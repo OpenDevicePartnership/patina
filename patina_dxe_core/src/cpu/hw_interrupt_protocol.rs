@@ -12,7 +12,7 @@ use arm_gic::{
 };
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{IntoComponent, service::Service},
+    component::{component, service::Service},
     guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
     uefi_protocol::ProtocolInterface,
 };
@@ -453,13 +453,13 @@ impl HwInterruptProtocolHandler {
     }
 }
 
-#[derive(IntoComponent)]
 /// A component to install the two hardware interrupt protocols.
 pub(crate) struct HwInterruptProtocolInstaller {
     /// The GIC base addresses.
     gic_bases: GicBases,
 }
 
+#[component]
 impl HwInterruptProtocolInstaller {
     /// Creates a new `HwInterruptProtocolInstaller` instance.
     #[coverage(off)]

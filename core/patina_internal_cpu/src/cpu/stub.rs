@@ -26,6 +26,10 @@ impl EfiCpuStub {
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         Ok(())
     }
+    /// Causes the CPU to enter a low power state until the next interrupt.
+    // Trivial emulation of hardware access, so no coverage.
+    #[coverage(off)]
+    pub fn sleep() {}
 }
 
 impl Cpu for EfiCpuStub {

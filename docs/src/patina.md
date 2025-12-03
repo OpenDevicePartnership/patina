@@ -203,8 +203,8 @@ calls into boot services which are implemented in the DXE Core on a Q35 QEMU pla
 to show that while DXE drivers written in C are still dispatched and used during boot, the core services invoked
 and depended on by those drivers are written in Rust.
 
-| ![UEFI Boot Services Call Count 1](./media/bootserv_call_table_1.png) | ![UEFI Boot Services Call Count 2](./media/bootserv_call_table_2.png)  |
-|---|---|
+| ![UEFI Boot Services Call Count 1](./media/bootserv_call_table_1.png) | ![UEFI Boot Services Call Count 2](./media/bootserv_call_table_2.png) |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------- |
 
 #### Rust DXE Scaling Plan
 
@@ -300,3 +300,15 @@ dereference detection and stack guard are active so code (C DXE driver or a thir
 protection violations caught at runtime.
 
 For more details about mememory management in Patina see [Memory Management](./dxe_core/memory_management.md).
+
+#### Performance
+
+While Rust provides some drawbacks when compared to C (e.g.  
+[binary size](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md)),
+it is generally the most performant of the memory-safe languages and adds comparatively minimal overhead. It is a more  
+feature-rich language; for example, exposing complex data structures like HashMaps, Vectors, iterators (compare to the
+simple linked lists used in C). Patina uses these abstractions to provide more robust implementations of core  
+functionality and enables core CPU capabilities differently than standard C firmware; as such, simple wall clock timing
+is not a fully accurate performance comparison. However, as a baseline measurement, with Patina v16.0 running on Intel  
+x64 hardware, the Rust DXE core executes approximately 10% slower than the C core when timed across identical  
+checkpoints (with magnitude in tens of ms).

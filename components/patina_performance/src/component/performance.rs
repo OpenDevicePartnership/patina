@@ -9,15 +9,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-extern crate alloc;
-
-use crate::{config, mm};
+use crate::{component::protocol::create_performance_measurement_efiapi, config, mm};
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{clone::Clone, convert::AsRef};
 use patina::{
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::{
-        IntoComponent,
+        component,
         hob::Hob,
         params::Config,
         service::{Service, perf_timer::ArchTimerFunctionality},
@@ -26,7 +24,7 @@ use patina::{
     guids::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     performance::{
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
-        measurement::{PerformanceProperty, create_performance_measurement, event_callback},
+        measurement::{PerformanceProperty, event_callback},
         record::{
             GenericPerformanceRecord, PerformanceRecordHeader,
             hob::{HobPerformanceData, HobPerformanceDataExtractor},
@@ -47,9 +45,9 @@ pub use mu_rust_helpers::function;
 type MmPerformanceEventContext<BB, B, F> = Box<(BB, &'static TplMutex<'static, F, B>, Service<dyn MmCommunication>)>;
 
 /// Performance Component.
-#[derive(IntoComponent)]
 pub struct Performance;
 
+#[component]
 impl Performance {
     /// Entry point of [`Performance`]
     #[coverage(off)] // This is tested via the generic version, see _entry_point.
@@ -136,7 +134,9 @@ impl Performance {
         // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
             None,
-            Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }),
+            Box::new(EdkiiPerformanceMeasurement {
+                create_performance_measurement: create_performance_measurement_efiapi,
+            }),
         )?;
 
         // Register ReadyToBoot event to update the boot performance table for MM performance data.

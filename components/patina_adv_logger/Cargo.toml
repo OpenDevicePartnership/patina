@@ -28,6 +28,9 @@ zerocopy-derive = { workspace = true }
 # Only used for CLI
 clap = { workspace = true, features = ['derive'], optional = true }
 
+[dev-dependencies]
+patina_dxe_core = { path = "../../patina_dxe_core" }
+
 [features]
 default = []
 std = ['clap']

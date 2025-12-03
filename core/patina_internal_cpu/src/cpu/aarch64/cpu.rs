@@ -100,6 +100,19 @@ impl EfiCpuAarch64 {
             }
         }
     }
+
+    /// Causes the CPU to enter a low power state until the next interrupt.
+    // This routine only does bare-metal hardware access, so no coverage.
+    #[coverage(off)]
+    pub fn sleep() {
+        #[cfg(all(not(test), target_arch = "aarch64"))]
+        {
+            // SAFETY: The caller is expected to ensure that they want to wait for an interrupt
+            unsafe {
+                asm!("wfi", options(nostack));
+            }
+        }
+    }
 }
 
 impl Cpu for EfiCpuAarch64 {

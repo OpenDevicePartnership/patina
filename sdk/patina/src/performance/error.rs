@@ -23,7 +23,7 @@ macro_rules! performance_debug_assert {
 }
 
 /// Error type for the Patina Performance component.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     /// FBPT full, can't add more performance records.
     OutOfResources,

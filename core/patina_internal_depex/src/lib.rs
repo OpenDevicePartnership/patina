@@ -442,21 +442,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid SOR not at start of depex")]
     fn sor_not_first_opcode_should_eval_false() {
         let mut depex = Depex::from(vec![0x06, 0x09, 0x08]);
         assert!(!depex.eval(&[]));
     }
 
     #[test]
-    #[should_panic(expected = "Exiting early due to an unknown opcode.")]
     fn replacetrue_should_eval_false() {
         let mut depex = Depex::from(vec![0xFF, 0x08]);
         assert!(!depex.eval(&[]));
     }
 
     #[test]
-    #[should_panic(expected = "Exiting early due to an unknown opcode.")]
     fn unknown_opcode_should_return_false() {
         let mut depex = Depex::from(vec![0xE0, 0x08]);
         assert!(!depex.eval(&[]));
@@ -675,7 +672,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER not at start of depex")]
     fn opcode_before_should_panic_when_not_at_start_of_depex() {
         let opcodes = [Opcode::And, Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap())];
         let mut depex = Depex::from(opcodes.as_slice());
@@ -683,7 +679,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER not at start of depex")]
     fn opcode_after_should_panic_when_not_at_start_of_depex() {
         let opcodes = [Opcode::And, Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap())];
         let mut depex = Depex::from(opcodes.as_slice());
@@ -691,7 +686,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER with additional opcodes")]
     fn opcode_before_should_panic_when_final_opcode_is_not_end() {
         let opcodes = [Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And];
         let mut depex = Depex::from(opcodes.as_slice());
@@ -699,7 +693,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER with additional opcodes")]
     fn opcode_after_should_panic_when_final_opcode_is_not_end() {
         let opcodes = [Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And];
         let mut depex = Depex::from(opcodes.as_slice());
@@ -707,7 +700,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER with additional opcodes")]
     fn opcode_before_should_panic_when_additional_opcodes_after() {
         let opcodes =
             [Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And, Opcode::End];
@@ -716,7 +708,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid BEFORE or AFTER with additional opcodes")]
     fn opcode_after_should_panic_when_additional_opcodes_after() {
         let opcodes =
             [Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And, Opcode::End];
@@ -725,7 +716,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Exiting early because opcode [0x0] expects a guid, only has a length of: 0")]
     fn malformed_opcode_should_panic_with_well_defined_message() {
         let opcodes = [Opcode::Malformed { opcode: 0x00, len: 0 }];
         let mut depex = Depex::from(opcodes.as_slice());

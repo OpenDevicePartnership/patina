@@ -7,16 +7,12 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::{
-    ffi::{c_char, c_void},
-    ptr,
-};
-
-use alloc::ffi::CString;
 use r_efi::efi;
 
 use crate::{
-    performance::{Measurement, globals::get_perf_measurement_mask, record::known::KnownPerfId},
+    performance::{
+        Measurement, globals::get_perf_measurement_mask, measurement::CallerIdentifier, record::known::KnownPerfId,
+    },
     uefi_protocol::performance_measurement::{CreateMeasurement, PerfAttribute},
 };
 
@@ -24,75 +20,74 @@ use crate::{
 ///
 /// `caller_identifier` is either a Handle or a pointer to a caller ID GUID.
 fn log_perf_measurement(
-    caller_identifier: *const c_void,
+    caller_identifier: CallerIdentifier,
     guid: Option<&efi::Guid>,
     string: Option<&str>,
     address: usize,
     identifier: u16,
     create_performance_measurement: CreateMeasurement,
 ) {
-    let s = string
-        .map(CString::new)
-        .transpose()
-        .expect("String should not contain 0 bytes.")
-        .map_or(ptr::null(), |s| s.into_raw());
-
-    // SAFETY: The above check ensures that if `string` is Some, then `s` is a valid C string.
-    unsafe {
-        (create_performance_measurement)(
-            caller_identifier,
-            guid,
-            s,
-            0,
-            address,
-            identifier as u32,
-            PerfAttribute::PerfEntry,
-        )
-    };
+    if let Err(e) = (create_performance_measurement)(
+        caller_identifier,
+        guid,
+        string,
+        0,
+        address,
+        identifier,
+        PerfAttribute::PerfEntry,
+    ) {
+        // We should not panic here as performance measurement failure should not block normal execution.
+        // Instead, log and continue.
+        log::error!("Failed to log performance measurement: {:?}", e);
+    }
 }
 
 // Adds a record that records the start time of a performance measurement.
 fn start_perf_measurement(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
-    let string = if !token.is_null() {
-        token
-    } else if !module.is_null() {
-        module
-    } else {
-        ptr::null()
-    };
-    // SAFETY: string parameter is expected to be a valid C string.
-    unsafe {
-        (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfStartEntry)
-    };
+    let string = token.or(module);
+
+    if let Err(e) = (create_performance_measurement)(
+        CallerIdentifier::Handle(handle),
+        None,
+        string,
+        timestamp,
+        0,
+        identifier as u16,
+        PerfAttribute::PerfStartEntry,
+    ) {
+        log::error!("Failed to log start performance measurement: {:?}", e);
+    }
 }
 
 // Adds a record that records the end time of a performance measurement.
 fn end_perf_measurement(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
-    let string = if !token.is_null() {
-        token
-    } else if !module.is_null() {
-        module
-    } else {
-        ptr::null()
-    };
-    // SAFETY: string parameter is expected to be a valid C string.
-    unsafe {
-        (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry)
-    };
+    let string = token.or(module);
+
+    if let Err(e) = (create_performance_measurement)(
+        CallerIdentifier::Handle(handle),
+        None,
+        string,
+        timestamp,
+        0,
+        identifier as u16,
+        PerfAttribute::PerfEndEntry,
+    ) {
+        log::error!("Failed to log end performance measurement: {:?}", e);
+    }
 }
 
 /// Begins performance measurement of start image in core.
@@ -101,7 +96,7 @@ pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_mea
         return;
     }
     log_perf_measurement(
-        module_handle,
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -115,7 +110,14 @@ pub fn perf_image_start_end(image_handle: efi::Handle, create_performance_measur
     if get_perf_measurement_mask() & Measurement::StartImage as u32 == 0 {
         return;
     }
-    log_perf_measurement(image_handle, None, None, 0, KnownPerfId::ModuleEnd.as_u16(), create_performance_measurement)
+    log_perf_measurement(
+        CallerIdentifier::Handle(image_handle),
+        None,
+        None,
+        0,
+        KnownPerfId::ModuleEnd.as_u16(),
+        create_performance_measurement,
+    )
 }
 
 /// Begins performance measurement of load image in core.
@@ -124,7 +126,7 @@ pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_meas
         return;
     }
     log_perf_measurement(
-        module_handle,
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -139,7 +141,7 @@ pub fn perf_load_image_end(module_handle: efi::Handle, create_performance_measur
         return;
     }
     log_perf_measurement(
-        module_handle,
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -158,7 +160,7 @@ pub fn perf_driver_binding_support_begin(
         return;
     }
     log_perf_measurement(
-        driver_binding_handle,
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -177,7 +179,7 @@ pub fn perf_driver_binding_support_end(
         return;
     }
     log_perf_measurement(
-        driver_binding_handle,
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -196,7 +198,7 @@ pub fn perf_driver_binding_start_begin(
         return;
     }
     log_perf_measurement(
-        driver_binding_handle,
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -215,7 +217,7 @@ pub fn perf_driver_binding_start_end(
         return;
     }
     log_perf_measurement(
-        driver_binding_handle,
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -234,7 +236,7 @@ pub fn perf_driver_binding_stop_begin(
         return;
     }
     log_perf_measurement(
-        module_handle,
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         controller_handle as usize,
@@ -253,7 +255,7 @@ pub fn perf_driver_binding_stop_end(
         return;
     }
     log_perf_measurement(
-        module_handle,
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         controller_handle as usize,
@@ -265,7 +267,7 @@ pub fn perf_driver_binding_stop_end(
 /// Measure the time from power-on to this function execution.
 pub fn perf_event(event_string: &str, caller_id: &efi::Guid, create_performance_measurement: CreateMeasurement) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(event_string),
         0,
@@ -282,7 +284,7 @@ pub fn perf_event_signal_begin(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         Some(event_guid),
         Some(fun_name),
         0,
@@ -299,7 +301,7 @@ pub fn perf_event_signal_end(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         Some(event_guid),
         Some(fun_name),
         0,
@@ -316,7 +318,7 @@ pub fn perf_callback_begin(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         Some(trigger_guid),
         Some(fun_name),
         0,
@@ -333,7 +335,7 @@ pub fn perf_callback_end(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         Some(trigger_guid),
         Some(fun_name),
         0,
@@ -345,7 +347,7 @@ pub fn perf_callback_end(
 /// Begin performance measurement of any function in any module.
 pub fn perf_function_begin(fun_name: &str, caller_id: &efi::Guid, create_performance_measurement: CreateMeasurement) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(fun_name),
         0,
@@ -357,7 +359,7 @@ pub fn perf_function_begin(fun_name: &str, caller_id: &efi::Guid, create_perform
 /// Ends performance measurement of any function in any module.
 pub fn perf_function_end(fun_name: &str, caller_id: &efi::Guid, create_performance_measurement: CreateMeasurement) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(fun_name),
         0,
@@ -373,7 +375,7 @@ pub fn perf_in_module_begin(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(measurement_str),
         0,
@@ -389,7 +391,7 @@ pub fn perf_in_module_end(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(measurement_str),
         0,
@@ -405,7 +407,7 @@ pub fn perf_cross_module_begin(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(measurement_str),
         0,
@@ -421,7 +423,7 @@ pub fn perf_cross_module_end(
     create_performance_measurement: CreateMeasurement,
 ) {
     log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
+        CallerIdentifier::Guid(*caller_id),
         None,
         Some(measurement_str),
         0,
@@ -433,8 +435,8 @@ pub fn perf_cross_module_end(
 /// Adds a record that records the start time of a performance measurement.
 pub fn perf_start(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     create_performance_measurement: CreateMeasurement,
 ) {
@@ -444,8 +446,8 @@ pub fn perf_start(
 /// Adds a record that records the end time of a performance measurement.
 pub fn perf_end(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     create_performance_measurement: CreateMeasurement,
 ) {
@@ -455,8 +457,8 @@ pub fn perf_end(
 /// Adds a record that records the start time of a performance measurement.
 pub fn perf_start_ex(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
@@ -467,11 +469,79 @@ pub fn perf_start_ex(
 /// Adds a record that records the end time of a performance measurement.
 pub fn perf_end_ex(
     handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
+    token: Option<&str>,
+    module: Option<&str>,
     timestamp: u64,
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
     end_perf_measurement(handle, token, module, timestamp, identifier, create_performance_measurement)
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    fn mock_create_measurement_ok(
+        _caller_identifier: CallerIdentifier,
+        _guid: Option<&efi::Guid>,
+        _string: Option<&str>,
+        _ticker: u64,
+        _address: usize,
+        _identifier: u16,
+        _attribute: PerfAttribute,
+    ) -> Result<(), crate::performance::error::Error> {
+        Ok(())
+    }
+
+    fn mock_create_measurement_err(
+        _caller_identifier: CallerIdentifier,
+        _guid: Option<&efi::Guid>,
+        _string: Option<&str>,
+        _ticker: u64,
+        _address: usize,
+        _identifier: u16,
+        _attribute: PerfAttribute,
+    ) -> Result<(), crate::performance::error::Error> {
+        Err(crate::performance::error::Error::OutOfResources)
+    }
+
+    #[test]
+    fn test_start_measurement() {
+        // Test with token valid.
+        start_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 1, mock_create_measurement_ok);
+
+        // Test with module valid.
+        start_perf_measurement(0x2 as efi::Handle, None, Some("TestModule"), 100, 2, mock_create_measurement_ok);
+
+        // Test with both token and module invalid.
+        start_perf_measurement(0x2 as efi::Handle, None, None, 100, 3, mock_create_measurement_ok);
+
+        // Should handle internal error without panic.
+        start_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 4, mock_create_measurement_err);
+    }
+
+    #[test]
+    fn test_end_measurement() {
+        // Test with token valid.
+        end_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 1, mock_create_measurement_ok);
+
+        // Test with module valid.
+        end_perf_measurement(0x2 as efi::Handle, None, Some("TestModule"), 100, 2, mock_create_measurement_ok);
+
+        // Test with both token and module invalid.
+        end_perf_measurement(0x2 as efi::Handle, None, None, 100, 3, mock_create_measurement_ok);
+
+        // Should handle error without panic.
+        end_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 4, mock_create_measurement_err);
+    }
+
+    #[test]
+    fn test_perf_instrumentation() {
+        perf_start(0x2 as efi::Handle, Some("TestToken"), None, 100, mock_create_measurement_ok);
+        perf_start_ex(0x2 as efi::Handle, Some("TestToken"), None, 100, 100, mock_create_measurement_ok);
+        perf_end_ex(0x2 as efi::Handle, Some("TestToken"), None, 100, 100, mock_create_measurement_ok);
+        perf_end(0x2 as efi::Handle, Some("TestToken"), None, 100, mock_create_measurement_ok);
+    }
 }

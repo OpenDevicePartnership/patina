@@ -255,7 +255,7 @@ impl ComponentDispatcher {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use patina::pi::hob::GuidHob;
+    use patina::{component::component, pi::hob::GuidHob};
 
     use crate::test_support::with_global_lock;
 
@@ -286,9 +286,9 @@ mod tests {
 
         impl TestService for TestServiceImpl {}
 
-        #[derive(patina::component::IntoComponent)]
         struct TestComponent;
 
+        #[component]
         impl TestComponent {
             fn entry_point(self) -> patina::error::Result<()> {
                 Ok(())
@@ -394,9 +394,9 @@ mod tests {
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob3, hob3_bytes));
         hob_list.push(patina::pi::hob::Hob::Misc(30)); // Non-guid HOB to ensure it's ignored.
 
-        #[derive(patina::component::IntoComponent)]
         struct TestComponent;
 
+        #[component]
         impl TestComponent {
             fn entry_point(
                 self,
@@ -432,11 +432,11 @@ mod tests {
 
     #[test]
     fn test_dispatch_missing_shows_not_dispatched() {
-        #[derive(patina::component::IntoComponent)]
         struct TestComponent;
 
         trait TestService {}
 
+        #[component]
         impl TestComponent {
             fn entry_point(self, _: patina::component::service::Service<dyn TestService>) -> patina::error::Result<()> {
                 Ok(())
@@ -450,11 +450,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_error_in_component_debug_asserts() {
-        #[derive(patina::component::IntoComponent)]
+    fn test_dispatch_still_succeeds_with_error_in_component() {
         struct TestComponent;
 
+        #[component]
         impl TestComponent {
             fn entry_point(self) -> patina::error::Result<()> {
                 Err(patina::error::EfiError::Unsupported)
@@ -463,6 +462,6 @@ mod tests {
 
         let mut dispatcher = ComponentDispatcher::default();
         dispatcher.insert_component(0, TestComponent.into_component());
-        dispatcher.dispatch();
+        assert!(dispatcher.dispatch(), "Dispatch should succeed even if component fails");
     }
 }

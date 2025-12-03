@@ -246,11 +246,6 @@ pub(crate) unsafe fn init_test_protocol_db() {
     PROTOCOL_DB.init_protocol_db();
 }
 
-/// Reset the dispatcher context to default empty state.
-pub(crate) fn reset_dispatcher_context() {
-    crate::dispatcher::reset_dispatcher_context_for_tests();
-}
-
 pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     // SAFETY: Test code - allocates memory for the test HOB list.
     let mem = unsafe { get_memory(mem_size as usize) };

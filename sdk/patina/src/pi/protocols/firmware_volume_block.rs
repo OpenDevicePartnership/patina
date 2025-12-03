@@ -99,3 +99,10 @@ pub struct Protocol {
     /// Handle of the parent firmware volume.
     pub parent_handle: Handle,
 }
+
+// Safety: The only non-send type in this structure is `Handle` which itself is actually `Send` as it is an opaque
+// pointer used purely as a token for identification purposes.
+unsafe impl Send for Protocol {}
+// Safety: The only non-sync type in this structure is `Handle` which itself is actually `Send` as it is an opaque
+// pointer used purely as a token for identification purposes.
+unsafe impl Sync for Protocol {}

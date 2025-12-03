@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_config2' (position 2) conflicts with parameter '_config1' (position 1). Each ConfigMut<u32> type can only appear once in a component's entry point.
+  --> tests/ui/duplicate_config_mut.rs:12:52
+   |
+12 |     fn entry_point(self, _config1: ConfigMut<u32>, _config2: ConfigMut<u32>) -> Result<()> {
+   |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: first '_config1' parameter here
+  --> tests/ui/duplicate_config_mut.rs:12:26
+   |
+12 |     fn entry_point(self, _config1: ConfigMut<u32>, _config2: ConfigMut<u32>) -> Result<()> {
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^

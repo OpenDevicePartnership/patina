@@ -593,6 +593,7 @@ fn core_load_pe_image(
                         resource_section_size
                     );
                     debug_assert!(false);
+                    return Err(EfiError::LoadError);
                 }
             }
         }
@@ -2411,11 +2412,8 @@ mod tests {
         //
         // We craft a malformed PE image with a section virtual_size that will cause
         // align_up() to overflow when aligning to section_alignment.
-        //
-        // Note: In debug builds, this hits a debug_assert!(false) which panics.
-        // The panic is caught by with_global_lock(), so we check for that.
 
-        let result = test_support::with_global_lock(|| {
+        test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2451,31 +2449,15 @@ mod tests {
             image[virtual_size_offset..virtual_size_offset + 4].copy_from_slice(&overflow_value.to_le_bytes());
 
             // Try to load the malformed image by calling core_load_pe_image directly
-            // (bypassing the FFI extern "efiapi" fn load_image which cannot unwind)
             let image_info = empty_image_info();
             let result = super::core_load_pe_image(&image, image_info);
 
-            // The load should FAIL due to alignment overflow
-            // This verifies that the error from apply_image_memory_protections
-            // is properly propagated (Fix #176)
-            match result {
-                Err(EfiError::LoadError) => { /* Expected error */ }
-                Err(e) => panic!("Expected LoadError from alignment overflow, got {:?}", e),
-                Ok(_) => panic!("Image with overflowing section alignment should fail to load"),
-            }
-        });
-
-        // In debug builds, debug_assert!(false) panics and with_global_lock catches it
-        #[cfg(debug_assertions)]
-        assert!(result.is_err(), "Expected panic from debug_assert! in debug build");
-
-        // In release builds, debug_assert is compiled away and function returns error normally
-        #[cfg(not(debug_assertions))]
-        assert!(result.is_ok(), "Expected successful test execution in release build");
+            assert!(matches!(result, Err(EfiError::LoadError)), "Expected LoadError from alignment overflow");
+        })
+        .unwrap();
     }
 
     #[test]
-    #[cfg(debug_assertions)]
     fn load_image_should_fail_with_unaligned_section_address() {
         // This test verifies error path #3 from Fix #176: set_memory_space_attributes failure
         // (Task #1030 coverage improvement)
@@ -2484,12 +2466,8 @@ mod tests {
         // When apply_image_memory_protections calculates section_base_addr = image_base + virtual_address,
         // the result will be unaligned. Then set_memory_space_attributes will fail with InvalidParameter
         // because the base address is not page-aligned.
-        //
-        // Note: This test only runs in debug builds because it specifically tests
-        // the debug_assert!(false) panic path. In release mode, this particular error
-        // case doesn't result in a load failure.
 
-        let result = test_support::with_global_lock(|| {
+        test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2525,14 +2503,11 @@ mod tests {
             // The load should FAIL because when apply_image_memory_protections calculates
             // section_base_addr = image_base + 0x1001, the address will be unaligned.
             // set_memory_space_attributes will check (base_address & 0xFFF) == 0 and fail.
-            match result {
-                Err(EfiError::InvalidParameter) => { /* Expected error */ }
-                Err(e) => panic!("Expected InvalidParameter from unaligned address, got {:?}", e),
-                Ok(_) => panic!("Image with unaligned section address should fail to load"),
-            }
-        });
-
-        // Verify that the panic was caught by with_global_lock
-        assert!(result.is_err(), "Expected panic from debug_assert!");
+            assert!(
+                matches!(result, Err(EfiError::InvalidParameter)),
+                "Expected InvalidParameter from unaligned section address"
+            );
+        })
+        .unwrap();
     }
 }

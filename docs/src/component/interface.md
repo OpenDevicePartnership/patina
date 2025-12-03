@@ -25,24 +25,27 @@ graph TD
     C --> F[Remove from Dispatch Queue]
 ```
 
-In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements the
-[Component][patina] trait and the [IntoComponent][patina] (Used to convert it to `Box<dyn Component>`), then it
-can be consumed and executed by the Patina DXE Core. While a developer can elect to create their own implementation of
-[Component][patina] if they wish, [patina][patina] currently provides a single implementation that makes it
-easy to turn any struct or enum into a Component.
+## Defining Components
 
-This single implementation is the [StructComponent][patina], which cannot be instantiated manually; a derive
-proc-macro of `IntoComponent` is provided that allows any struct or enum to be used as a component. This derive proc-macro
-expects that a `Self::entry_point(self, ...) -> patina::error::Result<()> { ... }` exists, where the `...` in the
-function definition can be any number of parameters that support dependency injection as shown below. The function
-name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
+Components are defined by applying the `#[component]` attribute to an impl block that contains an `entry_point` method.
+The `entry_point` method name is mandatory - all components must use this exact name.
+
+The `#[component]` attribute automatically:
+
+- Validates that an `entry_point` method exists with the required signature
+- Validates parameters for conflicts at compile time
+- Generates the necessary trait implementations to integrate with the dispatcher
+
+The `#[component]` attribute validates that component parameters don't have conflicting combinations (like duplicate
+`ConfigMut<T>` parameters or mixing `Config<T>` and `ConfigMut<T>` for the same type). The macro also automatically
+generates the necessary trait implementations for component execution.
 
 See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_samples) or
-[Examples](#examples) for examples of basic components using these two methods.
+[Examples](#examples) for examples of basic components.
 
-Due to this, developing a component is as simple as writing a function whose parameters are part of the below list of
-supported parameters (which is subject to change). Always reference the trait's [Type Implementations][patina]
-for a complete list, however the below information should be up to date.
+Developing a component is as simple as writing an `entry_point` method whose parameters are part of the below list of
+supported parameters (which is subject to change). Always reference the [Type Implementations][patina] for a complete
+list, however the below information should be up to date.
 
 ## Component Execution
 
@@ -91,9 +94,14 @@ in the function interface of a component.
 <!-- markdownlint-enable -->
 
 ``` admonish warning
-Certain combinations of parameters may lead to undefined behavior as they can allow multiple mutable accesses to the
-same data. Each parameter type checks for conflicts with previously registered accesses, but **ONLY** on debug builds.
-In release builds, these checks are disabled for performance and size reasons.
+Certain combinations of parameters are invalid and will cause compile-time errors. The `#[component]` attribute
+enforces parameter validation for pre-defined parameter types, detecting conflicts such as:
+
+- Duplicate `ConfigMut<T>` parameters with the same type T
+- Both `Config<T>` and `ConfigMut<T>` for the same type T
+- `&mut Storage` combined with `Config<T>` or `ConfigMut<T>`
+- `&Storage` combined with `ConfigMut<T>`
+- Multiple `Commands`, `StandardBootServices`, or `StandardRuntimeServices` parameters
 ```
 
 ### Config\<T\> / ConfigMut\<T\>
@@ -211,39 +219,42 @@ The [patina](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patin
 binaries in it's `example` folder that can be compiled and executed. These show implementations of common use cases and
 usage models for components and their parameters.
 
-### StructComponent Examples
+### Component Examples
 
 ```rust
 # extern crate patina;
 use patina::{
     boot_services::StandardBootServices,
     component::{
-        IntoComponent,
+        component,
         params::{Config, ConfigMut},
     },
     error::{EfiError, Result},
 };
 
-#[derive(IntoComponent)]
-#[entry_point(path = entry_point)]
-struct MyComponent {
+// Basic component with configuration
+pub struct MyComponent {
     private_config: u32,
 }
 
-fn entry_point(c: MyComponent, public_config: Config<u32>) -> patina::error::Result<()> {
-    if *public_config != c.private_config {
-        return Err(EfiError::Unsupported)
+#[component]
+impl MyComponent {
+    fn entry_point(self, public_config: Config<u32>) -> Result<()> {
+        if *public_config != self.private_config {
+            return Err(EfiError::Unsupported)
+        }
+        Ok(())
     }
-    Ok(())
 }
 
-#[derive(IntoComponent)]
-struct MyComponent2 {
+// Component that modifies configuration
+pub struct MyComponent2 {
     private_config: u32,
 }
 
+#[component]
 impl MyComponent2 {
-    fn entry_point(self, mut public_config: ConfigMut<u32>) -> patina::error::Result<()> {
+    fn entry_point(self, mut public_config: ConfigMut<u32>) -> Result<()> {
         *public_config += self.private_config;
         Ok(())
     }

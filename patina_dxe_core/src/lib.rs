@@ -9,8 +9,9 @@
 //! # use core::ffi::c_void;
 //! # use patina_dxe_core::*;
 //! # use patina_ffs_extractors::NullSectionExtractor;
-//! # #[derive(patina::component::IntoComponent, Default)]
+//! # #[derive(Default)]
 //! # struct ExampleComponent;
+//! # #[patina::component::component]
 //! # impl ExampleComponent {
 //! #     fn entry_point(self) -> patina::error::Result<()> { Ok(()) }
 //! # }
@@ -66,24 +67,25 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
+
 mod allocator;
 mod component_dispatcher;
 mod config_tables;
 mod cpu;
 mod decompress;
-mod dispatcher;
 mod driver_services;
 mod dxe_services;
 mod event_db;
 mod events;
 mod filesystems;
-mod fv;
 mod gcd;
 mod image;
 mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
+mod pi_dispatcher;
 mod protocol_db;
 mod protocols;
 mod runtime;
@@ -110,7 +112,6 @@ use core::{
     str::FromStr,
 };
 
-use alloc::boxed::Box;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_rust_helpers::{function, guid::CALLER_ID};
@@ -123,7 +124,7 @@ use patina::{
         measurement::create_performance_measurement,
     },
     pi::{
-        hob::{HobList, get_c_hob_list_size},
+        hob::{HobList, get_pi_hob_list_size},
         protocols::{bds, status_code},
         status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
     },
@@ -133,7 +134,10 @@ use patina_ffs::section::SectionExtractor;
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
-use crate::{component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, tpl_mutex::TplMutex};
+use crate::{
+    component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, pi_dispatcher::PiDispatcher,
+    tpl_mutex::TplMutex,
+};
 
 #[doc(hidden)]
 #[macro_export]
@@ -203,7 +207,13 @@ pub trait MemoryInfo {
 ///
 /// impl ComponentInfo for ExamplePlatform {}
 /// impl MemoryInfo for ExamplePlatform {}
-/// impl CpuInfo for ExamplePlatform {}
+///
+/// impl CpuInfo for ExamplePlatform {
+///   #[cfg(target_arch = "aarch64")]
+///   fn gic_bases() -> GicBases {
+///     unsafe { GicBases::new(0x1E000000, 0x1E010000) }
+///   }
+/// }
 /// ```
 #[cfg_attr(test, mockall::automock(
     type Extractor = patina_ffs_extractors::NullSectionExtractor;
@@ -231,6 +241,9 @@ pub trait PlatformInfo {
 /// only in efiapi functions where no reference to the core is otherwise available.
 static __SELF: Once<NonZeroUsize> = Once::new();
 
+#[cfg(test)]
+type MockCore = Core<MockPlatformInfo>;
+
 /// Platform configured DXE Core responsible for the DXE phase of UEFI booting.
 ///
 /// This struct is generic over the [PlatformInfo] trait, which is used to provide platform-specific configuration to
@@ -248,8 +261,9 @@ static __SELF: Once<NonZeroUsize> = Once::new();
 /// # use core::ffi::c_void;
 /// # use patina_dxe_core::*;
 /// # use patina_ffs_extractors::NullSectionExtractor;
-/// # #[derive(patina::component::IntoComponent, Default)]
+/// # #[derive(Default)]
 /// # struct ExampleComponent;
+/// # #[patina::component::component]
 /// # impl ExampleComponent {
 /// #     fn entry_point(self) -> patina::error::Result<()> { Ok(()) }
 /// # }
@@ -293,15 +307,19 @@ pub struct Core<P: PlatformInfo> {
     hob_list: Once<HobList<'static>>,
     /// The subsystem responsible for data management and dispatch of Patina components.
     component_dispatcher: TplMutex<ComponentDispatcher>,
-    // NOTE: This field will be moved into the `DISPATCHER_CONTEXT` when it is moved into the Core.
-    section_extractor: P::Extractor,
+    /// The subsystem responsible for fv management and dispatch of PI specification compliant UEFI drivers.
+    pi_dispatcher: PiDispatcher<P>,
 }
 
 #[coverage(off)]
 impl<P: PlatformInfo> Core<P> {
     /// Creates a new instance of the DXE Core in the NoAlloc phase.
     pub const fn new(section_extractor: P::Extractor) -> Self {
-        Self { component_dispatcher: ComponentDispatcher::new_locked(), hob_list: Once::new(), section_extractor }
+        Self {
+            hob_list: Once::new(),
+            component_dispatcher: ComponentDispatcher::new_locked(),
+            pi_dispatcher: PiDispatcher::new(section_extractor),
+        }
     }
 
     /// Sets the static DXE Core instance for global access.
@@ -311,6 +329,22 @@ impl<P: PlatformInfo> Core<P> {
     fn set_instance(&'static self) -> bool {
         let physical_address = NonNull::from_ref(self).expose_provenance();
         &physical_address == __SELF.call_once(|| physical_address)
+    }
+
+    /// Sets the static DXE Core instance for global access regardless of prior initialization.
+    ///
+    /// This is only to be used in tests where the instance needs to be overridden for tests.
+    #[cfg(test)]
+    fn override_instance(&'static self) {
+        let physical_address = NonNull::from_ref(self).expose_provenance();
+        if __SELF.is_completed() {
+            // SAFETY: The pointer is valid as `__SELF.is_completed` returned true and there is no casting involved.
+            unsafe {
+                __SELF.as_mut_ptr().write(physical_address);
+            }
+        } else {
+            __SELF.call_once(|| physical_address);
+        }
     }
 
     /// Gets the static DXE Core instance for global access.
@@ -329,10 +363,11 @@ impl<P: PlatformInfo> Core<P> {
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
         assert!(self.set_instance(), "DXE Core instance was already set!");
+        assert!(!physical_hob_list.is_null(), "The DXE Core requires a non-null HOB list pointer.");
 
-        self.init_memory(physical_hob_list);
+        let relocated_hob_list = self.init_memory(physical_hob_list);
 
-        if let Err(err) = self.start_dispatcher(physical_hob_list) {
+        if let Err(err) = self.start_dispatcher(relocated_hob_list) {
             log::error!("DXE Core failed to start: {err:?}");
         }
 
@@ -357,7 +392,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
-    fn init_memory(&self, physical_hob_list: *const c_void) {
+    ///
+    /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
+    fn init_memory(&self, physical_hob_list: *const c_void) -> *mut c_void {
         log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
@@ -367,10 +404,6 @@ impl<P: PlatformInfo> Core<P> {
 
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
         // patina_debugger::initialize(&mut interrupt_manager);
-
-        if physical_hob_list.is_null() {
-            panic!("HOB list pointer is null!");
-        }
 
         gcd::init_gcd(physical_hob_list);
 
@@ -388,6 +421,20 @@ impl<P: PlatformInfo> Core<P> {
         PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
+
+        // Relocate the PI Spec HOB list
+        //
+        // SAFETY: physical_hob_list is checked for null when it is accepted at the DXE core entry point.
+        let pi_hob_list_size = unsafe { get_pi_hob_list_size(physical_hob_list) };
+
+        // SAFETY: Creating a slice from the original PI HOB list pointer with the calculated size.
+        let pi_hob_slice = unsafe { core::slice::from_raw_parts(physical_hob_list as *const u8, pi_hob_list_size) };
+
+        // Leak a DXE allocated PI HOB list so it is available throughout the DXE phase.
+        let relocated_hob_list = Box::leak(pi_hob_slice.to_vec().into_boxed_slice()).as_mut_ptr().cast::<c_void>();
+
+        // Relocate the Rust HOB list
+        //
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
@@ -401,7 +448,10 @@ impl<P: PlatformInfo> Core<P> {
         });
 
         // Initialize the debugger if it is enabled.
-        patina_debugger::initialize(&mut interrupt_manager);
+        patina_debugger::initialize(
+            &mut interrupt_manager,
+            Some(Box::leak(Box::new(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0))))),
+        );
 
         log::info!("GCD - After memory init:\n{GCD}");
 
@@ -411,6 +461,8 @@ impl<P: PlatformInfo> Core<P> {
         component_dispatcher.add_service(CoreMemoryManager);
         component_dispatcher
             .add_service(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0)));
+
+        relocated_hob_list
     }
 
     /// Performs a combined dispatch of Patina components and UEFI drivers.
@@ -428,7 +480,10 @@ impl<P: PlatformInfo> Core<P> {
 
             // UEFI driver dispatch
             let dispatched = dispatched
-                || dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+                || self
+                    .pi_dispatcher
+                    .dispatch()
+                    .inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
 
             if !dispatched {
                 break;
@@ -439,19 +494,7 @@ impl<P: PlatformInfo> Core<P> {
         Ok(())
     }
 
-    /// Returns the length of the HOB list.
-    /// Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
-    /// get_c_hob_list_size is not marked unsafe, but it is
-    fn get_hob_list_len(hob_list: *const c_void) -> usize {
-        unsafe { get_c_hob_list_size(hob_list) }
-    }
-
-    fn initialize_system_table(&self, physical_hob_list: *const c_void) -> Result<()> {
-        let hob_list_slice = unsafe {
-            core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
-        };
-        let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
-
+    fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
         systemtables::init_system_table();
 
@@ -466,8 +509,8 @@ impl<P: PlatformInfo> Core<P> {
         config_tables::init_config_tables_support(st.boot_services_mut());
         runtime::init_runtime_support(st.runtime_services_mut());
         image::init_image_support(self.hob_list(), st);
-        dispatcher::init_dispatcher();
-        dxe_services::init_dxe_services(st);
+        self.pi_dispatcher.init();
+        self.install_dxe_services_table(st);
         driver_services::init_driver_services(st.boot_services_mut());
 
         memory_attributes_protocol::install_memory_attributes_protocol();
@@ -479,13 +522,8 @@ impl<P: PlatformInfo> Core<P> {
         let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
             uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
         let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
-
-        config_tables::core_install_configuration_table(
-            hob_list_guid,
-            Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void,
-            st,
-        )
-        .expect("Unable to create configuration table due to invalid table entry.");
+        config_tables::core_install_configuration_table(hob_list_guid, physical_hob_list, st)
+            .expect("Unable to create configuration table due to invalid table entry.");
 
         // Install Memory Type Info configuration table.
         allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
@@ -517,7 +555,7 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Starts the core, dispatching all drivers.
-    fn start_dispatcher(&'static self, physical_hob_list: *const c_void) -> Result<()> {
+    fn start_dispatcher(&'static self, physical_hob_list: *mut c_void) -> Result<()> {
         log::info!("Registering platform components");
         self.apply_component_info();
         log::info!("Finished.");
@@ -534,11 +572,8 @@ impl<P: PlatformInfo> Core<P> {
         self.component_dispatcher.lock().insert_hobs(self.hob_list());
         log::info!("Finished.");
 
-        dispatcher::register_section_extractor(&self.section_extractor);
-        fv::register_section_extractor(&self.section_extractor);
-
-        log::info!("Parsing FVs from FV HOBs");
-        fv::parse_hob_fvs(self.hob_list())?;
+        log::info!("Installing Firmware Volumes from HOB list.");
+        self.pi_dispatcher.install_firmware_volumes_from_hoblist(self.hob_list())?;
         log::info!("Finished.");
 
         log::info!("Dispatching Drivers");
@@ -551,7 +586,7 @@ impl<P: PlatformInfo> Core<P> {
 
         core_display_missing_arch_protocols();
 
-        dispatcher::display_discovered_not_dispatched();
+        self.pi_dispatcher.display_discovered_not_dispatched();
 
         Ok(())
     }
@@ -586,25 +621,35 @@ fn call_bds() -> ! {
     // Enable status code capability in Firmware Performance DXE.
     match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
-            let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
-            (status_code_protocol.report_status_code)(
-                EFI_PROGRESS_CODE,
-                EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
-                0,
-                &patina::guids::DXE_CORE,
-                ptr::null(),
-            );
+            if let Some(status_code_protocol_ptr) = NonNull::new(status_code_ptr) {
+                // SAFETY: Some(status_code_protocol_ptr) guarantees that the pointer is non-NULL
+                let status_code_protocol = unsafe { status_code_protocol_ptr.cast::<status_code::Protocol>().as_ref() };
+                (status_code_protocol.report_status_code)(
+                    EFI_PROGRESS_CODE,
+                    EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
+                    0,
+                    &patina::guids::DXE_CORE,
+                    ptr::null(),
+                );
+            } else {
+                log::error!("status_code protocol pointer is NULL")
+            }
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
-    };
+    }
 
     match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
-        Ok(bds) => {
-            let bds = bds as *mut bds::Protocol;
-            // SAFETY: The BDS arch protocol is the valid C structure as defined by the UEFI specification. The entry
-            // field of the protocol is a valid function pointer that conforms to the expected calling convention.
-            unsafe {
-                ((*bds).entry)(bds);
+        Ok(bds_ptr) => {
+            if let Some(bds_protocol_ptr) = NonNull::new(bds_ptr) {
+                let bds_protocol_ptr = bds_protocol_ptr.cast::<bds::Protocol>();
+                // SAFETY: The BDS arch protocol is the valid C structure as defined by the UEFI specification. The entry
+                // field of the protocol is a valid function pointer that conforms to the expected calling convention.
+                // Some(bds_protocol_ptr) guarantees that the pointer is non-NULL
+                unsafe {
+                    (bds_protocol_ptr.as_ref().entry)(bds_protocol_ptr.as_ptr());
+                }
+            } else {
+                log::error!("bds protocol pointer is NULL")
             }
         }
         Err(err) => log::error!("Unable to locate BDS arch protocol: {err:?}"),
@@ -616,28 +661,37 @@ fn call_bds() -> ! {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::test_support::with_global_lock;
+
     use super::*;
+    use core::{any::Any, sync::atomic::AtomicBool};
 
     #[test]
     fn test_cannot_set_instance_twice() {
-        static CORE: Core<MockPlatformInfo> =
-            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-        static CORE2: Core<MockPlatformInfo> =
-            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-        assert!(CORE.set_instance());
+        with_global_lock(|| {
+            static CORE: Core<MockPlatformInfo> =
+                Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            static CORE2: Core<MockPlatformInfo> =
+                Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-            panic!("CORE instance mismatch");
-        }
+            // Set the first time. We will do `override_instance` to ensure we set it once. It may have been set by
+            // other tests already.
+            CORE.override_instance();
 
-        // We return true because its the same address
-        assert!(CORE.set_instance());
-        // This should fail because CORE2 is a different instance
-        assert!(!CORE2.set_instance());
+            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+                panic!("CORE instance mismatch");
+            }
 
-        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-            panic!("CORE instance mismatch after second set_instance");
-        }
+            // We return true because its the same address
+            assert!(CORE.set_instance());
+            // This should fail because CORE2 is a different instance
+            assert!(!CORE2.set_instance());
+
+            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+                panic!("CORE instance mismatch after second set_instance");
+            }
+        })
+        .unwrap();
     }
 
     #[test]
@@ -649,5 +703,159 @@ mod tests {
         impl MemoryInfo for TestPlatform {}
 
         assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
+    }
+
+    fn with_reset_global_state<F>(f: F) -> core::result::Result<(), Box<dyn Any + Send>>
+    where
+        F: Fn() + std::panic::RefUnwindSafe,
+    {
+        test_support::with_global_lock(|| {
+            // SAFETY: init_test_protocol_db modifies global state. It is being called within a
+            // lock to have exclusive mutable access to the protocol database.
+            unsafe {
+                test_support::init_test_protocol_db();
+            }
+
+            f()
+        })
+    }
+
+    #[test]
+    fn test_mock_call_bds_valid_non_null() {
+        static BDS_CALLED: AtomicBool = AtomicBool::new(false);
+        extern "efiapi" fn mock_bds(_this: *mut patina::pi::protocols::bds::Protocol) {
+            BDS_CALLED.store(true, core::sync::atomic::Ordering::Relaxed)
+        }
+
+        assert!(
+            with_reset_global_state(|| {
+                let protocol = Box::leak(Box::new(patina::pi::protocols::bds::Protocol { entry: mock_bds }));
+
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    protocol as *mut _ as *mut c_void,
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
+
+        assert!(BDS_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+    }
+
+    #[test]
+    fn test_mock_call_bds_valid_null() {
+        assert!(
+            with_reset_global_state(|| {
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    core::ptr::null_mut(),
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
+    }
+
+    #[test]
+    fn test_mock_call_bds_invalid() {
+        assert!(
+            with_reset_global_state(|| {
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
+    }
+
+    #[test]
+    fn test_mock_call_status_code_valid_non_null() {
+        static STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
+        extern "efiapi" fn mock_status_code(
+            _: u32,
+            _: u32,
+            _: u32,
+            _: *const efi::Guid,
+            _: *const status_code::EfiStatusCodeData,
+        ) -> efi::Status {
+            STATUS_CODE_CALLED.store(true, core::sync::atomic::Ordering::Relaxed);
+            efi::Status::SUCCESS
+        }
+
+        assert!(
+            with_reset_global_state(|| {
+                let protocol = Box::leak(Box::new(patina::pi::protocols::status_code::Protocol {
+                    report_status_code: mock_status_code,
+                }));
+
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    protocol as *mut _ as *mut c_void,
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
+
+        assert!(STATUS_CODE_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+    }
+
+    #[test]
+    fn test_mock_call_status_code_valid_null() {
+        assert!(
+            with_reset_global_state(|| {
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    core::ptr::null_mut(),
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
+    }
+
+    #[test]
+    fn test_mock_call_status_code_invalid() {
+        assert!(
+            with_reset_global_state(|| {
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
     }
 }

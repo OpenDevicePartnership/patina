@@ -84,13 +84,13 @@ extern crate alloc;
 use core::{cell::UnsafeCell, fmt::Display, ptr::NonNull};
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use patina_macro::IntoService;
+use patina_macro::{IntoService, component};
 use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
 
 use crate as patina;
 use crate::{
     boot_services::{BootServices, event::EventType, tpl::Tpl},
-    component::{IntoComponent, Storage},
+    component::Storage,
     test::__private_api::{TestCase, TestTrigger},
 };
 
@@ -312,13 +312,14 @@ impl TestData {
 }
 
 /// A component that runs all test cases marked with the `#[patina_test]` attribute when loaded by the DXE core.
-#[derive(IntoComponent, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct TestRunner {
     filters: Vec<&'static str>,
     debug_mode: bool,
     fail_callback: Option<fn(&'static str, &'static str)>,
 }
 
+#[component]
 impl TestRunner {
     /// Adds a filter that will reduce the tests ran to only those that contain the filter value in their test name.
     ///
