@@ -954,6 +954,20 @@ pub trait BootServices {
     unsafe fn calculate_crc_32_unchecked(&self, data: *const c_void, data_size: usize) -> Result<u32, efi::Status>;
 }
 
+/// Clone implementation for MockBootServices that creates a new mock with default expectations.
+/// TplMutex owns its BootServices instance, so this Clone impl is needed when passing mocks.
+/// Sets up default expectations for raise_tpl and restore_tpl which are commonly used by TplMutex.
+#[cfg(any(test, feature = "mockall"))]
+impl Clone for MockBootServices {
+    fn clone(&self) -> Self {
+        let mut mock = Self::new();
+        // Set up default expectations for TPL methods used by TplMutex
+        mock.expect_raise_tpl().returning(|_| tpl::Tpl::APPLICATION);
+        mock.expect_restore_tpl().returning(|_| ());
+        mock
+    }
+}
+
 macro_rules! efi_boot_services_fn {
     ($efi_boot_services:expr, $fn_name:ident) => {{
         match $efi_boot_services.$fn_name {

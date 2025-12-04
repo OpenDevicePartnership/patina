@@ -42,7 +42,7 @@ use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 pub use mu_rust_helpers::function;
 
 /// Context parameter for the Ready-to-Boot event callback that fetches MM performance records.
-type MmPerformanceEventContext<BB, B, F> = Box<(BB, &'static TplMutex<'static, F, B>, Service<dyn MmCommunication>)>;
+type MmPerformanceEventContext<BB, B, F> = Box<(BB, &'static TplMutex<F, B>, Service<dyn MmCommunication>)>;
 
 /// Performance Component.
 pub struct Performance;
@@ -89,7 +89,7 @@ impl Performance {
         runtime_services: RR,
         records_buffers_hobs: Option<P>,
         mm_comm_service: Option<Service<dyn MmCommunication>>,
-        fbpt: &'static TplMutex<'static, F, B>,
+        fbpt: &'static TplMutex<F, B>,
         timer: Service<dyn ArchTimerFunctionality>,
     ) -> Result<(), EfiError>
     where
@@ -347,7 +347,7 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
 /// Processes MM performance records and adds them to the FBPT
 fn process_mm_performance_records<F, B>(
     comm_service: &Service<dyn MmCommunication>,
-    fbpt: &TplMutex<'static, F, B>,
+    fbpt: &TplMutex<F, B>,
 ) -> Result<(), MmPerformanceError>
 where
     F: FirmwareBasicBootPerfTable,
@@ -534,7 +534,7 @@ mod tests {
             .expect_create_event_ex::<Box<(
                 Rc<MockBootServices>,
                 Rc<MockRuntimeServices>,
-                &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
+                &TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
             .withf_st(|event_type, notify_tpl, notify_function, _notify_context, event_group| {
@@ -568,9 +568,8 @@ mod tests {
 
         let boot_services_rc = Rc::new(boot_services);
 
-        // Leak a reference to boot_services to create a 'static reference for TplMutex.
-        let boot_services_static = Box::leak(Box::new(Rc::clone(&boot_services_rc)));
-        let fbpt = TplMutex::new(&**boot_services_static, Tpl::NOTIFY, fbpt);
+        // TplMutex owns its BootServices instance
+        let fbpt = TplMutex::new((*boot_services_rc).clone(), Tpl::NOTIFY, fbpt);
 
         // Leak the fbpt to create a 'static reference for testing.
         let fbpt = Box::leak(Box::new(fbpt));
@@ -598,18 +597,21 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        let mut boot_services = MockBootServices::new();
-        boot_services.expect_raise_tpl().return_const(Tpl::APPLICATION);
-        boot_services.expect_restore_tpl().return_const(());
-        boot_services
+
+        // Mock for TplMutex - no expectations needed since _entry_point doesn't lock the mutex
+        let tpl_mock = MockBootServices::new();
+
+        // Mock for _entry_point - handles event creation and protocol installation
+        let mut entry_point_mock = MockBootServices::new();
+        entry_point_mock
             .expect_create_event_ex::<Box<(
                 Rc<MockBootServices>,
                 Rc<MockRuntimeServices>,
-                &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
+                &TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
             .return_const_st(Ok(TEST_EVENT_HANDLE));
-        boot_services
+        entry_point_mock
             .expect_create_event_ex::<MmPerformanceEventContext<
                 Rc<MockBootServices>,
                 MockBootServices,
@@ -623,26 +625,29 @@ mod tests {
                     && group == &EVENT_GROUP_READY_TO_BOOT
             })
             .return_const_st(Ok(TEST_EVENT_HANDLE_2));
-        boot_services
+        entry_point_mock
             .expect_install_protocol_interface::<EdkiiPerformanceMeasurement, Box<_>>()
             .once()
             .returning(|_, protocol_interface| Ok((TEST_EFI_HANDLE, protocol_interface.metadata())));
-        boot_services.expect_install_configuration_table::<Box<PerformanceProperty>>().once().return_const(Ok(()));
+        entry_point_mock.expect_install_configuration_table::<Box<PerformanceProperty>>().once().return_const(Ok(()));
+
         let runtime_services = MockRuntimeServices::new();
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_set_perf_records().never();
-        // SAFETY: boot_services is a stack variable that will remain valid for the duration of the test.
-        let fbpt = TplMutex::new(unsafe { &*core::ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
-        // SAFETY: fbpt is a stack variable that will remain valid for the duration of the test.
-        let fbpt = unsafe { &*core::ptr::addr_of!(fbpt) };
+
+        // Move tpl_mock into TplMutex (no clone needed)
+        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
+        // Use Box::leak for safe 'static reference
+        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
+
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(FakeComm));
         let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockTimer {}));
         let _ = Performance._entry_point(
-            Rc::new(boot_services),
+            Rc::new(entry_point_mock),
             Rc::new(runtime_services),
             Option::<MockHobPerformanceDataExtractor>::None,
             Some(mm_service),
-            fbpt,
+            fbpt_ref,
             timer,
         );
     }
@@ -669,18 +674,25 @@ mod tests {
                 Err(Status::InvalidDataBuffer)
             }
         }
-        let mut boot_services_inner = MockBootServices::new();
-        boot_services_inner.expect_close_event().once().return_const(Ok(()));
+        // Mock for TplMutex - no TPL expectations needed since zero records means no lock/unlock
+        let tpl_mock = MockBootServices::new();
+
+        // Mock for callback - handles close_event
+        let mut callback_mock = MockBootServices::new();
+        callback_mock.expect_close_event().once().return_const(Ok(()));
+
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().never();
-        let boot_services = Rc::new(boot_services_inner);
-        let fbpt_mutex = TplMutex::new(&*boot_services, Tpl::NOTIFY, fbpt);
-        // SAFETY: The lifetime of fbpt_mutex is only extended to 'static for testing.
-        let fbpt_ref: &TplMutex<'static, _, _> = unsafe { core::mem::transmute(&fbpt_mutex) };
+
+        // Move tpl_mock into TplMutex (no clone needed)
+        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
+        // Use Box::leak for safe 'static reference
+        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
+
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(ZeroSizeComm));
         fetch_and_add_mm_performance_records::<Rc<MockBootServices>, MockBootServices, MockFirmwareBasicBootPerfTable>(
             TEST_EVENT_HANDLE,
-            Box::new((boot_services.clone(), fbpt_ref, mm_service)),
+            Box::new((Rc::new(callback_mock), fbpt_ref, mm_service)),
         );
     }
 
@@ -723,21 +735,28 @@ mod tests {
                 }
             }
         }
-        let mut boot_services_inner = MockBootServices::new();
-        // TplMutex lock during add_record will invoke raise_tpl/restore_tpl
-        boot_services_inner.expect_raise_tpl().return_const(Tpl::APPLICATION);
-        boot_services_inner.expect_restore_tpl().return_const(());
-        boot_services_inner.expect_close_event().once().return_const(Ok(()));
+        // Mock for TplMutex - handles TPL operations during lock/unlock
+        let mut tpl_mock = MockBootServices::new();
+        // TplMutex lock during add_record will invoke raise_tpl/restore_tpl once
+        tpl_mock.expect_raise_tpl().once().return_const(Tpl::APPLICATION);
+        tpl_mock.expect_restore_tpl().once().return_const(());
+
+        // Mock for callback - handles close_event
+        let mut callback_mock = MockBootServices::new();
+        callback_mock.expect_close_event().once().return_const(Ok(()));
+
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().once().returning(|_| Ok(()));
-        let boot_services = Rc::new(boot_services_inner);
-        let fbpt_mutex = TplMutex::new(&*boot_services, Tpl::NOTIFY, fbpt);
-        // SAFETY: The lifetime of fbpt_mutex is only extended to 'static for testing.
-        let fbpt_ref: &TplMutex<'static, _, _> = unsafe { core::mem::transmute(&fbpt_mutex) };
+
+        // Move tpl_mock into TplMutex (no clone needed)
+        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
+        // Use Box::leak for safe 'static reference
+        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
+
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(OneRecordComm::new()));
         fetch_and_add_mm_performance_records::<Rc<MockBootServices>, MockBootServices, MockFirmwareBasicBootPerfTable>(
             TEST_EVENT_HANDLE,
-            Box::new((boot_services.clone(), fbpt_ref, mm_service)),
+            Box::new((Rc::new(callback_mock), fbpt_ref, mm_service)),
         );
     }
 
@@ -798,24 +817,30 @@ mod tests {
                 }
             }
         }
-        let mut boot_services_inner = MockBootServices::new();
-        // TplMutex lock for each add_record will raise/restore TPL; expect that TEST_MULTI_CHUNK_RECORD_COUNT times.
-        boot_services_inner.expect_raise_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(Tpl::APPLICATION);
-        boot_services_inner.expect_restore_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(());
-        boot_services_inner.expect_close_event().once().return_const(Ok(()));
+        // Mock for TplMutex - handles TPL operations during lock/unlock
+        let mut tpl_mock = MockBootServices::new();
+        // TplMutex lock for each add_record will raise/restore TPL; expect TEST_MULTI_CHUNK_RECORD_COUNT times
+        tpl_mock.expect_raise_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(Tpl::APPLICATION);
+        tpl_mock.expect_restore_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(());
+
+        // Mock for callback - handles close_event
+        let mut callback_mock = MockBootServices::new();
+        callback_mock.expect_close_event().once().return_const(Ok(()));
+
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().times(TEST_MULTI_CHUNK_RECORD_COUNT).returning(|_| Ok(()));
-        let boot_services = Rc::new(boot_services_inner);
-        let fbpt_mutex = TplMutex::new(&*boot_services, Tpl::NOTIFY, fbpt);
-        // SAFETY: The lifetime of fbpt_mutex is only extended to 'static for testing.
-        let fbpt_ref: &TplMutex<'static, _, _> = unsafe { core::mem::transmute(&fbpt_mutex) };
+
+        // Move tpl_mock into TplMutex (no clone needed)
+        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
+        // Use Box::leak for safe 'static reference
+        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
+
         let mm_service: Service<dyn MmCommunication> =
             Service::mock(Box::new(MultiChunks { buf: all_records, fetches: Cell::new(0) }));
         fetch_and_add_mm_performance_records::<Rc<MockBootServices>, MockBootServices, MockFirmwareBasicBootPerfTable>(
             TEST_EVENT_HANDLE,
-            Box::new((boot_services.clone(), fbpt_ref, mm_service)),
+            Box::new((Rc::new(callback_mock), fbpt_ref, mm_service)),
         );
-        assert_eq!(TOTAL_RECORD_BYTES, TOTAL_RECORD_BYTES, "expected total record bytes mismatch");
     }
 
     /// Verifies that malformed record data doesn't cause infinite loops.

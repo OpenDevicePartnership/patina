@@ -42,7 +42,7 @@ pub(super) struct SmbiosProtocolInternal {
     pub(super) protocol: SmbiosProtocol,
 
     // Internal component access only! Does not exist in C definition
-    pub(super) manager: &'static TplMutex<'static, SmbiosManager>,
+    pub(super) manager: &'static TplMutex<SmbiosManager, patina::boot_services::StandardBootServices>,
 
     // Boot services needed for table republishing after Add/Update/Remove
     pub(super) boot_services: &'static patina::boot_services::StandardBootServices,
@@ -93,7 +93,7 @@ impl SmbiosProtocolInternal {
     pub(super) fn new(
         major_version: u8,
         minor_version: u8,
-        manager: &'static TplMutex<'static, SmbiosManager>,
+        manager: &'static TplMutex<SmbiosManager, patina::boot_services::StandardBootServices>,
         boot_services: &'static patina::boot_services::StandardBootServices,
     ) -> Self {
         Self { protocol: SmbiosProtocol::new(major_version, minor_version), manager, boot_services }

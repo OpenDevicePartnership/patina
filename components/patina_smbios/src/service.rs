@@ -192,8 +192,8 @@ pub trait Smbios {
 #[derive(patina::component::service::IntoService)]
 #[service(dyn Smbios)]
 pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
-    pub(crate) manager: patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, B>,
-    pub(crate) boot_services: &'static B,
+    pub(crate) manager: patina::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B>,
+    pub(crate) boot_services: B,
     pub(crate) major_version: u8,
     pub(crate) minor_version: u8,
 }
@@ -201,7 +201,7 @@ pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
 impl<B: BootServices> SmbiosImpl<B> {
     /// Get a reference to the manager for unit tests
     #[allow(dead_code)] // Only used in tests
-    pub(crate) fn manager(&self) -> &patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, B> {
+    pub(crate) fn manager(&self) -> &patina::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B> {
         &self.manager
     }
 
@@ -774,27 +774,25 @@ mod tests {
     }
 
     /// Creates a test SmbiosImpl with MockBootServices
-    fn create_test_smbios_impl(boot_services: &'static MockBootServices) -> SmbiosImpl<MockBootServices> {
+    fn create_test_smbios_impl(boot_services: MockBootServices) -> SmbiosImpl<MockBootServices> {
         let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
         manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
 
-        let manager_mutex = TplMutex::new(boot_services, Tpl::NOTIFY, manager);
+        let manager_mutex = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, manager);
 
         SmbiosImpl { manager: manager_mutex, boot_services, major_version: 3, minor_version: 7 }
     }
 
     #[test]
     fn test_smbios_impl_version() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         assert_eq!(smbios.version(), (3, 7));
     }
 
     #[test]
     fn test_smbios_impl_add_from_bytes() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         // Create a Type 0 record
 
@@ -827,8 +825,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_update_string() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         // Add a record first
 
@@ -859,8 +856,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_remove() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         // Add a record first
 
@@ -895,8 +891,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_republish_table() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         // republish_table should work since buffers are allocated
         let result = smbios.republish_table();
@@ -905,8 +900,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_manager_accessor() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services());
 
         // Verify we can access the manager through the accessor
         let _manager_ref = smbios.manager();
@@ -927,8 +921,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_publish_table() {
-        let boot_services = Box::leak(Box::new(mock_boot_services_with_config_table()));
-        let smbios = create_test_smbios_impl(boot_services);
+        let smbios = create_test_smbios_impl(mock_boot_services_with_config_table());
 
         // publish_table should succeed with mocked install_configuration_table
         let result = smbios.publish_table();
@@ -942,8 +935,7 @@ mod tests {
 
     #[test]
     fn test_smbios_ext_add_record() {
-        let boot_services = Box::leak(Box::new(mock_boot_services()));
-        let smbios_impl = create_test_smbios_impl(boot_services);
+        let smbios_impl = create_test_smbios_impl(mock_boot_services());
 
         // Create a Service<dyn Smbios> using the mock helper
         let service: Service<dyn Smbios> = Service::mock(Box::new(smbios_impl));

@@ -51,7 +51,7 @@ use self::protocol::{SmbiosProtocol, SmbiosProtocolInternal};
 pub fn install_smbios_protocol(
     major_version: u8,
     minor_version: u8,
-    manager_mutex: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+    manager_mutex: &'static TplMutex<SmbiosManager, StandardBootServices>,
     boot_services: &'static StandardBootServices,
 ) -> Result<efi::Handle, SmbiosError> {
     // Create the protocol instance with internal struct

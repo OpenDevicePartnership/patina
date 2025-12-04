@@ -100,12 +100,6 @@ impl SmbiosProvider {
 
         let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version)?;
 
-        // SAFETY: Storage guarantees that boot_services has a 'static lifetime.
-        // We use an unsafe cast because storage.boot_services() returns a reference with
-        // a shorter lifetime bound, but Storage guarantees it lives for 'static.
-        let boot_services_static: &'static patina::boot_services::StandardBootServices =
-            unsafe { &*(storage.boot_services() as *const _) };
-
         // Get the MemoryManager service for memory allocations
         let memory_manager = storage.get_service::<dyn MemoryManager>().ok_or(patina::error::EfiError::Unsupported)?;
 
@@ -113,11 +107,14 @@ impl SmbiosProvider {
         // This must be done before protocol installation to avoid allocate_pages during Add()
         manager.allocate_buffers(*memory_manager)?;
 
+        // TplMutex and SmbiosImpl own their BootServices instances.
+        let boot_services = storage.boot_services();
+
         // Create TplMutex at TPL_NOTIFY for thread safety against timer interrupts
-        let manager_mutex = TplMutex::new(boot_services_static, Tpl::NOTIFY, manager);
+        let manager_mutex = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, manager);
         let smbios_service = SmbiosImpl {
             manager: manager_mutex,
-            boot_services: boot_services_static,
+            boot_services: boot_services.clone(),
             major_version: cfg.major_version,
             minor_version: cfg.minor_version,
         };
@@ -132,7 +129,7 @@ impl SmbiosProvider {
             cfg.major_version,
             cfg.minor_version,
             &smbios_static.manager,
-            boot_services_static,
+            &smbios_static.boot_services,
         )?;
 
         // Publish initial table (Type 127 only) to register buffer with UEFI configuration table

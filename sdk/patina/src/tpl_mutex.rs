@@ -20,8 +20,10 @@ use crate::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 /// Type use for mutual exclusion of data across Tpl (task priority level)
 ///
 /// This mutex will raise the TPL to the specified level when locked, and restore it when the lock is released.
-pub struct TplMutex<'a, T: ?Sized, B: BootServices = StandardBootServices> {
-    boot_services: &'a B,
+///
+/// The mutex owns the BootServices instance. Callers pass an owned instance or clone if needed.
+pub struct TplMutex<T: ?Sized, B: BootServices = StandardBootServices> {
+    boot_services: B,
     tpl_lock_level: Tpl,
     lock: AtomicBool,
     data: UnsafeCell<T>,
@@ -30,23 +32,26 @@ pub struct TplMutex<'a, T: ?Sized, B: BootServices = StandardBootServices> {
 /// RAII implementation of a [TplMutex] lock. When this structure is dropped, the lock will be unlocked.
 #[must_use = "if unused the TplMutex will immediately unlock"]
 pub struct TplMutexGuard<'a, T: ?Sized, B: BootServices> {
-    tpl_mutex: &'a TplMutex<'a, T, B>,
+    tpl_mutex: &'a TplMutex<T, B>,
     release_tpl: Tpl,
 }
 
-impl<'a, T, B: BootServices> TplMutex<'a, T, B> {
-    /// Create an new TplMutex in an unlock state.
-    pub const fn new(boot_services: &'a B, tpl_lock_level: Tpl, data: T) -> Self {
+impl<T, B: BootServices> TplMutex<T, B> {
+    /// Create a new TplMutex in an unlocked state.
+    ///
+    /// Takes ownership of the boot_services instance. Callers can pass an owned
+    /// instance directly or clone if they need to retain a copy.
+    pub fn new(boot_services: B, tpl_lock_level: Tpl, data: T) -> Self {
         Self { boot_services, tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data) }
     }
 }
 
-impl<'a, T: ?Sized, B: BootServices> TplMutex<'a, T, B> {
+impl<T: ?Sized, B: BootServices> TplMutex<T, B> {
     /// Attempt to lock the mutex and return a [TplMutexGuard] if the mutex was not locked.
     ///
     /// # Panics
     /// This call will panic if the mutex is already locked.
-    pub fn lock(&'a self) -> TplMutexGuard<'a, T, B> {
+    pub fn lock(&self) -> TplMutexGuard<'_, T, B> {
         self.try_lock().map_err(|_| "Re-entrant lock").unwrap()
     }
 
@@ -55,7 +60,7 @@ impl<'a, T: ?Sized, B: BootServices> TplMutex<'a, T, B> {
     /// # Errors
     /// If the mutex is already lock, then this call will return [Err].
     #[allow(clippy::result_unit_err)]
-    pub fn try_lock(&'a self) -> Result<TplMutexGuard<'a, T, B>, ()> {
+    pub fn try_lock(&self) -> Result<TplMutexGuard<'_, T, B>, ()> {
         self.lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .map(|_| TplMutexGuard { release_tpl: self.boot_services.raise_tpl(self.tpl_lock_level), tpl_mutex: self })
@@ -70,18 +75,18 @@ impl<T: ?Sized, B: BootServices> Drop for TplMutexGuard<'_, T, B> {
     }
 }
 
-impl<'a, T: ?Sized, B: BootServices> Deref for TplMutexGuard<'a, T, B> {
+impl<T: ?Sized, B: BootServices> Deref for TplMutexGuard<'_, T, B> {
     type Target = T;
-    fn deref(&self) -> &'a T {
+    fn deref(&self) -> &T {
         // SAFETY:
         // `as_ref` is guarantee to have a valid pointer because it come from a UnsafeCell.
         // This also comply to the aliasing rule because it is the only way to get a reference to the data, thus no other mutable reference to this data exist.
-        unsafe { self.tpl_mutex.data.get().as_ref::<'a>().unwrap() }
+        unsafe { self.tpl_mutex.data.get().as_ref().unwrap() }
     }
 }
 
-impl<'a, T: ?Sized, B: BootServices> DerefMut for TplMutexGuard<'a, T, B> {
-    fn deref_mut(&mut self) -> &'a mut T {
+impl<T: ?Sized, B: BootServices> DerefMut for TplMutexGuard<'_, T, B> {
+    fn deref_mut(&mut self) -> &mut T {
         // SAFETY:
         // `as_ref` is guarantee to have a valid pointer because it come from a UnsafeCell.
         // This also comply to the mutability rule because it is the only way to get a reference to the data, thus no other mutable reference to this data exist.
@@ -89,7 +94,7 @@ impl<'a, T: ?Sized, B: BootServices> DerefMut for TplMutexGuard<'a, T, B> {
     }
 }
 
-impl<T: ?Sized + fmt::Debug, B: BootServices> fmt::Debug for TplMutex<'_, T, B> {
+impl<T: ?Sized + fmt::Debug, B: BootServices> fmt::Debug for TplMutex<T, B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut dbg = f.debug_struct("TplMutex");
         match self.try_lock() {
@@ -115,10 +120,10 @@ impl<T: ?Sized + fmt::Display, B: BootServices> fmt::Display for TplMutexGuard<'
 // Safety: TplMutex is Sync because it ensures exclusive access to T through TPL-based locking.
 // The lock/unlock operations at TPL_HIGH_LEVEL prevent concurrent access. T must be Send to
 // allow transfer between threads, and the mutex ensures only one thread accesses T at a time.
-unsafe impl<T: ?Sized + Send, B: BootServices> Sync for TplMutex<'_, T, B> {}
+unsafe impl<T: ?Sized + Send, B: BootServices + Send> Sync for TplMutex<T, B> {}
 // Safety: TplMutex is Send because it owns T (which is Send) and uses TPL locking to ensure
 // thread-safe access. The mutex can be safely transferred between threads.
-unsafe impl<T: ?Sized + Send, B: BootServices> Send for TplMutex<'_, T, B> {}
+unsafe impl<T: ?Sized + Send, B: BootServices + Send> Send for TplMutex<T, B> {}
 
 // Safety: TplMutexGuard is Sync when T is Sync because the guard represents exclusive access
 // to T through the TPL mutex. The guard can be shared across threads safely.
@@ -150,8 +155,7 @@ mod tests {
 
     #[test]
     fn test_try_lock() {
-        let boot_services = boot_services();
-        let mutex = TplMutex::new(&boot_services, Tpl::NOTIFY, 0);
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, 0);
 
         let guard_result = mutex.try_lock();
         assert!(guard_result.is_ok(), "First lock should work.");
@@ -171,8 +175,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Re-entrant lock")]
     fn test_that_locking_a_locked_mutex_with_lock_fn_should_panic() {
-        let boot_services = boot_services();
-        let mutex = TplMutex::new(&boot_services, Tpl::NOTIFY, TestStruct::default());
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
         let guard_result = mutex.try_lock();
         assert!(guard_result.is_ok());
         let _ = mutex.lock();
@@ -180,8 +183,7 @@ mod tests {
 
     #[test]
     fn test_debug_output_for_tpl_mutex() {
-        let boot_services = boot_services();
-        let mutex = TplMutex::new(&boot_services, Tpl::NOTIFY, TestStruct::default());
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
         assert_eq!("TplMutex { data: TestStruct { field: 0 }, .. }", format!("{mutex:?}"));
         let _guard = mutex.lock();
         assert_eq!("TplMutex { data: <locked>, .. }", format!("{mutex:?}"));
@@ -189,8 +191,7 @@ mod tests {
 
     #[test]
     fn test_display_and_debug_output_for_tpl_mutex_guard() {
-        let boot_services = boot_services();
-        let mutex = TplMutex::new(&boot_services, Tpl::NOTIFY, TestStruct::default());
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
         let guard = mutex.lock();
         assert_eq!("0", format!("{guard}"));
         assert_eq!("TestStruct { field: 0 }", format!("{guard:?}"));
