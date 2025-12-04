@@ -14,7 +14,7 @@ use crate::{
 };
 
 use core::{ffi::c_void, mem};
-use patina::uefi_protocol::ProtocolInterface;
+use patina::{boot_services::BootServices, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
 use crate::{
@@ -92,6 +92,8 @@ impl AcpiTableProtocol {
         if tbl_length < min_size {
             return efi::Status::INVALID_PARAMETER;
         }
+
+        ACPI_TABLE_INFO.boot_services.get().unwrap().get_memory_map();
 
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {

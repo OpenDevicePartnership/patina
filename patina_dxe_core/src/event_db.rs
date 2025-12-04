@@ -16,17 +16,13 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
-<<<<<<< HEAD
-use core::{cmp::Ordering, ffi::c_void, fmt};
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality as _};
-=======
 use core::{
     cmp::Ordering,
     ffi::c_void,
     fmt,
     ops::{Deref, DerefMut},
 };
->>>>>>> 2a7e17980dada1e80a8b07320d570c6a5e5236fe
+use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality as _};
 use patina::error::EfiError;
 use r_efi::efi;
 
@@ -511,6 +507,28 @@ impl EventDb {
         // Poll the debugger before processing any events. This has no effect if
         // the debugger is not enabled.
         // patina_debugger::poll_debugger();
+
+        // Print addresses periodically
+        static mut COUNTER: usize = 0;
+        unsafe {
+            COUNTER += 1;
+            if COUNTER % 100 == 0 {
+                // Test: Raw memory read performance
+                let test_addr = 0x7E564808usize as *const u64;
+
+                let start = Arch::cpu_count();
+                let mut sum = 0u64;
+                for _ in 0..1000 {
+                    unsafe {
+                        sum = sum.wrapping_add(test_addr.read_volatile());
+                    }
+                }
+                let end = Arch::cpu_count();
+
+                let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+                log::warn!("1000 reads from 0x7E564808 took {elapsed:.6} ms (sum={sum})");
+            }
+        }
 
         let start = Arch::cpu_count();
         let events: Vec<usize> = self.events.keys().rev().cloned().collect();

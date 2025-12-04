@@ -3,6 +3,7 @@
 use crate::{
     acpi_table::{AcpiTableHeader, AcpiXsdtMetadata},
     alloc::boxed::Box,
+    component,
     hob::AcpiMemoryHob,
     service::{AcpiProvider, AcpiTableManager},
 };
@@ -10,7 +11,10 @@ use crate::{
 use core::mem;
 
 use alloc::vec::Vec;
-use patina::boot_services::{BootServices, StandardBootServices};
+use patina::{
+    boot_services::{BootServices, StandardBootServices},
+    component::component,
+};
 
 use patina::{
     component::{
@@ -33,7 +37,7 @@ use crate::{
 };
 
 /// Initializes the ACPI provider service.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct AcpiProviderManager {
     /// Platform vendor.
     pub oem_id: [u8; 6],
@@ -47,6 +51,7 @@ pub struct AcpiProviderManager {
     pub creator_revision: u32,
 }
 
+#[component]
 impl AcpiProviderManager {
     /// Initializes a new `AcpiProviderManager`.
     pub fn new(
@@ -143,9 +148,10 @@ impl AcpiProviderManager {
 }
 
 /// Produces EDKII ACPI protocols.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct AcpiSystemProtocolManager {}
 
+#[component]
 impl AcpiSystemProtocolManager {
     /// Initializes a new `AcpiSystemProtocolManager`.
     pub fn new() -> Self {
@@ -163,9 +169,10 @@ impl AcpiSystemProtocolManager {
 
 /// Initializes the ACPI table manager service.
 /// This services wraps `AcpiProvider` and allows for generic retrieval of tables.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct GenericAcpiManager {}
 
+#[component]
 impl GenericAcpiManager {
     /// Initializes a new `GenericAcpiManager`.
     pub fn new() -> Self {
