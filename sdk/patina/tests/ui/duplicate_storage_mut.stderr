@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_s2' (position 2) conflicts with parameter '_s1' (position 1). Only one &mut Storage parameter is allowed.
+ --> tests/ui/duplicate_storage_mut.rs:9:45
+  |
+9 |     fn entry_point(self, _s1: &mut Storage, _s2: &mut Storage) -> Result<()> {
+  |                                             ^^^^^^^^^^^^^^^^^
+
+error: conflicts with '_s1' parameter here
+ --> tests/ui/duplicate_storage_mut.rs:9:26
+  |
+9 |     fn entry_point(self, _s1: &mut Storage, _s2: &mut Storage) -> Result<()> {
+  |                          ^^^^^^^^^^^^^^^^^
