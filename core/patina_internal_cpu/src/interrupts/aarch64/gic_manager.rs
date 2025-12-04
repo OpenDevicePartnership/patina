@@ -159,12 +159,6 @@ impl AArch64InterruptInitializer {
 
         // Disable all interrupts and set priority to 0x80.
         gic_v3.enable_all_interrupts(false);
-        for i in IntId::private() {
-            gic_v3.set_interrupt_priority(i, Some(cpu_r_idx), 0x80).map_err(|_| EfiError::DeviceError)?;
-        }
-        for spi in 0..gic_v3.typer().num_spis() {
-            gic_v3.set_interrupt_priority(IntId::spi(spi), None, 0x80).map_err(|_| EfiError::DeviceError)?;
-        }
 
         // Set binary point reg to 0x7 (no preemption)
         // Safety: this is a legal value for BPR1 register.
@@ -184,7 +178,7 @@ impl AArch64InterruptInitializer {
             x if x < IntId::SGI_COUNT => IntId::sgi(x),
             x if x < IntId::SGI_COUNT + IntId::PPI_COUNT => IntId::ppi(x - IntId::SGI_COUNT),
             x => {
-                let int_id = IntId::spi(x - IntId::SGI_COUNT + IntId::PPI_COUNT);
+                let int_id = IntId::spi(x - IntId::SGI_COUNT - IntId::PPI_COUNT);
                 if self.gic_v3.typer().num_spis() < int_id.into() {
                     Err(EfiError::InvalidParameter)?;
                 }
