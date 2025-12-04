@@ -182,7 +182,7 @@ One example is a PEI Video driver. If PEI configured a video device and displaye
 region associated with the frame buffer would usually be configured as write combined (EFI_MEMORY_WC) for performance.
 If the video region was not configured as write combined, then attempting to display anything on the screen would be
 extremely slow. The caching attributes for this region would need to be reported through a non-overlapping resource
-descriptor hob for that region.
+descriptor HOB for that region.
 
 The write combined would persist through out the rest of the boot process, including after GOP drivers start managing
 the video device. The other transition point would be prior to handing off to the OS. At that point, the region
