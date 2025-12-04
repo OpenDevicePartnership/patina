@@ -157,9 +157,6 @@ impl AArch64InterruptInitializer {
         let mut gic_v3 = unsafe { GicV3::new(gicd, gicr, r_count, true) };
         gic_v3.setup(cpu_r_idx);
 
-        // Disable all interrupts and set priority to 0x80.
-        gic_v3.enable_all_interrupts(false);
-
         // Set binary point reg to 0x7 (no preemption)
         // Safety: this is a legal value for BPR1 register.
         // Refer to "Arm Generic Interrupt Controller Architecture Specification GIC
