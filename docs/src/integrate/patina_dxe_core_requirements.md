@@ -178,7 +178,7 @@ memory protections from the start of DXE.
 By the start of DXE, most system memory should be configured as Write Back (EFI_MEMORY_WB), and most Memory Mapped I/O
 should be configured as uncached (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
 
-One example is a Pei Video driver. If PEI configured a video device and displayed a logo on the screen, the memory
+One example is a PEI Video driver. If PEI configured a video device and displayed a logo on the screen, the memory
 region associated with the frame buffer would usually be configured as write combined (EFI_MEMORY_WC) for performance.
 If the video region was not configured as write combined, then attempting to display anything on the screen would be
 extremely slow. The caching attributes for this region would need to be reported through a non-overlapping resource
