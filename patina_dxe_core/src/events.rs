@@ -360,7 +360,6 @@ mod tests {
                 crate::test_support::reset_allocators();
                 crate::test_support::init_test_protocol_db();
             }
-            crate::test_support::reset_dispatcher_context();
             f();
         })
         .unwrap();

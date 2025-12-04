@@ -74,19 +74,18 @@ mod component_dispatcher;
 mod config_tables;
 mod cpu;
 mod decompress;
-mod dispatcher;
 mod driver_services;
 mod dxe_services;
 mod event_db;
 mod events;
 mod filesystems;
-mod fv;
 mod gcd;
 mod image;
 mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
+mod pi_dispatcher;
 mod protocol_db;
 mod protocols;
 mod runtime;
@@ -135,7 +134,10 @@ use patina_ffs::section::SectionExtractor;
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
-use crate::{component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, tpl_mutex::TplMutex};
+use crate::{
+    component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, pi_dispatcher::PiDispatcher,
+    tpl_mutex::TplMutex,
+};
 
 #[doc(hidden)]
 #[macro_export]
@@ -239,6 +241,9 @@ pub trait PlatformInfo {
 /// only in efiapi functions where no reference to the core is otherwise available.
 static __SELF: Once<NonZeroUsize> = Once::new();
 
+#[cfg(test)]
+type MockCore = Core<MockPlatformInfo>;
+
 /// Platform configured DXE Core responsible for the DXE phase of UEFI booting.
 ///
 /// This struct is generic over the [PlatformInfo] trait, which is used to provide platform-specific configuration to
@@ -302,15 +307,19 @@ pub struct Core<P: PlatformInfo> {
     hob_list: Once<HobList<'static>>,
     /// The subsystem responsible for data management and dispatch of Patina components.
     component_dispatcher: TplMutex<ComponentDispatcher>,
-    // NOTE: This field will be moved into the `DISPATCHER_CONTEXT` when it is moved into the Core.
-    section_extractor: P::Extractor,
+    /// The subsystem responsible for fv management and dispatch of PI specification compliant UEFI drivers.
+    pi_dispatcher: PiDispatcher<P>,
 }
 
 #[coverage(off)]
 impl<P: PlatformInfo> Core<P> {
     /// Creates a new instance of the DXE Core in the NoAlloc phase.
     pub const fn new(section_extractor: P::Extractor) -> Self {
-        Self { component_dispatcher: ComponentDispatcher::new_locked(), hob_list: Once::new(), section_extractor }
+        Self {
+            hob_list: Once::new(),
+            component_dispatcher: ComponentDispatcher::new_locked(),
+            pi_dispatcher: PiDispatcher::new(section_extractor),
+        }
     }
 
     /// Sets the static DXE Core instance for global access.
@@ -320,6 +329,22 @@ impl<P: PlatformInfo> Core<P> {
     fn set_instance(&'static self) -> bool {
         let physical_address = NonNull::from_ref(self).expose_provenance();
         &physical_address == __SELF.call_once(|| physical_address)
+    }
+
+    /// Sets the static DXE Core instance for global access regardless of prior initialization.
+    ///
+    /// This is only to be used in tests where the instance needs to be overridden for tests.
+    #[cfg(test)]
+    fn override_instance(&'static self) {
+        let physical_address = NonNull::from_ref(self).expose_provenance();
+        if __SELF.is_completed() {
+            // SAFETY: The pointer is valid as `__SELF.is_completed` returned true and there is no casting involved.
+            unsafe {
+                __SELF.as_mut_ptr().write(physical_address);
+            }
+        } else {
+            __SELF.call_once(|| physical_address);
+        }
     }
 
     /// Gets the static DXE Core instance for global access.
@@ -455,7 +480,10 @@ impl<P: PlatformInfo> Core<P> {
 
             // UEFI driver dispatch
             let dispatched = dispatched
-                || dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+                || self
+                    .pi_dispatcher
+                    .dispatch()
+                    .inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
 
             if !dispatched {
                 break;
@@ -481,8 +509,8 @@ impl<P: PlatformInfo> Core<P> {
         config_tables::init_config_tables_support(st.boot_services_mut());
         runtime::init_runtime_support(st.runtime_services_mut());
         image::init_image_support(self.hob_list(), st);
-        dispatcher::init_dispatcher();
-        dxe_services::init_dxe_services(st);
+        self.pi_dispatcher.init();
+        self.install_dxe_services_table(st);
         driver_services::init_driver_services(st.boot_services_mut());
 
         memory_attributes_protocol::install_memory_attributes_protocol();
@@ -544,11 +572,8 @@ impl<P: PlatformInfo> Core<P> {
         self.component_dispatcher.lock().insert_hobs(self.hob_list());
         log::info!("Finished.");
 
-        dispatcher::register_section_extractor(&self.section_extractor);
-        fv::register_section_extractor(&self.section_extractor);
-
-        log::info!("Parsing FVs from FV HOBs");
-        fv::parse_hob_fvs(self.hob_list())?;
+        log::info!("Installing Firmware Volumes from HOB list.");
+        self.pi_dispatcher.install_firmware_volumes_from_hoblist(self.hob_list())?;
         log::info!("Finished.");
 
         log::info!("Dispatching Drivers");
@@ -561,7 +586,7 @@ impl<P: PlatformInfo> Core<P> {
 
         core_display_missing_arch_protocols();
 
-        dispatcher::display_discovered_not_dispatched();
+        self.pi_dispatcher.display_discovered_not_dispatched();
 
         Ok(())
     }
@@ -636,29 +661,37 @@ fn call_bds() -> ! {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::test_support::with_global_lock;
+
     use super::*;
     use core::{any::Any, sync::atomic::AtomicBool};
 
     #[test]
     fn test_cannot_set_instance_twice() {
-        static CORE: Core<MockPlatformInfo> =
-            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-        static CORE2: Core<MockPlatformInfo> =
-            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-        assert!(CORE.set_instance());
+        with_global_lock(|| {
+            static CORE: Core<MockPlatformInfo> =
+                Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            static CORE2: Core<MockPlatformInfo> =
+                Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-            panic!("CORE instance mismatch");
-        }
+            // Set the first time. We will do `override_instance` to ensure we set it once. It may have been set by
+            // other tests already.
+            CORE.override_instance();
 
-        // We return true because its the same address
-        assert!(CORE.set_instance());
-        // This should fail because CORE2 is a different instance
-        assert!(!CORE2.set_instance());
+            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+                panic!("CORE instance mismatch");
+            }
 
-        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-            panic!("CORE instance mismatch after second set_instance");
-        }
+            // We return true because its the same address
+            assert!(CORE.set_instance());
+            // This should fail because CORE2 is a different instance
+            assert!(!CORE2.set_instance());
+
+            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+                panic!("CORE instance mismatch after second set_instance");
+            }
+        })
+        .unwrap();
     }
 
     #[test]
