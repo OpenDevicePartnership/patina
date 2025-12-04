@@ -184,7 +184,7 @@ If the video region was not configured as write combined, then attempting to dis
 extremely slow. The caching attributes for this region would need to be reported through a non-overlapping resource
 descriptor HOB for that region.
 
-The write combined would persist through out the rest of the boot process, including after GOP drivers start managing
+The write combined cache setting would persist throughout the rest of the boot process, including after GOP drivers start managing
 the video device. The other transition point would be prior to handing off to the OS. At that point, the region
 would transition to uncached (EFI_MEMORY_UC). The OS would then be responsible to managing caching attributes.
 
