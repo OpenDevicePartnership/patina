@@ -432,8 +432,8 @@ impl RegId for X64CoreRegId {
             17 => (Self::Eflags, 8),
             18..=23 => (Self::Segment((id - 18) as u8), 4),
             24..=28 => (Self::Control((id - 24) as u8), 8),
-            29..=35 => (Self::Fpu((id - 24) as u8), 4),
-            36..=44 => (Self::St((id - 31) as u8), 10),
+            29..=35 => (Self::Fpu((id - 29) as u8), 4),
+            36..=44 => (Self::St((id - 36) as u8), 10),
             _ => return None,
         };
 

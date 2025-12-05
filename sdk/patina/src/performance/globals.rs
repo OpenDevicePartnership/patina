@@ -21,18 +21,18 @@ static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 static PERF_MEASUREMENT_MASK: AtomicU32 = AtomicU32::new(0);
 
 /// Static state for the performance component.
-struct StaticState<'a> {
+struct StaticState {
     /// Boot Services instance
     boot_services: OnceCell<StandardBootServices>,
     /// The FBPT protected by a TPL mutex.
-    fbpt: OnceCell<TplMutex<'a, FBPT>>,
+    fbpt: OnceCell<TplMutex<FBPT>>,
     /// Flag to indicate if the static state is in the process of being initialized.
     initializing: AtomicBool,
     /// Timer service for performance measurements.
     timer: Service<dyn ArchTimerFunctionality>,
 }
 
-impl<'a> StaticState<'a> {
+impl StaticState {
     /// Creates a new uninitialized static state.
     const fn uninit() -> Self {
         Self {
@@ -49,15 +49,15 @@ impl<'a> StaticState<'a> {
     ///
     /// Returns `Already initialized` if the static state has already been initialized.
     /// Returns `Currently initializing somewhere else` if another thread is currently initializing the static state.
-    fn init(
-        &'a self,
-        bs: StandardBootServices,
-        timer: Service<dyn ArchTimerFunctionality>,
-    ) -> Result<(), &'static str> {
+    fn init(&self, bs: StandardBootServices, timer: Service<dyn ArchTimerFunctionality>) -> Result<(), &'static str> {
         if self.initializing.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             self.boot_services.set(bs).map_err(|_| "Already initialized")?;
             self.fbpt
-                .set(TplMutex::new(self.boot_services.get().expect("Boot Services Just Set"), Tpl::NOTIFY, FBPT::new()))
+                .set(TplMutex::new(
+                    self.boot_services.get().expect("Boot Services Just Set").clone(),
+                    Tpl::NOTIFY,
+                    FBPT::new(),
+                ))
                 .map_err(|_| "Failed to set FBPT")?;
             self.timer.replace(&timer);
             self.initializing.store(false, Ordering::Release);
@@ -72,7 +72,7 @@ impl<'a> StaticState<'a> {
     /// Returns `None` if the state is not yet initialized.
     /// Returns `None` if the state is currently being initialized.
     /// Returns `Some` with references to the `StandardBootServices` and `TplMutex<FBPT>` if initialized.
-    fn inner(&self) -> Option<(&StandardBootServices, &TplMutex<'a, FBPT>, &Service<dyn ArchTimerFunctionality>)> {
+    fn inner(&self) -> Option<(&StandardBootServices, &TplMutex<FBPT>, &Service<dyn ArchTimerFunctionality>)> {
         if !self.initializing.load(Ordering::Acquire)
             && let Some(bs) = self.boot_services.get()
             && let Some(fbpt) = self.fbpt.get()
@@ -86,14 +86,14 @@ impl<'a> StaticState<'a> {
 /// SAFETY: Initializing the `OnceCell`s via the atomic `initialize` flag satisfies the `Send` requirement for
 /// synchronization on the `set` calls inside `init`. Both the `StandardBootServices` and `TplMutex` types are `Send`
 /// as well, so the only other usage of the `OnceCell`s `get` method is safe.
-unsafe impl Send for StaticState<'static> {}
+unsafe impl Send for StaticState {}
 
 /// SAFETY: Initializing the `OnceCell`s via the atomic `initialize` flag satisfies the `Sync` requirement for
 /// synchronization on the `set` calls inside `init`. Both the `StandardBootServices` and `TplMutex` types are `Sync`
 /// as well, so the only other usage of the `OnceCell`s `get` method is safe.
-unsafe impl Sync for StaticState<'static> {}
+unsafe impl Sync for StaticState {}
 
-static STATIC_STATE: StaticState<'static> = StaticState::uninit();
+static STATIC_STATE: StaticState = StaticState::uninit();
 
 /// Set performance component static state.
 pub fn set_perf_measurement_mask(mask: u32) {
@@ -131,11 +131,8 @@ pub fn set_static_state(
 
 /// Get performance component static state.
 #[coverage(off)]
-pub fn get_static_state() -> Option<(
-    &'static StandardBootServices,
-    &'static TplMutex<'static, FBPT>,
-    &'static Service<dyn ArchTimerFunctionality>,
-)> {
+pub fn get_static_state()
+-> Option<(&'static StandardBootServices, &'static TplMutex<FBPT>, &'static Service<dyn ArchTimerFunctionality>)> {
     STATIC_STATE.inner()
 }
 

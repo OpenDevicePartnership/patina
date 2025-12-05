@@ -105,6 +105,9 @@ use spin::Once;
 #[coverage(off)]
 pub mod test_support;
 
+#[coverage(off)]
+mod core_patina_tests;
+
 use core::{
     ffi::c_void,
     num::NonZeroUsize,
