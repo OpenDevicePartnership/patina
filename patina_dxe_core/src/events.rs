@@ -293,12 +293,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
 extern "efiapi" fn timer_tick(time: u64) {
     let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-
     SYSTEM_TIME.fetch_add(time, Ordering::SeqCst);
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
-
     EVENT_DB.timer_tick(current_time);
-
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
 }
 

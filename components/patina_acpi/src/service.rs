@@ -59,8 +59,7 @@ impl AcpiTableManager {
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
     pub unsafe fn install_acpi_table<T: 'static>(&self, table: T) -> Result<TableKey, AcpiError> {
         let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
-        let result = self.provider_service.install_acpi_table(acpi_table);
-        result
+        self.provider_service.install_acpi_table(acpi_table)
     }
 
     /// Uninstalls an ACPI table.
@@ -69,8 +68,7 @@ impl AcpiTableManager {
     ///
     /// This function will remove the table from the XSDT and free the memory associated with it.
     pub fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError> {
-        let result = self.provider_service.uninstall_acpi_table(table_key);
-        result
+        self.provider_service.uninstall_acpi_table(table_key)
     }
 
     /// Retrieves an ACPI table by its table key.
@@ -123,15 +121,13 @@ impl AcpiTableManager {
 
     /// Registers a function which will be called whenever a new ACPI table is installed.
     pub fn register_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        let result = self.provider_service.register_notify(true, notify_fn);
-        result
+        self.provider_service.register_notify(true, notify_fn)
     }
 
     /// Unregisters an existing notification function.
     /// The function must have been previously registered with `register_notify`.
     pub fn unregister_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        let result = self.provider_service.register_notify(false, notify_fn);
-        result
+        self.provider_service.register_notify(false, notify_fn)
     }
 
     /// Returns an iterator over the installed ACPI tables.
@@ -141,8 +137,7 @@ impl AcpiTableManager {
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
     pub fn iter_tables(&self) -> Vec<AcpiTable> {
-        let tables = self.provider_service.iter_tables();
-        tables
+        self.provider_service.iter_tables()
     }
 }
 

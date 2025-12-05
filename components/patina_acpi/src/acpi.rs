@@ -151,7 +151,6 @@ where
 
         self.publish_tables()?;
         self.notify_acpi_list(table_key)?;
-
         Ok(table_key)
     }
 
@@ -183,14 +182,12 @@ where
     /// Iterate over installed tables in the ACPI table list.
     /// The RSDP, FACS, and DSDT are not considered part of the list of installed tables and should not be iterated over.
     fn iter_tables(&self) -> Vec<AcpiTable> {
-        let tables: Vec<AcpiTable> = self
-            .acpi_tables
+        self.acpi_tables
             .read()
             .iter()
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
             .map(|(_, v)| *v)
-            .collect();
-        tables
+            .collect()
     }
 }
 
@@ -484,13 +481,6 @@ where
             xsdt_data.max_capacity = new_capacity;
             // Calculates bytes needed for new number of entries, including the XSDT's header.
             let num_bytes_new = ACPI_HEADER_LEN + new_capacity * ACPI_XSDT_ENTRY_SIZE;
-            log::warn!(
-                "StandardAcpiProvider::reallocate_xsdt reallocating XSDT from {} bytes ({} entries) to {} bytes ({} entries)",
-                num_bytes_original,
-                curr_capacity,
-                num_bytes_new,
-                new_capacity
-            );
 
             // The XSDT is always allocated in reclaim memory.
             let allocator = self
@@ -690,7 +680,7 @@ where
         }
 
         Ok(())
-    } // register notify function
+    }
 
     /// Retrieves a table at a specific index in the list of installed tables.
     /// This is mostly to assist the C protocol.

@@ -780,7 +780,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                             AllocError
                         },
                     )?;
-                log::trace!("required_pages: {required_pages:#x}");
 
                 allocation_size = uefi_pages_to_size!(required_pages);
 
@@ -805,7 +804,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                         );
                         AllocError
                     })?;
-                log::trace!("Allocated additional memory at address: {start_address:#x}");
 
                 // Expand the FSB using the allocated memory region
                 let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or_else(|| {

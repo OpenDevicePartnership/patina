@@ -774,7 +774,7 @@ extern "efiapi" fn get_memory_map(
         }
     }
 
-    log::warn!("EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
+    log::debug!("EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
 
     efi::Status::SUCCESS
 }

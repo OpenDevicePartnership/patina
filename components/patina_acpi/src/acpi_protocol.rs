@@ -155,20 +155,20 @@ impl AcpiTableProtocol {
     }
 }
 
-/// Custom protocol to enable C AML code to interface with Rust ACPI tables.
+/// Corresponds to the ACPI SDT Protocol as defined in PI spec.
 #[repr(C)]
-pub struct AcpiGetProtocol {
+pub struct AcpiSdtProtocol {
     pub version: u32,
     pub get_table: AcpiTableGet,
     pub register_notify: AcpiTableRegisterNotify,
 }
 
-unsafe impl ProtocolInterface for AcpiGetProtocol {
+unsafe impl ProtocolInterface for AcpiSdtProtocol {
     const PROTOCOL_GUID: efi::Guid =
         efi::Guid::from_fields(0xeb97088e, 0xcfdf, 0x49c6, 0xbe, 0x4b, &[0xd9, 0x06, 0xa5, 0xb2, 0x0e, 0x86]);
 }
 
-impl AcpiGetProtocol {
+impl AcpiSdtProtocol {
     pub(crate) fn new() -> Self {
         Self {
             version: ACPI_VERSIONS_GTE_2,
@@ -178,7 +178,7 @@ impl AcpiGetProtocol {
     }
 }
 
-impl AcpiGetProtocol {
+impl AcpiSdtProtocol {
     /// Returns a requested ACPI table.
     ///
     /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 1.8

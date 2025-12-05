@@ -19,7 +19,7 @@ use r_efi::efi;
 
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
+    acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
     acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
     service::AcpiTableManager,
     signature::{
@@ -67,7 +67,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
 
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
-    let sdt_protocol = unsafe { bs.locate_protocol::<AcpiGetProtocol>(None) }.expect("Locate protocol should succeed.");
+    let sdt_protocol = unsafe { bs.locate_protocol::<AcpiSdtProtocol>(None) }.expect("Locate protocol should succeed.");
 
     let mut table_key_buf: usize = 0;
 
