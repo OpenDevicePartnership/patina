@@ -405,8 +405,9 @@ impl InterruptHandler for HwInterruptProtocolHandler {
             return;
         }
 
-        let rw_handler =
-            self.handlers[raw_value as usize].try_read().expect("Failed to read lock in exception handler for interrupt ID {}!", raw_value);
+        let rw_handler = self.handlers[raw_value as usize]
+            .try_read()
+            .expect("Failed to read lock in exception handler for interrupt ID {}!", raw_value);
 
         if let Some(handler) = *rw_handler {
             handler(raw_value as u64, context);
