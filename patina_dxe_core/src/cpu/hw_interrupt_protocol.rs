@@ -437,7 +437,7 @@ impl HwInterruptProtocolHandler {
 
         // If the handler is a null pointer, return invalid parameter
         if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
-            if m_handler.is_null() & (*rw_handler).is_none() {
+            if m_handler.is_null() && (*rw_handler).is_none() {
                 return efi::Status::INVALID_PARAMETER;
             }
 
