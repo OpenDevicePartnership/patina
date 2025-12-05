@@ -62,6 +62,9 @@ impl AcpiProviderManager {
         Self { oem_id, oem_table_id, oem_revision, creator_id, creator_revision }
     }
 
+    /// Initializes the ACPI system.
+    /// Ignore coverage due to the use of `StandardBootServices`.
+    #[coverage(off)]
     fn entry_point(
         self,
         boot_services: StandardBootServices,
@@ -185,6 +188,8 @@ impl AcpiSystemProtocolManager {
         Self {}
     }
 
+    /// Initializes the ACPI protocols.
+    /// Ignore coverage due to the use of `StandardBootServices`.
     fn entry_point(self, boot_services: StandardBootServices) -> patina::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;

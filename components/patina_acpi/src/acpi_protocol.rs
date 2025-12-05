@@ -342,4 +342,27 @@ mod tests {
         );
         assert_eq!(status, efi::Status::NOT_STARTED);
     }
+
+    #[test]
+    fn test_acpi_sdt_init() {
+        let protocol = AcpiSdtProtocol::new();
+        assert_eq!(protocol.version, ACPI_VERSIONS_GTE_2);
+        assert_eq!(protocol.get_table as usize, AcpiSdtProtocol::get_acpi_table_ext as usize);
+        assert_eq!(protocol.register_notify as usize, AcpiSdtProtocol::register_notify_ext as usize);
+    }
+
+    #[test]
+    fn test_get_table_ext_error_cases() {
+        // Test null output parameters.
+        let status =
+            AcpiSdtProtocol::get_acpi_table_ext(0, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_register_notify_ext_error_cases() {
+        // Test null notify function.
+        let status = AcpiSdtProtocol::register_notify_ext(true, core::ptr::null());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
 }

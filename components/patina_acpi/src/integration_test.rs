@@ -27,6 +27,7 @@ use crate::{
     },
 };
 
+#[coverage(off)]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     // Install a dummy FADT.
@@ -60,6 +61,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     Ok(())
 }
 
+#[coverage(off)]
 #[patina_test]
 fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     // Hack that is necessary since all tests share a global `ACPI_TABLE_INFO`.

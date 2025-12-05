@@ -19,6 +19,9 @@ use crate::{
     error::AcpiError,
 };
 
+#[cfg(any(test, feature = "mockall"))]
+use mockall::automock;
+
 /// Represents an opaque reference to an installed ACPI table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TableKey(pub(crate) usize);
@@ -143,6 +146,7 @@ impl AcpiTableManager {
 
 /// The `AcpiTableManager` provides functionality for installing, uninstalling, and accessing ACPI tables.
 /// This struct serves as the API by which internal implementations can provide custom ACPI implementation.
+#[cfg_attr(any(test, feature = "mockall"), automock)]
 pub(crate) trait AcpiProvider {
     /// Installs an ACPI table and returns an associated key which can be used to get or uninstall the table later.
     fn install_acpi_table(&self, acpi_table: AcpiTable) -> Result<TableKey, AcpiError>;
@@ -158,4 +162,37 @@ pub(crate) trait AcpiProvider {
 
     /// Returns all currently installed tables in an iterable format.
     fn iter_tables(&self) -> Vec<AcpiTable>;
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use alloc::boxed::Box;
+    use patina::component::service::memory::StdMemoryManager;
+
+    use crate::acpi_table::{AcpiFacs, AcpiFadt};
+
+    use super::*;
+
+    #[test]
+    fn test_get_table_wrong_type() {
+        unsafe impl Send for AcpiTable {}
+        unsafe impl Sync for AcpiTable {}
+
+        let table =
+            unsafe { AcpiTable::new(AcpiFadt::default(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap() };
+
+        let mut mock_acpi_provider = MockAcpiProvider::new();
+        mock_acpi_provider.expect_get_acpi_table().returning(move |_table_key| Ok(table));
+        let provider = AcpiTableManager {
+            provider_service: Service::mock(Box::new(mock_acpi_provider)),
+            memory_manager: Service::mock(Box::new(StdMemoryManager::new())),
+        };
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct TestTable;
+
+        let result = provider.get_acpi_table::<TestTable>(TableKey(0));
+        assert_eq!(result, Err(AcpiError::InvalidTableType));
+    }
 }
