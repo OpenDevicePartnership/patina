@@ -114,7 +114,6 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 Some(Self::fw_vol_event_protocol_notify_efiapi),
                 None,
                 None,
-                None,
             )
             .expect("Failed to create fv protocol installation callback.");
 

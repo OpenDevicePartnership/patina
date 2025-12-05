@@ -22,11 +22,10 @@ use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality as _};
 use patina::error::EfiError;
 use r_efi::efi;
 
-use crate::{events::TIMER_TICK_EXIT_COUNT, runtime, tpl_mutex};
+use crate::{runtime, tpl_mutex};
 
 /// Defines the supported UEFI event types
 #[repr(u32)]
@@ -210,7 +209,6 @@ struct Event {
     //Only used for NOTIFY events.
     notify_tpl: efi::Tpl,
     notify_function: Option<efi::EventNotify>,
-    notify_function_name: Option<&'static str>,
     notify_context: Option<*mut c_void>,
 
     //Only used for TIMER events.
@@ -237,7 +235,6 @@ impl fmt::Debug for Event {
             .field("signaled", &self.signaled)
             .field("notify_tpl", &self.notify_tpl)
             .field("notify_function", &notify_func)
-            .field("notify_function_name", &self.notify_function_name)
             .field("notify_context", &self.notify_context)
             .field("trigger_time", &self.trigger_time)
             .field("period", &self.period)
@@ -251,7 +248,6 @@ impl Event {
         event_type: u32,
         notify_tpl: efi::Tpl,
         notify_function: Option<efi::EventNotify>,
-        notify_function_name: Option<&'static str>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
     ) -> Result<Self, EfiError> {
@@ -279,7 +275,6 @@ impl Event {
             event_type,
             notify_tpl,
             notify_function,
-            notify_function_name,
             notify_context,
             event_group,
             signaled: false,
@@ -317,7 +312,6 @@ impl EventDb {
         event_type: u32,
         notify_tpl: r_efi::base::Tpl,
         notify_function: Option<efi::EventNotify>,
-        notify_function_name: Option<&'static str>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
     ) -> Result<efi::Event, EfiError> {
@@ -344,15 +338,7 @@ impl EventDb {
                 notify_context,
             )?;
         } else {
-            let event = Event::new(
-                id,
-                event_type,
-                notify_tpl,
-                notify_function,
-                notify_function_name,
-                notify_context,
-                event_group,
-            )?;
+            let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
             let k = event.clone();
             self.events.insert(id, event);
             log::info!("id {} event {:?}", id, k);
@@ -506,42 +492,11 @@ impl EventDb {
     fn timer_tick(&mut self, current_time: u64) {
         // Poll the debugger before processing any events. This has no effect if
         // the debugger is not enabled.
-        // patina_debugger::poll_debugger();
+        patina_debugger::poll_debugger();
 
-        // Print addresses periodically
-        static mut COUNTER: usize = 0;
-        unsafe {
-            COUNTER += 1;
-            if COUNTER % 100 == 0 {
-                // Test: Raw memory read performance
-                let test_addr = 0x7E564808usize as *const u64;
-
-                let start = Arch::cpu_count();
-                let mut sum = 0u64;
-                for _ in 0..1000 {
-                    unsafe {
-                        sum = sum.wrapping_add(test_addr.read_volatile());
-                    }
-                }
-                let end = Arch::cpu_count();
-
-                let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-                log::warn!("1000 reads from 0x7E564808 took {elapsed:.6} ms (sum={sum})");
-            }
-        }
-
-        let start = Arch::cpu_count();
         let events: Vec<usize> = self.events.keys().rev().cloned().collect();
-        let end = Arch::cpu_count();
-        let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-        if elapsed > 0.1 {
-            log::warn!("Timer Tick: Collected {} events in {elapsed:.6} ms", events.len());
-        }
-
-        let total_event_time_start = Arch::cpu_count();
 
         for event in events {
-            let find_event_start = Arch::cpu_count();
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
             } else {
@@ -549,11 +504,6 @@ impl EventDb {
                 log::error!("Event {event:?} not found.");
                 continue;
             };
-            let find_event_end = Arch::cpu_count();
-            let elapsed = find_event_end.wrapping_sub(find_event_start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-            if elapsed > 0.1 {
-                log::warn!("Timer Tick: Found event {event:?} in {elapsed:.6} ms");
-            }
 
             if current_event.event_type.is_timer()
                 && let Some(trigger_time) = current_event.trigger_time
@@ -566,28 +516,10 @@ impl EventDb {
                     current_event.trigger_time = None;
                 }
 
-                let copy_event = current_event.clone();
-
-                /* --------------------------------------------------- SIGNAL EVENT ---------------------------------- */
-                let start = Arch::cpu_count();
                 if let Err(e) = self.signal_event(event as *mut c_void) {
                     log::error!("Error {e:?} signaling event {event:?}.");
                 }
-                let end = Arch::cpu_count();
-                let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-                /* --------------------------------------------------- SIGNAL EVENT ---------------------------------- */
-
-                if elapsed > 0.1 {
-                    log::warn!("Timer Tick: Signaled event {event:?} |{copy_event:?}| in {elapsed:.6} ms");
-                }
             }
-        }
-
-        let total_event_time_end = Arch::cpu_count();
-        let total_elapsed =
-            total_event_time_end.wrapping_sub(total_event_time_start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-        if total_elapsed > 1.0 {
-            log::warn!("Timer Tick: Processed all timer events in {total_elapsed:.6} ms");
         }
     }
 
@@ -714,18 +646,10 @@ impl SpinLockedEventDb {
         event_type: u32,
         notify_tpl: r_efi::base::Tpl,
         notify_function: Option<efi::EventNotify>,
-        notify_function_name: Option<&'static str>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
     ) -> Result<efi::Event, EfiError> {
-        self.lock().create_event(
-            event_type,
-            notify_tpl,
-            notify_function,
-            notify_function_name,
-            notify_context,
-            event_group,
-        )
+        self.lock().create_event(event_type, notify_tpl, notify_function, notify_context, event_group)
     }
 
     /// Closes (deletes) an event from the event database
@@ -872,21 +796,7 @@ impl SpinLockedEventDb {
     /// signaled events with notifications are queued and can be retrieved via
     /// [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     pub fn timer_tick(&self, current_time: u64) {
-        let start = Arch::cpu_count();
-        let mut guard = self.lock();
-        let end = Arch::cpu_count();
-        if end - start > 244655 {
-            let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-            log::warn!("time to acquire spinlock in timer_tick for SpinLockedEventDb {elapsed:.6} ms");
-        }
-
-        let start = Arch::cpu_count();
-        guard.timer_tick(current_time);
-        let end = Arch::cpu_count();
-        if end - start > 2_446_552 {
-            let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
-            log::warn!("time to run guard.timer_tick for SpinLockedEventDb {elapsed:.6} ms");
-        }
+        self.lock().timer_tick(current_time)
     }
 
     /// Returns the next pending event notification (if any) that should be dispatched at or above the given TPL level.
@@ -960,7 +870,6 @@ mod tests {
                 efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                 efi::TPL_NOTIFY,
                 Some(test_notify_function),
-                Some("test_notify_function"),
                 None,
                 None,
             );
@@ -990,7 +899,6 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
             );
             assert_eq!(result, Err(EfiError::InvalidParameter));
 
@@ -1002,7 +910,6 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
             );
             assert_eq!(result, Err(EfiError::InvalidParameter));
 
@@ -1011,7 +918,6 @@ mod tests {
                 efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                 efi::TPL_HIGH_LEVEL + 1,
                 Some(test_notify_function),
-                Some("test_notify_function"),
                 None,
                 None,
             );
@@ -1031,7 +937,6 @@ mod tests {
                             efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                             efi::TPL_NOTIFY,
                             Some(test_notify_function),
-                            Some("test_notify_function"),
                             None,
                             None,
                         )
@@ -1061,7 +966,6 @@ mod tests {
                             efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                             efi::TPL_NOTIFY,
                             Some(test_notify_function),
-                            None,
                             None,
                             None,
                         )
@@ -1135,7 +1039,6 @@ mod tests {
                             efi::TPL_NOTIFY,
                             Some(test_notify_function),
                             None,
-                            None,
                             Some(group1),
                         )
                         .unwrap(),
@@ -1149,7 +1052,6 @@ mod tests {
                             efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                             efi::TPL_NOTIFY,
                             Some(test_notify_function),
-                            None,
                             None,
                             Some(group2),
                         )
@@ -1727,8 +1629,7 @@ mod tests {
             assert_eq!(event_notification.notify_function.unwrap() as usize, test_notify_function as usize);
             assert!(event_notification.notify_context.is_none());
 
-            let event =
-                SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, None, None, None, None).unwrap();
+            let event = SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, None, None, None).unwrap();
             let notification_data = SPIN_LOCKED_EVENT_DB.get_notification_data(event);
             assert_eq!(notification_data.err(), Some(EfiError::NotFound));
 

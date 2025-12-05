@@ -11,7 +11,6 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use r_efi::efi;
 
 use patina::pi::protocols::timer;
@@ -23,13 +22,6 @@ use crate::{
     gcd,
     protocols::PROTOCOL_DB,
 };
-
-// Timer tick instrumentation
-static TIMER_TICK_ENTRY_COUNT: AtomicU64 = AtomicU64::new(0);
-pub static TIMER_TICK_EXIT_COUNT: AtomicU64 = AtomicU64::new(0);
-static TIMER_TICK_TOTAL_TIME: AtomicU64 = AtomicU64::new(0);
-static TIMER_TICK_LONGEST_TIME: AtomicU64 = AtomicU64::new(0);
-static TIMER_TICK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
@@ -57,7 +49,7 @@ extern "efiapi" fn create_event(
         other => (other, None),
     };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, None, notify_context, event_group) {
+    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
             // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
@@ -91,7 +83,7 @@ extern "efiapi" fn create_event_ex(
     // Safety: caller must ensure that event_group is a valid pointer if not null.
     let event_group = if !event_group.is_null() { Some(unsafe { event_group.read_unaligned() }) } else { None };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, None, notify_context, event_group) {
+    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
             // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
@@ -300,92 +292,14 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 }
 
 extern "efiapi" fn timer_tick(time: u64) {
-    let entry_count = TIMER_TICK_ENTRY_COUNT.fetch_add(1, Ordering::AcqRel);
-    // log::info!("Timer tick entry");
-    let start_time = Arch::cpu_count();
-
-    /*  ------------------------------------- START -----------------------*/
-    let before_raise_tpl = Arch::cpu_count();
     let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-    let after_raise_tpl = Arch::cpu_count();
-    let raise_tpl_time = after_raise_tpl.saturating_sub(before_raise_tpl);
 
     SYSTEM_TIME.fetch_add(time, Ordering::SeqCst);
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
 
-    let before_event_db = Arch::cpu_count();
     EVENT_DB.timer_tick(current_time);
-    let after_event_db = Arch::cpu_count();
-    let event_db_time = after_event_db.saturating_sub(before_event_db);
 
-    let before_restore_tpl = Arch::cpu_count();
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
-    let after_restore_tpl = Arch::cpu_count();
-    let restore_tpl_time = after_restore_tpl.saturating_sub(before_restore_tpl);
-
-    let end_time = Arch::cpu_count();
-    /*  ------------------------------------- END -----------------------*/
-
-    let elapsed = end_time.saturating_sub(start_time);
-
-    let exit_count = TIMER_TICK_EXIT_COUNT.fetch_add(1, Ordering::AcqRel);
-
-    if (exit_count + 1) % 100 == 0 {
-        let elapsed_ms = elapsed as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let raise_tpl_ms = raise_tpl_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let event_db_ms = event_db_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let restore_tpl_ms = restore_tpl_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let overhead_before = before_raise_tpl.saturating_sub(start_time) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let overhead_after = end_time.saturating_sub(after_restore_tpl) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let accounted = raise_tpl_ms + event_db_ms + restore_tpl_ms + overhead_before + overhead_after;
-        log::warn!(
-            "Timer tick #{} breakdown: total={:.3}ms, overhead_before={:.3}ms, raise_tpl={:.3}ms, event_db={:.3}ms, restore_tpl={:.3}ms, overhead_after={:.3}ms, accounted={:.3}ms",
-            entry_count,
-            elapsed_ms,
-            overhead_before,
-            raise_tpl_ms,
-            event_db_ms,
-            restore_tpl_ms,
-            overhead_after,
-            accounted
-        );
-    }
-
-    // Update total time
-    TIMER_TICK_TOTAL_TIME.fetch_add(elapsed, Ordering::AcqRel);
-
-    // Update longest time
-    let mut current_longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire);
-    while elapsed > current_longest {
-        match TIMER_TICK_LONGEST_TIME.compare_exchange_weak(
-            current_longest,
-            elapsed,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => break,
-            Err(actual) => current_longest = actual,
-        }
-    }
-
-    TIMER_TICK_IN_PROGRESS.store(false, Ordering::Release);
-    // log::info!("Timer tick exit");
-
-    // Log statistics every 100 timer ticks
-    if (exit_count + 1) % 100 == 0 {
-        let total_entries = entry_count + 1;
-        let total_exits = exit_count + 1;
-        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
-        log::warn!(
-            "TIMER TICK STATS: entries={}, exits={}, total_time(ms)={}, longest={}, avg={}",
-            total_entries,
-            total_exits,
-            total_time,
-            longest,
-            if total_exits > 0 { total_time / (total_exits as f64) as f64 } else { 0.0 }
-        );
-    }
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
@@ -427,14 +341,7 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
 
     //set up call back for timer arch protocol installation.
     let event = EVENT_DB
-        .create_event(
-            efi::EVT_NOTIFY_SIGNAL,
-            efi::TPL_CALLBACK,
-            Some(timer_available_callback),
-            Some("timer_available_callback"),
-            None,
-            None,
-        )
+        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(timer_available_callback), None, None)
         .expect("Failed to create timer available callback.");
 
     PROTOCOL_DB

@@ -14,7 +14,7 @@ use crate::{
 };
 
 use core::{ffi::c_void, mem};
-use patina::{boot_services::BootServices, uefi_protocol::ProtocolInterface};
+use patina::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 
 use crate::{
@@ -66,9 +66,7 @@ impl AcpiTableProtocol {
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
-        log::trace!("AcpiTableProtocol::install_acpi_table_ext called with buffer size: {}", acpi_table_buffer_size);
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
-            log::trace!("AcpiTableProtocol::install_acpi_table_ext invalid parameters");
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -93,8 +91,6 @@ impl AcpiTableProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        ACPI_TABLE_INFO.boot_services.get().unwrap().get_memory_map();
-
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
             let acpi_table =
@@ -112,7 +108,6 @@ impl AcpiTableProtocol {
                     Ok(key) => {
                         // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
                         unsafe { *table_key = key.0 };
-                        log::trace!("AcpiTableProtocol::install_acpi_table_ext table installed with key: {}", key.0);
                     }
                     Err(e) => {
                         log::info!("Protocol install failed: {:?} for table with signature {}", e, table.signature());
@@ -132,7 +127,6 @@ impl AcpiTableProtocol {
                     return e.into();
                 }
 
-                log::trace!("AcpiTableProtocol::install_acpi_table_ext succeeded");
                 efi::Status::SUCCESS
             } else {
                 efi::Status::OUT_OF_RESOURCES
@@ -154,16 +148,9 @@ impl AcpiTableProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the table key does not correspond to an installed table.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
-        log::trace!("AcpiTableProtocol::uninstall_acpi_table_ext called with table_key: {}", table_key);
         match ACPI_TABLE_INFO.uninstall_acpi_table(TableKey(table_key)) {
-            Ok(_) => {
-                log::trace!("AcpiTableProtocol::uninstall_acpi_table_ext succeeded");
-                efi::Status::SUCCESS
-            }
-            Err(e) => {
-                log::trace!("AcpiTableProtocol::uninstall_acpi_table_ext failed: {:?}", e);
-                e.into()
-            }
+            Ok(_) => efi::Status::SUCCESS,
+            Err(e) => e.into(),
         }
     }
 }
@@ -178,7 +165,7 @@ pub struct AcpiGetProtocol {
 
 unsafe impl ProtocolInterface for AcpiGetProtocol {
     const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0x7f3c1a92, 0x8b4e, 0x4d2f, 0xa6, 0xc9, &[0x3e, 0x12, 0xf4, 0xb8, 0xd7, 0xc1]);
+        efi::Guid::from_fields(0xeb97088e, 0xcfdf, 0x49c6, 0xbe, 0x4b, &[0xd9, 0x06, 0xa5, 0xb2, 0x0e, 0x86]);
 }
 
 impl AcpiGetProtocol {
@@ -210,9 +197,7 @@ impl AcpiGetProtocol {
         version: *mut u32,
         table_key: *mut usize,
     ) -> efi::Status {
-        log::trace!("AcpiGetProtocol::get_acpi_table_ext called with index: {}", index);
         if table.is_null() || version.is_null() || table_key.is_null() {
-            log::trace!("AcpiGetProtocol::get_acpi_table_ext invalid parameters");
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -226,7 +211,6 @@ impl AcpiGetProtocol {
 
                 let sdt_ptr = table_at_idx.as_mut_ptr();
                 unsafe { *table = sdt_ptr };
-                log::trace!("AcpiGetProtocol::get_acpi_table_ext succeeded with table_key: {}", key_at_idx.0);
                 efi::Status::SUCCESS
             }
             Err(e) => {
@@ -248,25 +232,17 @@ impl AcpiGetProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if there is an attempt to unregister a notify function that was never registered.
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the notify function pointer is null or does not match the standard notify function signature.
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
-        log::trace!("AcpiGetProtocol::register_notify_ext called with register: {}", register);
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {
             Some(ptr) => unsafe { core::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },
             None => {
-                log::trace!("AcpiGetProtocol::register_notify_ext invalid notify function pointer");
                 return efi::Status::INVALID_PARAMETER;
             }
         };
 
         match ACPI_TABLE_INFO.register_notify(register, rust_fn) {
-            Ok(_) => {
-                log::trace!("AcpiGetProtocol::register_notify_ext succeeded");
-                efi::Status::SUCCESS
-            }
-            Err(err) => {
-                log::trace!("AcpiGetProtocol::register_notify_ext failed: {:?}", err);
-                err.into()
-            }
+            Ok(_) => efi::Status::SUCCESS,
+            Err(err) => err.into(),
         }
     }
 }
