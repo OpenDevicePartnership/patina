@@ -41,7 +41,8 @@
 //!
 
 #![no_std]
-#![feature(allocator_api)]
+#![feature(coverage_attribute)]
+
 extern crate alloc;
 
 /// Component that provides initialization of ACPI functionality in the core.

@@ -10,7 +10,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use patina::{
     base::SIZE_4GB,
     component::service::{
@@ -202,7 +202,7 @@ pub struct AcpiXsdt {
 pub(crate) struct AcpiXsdtMetadata {
     pub(crate) n_entries: usize,
     pub(crate) max_capacity: usize,
-    pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
+    pub(crate) slice: &'static mut [u8],
 }
 
 impl AcpiXsdtMetadata {
@@ -520,6 +520,7 @@ impl AcpiTable {
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
     use patina::component::service::memory::StdMemoryManager;
 
     use crate::signature::ACPI_CHECKSUM_OFFSET;

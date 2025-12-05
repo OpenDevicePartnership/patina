@@ -10,7 +10,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
+use alloc::collections::btree_map::BTreeMap;
 use core::{
     cell::OnceCell,
     ffi::c_void,
@@ -27,6 +27,7 @@ use patina::{
         service::{IntoService, Service, memory::MemoryManager},
     },
     efi_types::EfiMemoryType,
+    uefi_pages_to_size,
 };
 
 use crate::{
@@ -58,7 +59,7 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     /// Stores data about the XSDT and its entries.
     xsdt_metadata: RwLock<Option<AcpiXsdtMetadata>>,
     /// Stores data about the RSDP.
-    rsdp: RwLock<Option<Box<AcpiRsdp, &'static dyn alloc::alloc::Allocator>>>,
+    rsdp: RwLock<Option<&'static mut AcpiRsdp>>,
 }
 
 // SAFETY: `StandardAcpiProvider` does not share any internal references or non-Send types across threads.
@@ -115,7 +116,7 @@ where
     }
 
     /// Sets up tracking for the RSDP internally.
-    pub fn set_rsdp(&self, rsdp: Box<AcpiRsdp, &'static dyn alloc::alloc::Allocator>) {
+    pub fn set_rsdp(&self, rsdp: &'static mut AcpiRsdp) {
         let mut write_guard = self.rsdp.write();
         *write_guard = Some(rsdp);
     }
@@ -472,7 +473,7 @@ where
 
     /// Allocates a new, larger memory space for the XSDT when it is full and relocates all entries to the newly allocated memory.
     fn reallocate_xsdt(&self) -> Result<(), AcpiError> {
-        if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
+        if let Some(xsdt_data) = self.xsdt_metadata.write().as_mut() {
             // Calculate current size of the XSDT.
             let num_bytes_original = xsdt_data.get_length()? as usize;
             let curr_capacity = xsdt_data.max_capacity;
@@ -483,27 +484,33 @@ where
             let num_bytes_new = ACPI_HEADER_LEN + new_capacity * ACPI_XSDT_ENTRY_SIZE;
 
             // The XSDT is always allocated in reclaim memory.
-            let allocator = self
+            let xsdt_allocation = self
                 .memory_manager
                 .get()
                 .ok_or(AcpiError::ProviderNotInitialized)?
-                .get_allocator(EfiMemoryType::ACPIReclaimMemory)
+                .allocate_pages(
+                    uefi_pages_to_size!(num_bytes_new),
+                    patina::component::service::memory::AllocationOptions::new()
+                        .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
+                )
                 .map_err(|_e| AcpiError::AllocationFailed)?;
-            let mut xsdt_allocated_bytes = Vec::with_capacity_in(num_bytes_new, allocator);
+            let xsdt_ptr = xsdt_allocation.into_raw_ptr().ok_or(AcpiError::AllocationFailed)? as *mut u8;
+            let xsdt_addr = xsdt_ptr as u64;
+            // SAFETY: The allocated call above allocated enough memory for the new XSDT.
+            let new_xsdt_slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, num_bytes_new) };
+
             // Copy over existing data.
-            xsdt_allocated_bytes.extend_from_slice(&xsdt_data.slice);
+            new_xsdt_slice[0..num_bytes_original].copy_from_slice(&xsdt_data.slice[0..num_bytes_original]);
             // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
-            xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(num_bytes_new - num_bytes_original));
+            new_xsdt_slice[num_bytes_original..].fill(0);
 
             // Update the RSDP with the new XSDT address.
-            let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
-            let xsdt_addr = xsdt_ptr as u64;
             if let Some(ref mut rsdp) = *self.rsdp.write() {
                 rsdp.xsdt_address = xsdt_addr
             }
 
             // Point to the newly allocated data.
-            xsdt_data.slice = xsdt_allocated_bytes.into_boxed_slice();
+            xsdt_data.slice = new_xsdt_slice;
         }
 
         Ok(())
@@ -615,10 +622,10 @@ where
     /// Performs `checksum` and `extended_checksum` calculations on the RSDP and XSDT.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
-        if let Some(ref mut rsdp) = *self.rsdp.write() {
+        if let Some(rsdp) = self.rsdp.write().as_mut() {
             // SAFETY: We know the size and layout of the RSDP in memory.
             let rsdp_bytes =
-                unsafe { slice::from_raw_parts(rsdp.as_mut() as *mut AcpiRsdp as *mut u8, mem::size_of::<AcpiRsdp>()) };
+                unsafe { slice::from_raw_parts(*rsdp as *mut AcpiRsdp as *mut u8, mem::size_of::<AcpiRsdp>()) };
 
             // Zero out both checksums before recalculating.
             rsdp.checksum = 0;
@@ -647,10 +654,10 @@ where
 
     /// Publishes ACPI tables after installation.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
-        if let Some(ref mut rsdp) = *self.rsdp.write() {
+        if let Some(rsdp) = self.rsdp.write().as_mut() {
             // Cast RSDP to raw pointer for boot services.
-            let rsdp_ptr = rsdp.as_mut() as *mut AcpiRsdp as *mut c_void;
             unsafe {
+                let rsdp_ptr = *rsdp as *mut AcpiRsdp as *mut c_void;
                 self.boot_services
                     .get()
                     .ok_or(AcpiError::ProviderNotInitialized)?
@@ -680,7 +687,7 @@ where
         }
 
         Ok(())
-    }
+    } // register notify function
 
     /// Retrieves a table at a specific index in the list of installed tables.
     /// This is mostly to assist the C protocol.
@@ -712,12 +719,12 @@ where
 mod tests {
     extern crate std;
 
-    use crate::{acpi_table::AcpiXsdt, signature::MAX_INITIAL_ENTRIES};
+    use crate::signature::MAX_INITIAL_ENTRIES;
 
     use super::*;
     use patina::{
         boot_services::MockBootServices,
-        component::service::memory::{MockMemoryManager, StdMemoryManager},
+        component::service::memory::{AllocationOptions, MockMemoryManager, StdMemoryManager},
     };
     use r_efi::efi;
     use std::{
@@ -851,26 +858,8 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-
         // Initialize a mock XSDT.
-        let mut xsdt_allocated_bytes = Vec::with_capacity_in(1000, allocator);
-        let xsdt_info = AcpiXsdt {
-            header: AcpiTableHeader {
-                signature: signature::XSDT,
-                length: ACPI_HEADER_LEN as u32,
-                ..Default::default()
-            },
-        };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        // Add some extra space after the XSDT so it's safe to write the entry.
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: MAX_INITIAL_ENTRIES,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
-        provider.set_xsdt(xsdt_metadata);
+        create_dummy_xsdt(MAX_INITIAL_ENTRIES, 100, &provider);
 
         // Create dummy data for the FADT.
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
@@ -952,31 +941,38 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_add_and_remove_xsdt() {
-        let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
-
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-
-        // Initialize a mock XSDT.
-        let mut xsdt_allocated_bytes = Vec::with_capacity_in(1000, allocator);
-        let xsdt_info = AcpiXsdt {
+    // Helper function to create a dummy XSDT in tests.
+    fn create_dummy_xsdt(starting_entries: usize, byte_size: usize, provider: &StandardAcpiProvider<MockBootServices>) {
+        let xsdt_allocation = provider
+            .memory_manager
+            .get()
+            .unwrap()
+            .allocate_pages(1, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
+            .unwrap();
+        let xsdt_info = crate::acpi_table::AcpiXsdt {
             header: AcpiTableHeader {
                 signature: signature::XSDT,
                 length: ACPI_HEADER_LEN as u32,
                 ..Default::default()
             },
         };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        // Add some extra space after the XSDT so it's safe to write the entry.
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: MAX_INITIAL_ENTRIES,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
+        let xsdt_ptr = xsdt_allocation.into_raw_ptr().unwrap() as *mut u8;
+        let header_bytes = xsdt_info.header.hdr_to_bytes();
+        unsafe {
+            core::ptr::copy_nonoverlapping(header_bytes.as_ptr(), xsdt_ptr, ACPI_HEADER_LEN);
+            core::ptr::write_bytes(xsdt_ptr.add(ACPI_HEADER_LEN), 0, byte_size - ACPI_HEADER_LEN);
+        }
+        let xsdt_slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, byte_size) };
+        let xsdt_metadata = AcpiXsdtMetadata { n_entries: 0, max_capacity: starting_entries, slice: xsdt_slice };
         provider.set_xsdt(xsdt_metadata);
+    }
+
+    #[test]
+    fn test_add_and_remove_xsdt() {
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+
+        create_dummy_xsdt(MAX_INITIAL_ENTRIES, 1000, &provider);
 
         const XSDT_ADDR: u64 = 0x1000_0000_0000_0004;
 
@@ -1009,27 +1005,8 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-
-        // Initialize a mock XSDT with a small max_capacity
         let initial_capacity = 2;
-        let mut xsdt_allocated_bytes =
-            Vec::with_capacity_in(ACPI_HEADER_LEN + initial_capacity * ACPI_XSDT_ENTRY_SIZE, allocator);
-        let xsdt_info = AcpiXsdt {
-            header: AcpiTableHeader {
-                signature: signature::XSDT,
-                length: ACPI_HEADER_LEN as u32,
-                ..Default::default()
-            },
-        };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(initial_capacity * ACPI_XSDT_ENTRY_SIZE));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: initial_capacity,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
-        provider.set_xsdt(xsdt_metadata);
+        create_dummy_xsdt(initial_capacity, 100, &provider);
 
         // Add entries up to capacity
         for i in 0..initial_capacity {
@@ -1066,23 +1043,7 @@ mod tests {
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         // Create a dummy XSDT.
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-        let mut xsdt_allocated_bytes = Vec::with_capacity_in(100, allocator);
-        let xsdt_info = crate::acpi_table::AcpiXsdt {
-            header: AcpiTableHeader {
-                signature: signature::XSDT,
-                length: ACPI_HEADER_LEN as u32,
-                ..Default::default()
-            },
-        };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: crate::signature::MAX_INITIAL_ENTRIES,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
-        provider.set_xsdt(xsdt_metadata);
+        create_dummy_xsdt(MAX_INITIAL_ENTRIES, 100, &provider);
 
         // Install FADT and FACS
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
@@ -1113,24 +1074,7 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
-        // Create a dummy XSDT.
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-        let mut xsdt_allocated_bytes = Vec::with_capacity_in(100, allocator);
-        let xsdt_info = crate::acpi_table::AcpiXsdt {
-            header: AcpiTableHeader {
-                signature: signature::XSDT,
-                length: ACPI_HEADER_LEN as u32,
-                ..Default::default()
-            },
-        };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: crate::signature::MAX_INITIAL_ENTRIES,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
-        provider.set_xsdt(xsdt_metadata);
+        create_dummy_xsdt(MAX_INITIAL_ENTRIES, 100, &provider);
 
         // Install FADT and DSDT
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
@@ -1373,27 +1317,7 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
-
-        // Initialize a mock XSDT with capacity for 3 entries
-        let initial_capacity = 3;
-        let mut xsdt_allocated_bytes =
-            Vec::with_capacity_in(ACPI_HEADER_LEN + initial_capacity * ACPI_XSDT_ENTRY_SIZE, allocator);
-        let xsdt_info = AcpiXsdt {
-            header: AcpiTableHeader {
-                signature: signature::XSDT,
-                length: ACPI_HEADER_LEN as u32,
-                ..Default::default()
-            },
-        };
-        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(initial_capacity * ACPI_XSDT_ENTRY_SIZE));
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: initial_capacity,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
-        provider.set_xsdt(xsdt_metadata);
+        create_dummy_xsdt(3, 100, &provider);
 
         // Add three entries
         let addr1 = 0x1000;

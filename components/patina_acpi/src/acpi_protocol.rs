@@ -248,3 +248,98 @@ impl AcpiSdtProtocol {
 }
 
 type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acpi_table_protocol_creation() {
+        let protocol = AcpiTableProtocol::new();
+        assert_eq!(protocol.install_table as usize, AcpiTableProtocol::install_acpi_table_ext as usize);
+        assert_eq!(protocol.uninstall_table as usize, AcpiTableProtocol::uninstall_acpi_table_ext as usize);
+    }
+
+    #[test]
+    fn test_install_acpi_table_ext_error_cases() {
+        // Test null buffer.
+        let status =
+            AcpiTableProtocol::install_acpi_table_ext(core::ptr::null(), core::ptr::null(), 0, core::ptr::null_mut());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test buffer too small.
+        let dummy_table: [u8; 2] = [0; 2];
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table key null.
+        let dummy_table: [u8; 8] = [0; 8];
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            core::ptr::null_mut(),
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table length mismatch.
+        let dummy_table: [u8; 8] = [100; 8]; // If this is the table buffer, the length is not 16.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            16, // Incorrect length,
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table smaller than known minimum size.
+        let dummy_table: [u8; 8] = [b'F', b'A', b'C', b'S', 0, 0, 0, 15]; // FACS minimum size is larger than 15.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test memory manager not initialized.
+        let dummy_table: [u8; 36] = [
+            // Signature "TEST"
+            b'T', b'E', b'S', b'T', // 0..3
+            // Length = 36 (0x24) little-endian
+            36, 0, 0, 0, // 4..7
+            // Revision
+            1, // 8
+            // Checksum (calculated so sum = 0)
+            0xE5, // 9
+            // OEMID "OEMID  "
+            b'O', b'E', b'M', b'I', b'D', b' ', // 10..15
+            // OEM Table ID "OTABLE  "
+            b'O', b'T', b'A', b'B', b'L', b'E', b' ', b' ', // 16..23
+            // OEM Revision
+            1, 0, 0, 0, // 24..27
+            // Creator ID "CRID"
+            b'C', b'R', b'I', b'D', // 28..31
+            // Creator Revision
+            1, 0, 0, 0, // 32..35
+        ];
+        // This should pass other table checks.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::NOT_STARTED);
+    }
+}

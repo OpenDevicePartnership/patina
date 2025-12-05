@@ -12,6 +12,7 @@ use core::mem;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::component,
+    uefi_pages_to_size,
 };
 
 use patina::{
@@ -70,25 +71,16 @@ impl AcpiProviderManager {
     ) -> patina::error::Result<()> {
         ACPI_TABLE_INFO.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
-        // Both XSDT and RSDP are always in reclaim memory.
-        let allocator = ACPI_TABLE_INFO
-            .memory_manager
-            .get()
-            .ok_or(EfiError::NotStarted)?
-            .get_allocator(EfiMemoryType::ACPIReclaimMemory)
-            .map_err(|_e| EfiError::OutOfResources)?;
-
         // Create and set the XSDT with an initial number of entries.
-        let xsdt_capacity = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
+        let xsdt_size = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
 
         // Allocate pages directly instead of using Vec
-        let xsdt_pages = (xsdt_capacity + 0xFFF) / 0x1000; // Round up to pages
         let xsdt_allocation = ACPI_TABLE_INFO
             .memory_manager
             .get()
             .ok_or(EfiError::NotStarted)?
             .allocate_pages(
-                xsdt_pages,
+                uefi_pages_to_size!(xsdt_size),
                 patina::component::service::memory::AllocationOptions::new()
                     .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
             )
@@ -118,16 +110,14 @@ impl AcpiProviderManager {
         unsafe {
             core::ptr::copy_nonoverlapping(header_bytes.as_ptr(), xsdt_ptr, ACPI_HEADER_LEN);
             // Zero out the rest of the allocated space
-            core::ptr::write_bytes(xsdt_ptr.add(ACPI_HEADER_LEN), 0, xsdt_capacity - ACPI_HEADER_LEN);
+            core::ptr::write_bytes(xsdt_ptr.add(ACPI_HEADER_LEN), 0, xsdt_size - ACPI_HEADER_LEN);
         }
 
         // Convert the raw pointer into a Box<[u8], &'static dyn Allocator>
         // We need to create a slice from the raw pointer and then box it with the allocator
-        let xsdt_slice = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, xsdt_capacity) };
-        let xsdt_boxed_slice = unsafe { Box::from_raw_in(xsdt_slice as *mut [u8], allocator) };
+        let xsdt_slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, xsdt_size) };
 
-        let xsdt_metadata =
-            AcpiXsdtMetadata { n_entries: 0, max_capacity: MAX_INITIAL_ENTRIES, slice: xsdt_boxed_slice };
+        let xsdt_metadata = AcpiXsdtMetadata { n_entries: 0, max_capacity: MAX_INITIAL_ENTRIES, slice: xsdt_slice };
         ACPI_TABLE_INFO.set_xsdt(xsdt_metadata);
 
         // Set up initial values for the RSDP, including XSDT address.
@@ -167,7 +157,7 @@ impl AcpiProviderManager {
         }
 
         // Convert the raw pointer into a Box<AcpiRsdp, &'static dyn Allocator>
-        let rsdp_allocated = unsafe { Box::from_raw_in(rsdp_ptr, allocator) };
+        let rsdp_allocated = unsafe { Box::leak(Box::from_raw(rsdp_ptr)) };
 
         ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);
 
