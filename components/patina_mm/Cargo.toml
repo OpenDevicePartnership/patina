@@ -24,6 +24,7 @@ zerocopy-derive = { workspace = true }
 env_logger = { workspace = true }
 mockall = { workspace = true }
 patina = { workspace = true, features = ["mockall"] }
+patina_dxe_core = { path = "../../patina_dxe_core"}
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = [

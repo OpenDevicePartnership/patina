@@ -103,19 +103,28 @@ impl Service {
     }
 
     /// The left hand side generics for the struct, which can include trait bounds.
+    /// Default type parameters are stripped since they are not allowed in impl blocks.
     fn lhs_generics(&self) -> Generics {
-        self.generics()
+        let mut generics = self.generics();
+        for param in generics.params.iter_mut() {
+            if let syn::GenericParam::Type(param) = param {
+                param.default = None;
+            }
+        }
+        generics
     }
 
-    /// The right hand side generics for the struct, which do not include trait bounds.
+    /// The right hand side generics for the struct, which do not include trait bounds or defaults.
     ///
     /// valid: `impl<T: Debug> SomeTrait for MyStruct<T> {}`
     /// invalid: `impl SomeTrait for MyStruct<T: Debug> {}`
+    /// invalid: `impl SomeTrait for MyStruct<T = i32> {}`
     fn rhs_generics(&self) -> Generics {
         let mut generics = self.generics();
         for param in generics.params.iter_mut() {
             if let syn::GenericParam::Type(param) = param {
                 param.bounds.clear();
+                param.default = None;
             }
         }
         generics.where_clause = None;
@@ -282,6 +291,38 @@ mod tests {
             }
 
             impl<T: Debug> patina::component::service::IntoService for &'static MyStruct<T> where T: Clone {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: Self = self;
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+        };
+
+        assert_eq!(expected.to_string(), service2(input).to_string());
+    }
+
+    #[test]
+    fn test_struct_with_generic_default_type_parameter() {
+        let input = quote! {
+            #[service(dyn MyService)]
+            struct MyStruct<T: Debug = i32>;
+        };
+
+        // Default type parameters should be stripped in impl blocks
+        let expected = quote! {
+            extern crate alloc as __alloc_service_MyStruct;
+            impl<T: Debug> patina::component::service::IntoService for MyStruct<T> {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl<T: Debug> patina::component::service::IntoService for &'static MyStruct<T> {
                 fn register(self, storage: &mut patina::component::Storage) {
                     let leaked: Self = self;
                     let ref_service: &'static dyn MyService = leaked;

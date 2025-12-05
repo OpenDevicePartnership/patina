@@ -42,6 +42,8 @@ use syn::{FnArg, ImplItem, ItemFn, ItemImpl, Pat, Type, TypePath, parse2, spanne
 /// - Cannot use `&mut Storage` with `Config<T>` or `ConfigMut<T>`
 /// - Cannot use `&Storage` with `ConfigMut<T>`
 /// - Cannot have multiple `Commands` parameters or multiple service table parameters
+/// - Cannot have multiple `&mut Storage` parameters (only one mutable reference is allowed)
+/// - Cannot mix `&Storage` and `&mut Storage` parameters (a mutable reference must be exclusive)
 pub(crate) fn component_entry_point(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Try to parse as an impl block
     if let Ok(impl_block) = parse2::<ItemImpl>(item.clone()) {
@@ -278,6 +280,14 @@ impl ParamType {
             (ParamType::StandardRuntimeServices, ParamType::StandardRuntimeServices) => {
                 Some("Only one StandardRuntimeServices parameter is allowed.")
             }
+
+            // StorageMut conflicts with Storage (a mutable reference must be exclusive)
+            (ParamType::StorageMut, ParamType::Storage) | (ParamType::Storage, ParamType::StorageMut) => {
+                Some("You cannot use &mut Storage together with &Storage parameters.")
+            }
+
+            // Duplicate StorageMut (only one mutable reference is allowed)
+            (ParamType::StorageMut, ParamType::StorageMut) => Some("Only one &mut Storage parameter is allowed."),
 
             // No conflict
             _ => None,
@@ -1237,6 +1247,192 @@ mod tests {
                 config: Config<u32>,
                 service: Service<Foo>,
                 commands: Commands
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(!result.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_allows_multiple_immutable_storage() {
+        let input = quote! {
+            fn entry_point(self, s1: &Storage, s2: &Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(!result.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_allows_multiple_immutable_storage_with_other_params() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                service: Service<T>,
+                s1: &Storage,
+                config: Config<u32>,
+                s2: &Storage,
+                s3: &Storage
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(!result.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_detects_storage_and_storage_mut_conflict() {
+        let input = quote! {
+            fn entry_point(self, s1: &Storage, s2: &mut Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Patina component parameter conflict detected"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_detects_storage_mut_and_storage_conflict() {
+        let input = quote! {
+            fn entry_point(self, s1: &mut Storage, s2: &Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Patina component parameter conflict detected"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_detects_duplicate_storage_mut() {
+        let input = quote! {
+            fn entry_point(self, s1: &mut Storage, s2: &mut Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Patina component parameter conflict detected"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_allows_single_immutable_storage() {
+        let input = quote! {
+            fn entry_point(comp: MyComponent, storage: &Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(!result.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_allows_single_storage_mut() {
+        let input = quote! {
+            fn entry_point(comp: MyComponent, storage: &mut Storage) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(!result.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_detects_storage_mut_with_multiple_storage() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                service: Service<T>,
+                s1: &Storage,
+                config: Config<u32>,
+                s2: &mut Storage
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_detects_duplicate_storage_mut_with_other_params() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                service: Service<T>,
+                s1: &mut Storage,
+                hob: Hob<MyHob>,
+                s2: &mut Storage
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_detects_qualified_storage_and_storage_mut_conflict() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                s1: &Storage,
+                s2: &mut patina::Storage
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_detects_qualified_duplicate_storage_mut() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                s1: &mut Storage,
+                s2: &mut patina::component::Storage
+            ) -> Result<()> {
+                Ok(())
+            }
+        };
+
+        let result = validate_component_params2(quote!(), input);
+        assert!(result.to_string().contains("compile_error"));
+        assert!(result.to_string().contains("Storage"));
+    }
+
+    #[test]
+    fn test_allows_qualified_multiple_storage() {
+        let input = quote! {
+            fn entry_point(
+                self,
+                s1: &Storage,
+                s2: &patina::Storage,
+                s3: &patina::component::Storage
             ) -> Result<()> {
                 Ok(())
             }

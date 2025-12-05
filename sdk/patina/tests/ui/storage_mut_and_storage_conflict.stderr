@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_s2' (position 2) conflicts with parameter '_s1' (position 1). You cannot use &mut Storage together with &Storage parameters.
+ --> tests/ui/storage_mut_and_storage_conflict.rs:9:45
+  |
+9 |     fn entry_point(self, _s1: &mut Storage, _s2: &Storage) -> Result<()> {
+  |                                             ^^^^^^^^^^^^^
+
+error: conflicts with '_s1' parameter here
+ --> tests/ui/storage_mut_and_storage_conflict.rs:9:26
+  |
+9 |     fn entry_point(self, _s1: &mut Storage, _s2: &Storage) -> Result<()> {
+  |                          ^^^^^^^^^^^^^^^^^

@@ -40,7 +40,7 @@ use patina_smbios::{
     service::{SMBIOS_HANDLE_PI_RESERVED, Smbios, SmbiosExt, SmbiosTableHeader},
     smbios_record::{
         SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type1SystemInformation, Type2BaseboardInformation,
-        Type3SystemEnclosure, Type127EndOfTable,
+        Type3SystemEnclosure,
     },
 };
 
@@ -128,12 +128,7 @@ impl SmbiosExampleComponent {
             return Err(e);
         }
 
-        // Type 127: End-of-table marker
-        if let Err(e) = Self::add_end_of_table(&smbios) {
-            log::error!("Failed to add end-of-table marker: {:?}", e);
-            return Err(e);
-        }
-
+        // Type 127 End-of-Table marker is automatically added by the manager during initialization
         log::info!("Platform SMBIOS records created successfully");
 
         // Publish the SMBIOS table to the UEFI Configuration Table
@@ -312,24 +307,6 @@ impl SmbiosExampleComponent {
         })?;
 
         log::info!("  Type 0x80 (Vendor OEM) - Handle 0x{:04X}", handle);
-        Ok(())
-    }
-
-    /// Add Type 127 (End of Table) marker
-    ///
-    /// Required marker to indicate the end of the SMBIOS table.
-    fn add_end_of_table(smbios: &Service<dyn Smbios>) -> Result<()> {
-        let end_of_table = Type127EndOfTable {
-            header: SmbiosTableHeader::new(127, 0, SMBIOS_HANDLE_PI_RESERVED),
-            string_pool: vec![],
-        };
-
-        let handle = smbios.add_record(None, &end_of_table).map_err(|e| {
-            log::error!("Failed to add end-of-table: {:?}", e);
-            patina::error::EfiError::DeviceError
-        })?;
-
-        log::info!("  Type 127 (End of Table) - Handle 0x{:04X}", handle);
         Ok(())
     }
 }

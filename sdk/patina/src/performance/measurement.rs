@@ -57,7 +57,7 @@ pub mod event_callback {
     /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
     pub extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
         event: efi::Event,
-        ctx: Box<(BB, RR, &TplMutex<'static, F, B>)>,
+        ctx: Box<(BB, RR, &TplMutex<F, B>)>,
     ) where
         BB: AsRef<B> + Clone,
         B: BootServices + 'static,
@@ -229,7 +229,7 @@ fn _create_performance_measurement<B, F>(
     perf_id: u16,
     attribute: PerfAttribute,
     boot_services: &B,
-    fbpt: &TplMutex<'static, F, B>,
+    fbpt: &TplMutex<F, B>,
     timer: &Service<dyn ArchTimerFunctionality>,
 ) -> Result<(), Error>
 where
@@ -580,8 +580,7 @@ mod tests {
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_report_table::<MockBootServices>().once().returning(|_, _| Ok(1));
 
-        // SAFETY: Test code - creating a reference to the boot_services for TplMutex initialization.
-        let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
+        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
         // SAFETY: Test code - creating a static reference to the fbpt for callback testing.
         let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
 
@@ -622,8 +621,7 @@ mod tests {
 
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().times(EXPECTED_NUMBER_OF_RECORD).returning(|_| Ok(()));
-        // SAFETY: Test code - creating reference to boot_services for TplMutex initialization.
-        let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
+        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
 
         // These functions call create_performance_measurement with the right arguments.
         let module_handle = 1_usize as efi::Handle;
@@ -633,7 +631,7 @@ mod tests {
         let event_guid = efi::Guid::from_bytes(&[3; 16]);
 
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
 
         // SAFETY: Test code - initializing static variables with test references.
         unsafe {
@@ -709,14 +707,9 @@ mod tests {
     #[test]
     fn test_generic_create_performance_measurement() {
         let boot_services = MockBootServices::new();
-        let fbpt = TplMutex::new(
-            // SAFETY: Test code - creating reference to boot_services for TplMutex initialization.
-            unsafe { &*ptr::addr_of!(boot_services) },
-            Tpl::NOTIFY,
-            MockFirmwareBasicBootPerfTable::new(),
-        );
+        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, MockFirmwareBasicBootPerfTable::new());
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
         // SAFETY: Test code - initializing static variables with test references.
         unsafe {
             BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));

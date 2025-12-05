@@ -131,9 +131,19 @@ fn parse_on_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
                         patina::test::__private_api::TestTrigger::Event(&#value)
                     });
                 }
+                // CASE2: $[on(timer = interval_in_100ns_units)]
+                Meta::NameValue(nv) if nv.path.is_ident("timer") => {
+                    let value = &nv.value;
+                    return Ok(quote! {
+                        patina::test::__private_api::TestTrigger::Timer(#value)
+                    });
+                }
                 // No other cases are supported right now.
                 _ => {
-                    return Err(syn::Error::new(meta.span(), "Only support #[on(event = ...)]"));
+                    return Err(syn::Error::new(
+                        meta.span(),
+                        "Unsupported attribute key. See patina::test::__private_api::TestTrigger for supported keys.",
+                    ));
                 }
             }
         }
@@ -339,6 +349,32 @@ mod tests {
     }
 
     #[test]
+    fn test_process_on_timer_attribute() {
+        let attr = syn::parse_quote! { #[on(timer = 1000000)] };
+        let tokens = parse_on_attr(&attr).unwrap();
+
+        let expected = quote! {
+            patina::test::__private_api::TestTrigger::Timer(1000000)
+        };
+        assert_eq!(tokens.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_improper_on_timer_attribute() {
+        let attr = syn::parse_quote! { #[on(timer = )] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on(junk = 1000000)] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on()] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on] };
+        assert!(parse_on_attr(&attr).is_err());
+    }
+
+    #[test]
     fn test_process_multiple_attributes() {
         let stream = quote! {
             #[patina_test]
@@ -400,7 +436,7 @@ mod tests {
 
         let expanded = patina_test2(stream);
         let expected = quote! {
-            ::core::compile_error ! { "Only support #[on(event = ...)]" }
+            ::core::compile_error ! { "Unsupported attribute key. See patina::test::__private_api::TestTrigger for supported keys." }
         };
         assert_eq!(expanded.to_string(), expected.to_string());
     }

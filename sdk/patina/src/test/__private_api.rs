@@ -50,6 +50,8 @@ pub enum TestTrigger {
     Immediate,
     /// The test case should be executed when the specified event triggers.
     Event(&'static Guid),
+    /// The test case should be executed after the specified units of 100ns have elapsed.
+    Timer(u64),
 }
 
 /// Internal struct to hold the test case information.

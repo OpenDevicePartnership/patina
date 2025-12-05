@@ -59,6 +59,47 @@ fn my_test1() -> Result { todo!() }
 fn my_test2() -> Result { todo!() }
 ```
 
+### Test Triggers
+
+There are three supported trigger types for patina_test tests.
+
+#### Immediate
+
+These tests are executed immediately on the `TestRunner` component being dispatched. They are only executed once. This
+is the default trigger.
+
+#### Event
+
+These tests are triggered when a given event group GUID is signalled. A separate `on` attribute is used to indicate
+this, e.g.:
+
+```rust
+# extern crate patina;
+use patina::test::{Result, patina_test};
+
+#[patina_test]
+#[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
+fn my_test() -> Result { todo!() }
+```
+
+These tests will be executed every time the event group is signalled.
+
+#### Timer
+
+These tests are executed every specified time interval (in units of 100ns, i.e. timer ticks). The `on` attribute is
+also used to indicate this, e.g.:
+
+```rust
+# extern crate patina;
+use patina::test::{Result, patina_test};
+
+#[patina_test]
+#[on(timer = 1_000_000)] // run every 100 ms
+fn my_test() -> Result { todo!() }
+```
+
+These tests will continue to execute after the specified time interval for the length of UEFI boot.
+
 ## Running On-Platform Tests
 
 Running all these tests on a platform is as easy as instantiating the test runner component and registering it with
