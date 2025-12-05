@@ -1,5 +1,5 @@
 use crate::tpl_mutex::TplMutex;
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, format, vec, vec::Vec};
 use core::ffi::c_void;
 use patina_internal_cpu::interrupts::{
     ExceptionContext, InterruptHandler, InterruptManager, gic_manager::AArch64InterruptInitializer,
@@ -407,7 +407,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
         let rw_handler = self.handlers[raw_value as usize]
             .try_read()
-            .expect("Failed to read lock in exception handler for interrupt ID {}!", raw_value);
+            .expect(&format!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
 
         if let Some(handler) = *rw_handler {
             handler(raw_value as u64, context);
@@ -436,8 +436,8 @@ impl HwInterruptProtocolHandler {
 
         let m_handler = handler as *const c_void;
 
-        // If the handler is a null pointer, return invalid parameter
-        if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
+        if let Some(rw_handler) = self.handlers[interrupt_source].try_read() {
+            // Use read access to test the state of the handler
             if m_handler.is_null() && (*rw_handler).is_none() {
                 return efi::Status::INVALID_PARAMETER;
             }
@@ -445,22 +445,33 @@ impl HwInterruptProtocolHandler {
             if !m_handler.is_null() && (*rw_handler).is_some() {
                 return efi::Status::ALREADY_STARTED;
             }
+        }
 
-            // If the interrupt handler is unregistered then disable the interrupt
-            if m_handler.is_null() {
+        if m_handler.is_null() {
+            // If the operation is to unregister the interrupt handler, we first disable the interrupt
+            if let Err(err) = self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64) {
+                return err.into();
+            }
+
+            // Interrupt disabled, now remove the handler
+            if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
                 *rw_handler = None;
-                if let Err(err) = self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64) {
-                    return err.into();
-                }
             } else {
-                *rw_handler = Some(handler);
-                if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
-                    return err.into();
-                }
+                return efi::Status::DEVICE_ERROR;
             }
         } else {
-            return efi::Status::DEVICE_ERROR;
-        }
+            // Register the interrupt handler
+            if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
+                *rw_handler = Some(handler);
+            } else {
+                return efi::Status::DEVICE_ERROR;
+            }
+
+            // Interrupt handler registered, now enable the interrupt
+            if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
+                return err.into();
+            }
+        };
 
         efi::Status::SUCCESS
     }
