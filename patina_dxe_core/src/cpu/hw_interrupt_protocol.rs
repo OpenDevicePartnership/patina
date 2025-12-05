@@ -441,7 +441,7 @@ impl HwInterruptProtocolHandler {
                 return efi::Status::INVALID_PARAMETER;
             }
 
-            if !m_handler.is_null() & (*rw_handler).is_some() {
+            if !m_handler.is_null() && (*rw_handler).is_some() {
                 return efi::Status::ALREADY_STARTED;
             }
 
