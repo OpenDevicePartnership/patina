@@ -405,7 +405,8 @@ impl InterruptHandler for HwInterruptProtocolHandler {
             return;
         }
 
-        let rw_handler = self.handlers[raw_value as usize].try_read().expect("Failed to read lock in exception handler!");
+        let rw_handler =
+            self.handlers[raw_value as usize].try_read().expect("Failed to read lock in exception handler!");
 
         if let Some(handler) = *rw_handler {
             handler(raw_value as u64, context);
@@ -444,19 +445,15 @@ impl HwInterruptProtocolHandler {
                 return efi::Status::ALREADY_STARTED;
             }
 
-        // If the interrupt handler is unregistered then disable the interrupt
+            // If the interrupt handler is unregistered then disable the interrupt
             if m_handler.is_null() {
                 *rw_handler = None;
-                if let Err(err) =
-                    self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64)
-                {
+                if let Err(err) = self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64) {
                     return err.into();
                 }
             } else {
                 *rw_handler = Some(handler);
-                if let Err(err) =
-                    self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64)
-                {
+                if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
                     return err.into();
                 }
             }
