@@ -406,6 +406,7 @@ impl AcpiTable {
         } else {
             PageAllocationStrategy::Any
         };
+        // let allocation_strategy = PageAllocationStrategy::MaxAddress(0x74000000);
 
         // Allocate memory in appropriate ACPI region, up to page granularity.
         let table_page_alloc = mm
@@ -414,7 +415,7 @@ impl AcpiTable {
                 AllocationOptions::new().with_memory_type(allocator_type).with_strategy(allocation_strategy),
             )
             .map_err(|_e| AcpiError::AllocationFailed)?;
-        log::info!("allocated {} pages", uefi_size_to_pages!(table_length));
+        log::warn!("allocated {} pages", uefi_size_to_pages!(table_length));
 
         // Get the raw pointer to the allocated memory for copying.
         let dest_alloc = table_page_alloc.into_raw_ptr().ok_or(AcpiError::AllocationFailed)?;

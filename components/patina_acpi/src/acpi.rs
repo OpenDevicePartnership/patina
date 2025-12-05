@@ -174,8 +174,6 @@ where
         self.notify_acpi_list(table_key)?;
         log::trace!("StandardAcpiProvider::install_acpi_table succeeded with table_key: {:?}", table_key);
 
-        let _ = self.boot_services.get().unwrap().get_memory_map();
-
         Ok(table_key)
     }
 
@@ -561,42 +559,49 @@ where
 
     /// Allocates a new, larger memory space for the XSDT when it is full and relocates all entries to the newly allocated memory.
     fn reallocate_xsdt(&self) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::reallocate_xsdt called");
-        if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
-            // Calculate current size of the XSDT.
-            let num_bytes_original = xsdt_data.get_length()? as usize;
-            let curr_capacity = xsdt_data.max_capacity;
-            // Use a geometric resizing strategy.
-            let new_capacity = curr_capacity * 2;
-            xsdt_data.max_capacity = new_capacity;
-            // Calculates bytes needed for new number of entries, including the XSDT's header.
-            let num_bytes_new = ACPI_HEADER_LEN + new_capacity * ACPI_XSDT_ENTRY_SIZE;
+        // log::trace!("StandardAcpiProvider::reallocate_xsdt called");
+        // if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
+        //     // Calculate current size of the XSDT.
+        //     let num_bytes_original = xsdt_data.get_length()? as usize;
+        //     let curr_capacity = xsdt_data.max_capacity;
+        //     // Use a geometric resizing strategy.
+        //     let new_capacity = curr_capacity * 2;
+        //     xsdt_data.max_capacity = new_capacity;
+        //     // Calculates bytes needed for new number of entries, including the XSDT's header.
+        //     let num_bytes_new = ACPI_HEADER_LEN + new_capacity * ACPI_XSDT_ENTRY_SIZE;
+        //     log::warn!(
+        //         "StandardAcpiProvider::reallocate_xsdt reallocating XSDT from {} bytes ({} entries) to {} bytes ({} entries)",
+        //         num_bytes_original,
+        //         curr_capacity,
+        //         num_bytes_new,
+        //         new_capacity
+        //     );
 
-            // The XSDT is always allocated in reclaim memory.
-            let allocator = self
-                .memory_manager
-                .get()
-                .ok_or(AcpiError::ProviderNotInitialized)?
-                .get_allocator(EfiMemoryType::ACPIReclaimMemory)
-                .map_err(|_e| AcpiError::AllocationFailed)?;
-            let mut xsdt_allocated_bytes = Vec::with_capacity_in(num_bytes_new, allocator);
-            // Copy over existing data.
-            xsdt_allocated_bytes.extend_from_slice(&xsdt_data.slice);
-            // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
-            xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(num_bytes_new - num_bytes_original));
+        //     // The XSDT is always allocated in reclaim memory.
+        //     let allocator = self
+        //         .memory_manager
+        //         .get()
+        //         .ok_or(AcpiError::ProviderNotInitialized)?
+        //         .get_allocator(EfiMemoryType::ACPIReclaimMemory)
+        //         .map_err(|_e| AcpiError::AllocationFailed)?;
+        //     let mut xsdt_allocated_bytes = Vec::with_capacity_in(num_bytes_new, allocator);
+        //     // Copy over existing data.
+        //     xsdt_allocated_bytes.extend_from_slice(&xsdt_data.slice);
+        //     // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
+        //     xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(num_bytes_new - num_bytes_original));
 
-            // Update the RSDP with the new XSDT address.
-            let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
-            let xsdt_addr = xsdt_ptr as u64;
-            if let Some(ref mut rsdp) = *self.rsdp.write() {
-                rsdp.xsdt_address = xsdt_addr
-            }
+        //     // Update the RSDP with the new XSDT address.
+        //     let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
+        //     let xsdt_addr = xsdt_ptr as u64;
+        //     if let Some(ref mut rsdp) = *self.rsdp.write() {
+        //         rsdp.xsdt_address = xsdt_addr
+        //     }
 
-            // Point to the newly allocated data.
-            xsdt_data.slice = xsdt_allocated_bytes.into_boxed_slice();
-        }
+        //     // Point to the newly allocated data.
+        //     xsdt_data.slice = xsdt_allocated_bytes.into_boxed_slice();
+        // }
 
-        log::trace!("StandardAcpiProvider::reallocate_xsdt succeeded");
+        // log::trace!("StandardAcpiProvider::reallocate_xsdt succeeded");
         Ok(())
     }
 
@@ -1481,6 +1486,7 @@ mod tests {
         assert!(dsdt_table.is_ok());
         assert_eq!(dsdt_table.unwrap().signature(), signature::DSDT);
     }
+
     #[test]
     fn test_remove_table_from_xsdt_removes_correct_entry() {
         let provider = StandardAcpiProvider::new_uninit();
