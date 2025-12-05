@@ -179,8 +179,13 @@ mod tests {
         unsafe impl Send for AcpiTable {}
         unsafe impl Sync for AcpiTable {}
 
-        let table =
-            unsafe { AcpiTable::new(AcpiFadt::default(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap() };
+        let table = unsafe {
+            AcpiTable::new(
+                AcpiFadt { header: AcpiTableHeader { length: 200, ..Default::default() }, ..Default::default() },
+                &Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap()
+        };
 
         let mut mock_acpi_provider = MockAcpiProvider::new();
         mock_acpi_provider.expect_get_acpi_table().returning(move |_table_key| Ok(table));
