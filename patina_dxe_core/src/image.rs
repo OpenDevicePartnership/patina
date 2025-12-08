@@ -971,8 +971,9 @@ pub fn core_load_image(
     let image_info_ptr = image_info_ptr as *mut c_void;
 
     log::info!(
-        "Loaded driver at {:#x?} EntryPoint={:#x?} {:}",
+        "Loaded image at {:#x?} Size={:#x?} EntryPoint={:#x?} {:}",
         private_info.image_info.image_base,
+        private_info.image_info.image_size,
         private_info.entry_point as usize,
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("<no PDB>"))
     );
