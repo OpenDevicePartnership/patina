@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice, slice::from_raw_parts};
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
@@ -23,7 +23,7 @@ use patina::{
         fw_fs::FfsSectionRawType::PE32,
         hob::{Hob, HobList},
     },
-    uefi_pages_to_size, uefi_size_to_pages,
+    uefi_size_to_pages,
 };
 use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use r_efi::efi;
@@ -148,7 +148,7 @@ unsafe impl Stack for ImageStack {
 
 // This struct tracks private data associated with a particular image handle.
 struct PrivateImageData {
-    image_buffer: *mut [u8],
+    image_buffer: Buffer,
     image_info: Box<efi::protocols::loaded_image::Protocol>,
     hii_resource_section: Option<Box<[u8], PageFree>>,
     entry_point: efi::ImageEntryPoint,
@@ -158,53 +158,33 @@ struct PrivateImageData {
     image_device_path_ptr: *mut c_void,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
-    image_base_page: efi::PhysicalAddress,
-    image_num_pages: usize,
 }
 
 impl PrivateImageData {
-    fn new(image_info: efi::protocols::loaded_image::Protocol, pe_info: &UefiPeInfo) -> Result<Self, EfiError> {
-        // Allocate pages for the image to be loaded into. We use pages here instead of a pool because we are going to
-        // set memory attributes on this range and it is not valid to set attributes on pool backed memory.
-        let mut image_base_page: efi::PhysicalAddress = 0;
+    fn new(mut image_info: efi::protocols::loaded_image::Protocol, pe_info: &UefiPeInfo) -> Result<Self, EfiError> {
+        let image_size = usize::try_from(image_info.image_size).map_err(|_| EfiError::LoadError)?;
+        let section_alignment = usize::try_from(pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
 
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
-        let num_pages: usize = if pe_info.section_alignment as usize > UEFI_PAGE_SIZE {
-            if let Some(image_size) = image_info.image_size.checked_add(pe_info.section_alignment as u64) {
-                match usize::try_from(image_size) {
-                    Ok(size) => uefi_size_to_pages!(size),
-                    Err(_) => return Err(EfiError::LoadError),
-                }
-            } else {
-                return Err(EfiError::LoadError);
-            }
+        let page_count = if section_alignment > UEFI_PAGE_SIZE {
+            image_size
+                .checked_add(section_alignment)
+                .map(|size| uefi_size_to_pages!(size))
+                .ok_or(EfiError::LoadError)?
         } else {
-            match usize::try_from(image_info.image_size) {
-                Ok(size) => uefi_size_to_pages!(size),
-                Err(_) => return Err(EfiError::LoadError),
-            }
+            uefi_size_to_pages!(image_size)
         };
 
-        core_allocate_pages(
-            efi::ALLOCATE_ANY_PAGES,
-            image_info.image_code_type,
-            num_pages,
-            &mut image_base_page,
-            None,
-        )?;
+        let options = AllocationOptions::new()
+            .with_memory_type(EfiMemoryType::from_efi(image_info.image_code_type)?)
+            .with_alignment(section_alignment);
 
-        if image_base_page == 0 {
-            return Err(EfiError::OutOfResources);
-        }
+        let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_boxed_slice::<u8>();
 
-        let aligned_image_start =
-            align_up(image_base_page, pe_info.section_alignment.into()).map_err(|_| EfiError::LoadError)?;
+        image_info.image_base = bytes.as_ptr() as *mut c_void;
 
-        let mut image_data = PrivateImageData {
-            image_buffer: core::ptr::slice_from_raw_parts_mut(
-                aligned_image_start as *mut u8,
-                image_info.image_size as usize,
-            ),
+        let image_data = PrivateImageData {
+            image_buffer: Buffer::Owned(bytes),
             image_info: Box::new(image_info),
             hii_resource_section: None,
             entry_point: unimplemented_entry_point,
@@ -214,24 +194,26 @@ impl PrivateImageData {
             image_device_path_ptr: core::ptr::null_mut(),
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
-            image_base_page,
-            image_num_pages: num_pages,
         };
 
-        image_data.image_info.image_base = image_data.image_buffer as *mut c_void;
         Ok(image_data)
     }
 
-    fn new_with_existing_allocation(
+    /// Creates a new PrivateImageData with a image buffer created from outside this program.
+    ///
+    /// ## Safety
+    ///
+    /// Caller must ensure that `image_buffer` is a valid pointer to a slice of u8.
+    /// Caller must ensure that `image_buffer` is never deallocated.
+    unsafe fn new_from_foreign_image(
         image_info: efi::protocols::loaded_image::Protocol,
         image_buffer: *mut [u8],
         entry_point: efi::ImageEntryPoint,
         pe_info: &UefiPeInfo,
-        image_base_page: efi::PhysicalAddress,
-        image_num_pages: usize,
     ) -> Self {
         PrivateImageData {
-            image_buffer,
+            // Safety: Caller must meet the safety requirements of this function.
+            image_buffer: Buffer::Borrowed(unsafe { &*image_buffer }),
             image_info: Box::new(image_info),
             hii_resource_section: None,
             entry_point,
@@ -241,18 +223,37 @@ impl PrivateImageData {
             image_device_path_ptr: core::ptr::null_mut(),
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
-            image_base_page,
-            image_num_pages,
         }
     }
 
-    fn allocate_resource_section(
-        &mut self,
-        alignment: usize,
-        memory_type: EfiMemoryType,
-        resource_section: &[u8],
-    ) -> Result<(), EfiError> {
+    fn load_resource_section(&mut self, image: &[u8]) -> Result<(), EfiError> {
+        let loaded_image = self.image_buffer.as_ref();
+
+        let result = pecoff::load_resource_section(&self.pe_info, image).map_err(|err| {
+            let pe_file_name = self.pe_info.filename_or("Unknown");
+            log::error!("core_load_pe_image failed: {pe_file_name} load_resource_section returned status: {err:?}");
+            EfiError::LoadError
+        })?;
+
+        let Some((resource_section_offset, resource_section_size)) = result else { return Ok(()) };
+
+        if resource_section_offset + resource_section_size > loaded_image.len() {
+            let pe_file_name = self.pe_info.filename_or("Unknown");
+            log::error!(
+                "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
+                resource_section_offset,
+                resource_section_size
+            );
+            debug_assert!(false);
+            return Err(EfiError::LoadError);
+        }
+
+        let resource_section = &loaded_image[resource_section_offset..resource_section_offset + resource_section_size];
         let size = resource_section.len();
+
+        let alignment = usize::try_from(self.pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
+        let memory_type = EfiMemoryType::from_efi(self.image_info.image_code_type)?;
+
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
         let page_count: usize =
             if alignment > UEFI_PAGE_SIZE { uefi_size_to_pages!(size + alignment) } else { uefi_size_to_pages!(size) };
@@ -266,21 +267,41 @@ impl PrivateImageData {
         self.hii_resource_section = Some(bytes);
         Ok(())
     }
-}
 
-impl Drop for PrivateImageData {
-    fn drop(&mut self) {
-        if !self.image_buffer.is_null()
-            && let Err(status) = core_free_pages(self.image_base_page, self.image_num_pages)
-        {
-            log::error!(
-                "core_free_pages returned error {:#x?} for image buffer at {:#x} for num_pages {:#x}",
-                status,
-                self.image_base_page,
-                self.image_num_pages
-            );
-            debug_assert!(false);
+    fn load_image(&mut self, image: &[u8]) -> Result<(), EfiError> {
+        let bytes = self.image_buffer.as_mut().ok_or(EfiError::LoadError)?;
+
+        if let Err(e) = pecoff::load_image(&self.pe_info, image, bytes) {
+            let file_name = self.pe_info.filename_or("Unknown");
+            log::error!("core_load_pe_image failed: {file_name} load_image returned status: {e:?}");
+            return Err(EfiError::LoadError);
         }
+
+        Ok(())
+    }
+
+    fn relocate_image(&mut self) -> Result<(), EfiError> {
+        let image_buffer = self.image_buffer.as_mut().ok_or(EfiError::LoadError)?;
+        let physical_addr = self.image_info.image_base as usize;
+
+        // Update relocation data so it can be execution from it's current location in memory
+        self.relocation_data =
+            pecoff::relocate_image(&self.pe_info, physical_addr, image_buffer, &self.relocation_data).map_err(
+                |err| {
+                    let pe_file_name = self.pe_info.filename_or("Unknown");
+                    log::error!("core_load_pe_image failed: {pe_file_name} relocate_image returned status: {err:?}");
+                    EfiError::LoadError
+                },
+            )?;
+
+        // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
+        self.entry_point = unsafe {
+            transmute::<usize, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> efi::Status>(
+                physical_addr + self.pe_info.entry_point_offset,
+            )
+        };
+
+        Ok(())
     }
 }
 
@@ -442,14 +463,11 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
     // here as DXE Core is uniquely already loaded
     let image_buffer =
         core::ptr::slice_from_raw_parts_mut(image_info.image_base as *mut u8, image_info.image_size as usize);
-    let mut private_image_data = PrivateImageData::new_with_existing_allocation(
-        image_info,
-        image_buffer,
-        entry_point,
-        &pe_info,
-        dxe_core_hob.alloc_descriptor.memory_base_address,
-        uefi_size_to_pages!(dxe_core_hob.alloc_descriptor.memory_length as usize),
-    );
+
+    // SAFETY: The DXE Core image comes from a HOB outside this program and will not be deallocated.
+    // SAFETY: This image buffer is a valid slice of u8 of the correct size as indicated by the HOB.
+    let mut private_image_data =
+        unsafe { PrivateImageData::new_from_foreign_image(image_info, image_buffer, entry_point, &pe_info) };
 
     let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
@@ -488,11 +506,12 @@ fn core_load_pe_image(
     mut image_info: efi::protocols::loaded_image::Protocol,
 ) -> Result<PrivateImageData, EfiError> {
     // parse and validate the header and retrieve the image data from it.
-    let pe_info = pecoff::UefiPeInfo::parse(image)
-        .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {err:?}"))
-        .map_err(|_| EfiError::Unsupported)?;
+    let pe_info = pecoff::UefiPeInfo::parse(image).map_err(|err| {
+        log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {err:?}");
+        EfiError::Unsupported
+    })?;
 
-    let pe_file_name = pe_info.filename.as_deref().unwrap_or("Unknown");
+    let pe_file_name = pe_info.filename_or("Unknown");
 
     // based on the image type, determine the correct allocator and code/data types.
     let (code_type, data_type) = match pe_info.image_type {
@@ -530,63 +549,24 @@ fn core_load_pe_image(
 
     //allocate a buffer to hold the image (also updates private_info.image_info.image_base)
     let mut private_info = PrivateImageData::new(image_info, &pe_info)?;
-    let loaded_image = unsafe { &mut *private_info.image_buffer };
 
-    //load the image into the new loaded image buffer
-    pecoff::load_image(&pe_info, image, loaded_image)
-        .inspect_err(|err| log::error!("core_load_pe_image failed: {pe_file_name} load_image returned status: {err:?}"))
-        .map_err(|_| EfiError::LoadError)?;
+    private_info.load_image(image)?;
 
-    //relocate the image to the address at which it was loaded.
-    let loaded_image_addr = private_info.image_info.image_base as usize;
-    private_info.relocation_data = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
-        .inspect_err(|err| {
-            log::error!("core_load_pe_image failed: {pe_file_name} relocate_image returned status: {err:?}")
-        })
-        .map_err(|_| EfiError::LoadError)?;
+    private_info.relocate_image()?;
 
-    // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
-    private_info.entry_point = unsafe {
-        transmute::<usize, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> efi::Status>(
-            loaded_image_addr + pe_info.entry_point_offset,
-        )
-    };
-
-    let result = pecoff::load_resource_section(&pe_info, image)
-        .inspect_err(|err| {
-            log::error!("core_load_pe_image failed: {pe_file_name} load_resource_section returned status: {err:?}")
-        })
-        .map_err(|_| EfiError::LoadError)?;
-
-    // Load HII Resource section if present.
-    if let Some((resource_section_offset, resource_section_size)) = result {
-        if resource_section_offset + resource_section_size > loaded_image.len() {
-            log::error!(
-                "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
-                resource_section_offset,
-                resource_section_size
-            );
-            debug_assert!(false);
-            return Err(EfiError::LoadError);
-        }
-
-        private_info.allocate_resource_section(
-            alignment,
-            EfiMemoryType::from_efi(code_type)?,
-            &loaded_image[resource_section_offset..resource_section_offset + resource_section_size],
-        )?;
-    }
+    private_info.load_resource_section(image)?;
 
     match pe_info.image_type {
         EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION if !pe_info.nx_compat => {
+            let bytes = private_info.image_buffer.as_ref();
             // we are trying to load an application image that is not NX compatible, likely a bootloader
             // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
             // to load the image
             MemoryProtectionPolicy::activate_compatibility_mode(
                 &GCD,
-                private_info.image_base_page as usize,
-                private_info.image_num_pages,
-                pe_info.filename.clone().unwrap_or(String::from("Unknown")),
+                bytes.as_ptr() as usize,
+                uefi_size_to_pages!(bytes.len()),
+                pe_info.filename_or("Unknown"),
             )?;
         }
         _ => {
@@ -603,14 +583,16 @@ extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _contex
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
 
     for image in private_data.private_image_data.values_mut() {
+        // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
+        let buffer = image.image_buffer.as_ref();
         if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-            let cache_attrs = dxe_services::core_get_memory_space_descriptor(image.image_base_page)
+            let cache_attrs = dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
                 .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
                 .unwrap_or(DEFAULT_CACHE_ATTR);
 
             match core_set_memory_space_attributes(
-                image.image_base_page,
-                uefi_pages_to_size!(image.image_num_pages) as u64,
+                buffer.as_ptr() as efi::PhysicalAddress,
+                buffer.len() as u64,
                 cache_attrs,
             ) {
                 Ok(_) => {
@@ -619,7 +601,7 @@ extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _contex
                 Err(status) => {
                     log::error!(
                         "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
-                        image.image_base_page,
+                        buffer.as_ptr() as efi::PhysicalAddress,
                         status
                     );
                     debug_assert!(false);
@@ -882,10 +864,12 @@ pub fn core_load_image(
         .validate_handle(parent_image_handle)
         .inspect_err(|err| log::error!("failed to load image: invalid handle: {err:#x?}"))?;
 
-    PROTOCOL_DB
-        .get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
-        .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {err:?}"))
-        .map_err(|_| EfiError::InvalidParameter)?;
+    PROTOCOL_DB.get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID).map_err(
+        |err| {
+            log::error!("failed to load image: failed to get loaded image interface: {err:?}");
+            EfiError::InvalidParameter
+        },
+    )?;
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
         Some(image) => {
@@ -953,7 +937,7 @@ pub fn core_load_image(
         private_info.image_info.image_base,
         private_info.image_info.image_size,
         private_info.entry_point as usize,
-        private_info.pe_info.filename.as_ref().unwrap_or(&String::from("<no PDB>"))
+        private_info.pe_info.filename_or("<no PDB>"),
     );
 
     // install the loaded_image protocol for this freshly loaded image on a new
@@ -972,7 +956,7 @@ pub fn core_load_image(
 
     // Notify the debugger of the image load.
     patina_debugger::notify_module_load(
-        private_info.pe_info.filename.as_ref().unwrap_or(&String::from("")),
+        private_info.pe_info.filename_or(""),
         private_info.image_info.image_base as usize,
         private_info.image_info.image_size as usize,
     );
@@ -1400,6 +1384,30 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
     system_table.boot_services_mut().exit = exit;
 }
 
+/// A buffer of bytes that is either owned or borrowed.
+enum Buffer {
+    /// Bytes allocated with the page allocator and owned by this struct.
+    Owned(Box<[u8], PageFree>),
+    /// Immutable bytes borrowed from elsewhere.
+    Borrowed(&'static [u8]),
+}
+
+impl Buffer {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Buffer::Owned(boxed) => boxed.as_ref(),
+            Buffer::Borrowed(slice) => slice,
+        }
+    }
+
+    fn as_mut(&mut self) -> Option<&mut [u8]> {
+        match self {
+            Buffer::Owned(boxed) => Some(boxed.as_mut()),
+            Buffer::Borrowed(_) => None,
+        }
+    }
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -1489,8 +1497,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
-            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
+            let image_buf_len = image_data.image_buffer.as_ref().len() as usize;
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -1695,8 +1702,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
-            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
+            let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -1780,8 +1786,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
-            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
+            let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -2346,8 +2351,12 @@ mod tests {
 
             // Manually construct PrivateImageData with minimal required fields
             // SAFETY: Allocating memory for fake image buffer to construct test data
+            const LEN: usize = 0x2000;
             let fake_buffer =
-                unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(0x2000, 0x1000).unwrap()) };
+                unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(LEN, 0x1000).unwrap()) };
+
+            let slice = unsafe { core::slice::from_raw_parts_mut(fake_buffer, LEN) };
+            let bytes = super::Buffer::Borrowed(slice);
 
             // Dummy entry point function
             extern "efiapi" fn dummy_entry(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
@@ -2356,7 +2365,7 @@ mod tests {
 
             let private_info = super::PrivateImageData {
                 // SAFETY: Creating a raw slice from allocated buffer for test purposes
-                image_buffer: core::ptr::slice_from_raw_parts_mut(fake_buffer, 0x2000),
+                image_buffer: bytes,
                 image_info: Box::new(image_info),
                 hii_resource_section: None,
                 entry_point: dummy_entry,
@@ -2366,8 +2375,6 @@ mod tests {
                 image_device_path_ptr: core::ptr::null_mut(),
                 pe_info: pe_info.clone(),
                 relocation_data: Vec::new(),
-                image_base_page: 0x1000,
-                image_num_pages: 2,
             };
 
             // Call apply_image_memory_protections directly
