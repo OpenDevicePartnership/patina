@@ -137,7 +137,7 @@ struct PrivateImageData {
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<(usize, *mut efi::Char16)>,
-    image_device_path_ptr: *mut c_void,
+    image_device_path: Option<Box<[u8]>>,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
 }
@@ -172,7 +172,7 @@ impl PrivateImageData {
             entry_point: unimplemented_entry_point,
             started: false,
             exit_data: None,
-            image_device_path_ptr: core::ptr::null_mut(),
+            image_device_path: None,
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
         };
@@ -200,7 +200,7 @@ impl PrivateImageData {
             entry_point,
             started: true,
             exit_data: None,
-            image_device_path_ptr: core::ptr::null_mut(),
+            image_device_path: None,
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
         }
@@ -282,6 +282,10 @@ impl PrivateImageData {
         };
 
         Ok(())
+    }
+
+    fn image_device_path_ptr(&self) -> *mut c_void {
+        self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
     }
 }
 
@@ -939,15 +943,12 @@ pub fn core_load_image(
 
     // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
     // permanent copy on the heap.
-    let loaded_image_device_path = if file_path.is_null() {
-        core::ptr::null_mut()
-    } else {
-        // make copy and convert to raw pointer to avoid drop at end of function.
-        Box::into_raw(
+    if !file_path.is_null() {
+        private_info.image_device_path = Some(
             copy_device_path_to_boxed_slice(file_path)
                 .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
-        ) as *mut u8
-    };
+        );
+    }
 
     // Register runtime images with the runtime module.
     if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
@@ -963,7 +964,7 @@ pub fn core_load_image(
     core_install_protocol_interface(
         Some(handle),
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-        loaded_image_device_path as *mut c_void,
+        private_info.image_device_path_ptr(),
     )
     .inspect_err(|err| log::error!("failed to load image: install device path failed: {err:?}"))?;
 
@@ -975,9 +976,6 @@ pub fn core_load_image(
         )
         .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {err:?}"))?;
     }
-
-    // Store the interface pointers for unload to use when uninstalling these protocol interfaces.
-    private_info.image_device_path_ptr = file_path as *mut c_void;
 
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
@@ -1230,17 +1228,27 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // and the image_info box along with it.
     let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
     // remove the image and device path protocols from the image handle.
-    let _ = core_uninstall_protocol_interface(
+    if let Err(err) = core_uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image::PROTOCOL_GUID,
         private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
-    );
+    ) && err != EfiError::NotFound
+    {
+        log::warn!("Failed to uninstall loaded image protocol for handle {image_handle:?}: {err:?}");
+        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
+        return Ok(());
+    }
 
-    let _ = core_uninstall_protocol_interface(
+    if let Err(err) = core_uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-        private_image_data.image_device_path_ptr,
-    );
+        private_image_data.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void),
+    ) && err != EfiError::NotFound
+    {
+        log::warn!("Failed to uninstall loaded image device path for handle {image_handle:?}: {err:?}");
+        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
+        return Ok(());
+    }
 
     if let Some(res_section) = &private_image_data.hii_resource_section {
         let _ = core_uninstall_protocol_interface(
@@ -1253,8 +1261,11 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // Remove runtime image if it is one.
     if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
         && let Err(err) = runtime::remove_runtime_image(image_handle)
+        && err != EfiError::NotFound
     {
         log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
+        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
+        return Ok(());
     }
 
     Ok(())
@@ -2346,7 +2357,7 @@ mod tests {
                 entry_point: dummy_entry,
                 started: false,
                 exit_data: None,
-                image_device_path_ptr: core::ptr::null_mut(),
+                image_device_path: None,
                 pe_info: pe_info.clone(),
                 relocation_data: Vec::new(),
             };
