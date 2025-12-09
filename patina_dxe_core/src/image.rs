@@ -136,7 +136,7 @@ struct PrivateImageData {
     hii_resource_section: Option<Box<[u8], PageFree>>,
     entry_point: efi::ImageEntryPoint,
     started: bool,
-    exit_data: Option<(usize, *mut efi::Char16)>,
+    exit_data: Option<ExitData>,
     image_device_path: Option<Box<[u8]>>,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
@@ -371,6 +371,16 @@ impl PrivateImageData {
         self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
     }
 }
+
+/// A wrapper around the data that an image can return on completion. A tuple of (size, pointer).
+///
+/// This data is returned to the caller of `StartImage`.
+struct ExitData(usize, *mut efi::Char16);
+
+// SAFETY: `ExitData` is owned by the caller of `StartImage` and cannot be accessed by any other entity.
+unsafe impl Sync for ExitData {}
+// SAFETY: `ExitData` is owned by the caller of `StartImage` and cannot be accessed by any other entity.
+unsafe impl Send for ExitData {}
 
 // This struct tracks global data used by the imaging subsystem.
 struct DxeCoreGlobalImageData {
@@ -1104,7 +1114,7 @@ extern "efiapi" fn start_image(
     if !exit_data_size.is_null() && !exit_data.is_null() {
         let private_data = PRIVATE_IMAGE_DATA.lock();
         if let Some(image_data) = private_data.private_image_data.get(&image_handle)
-            && let Some(image_exit_data) = image_data.exit_data
+            && let Some(image_exit_data) = &image_data.exit_data
             && !exit_data_size.is_null()
             && !exit_data.is_null()
         {
@@ -1334,7 +1344,7 @@ extern "efiapi" fn exit(
         && !exit_data.is_null()
         && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
     {
-        image_data.exit_data = Some((exit_data_size, exit_data));
+        image_data.exit_data = Some(ExitData(exit_data_size, exit_data));
     }
 
     // retrieve the yielder that was saved in the start_image entry point
