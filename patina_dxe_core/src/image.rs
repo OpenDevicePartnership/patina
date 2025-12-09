@@ -143,7 +143,7 @@ struct PrivateImageData {
 }
 
 impl PrivateImageData {
-    fn new(mut image_info: efi::protocols::loaded_image::Protocol, pe_info: &UefiPeInfo) -> Result<Self, EfiError> {
+    fn new(mut image_info: efi::protocols::loaded_image::Protocol, pe_info: UefiPeInfo) -> Result<Self, EfiError> {
         let image_size = usize::try_from(image_info.image_size).map_err(|_| EfiError::LoadError)?;
         let section_alignment = usize::try_from(pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
 
@@ -173,7 +173,7 @@ impl PrivateImageData {
             started: false,
             exit_data: None,
             image_device_path: None,
-            pe_info: pe_info.clone(),
+            pe_info,
             relocation_data: Vec::new(),
         };
 
@@ -322,13 +322,16 @@ impl PrivateImageData {
     ///
     /// Returns an Err if any uninstall operation fails.
     fn uninstall(&self, handle: efi::Handle) -> Result<(), EfiError> {
+        // Note: InvalidParameter is OK here because it indicates that all usage of the protocol was already removed
+        //  and the handle is now stale. NotFound is also OK because it indicates the handle is still valid, but the
+        //  particular protocol was already removed.
         let mut result = Ok(());
 
         if let Err(err) = core_uninstall_protocol_interface(
             handle,
             efi::protocols::loaded_image::PROTOCOL_GUID,
             self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
-        ) && err != EfiError::NotFound
+        ) && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
             log::warn!("Failed to uninstall loaded image protocol for handle {handle:?}: {err:?}");
             result = Err(err);
@@ -338,7 +341,7 @@ impl PrivateImageData {
             handle,
             efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
             self.image_device_path_ptr(),
-        ) && err != EfiError::NotFound
+        ) && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
             log::warn!("Failed to uninstall loaded image device path protocol for handle {handle:?}: {err:?}");
             result = Err(err);
@@ -350,7 +353,7 @@ impl PrivateImageData {
                 efi::protocols::hii_package_list::PROTOCOL_GUID,
                 hii_section.as_ptr() as *mut c_void,
             )
-            && err != EfiError::NotFound
+            && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
             log::warn!("Failed to uninstall HII package list protocol for handle {handle:?}: {err:?}");
             result = Err(err);
@@ -369,6 +372,74 @@ impl PrivateImageData {
 
     fn image_device_path_ptr(&self) -> *mut c_void {
         self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
+    }
+
+    fn activate_compatibility_mode(&self) -> Result<(), EfiError> {
+        let bytes = self.image_buffer.as_ref();
+        // we are trying to load an application image that is not NX compatible, likely a bootloader
+        // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
+        // to load the image
+        MemoryProtectionPolicy::activate_compatibility_mode(
+            &GCD,
+            bytes.as_ptr() as usize,
+            uefi_size_to_pages!(bytes.len()),
+            self.pe_info.filename_or("Unknown"),
+        )
+    }
+
+    fn apply_image_memory_protections(&self) -> Result<(), EfiError> {
+        for section in &self.pe_info.sections {
+            // each section starts at image_base + virtual_address, per PE/COFF spec.
+            let section_base_addr = (self.image_info.image_base as u64) + (section.virtual_address as u64);
+
+            // we need to get the current attributes for this region and add our new attribute
+            // if we can't find this range in the GCD, try the next one, but report the failure
+            let desc = dxe_services::core_get_memory_space_descriptor(section_base_addr)?;
+            let (attributes, capabilities) =
+                MemoryProtectionPolicy::apply_image_protection_policy(section.characteristics, &desc);
+
+            // now actually set the attributes. We need to use the virtual size for the section length, but
+            // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
+            // We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
+            // plus our new attribute, as we need to ensure all existing attributes are supported by the new
+            // capabilities.
+            let aligned_virtual_size =
+                if let Ok(virtual_size) = align_up(section.virtual_size, self.pe_info.section_alignment) {
+                    virtual_size as u64
+                } else {
+                    log::error!(
+                        "Failed to align up section size {:#X} with alignment {:#X}",
+                        section.virtual_size,
+                        self.pe_info.section_alignment
+                    );
+                    debug_assert!(false);
+                    return Err(EfiError::LoadError);
+                };
+
+            if let Err(status) =
+                dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, capabilities)
+            {
+                // even if we fail to set the capabilities, we should still try to set the attributes, who knows, maybe we
+                // will succeed
+                log::error!(
+                    "Failed to set GCD capabilities for image section {section_base_addr:#X} with Status {status:#X?}",
+                );
+            }
+
+            // this may be verbose to log, but we also have a lot of errors historically here, so let's log at info level
+            // for now
+            log::info!(
+                "Applying image memory protections on {section_base_addr:#X} for len {aligned_virtual_size:#X} with attributes {attributes:#X}",
+            );
+
+            dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
+                .inspect_err(|status| {
+                    log::error!(
+                        "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
+                    );
+                })?;
+        }
+        Ok(())
     }
 }
 
@@ -437,60 +508,6 @@ fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
         image_data_type: efi::BOOT_SERVICES_DATA,
         unload: None,
     }
-}
-
-fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) -> Result<(), EfiError> {
-    for section in &pe_info.sections {
-        // each section starts at image_base + virtual_address, per PE/COFF spec.
-        let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
-
-        // we need to get the current attributes for this region and add our new attribute
-        // if we can't find this range in the GCD, try the next one, but report the failure
-        let desc = dxe_services::core_get_memory_space_descriptor(section_base_addr)?;
-        let (attributes, capabilities) =
-            MemoryProtectionPolicy::apply_image_protection_policy(section.characteristics, &desc);
-
-        // now actually set the attributes. We need to use the virtual size for the section length, but
-        // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
-        // We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
-        // plus our new attribute, as we need to ensure all existing attributes are supported by the new
-        // capabilities.
-        let aligned_virtual_size = if let Ok(virtual_size) = align_up(section.virtual_size, pe_info.section_alignment) {
-            virtual_size as u64
-        } else {
-            log::error!(
-                "Failed to align up section size {:#X} with alignment {:#X}",
-                section.virtual_size,
-                pe_info.section_alignment
-            );
-            debug_assert!(false);
-            return Err(EfiError::LoadError);
-        };
-
-        if let Err(status) =
-            dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, capabilities)
-        {
-            // even if we fail to set the capabilities, we should still try to set the attributes, who knows, maybe we
-            // will succeed
-            log::error!(
-                "Failed to set GCD capabilities for image section {section_base_addr:#X} with Status {status:#X?}",
-            );
-        }
-
-        // this may be verbose to log, but we also have a lot of errors historically here, so let's log at info level
-        // for now
-        log::info!(
-            "Applying image memory protections on {section_base_addr:#X} for len {aligned_virtual_size:#X} with attributes {attributes:#X}",
-        );
-
-        dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
-            .inspect_err(|status| {
-                log::error!(
-                    "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
-                );
-            })?;
-    }
-    Ok(())
 }
 
 // retrieves the dxe core image info from the hob list, and installs the
@@ -621,7 +638,7 @@ fn core_load_pe_image(
     image_info.image_data_type = data_type;
 
     //allocate a buffer to hold the image (also updates private_info.image_info.image_base)
-    let mut private_info = PrivateImageData::new(image_info, &pe_info)?;
+    let mut private_info = PrivateImageData::new(image_info, pe_info)?;
 
     private_info.load_image(image)?;
 
@@ -629,24 +646,14 @@ fn core_load_pe_image(
 
     private_info.load_resource_section(image)?;
 
-    match pe_info.image_type {
-        EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION if !pe_info.nx_compat => {
-            let bytes = private_info.image_buffer.as_ref();
-            // we are trying to load an application image that is not NX compatible, likely a bootloader
-            // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
-            // to load the image
-            MemoryProtectionPolicy::activate_compatibility_mode(
-                &GCD,
-                bytes.as_ptr() as usize,
-                uefi_size_to_pages!(bytes.len()),
-                pe_info.filename_or("Unknown"),
-            )?;
-        }
-        _ => {
-            // finally, update the GCD attributes for this image so that code sections have RO set and data sections
-            // have XP
-            apply_image_memory_protections(&pe_info, &private_info)?;
-        }
+    // If we are not NX compatible and a runtime driver, we need to attempt to activate compatibility mode.
+    // Otherwise apply the memory protections.
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER && !private_info.pe_info.nx_compat {
+        private_info.activate_compatibility_mode()?;
+    } else {
+        // finally, update the GCD attributes for this image so that code sections have RO set and data sections
+        // have XP
+        private_info.apply_image_memory_protections()?;
     }
 
     Ok(private_info)
@@ -1428,7 +1435,8 @@ mod tests {
     extern crate std;
     use super::{empty_image_info, get_buffer_by_file_path, load_image};
     use crate::{
-        image::{PRIVATE_IMAGE_DATA, exit, start_image, unload_image},
+        image::{PRIVATE_IMAGE_DATA, PrivateImageData, exit, start_image, unload_image},
+        pecoff::UefiPeInfo,
         protocol_db,
         protocols::{PROTOCOL_DB, core_install_protocol_interface},
         systemtables::{SYSTEM_TABLE, init_system_table},
@@ -2391,7 +2399,7 @@ mod tests {
             };
 
             // Call apply_image_memory_protections directly
-            let result = super::apply_image_memory_protections(&pe_info, &private_info);
+            let result = private_info.apply_image_memory_protections();
 
             // Should FAIL with NotFound because the GCD RBT is empty (no descriptors),
             // so get_closest_idx returns None and get_memory_descriptor_for_address returns NotFound
@@ -2511,6 +2519,296 @@ mod tests {
                 matches!(result, Err(EfiError::InvalidParameter)),
                 "Expected InvalidParameter from unaligned section address"
             );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_stack_guard_sizes_are_calculated_correctly() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            const STACK_SIZE: usize = 0x10000;
+            let stack = super::ImageStack::new(STACK_SIZE).unwrap();
+
+            let guard_start = stack.stack.as_ptr() as usize;
+            let guard_end = guard_start + super::UEFI_PAGE_SIZE;
+            let stack_start = guard_end;
+            let stack_end = stack_start + STACK_SIZE;
+
+            assert_eq!(stack.guard().as_ptr() as usize, guard_start);
+            assert_eq!(stack.guard().len(), super::UEFI_PAGE_SIZE);
+            assert_eq!(stack.guard().as_ptr() as usize + stack.guard().len(), guard_end);
+            assert_eq!(stack.guard().as_ptr() as usize + stack.guard().len(), stack.body().as_ptr() as usize);
+            assert_eq!(stack.body().as_ptr() as usize, stack_start);
+            assert_eq!(stack.body().len(), STACK_SIZE);
+            assert_eq!(stack.body().as_ptr() as usize + stack.body().len(), stack_end);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_custom_alignment_creates_proper_page_count() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            // Modify section alignment to a custom value (e.g., 0x2000)
+            const CUSTOM_ALIGNMENT: u32 = super::UEFI_PAGE_SIZE as u32 * 4;
+            pe_info.section_alignment = CUSTOM_ALIGNMENT;
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = pe_info.size_of_image as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let image_info = PrivateImageData::new(protocol, pe_info).unwrap();
+            match image_info.image_buffer {
+                super::Buffer::Owned(buffer) => {
+                    // Validate that we are aligned to the custom alignment
+                    assert_eq!(buffer.as_ptr() as usize % CUSTOM_ALIGNMENT as usize, 0);
+                }
+                super::Buffer::Borrowed(_) => {
+                    panic!("Expected owned buffer for loaded image");
+                }
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cannot_load_image_on_foreign_image() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            // SAFETY: image will live longer than the created PrivateImageData
+            let slice_ptr: *mut [u8] = std::ptr::slice_from_raw_parts_mut(image.as_mut_ptr(), image.len());
+            let mut image_data = unsafe {
+                PrivateImageData::new_from_foreign_image(
+                    protocol,
+                    slice_ptr,
+                    super::unimplemented_entry_point,
+                    &pe_info,
+                )
+            };
+
+            assert!(image_data.load_image(&image).is_err_and(|err| err == EfiError::LoadError));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_pecoff_load_error_is_propagaged() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let mut image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+
+            // Corrupt the image to induce a load error
+            image[0] = 0x00;
+
+            assert!(image_data.load_image(&image).is_err_and(|err| err == EfiError::LoadError));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg(not(feature = "compatibility_mode_allowed"))]
+    fn test_activate_compatability_mode_should_fail_if_feature_not_set() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+
+            assert!(image_data.activate_compatibility_mode().is_err_and(|err| err == EfiError::LoadError));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_private_image_data_uninstall_succeeds_even_if_handle_is_stale() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+
+            let handle = image_data.install().unwrap();
+
+            assert!(image_data.uninstall(handle).is_ok());
+            // The handle was removed, so it is stale. We should actually hit a invalid parameter, uninstall ignores
+            // it, and will still return OK.
+            assert!(image_data.uninstall(handle).is_ok());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_private_image_data_uninstall_succeeds_even_if_protocol_already_uninstalled() {
+        // This is similar to the test above, but in this scenario, we make sure the handle continues to be valid by
+        // installing a dummy protocol on it.
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+
+            let handle = image_data.install().unwrap();
+            core_install_protocol_interface(
+                Some(handle),
+                efi::protocols::disk_io::PROTOCOL_GUID,
+                core::ptr::null_mut(),
+            )
+            .unwrap();
+
+            assert!(image_data.uninstall(handle).is_ok());
+
+            assert!(image_data.uninstall(handle).is_ok());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_private_image_data_uninstall_succeeds_if_found() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+
+            let handle = image_data.install().unwrap();
+            assert_eq!(image_data.uninstall(handle), Ok(()));
         })
         .unwrap();
     }
