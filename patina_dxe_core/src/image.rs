@@ -10,6 +10,8 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice, slice::from_raw_parts};
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
+    component::service::memory::{AllocationOptions, MemoryManager, PageFree},
+    efi_types::EfiMemoryType,
     error::EfiError,
     guids,
     performance::{
@@ -37,6 +39,7 @@ use crate::{
     events::EVENT_DB,
     filesystems::SimpleFile,
     gcd::MemoryProtectionPolicy,
+    memory_manager::CoreMemoryManager,
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
     protocol_db,
     protocols::{
@@ -147,9 +150,7 @@ unsafe impl Stack for ImageStack {
 struct PrivateImageData {
     image_buffer: *mut [u8],
     image_info: Box<efi::protocols::loaded_image::Protocol>,
-    hii_resource_section: Option<*mut [u8]>,
-    hii_resource_section_base: Option<efi::PhysicalAddress>,
-    hii_resource_section_num_pages: Option<usize>,
+    hii_resource_section: Option<Box<[u8], PageFree>>,
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<(usize, *mut efi::Char16)>,
@@ -206,8 +207,6 @@ impl PrivateImageData {
             ),
             image_info: Box::new(image_info),
             hii_resource_section: None,
-            hii_resource_section_base: None,
-            hii_resource_section_num_pages: None,
             entry_point: unimplemented_entry_point,
             started: false,
             exit_data: None,
@@ -235,8 +234,6 @@ impl PrivateImageData {
             image_buffer,
             image_info: Box::new(image_info),
             hii_resource_section: None,
-            hii_resource_section_base: None,
-            hii_resource_section_num_pages: None,
             entry_point,
             started: true,
             exit_data: None,
@@ -251,25 +248,22 @@ impl PrivateImageData {
 
     fn allocate_resource_section(
         &mut self,
-        size: usize,
         alignment: usize,
-        code_type: efi::MemoryType,
+        memory_type: EfiMemoryType,
+        resource_section: &[u8],
     ) -> Result<(), EfiError> {
-        let mut hii_base_page: efi::PhysicalAddress = 0;
+        let size = resource_section.len();
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
-        let num_pages: usize =
+        let page_count: usize =
             if alignment > UEFI_PAGE_SIZE { uefi_size_to_pages!(size + alignment) } else { uefi_size_to_pages!(size) };
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, code_type, num_pages, &mut hii_base_page, None)?;
 
-        if hii_base_page == 0 {
-            return Err(EfiError::OutOfResources);
-        }
+        let options = AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment);
 
-        let aligned_hii_start = align_up(hii_base_page, alignment as u64).map_err(|_| EfiError::LoadError)?;
+        let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_boxed_slice::<u8>();
 
-        self.hii_resource_section = Some(core::ptr::slice_from_raw_parts_mut(aligned_hii_start as *mut u8, size));
-        self.hii_resource_section_base = Some(hii_base_page);
-        self.hii_resource_section_num_pages = Some(num_pages);
+        bytes[..resource_section.len()].copy_from_slice(resource_section);
+
+        self.hii_resource_section = Some(bytes);
         Ok(())
     }
 }
@@ -284,16 +278,6 @@ impl Drop for PrivateImageData {
                 status,
                 self.image_base_page,
                 self.image_num_pages
-            );
-            debug_assert!(false);
-        }
-
-        if let (Some(resource_addr), Some(num_pages)) =
-            (self.hii_resource_section_base, self.hii_resource_section_num_pages)
-            && let Err(status) = core_free_pages(resource_addr, num_pages)
-        {
-            log::error!(
-                "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
             );
             debug_assert!(false);
         }
@@ -574,29 +558,23 @@ fn core_load_pe_image(
         })
         .map_err(|_| EfiError::LoadError)?;
 
+    // Load HII Resource section if present.
     if let Some((resource_section_offset, resource_section_size)) = result {
-        private_info.allocate_resource_section(resource_section_size, alignment, code_type)?;
-        if let Some(resource_slice) = private_info.hii_resource_section {
-            unsafe {
-                let image_buf_ref = &mut *private_info.image_buffer;
-                let resource_slice = &mut *resource_slice;
-                if resource_section_offset + resource_section_size <= image_buf_ref.len() {
-                    resource_slice.copy_from_slice(
-                        &image_buf_ref[resource_section_offset..resource_section_offset + resource_section_size],
-                    );
-
-                    log::info!("HII Resource Section found for {pe_file_name}.");
-                } else {
-                    log::error!(
-                        "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
-                        resource_section_offset,
-                        resource_section_size
-                    );
-                    debug_assert!(false);
-                    return Err(EfiError::LoadError);
-                }
-            }
+        if resource_section_offset + resource_section_size > loaded_image.len() {
+            log::error!(
+                "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
+                resource_section_offset,
+                resource_section_size
+            );
+            debug_assert!(false);
+            return Err(EfiError::LoadError);
         }
+
+        private_info.allocate_resource_section(
+            alignment,
+            EfiMemoryType::from_efi(code_type)?,
+            &loaded_image[resource_section_offset..resource_section_offset + resource_section_size],
+        )?;
     }
 
     match pe_info.image_type {
@@ -1029,11 +1007,11 @@ pub fn core_load_image(
     )
     .inspect_err(|err| log::error!("failed to load image: install device path failed: {err:?}"))?;
 
-    if let Some(res_section) = private_info.hii_resource_section {
+    if let Some(res_section) = &private_info.hii_resource_section {
         core_install_protocol_interface(
             Some(handle),
             efi::protocols::hii_package_list::PROTOCOL_GUID,
-            res_section as *mut c_void,
+            res_section.as_ptr() as *mut c_void,
         )
         .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {err:?}"))?;
     }
@@ -1305,11 +1283,11 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         private_image_data.image_device_path_ptr,
     );
 
-    if let Some(ptr) = private_image_data.hii_resource_section {
+    if let Some(res_section) = &private_image_data.hii_resource_section {
         let _ = core_uninstall_protocol_interface(
             image_handle,
             efi::protocols::hii_package_list::PROTOCOL_GUID,
-            ptr as *mut c_void,
+            res_section.as_ptr() as *mut c_void,
         );
     }
 
@@ -2381,8 +2359,6 @@ mod tests {
                 image_buffer: core::ptr::slice_from_raw_parts_mut(fake_buffer, 0x2000),
                 image_info: Box::new(image_info),
                 hii_resource_section: None,
-                hii_resource_section_base: None,
-                hii_resource_section_num_pages: None,
                 entry_point: dummy_entry,
                 started: false,
                 exit_data: None,
