@@ -137,7 +137,6 @@ struct PrivateImageData {
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<(usize, *mut efi::Char16)>,
-    image_info_ptr: *mut c_void,
     image_device_path_ptr: *mut c_void,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
@@ -173,7 +172,6 @@ impl PrivateImageData {
             entry_point: unimplemented_entry_point,
             started: false,
             exit_data: None,
-            image_info_ptr: core::ptr::null_mut(),
             image_device_path_ptr: core::ptr::null_mut(),
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
@@ -202,7 +200,6 @@ impl PrivateImageData {
             entry_point,
             started: true,
             exit_data: None,
-            image_info_ptr: core::ptr::null_mut(),
             image_device_path_ptr: core::ptr::null_mut(),
             pe_info: pe_info.clone(),
             relocation_data: Vec::new(),
@@ -449,18 +446,14 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
 
     // SAFETY: The DXE Core image comes from a HOB outside this program and will not be deallocated.
     // SAFETY: This image buffer is a valid slice of u8 of the correct size as indicated by the HOB.
-    let mut private_image_data =
+    let private_image_data =
         unsafe { PrivateImageData::new_from_foreign_image(image_info, image_buffer, entry_point, &pe_info) };
-
-    let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
-    let image_info_ptr = image_info_ptr as *mut c_void;
-    private_image_data.image_info_ptr = image_info_ptr;
 
     // install the loaded_image protocol on a new handle.
     let handle = match core_install_protocol_interface(
         Some(protocol_db::DXE_CORE_HANDLE),
         efi::protocols::loaded_image::PROTOCOL_GUID,
-        image_info_ptr,
+        private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
     ) {
         Err(err) => panic!("Failed to install dxe core image handle: {err:?}"),
         Ok(handle) => handle,
@@ -471,7 +464,7 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
     initialize_debug_image_info_table(system_table);
     core_new_debug_image_info_entry(
         EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol,
         handle,
     );
 
@@ -984,7 +977,6 @@ pub fn core_load_image(
     }
 
     // Store the interface pointers for unload to use when uninstalling these protocol interfaces.
-    private_info.image_info_ptr = image_info_ptr;
     private_info.image_device_path_ptr = file_path as *mut c_void;
 
     // save the private image data for this image in the private image data map.
@@ -1241,7 +1233,7 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     let _ = core_uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image::PROTOCOL_GUID,
-        private_image_data.image_info_ptr,
+        private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
     );
 
     let _ = core_uninstall_protocol_interface(
@@ -2354,7 +2346,6 @@ mod tests {
                 entry_point: dummy_entry,
                 started: false,
                 exit_data: None,
-                image_info_ptr: core::ptr::null_mut(),
                 image_device_path_ptr: core::ptr::null_mut(),
                 pe_info: pe_info.clone(),
                 relocation_data: Vec::new(),
