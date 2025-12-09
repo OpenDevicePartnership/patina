@@ -30,7 +30,6 @@ use r_efi::efi;
 
 use crate::{
     GCD,
-    allocator::{core_allocate_pages, core_free_pages},
     config_tables::debug_image_info_table::{
         EfiDebugImageInfoNormal, core_new_debug_image_info_entry, core_remove_debug_image_info_entry,
         initialize_debug_image_info_table,
@@ -73,33 +72,31 @@ extern "efiapi" fn unimplemented_entry_point(
 
 // define a stack structure for coroutine support.
 struct ImageStack {
-    stack: *const [u8],
-    len: usize,
-    allocated_pages: usize,
+    stack: Box<[u8], PageFree>,
 }
 
 impl ImageStack {
     fn new(size: usize) -> Result<Self, EfiError> {
-        let mut stack: efi::PhysicalAddress = 0;
         let len = align_up(size.max(MIN_STACK_SIZE), STACK_ALIGNMENT)?;
         // allocate an extra page for the stack guard page.
-        let allocated_pages = uefi_size_to_pages!(len) + 1;
+        let page_count = uefi_size_to_pages!(len) + 1;
 
-        // allocate the stack, newly allocated memory will have efi::MEMORY_XP already set, so we don't need to set it
-        // here
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, allocated_pages, &mut stack, None)?;
+        let stack = CoreMemoryManager.allocate_pages(page_count, AllocationOptions::default())?.into_boxed_slice();
 
+        let base_address = stack.as_ptr() as efi::PhysicalAddress;
         // attempt to set the memory space attributes for the stack guard page.
         // if we fail, we should still try to continue to boot
         // the stack grows downwards, so stack here is the guard page
-        let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
+        let mut attributes = match dxe_services::core_get_memory_space_descriptor(base_address) {
             Ok(descriptor) => descriptor.attributes,
             Err(_) => DEFAULT_CACHE_ATTR,
         };
 
         attributes = MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes);
 
-        if let Err(err) = dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes) {
+        if let Err(err) =
+            dxe_services::core_set_memory_space_attributes(base_address, UEFI_PAGE_SIZE as u64, attributes)
+        {
             log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
             // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
             // and need to be refactored to handle the page table
@@ -107,41 +104,27 @@ impl ImageStack {
         }
 
         // we have the guard page at the bottom, so we need to add a page to the stack pointer for the limit
-        Ok(ImageStack {
-            stack: core::ptr::slice_from_raw_parts_mut((stack + (UEFI_PAGE_SIZE as u64)) as *mut u8, len),
-            len,
-            allocated_pages,
-        })
+        Ok(ImageStack { stack })
     }
-}
 
-impl Drop for ImageStack {
-    fn drop(&mut self) {
-        if !self.stack.is_null() {
-            // we added a guard page, so we need to subtract a page from the stack pointer to free everything
-            let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
+    #[allow(unused)]
+    fn guard(&self) -> &[u8] {
+        &self.stack[..UEFI_PAGE_SIZE]
+    }
 
-            if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
-                log::error!(
-                    "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
-                    status,
-                    stack_addr,
-                    self.allocated_pages
-                );
-                debug_assert!(false);
-            }
-        }
+    fn body(&self) -> &[u8] {
+        &self.stack[UEFI_PAGE_SIZE..]
     }
 }
 
 unsafe impl Stack for ImageStack {
     fn base(&self) -> StackPointer {
         //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
-        self.limit().checked_add(self.len).expect("Stack base address overflow.")
+        self.limit().checked_add(self.body().len()).expect("Stack base address overflow.")
     }
     fn limit(&self) -> StackPointer {
         //stack grows downward, so "limit" is the lowest address, i.e. the ptr.
-        StackPointer::new(self.stack as *const u8 as usize)
+        StackPointer::new(self.body().as_ptr() as usize)
             .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
 }
