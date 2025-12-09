@@ -19,6 +19,9 @@ use crate::{
     error::AcpiError,
 };
 
+#[cfg(any(test, feature = "mockall"))]
+use mockall::automock;
+
 /// Represents an opaque reference to an installed ACPI table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TableKey(pub(crate) usize);
@@ -58,6 +61,7 @@ impl AcpiTableManager {
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
     pub unsafe fn install_acpi_table<T: 'static>(&self, table: T) -> Result<TableKey, AcpiError> {
+        // SAFETY: If the safety contract of this function is upheld, the created AcpiTable is valid.
         let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
         self.provider_service.install_acpi_table(acpi_table)
     }
@@ -112,10 +116,10 @@ impl AcpiTableManager {
     pub unsafe fn get_acpi_table_unchecked<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
-        // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
         // Cast the table to its expected type.
         let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
 
+        // SAFETY: The installed tables are stored in the provider and live at least as long as `self`.
         Ok(unsafe { &*raw_table_ptr })
     }
 
@@ -143,6 +147,7 @@ impl AcpiTableManager {
 
 /// The `AcpiTableManager` provides functionality for installing, uninstalling, and accessing ACPI tables.
 /// This struct serves as the API by which internal implementations can provide custom ACPI implementation.
+#[cfg_attr(any(test, feature = "mockall"), automock)]
 pub(crate) trait AcpiProvider {
     /// Installs an ACPI table and returns an associated key which can be used to get or uninstall the table later.
     fn install_acpi_table(&self, acpi_table: AcpiTable) -> Result<TableKey, AcpiError>;
@@ -158,4 +163,48 @@ pub(crate) trait AcpiProvider {
 
     /// Returns all currently installed tables in an iterable format.
     fn iter_tables(&self) -> Vec<AcpiTable>;
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use alloc::boxed::Box;
+    use patina::component::service::memory::StdMemoryManager;
+
+    use crate::acpi_table::AcpiFadt;
+
+    use super::*;
+
+    #[test]
+    fn test_get_table_wrong_type() {
+        // Allow Send and Sync for AcpiTable in this test context.
+        #[allow(non_local_definitions)]
+        // SAFETY: This is only for testing purposes.
+        unsafe impl Send for AcpiTable {}
+        #[allow(non_local_definitions)]
+        // SAFETY: This is only for testing purposes.
+        unsafe impl Sync for AcpiTable {}
+
+        // SAFETY: The constructed table is a valid ACPI table.
+        let table = unsafe {
+            AcpiTable::new(
+                AcpiFadt { header: AcpiTableHeader { length: 245, ..Default::default() }, ..Default::default() },
+                &Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap()
+        };
+
+        let mut mock_acpi_provider = MockAcpiProvider::new();
+        mock_acpi_provider.expect_get_acpi_table().returning(move |_table_key| Ok(table));
+        let provider = AcpiTableManager {
+            provider_service: Service::mock(Box::new(mock_acpi_provider)),
+            memory_manager: Service::mock(Box::new(StdMemoryManager::new())),
+        };
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct TestTable;
+
+        let result = provider.get_acpi_table::<TestTable>(TableKey(0));
+        assert_eq!(result, Err(AcpiError::InvalidTableType));
+    }
 }

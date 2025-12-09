@@ -29,6 +29,7 @@ pub struct AcpiTableProtocol {
     pub uninstall_table: AcpiTableUninstall,
 }
 
+// SAFETY: `AcpiTableProtocol` matches the C layout and behavior of the EFI_ACPI_TABLE_PROTOCOL.
 unsafe impl ProtocolInterface for AcpiTableProtocol {
     const PROTOCOL_GUID: efi::Guid =
         efi::Guid::from_fields(0xffe06bdd, 0x6107, 0x46a6, 0x7b, 0xb2, &[0x5a, 0x9c, 0x7e, 0xc5, 0x27, 0x5c]);
@@ -79,12 +80,14 @@ impl AcpiTableProtocol {
         }
 
         // The size of the allocated table buffer must be large enough to store the whole table.
+        // SAFETY: `acpi_table_buffer` is checked non-null and large enough to read an AcpiTableHeader.
         let tbl_length = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).length } as usize;
         if tbl_length != acpi_table_buffer_size {
             return efi::Status::INVALID_PARAMETER;
         }
 
         // The size of the allocated table buffer must be large enough to store the table, for known table types.
+        // SAFETY: `acpi_table_buffer` is checked non-null and large enough to read an AcpiTableHeader.
         let signature = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).signature };
         let min_size = signature::acpi_table_min_size(signature);
         if tbl_length < min_size {
@@ -93,6 +96,7 @@ impl AcpiTableProtocol {
 
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
+            // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
             let acpi_table =
                 unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, None, global_mm) };
 
@@ -121,6 +125,7 @@ impl AcpiTableProtocol {
                     return e.into();
                 }
 
+                // SAFETY: `table_key` has been checked non-null above.
                 let notify_result = ACPI_TABLE_INFO.notify_acpi_list(TableKey(unsafe { *table_key }));
                 if let Err(e) = notify_result {
                     log::info!("Failed to notify ACPI list: {:?}", e);
@@ -163,6 +168,7 @@ pub struct AcpiSdtProtocol {
     pub register_notify: AcpiTableRegisterNotify,
 }
 
+// SAFETY: `AcpiSdtProtocol` matches the C layout and behavior of the EFI_ACPI_SDT_PROTOCOL.
 unsafe impl ProtocolInterface for AcpiSdtProtocol {
     const PROTOCOL_GUID: efi::Guid =
         efi::Guid::from_fields(0xeb97088e, 0xcfdf, 0x49c6, 0xbe, 0x4b, &[0xd9, 0x06, 0xa5, 0xb2, 0x0e, 0x86]);
@@ -206,10 +212,13 @@ impl AcpiSdtProtocol {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
                 let (key_at_idx, table_at_idx) = table_info;
+                // SAFETY: We check that `version` is non-null above.
                 unsafe { *version = ACPI_VERSIONS_GTE_2 };
+                // SAFETY: We check that `table_key` is non-null above.
                 unsafe { *table_key = key_at_idx.0 };
 
                 let sdt_ptr = table_at_idx.as_mut_ptr();
+                // SAFETY: We check that `table` is non-null above.
                 unsafe { *table = sdt_ptr };
                 efi::Status::SUCCESS
             }
@@ -234,8 +243,11 @@ impl AcpiSdtProtocol {
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {
+            // SAFETY: The function points to an `AcpiNotifyFnExt`, which has the same signature as `AcpiNotifyFn`.
             Some(ptr) => unsafe { core::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },
-            None => return efi::Status::INVALID_PARAMETER,
+            None => {
+                return efi::Status::INVALID_PARAMETER;
+            }
         };
 
         match ACPI_TABLE_INFO.register_notify(register, rust_fn) {
@@ -246,3 +258,121 @@ impl AcpiSdtProtocol {
 }
 
 type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acpi_table_protocol_creation() {
+        let protocol = AcpiTableProtocol::new();
+        assert_eq!(protocol.install_table as usize, AcpiTableProtocol::install_acpi_table_ext as usize);
+        assert_eq!(protocol.uninstall_table as usize, AcpiTableProtocol::uninstall_acpi_table_ext as usize);
+    }
+
+    #[test]
+    fn test_install_acpi_table_ext_error_cases() {
+        // Test null buffer.
+        let status =
+            AcpiTableProtocol::install_acpi_table_ext(core::ptr::null(), core::ptr::null(), 0, core::ptr::null_mut());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test buffer too small.
+        let dummy_table: [u8; 2] = [0; 2];
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table key null.
+        let dummy_table: [u8; 8] = [0; 8];
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            core::ptr::null_mut(),
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table length mismatch.
+        let dummy_table: [u8; 8] = [100; 8]; // If this is the table buffer, the length is not 16.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            16, // Incorrect length,
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test table smaller than known minimum size.
+        let dummy_table: [u8; 8] = [b'F', b'A', b'C', b'S', 0, 0, 0, 15]; // FACS minimum size is larger than 15.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        // Test memory manager not initialized.
+        let dummy_table: [u8; 36] = [
+            // Signature "TEST"
+            b'T', b'E', b'S', b'T', // 0..3
+            // Length = 36 (0x24) little-endian
+            36, 0, 0, 0, // 4..7
+            // Revision
+            1, // 8
+            // Checksum (calculated so sum = 0)
+            0xE5, // 9
+            // OEM ID
+            b'O', b'E', b'M', b'I', b'D', b' ', // 10..15
+            // OEM Table ID "
+            b'O', b'T', b'A', b'B', b'L', b'E', b' ', b' ', // 16..23
+            // OEM Revision
+            1, 0, 0, 0, // 24..27
+            // Creator ID "CRID"
+            b'C', b'R', b'I', b'D', // 28..31
+            // Creator Revision
+            1, 0, 0, 0, // 32..35
+        ];
+        // This should pass other table checks.
+        let mut table_key: usize = 0;
+        let status = AcpiTableProtocol::install_acpi_table_ext(
+            &AcpiTableProtocol::new(),
+            dummy_table.as_ptr() as *const c_void,
+            dummy_table.len(),
+            &mut table_key as *mut usize,
+        );
+        assert_eq!(status, efi::Status::NOT_STARTED);
+    }
+
+    #[test]
+    fn test_acpi_sdt_init() {
+        let protocol = AcpiSdtProtocol::new();
+        assert_eq!(protocol.version, ACPI_VERSIONS_GTE_2);
+        assert_eq!(protocol.get_table as usize, AcpiSdtProtocol::get_acpi_table_ext as usize);
+        assert_eq!(protocol.register_notify as usize, AcpiSdtProtocol::register_notify_ext as usize);
+    }
+
+    #[test]
+    fn test_get_table_ext_error_cases() {
+        // Test null output parameters.
+        let status =
+            AcpiSdtProtocol::get_acpi_table_ext(0, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_register_notify_ext_error_cases() {
+        // Test null notify function.
+        let status = AcpiSdtProtocol::register_notify_ext(true, core::ptr::null());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+}

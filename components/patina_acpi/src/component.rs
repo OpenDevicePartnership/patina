@@ -1,7 +1,7 @@
 //! Component that provides initialization of ACPI functionality in the core.
 
 use crate::{
-    acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata},
+    acpi_table::{AcpiTableHeader, AcpiXsdtMetadata},
     alloc::boxed::Box,
     hob::AcpiMemoryHob,
     service::{AcpiProvider, AcpiTableManager},
@@ -9,12 +9,14 @@ use crate::{
 
 use core::mem;
 
-use alloc::vec::Vec;
-use patina::boot_services::{BootServices, StandardBootServices};
+use patina::{
+    boot_services::{BootServices, StandardBootServices},
+    component::component,
+    uefi_pages_to_size,
+};
 
 use patina::{
     component::{
-        IntoComponent,
         hob::Hob,
         params::Commands,
         service::{Service, memory::MemoryManager},
@@ -33,7 +35,7 @@ use crate::{
 };
 
 /// Initializes the ACPI provider service.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct AcpiProviderManager {
     /// Platform vendor.
     pub oem_id: [u8; 6],
@@ -47,6 +49,7 @@ pub struct AcpiProviderManager {
     pub creator_revision: u32,
 }
 
+#[component]
 impl AcpiProviderManager {
     /// Initializes a new `AcpiProviderManager`.
     pub fn new(
@@ -59,6 +62,9 @@ impl AcpiProviderManager {
         Self { oem_id, oem_table_id, oem_revision, creator_id, creator_revision }
     }
 
+    /// Initializes the ACPI system.
+    /// Ignore coverage due to the use of `StandardBootServices`.
+    #[coverage(off)]
     fn entry_point(
         self,
         boot_services: StandardBootServices,
@@ -68,17 +74,26 @@ impl AcpiProviderManager {
     ) -> patina::error::Result<()> {
         ACPI_TABLE_INFO.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
-        // Both XSDT and RSDP are always in reclaim memory.
-        let allocator = ACPI_TABLE_INFO
+        // Create and set the XSDT with an initial number of entries.
+        let xsdt_size = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
+
+        // Allocate pages directly instead of using Vec
+        let xsdt_allocation = ACPI_TABLE_INFO
             .memory_manager
             .get()
             .ok_or(EfiError::NotStarted)?
-            .get_allocator(EfiMemoryType::ACPIReclaimMemory)
+            .allocate_pages(
+                uefi_pages_to_size!(xsdt_size),
+                patina::component::service::memory::AllocationOptions::new()
+                    .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
+            )
             .map_err(|_e| EfiError::OutOfResources)?;
 
-        // Create and set the XSDT with an initial number of entries.
-        let xsdt_capacity = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
-        let mut xsdt_allocated_bytes = Vec::with_capacity_in(xsdt_capacity, allocator);
+        // Get the raw pointer from the allocation
+        let xsdt_ptr = xsdt_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)?;
+        let xsdt_addr = xsdt_ptr as u64;
+
+        // Create XSDT header
         let xsdt_info = AcpiXsdt {
             header: AcpiTableHeader {
                 signature: signature::XSDT,
@@ -92,20 +107,22 @@ impl AcpiProviderManager {
                 creator_revision: self.creator_revision,
             },
         };
-        // Fill in XSDT data.
-        let header_bytes = xsdt_info.header.hdr_to_bytes();
-        xsdt_allocated_bytes.extend(header_bytes);
-        // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(xsdt_capacity - ACPI_HEADER_LEN));
 
-        // // Get pointer to the XSDT in memory for RSDP and metadata.
-        let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
-        let xsdt_addr = xsdt_ptr as u64;
-        let xsdt_metadata = AcpiXsdtMetadata {
-            n_entries: 0,
-            max_capacity: MAX_INITIAL_ENTRIES,
-            slice: xsdt_allocated_bytes.into_boxed_slice(),
-        };
+        // Write the XSDT header to the allocated memory.
+        let header_bytes = xsdt_info.header.hdr_to_bytes();
+        // SAFETY: `xsdt_ptr` is valid for writes of size `xsdt_size`.
+        unsafe {
+            core::ptr::copy_nonoverlapping(header_bytes.as_ptr(), xsdt_ptr, ACPI_HEADER_LEN);
+            // Zero out the rest of the allocated space.
+            core::ptr::write_bytes(xsdt_ptr.add(ACPI_HEADER_LEN), 0, xsdt_size - ACPI_HEADER_LEN);
+        }
+
+        // Convert the raw pointer into a Box<[u8], &'static dyn Allocator>.
+        // We need to create a slice from the raw pointer and then box it with the allocator.
+        // SAFETY: The XSDT was allocated above and should be valid for `xsdt_size` bytes.
+        let xsdt_slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, xsdt_size) };
+
+        let xsdt_metadata = AcpiXsdtMetadata { n_entries: 0, max_capacity: MAX_INITIAL_ENTRIES, slice: xsdt_slice };
         ACPI_TABLE_INFO.set_xsdt(xsdt_metadata);
 
         // Set up initial values for the RSDP, including XSDT address.
@@ -122,11 +139,32 @@ impl AcpiProviderManager {
             reserved: [ACPI_RESERVED_BYTE; 3],
         };
 
-        // Allocate memory for the RSDP.
-        let rsdp_allocated = unsafe {
-            AcpiTable::new(rsdp_data, ACPI_TABLE_INFO.memory_manager.get().ok_or(EfiError::NotStarted)?)
-                .map_err(|_e| EfiError::InvalidParameter)?
-        };
+        // Allocate memory for the RSDP using allocate_pages
+        let rsdp_size = mem::size_of::<AcpiRsdp>();
+        let rsdp_allocation = ACPI_TABLE_INFO
+            .memory_manager
+            .get()
+            .ok_or(EfiError::NotStarted)?
+            .allocate_pages(
+                uefi_pages_to_size!(rsdp_size),
+                patina::component::service::memory::AllocationOptions::new()
+                    .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
+            )
+            .map_err(|_e| EfiError::OutOfResources)?;
+
+        // Get the raw pointer from the allocation
+        let rsdp_ptr = rsdp_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)?;
+
+        // Write the RSDP data to the allocated memory
+        // SAFETY: `rsdp_ptr` is valid for writes of size `rsdp_size`; the RSDP has a well-defined layout.
+        unsafe {
+            core::ptr::write(rsdp_ptr, rsdp_data);
+        }
+
+        // Convert the raw pointer into a Box<AcpiRsdp, &'static dyn Allocator>.
+        // SAFETY: The allocated memory is valid for the lifetime of the ACPI_TABLE_INFO.
+        let rsdp_allocated = unsafe { Box::leak(Box::from_raw(rsdp_ptr)) };
+
         ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);
 
         // Checksum the root tables after setting up.
@@ -143,15 +181,18 @@ impl AcpiProviderManager {
 }
 
 /// Produces EDKII ACPI protocols.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct AcpiSystemProtocolManager {}
 
+#[component]
 impl AcpiSystemProtocolManager {
     /// Initializes a new `AcpiSystemProtocolManager`.
     pub fn new() -> Self {
         Self {}
     }
 
+    /// Initializes the ACPI protocols.
+    /// Ignore coverage due to the use of `StandardBootServices`.
     fn entry_point(self, boot_services: StandardBootServices) -> patina::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
@@ -161,9 +202,10 @@ impl AcpiSystemProtocolManager {
 
 /// Initializes the ACPI table manager service.
 /// This services wraps `AcpiProvider` and allows for generic retrieval of tables.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct GenericAcpiManager {}
 
+#[component]
 impl GenericAcpiManager {
     /// Initializes a new `GenericAcpiManager`.
     pub fn new() -> Self {
