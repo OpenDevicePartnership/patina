@@ -90,7 +90,7 @@ impl AcpiProviderManager {
             .map_err(|_e| EfiError::OutOfResources)?;
 
         // Get the raw pointer from the allocation
-        let xsdt_ptr = xsdt_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)? as *mut u8;
+        let xsdt_ptr = xsdt_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)?;
         let xsdt_addr = xsdt_ptr as u64;
 
         // Create XSDT header
@@ -108,16 +108,18 @@ impl AcpiProviderManager {
             },
         };
 
-        // Write the XSDT header to the allocated memory
+        // Write the XSDT header to the allocated memory.
         let header_bytes = xsdt_info.header.hdr_to_bytes();
+        // SAFETY: `xsdt_ptr` is valid for writes of size `xsdt_size`.
         unsafe {
             core::ptr::copy_nonoverlapping(header_bytes.as_ptr(), xsdt_ptr, ACPI_HEADER_LEN);
-            // Zero out the rest of the allocated space
+            // Zero out the rest of the allocated space.
             core::ptr::write_bytes(xsdt_ptr.add(ACPI_HEADER_LEN), 0, xsdt_size - ACPI_HEADER_LEN);
         }
 
-        // Convert the raw pointer into a Box<[u8], &'static dyn Allocator>
-        // We need to create a slice from the raw pointer and then box it with the allocator
+        // Convert the raw pointer into a Box<[u8], &'static dyn Allocator>.
+        // We need to create a slice from the raw pointer and then box it with the allocator.
+        // SAFETY: The XSDT was allocated above and should be valid for `xsdt_size` bytes.
         let xsdt_slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(xsdt_ptr, xsdt_size) };
 
         let xsdt_metadata = AcpiXsdtMetadata { n_entries: 0, max_capacity: MAX_INITIAL_ENTRIES, slice: xsdt_slice };
@@ -139,27 +141,28 @@ impl AcpiProviderManager {
 
         // Allocate memory for the RSDP using allocate_pages
         let rsdp_size = mem::size_of::<AcpiRsdp>();
-        let rsdp_pages = (rsdp_size + 0xFFF) / 0x1000; // Round up to pages (will be 1 page)
         let rsdp_allocation = ACPI_TABLE_INFO
             .memory_manager
             .get()
             .ok_or(EfiError::NotStarted)?
             .allocate_pages(
-                rsdp_pages,
+                uefi_pages_to_size!(rsdp_size),
                 patina::component::service::memory::AllocationOptions::new()
                     .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
             )
             .map_err(|_e| EfiError::OutOfResources)?;
 
         // Get the raw pointer from the allocation
-        let rsdp_ptr = rsdp_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)? as *mut AcpiRsdp;
+        let rsdp_ptr = rsdp_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)?;
 
         // Write the RSDP data to the allocated memory
+        // SAFETY: `rsdp_ptr` is valid for writes of size `rsdp_size`; the RSDP has a well-defined layout.
         unsafe {
             core::ptr::write(rsdp_ptr, rsdp_data);
         }
 
-        // Convert the raw pointer into a Box<AcpiRsdp, &'static dyn Allocator>
+        // Convert the raw pointer into a Box<AcpiRsdp, &'static dyn Allocator>.
+        // SAFETY: The allocated memory is valid for the lifetime of the ACPI_TABLE_INFO.
         let rsdp_allocated = unsafe { Box::leak(Box::from_raw(rsdp_ptr)) };
 
         ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);

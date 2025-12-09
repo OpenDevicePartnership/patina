@@ -456,6 +456,7 @@ impl AcpiTable {
     /// ## SAFETY
     /// `self.length` must accurately reflect the allocated size of the table.
     pub unsafe fn as_bytes(&self) -> &[u8] {
+        // SAFETY: If the caller preconditions are met, the length is accurate.
         unsafe { slice::from_raw_parts(self.table.as_ptr() as *const u8, self.header().length as usize) }
     }
 
@@ -465,12 +466,14 @@ impl AcpiTable {
     /// ## SAFETY
     /// `self.length` must accurately reflect the allocated size of the table.
     pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: If the caller preconditions are met, the length is accurate.
         unsafe { slice::from_raw_parts_mut(self.table.as_ptr() as *mut u8, self.header().length as usize) }
     }
 
     /// Updates the checksum for an ACPI table.
     /// According to the ACPI spec 2.0+, all bytes of a table must sum to zero modulo 256.
     pub fn update_checksum(&mut self, offset: usize) -> Result<(), AcpiError> {
+        // SAFETY: The construction of `AcpiTable` maintains that `self.length` is the size in memory.
         let bytes = unsafe { self.as_bytes_mut() };
         let len = bytes.len();
 
@@ -555,10 +558,12 @@ mod tests {
         };
 
         // Set up the test table.
+        // SAFETY: `test_table` has the correct format by definition (above).
         let table_union: Table<TestTable> = unsafe { Table::new(test_table).unwrap() };
         // Box it on the heap (uses the global allocator).
         let boxed: Box<Table<TestTable>> = Box::new(table_union);
         let raw_ptr: *mut Table<TestTable> = Box::into_raw(boxed);
+        // SAFETY: This is set up to be non-null by the test.
         let nn = unsafe { NonNull::new_unchecked(raw_ptr as *mut Table) };
 
         // Wrap in AcpiTable.
@@ -569,6 +574,7 @@ mod tests {
         assert!(acpi_table.update_checksum(offset).is_ok());
 
         // Pull out the bytes and verify the checksum.
+        // SAFETY: The table length is correctly specified in the test header.
         let bytes: &[u8] = unsafe { acpi_table.as_bytes() };
         // Total sum must be zero mod 256.
         let total: u8 = bytes.iter().copied().fold(0u8, |acc, b| acc.wrapping_add(b));
@@ -614,9 +620,11 @@ mod tests {
         assert_eq!(header.oem_revision, 0xDEADBEEF);
         assert_eq!(header.creator_id, 0xCAFEBABE);
         assert_eq!(header.creator_revision, 0xFEEDFACE);
+        // SAFETY: The table type `TestTable` is constructed by the test.
         assert_eq!(unsafe { acpi_table.as_ref::<TestTable>().body }, [42, 43, 44]);
 
         // Check that the body bytes are correct.
+        // SAFETY: The length and table are constructed by the test.
         let bytes = unsafe { acpi_table.as_bytes() };
         let body_offset = mem::size_of::<AcpiTableHeader>();
         assert_eq!(&bytes[body_offset..body_offset + 3], &[42, 43, 44]);

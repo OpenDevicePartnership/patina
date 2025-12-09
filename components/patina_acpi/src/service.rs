@@ -61,6 +61,7 @@ impl AcpiTableManager {
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
     pub unsafe fn install_acpi_table<T: 'static>(&self, table: T) -> Result<TableKey, AcpiError> {
+        // SAFETY: If the safety contract of this function is upheld, the created AcpiTable is valid.
         let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
         self.provider_service.install_acpi_table(acpi_table)
     }
@@ -115,10 +116,10 @@ impl AcpiTableManager {
     pub unsafe fn get_acpi_table_unchecked<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
-        // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
         // Cast the table to its expected type.
         let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
 
+        // SAFETY: The installed tables are stored in the provider and live at least as long as `self`.
         Ok(unsafe { &*raw_table_ptr })
     }
 
@@ -170,18 +171,24 @@ mod tests {
     use alloc::boxed::Box;
     use patina::component::service::memory::StdMemoryManager;
 
-    use crate::acpi_table::{AcpiFacs, AcpiFadt};
+    use crate::acpi_table::AcpiFadt;
 
     use super::*;
 
     #[test]
     fn test_get_table_wrong_type() {
+        // Allow Send and Sync for AcpiTable in this test context.
+        #[allow(non_local_definitions)]
+        // SAFETY: This is only for testing purposes.
         unsafe impl Send for AcpiTable {}
+        #[allow(non_local_definitions)]
+        // SAFETY: This is only for testing purposes.
         unsafe impl Sync for AcpiTable {}
 
+        // SAFETY: The constructed table is a valid ACPI table.
         let table = unsafe {
             AcpiTable::new(
-                AcpiFadt { header: AcpiTableHeader { length: 200, ..Default::default() }, ..Default::default() },
+                AcpiFadt { header: AcpiTableHeader { length: 245, ..Default::default() }, ..Default::default() },
                 &Service::mock(Box::new(StdMemoryManager::new())),
             )
             .unwrap()
