@@ -101,3 +101,18 @@ impl From<AcpiError> for efi::Status {
         }
     }
 }
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_acpi_error_to_efi_status() {
+        // Test a subset of ACPI errors.
+        assert_eq!(efi::Status::from(AcpiError::AllocationFailed), efi::Status::OUT_OF_RESOURCES);
+        assert_eq!(efi::Status::from(AcpiError::InvalidSignature), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::FadtAlreadyInstalled), efi::Status::ALREADY_STARTED);
+        assert_eq!(efi::Status::from(AcpiError::NullTablePtr), efi::Status::INVALID_PARAMETER);
+    }
+}

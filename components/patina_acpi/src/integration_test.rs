@@ -27,6 +27,7 @@ use crate::{
     },
 };
 
+#[coverage(off)]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     // Install a dummy FADT.
@@ -35,10 +36,12 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
         AcpiTableHeader { signature: signature::FADT, length: mem::size_of::<AcpiFadt>() as u32, ..Default::default() };
     let dummy_fadt = AcpiFadt { header: dummy_header, ..Default::default() };
 
+    // SAFETY: The constructed table is a valid ACPI table.
     let table_key = unsafe { table_manager.install_acpi_table(dummy_fadt) }.expect("Should install dummy FADT.");
 
     // Install a FACS table (special case — not iterated over).
     let facs = AcpiFacs { signature: signature::FACS, length: mem::size_of::<AcpiFacs>() as u32, ..Default::default() };
+    // SAFETY: The constructed table is a valid ACPI table.
     assert!(unsafe { table_manager.install_acpi_table(facs) }.is_ok(), "Should install FACS table.");
 
     // Verify only the FADT is in the iterator.
@@ -60,13 +63,16 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     Ok(())
 }
 
+#[coverage(off)]
 #[patina_test]
 fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     // Hack that is necessary since all tests share a global `ACPI_TABLE_INFO`.
     ACPI_TABLE_INFO.acpi_tables.write().clear();
 
+    // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
+    // SAFETY: there is only one reference to the `AcpiSdtProtocol` during this test.
     let sdt_protocol = unsafe { bs.locate_protocol::<AcpiSdtProtocol>(None) }.expect("Locate protocol should succeed.");
 
     let mut table_key_buf: usize = 0;
@@ -101,12 +107,14 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
         &mut get_table_key,
     );
     assert_eq!(get_result, efi::Status::SUCCESS, "Get table should succeed");
+    // SAFETY: `table_buf` is valid and directly constructed from the dummy FADT.
     let retrieved_table = unsafe { &*table_buf };
     assert_eq!(retrieved_table.signature, signature::FADT, "Signature should match installed FADT");
     assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
     assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
 
     // We should be able to access the normal FADT fields.
+    // SAFETY: We know that the table_buf points to an AcpiFadt (constructed above).
     #[allow(invalid_reference_casting)]
     let retrieved_fadt = unsafe { &*(table_buf as *const AcpiFadt) };
     // We haven't installed a FACS, so this should be zero, but still accessible.
