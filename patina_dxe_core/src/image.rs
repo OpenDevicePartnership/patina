@@ -1304,6 +1304,14 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         private_image_data.image_device_path_ptr,
     );
 
+    if let Some(ptr) = private_image_data.hii_resource_section {
+        let _ = core_uninstall_protocol_interface(
+            image_handle,
+            efi::protocols::hii_package_list::PROTOCOL_GUID,
+            ptr as *mut c_void,
+        );
+    }
+
     // Remove runtime image if it is one.
     if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
         && let Err(err) = runtime::remove_runtime_image(image_handle)
