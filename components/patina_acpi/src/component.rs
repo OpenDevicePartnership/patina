@@ -12,7 +12,7 @@ use core::mem;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::component,
-    uefi_pages_to_size,
+    uefi_size_to_pages,
 };
 
 use patina::{
@@ -83,7 +83,7 @@ impl AcpiProviderManager {
             .get()
             .ok_or(EfiError::NotStarted)?
             .allocate_pages(
-                uefi_pages_to_size!(xsdt_size),
+                uefi_size_to_pages!(xsdt_size),
                 patina::component::service::memory::AllocationOptions::new()
                     .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
             )
@@ -146,7 +146,7 @@ impl AcpiProviderManager {
             .get()
             .ok_or(EfiError::NotStarted)?
             .allocate_pages(
-                uefi_pages_to_size!(rsdp_size),
+                uefi_size_to_pages!(rsdp_size),
                 patina::component::service::memory::AllocationOptions::new()
                     .with_memory_type(EfiMemoryType::ACPIReclaimMemory),
             )
