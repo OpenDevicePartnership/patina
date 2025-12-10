@@ -61,6 +61,13 @@ pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
+// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from uefi_corosensei) is never larger than
+// UEFI_PAGE_SIZE. This can cause issues with the stack allocation not being aligned properly. This was chosen rather
+// than updating the `AllocationOptions` alignment configuration being set to `STACK_ALIGNMENT` because we cannot
+// guarantee that the alignment will be a multiple of UEFI_PAGE_SIZE in all cases. We would rather hit a compile time
+// error then runtime error where no image is executed because we fail to allocate the stack.
+const _: () = assert!(STACK_ALIGNMENT < UEFI_PAGE_SIZE);
+
 // dummy function used to initialize PrivateImageData.entry_point.
 #[coverage(off)]
 extern "efiapi" fn unimplemented_entry_point(
@@ -264,7 +271,7 @@ impl PrivateImageData {
         let image_buffer = self.image_buffer.as_mut().ok_or(EfiError::LoadError)?;
         let physical_addr = self.image_info.image_base as usize;
 
-        // Update relocation data so it can be execution from it's current location in memory
+        // Update relocation data so if we need to relocate again later, we have the necessary info.
         self.relocation_data =
             pecoff::relocate_image(&self.pe_info, physical_addr, image_buffer, &self.relocation_data).map_err(
                 |err| {
