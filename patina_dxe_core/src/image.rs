@@ -284,6 +284,89 @@ impl PrivateImageData {
         Ok(())
     }
 
+    /// Installs all necessary protocols for this image, returning the new image handle.
+    fn install(&self) -> Result<efi::Handle, EfiError> {
+        let handle = core_install_protocol_interface(
+            None,
+            efi::protocols::loaded_image::PROTOCOL_GUID,
+            self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
+        )?;
+
+        core_install_protocol_interface(
+            Some(handle),
+            efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
+            self.image_device_path_ptr(),
+        )?;
+
+        if let Some(hii_section) = &self.hii_resource_section {
+            core_install_protocol_interface(
+                Some(handle),
+                efi::protocols::hii_package_list::PROTOCOL_GUID,
+                hii_section.as_ptr() as *mut c_void,
+            )?;
+        }
+
+        if self.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+            runtime::add_runtime_image(
+                self.image_info.image_base,
+                self.image_info.image_size,
+                &self.relocation_data,
+                handle,
+            )?;
+        }
+
+        Ok(handle)
+    }
+
+    /// Uninstalls all protocols associated with this image from the specified handle.
+    ///
+    /// Returns an Err if any uninstall operation fails.
+    fn uninstall(&self, handle: efi::Handle) -> Result<(), EfiError> {
+        let mut result = Ok(());
+
+        if let Err(err) = core_uninstall_protocol_interface(
+            handle,
+            efi::protocols::loaded_image::PROTOCOL_GUID,
+            self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
+        ) && err != EfiError::NotFound
+        {
+            log::warn!("Failed to uninstall loaded image protocol for handle {handle:?}: {err:?}");
+            result = Err(err);
+        }
+
+        if let Err(err) = core_uninstall_protocol_interface(
+            handle,
+            efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
+            self.image_device_path_ptr(),
+        ) && err != EfiError::NotFound
+        {
+            log::warn!("Failed to uninstall loaded image device path protocol for handle {handle:?}: {err:?}");
+            result = Err(err);
+        }
+
+        if let Some(hii_section) = &self.hii_resource_section
+            && let Err(err) = core_uninstall_protocol_interface(
+                handle,
+                efi::protocols::hii_package_list::PROTOCOL_GUID,
+                hii_section.as_ptr() as *mut c_void,
+            )
+            && err != EfiError::NotFound
+        {
+            log::warn!("Failed to uninstall HII package list protocol for handle {handle:?}: {err:?}");
+            result = Err(err);
+        }
+
+        if self.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
+            && let Err(err) = runtime::remove_runtime_image(handle)
+            && err != EfiError::NotFound
+        {
+            log::warn!("Failed to remove runtime image for handle {handle:?}: {err:?}");
+            result = Err(err);
+        }
+
+        result
+    }
+
     fn image_device_path_ptr(&self) -> *mut c_void {
         self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
     }
@@ -912,6 +995,16 @@ pub fn core_load_image(
     let image_info_ptr = private_info.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
 
+    // Set the loaded_image_device_path to be installed.
+    if !file_path.is_null() {
+        private_info.image_device_path = Some(
+            copy_device_path_to_boxed_slice(file_path)
+                .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
+        );
+    }
+
+    let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
+
     log::info!(
         "Loaded image at {:#x?} Size={:#x?} EntryPoint={:#x?} {:}",
         private_info.image_info.image_base,
@@ -919,11 +1012,6 @@ pub fn core_load_image(
         private_info.entry_point as usize,
         private_info.pe_info.filename_or("<no PDB>"),
     );
-
-    // install the loaded_image protocol for this freshly loaded image on a new
-    // handle.
-    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
-        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {err:?}"))?;
 
     // register the loaded image with the debug image info configuration table. This is done before the debugger is
     // notified so that the debugger can access the loaded image protocol before that point, e.g. so
@@ -940,42 +1028,6 @@ pub fn core_load_image(
         private_info.image_info.image_base as usize,
         private_info.image_info.image_size as usize,
     );
-
-    // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
-    // permanent copy on the heap.
-    if !file_path.is_null() {
-        private_info.image_device_path = Some(
-            copy_device_path_to_boxed_slice(file_path)
-                .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
-        );
-    }
-
-    // Register runtime images with the runtime module.
-    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-        runtime::add_runtime_image(
-            private_info.image_info.image_base,
-            private_info.image_info.image_size,
-            &private_info.relocation_data,
-            handle,
-        )
-        .inspect_err(|err| log::error!("failed to load image: register runtime image failed: {err:?}"))?;
-    }
-
-    core_install_protocol_interface(
-        Some(handle),
-        efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-        private_info.image_device_path_ptr(),
-    )
-    .inspect_err(|err| log::error!("failed to load image: install device path failed: {err:?}"))?;
-
-    if let Some(res_section) = &private_info.hii_resource_section {
-        core_install_protocol_interface(
-            Some(handle),
-            efi::protocols::hii_package_list::PROTOCOL_GUID,
-            res_section.as_ptr() as *mut c_void,
-        )
-        .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {err:?}"))?;
-    }
 
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
@@ -1227,45 +1279,11 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // it will get dropped when it goes out of scope at the end of the function and the pages allocated for it
     // and the image_info box along with it.
     let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
-    // remove the image and device path protocols from the image handle.
-    if let Err(err) = core_uninstall_protocol_interface(
-        image_handle,
-        efi::protocols::loaded_image::PROTOCOL_GUID,
-        private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
-    ) && err != EfiError::NotFound
-    {
-        log::warn!("Failed to uninstall loaded image protocol for handle {image_handle:?}: {err:?}");
-        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
-        return Ok(());
-    }
 
-    if let Err(err) = core_uninstall_protocol_interface(
-        image_handle,
-        efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-        private_image_data.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void),
-    ) && err != EfiError::NotFound
-    {
-        log::warn!("Failed to uninstall loaded image device path for handle {image_handle:?}: {err:?}");
+    // If something fails to uninstall, then re-insert the private image data back into the map so the protocols
+    // are not deallocated.
+    if private_image_data.uninstall(image_handle).is_err() {
         PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
-        return Ok(());
-    }
-
-    if let Some(res_section) = &private_image_data.hii_resource_section {
-        let _ = core_uninstall_protocol_interface(
-            image_handle,
-            efi::protocols::hii_package_list::PROTOCOL_GUID,
-            res_section.as_ptr() as *mut c_void,
-        );
-    }
-
-    // Remove runtime image if it is one.
-    if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
-        && let Err(err) = runtime::remove_runtime_image(image_handle)
-        && err != EfiError::NotFound
-    {
-        log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
-        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
-        return Ok(());
     }
 
     Ok(())
