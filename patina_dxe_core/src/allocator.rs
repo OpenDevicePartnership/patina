@@ -2000,8 +2000,8 @@ mod tests {
     #[test]
     fn free_pages_error_scenarios_should_be_handled_properly() {
         with_locked_state(0x1000000, || {
-            assert_eq!(free_pages(0x12345000, usize::MAX & !0xFFF), efi::Status::INVALID_PARAMETER);
-            assert_eq!(free_pages(u64::MAX & !0xFFF, 0x10), efi::Status::INVALID_PARAMETER);
+            assert_eq!(free_pages(0x12345000, !0xFFF), efi::Status::INVALID_PARAMETER);
+            assert_eq!(free_pages(!0xFFF, 0x10), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(0x12345678, 1), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(0x12345000, 1), efi::Status::NOT_FOUND);
         });

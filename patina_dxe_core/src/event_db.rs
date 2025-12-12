@@ -223,8 +223,8 @@ unsafe impl Send for crate::event_db::Event {}
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut notify_func = 0;
-        if self.notify_function.is_some() {
-            notify_func = self.notify_function.unwrap() as usize;
+        if let Some(func) = self.notify_function {
+            notify_func = func as *const () as usize;
         }
 
         f.debug_struct("Event")
@@ -875,7 +875,10 @@ mod tests {
             assert_eq!(events.get(&index).unwrap().event_type, EventType::TimerNotify);
             assert_eq!(events.get(&index).unwrap().event_type as u32, efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL);
             assert_eq!(events.get(&index).unwrap().notify_tpl, efi::TPL_NOTIFY);
-            assert_eq!(events.get(&index).unwrap().notify_function.unwrap() as usize, test_notify_function as usize);
+            assert_eq!(
+                events.get(&index).unwrap().notify_function.unwrap() as usize,
+                test_notify_function as *const () as usize
+            );
             assert_eq!(events.get(&index).unwrap().notify_context, None);
             assert_eq!(events.get(&index).unwrap().event_group, None);
         });
@@ -1700,7 +1703,10 @@ mod tests {
             assert!(notification_data.is_ok());
             let event_notification = notification_data.unwrap();
             assert_eq!(event_notification.notify_tpl, efi::TPL_NOTIFY);
-            assert_eq!(event_notification.notify_function.unwrap() as usize, test_notify_function as usize);
+            assert_eq!(
+                event_notification.notify_function.unwrap() as usize,
+                test_notify_function as *const () as usize
+            );
             assert_eq!(event_notification.notify_context.unwrap(), test_context);
 
             let event = SPIN_LOCKED_EVENT_DB
@@ -1717,7 +1723,10 @@ mod tests {
             assert!(notification_data.is_ok());
             let event_notification = notification_data.unwrap();
             assert_eq!(event_notification.notify_tpl, efi::TPL_NOTIFY);
-            assert_eq!(event_notification.notify_function.unwrap() as usize, test_notify_function as usize);
+            assert_eq!(
+                event_notification.notify_function.unwrap() as usize,
+                test_notify_function as *const () as usize
+            );
             assert!(event_notification.notify_context.is_none());
 
             let event = SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, None, None, None).unwrap();

@@ -235,8 +235,7 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
     };
 
     // Generate serialize_strings helper
-    let serialize_strings = if record.string_pool_field.is_some() {
-        let pool_field = record.string_pool_field.as_ref().unwrap();
+    let serialize_strings = if let Some(pool_field) = record.string_pool_field.as_ref() {
         quote! {
             let mut string_bytes = alloc::vec::Vec::new();
             if self.#pool_field.is_empty() {

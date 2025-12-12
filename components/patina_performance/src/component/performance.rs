@@ -547,7 +547,7 @@ mod tests {
                         Rc<_>,
                         MockRuntimeServices,
                         MockFirmwareBasicBootPerfTable,
-                    > as usize,
+                    > as *const () as usize,
                     notify_function.unwrap() as usize
                 );
                 assert_eq!(&EVENT_GROUP_END_OF_DXE, event_group);
@@ -621,7 +621,7 @@ mod tests {
             .withf_st(|_, _, f, _, group| {
                 (f.unwrap() as usize)
                     == fetch_and_add_mm_performance_records::<Rc<_>, MockBootServices, MockFirmwareBasicBootPerfTable>
-                        as usize
+                        as * const () as usize
                     && group == &EVENT_GROUP_READY_TO_BOOT
             })
             .return_const_st(Ok(TEST_EVENT_HANDLE_2));

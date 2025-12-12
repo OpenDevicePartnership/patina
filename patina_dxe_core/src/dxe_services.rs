@@ -2286,9 +2286,12 @@ mod tests {
             assert_eq!(dxe_tbl.header.crc32, crc, "DXE Services table CRC32 should be valid");
 
             // Spot-check a few function pointers are correctly wired
-            assert_eq!(dxe_tbl.add_memory_space as usize, add_memory_space as usize);
-            assert_eq!(dxe_tbl.dispatch as usize, MockCore::dispatch_efiapi as usize);
-            assert_eq!(dxe_tbl.process_firmware_volume as usize, MockCore::process_firmware_volume_efiapi as usize);
+            assert_eq!(dxe_tbl.add_memory_space as usize, add_memory_space as *const () as usize);
+            assert_eq!(dxe_tbl.dispatch as usize, MockCore::dispatch_efiapi as *const () as usize);
+            assert_eq!(
+                dxe_tbl.process_firmware_volume as usize,
+                MockCore::process_firmware_volume_efiapi as *const () as usize
+            );
         });
     }
 }
