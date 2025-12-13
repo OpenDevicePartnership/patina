@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
-use core::{convert::TryInto, ffi::c_void, mem::transmute, slice, slice::from_raw_parts};
+use core::{convert::TryInto, ffi::c_void, mem::transmute, ptr::null_mut, slice, slice::from_raw_parts};
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
@@ -927,6 +927,16 @@ fn authenticate_image(
     EfiError::status_to_result(security_status)
 }
 
+/// The status of the image attempting to be loaded.
+pub(super) enum ImageStatus {
+    /// The image was successfully loaded
+    Loaded(efi::Handle),
+    /// The image was successfully loaded, but failed authentication
+    SecurityViolation(efi::Handle),
+    /// The image was not loaded due to platform policy
+    AccessDenied,
+}
+
 /// Loads the image specified by the device path (not yet supported) or slice.
 /// * parent_image_handle - the handle of the image that is loading this one.
 /// * file_path - optional device path describing where to load the image from.
@@ -934,12 +944,16 @@ fn authenticate_image(
 ///
 /// One of `file_path` or `image` must be specified.
 /// returns the image handle of the freshly loaded image.
+///
+/// Returns Err(EfiError) if there was an unexpected error when loading the image.
+/// Returns Ok(ImageStatus) if code executed successfully. The enum value determines if the image was loaded
+///   successfully or not.
 pub fn core_load_image(
     boot_policy: bool,
     parent_image_handle: efi::Handle,
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
-) -> Result<(efi::Handle, Result<(), EfiError>), EfiError> {
+) -> Result<ImageStatus, EfiError> {
     perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
 
     if image.is_none() && file_path.is_null() {
@@ -977,6 +991,18 @@ pub fn core_load_image(
 
     // authenticate the image
     let security_status = authenticate_image(file_path, &image_to_load, boot_policy, from_fv, authentication_status);
+
+    // If a security violation occurs, we still load the image, but will ultimately return a ImageStatus::SecurityViolation
+    if let Err(err) = security_status
+        && err != EfiError::SecurityViolation
+    {
+        // If the error is AccessDenied, we abort loading completely, as platform policy prohibits the image from being loaded
+        if err == EfiError::AccessDenied {
+            return Ok(ImageStatus::AccessDenied);
+        }
+        // Any other errors are unexpected, so we return the actual error.
+        return Err(err);
+    }
 
     // load the image.
     let mut image_info = empty_image_info();
@@ -1058,8 +1084,10 @@ pub fn core_load_image(
 
     perf_load_image_end(handle, create_performance_measurement);
 
-    // return the new handle.
-    Ok((handle, security_status))
+    match security_status {
+        Err(EfiError::SecurityViolation) => Ok(ImageStatus::SecurityViolation(handle)),
+        _ => Ok(ImageStatus::Loaded(handle)),
+    }
 }
 
 // Loads the image specified by the device_path (not yet supported) or
@@ -1097,17 +1125,15 @@ extern "efiapi" fn load_image(
         Some(unsafe { from_raw_parts(source_buffer as *const u8, source_size) })
     };
 
-    match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
-        Err(err) => err.into(),
-        Ok((handle, security_status)) => unsafe {
-            // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
-            image_handle.write_unaligned(handle);
-            match security_status {
-                Ok(()) => efi::Status::SUCCESS,
-                Err(err) => err.into(),
-            }
-        },
-    }
+    let (handle, status) = match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
+        Err(err) => return err.into(),
+        Ok(ImageStatus::AccessDenied) => (null_mut(), efi::Status::ACCESS_DENIED),
+        Ok(ImageStatus::SecurityViolation(handle)) => (handle, efi::Status::SECURITY_VIOLATION),
+        Ok(ImageStatus::Loaded(handle)) => (handle, efi::Status::SUCCESS),
+    };
+
+    unsafe { image_handle.write_unaligned(handle) };
+    status
 }
 
 // Transfers control to the entry point of an image that was loaded by
@@ -1452,7 +1478,7 @@ mod tests {
     use core::{ffi::c_void, sync::atomic::AtomicBool};
     use patina::{error::EfiError, pi};
     use r_efi::efi;
-    use std::{fs::File, io::Read};
+    use std::{fs::File, io::Read, ptr::null_mut};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
@@ -1822,6 +1848,168 @@ mod tests {
             assert_ne!(image_data.entry_point as usize, 0);
             assert!(!image_data.relocation_data.is_empty());
             assert!(image_data.hii_resource_section.is_some());
+        });
+    }
+
+    #[test]
+    fn load_image_with_auth_err_security_violation_should_continue_to_load_image() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // Mock Security2 Arch protocol
+            extern "efiapi" fn mock_file_authentication(
+                _this: *mut pi::protocols::security2::Protocol,
+                _file: *mut efi::protocols::device_path::Protocol,
+                _file_buffer: *mut c_void,
+                _file_size: usize,
+                _boot_policy: bool,
+            ) -> efi::Status {
+                efi::Status::SECURITY_VIOLATION
+            }
+
+            let security2_protocol =
+                pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    pi::protocols::security2::PROTOCOL_GUID,
+                    &security2_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            // There should be 1 handle prior to this
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
+            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
+            // In this result, we expect to get SECURITY_VIOLATION, but the image_handle is successfully populated.
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            assert!(image_handle.is_null());
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::SECURITY_VIOLATION);
+
+            assert!(!image_handle.is_null());
+
+            // Load successful, we should have one more now.
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 2);
+            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 1);
+        });
+    }
+
+    #[test]
+    fn load_image_with_auth_err_access_denied_should_exit_early_and_not_load_image() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // Mock Security2 Arch protocol
+            extern "efiapi" fn mock_file_authentication(
+                _this: *mut pi::protocols::security2::Protocol,
+                _file: *mut efi::protocols::device_path::Protocol,
+                _file_buffer: *mut c_void,
+                _file_size: usize,
+                _boot_policy: bool,
+            ) -> efi::Status {
+                efi::Status::ACCESS_DENIED
+            }
+
+            let security2_protocol =
+                pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    pi::protocols::security2::PROTOCOL_GUID,
+                    &security2_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            // In this result, we expect to get ACCESS_DENIED, and the pointer is set to null
+            let data = Box::leak(Box::new([15u8; 1])) as *mut [u8; 1] as *mut c_void;
+            let mut image_handle: efi::Handle = data;
+            assert!(!image_handle.is_null());
+
+            // There should be 1 handle prior to this
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
+            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::ACCESS_DENIED);
+
+            assert_eq!(image_handle, null_mut());
+
+            // There should still be only 1 handle
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
+            assert!(PRIVATE_IMAGE_DATA.lock().private_image_data.is_empty());
+        });
+    }
+
+    #[test]
+    fn load_image_with_auth_err_unexpected_should_exit_early_and_not_load_image() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // Mock Security2 Arch protocol
+            extern "efiapi" fn mock_file_authentication(
+                _this: *mut pi::protocols::security2::Protocol,
+                _file: *mut efi::protocols::device_path::Protocol,
+                _file_buffer: *mut c_void,
+                _file_size: usize,
+                _boot_policy: bool,
+            ) -> efi::Status {
+                efi::Status::INVALID_PARAMETER
+            }
+
+            let security2_protocol =
+                pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    pi::protocols::security2::PROTOCOL_GUID,
+                    &security2_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            // There should be 1 handle prior to this
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
+            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+            assert_eq!(image_handle, null_mut());
+
+            // There should still be only 1 handle
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
+            assert!(PRIVATE_IMAGE_DATA.lock().private_image_data.is_empty());
         });
     }
 
