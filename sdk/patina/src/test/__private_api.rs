@@ -58,7 +58,7 @@ pub enum TestTrigger {
 #[derive(Debug, Clone, Copy)]
 pub struct TestCase {
     pub name: &'static str,
-    pub trigger: TestTrigger,
+    pub triggers: &'static [TestTrigger],
     pub skip: bool,
     pub should_fail: bool,
     pub fail_msg: Option<&'static str>,
@@ -155,7 +155,7 @@ mod tests {
     fn test_should_run() {
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -174,7 +174,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -183,7 +183,7 @@ mod tests {
 
         let test_case_fail = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -205,7 +205,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -213,7 +213,7 @@ mod tests {
         };
         let test_case_fail = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -236,7 +236,7 @@ mod tests {
         // Test that a test that fails with the expected message, should pass
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: Some("Failed to install protocol interface"),
@@ -249,7 +249,7 @@ mod tests {
         // Test that a test that fails with an unexpected message, should fail
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: Some("Other failure"),

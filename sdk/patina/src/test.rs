@@ -271,6 +271,7 @@ impl Display for Recorder {
 ///   - `storage` is properly aligned.
 ///   - `storage` is non-null.
 ///   - `storage` is a pointer that points to a valid instance of `Storage`.
+#[derive(Clone)]
 struct TestData {
     /// A pointer to the Storage struct.
     storage: NonNull<Storage>,
@@ -405,35 +406,38 @@ impl TestRunner {
                 continue;
             }
 
-            let mut test = TestData::new(storage, self.debug_mode, test_case, self.fail_callback);
+            // Base test data. we will clone this for each trigger registered.
+            let test = TestData::new(storage, self.debug_mode, test_case, self.fail_callback);
 
-            match test_case.trigger {
-                TestTrigger::Immediate => {
-                    // SAFETY: This is the only mutable access to `Storage` due to the guarantees of Component execution.
-                    unsafe { test.run() }
-                }
-                TestTrigger::Event(guid) => {
-                    storage.boot_services().create_event_ex(
-                        EventType::NOTIFY_SIGNAL,
-                        Tpl::CALLBACK,
-                        Some(Self::run_test),
-                        // Events can be triggered multiple times, so we need to leak it so it is available for
-                        // multiple test runs
-                        NonNull::from_ref(Box::leak(Box::new(test))),
-                        guid,
-                    )?;
-                }
-                TestTrigger::Timer(interval) => {
-                    let event = storage.boot_services().create_event(
-                        EventType::NOTIFY_SIGNAL | EventType::TIMER,
-                        Tpl::CALLBACK,
-                        Some(Self::run_test),
-                        // We are setting up this timer to be periodic, so we need to leak it so it is available for
-                        // multiple test runs
-                        NonNull::from_ref(Box::leak(Box::new(test))),
-                    )?;
+            for trigger in test_case.triggers {
+                match trigger {
+                    TestTrigger::Immediate => {
+                        // SAFETY: This is the only mutable access to `Storage` due to the guarantees of Component execution.
+                        unsafe { test.clone().run() }
+                    }
+                    TestTrigger::Event(guid) => {
+                        storage.boot_services().create_event_ex(
+                            EventType::NOTIFY_SIGNAL,
+                            Tpl::CALLBACK,
+                            Some(Self::run_test),
+                            // Events can be triggered multiple times, so we need to leak it so it is available for
+                            // multiple test runs
+                            NonNull::from_ref(Box::leak(Box::new(test.clone()))),
+                            guid,
+                        )?;
+                    }
+                    TestTrigger::Timer(interval) => {
+                        let event = storage.boot_services().create_event(
+                            EventType::NOTIFY_SIGNAL | EventType::TIMER,
+                            Tpl::CALLBACK,
+                            Some(Self::run_test),
+                            // We are setting up this timer to be periodic, so we need to leak it so it is available for
+                            // multiple test runs
+                            NonNull::from_ref(Box::leak(Box::new(test.clone()))),
+                        )?;
 
-                    storage.boot_services().set_timer(event, EventTimerType::Periodic, interval)?;
+                        storage.boot_services().set_timer(event, EventTimerType::Periodic, *interval)?;
+                    }
                 }
             }
         }
@@ -514,7 +518,7 @@ mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
-        trigger: super::__private_api::TestTrigger::Immediate,
+        triggers: &[super::__private_api::TestTrigger::Immediate],
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -524,7 +528,7 @@ mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
-        trigger: super::__private_api::TestTrigger::Immediate,
+        triggers: &[super::__private_api::TestTrigger::Immediate],
         skip: true,
         should_fail: false,
         fail_msg: None,
@@ -533,7 +537,7 @@ mod tests {
 
     static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test_that_fails",
-        trigger: super::__private_api::TestTrigger::Immediate,
+        triggers: &[super::__private_api::TestTrigger::Immediate],
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -542,7 +546,7 @@ mod tests {
 
     static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "event_triggered_test",
-        trigger: super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16])),
+        triggers: &[super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -551,7 +555,7 @@ mod tests {
 
     static TEST_CASE5: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "timer_triggered_test",
-        trigger: super::__private_api::TestTrigger::Timer(1_000_000),
+        triggers: &[super::__private_api::TestTrigger::Timer(1_000_000)],
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -560,7 +564,7 @@ mod tests {
 
     static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "invalid_test",
-        trigger: super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16])),
+        triggers: &[super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
         fail_msg: None,

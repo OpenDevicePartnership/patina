@@ -140,10 +140,21 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 ///   todo!()
 /// }
+///
+/// #[patina_test]
+/// #[on(timer = 1000000)]
+/// #[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
+/// fn multi_triggered_test_case() -> Result {
+///  todo!()
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    test_macro::patina_test2(item.into()).into()
+    if cfg!(feature = "enable_patina_tests") {
+        test_macro::patina_test2(item.into()).into()
+    } else {
+        test_macro::patina_test_feature_off(item.into()).into()
+    }
 }
 
 /// Derive Macro for implementing the `SmbiosRecordStructure` trait.
