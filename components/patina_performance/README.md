@@ -19,8 +19,8 @@ The Patina performance component maintains the infrastructure to report firmware
 - Platforms that need runtime configuration can include the `PerformanceConfigurationProvider` component, which reads a
   `PerformanceConfigHob` and locks the `PerfConfig` values for the session.
 
-
-To enable performance measurements in Patina, add the `Performance` component and provide a `PerfConfig` using `configs(mut add: Add<Config>)` in your platform's `ComponentInfo` implementation. For example:
+To enable performance measurements in Patina, add the `Performance` component and provide a `PerfConfig` using 
+`configs(mut add: Add<Config>)` in your platform's `ComponentInfo` implementation. For example:
 
 ```rust
 use patina_performance::component::Performance;
@@ -50,7 +50,8 @@ impl ComponentInfo for ExamplePlatform {
 }
 ```
 
-> **Note:** The `PerformanceConfigurationProvider` component is optional. Include it if you want to allow runtime configuration of performance measurements via a HOB. If you only want static configuration, you can omit it.
+> **Note:** The `PerformanceConfigurationProvider` component is optional. Include it if you want to allow runtime
+configuration of performance measurements via a HOB. If you only want static configuration, you can omit it.
 
 ### Enabling Performance Measurements During Boot
 
