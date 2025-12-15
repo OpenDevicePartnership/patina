@@ -388,7 +388,7 @@ impl PrivateImageData {
         {
             // strip the parent device path prefix from the full device path to leave only the file node
             let (_, device_path_size) =
-                device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol).unwrap_or((0, 0));
+                device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
             let split_idx =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
             let file_path = unsafe { (file_path as *const u8).add(split_idx) };
