@@ -1138,6 +1138,7 @@ extern "efiapi" fn load_image(
         Err(ImageStatus::LoadError(err)) => return err.into(),
     };
 
+    // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
     unsafe { image_handle.write_unaligned(handle) };
     status
 }
