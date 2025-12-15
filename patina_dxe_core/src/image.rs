@@ -375,7 +375,7 @@ impl PrivateImageData {
         result
     }
 
-    /// Calculates and sets the file path for this image, if appopriate
+    /// Calculates and sets the file path for this image, if appropriate
     ///
     /// If the device_handle is valid, determines the file name from that handles device path.
     /// If the device_handle is invalid, uses the provided file name directly.
@@ -407,7 +407,7 @@ impl PrivateImageData {
         Ok(())
     }
 
-    /// Sets the full file path for this image, which is avialable via the loaded_image_device_path protocol.
+    /// Sets the full file path for this image, which is available via the loaded_image_device_path protocol.
     fn set_file_path(&mut self, file_path: *mut efi::protocols::device_path::Protocol) -> Result<(), EfiError> {
         if !file_path.is_null() {
             self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path)?);
