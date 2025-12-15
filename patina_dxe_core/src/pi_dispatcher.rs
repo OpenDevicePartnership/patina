@@ -190,19 +190,19 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
                 let data = driver.pe32.try_content_as_slice()?;
                 match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(data)) {
-                    Ok(ImageStatus::Loaded(image_handle)) => {
-                        driver.image_handle = Some(image_handle);
+                    Ok(handle) => {
+                        driver.image_handle = Some(handle);
                         driver.security_status = efi::Status::SUCCESS;
                     }
-                    Ok(ImageStatus::SecurityViolation(image_handle)) => {
-                        driver.image_handle = Some(image_handle);
+                    Err(ImageStatus::SecurityViolation(handle)) => {
+                        driver.image_handle = Some(handle);
                         driver.security_status = efi::Status::SECURITY_VIOLATION;
                     }
-                    Ok(ImageStatus::AccessDenied) => {
+                    Err(ImageStatus::AccessDenied) => {
                         driver.image_handle = None;
                         driver.security_status = efi::Status::ACCESS_DENIED;
                     }
-                    Err(err) => log::error!("Failed to load: load_image returned {err:x?}"),
+                    Err(ImageStatus::LoadError(err)) => log::error!("Failed to load: load_image returned {err:x?}"),
                 }
             }
 

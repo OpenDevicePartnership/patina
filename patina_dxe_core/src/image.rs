@@ -929,12 +929,18 @@ fn authenticate_image(
 
 /// The status of the image attempting to be loaded.
 pub(super) enum ImageStatus {
-    /// The image was successfully loaded
-    Loaded(efi::Handle),
+    /// An unexpected error occurred when loading the image
+    LoadError(EfiError),
     /// The image was successfully loaded, but failed authentication
     SecurityViolation(efi::Handle),
     /// The image was not loaded due to platform policy
     AccessDenied,
+}
+
+impl From<EfiError> for ImageStatus {
+    fn from(err: EfiError) -> Self {
+        ImageStatus::LoadError(err)
+    }
 }
 
 /// Loads the image specified by the device path (not yet supported) or slice.
@@ -953,12 +959,12 @@ pub fn core_load_image(
     parent_image_handle: efi::Handle,
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
-) -> Result<ImageStatus, EfiError> {
+) -> Result<efi::Handle, ImageStatus> {
     perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
 
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
-        return Err(EfiError::InvalidParameter);
+        return Err(EfiError::InvalidParameter.into());
     }
 
     PROTOCOL_DB
@@ -998,10 +1004,10 @@ pub fn core_load_image(
     {
         // If the error is AccessDenied, we abort loading completely, as platform policy prohibits the image from being loaded
         if err == EfiError::AccessDenied {
-            return Ok(ImageStatus::AccessDenied);
+            return Err(ImageStatus::AccessDenied);
         }
         // Any other errors are unexpected, so we return the actual error.
-        return Err(err);
+        return Err(err.into());
     }
 
     // load the image.
@@ -1085,8 +1091,8 @@ pub fn core_load_image(
     perf_load_image_end(handle, create_performance_measurement);
 
     match security_status {
-        Err(EfiError::SecurityViolation) => Ok(ImageStatus::SecurityViolation(handle)),
-        _ => Ok(ImageStatus::Loaded(handle)),
+        Err(EfiError::SecurityViolation) => Err(ImageStatus::SecurityViolation(handle)),
+        _ => Ok(handle),
     }
 }
 
@@ -1126,10 +1132,10 @@ extern "efiapi" fn load_image(
     };
 
     let (handle, status) = match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
-        Err(err) => return err.into(),
-        Ok(ImageStatus::AccessDenied) => (null_mut(), efi::Status::ACCESS_DENIED),
-        Ok(ImageStatus::SecurityViolation(handle)) => (handle, efi::Status::SECURITY_VIOLATION),
-        Ok(ImageStatus::Loaded(handle)) => (handle, efi::Status::SUCCESS),
+        Ok(handle) => (handle, efi::Status::SUCCESS),
+        Err(ImageStatus::AccessDenied) => (null_mut(), efi::Status::ACCESS_DENIED),
+        Err(ImageStatus::SecurityViolation(handle)) => (handle, efi::Status::SECURITY_VIOLATION),
+        Err(ImageStatus::LoadError(err)) => return err.into(),
     };
 
     unsafe { image_handle.write_unaligned(handle) };
