@@ -377,7 +377,7 @@ impl PrivateImageData {
 
     /// Calculates and sets the file name for this image, if appropriate
     ///
-    /// If the device_handle is valid, determines the file name from that handles device path.
+    /// If the device_handle is valid, determines the file name from the device path instance installed on the device_handle.
     /// If the device_handle is invalid, uses the provided file name directly.
     fn set_file_name(&mut self, file_path: *mut efi::protocols::device_path::Protocol) -> Result<(), EfiError> {
         let fixed_file_path = if self.image_info.device_handle == protocol_db::INVALID_HANDLE {
@@ -600,7 +600,7 @@ impl DxeCoreGlobalImageData {
         Ok(())
     }
 
-    /// Returns the image metadata by it's buffer using device path protocol.
+    /// Returns a tuple of image meta-data: `(image_as_vec, from_fv, device_handle, authentication_status)`
     fn locate_image_metadata_by_buffer(
         image: &[u8],
         file_path: *mut efi::protocols::device_path::Protocol,
@@ -612,9 +612,7 @@ impl DxeCoreGlobalImageData {
         }
     }
 
-    /// Returns the image metadata by it's file path using simple file system or load file protocols.
-    ///
-    /// Note: presently none of the supported methods return `from_fv` or `authentication_status`.
+    /// Returns the image metadata by its file path using simple file system or load file protocols.
     ///
     /// Returns a tuple of (image buffer, from_fv, device handle, authentication status).
     fn locate_image_metadata_by_file_path(
