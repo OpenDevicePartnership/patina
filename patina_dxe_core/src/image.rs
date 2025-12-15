@@ -375,7 +375,7 @@ impl PrivateImageData {
         result
     }
 
-    /// Calculates and sets the file path for this image, if appropriate
+    /// Calculates and sets the file name for this image, if appropriate
     ///
     /// If the device_handle is valid, determines the file name from that handles device path.
     /// If the device_handle is invalid, uses the provided file name directly.
