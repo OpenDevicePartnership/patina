@@ -579,14 +579,16 @@ impl DxeCoreGlobalImageData {
 
         assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
 
+        let protocol_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
+
+        self.private_image_data.insert(handle, private_image_data);
+
         initialize_debug_image_info_table(system_table);
         core_new_debug_image_info_entry(
             EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-            private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol,
+            protocol_ptr,
             handle,
         );
-
-        self.private_image_data.insert(handle, private_image_data);
     }
 
     /// Validates that the provided parent handle is valid and has a loaded image protocol.
@@ -1046,6 +1048,16 @@ pub fn core_load_image(
 
     let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
 
+    let mut private_image_data = PRIVATE_IMAGE_DATA.lock();
+
+    // save the private image data for this image in the private image data map.
+    private_image_data.private_image_data.insert(handle, private_info);
+
+    let private_info = private_image_data
+        .private_image_data
+        .get(&handle)
+        .expect("Image just inserted must exist in private image data map");
+
     log::info!(
         "Loaded image at {:#x?} Size={:#x?} EntryPoint={:#x?} {:}",
         private_info.image_info.image_base,
@@ -1069,9 +1081,6 @@ pub fn core_load_image(
         private_info.image_info.image_base as usize,
         private_info.image_info.image_size as usize,
     );
-
-    // save the private image data for this image in the private image data map.
-    PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
     perf_load_image_end(handle, create_performance_measurement);
 
