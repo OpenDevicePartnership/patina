@@ -951,9 +951,9 @@ impl From<EfiError> for ImageStatus {
 /// One of `file_path` or `image` must be specified.
 /// returns the image handle of the freshly loaded image.
 ///
-/// Returns Err(EfiError) if there was an unexpected error when loading the image.
-/// Returns Ok(ImageStatus) if code executed successfully. The enum value determines if the image was loaded
-///   successfully or not.
+/// Returns Ok(efi::Handle) if the image was loaded successfully.
+/// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
+///   with security violations, or not at all. See [ImageStatus] for details.
 pub fn core_load_image(
     boot_policy: bool,
     parent_image_handle: efi::Handle,
