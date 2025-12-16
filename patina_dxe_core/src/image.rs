@@ -7,7 +7,14 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
-use core::{convert::TryInto, ffi::c_void, mem::transmute, ptr::null_mut, slice, slice::from_raw_parts};
+use core::{
+    convert::TryInto,
+    ffi::c_void,
+    mem::transmute,
+    ptr::{NonNull, null_mut},
+    slice,
+    slice::from_raw_parts,
+};
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
@@ -375,43 +382,38 @@ impl PrivateImageData {
         result
     }
 
-    /// Calculates and sets the file name for this image, if appropriate
+    /// Sets both the file path and file name for this image.
     ///
-    /// If the device_handle is valid, determines the file name from the device path instance installed on the device_handle.
-    /// If the device_handle is invalid, uses the provided file name directly.
-    fn set_file_name(&mut self, file_path: *mut efi::protocols::device_path::Protocol) -> Result<(), EfiError> {
-        let fixed_file_path = if self.image_info.device_handle == protocol_db::INVALID_HANDLE {
-            Some(file_path)
-        } else if file_path.is_null()
+    /// The file name is a part of the loaded_image protocol, and is the remaining portion of the device path after
+    /// the parent handle's device path (if there is a valid parent handle).
+    ///
+    /// The file path is the full device path for this image and is what is set for the loaded_image_device_path protocol.
+    fn set_file_path(&mut self, file_path: NonNull<efi::protocols::device_path::Protocol>) -> Result<(), EfiError> {
+        let mut fp = file_path.as_ptr();
+
+        // If the device handle is valid, and the handle has a device path protocol, we need to adjust our file path
+        if self.image_info.device_handle != protocol_db::INVALID_HANDLE
             && let Ok(device_path) = PROTOCOL_DB
                 .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
-            // strip the parent device path prefix from the full device path to leave only the file node
             let (_, device_path_size) =
                 device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
             let split_idx =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
-            let file_path = unsafe { (file_path as *const u8).add(split_idx) };
-            Some(file_path as *mut efi::protocols::device_path::Protocol)
-        } else {
-            None
-        };
-
-        if let Some(path) = fixed_file_path
-            && !path.is_null()
-        {
-            self.image_info.file_path =
-                Box::into_raw(copy_device_path_to_boxed_slice(path)?) as *mut efi::protocols::device_path::Protocol;
+            // SAFETY: `device_path_node_count` is always less than or equal to the size of the device path, so adding `split_idx` to
+            //  `file_path` will always produce a valid pointer within the bounds of the original device path.
+            fp = unsafe {
+                file_path.cast::<u8>().add(split_idx).cast::<efi::protocols::device_path::Protocol>().as_ptr()
+            };
         }
 
-        Ok(())
-    }
+        // The `file_path` field in the loaded image protocol is really just the filename (more specifically the remaining portion
+        // of the device path in relation to the parent's device path)
+        self.image_info.file_path =
+            Box::into_raw(copy_device_path_to_boxed_slice(fp)?) as *mut efi::protocols::device_path::Protocol;
 
-    /// Sets the full file path for this image, which is available via the loaded_image_device_path protocol.
-    fn set_file_path(&mut self, file_path: *mut efi::protocols::device_path::Protocol) -> Result<(), EfiError> {
-        if !file_path.is_null() {
-            self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path)?);
-        }
+        // The `image_device_path` field is the `loaded_image_device_path` protocol, which is the full device path.
+        self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path.as_ptr())?);
 
         Ok(())
     }
@@ -1043,8 +1045,9 @@ pub fn core_load_image(
 
     let mut private_info = core_load_pe_image(&image_to_load, image_info)?;
 
-    private_info.set_file_name(file_path)?;
-    private_info.set_file_path(file_path)?;
+    if let Some(fp) = NonNull::new(file_path) {
+        private_info.set_file_path(fp)?;
+    }
 
     let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
 
