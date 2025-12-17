@@ -58,7 +58,7 @@ pub enum TestTrigger {
 #[derive(Debug, Clone, Copy)]
 pub struct TestCase {
     pub name: &'static str,
-    pub trigger: TestTrigger,
+    pub triggers: &'static [TestTrigger],
     pub skip: bool,
     pub should_fail: bool,
     pub fail_msg: Option<&'static str>,
@@ -124,7 +124,13 @@ where
 
         // Safety: init_state requires mutable access to storage. UnsafeStorageCell provides controlled access.
         // This is the initialization phase before parameter validation.
-        let param_state = unsafe { Func::Param::init_state(storage.storage_mut(), &mut metadata) };
+        let param_state = match Func::Param::init_state(unsafe { storage.storage_mut() }, &mut metadata) {
+            Ok(param_state) => param_state,
+            Err(error) => {
+                log::warn!("Failed to initialize test state: {error:?}");
+                return Ok(false);
+            }
+        };
 
         if let Err(bad_param) = Func::Param::try_validate(&param_state, storage) {
             log::warn!("Failed to retreive parameter: {bad_param:?}");
@@ -149,7 +155,7 @@ mod tests {
     fn test_should_run() {
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -168,7 +174,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -177,7 +183,7 @@ mod tests {
 
         let test_case_fail = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -199,7 +205,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -207,7 +213,7 @@ mod tests {
         };
         let test_case_fail = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -230,7 +236,7 @@ mod tests {
         // Test that a test that fails with the expected message, should pass
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: Some("Failed to install protocol interface"),
@@ -243,7 +249,7 @@ mod tests {
         // Test that a test that fails with an unexpected message, should fail
         let test_case = TestCase {
             name: "test",
-            trigger: TestTrigger::Immediate,
+            triggers: &[TestTrigger::Immediate],
             skip: false,
             should_fail: true,
             fail_msg: Some("Other failure"),

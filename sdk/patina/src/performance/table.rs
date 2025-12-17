@@ -37,8 +37,7 @@ use scroll::Pwrite;
 
 /// The number of extra space in byte that will be allocated when publishing the performance buffer.
 /// This is used for every performance records that will be added to the table after it is published.
-// const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x400_000;
-const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
+const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x40_000;
 
 /// Interface for a Firmware Basic Boot Performance Table.
 #[cfg_attr(any(test, feature = "mockall"), automock)]

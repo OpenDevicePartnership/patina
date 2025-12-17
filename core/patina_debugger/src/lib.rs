@@ -105,7 +105,9 @@
 #![cfg_attr(not(test), no_std)]
 #![feature(coverage_attribute)]
 
+#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod arch;
+#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod dbg_target;
 #[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod debugger;

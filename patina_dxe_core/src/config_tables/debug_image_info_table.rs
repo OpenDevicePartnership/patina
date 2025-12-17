@@ -9,14 +9,9 @@
 extern crate alloc;
 use alloc::{boxed::Box, vec, vec::Vec};
 use patina::base::UEFI_PAGE_SIZE;
+use spin::RwLock;
 
-use core::{
-    ffi::c_void,
-    fmt::Debug,
-    mem::size_of,
-    ptr,
-    sync::atomic::{AtomicPtr, AtomicU64, Ordering},
-};
+use core::{ffi::c_void, fmt::Debug, mem::size_of, ptr};
 
 use crate::{
     GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
@@ -26,7 +21,7 @@ use patina::pi::dxe_services::GcdMemoryType;
 
 use r_efi::efi;
 
-// to be sent upstream to r_efi
+// TODO: (Issue #490) to be sent upstream to r_efi.
 
 /// GUID for the EFI_DEBUG_IMAGE_INFO_TABLE per section 18.4.3 of UEFI Spec 2.11
 pub const EFI_DEBUG_IMAGE_INFO_TABLE_GUID: efi::Guid =
@@ -98,16 +93,20 @@ const IMAGE_INFO_TABLE_SIZE: usize = 128; // initial size of the table
 /// Metadata structure for the DebugImageInfoTable, which contains the actual table and its size. It is only used
 /// internally to manage the table and is not part of the UEFI spec.
 struct DebugImageInfoTableMetadata<'a> {
+    dbg_system_table_pointer_address: efi::PhysicalAddress,
     actual_table_size: u32,
     table: &'a mut DebugImageInfoTableHeader,
     slice: Box<[EfiDebugImageInfo]>,
 }
+// Safety: This structure is only accessed under a lock and the data it points to is only modified
+// under that same lock, so it is safe to send and share between threads.
+unsafe impl Sync for DebugImageInfoTableMetadata<'_> {}
+// Safety: See Sync impl above.
+unsafe impl Send for DebugImageInfoTableMetadata<'_> {}
 
-static METADATA_TABLE: AtomicPtr<DebugImageInfoTableMetadata> = AtomicPtr::new(core::ptr::null_mut());
+static METADATA_TABLE: RwLock<Option<DebugImageInfoTableMetadata>> = RwLock::new(None);
 
 const ALIGNMENT_SHIFT_4MB: usize = 22;
-
-static DBG_SYSTEM_TABLE_POINTER_ADDRESS: AtomicU64 = AtomicU64::new(0);
 
 /// Initializes the EFI_DEBUG_IMAGE_INFO_TABLE_GUID configuration table in the UEFI system table with an empty table.
 pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTable) {
@@ -128,11 +127,12 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
 
     // SAFETY: This is safe because we just allocated the table and we are going to use it immediately
     let table = Box::new(DebugImageInfoTableMetadata {
+        dbg_system_table_pointer_address: 0,
         actual_table_size: IMAGE_INFO_TABLE_SIZE as u32,
         table: unsafe { &mut *table_ptr.cast::<DebugImageInfoTableHeader>() },
         slice: initial_table,
     });
-    METADATA_TABLE.store(Box::into_raw(table), Ordering::SeqCst);
+    *METADATA_TABLE.write() = Some(*table);
 
     // Now create the EFI_SYSTEM_TABLE_POINTER structure
     let system_table_pointer = system_table.system_table() as *const _ as u64;
@@ -170,10 +170,12 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
     }
 
     // Set the system table address for the debugger.
-    DBG_SYSTEM_TABLE_POINTER_ADDRESS.store(address as u64, Ordering::Relaxed);
+    METADATA_TABLE.write().as_mut().expect("METADATA_TABLE initialized above").dbg_system_table_pointer_address =
+        address as efi::PhysicalAddress;
 
     patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", |_, out| {
-        let address = DBG_SYSTEM_TABLE_POINTER_ADDRESS.load(Ordering::Relaxed);
+        let address =
+            METADATA_TABLE.read().as_ref().expect("METADATA_TABLE initialized above").dbg_system_table_pointer_address;
         let _ = write!(out, "{address:x}");
     });
 }
@@ -184,21 +186,18 @@ pub(crate) fn core_new_debug_image_info_entry(
     loaded_image_protocol_instance: *const efi::protocols::loaded_image::Protocol,
     image_handle: efi::Handle,
 ) {
-    // This is a very funny check for null because it is working around an LLVM bug where checking is_null() or variations
-    // of that on a load of an atomic pointer causes improper code generation and LLVM to crash. So, this check is a workaround
-    // to check if the pointer is in the first page of memory, which is a valid check for null in this case, as we mark
-    // that entire page as invalid. LLVM issue: https://github.com/llvm/llvm-project/issues/137152.
-    let metadata_table = METADATA_TABLE.load(Ordering::SeqCst);
-    if metadata_table < UEFI_PAGE_SIZE as *mut DebugImageInfoTableMetadata {
-        log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
-        return;
-    }
+    let mut metadata_table_guard = METADATA_TABLE.write();
 
-    // SAFETY: This is safe because we check that the table is initialized above
-    let metadata_table = unsafe { &mut *(metadata_table) };
+    let metadata_table = match metadata_table_guard.as_mut() {
+        Some(table) => table,
+        None => {
+            log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
+            return;
+        }
+    };
 
     // per UEFI spec, need to mark the table is being updated and preserve the modified bit if set
-    // SAFETY: This is safe because we are accessing the table header and we ensure that it is initialized
+    // SAFETY: This is safe because we are accessing the table header under a lock, and we ensure that it is initialized in initialize_debug_image_info_table.
     let update_status = unsafe { metadata_table.table.get_update_status() };
     unsafe {
         metadata_table
@@ -246,21 +245,17 @@ pub(crate) fn core_new_debug_image_info_entry(
 
 /// This function is called on image unload to remove an entry from the EFI_DEBUG_IMAGE_INFO_TABLE_GUID table.
 pub(crate) fn core_remove_debug_image_info_entry(image_handle: efi::Handle) {
-    // This is a very funny check for null because it is working around an LLVM bug where checking is_null() or variations
-    // of that on a load of an atomic pointer causes improper code generation and LLVM to crash. So, this check is a workaround
-    // to check if the pointer is in the first page of memory, which is a valid check for null in this case, as we mark
-    // that entire page as invalid. LLVM issue: https://github.com/llvm/llvm-project/issues/137152.
-    let metadata_table = METADATA_TABLE.load(Ordering::SeqCst);
-    if metadata_table < UEFI_PAGE_SIZE as *mut DebugImageInfoTableMetadata {
-        log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
-        return;
-    }
-
-    // SAFETY: This is safe because we check that the table is initialized above
-    let metadata_table = unsafe { &mut *(metadata_table) };
+    let mut metadata_table_guard = METADATA_TABLE.write();
+    let metadata_table = match metadata_table_guard.as_mut() {
+        Some(table) => table,
+        None => {
+            log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
+            return;
+        }
+    };
 
     // per UEFI spec, need to mark the table is being updated and preserve the modified bit if set
-    // SAFETY: This is safe because we are accessing the table header and we ensure that it is initialized
+    // SAFETY: This is safe because we are accessing the table header under a lock, and we ensure that it is initialized in initialize_debug_image_info_table.
     let update_status = unsafe { metadata_table.table.get_update_status() };
     unsafe {
         metadata_table
@@ -312,4 +307,100 @@ pub(crate) fn core_remove_debug_image_info_entry(image_handle: efi::Handle) {
                 | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
         )
     };
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{
+        config_tables::get_configuration_table,
+        systemtables::{SYSTEM_TABLE, init_system_table},
+        test_support,
+    };
+
+    use super::*;
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            METADATA_TABLE.write().take();
+            unsafe {
+                test_support::init_test_gcd(None);
+                init_system_table();
+            }
+            f();
+
+            METADATA_TABLE.write().take();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn initialize_debug_image_info_table_should_init_table() {
+        with_locked_state(|| {
+            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            assert!(METADATA_TABLE.read().as_ref().is_some());
+            assert!(METADATA_TABLE.read().as_ref().unwrap().dbg_system_table_pointer_address != 0);
+            assert!(get_configuration_table(&EFI_DEBUG_IMAGE_INFO_TABLE_GUID).is_some());
+        });
+    }
+
+    #[test]
+    fn add_image_info_should_update_table() {
+        with_locked_state(|| {
+            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            core_new_debug_image_info_entry(
+                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+                core::ptr::null(),
+                0x1234 as efi::Handle,
+            );
+            core_new_debug_image_info_entry(
+                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+                core::ptr::null(),
+                0x5678 as efi::Handle,
+            );
+
+            let metadata_table = METADATA_TABLE.read();
+            let metadata_table = metadata_table.as_ref().unwrap();
+
+            assert_eq!(metadata_table.table.table_size, 2);
+
+            // SAFETY: This is safe because we just added an entry
+            let debug_image_info = unsafe { &*metadata_table.slice[0].normal_image };
+            assert_eq!(debug_image_info.image_handle, 0x1234 as efi::Handle);
+
+            let debug_image_info = unsafe { &*metadata_table.slice[1].normal_image };
+            assert_eq!(debug_image_info.image_handle, 0x5678 as efi::Handle);
+        });
+    }
+
+    #[test]
+    fn remove_image_info_should_update_table() {
+        with_locked_state(|| {
+            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            core_new_debug_image_info_entry(
+                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+                core::ptr::null(),
+                0x1234 as efi::Handle,
+            );
+            core_new_debug_image_info_entry(
+                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+                core::ptr::null(),
+                0x5678 as efi::Handle,
+            );
+
+            core_remove_debug_image_info_entry(0x1234 as efi::Handle);
+
+            let metadata_table = METADATA_TABLE.read();
+            let metadata_table = metadata_table.as_ref().unwrap();
+
+            assert_eq!(metadata_table.table.table_size, 1);
+
+            // SAFETY: This is safe because we just added an entry
+            let debug_image_info = unsafe { &*metadata_table.slice[0].normal_image };
+            assert_eq!(debug_image_info.image_handle, 0x5678 as efi::Handle);
+        });
+    }
 }

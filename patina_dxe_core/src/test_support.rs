@@ -21,6 +21,7 @@ use patina::{
 use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
 use patina_paging::{MemoryAttributes, PtError};
 use r_efi::efi;
+use spin::{Once, RwLock};
 use std::{any::Any, cell::RefCell, fs::File, io::Read, slice};
 
 #[macro_export]
@@ -28,6 +29,40 @@ macro_rules! test_collateral {
     ($fname:expr) => {
         concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/", $fname)
     };
+}
+
+/// A wrapper around `Once<T>` that can be reset for test purposes.
+pub struct TestOnce<T> {
+    inner: RwLock<Once<T>>,
+}
+
+impl<T> TestOnce<T> {
+    /// Constructs a new `TestOnce` instance.
+    /// No Default is provided to better match API footprint of Once.
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self { inner: RwLock::new(Once::new()) }
+    }
+
+    /// Passthru call to the underlying `Once<T>` instance.
+    pub fn is_completed(&self) -> bool {
+        self.inner.read().is_completed()
+    }
+
+    /// Passthru call to the underlying `Once<T>` instance.
+    pub fn call_once<F>(&self, f: F)
+    where
+        F: FnOnce() -> T,
+    {
+        self.inner.read().call_once(f);
+    }
+
+    // further APIs for `Once` can be added here in the future should the need arise.
+
+    /// Resets the underlying `Once<T>` instance.
+    pub fn reset(&self) {
+        *self.inner.write() = Once::new();
+    }
 }
 
 /// A global mutex that can be used for tests to synchronize on access to global state.

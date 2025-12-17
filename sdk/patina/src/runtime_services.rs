@@ -19,12 +19,8 @@ pub mod variable_services;
 use mockall::automock;
 
 use alloc::vec::Vec;
-use core::{
-    ffi::c_void,
-    fmt::Debug,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use core::{ffi::c_void, fmt::Debug, ptr};
+use spin::Once;
 
 use r_efi::efi;
 use variable_services::{GetVariableStatus, VariableInfo};
@@ -34,12 +30,19 @@ use variable_services::{GetVariableStatus, VariableInfo};
 ///
 /// UEFI Spec Documentation: [8. Services - RuntimeServices](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html)
 pub struct StandardRuntimeServices {
-    efi_runtime_services: AtomicPtr<efi::RuntimeServices>,
+    efi_runtime_services: Once<&'static efi::RuntimeServices>,
 }
+
+// Safety: efi::BootServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
+// within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_boot_services reference
+// itself, that is protected by the Once wrapper.
+unsafe impl Sync for StandardRuntimeServices {}
+// Safety: See Sync impl above.
+unsafe impl Send for StandardRuntimeServices {}
 
 impl StandardRuntimeServices {
     /// Create a new StandardRuntimeServices with the provided [efi::RuntimeServices].
-    pub fn new(efi_runtime_services: &efi::RuntimeServices) -> Self {
+    pub fn new(efi_runtime_services: &'static efi::RuntimeServices) -> Self {
         let this = StandardRuntimeServices::new_uninit();
         this.init(efi_runtime_services);
         this
@@ -47,23 +50,22 @@ impl StandardRuntimeServices {
 
     /// Create a new StandarRuntimeServices that is not initialized.
     pub const fn new_uninit() -> Self {
-        Self { efi_runtime_services: AtomicPtr::new(ptr::null_mut()) }
+        Self { efi_runtime_services: Once::new() }
     }
 
     /// Initialized the StandardRuntimeServices.
-    pub fn init(&self, efi_runtime_services: &efi::RuntimeServices) {
-        self.efi_runtime_services.store(efi_runtime_services as *const _ as *mut _, Ordering::Relaxed);
+    pub fn init(&self, efi_runtime_services: &'static efi::RuntimeServices) {
+        self.efi_runtime_services.call_once(|| efi_runtime_services);
     }
 
     /// Return true if StandardRuntimeServices is initialized.
     pub fn is_init(&self) -> bool {
-        !self.efi_runtime_services.load(Ordering::Relaxed).is_null()
+        self.efi_runtime_services.is_completed()
     }
 
     fn efi_runtime_services(&self) -> &efi::RuntimeServices {
         // SAFETY: Runtime services lifetime is expected to live long enough.
-        unsafe { self.efi_runtime_services.load(Ordering::Relaxed).as_ref() }
-            .expect("Standard Runtime Services is not initialized!")
+        self.efi_runtime_services.get().expect("Standard Runtime Services is not initialized!")
     }
 }
 
@@ -75,7 +77,11 @@ impl AsRef<StandardRuntimeServices> for StandardRuntimeServices {
 
 impl Clone for StandardRuntimeServices {
     fn clone(&self) -> Self {
-        Self { efi_runtime_services: AtomicPtr::new(self.efi_runtime_services.load(Ordering::Relaxed)) }
+        if let Some(efi_runtime_services) = self.efi_runtime_services.get() {
+            Self::new(efi_runtime_services)
+        } else {
+            Self::new_uninit()
+        }
     }
 }
 
@@ -455,15 +461,15 @@ pub(crate) mod test {
             // SAFETY: This is only used in tests. A zero sized RuntimeServices struct is created
             // and only the specified function pointers are initialized with valid function
             // implementations. The RuntimeServices wrapper will handle uninitialized fields.
-            let efi_runtime_services = unsafe {
+            let efi_runtime_services = Box::leak(Box::new(unsafe {
                 #[allow(unused_mut)]
                 let mut rs = mem::MaybeUninit::<efi::RuntimeServices>::zeroed();
                 $(
                 rs.assume_init_mut().$efi_services = $efi_service_fn;
                 )*
                 rs.assume_init()
-            };
-            StandardRuntimeServices::new(&efi_runtime_services)
+            }));
+            StandardRuntimeServices::new(efi_runtime_services)
         }};
     }
 

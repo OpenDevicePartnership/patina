@@ -35,7 +35,8 @@ use crate::{
 const GDB_BUFF_LEN: usize = 0x2000;
 
 /// A default GDB stop packet used when entering the debugger.
-const GDB_STOP_PACKET: &str = "$T05thread:01;#07";
+const GDB_STOP_PACKET: &[u8] = b"$T05thread:01;#07";
+const GDB_NACK_PACKET: &[u8] = b"-";
 
 #[cfg(not(feature = "alloc"))]
 static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
@@ -167,7 +168,11 @@ impl<T: SerialIO> PatinaDebugger<T> {
     }
 
     /// Enters the debugger from an exception.
-    fn enter_debugger(&'static self, exception_info: ExceptionInfo) -> Result<ExceptionInfo, DebugError> {
+    fn enter_debugger(
+        &'static self,
+        exception_info: ExceptionInfo,
+        restart: bool,
+    ) -> Result<ExceptionInfo, DebugError> {
         let mut debug = match self.internal.try_lock() {
             Some(inner) => inner,
             None => return Err(DebugError::Reentry),
@@ -211,10 +216,15 @@ impl<T: SerialIO> PatinaDebugger<T> {
 
         let mut timeout_reached = false;
         if let GdbStubStateMachine::Idle(mut inner) = gdb {
-            // Always start with a stop code if starting from idle. This may be because this is the initial breakpoint
+            // If this is a restart, send a nack to request a resend of the failing packet.
+            // Otherwise, always start with a stop code if starting from idle. This may be because this is the initial breakpoint
             // or because the initial breakpoint timed out. This is not to spec, but is a useful hint to the client
             // that a break has occurred. This allows the debugger to reconnect on scenarios like reboots.
-            let _ = inner.borrow_conn().write_all(GDB_STOP_PACKET.as_bytes());
+            if restart {
+                let _ = inner.borrow_conn().write_all(GDB_NACK_PACKET);
+            } else {
+                let _ = inner.borrow_conn().write_all(GDB_STOP_PACKET);
+            }
 
             // Until some traffic is received, wait for the timeout before entering the state machine.
             if timeout != 0
@@ -443,9 +453,10 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
             return;
         }
 
+        let mut restart = false;
         let mut exception_info = loop {
             let exception_info = SystemArch::process_entry(exception_type as u64, context);
-            let result = self.enter_debugger(exception_info);
+            let result = self.enter_debugger(exception_info, restart);
 
             match result {
                 Ok(info) => break info,
@@ -456,6 +467,7 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
                     // a more robust solution could be explored. This will also
                     // resend the break packet to the client.
                     log::error!("GDB Stub error, restarting debugger. {gdb_error:?}");
+                    restart = true;
                     continue;
                 }
                 Err(error) => {

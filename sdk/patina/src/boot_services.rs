@@ -31,8 +31,8 @@ use core::{
     mem::{self, MaybeUninit},
     option::Option,
     ptr::{self, NonNull},
-    sync::atomic::{AtomicPtr, Ordering},
 };
+use spin::Once;
 
 use r_efi::efi;
 
@@ -44,14 +44,20 @@ use protocol_handler::{HandleSearchType, Registration};
 use tpl::{Tpl, TplGuard};
 
 /// This is the boot services used in the UEFI.
-/// It wraps an atomic ptr to [`efi::BootServices`]
 pub struct StandardBootServices {
-    efi_boot_services: AtomicPtr<efi::BootServices>,
+    efi_boot_services: Once<&'static efi::BootServices>,
 }
+
+// Safety: efi::BootServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
+// within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_boot_services reference
+// itself, that is protected by the Once wrapper.
+unsafe impl Sync for StandardBootServices {}
+// Safety: See Sync impl above.
+unsafe impl Send for StandardBootServices {}
 
 impl StandardBootServices {
     /// Create a new StandardBootServices with the provided [efi::BootServices].
-    pub fn new(efi_boot_services: &efi::BootServices) -> Self {
+    pub fn new(efi_boot_services: &'static efi::BootServices) -> Self {
         let this = Self::new_uninit();
         this.init(efi_boot_services);
         this
@@ -59,24 +65,22 @@ impl StandardBootServices {
 
     /// Create a new StandarBootServices that has not been initialized.
     pub const fn new_uninit() -> Self {
-        StandardBootServices { efi_boot_services: AtomicPtr::new(ptr::null_mut()) }
+        StandardBootServices { efi_boot_services: Once::new() }
     }
 
     /// Initialize the StandardBootServices.
-    pub fn init(&self, efi_boot_services: &efi::BootServices) {
+    pub fn init(&self, efi_boot_services: &'static efi::BootServices) {
         // This struct never mutate the efi_boot_services.
-        self.efi_boot_services.store(efi_boot_services as *const _ as *mut _, Ordering::Relaxed);
+        self.efi_boot_services.call_once(|| efi_boot_services);
     }
 
     /// Return true if StandardBootServices is initialized.
     pub fn is_init(&self) -> bool {
-        !self.efi_boot_services.load(Ordering::Relaxed).is_null()
+        self.efi_boot_services.is_completed()
     }
 
     fn efi_boot_services(&self) -> &efi::BootServices {
-        // SAFETY: Boot services lifetime is expected to live long enough.
-        unsafe { self.efi_boot_services.load(Ordering::Relaxed).as_ref() }
-            .expect("Standard Boot Services is not initialized!")
+        self.efi_boot_services.get().expect("Standard Boot Services is not initialized!")
     }
 }
 
@@ -88,7 +92,11 @@ impl AsRef<StandardBootServices> for StandardBootServices {
 
 impl Clone for StandardBootServices {
     fn clone(&self) -> Self {
-        Self { efi_boot_services: AtomicPtr::new(self.efi_boot_services.load(Ordering::Relaxed)) }
+        if let Some(efi_boot_services) = self.efi_boot_services.get() {
+            StandardBootServices::new(efi_boot_services)
+        } else {
+            StandardBootServices::new_uninit()
+        }
     }
 }
 
@@ -1643,15 +1651,15 @@ mod tests {
             // SAFETY: This is only used in tests. A zero sized BootServices struct is created
             // and only the specified function pointers are initialized with valid function
             // implementations. The StandardBootServices wrapper will handle uninitialized fields.
-            let efi_boot_services = unsafe {
+            let efi_boot_services = Box::leak(Box::new(unsafe {
                 #[allow(unused_mut)]
                 let mut bs = MaybeUninit::<efi::BootServices>::zeroed();
                 $(
                 bs.assume_init_mut().$efi_services = $efi_service_fn;
                 )*
                 bs.assume_init()
-            };
-            StandardBootServices::new(&efi_boot_services)
+            }));
+            StandardBootServices::new(efi_boot_services)
         }};
     }
 

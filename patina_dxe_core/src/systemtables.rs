@@ -635,21 +635,37 @@ impl EfiSystemTable {
     }
 
     #[allow(dead_code)]
-    pub fn boot_services(&self) -> &efi::BootServices {
+    pub fn boot_services(&self) -> &'static efi::BootServices {
+        // SAFETY: boot_services pointer in the system table is valid once system table is constructed.
+        // Note: some function pointers within the boot_services table may point to stub functions until
+        // architectural drivers outside the core install the corresponding architectural interfaces; but
+        // the pointers will be valid pointers to stub functions.
         unsafe { self.system_table.boot_services.as_ref().expect("BootServices uninitialized") }
     }
 
     #[allow(dead_code)]
     pub fn boot_services_mut(&mut self) -> &mut efi::BootServices {
+        // SAFETY: boot_services pointer in the system table is valid once system table is constructed.
+        // Note: this creates a mutable reference to the boot services pointer. The function should be marked unsafe
+        // since the caller needs to ensure that no other references to boot services exist when this is called.
+        // Issue: #1200
         unsafe { self.system_table.boot_services.as_mut().expect("BootServices uninitialized") }
     }
 
     #[allow(dead_code)]
-    pub fn runtime_services(&self) -> &efi::RuntimeServices {
+    pub fn runtime_services(&self) -> &'static efi::RuntimeServices {
+        // SAFETY: runtime_services pointer in the system table is valid once system table is constructed.
+        // Note: some function pointers within the runtime_services table may point to stub functions until
+        // architectural drivers outside the core install the corresponding architectural interfaces; but
+        // the pointers will be valid pointers to stub functions.
         unsafe { self.system_table.runtime_services.as_ref().expect("RuntimeServices uninitialized") }
     }
 
     pub fn runtime_services_mut(&mut self) -> &mut efi::RuntimeServices {
+        // SAFETY: runtime_services pointer in the system table is valid once system table is constructed.
+        // Note: this creates a mutable reference to the runtime services pointer. The function should be marked unsafe
+        // since the caller needs to ensure that no other references to runtime services exist when this is called.
+        // Issue: #1200
         unsafe { self.system_table.runtime_services.as_mut().expect("RuntimeServices uninitialized") }
     }
 

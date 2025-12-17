@@ -17,7 +17,10 @@ use gdbstub::target::{
     Target, TargetError, TargetResult,
     ext::{
         self,
-        base::singlethread::{SingleThreadBase, SingleThreadResume, SingleThreadResumeOps},
+        base::{
+            single_register_access::{SingleRegisterAccess, SingleRegisterAccessOps},
+            singlethread::{SingleThreadBase, SingleThreadResume, SingleThreadResumeOps},
+        },
         breakpoints::{self, BreakpointsOps},
     },
 };
@@ -165,6 +168,41 @@ impl SingleThreadBase for PatinaTarget {
     #[inline(always)]
     fn support_resume(&mut self) -> Option<SingleThreadResumeOps<'_, Self>> {
         Some(self)
+    }
+
+    #[inline(always)]
+    fn support_single_register_access(&mut self) -> Option<SingleRegisterAccessOps<'_, (), Self>> {
+        Some(self)
+    }
+}
+
+impl SingleRegisterAccess<()> for PatinaTarget {
+    fn read_register(
+        &mut self,
+        _tid: (),
+        reg_id: <Self::Arch as gdbstub::arch::Arch>::RegId,
+        buf: &mut [u8],
+    ) -> TargetResult<usize, Self> {
+        <Self::Arch as gdbstub::arch::Arch>::Registers::read_register_from_context(
+            &self.exception_info.context,
+            reg_id,
+            buf,
+        )
+        .map_err(|_| gdbstub::target::TargetError::NonFatal)
+    }
+
+    fn write_register(
+        &mut self,
+        _tid: (),
+        reg_id: <Self::Arch as gdbstub::arch::Arch>::RegId,
+        val: &[u8],
+    ) -> TargetResult<(), Self> {
+        <Self::Arch as gdbstub::arch::Arch>::Registers::write_register_to_context(
+            &mut self.exception_info.context,
+            reg_id,
+            val,
+        )
+        .map_err(|_| gdbstub::target::TargetError::NonFatal)
     }
 }
 

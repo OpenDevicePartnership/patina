@@ -189,6 +189,15 @@ impl UefiPeInfo {
 
         Ok(Some(format!("{filename}.efi")))
     }
+
+    /// Returns the filename of the image, or the provided default if not available.
+    #[inline(always)]
+    pub fn filename_or<'a, 'b>(&'a self, default: &'b str) -> &'b str
+    where
+        'a: 'b,
+    {
+        self.filename.as_deref().unwrap_or(default)
+    }
 }
 
 /// Attempts to load the image into the specified bytes buffer.

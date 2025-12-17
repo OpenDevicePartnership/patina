@@ -73,6 +73,8 @@ mod allocator;
 mod component_dispatcher;
 mod config_tables;
 mod cpu;
+#[cfg(feature = "debugger_reload")]
+mod debugger_reload;
 mod decompress;
 mod driver_services;
 mod dxe_services;
@@ -450,11 +452,17 @@ impl<P: PlatformInfo> Core<P> {
             let _ = write!(out, "GCD -\n{GCD}");
         });
 
+        #[cfg(feature = "debugger_reload")]
+        debugger_reload::initialize_debugger_reload(physical_hob_list);
+
         // Initialize the debugger if it is enabled.
         patina_debugger::initialize(
             &mut interrupt_manager,
             Some(Box::leak(Box::new(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0))))),
         );
+
+        #[cfg(feature = "debugger_reload")]
+        debugger_reload::tear_down_debugger_reload();
 
         log::info!("GCD - After memory init:\n{GCD}");
 

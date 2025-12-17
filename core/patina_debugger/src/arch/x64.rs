@@ -256,8 +256,8 @@ pub struct X64CoreRegs {
     pub eflags: u64,
     /// Segment registers: CS, SS, DS, ES, FS, GS
     pub segments: [u32; 6],
-    /// Control registers: CR0, CR2, CR3, CR4
-    pub control: [u64; 4],
+    /// Control registers: CR0, CR2, CR3, CR4, CR8
+    pub control: [u64; 5],
     /// FPU internal registers
     pub fpu: [u32; 7],
     /// FPU registers: FOP +  ST0 through ST7
@@ -371,7 +371,7 @@ impl UefiArchRegs for X64CoreRegs {
                 context.fs as u32,
                 context.gs as u32,
             ],
-            control: [context.cr0, context.cr2, context.cr3, context.cr4],
+            control: [context.cr0, context.cr2, context.cr3, context.cr4, context.cr8],
             fpu: [0; 7],
             st: [[0; 10]; 9],
         }
@@ -409,6 +409,137 @@ impl UefiArchRegs for X64CoreRegs {
         context.cr2 = self.control[1];
         context.cr3 = self.control[2];
         context.cr4 = self.control[3];
+        context.cr8 = self.control[4];
+    }
+
+    fn read_register_from_context(
+        context: &ExceptionContext,
+        reg_id: <super::SystemArch as gdbstub::arch::Arch>::RegId,
+        buf: &mut [u8],
+    ) -> Result<usize, ()> {
+        macro_rules! read_field {
+            ($value:expr) => {{
+                let size = core::mem::size_of_val(&$value);
+                let bytes = $value.to_le_bytes();
+                buf.get_mut(0..size).ok_or(())?.copy_from_slice(&bytes);
+                Ok(bytes.len())
+            }};
+        }
+
+        match reg_id {
+            X64CoreRegId::Gpr(index) => match index {
+                0 => read_field!(context.rax),
+                1 => read_field!(context.rbx),
+                2 => read_field!(context.rcx),
+                3 => read_field!(context.rdx),
+                4 => read_field!(context.rsi),
+                5 => read_field!(context.rdi),
+                6 => read_field!(context.rbp),
+                7 => read_field!(context.rsp),
+                8 => read_field!(context.r8),
+                9 => read_field!(context.r9),
+                10 => read_field!(context.r10),
+                11 => read_field!(context.r11),
+                12 => read_field!(context.r12),
+                13 => read_field!(context.r13),
+                14 => read_field!(context.r14),
+                15 => read_field!(context.r15),
+                _ => Err(()),
+            },
+            X64CoreRegId::Rip => {
+                read_field!(context.rip)
+            }
+            X64CoreRegId::Eflags => {
+                read_field!(context.rflags)
+            }
+            X64CoreRegId::Segment(index) => match index {
+                0 => read_field!(context.cs as u32),
+                1 => read_field!(context.ss as u32),
+                2 => read_field!(context.ds as u32),
+                3 => read_field!(context.es as u32),
+                4 => read_field!(context.fs as u32),
+                5 => read_field!(context.gs as u32),
+                _ => Err(()),
+            },
+            X64CoreRegId::Control(index) => match index {
+                0 => read_field!(context.cr0),
+                1 => read_field!(context.cr2),
+                2 => read_field!(context.cr3),
+                3 => read_field!(context.cr4),
+                4 => read_field!(context.cr8),
+                _ => Err(()),
+            },
+            X64CoreRegId::Fpu(_) => {
+                buf[..4].fill(0);
+                Ok(4)
+            }
+            X64CoreRegId::St(_) => {
+                buf[..10].fill(0);
+                Ok(10)
+            }
+        }
+    }
+
+    fn write_register_to_context(
+        context: &mut ExceptionContext,
+        reg_id: <super::SystemArch as gdbstub::arch::Arch>::RegId,
+        buf: &[u8],
+    ) -> Result<(), ()> {
+        macro_rules! write_field {
+            ($field:expr, $field_type:ty) => {{
+                let size = core::mem::size_of::<$field_type>();
+                let value = <$field_type>::from_le_bytes(buf.get(0..size).ok_or(())?.try_into().map_err(|_| ())?);
+                $field = value.into();
+            }};
+        }
+
+        match reg_id {
+            X64CoreRegId::Gpr(index) => {
+                match index {
+                    0 => write_field!(context.rax, u64),
+                    1 => write_field!(context.rbx, u64),
+                    2 => write_field!(context.rcx, u64),
+                    3 => write_field!(context.rdx, u64),
+                    4 => write_field!(context.rsi, u64),
+                    5 => write_field!(context.rdi, u64),
+                    6 => write_field!(context.rbp, u64),
+                    7 => write_field!(context.rsp, u64),
+                    8 => write_field!(context.r8, u64),
+                    9 => write_field!(context.r9, u64),
+                    10 => write_field!(context.r10, u64),
+                    11 => write_field!(context.r11, u64),
+                    12 => write_field!(context.r12, u64),
+                    13 => write_field!(context.r13, u64),
+                    14 => write_field!(context.r14, u64),
+                    15 => write_field!(context.r15, u64),
+                    _ => return Err(()),
+                };
+            }
+            X64CoreRegId::Rip => context.rip = u64::from_le_bytes(buf.try_into().map_err(|_| ())?),
+            X64CoreRegId::Eflags => context.rflags = u64::from_le_bytes(buf.try_into().map_err(|_| ())?),
+            X64CoreRegId::Segment(index) => match index {
+                0 => write_field!(context.cs, u32),
+                1 => write_field!(context.ss, u32),
+                2 => write_field!(context.ds, u32),
+                3 => write_field!(context.es, u32),
+                4 => write_field!(context.fs, u32),
+                5 => write_field!(context.gs, u32),
+                _ => return Err(()),
+            },
+            X64CoreRegId::Control(index) => match index {
+                0 => write_field!(context.cr0, u64),
+                1 => write_field!(context.cr2, u64),
+                2 => write_field!(context.cr3, u64),
+                3 => write_field!(context.cr4, u64),
+                4 => write_field!(context.cr8, u64),
+                _ => return Err(()),
+            },
+            X64CoreRegId::Fpu(_) | X64CoreRegId::St(_) => {
+                // Do nothing.
+            }
+        }
+
+        Ok(())
     }
 }
 

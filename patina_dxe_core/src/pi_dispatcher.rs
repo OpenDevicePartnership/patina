@@ -43,7 +43,7 @@ use section_decompress::CoreExtractor;
 use crate::{
     PlatformInfo,
     events::EVENT_DB,
-    image::{core_load_image, core_start_image},
+    image::{ImageStatus, core_load_image, core_start_image},
     protocol_db::DXE_CORE_HANDLE,
     protocols::PROTOCOL_DB,
     tpl_mutex::TplMutex,
@@ -190,14 +190,19 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
                 let data = driver.pe32.try_content_as_slice()?;
                 match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(data)) {
-                    Ok((image_handle, security_status)) => {
-                        driver.image_handle = Some(image_handle);
-                        driver.security_status = match security_status {
-                            Ok(_) => efi::Status::SUCCESS,
-                            Err(err) => err.into(),
-                        };
+                    Ok(handle) => {
+                        driver.image_handle = Some(handle);
+                        driver.security_status = efi::Status::SUCCESS;
                     }
-                    Err(err) => log::error!("Failed to load: load_image returned {err:x?}"),
+                    Err(ImageStatus::SecurityViolation(handle)) => {
+                        driver.image_handle = Some(handle);
+                        driver.security_status = efi::Status::SECURITY_VIOLATION;
+                    }
+                    Err(ImageStatus::AccessDenied) => {
+                        driver.image_handle = None;
+                        driver.security_status = efi::Status::ACCESS_DENIED;
+                    }
+                    Err(ImageStatus::LoadError(err)) => log::error!("Failed to load: load_image returned {err:x?}"),
                 }
             }
 

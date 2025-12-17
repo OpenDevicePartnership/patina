@@ -10,7 +10,6 @@ mod io_block;
 mod memory_block;
 mod spin_locked_gcd;
 
-use alloc::string::String;
 use goblin::pe::section_table;
 
 use core::{cell::Cell, ffi::c_void, ops::Range};
@@ -252,7 +251,7 @@ impl MemoryProtectionPolicy {
         _gcd: &SpinLockedGcd,
         _image_base_page: usize,
         _image_num_pages: usize,
-        filename: String,
+        filename: &str,
     ) -> Result<(), EfiError> {
         log::error!(
             "Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
@@ -280,7 +279,7 @@ impl MemoryProtectionPolicy {
         gcd: &SpinLockedGcd,
         image_base_page: usize,
         image_num_pages: usize,
-        filename: String,
+        filename: &str,
     ) -> Result<(), EfiError> {
         // remove default NX protection
         gcd.memory_protection_policy.memory_allocation_default_attributes.set(0);
@@ -944,8 +943,7 @@ mod tests {
     fn test_activate_compatibility_mode_not_allowed() {
         let gcd: SpinLockedGcd = SpinLockedGcd::new(None);
 
-        let result =
-            MemoryProtectionPolicy::activate_compatibility_mode(&gcd, 0x1000, 0x10, "test_image.efi".to_string());
+        let result = MemoryProtectionPolicy::activate_compatibility_mode(&gcd, 0x1000, 0x10, "test_image.efi");
         assert_eq!(result, Err(EfiError::LoadError));
     }
 
@@ -1024,7 +1022,7 @@ mod tests {
             )
             .expect("Failed to allocate loader code memory");
             let image_num_pages = 4;
-            let filename = "legacy_app.efi".to_string();
+            let filename = "legacy_app.efi";
 
             let desc = GCD.get_memory_descriptor_for_address(image_base_page).unwrap();
             assert_eq!(desc.attributes & efi::MEMORY_XP, efi::MEMORY_XP);
@@ -1034,7 +1032,7 @@ mod tests {
                 &GCD,
                 image_base_page as usize,
                 image_num_pages,
-                filename.clone(),
+                filename,
             );
             assert!(result.is_ok());
 

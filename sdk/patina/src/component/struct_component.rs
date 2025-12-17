@@ -78,7 +78,7 @@ where
         let param_state = self.param_state.as_mut().expect("Param state created on initialize.");
 
         if let Err(bad_param) = Func::Param::try_validate(param_state, storage) {
-            self.metadata.set_failed_param(bad_param);
+            self.metadata.set_error_message(bad_param);
             return Ok(false);
         }
 
@@ -100,8 +100,17 @@ where
     }
 
     /// One-time initialization of the Component. Should set [Access](super::metadata::Access) requirements.
-    fn initialize(&mut self, _storage: &mut Storage) {
-        self.param_state = Some(Func::Param::init_state(_storage, &mut self.metadata));
+    fn initialize(&mut self, _storage: &mut Storage) -> bool {
+        match Func::Param::init_state(_storage, &mut self.metadata) {
+            Ok(param_state) => {
+                self.param_state = Some(param_state);
+                true
+            }
+            Err(init_error) => {
+                self.metadata.set_error_message(init_error);
+                false
+            }
+        }
     }
 }
 
@@ -113,6 +122,8 @@ mod tests {
         IntoComponent, component,
         params::{Config, ConfigMut},
     };
+
+    use alloc::borrow::Cow;
 
     #[allow(dead_code)]
     pub struct TestStructSuccess {
@@ -191,7 +202,10 @@ mod tests {
         test_struct.initialize(&mut storage);
         storage.lock_configs(); // Lock it so the ConfigMut can't be accessed
         assert!(test_struct.run(&mut storage).is_ok_and(|res| !res));
-        assert_eq!(test_struct.metadata().failed_param(), Some("patina::component::params::ConfigMut<'_, u32>"));
+        assert_eq!(
+            test_struct.metadata().error_message(),
+            Some(Cow::from("patina::component::params::ConfigMut<'_, u32>"))
+        );
 
         let mut test_struct = TestStructFail { x: 5 }.into_component();
         test_struct.initialize(&mut storage);

@@ -14,7 +14,7 @@ use crate::{
 };
 
 use crate::{OwnedGuid, boot_services::StandardBootServices};
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
     any::{Any, TypeId},
     cell::{Ref, RefCell, RefMut, UnsafeCell},
@@ -536,22 +536,28 @@ unsafe impl Param for &mut Storage {
         true
     }
 
-    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
+    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         // Storage provides global access to configuration. That means by manipulating the storage,
         // we can invalidate any config access, so we make sure no other config access has been
         // registered, and set ourselves as exclusive.
-        debug_assert!(
-            !meta.access().has_any_config_write(),
-            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
-            meta.name()
-        );
+        if meta.access().has_writes_all_configs() {
+            return Err(Cow::from("&mut Storage conflicts with a previous &mut Storage access."));
+        }
 
-        debug_assert!(
-            !meta.access().has_any_config_read(),
-            "&mut Storage in component {} conflicts with a previous Config<T> access.",
-            meta.name()
-        );
+        if meta.access().has_reads_all_configs() {
+            return Err(Cow::from("&mut Storage conflicts with a previous &Storage access."));
+        }
+
+        if meta.access().has_any_config_write() {
+            return Err(Cow::from("&mut Storage conflicts with a previous ConfigMut<T> access."));
+        }
+
+        if meta.access().has_any_config_read() {
+            return Err(Cow::from("&mut Storage conflicts with a previous Config<T> access."));
+        }
+
         meta.access_mut().writes_all_configs();
+        Ok(())
     }
 }
 
@@ -579,14 +585,17 @@ unsafe impl Param for &Storage {
         true
     }
 
-    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
-        debug_assert!(
-            !meta.access().has_any_config_write(),
-            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
-            meta.name()
-        );
+    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        if meta.access().has_writes_all_configs() {
+            return Err(Cow::from("&Storage conflicts with a previous &mut Storage access."));
+        }
+
+        if meta.access().has_any_config_write() {
+            return Err(Cow::from("&Storage conflicts with a previous ConfigMut<T> access."));
+        }
 
         meta.access_mut().reads_all_configs();
+        Ok(())
     }
 }
 
@@ -720,5 +729,71 @@ mod tests {
         assert!(storage.get_service::<dyn TestService>().is_some());
         let service = storage.get_service::<dyn TestService>().unwrap();
         assert_eq!(service.test(), 42);
+    }
+
+    #[test]
+    fn test_mutable_storage_param_conflict_scenarios() {
+        // `&mut Storage` conflicts with any config access (mutable or immutable) and any other storage access.
+        // This test simulates those scenarios by manipulating the MetaData access directly.
+
+        // Scenario 1: `&mut Storage` + `&mut Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<&mut Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&mut Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&mut Storage conflicts with a previous &mut Storage access."
+        );
+
+        // Scenario 2: `&Storage` + `&mut Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<&Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&mut Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&mut Storage conflicts with a previous &Storage access."
+        );
+
+        // Scenario 3: `ConfigMut<T>` + `&mut Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<crate::component::params::ConfigMut<u32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&mut Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&mut Storage conflicts with a previous ConfigMut<T> access."
+        );
+
+        // Scenario 4: `Config<T>` + `&mut Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<crate::component::params::Config<u32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&mut Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&mut Storage conflicts with a previous Config<T> access."
+        );
+    }
+
+    #[test]
+    fn test_immutable_storage_param_conflict_scenarios() {
+        // `&Storage` conflicts with any mutable config access and any `&mut Storage` access.
+        // This test simulates those scenarios by manipulating the MetaData access directly.
+
+        // Scenario 1: `&mut Storage` + `&Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<&mut Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&Storage conflicts with a previous &mut Storage access."
+        );
+
+        // Scenario 2: `ConfigMut<T>` + `&Storage` conflict
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<bool>();
+        assert!(<crate::component::params::ConfigMut<u32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <&Storage as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "&Storage conflicts with a previous ConfigMut<T> access."
+        );
     }
 }

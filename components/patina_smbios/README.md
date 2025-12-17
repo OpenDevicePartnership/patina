@@ -46,6 +46,95 @@ commands.add_component(SmbiosProvider::new(3, 9));  // SMBIOS 3.9
 > creation fails during `entry_point()`, the component returns
 > `EfiError::Unsupported` instead of panicking.
 
+## Platform Integration
+
+To integrate the `patina_smbios` component into your platform, remove the
+`SmbiosDxe` driver and add the `SmbiosProvider` component. This replaces
+`SmbiosDxe` as the producer of the `EFI_SMBIOS_PROTOCOL`.
+
+### Step 1: Remove the SmbiosDxe Driver
+
+Remove `SmbiosDxe.inf` from your platform's DSC file (e.g.,
+`YourPlatform.dsc` or `YourPlatformCommon.dsc.inc`):
+
+```diff
+-  #
+-  # SMBIOS Support
+-  #
+-  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf {
+-    <LibraryClasses>
+-      NULL|YourPlatform/Library/SmbiosVersionLib/DetectSmbiosVersionLib.inf
+-  }
+```
+
+Remove the corresponding entry from your platform's FDF file (e.g.,
+`YourPlatform.fdf`):
+
+```diff
+-INF  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+```
+
+Existing C drivers can locate and use the `EFI_SMBIOS_PROTOCOL` produced by the
+Patina SMBIOS component to add their records.
+
+### Step 2: Add the Patina SMBIOS Component
+
+In your Patina DXE core configuration (e.g., `your_platform_dxe_core.rs`), add
+the `SmbiosProvider` component:
+
+```rust
+use patina_smbios::SmbiosProvider;
+
+// In your DXE core builder
+PatinaCore::new()
+    .with_component(SmbiosProvider::new(3, 9))  // SMBIOS version 3.9
+    // ... other components
+```
+
+The version parameters represent the SMBIOS specification version (major, minor).
+Only SMBIOS 3.x versions are supported.
+
+### Step 3 (Optional): Create a Platform SMBIOS Component
+
+If you want to develop your own Patina-based platform SMBIOS component, remove
+your platform's existing SMBIOS driver (e.g., `SmbiosPlatformDxe`,
+`SbsaQemuSmbiosDxe`, `ProcessorSubClassDxe`) from your DSC and FDF files, then
+create a platform-specific component that populates your SMBIOS tables. This
+component uses the `#[component]` macro and receives the `Smbios` service as a
+parameter:
+
+```rust
+use patina::component::{component, service::Service};
+use patina_smbios::service::{Smbios, SmbiosExt};
+
+#[derive(Default)]
+pub struct YourPlatformSmbios;
+
+#[component]
+impl YourPlatformSmbios {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn entry_point(self, smbios: Service<dyn Smbios>) -> Result<()> {
+        // Add Type 0 (BIOS Information), Type 1 (System Information), etc.
+        // ... populate your platform-specific SMBIOS records
+
+        smbios.publish_table()?;
+        Ok(())
+    }
+}
+```
+
+Then add the platform component to your DXE core:
+
+```rust
+PatinaCore::new()
+    .with_component(SmbiosProvider::new(3, 9))
+    .with_component(YourPlatformSmbios::new())
+    // ... other components
+```
+
 ## Integration Guidance
 
 ### Adding SMBIOS Records
