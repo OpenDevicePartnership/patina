@@ -63,7 +63,7 @@ impl StandardBootServices {
         this
     }
 
-    /// Create a new StandarBootServices that has not been initialized.
+    /// Create a new StandardBootServices that has not been initialized.
     pub const fn new_uninit() -> Self {
         StandardBootServices { efi_boot_services: Once::new() }
     }

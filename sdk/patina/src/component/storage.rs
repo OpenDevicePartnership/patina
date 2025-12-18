@@ -214,6 +214,8 @@ pub struct Storage {
     boot_services: StandardBootServices,
     // Standard Runtime Services.
     runtime_services: StandardRuntimeServices,
+    // Image handle for the DXE Core (used as parent for LoadImage calls).
+    image_handle: Option<r_efi::efi::Handle>,
 }
 
 impl Default for Storage {
@@ -236,6 +238,7 @@ impl Storage {
             hob_indices: BTreeMap::new(),
             boot_services: StandardBootServices::new_uninit(),
             runtime_services: StandardRuntimeServices::new_uninit(),
+            image_handle: None,
         }
     }
 
@@ -277,6 +280,19 @@ impl Storage {
         &self.runtime_services
     }
 
+    /// Sets the image handle for the DXE Core.
+    ///
+    /// This handle is used as the parent image handle for `LoadImage()` calls
+    /// when loading boot applications.
+    pub fn set_image_handle(&mut self, handle: r_efi::efi::Handle) {
+        self.image_handle = Some(handle);
+    }
+
+    /// Returns the image handle for the DXE Core, if set.
+    pub fn image_handle(&self) -> Option<r_efi::efi::Handle> {
+        self.image_handle
+    }
+
     /// Registers a config type with the storage and returns its global id.
     pub(crate) fn register_config<C: Default + 'static>(&mut self) -> usize {
         let idx = self.config_indices.len();
@@ -284,18 +300,24 @@ impl Storage {
     }
 
     /// Adds a default valued config datum to the storage if it does not exist.
+    ///
+    /// Default configs are created unlocked so that `ConfigMut<T>` can modify them.
     pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> usize {
         let idx = self.register_config::<C>();
         if !self.configs.contains(idx) {
-            self.configs.insert(idx, RefCell::new(ConfigRaw::new(true, Box::<C>::default())));
+            self.configs.insert(idx, RefCell::new(ConfigRaw::new(false, Box::<C>::default())));
         }
         idx
     }
 
     /// Adds a config datum to the storage, overwriting an existing value if it exists.
+    ///
+    /// Configs are created unlocked so that components with `ConfigMut<T>` can modify them
+    /// during the first dispatch phase. Call `lock_configs()` to lock all configs before
+    /// dispatching components that require `Config<T>` (immutable access).
     pub fn add_config<C: Default + 'static>(&mut self, config: C) {
         let id = self.register_config::<C>();
-        self.configs.insert(id, RefCell::new(ConfigRaw::new(true, Box::new(config))));
+        self.configs.insert(id, RefCell::new(ConfigRaw::new(false, Box::new(config))));
     }
 
     /// Attempts to retrieve a config datum from the storage.

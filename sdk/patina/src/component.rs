@@ -205,7 +205,7 @@ pub mod prelude {
         component::{
             IntoComponent,
             hob::{FromHob, Hob},
-            params::{Commands, Config, ConfigMut},
+            params::{Commands, Config, ConfigMut, Handle},
             service::{IntoService, Service},
         },
         error::{EfiError, Result},
