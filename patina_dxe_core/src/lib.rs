@@ -484,18 +484,32 @@ impl<P: PlatformInfo> Core<P> {
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&'static self) -> Result<()> {
         perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
+
+        // First, do an initial component dispatch to install core protocols
+        // that PI drivers may depend on (e.g., Advanced Logger).
+        log::info!("Initial component dispatch for core protocols...");
+        let mut initial_dispatched = true;
+        while initial_dispatched {
+            initial_dispatched = self.component_dispatcher.lock().dispatch();
+        }
+
+        // Now dispatch all PI drivers from firmware volumes.
+        // This uses the full dispatcher() which loops until no more drivers can dispatch.
+        log::info!("Dispatching PI drivers from firmware volumes...");
+        match self.pi_dispatcher.dispatcher() {
+            Ok(()) => log::info!("PI driver dispatch complete"),
+            Err(e) => log::info!("PI driver dispatch returned: {:?}", e),
+        }
+
+        // Finally, do the interleaved dispatch for any remaining items.
+        // This allows components that depend on PI drivers to now dispatch.
+        log::info!("Final interleaved dispatch...");
         loop {
-            // Patina component dispatch
-            let dispatched = self.component_dispatcher.lock().dispatch();
+            let component_dispatched = self.component_dispatcher.lock().dispatch();
+            let pi_dispatched =
+                self.pi_dispatcher.dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
 
-            // UEFI driver dispatch
-            let dispatched = dispatched
-                || self
-                    .pi_dispatcher
-                    .dispatch()
-                    .inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
-
-            if !dispatched {
+            if !component_dispatched && !pi_dispatched {
                 break;
             }
         }
@@ -539,7 +553,10 @@ impl<P: PlatformInfo> Core<P> {
 
         memory_attributes_table::init_memory_attributes_table_support();
 
-        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(st.boot_services()));
+        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new_with_dxe_core_handle(
+            st.boot_services(),
+            protocol_db::DXE_CORE_HANDLE,
+        ));
         self.component_dispatcher.lock().set_runtime_services(StandardRuntimeServices::new(st.runtime_services()));
 
         Ok(())

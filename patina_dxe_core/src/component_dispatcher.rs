@@ -120,9 +120,13 @@ unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {
     /// Creates a new locked ComponentDispatcher.
+    ///
+    /// Uses TPL_CALLBACK to allow drivers connected during component dispatch
+    /// (e.g., via boot orchestration's ConnectController) to call
+    /// RaiseTPL(TPL_CALLBACK) without triggering TPL violations.
     #[inline(always)]
     pub(crate) const fn new_locked() -> TplMutex<Self> {
-        TplMutex::new(efi::TPL_NOTIFY, Self::new(), "ComponentDispatcher")
+        TplMutex::new(efi::TPL_CALLBACK, Self::new(), "ComponentDispatcher")
     }
 
     /// Creates a new ComponentDispatcher.

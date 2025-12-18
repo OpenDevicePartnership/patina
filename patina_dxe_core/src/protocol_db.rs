@@ -598,8 +598,11 @@ impl Default for SpinLockedProtocolDb {
 
 impl SpinLockedProtocolDb {
     /// Creates a new instance of SpinLockedProtocolDb.
+    ///
+    /// Uses TPL_CALLBACK to match SYSTEM_TABLE and allow both locks to be held
+    /// simultaneously without TPL ordering violations during boot orchestration.
     pub const fn new() -> Self {
-        SpinLockedProtocolDb { inner: tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, ProtocolDb::new(), "ProtocolLock") }
+        SpinLockedProtocolDb { inner: tpl_mutex::TplMutex::new(efi::TPL_CALLBACK, ProtocolDb::new(), "ProtocolLock") }
     }
 
     /// Resets the protocol database to its initial state.

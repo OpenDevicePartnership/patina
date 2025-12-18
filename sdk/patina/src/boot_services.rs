@@ -46,6 +46,7 @@ use tpl::{Tpl, TplGuard};
 /// This is the boot services used in the UEFI.
 pub struct StandardBootServices {
     efi_boot_services: Once<&'static efi::BootServices>,
+    dxe_core_image_handle: Option<efi::Handle>,
 }
 
 // Safety: efi::BootServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
@@ -63,9 +64,21 @@ impl StandardBootServices {
         this
     }
 
+    /// Create a new StandardBootServices with the provided [efi::BootServices] and DXE Core image handle.
+    #[coverage(off)]
+    pub fn new_with_dxe_core_handle(
+        efi_boot_services: &'static efi::BootServices,
+        dxe_core_image_handle: efi::Handle,
+    ) -> Self {
+        let mut this = Self::new_uninit();
+        this.init(efi_boot_services);
+        this.dxe_core_image_handle = Some(dxe_core_image_handle);
+        this
+    }
+
     /// Create a new StandarBootServices that has not been initialized.
     pub const fn new_uninit() -> Self {
-        StandardBootServices { efi_boot_services: Once::new() }
+        StandardBootServices { efi_boot_services: Once::new(), dxe_core_image_handle: None }
     }
 
     /// Initialize the StandardBootServices.
@@ -92,11 +105,13 @@ impl AsRef<StandardBootServices> for StandardBootServices {
 
 impl Clone for StandardBootServices {
     fn clone(&self) -> Self {
-        if let Some(efi_boot_services) = self.efi_boot_services.get() {
+        let mut cloned = if let Some(efi_boot_services) = self.efi_boot_services.get() {
             StandardBootServices::new(efi_boot_services)
         } else {
             StandardBootServices::new_uninit()
-        }
+        };
+        cloned.dxe_core_image_handle = self.dxe_core_image_handle;
+        cloned
     }
 }
 
@@ -960,6 +975,20 @@ pub trait BootServices {
     ///
     /// data pointer and size must be correct.
     unsafe fn calculate_crc_32_unchecked(&self, data: *const c_void, data_size: usize) -> Result<u32, efi::Status>;
+
+    /// Returns the DXE Core's image handle.
+    ///
+    /// This handle is required as the parent image handle when loading boot images
+    /// via `LoadImage()`. The handle is only available when running under the Patina
+    /// DXE Core.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(handle)` if the DXE Core image handle is available,
+    /// `None` otherwise (e.g., when not running under Patina DXE Core).
+    fn dxe_core_image_handle(&self) -> Option<efi::Handle> {
+        None
+    }
 }
 
 /// Clone implementation for MockBootServices that creates a new mock with default expectations.
@@ -1629,6 +1658,11 @@ impl BootServices for StandardBootServices {
             // SAFETY: If the call succeeded, crc32 has been initialized.
             _ => Ok(unsafe { crc32.assume_init() }),
         }
+    }
+
+    #[coverage(off)]
+    fn dxe_core_image_handle(&self) -> Option<efi::Handle> {
+        self.dxe_core_image_handle
     }
 }
 

@@ -28,6 +28,17 @@ pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
 
+/// Resets the TPL to TPL_APPLICATION for test isolation.
+///
+/// # Safety
+/// This function should only be called in test code with the global test lock held.
+/// It unconditionally resets the TPL without going through normal raise/restore
+/// validation, which is necessary when tests leave TPL in an unexpected state.
+#[cfg(test)]
+pub(crate) fn reset_tpl_for_tests() {
+    CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
+}
+
 extern "efiapi" fn create_event(
     event_type: u32,
     notify_tpl: efi::Tpl,
@@ -215,12 +226,12 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
 pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     assert!(new_tpl <= efi::TPL_HIGH_LEVEL, "Invalid attempt to raise TPL above TPL_HIGH_LEVEL");
 
+    // fetch_max keeps the higher value, so if current TPL > new_tpl, TPL stays unchanged.
+    // Per UEFI spec, behavior is "undefined" when new_tpl <= current TPL.
+    // We interpret this as a no-op: if already at a higher TPL, we're already protected
+    // from lower-TPL interruption, so there's nothing to do. This allows event notification
+    // callbacks (at TPL_NOTIFY) to call boot services that use locks at lower TPL levels.
     let prev_tpl = CURRENT_TPL.fetch_max(new_tpl, Ordering::SeqCst);
-
-    assert!(
-        new_tpl >= prev_tpl,
-        "Invalid attempt to raise TPL to lower value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
-    );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
         interrupts::disable_interrupts();
@@ -935,23 +946,21 @@ mod tests {
             // Store original TPL to restore later
             let original_tpl = CURRENT_TPL.load(Ordering::SeqCst);
 
-            // Instead of triggering a panic, we'll test the condition
-            // that would cause a panic
             let current_tpl = efi::TPL_NOTIFY;
             let lower_tpl = efi::TPL_CALLBACK; // Lower than NOTIFY
 
             // Set starting TPL to NOTIFY
             CURRENT_TPL.store(current_tpl, Ordering::SeqCst);
 
-            // This would trigger the panic in raise_tpl:
-            // raise_tpl(lower_tpl)
+            // Raising to a lower TPL is a no-op: TPL stays unchanged, returns current TPL.
+            // This allows event notification callbacks (at TPL_NOTIFY) to call boot services
+            // that use locks at lower TPL levels (like TPL_CALLBACK).
+            let prev_tpl = raise_tpl(lower_tpl);
+            assert_eq!(prev_tpl, current_tpl, "raise_tpl should return the current TPL");
+            assert_eq!(CURRENT_TPL.load(Ordering::SeqCst), current_tpl, "TPL should not change");
 
-            // Instead, verify the condition that would cause a panic
-            let would_panic = lower_tpl < current_tpl;
-            assert!(would_panic, "Attempting to raise TPL to a lower value should cause a panic");
-
-            // Test valid case - should not panic
-            let prev_tpl = raise_tpl(current_tpl); // Same level, should be fine
+            // Test same level - should be fine
+            let prev_tpl = raise_tpl(current_tpl);
             assert_eq!(prev_tpl, current_tpl);
 
             let higher_tpl = efi::TPL_HIGH_LEVEL; // Higher than NOTIFY

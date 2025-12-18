@@ -103,8 +103,11 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// Creates a new [TplMutex] wrapping a new [FvProtocolData] instance.
+    ///
+    /// Uses TPL_CALLBACK to match SYSTEM_TABLE and allow both locks to be held
+    /// simultaneously without TPL ordering violations during boot orchestration.
     pub const fn new_locked() -> tpl_mutex::TplMutex<Self> {
-        tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, Self::new(), "FvData")
+        tpl_mutex::TplMutex::new(efi::TPL_CALLBACK, Self::new(), "FvData")
     }
 
     /// Returns a locked instance of the global [FvProtocolData].

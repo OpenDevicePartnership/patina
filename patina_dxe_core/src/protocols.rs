@@ -504,9 +504,11 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
     // whether any registered notifies should be invoked between the installation of the multiple protocols, or only
     // after all protocols are installed. Despite the spec ambiguity, the reference EDK2 C implementation does raise to
     // TPL_NOTIFY prior to installing any of the interfaces, which has the effect of deferring any protocol notify
-    // callbacks until after all protocols are installed. This code matches those semantics by using a TPL guard here
-    // to ensure the logic of this function is conducted at TPL_NOTIFY.
-    let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "atomic_protocol_install");
+    // callbacks until after all protocols are installed.
+    //
+    // However, we use TPL_CALLBACK here to match SYSTEM_TABLE and allow protocol notify callbacks to access
+    // boot services without TPL ordering violations during boot orchestration.
+    let tpl_mutex = TplMutex::new(efi::TPL_CALLBACK, (), "atomic_protocol_install");
     let _tpl_guard = tpl_mutex.lock();
 
     if handle.is_null() {

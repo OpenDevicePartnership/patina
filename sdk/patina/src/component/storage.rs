@@ -284,18 +284,24 @@ impl Storage {
     }
 
     /// Adds a default valued config datum to the storage if it does not exist.
+    ///
+    /// Default configs are created unlocked so that `ConfigMut<T>` can modify them.
     pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> usize {
         let idx = self.register_config::<C>();
         if !self.configs.contains(idx) {
-            self.configs.insert(idx, RefCell::new(ConfigRaw::new(true, Box::<C>::default())));
+            self.configs.insert(idx, RefCell::new(ConfigRaw::new(false, Box::<C>::default())));
         }
         idx
     }
 
     /// Adds a config datum to the storage, overwriting an existing value if it exists.
+    ///
+    /// Configs are created unlocked so that components with `ConfigMut<T>` can modify them
+    /// during the first dispatch phase. Call `lock_configs()` to lock all configs before
+    /// dispatching components that require `Config<T>` (immutable access).
     pub fn add_config<C: Default + 'static>(&mut self, config: C) {
         let id = self.register_config::<C>();
-        self.configs.insert(id, RefCell::new(ConfigRaw::new(true, Box::new(config))));
+        self.configs.insert(id, RefCell::new(ConfigRaw::new(false, Box::new(config))));
     }
 
     /// Attempts to retrieve a config datum from the storage.

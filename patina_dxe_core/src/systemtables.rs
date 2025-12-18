@@ -16,8 +16,12 @@ use r_efi::efi;
 
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
 
+/// Global system table protected by a TPL mutex.
+///
+/// Uses TPL_CALLBACK instead of TPL_NOTIFY to allow drivers connected during
+/// boot orchestration to call RaiseTPL(TPL_CALLBACK) without TPL violations.
 pub static SYSTEM_TABLE: tpl_mutex::TplMutex<Option<EfiSystemTable>> =
-    tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, None, "StLock");
+    tpl_mutex::TplMutex::new(efi::TPL_CALLBACK, None, "StLock");
 
 pub struct EfiRuntimeServicesTable {
     runtime_services: Box<efi::RuntimeServices, &'static dyn Allocator>,

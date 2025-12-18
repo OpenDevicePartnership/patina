@@ -587,8 +587,10 @@ impl DispatcherContext {
         }
     }
 
+    /// Uses TPL_CALLBACK to match SYSTEM_TABLE and allow both locks to be held
+    /// simultaneously without TPL ordering violations during boot orchestration.
     const fn new_locked() -> TplMutex<Self> {
-        TplMutex::new(efi::TPL_NOTIFY, Self::new(), "Dispatcher Context")
+        TplMutex::new(efi::TPL_CALLBACK, Self::new(), "Dispatcher Context")
     }
 
     fn add_fv_handles(

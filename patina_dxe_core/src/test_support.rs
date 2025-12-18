@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::{GCD, protocols::PROTOCOL_DB};
+use crate::{GCD, events, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
 use patina::{
     guids::ZERO,
@@ -204,6 +204,9 @@ impl PatinaPageTable for MockPageTableWrapper {
 /// All tests should run from inside this.
 pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
+    // Reset TPL to APPLICATION level for test isolation.
+    // This ensures tests don't fail due to TPL state left by previous tests.
+    events::reset_tpl_for_tests();
     std::panic::catch_unwind(|| {
         f();
     })

@@ -816,11 +816,14 @@ mod tests {
     }
 
     #[test]
-    fn test_config_can_be_accessed_while_unlocked() {
+    fn test_config_can_be_accessed_when_locked() {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
+
+        // Config<T> requires configs to be locked
+        storage.lock_configs();
 
         assert!(Config::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
@@ -850,6 +853,10 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
 
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
+
+        // Lock configs so ConfigMut cannot access
+        storage.lock_configs();
+
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
                 .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32> not available.")
@@ -1006,6 +1013,10 @@ mod tests {
         storage.add_config(42u32);
 
         let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+
+        // Config<T> requires configs to be locked
+        storage.lock_configs();
+
         assert!(<Option<Config<u32>> as Param>::try_validate(&state, (&storage).into()).is_ok());
         // SAFETY: Test code - Option<Config<u32>> parameter has been validated.
         assert!(unsafe {
