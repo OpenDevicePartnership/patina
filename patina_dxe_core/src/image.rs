@@ -1481,8 +1481,17 @@ mod tests {
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
     use patina::{error::EfiError, pi};
-    use r_efi::efi;
-    use std::{fs::File, io::Read, ptr::null_mut, slice::from_raw_parts};
+    use patina_internal_device_path::device_path_node_count;
+    use r_efi::{
+        efi,
+        protocols::device_path::{End, Hardware, Media, TYPE_END, TYPE_HARDWARE, TYPE_MEDIA},
+    };
+    use std::{
+        fs::File,
+        io::Read,
+        ptr::{NonNull, null_mut},
+        slice::from_raw_parts,
+    };
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
@@ -3018,6 +3027,209 @@ mod tests {
 
             let handle = image_data.install().unwrap();
             assert_eq!(image_data.uninstall(handle), Ok(()));
+        })
+        .unwrap();
+    }
+
+    /// Converts a string representation of a device path node into its byte representation.
+    fn node_from_str(node_str: &str) -> Option<Vec<u8>> {
+        let node_str = node_str.to_uppercase();
+        match node_str.as_str() {
+            s if s.starts_with("PCI(") => {
+                let inner = s.strip_prefix("PCI(")?.strip_suffix(")")?;
+
+                let mut parts = inner.split(',');
+                let device = parts.next()?.trim();
+                let function = parts.next()?.trim();
+
+                Some(vec![
+                    TYPE_HARDWARE,
+                    Hardware::SUBTYPE_PCI,
+                    0x6,                                    //length[0]
+                    0x0,                                    //length[1]
+                    u8::from_str_radix(function, 16).ok()?, //func
+                    u8::from_str_radix(device, 16).ok()?,   //device
+                ])
+            }
+            "END" => Some(vec![
+                TYPE_END,
+                End::SUBTYPE_ENTIRE,
+                0x4, //length[0]
+                0x0, //length[1]
+            ]),
+            _ => None,
+        }
+    }
+
+    /// Converts a string file path into a FILEPATH device path node.
+    fn filepath_node_from_str(path: &str) -> Vec<u8> {
+        let path_bytes = path.as_bytes();
+        let path_len = path_bytes.len() + 2 + 4; // +2 for null terminator + 4 for header
+        let mut node = vec![
+            TYPE_MEDIA,
+            Media::SUBTYPE_FILE_PATH,
+            (path_len & 0xFF) as u8,        // length[0]
+            ((path_len >> 8) & 0xFF) as u8, // length[1]
+        ];
+        node.extend_from_slice(path_bytes);
+        node.push(0); // null terminator
+        node.push(0); // null terminator for unicode
+        node
+    }
+
+    // Test support function to generate device path bytes from a string representation.
+    // This does not currently support all device path node types, only the ones I cared about for these tests.
+    fn device_path_from_string(path: String) -> Box<[u8]> {
+        let path = path.replace("\\", "/").replace("0x", "");
+
+        let mut total = Vec::new();
+        let mut current_path = String::new();
+        for nodes in path.split('/') {
+            if let Some(node) = node_from_str(nodes) {
+                // If we were building a FILEPATH node, lets finalize it before appending this node
+                if !current_path.is_empty() {
+                    let filepath_node = filepath_node_from_str(&current_path);
+                    total.extend_from_slice(&filepath_node);
+                    current_path.clear();
+                }
+                total.extend_from_slice(&node);
+            }
+            // Unknown node type, we are just going to treat it as a filepath.
+            else {
+                if !current_path.is_empty() {
+                    current_path.push('/');
+                }
+                current_path.push_str(nodes);
+            }
+        }
+
+        if !current_path.is_empty() {
+            let filepath_node = filepath_node_from_str(&current_path);
+            total.extend_from_slice(&filepath_node);
+        }
+
+        Box::from(total.as_slice())
+    }
+
+    #[test]
+    fn test_set_file_path_with_no_device_handle() {
+        // This test verifies that when a file path is set without a device handle, the path is not modified.
+
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+
+            let child_device_path =
+                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            // Load the valid image.
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let mut private_info = PrivateImageData::new(protocol, pe_info).unwrap();
+            private_info.image_info.device_handle = protocol_db::INVALID_HANDLE;
+
+            // Set the file path to be the child device path.
+            let nn = NonNull::new(child_device_path.as_ptr() as *mut efi::protocols::device_path::Protocol).unwrap();
+            private_info.set_file_path(nn).unwrap();
+
+            assert!(!private_info.image_info.file_path.is_null());
+
+            // Validate the file path was set correctly
+            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
+            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+            assert_eq!(bytes, child_device_path.as_ref());
+
+            // validate the entire device path is correct
+            let (_, len) =
+                device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
+                    .unwrap();
+            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+            assert_eq!(bytes, child_device_path.as_ref());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_file_path_with_a_device_handle() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+
+            let parent_device_path = device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/END"));
+            let child_device_path =
+                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+            let child_filename = device_path_from_string(String::from("EFI/BOOT/BOOT_X64.EFI/END"));
+
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            // Register the parent device path to a new handle
+            let (parent_handle, _) = PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    efi::protocols::device_path::PROTOCOL_GUID,
+                    parent_device_path.as_ptr() as *mut c_void,
+                )
+                .unwrap();
+
+            // Load the valid image.
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut protocol = super::empty_image_info();
+            protocol.image_size = image.len() as u64;
+            protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+            protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            let pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let mut private_info = PrivateImageData::new(protocol, pe_info).unwrap();
+            private_info.image_info.device_handle = parent_handle;
+
+            // Set the file path to be the child device path.
+            let nn = NonNull::new(child_device_path.as_ptr() as *mut efi::protocols::device_path::Protocol).unwrap();
+            private_info.set_file_path(nn).unwrap();
+
+            assert!(!private_info.image_info.file_path.is_null());
+
+            // Validate the file path was set correctly
+            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
+            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+
+            // IMPORTANT: This is validating that we cut off the parent device path correctly.
+            assert_eq!(bytes, child_filename.as_ref());
+
+            // validate the entire device path is correct
+            let (_, len) =
+                device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
+                    .unwrap();
+            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+
+            // IMPORTANT: This should always contain the full path.
+            assert_eq!(bytes, child_device_path.as_ref());
         })
         .unwrap();
     }
