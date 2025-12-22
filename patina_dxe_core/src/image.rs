@@ -3279,7 +3279,7 @@ mod tests {
                     reserved: [0; 4],
                 },
                 module_name: guids::DXE_CORE,
-                entry_point: entry_point as usize as u64,
+                entry_point: entry_point as *const () as u64,
             };
             let end_hob = patina::pi::hob::header::Hob {
                 r#type: patina::pi::hob::END_OF_HOB_LIST,
