@@ -1,4 +1,4 @@
-# @file publish-mdbook.yml
+# @file publish-mdbook.yml.
 #
 # A Github workflow that compiles an mdbook located at docs/* and publishes it
 # to the repository's githubpages page.
