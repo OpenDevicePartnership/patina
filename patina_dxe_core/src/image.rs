@@ -1474,13 +1474,20 @@ mod tests {
     use crate::{
         image::{DxeCoreGlobalImageData, PRIVATE_IMAGE_DATA, PrivateImageData, exit, start_image, unload_image},
         pecoff::UefiPeInfo,
-        protocol_db,
-        protocols::{PROTOCOL_DB, core_install_protocol_interface},
+        protocol_db::{self, DXE_CORE_HANDLE},
+        protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface, handle_protocol},
         systemtables::{SYSTEM_TABLE, init_system_table},
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
-    use patina::{error::EfiError, pi};
+    use patina::{
+        error::EfiError,
+        guids,
+        pi::{
+            self,
+            hob::{HobList, MemoryAllocationModule, header::MemoryAllocation},
+        },
+    };
     use patina_internal_device_path::device_path_node_count;
     use r_efi::{
         efi,
@@ -3230,6 +3237,87 @@ mod tests {
 
             // IMPORTANT: This should always contain the full path.
             assert_eq!(bytes, child_device_path.as_ref());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_install_dxe_core_image() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
+
+            let mut test_file =
+                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            extern "efiapi" fn entry_point(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+
+            let hob = patina::pi::hob::header::Hob {
+                r#type: patina::pi::hob::MEMORY_ALLOCATION,
+                length: core::mem::size_of::<MemoryAllocationModule>() as u16,
+                reserved: 0,
+            };
+            let ma_hob = MemoryAllocationModule {
+                header: hob,
+                alloc_descriptor: MemoryAllocation {
+                    name: guids::DXE_CORE,
+                    memory_base_address: image.as_ptr() as u64,
+                    memory_length: image.len() as u64,
+                    memory_type: efi::BOOT_SERVICES_CODE,
+                    reserved: [0; 4],
+                },
+                module_name: guids::DXE_CORE,
+                entry_point: entry_point as usize as u64,
+            };
+            let end_hob = patina::pi::hob::header::Hob {
+                r#type: patina::pi::hob::END_OF_HOB_LIST,
+                length: core::mem::size_of::<patina::pi::hob::header::Hob>() as u16,
+                reserved: 0,
+            };
+
+            let mut hobs = Vec::new();
+            hobs.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    &ma_hob as *const MemoryAllocationModule as *const u8,
+                    core::mem::size_of::<MemoryAllocationModule>(),
+                )
+            });
+            hobs.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    &end_hob as *const patina::pi::hob::header::Hob as *const u8,
+                    core::mem::size_of::<patina::pi::hob::header::Hob>(),
+                )
+            });
+
+            let mut hob_list = HobList::new();
+            hob_list.discover_hobs(hobs.as_ptr() as *mut c_void);
+
+            let mut out: *mut c_void = core::ptr::null_mut();
+            assert_eq!(
+                efi::Status::SUCCESS,
+                handle_protocol(
+                    DXE_CORE_HANDLE,
+                    &efi::protocols::loaded_image::PROTOCOL_GUID as *const _ as *mut _,
+                    &mut out as *mut *mut c_void
+                )
+            );
+            core_uninstall_protocol_interface(DXE_CORE_HANDLE, efi::protocols::loaded_image::PROTOCOL_GUID, out)
+                .unwrap();
+
+            let mut locked = PRIVATE_IMAGE_DATA.lock();
+            locked.install_dxe_core_image(&hob_list, SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            assert!(locked.private_image_data.contains_key(&DXE_CORE_HANDLE));
         })
         .unwrap();
     }
