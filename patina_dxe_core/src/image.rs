@@ -392,14 +392,16 @@ impl PrivateImageData {
         let mut fp = file_path.as_ptr();
 
         // If the device handle is valid, and the handle has a device path protocol, we need to adjust our file path
-        if self.image_info.device_handle != protocol_db::INVALID_HANDLE
-            && let Ok(device_path) = PROTOCOL_DB
-                .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
+        if let Ok(device_path) = PROTOCOL_DB
+            .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
             let (_, device_path_size) =
                 device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
+
+            // Adjust the split index to exclude the END node of the device path, so the true file path does not start with END.
             let split_idx =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
+
             // SAFETY: `device_path_node_count` is always less than or equal to the size of the device path, so adding `split_idx` to
             //  `file_path` will always produce a valid pointer within the bounds of the original device path.
             fp = unsafe {
