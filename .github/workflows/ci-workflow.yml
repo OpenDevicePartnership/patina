@@ -1,4 +1,4 @@
-# @file ci-workflow.yml
+# @file ci-workflow.yml.
 #
 # A workflow that runs basic CI tests and Rust CI tests, triggered on a pull_request or push to
 # main.
