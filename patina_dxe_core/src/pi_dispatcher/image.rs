@@ -1004,7 +1004,7 @@ impl From<EfiError> for ImageStatus {
 /// Returns Ok(efi::Handle) if the image was loaded successfully.
 /// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
 ///   with security violations, or not at all. See [ImageStatus] for details.
-pub fn core_load_image(
+pub(super) fn core_load_image(
     boot_policy: bool,
     parent_image_handle: efi::Handle,
     file_path: *mut efi::protocols::device_path::Protocol,
@@ -1472,9 +1472,8 @@ impl Buffer {
 #[coverage(off)]
 mod tests {
     extern crate std;
-    use super::{empty_image_info, load_image};
+    use super::*;
     use crate::{
-        image::{DxeCoreGlobalImageData, PRIVATE_IMAGE_DATA, PrivateImageData, exit, start_image, unload_image},
         pecoff::UefiPeInfo,
         protocol_db::{self, DXE_CORE_HANDLE},
         protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface, handle_protocol},

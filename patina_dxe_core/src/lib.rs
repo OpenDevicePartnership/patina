@@ -82,7 +82,6 @@ mod event_db;
 mod events;
 mod filesystems;
 mod gcd;
-mod image;
 mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
@@ -519,7 +518,7 @@ impl<P: PlatformInfo> Core<P> {
         misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
         config_tables::init_config_tables_support(st.boot_services_mut());
         runtime::init_runtime_support(st.runtime_services_mut());
-        image::init_image_support(self.hob_list(), st);
+        pi_dispatcher::image::init_image_support(self.hob_list(), st);
         self.pi_dispatcher.init();
         self.install_dxe_services_table(st);
         driver_services::init_driver_services(st.boot_services_mut());
