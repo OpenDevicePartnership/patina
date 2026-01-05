@@ -267,8 +267,11 @@ mod tests {
     #[test]
     fn acpi_table_protocol_creation() {
         let protocol = AcpiTableProtocol::new();
-        assert_eq!(protocol.install_table as usize, AcpiTableProtocol::install_acpi_table_ext as usize);
-        assert_eq!(protocol.uninstall_table as usize, AcpiTableProtocol::uninstall_acpi_table_ext as usize);
+        assert_eq!(protocol.install_table as usize, AcpiTableProtocol::install_acpi_table_ext as *const () as usize);
+        assert_eq!(
+            protocol.uninstall_table as usize,
+            AcpiTableProtocol::uninstall_acpi_table_ext as *const () as usize
+        );
     }
 
     #[test]
@@ -357,8 +360,8 @@ mod tests {
     fn test_acpi_sdt_init() {
         let protocol = AcpiSdtProtocol::new();
         assert_eq!(protocol.version, ACPI_VERSIONS_GTE_2);
-        assert_eq!(protocol.get_table as usize, AcpiSdtProtocol::get_acpi_table_ext as usize);
-        assert_eq!(protocol.register_notify as usize, AcpiSdtProtocol::register_notify_ext as usize);
+        assert_eq!(protocol.get_table as usize, AcpiSdtProtocol::get_acpi_table_ext as *const () as usize);
+        assert_eq!(protocol.register_notify as usize, AcpiSdtProtocol::register_notify_ext as *const () as usize);
     }
 
     #[test]
