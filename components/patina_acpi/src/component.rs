@@ -27,7 +27,7 @@ use patina::{
 
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
+    acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
     acpi_table::{AcpiRsdp, AcpiXsdt},
     signature::{
         self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
@@ -193,9 +193,10 @@ impl AcpiSystemProtocolManager {
 
     /// Initializes the ACPI protocols.
     /// Ignore coverage due to the use of `StandardBootServices`.
+    #[coverage(off)]
     fn entry_point(self, boot_services: StandardBootServices) -> patina::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
-        boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
+        boot_services.install_protocol_interface(None, Box::new(AcpiGetProtocol::new()))?;
         Ok(())
     }
 }

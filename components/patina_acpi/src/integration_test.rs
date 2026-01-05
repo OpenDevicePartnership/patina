@@ -19,7 +19,7 @@ use r_efi::efi;
 
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
+    acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
     acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
     service::AcpiTableManager,
     signature::{
@@ -72,8 +72,9 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
-    // SAFETY: there is only one reference to the `AcpiSdtProtocol` during this test.
-    let sdt_protocol = unsafe { bs.locate_protocol::<AcpiSdtProtocol>(None) }.expect("Locate protocol should succeed.");
+    // SAFETY: there is only one reference to the `AcpiGetProtocol` during this test.
+    let acpi_get_protocol =
+        unsafe { bs.locate_protocol::<AcpiGetProtocol>(None) }.expect("Locate protocol should succeed.");
 
     let mut table_key_buf: usize = 0;
 
@@ -100,7 +101,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     let table_idx = 0; // We only installed one table, so index 0 should work.
     let mut get_supported_table_versions: u32 = 0;
     let mut get_table_key = 0;
-    let get_result = (sdt_protocol.get_table)(
+    let get_result = (acpi_get_protocol.get_table)(
         table_idx,
         &mut table_buf as *mut *mut AcpiTableHeader,
         &mut get_supported_table_versions,
