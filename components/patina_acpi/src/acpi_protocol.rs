@@ -35,7 +35,7 @@ unsafe impl ProtocolInterface for AcpiTableProtocol {
         efi::Guid::from_fields(0xffe06bdd, 0x6107, 0x46a6, 0x7b, 0xb2, &[0x5a, 0x9c, 0x7e, 0xc5, 0x27, 0x5c]);
 }
 
-// C function interfaces for ACPI Table Protocol and ACPI SDT Protocol.
+// C function interfaces for ACPI Table Protocol and ACPI Get Protocol.
 type AcpiTableInstall = extern "efiapi" fn(*const AcpiTableProtocol, *const c_void, usize, *mut usize) -> efi::Status;
 type AcpiTableUninstall = extern "efiapi" fn(*const AcpiTableProtocol, usize) -> efi::Status;
 type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiTableHeader, *mut u32, *mut usize) -> efi::Status;
@@ -160,21 +160,21 @@ impl AcpiTableProtocol {
     }
 }
 
-/// Corresponds to the ACPI SDT Protocol as defined in PI spec.
+/// Custom protocol to enable non-AML ACPI SDT functionality.
 #[repr(C)]
-pub struct AcpiSdtProtocol {
+pub struct AcpiGetProtocol {
     pub version: u32,
     pub get_table: AcpiTableGet,
     pub register_notify: AcpiTableRegisterNotify,
 }
 
-// SAFETY: `AcpiSdtProtocol` matches the C layout and behavior of the EFI_ACPI_SDT_PROTOCOL.
-unsafe impl ProtocolInterface for AcpiSdtProtocol {
+// SAFETY: `AcpiGetProtocol` matches the C layout and behavior of the custom-defined EFI_ACPI_GET_PROTOCOL. (Not a UEFI spec protocol.)
+unsafe impl ProtocolInterface for AcpiGetProtocol {
     const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0xeb97088e, 0xcfdf, 0x49c6, 0xbe, 0x4b, &[0xd9, 0x06, 0xa5, 0xb2, 0x0e, 0x86]);
+        efi::Guid::from_fields(0x7f3c1a92, 0x8b4e, 0x4d2f, 0xa6, 0xc9, &[0x3e, 0x12, 0xf4, 0xb8, 0xd7, 0xc1]);
 }
 
-impl AcpiSdtProtocol {
+impl AcpiGetProtocol {
     pub(crate) fn new() -> Self {
         Self {
             version: ACPI_VERSIONS_GTE_2,
@@ -184,7 +184,7 @@ impl AcpiSdtProtocol {
     }
 }
 
-impl AcpiSdtProtocol {
+impl AcpiGetProtocol {
     /// Returns a requested ACPI table.
     ///
     /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 1.8
@@ -357,25 +357,25 @@ mod tests {
     }
 
     #[test]
-    fn test_acpi_sdt_init() {
-        let protocol = AcpiSdtProtocol::new();
+    fn test_acpi_get_init() {
+        let protocol = AcpiGetProtocol::new();
         assert_eq!(protocol.version, ACPI_VERSIONS_GTE_2);
-        assert_eq!(protocol.get_table as usize, AcpiSdtProtocol::get_acpi_table_ext as *const () as usize);
-        assert_eq!(protocol.register_notify as usize, AcpiSdtProtocol::register_notify_ext as *const () as usize);
+        assert_eq!(protocol.get_table as usize, AcpiGetProtocol::get_acpi_table_ext as *const () as usize);
+        assert_eq!(protocol.register_notify as usize, AcpiGetProtocol::register_notify_ext as *const () as usize);
     }
 
     #[test]
     fn test_get_table_ext_error_cases() {
         // Test null output parameters.
         let status =
-            AcpiSdtProtocol::get_acpi_table_ext(0, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+            AcpiGetProtocol::get_acpi_table_ext(0, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 
     #[test]
     fn test_register_notify_ext_error_cases() {
         // Test null notify function.
-        let status = AcpiSdtProtocol::register_notify_ext(true, core::ptr::null());
+        let status = AcpiGetProtocol::register_notify_ext(true, core::ptr::null());
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 }
