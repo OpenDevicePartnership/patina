@@ -93,7 +93,7 @@ impl EfiCpuAarch64 {
                     asm!("mrs {}, ctr_el0", out(reg) ctr_el0);
                     ctr_el0
                 };
-                return 4 << ((ctr_el0 >> 16) & 0xf);
+                4 << ((ctr_el0 >> 16) & 0xf)
             } else {
                 // For test mode or non-aarch64 platforms, return 64 bytes
                 64_u64

@@ -106,7 +106,7 @@ pub(crate) fn arch_perf_frequency() -> u64 {
     #[cfg(target_arch = "aarch64")]
     {
         use patina::read_sysreg;
-        return read_sysreg!(CNTFRQ_EL0);
+        read_sysreg!(CNTFRQ_EL0)
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
