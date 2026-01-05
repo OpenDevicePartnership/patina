@@ -507,16 +507,17 @@ unsafe impl Sync for ExitData {}
 unsafe impl Send for ExitData {}
 
 // This struct tracks global data used by the imaging subsystem.
-struct DxeCoreGlobalImageData {
+pub(super) struct ImageData {
     system_table: *mut efi::SystemTable,
     private_image_data: BTreeMap<efi::Handle, PrivateImageData>,
     current_running_image: Option<efi::Handle>,
     image_start_contexts: Vec<*const Yielder<efi::Handle, efi::Status>>,
 }
 
-impl DxeCoreGlobalImageData {
+impl ImageData {
+    /// Creates a new ImageData with default values.
     const fn new() -> Self {
-        DxeCoreGlobalImageData {
+        ImageData {
             system_table: core::ptr::null_mut(),
             private_image_data: BTreeMap::new(),
             current_running_image: None,
@@ -524,16 +525,18 @@ impl DxeCoreGlobalImageData {
         }
     }
 
-    #[cfg(test)]
-    unsafe fn reset(&mut self) {
-        self.system_table = core::ptr::null_mut();
-        self.private_image_data = BTreeMap::new();
-        self.current_running_image = None;
-        self.image_start_contexts = Vec::new();
+    /// Creates a new TplMutex wrapping the ImageData.
+    pub(super) const fn new_locked() -> tpl_mutex::TplMutex<Self> {
+        tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, Self::new(), "ImageLock")
+    }
+
+    /// Sets the system table pointer for this global image data.
+    pub const fn set_system_table(&mut self, system_table: *mut efi::SystemTable) {
+        self.system_table = system_table;
     }
 
     /// Finds the DXE Core memory allocation module HOB and uses it to produce the loaded image protocol.
-    fn install_dxe_core_image(&mut self, hob_list: &HobList, system_table: &mut EfiSystemTable) {
+    pub(super) fn install_dxe_core_image(&mut self, hob_list: &HobList, system_table: &mut EfiSystemTable) {
         let dxe_core_hob = hob_list
             .iter()
             .find_map(|hob| {
@@ -654,13 +657,491 @@ impl DxeCoreGlobalImageData {
     }
 }
 
-// DxeCoreGlobalImageData is accessed through a mutex guard, so it is safe to
+// ImageData is accessed through a mutex guard, so it is safe to
 // mark it sync/send.
-unsafe impl Sync for DxeCoreGlobalImageData {}
-unsafe impl Send for DxeCoreGlobalImageData {}
+unsafe impl Sync for ImageData {}
+unsafe impl Send for ImageData {}
 
-static PRIVATE_IMAGE_DATA: tpl_mutex::TplMutex<DxeCoreGlobalImageData> =
-    tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, DxeCoreGlobalImageData::new(), "ImageLock");
+impl<P: super::PlatformInfo> super::PiDispatcher<P> {
+    /// Loads the image specified by the device path or slice.
+    /// * parent_image_handle - the handle of the image that is loading this one.
+    /// * file_path - optional device path describing where to load the image from.
+    /// * image - optional slice containing the image data.
+    ///
+    /// One of `file_path` or `image` must be specified.
+    /// returns the image handle of the freshly loaded image.
+    ///
+    /// Returns Ok(efi::Handle) if the image was loaded successfully.
+    /// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
+    ///   with security violations, or not at all. See [ImageStatus] for details.
+    pub fn load_image(
+        &self,
+        boot_policy: bool,
+        parent_image_handle: efi::Handle,
+        file_path: *mut efi::protocols::device_path::Protocol,
+        image: Option<&[u8]>,
+    ) -> Result<efi::Handle, ImageStatus> {
+        perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
+
+        if image.is_none() && file_path.is_null() {
+            log::error!("failed to load image: image is none or device path is null.");
+            return Err(EfiError::InvalidParameter.into());
+        }
+
+        ImageData::validate_parent(parent_image_handle)?;
+
+        let (image_to_load, from_fv, device_handle, auth_status) = match image {
+            Some(buffer) => ImageData::locate_image_metadata_by_buffer(buffer, file_path),
+            None => ImageData::locate_image_metadata_by_file_path(boot_policy, file_path)?,
+        };
+
+        // authenticate the image
+        let security_status = authenticate_image(file_path, &image_to_load, boot_policy, from_fv, auth_status);
+
+        // If a security violation occurs, we still load the image, but will ultimately return a ImageStatus::SecurityViolation
+        if let Err(err) = security_status
+            && err != EfiError::SecurityViolation
+        {
+            // If the error is AccessDenied, we abort loading completely, as platform policy prohibits the image from being loaded
+            if err == EfiError::AccessDenied {
+                return Err(ImageStatus::AccessDenied);
+            }
+            // Any other errors are unexpected, so we return the actual error.
+            return Err(err.into());
+        }
+
+        // load the image.
+        let mut image_info = empty_image_info();
+        image_info.system_table = self.image_data.lock().system_table;
+        image_info.parent_handle = parent_image_handle;
+        image_info.device_handle = device_handle;
+
+        let mut private_info = core_load_pe_image(&image_to_load, image_info)?;
+
+        if let Some(fp) = NonNull::new(file_path) {
+            private_info.set_file_path(fp)?;
+        }
+
+        let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
+
+        let mut private_image_data = self.image_data.lock();
+
+        // save the private image data for this image in the private image data map.
+        private_image_data.private_image_data.insert(handle, private_info);
+
+        let private_info = private_image_data
+            .private_image_data
+            .get(&handle)
+            .expect("Image just inserted must exist in private image data map");
+
+        log::info!(
+            "Loaded image at {:#x?} Size={:#x?} EntryPoint={:#x?} {:}",
+            private_info.image_info.image_base,
+            private_info.image_info.image_size,
+            private_info.entry_point as usize,
+            private_info.pe_info.filename_or("<no PDB>"),
+        );
+
+        // register the loaded image with the debug image info configuration table. This is done before the debugger is
+        // notified so that the debugger can access the loaded image protocol before that point, e.g. so
+        // that symbols can be loaded on module breakpoints.
+        core_new_debug_image_info_entry(
+            EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+            private_info.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol,
+            handle,
+        );
+
+        // Notify the debugger of the image load.
+        patina_debugger::notify_module_load(
+            private_info.pe_info.filename_or(""),
+            private_info.image_info.image_base as usize,
+            private_info.image_info.image_size as usize,
+        );
+
+        perf_load_image_end(handle, create_performance_measurement);
+
+        match security_status {
+            Err(EfiError::SecurityViolation) => Err(ImageStatus::SecurityViolation(handle)),
+            Err(_) => unreachable!(), // other errors handled above
+            _ => Ok(handle),
+        }
+    }
+
+    // Loads the image specified by the device_path or source_buffer argument.
+    //
+    //See EFI_BOOT_SERVICES::LoadImage() API definition
+    // in UEFI spec for usage details.
+    // * boot_policy - indicates whether the image is being loaded by the boot
+    //                 manager from the specified device path. ignored if
+    //                 source_buffer is not null.
+    // * parent_image_handle - the caller's image handle.
+    // * device_path - the file path from which the image is loaded.
+    // * source_buffer - if not null, pointer to the memory location containing the
+    //                   image to be loaded.
+    //  * source_size - size in bytes of source_buffer. ignored if source_buffer is
+    //                  null.
+    //  * image_handle - pointer to the returned image handle that is created on
+    //                   successful image load.
+    #[coverage(off)]
+    pub(super) extern "efiapi" fn load_image_efiapi(
+        boot_policy: efi::Boolean,
+        parent_image_handle: efi::Handle,
+        device_path: *mut efi::protocols::device_path::Protocol,
+        source_buffer: *mut c_void,
+        source_size: usize,
+        image_handle: *mut efi::Handle,
+    ) -> efi::Status {
+        if image_handle.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        let image = if source_buffer.is_null() {
+            None
+        } else {
+            if source_size == 0 {
+                return efi::Status::LOAD_ERROR;
+            }
+            Some(unsafe { from_raw_parts(source_buffer as *const u8, source_size) })
+        };
+
+        let (handle, status) =
+            match Self::instance().load_image(boot_policy.into(), parent_image_handle, device_path, image) {
+                Ok(handle) => (handle, efi::Status::SUCCESS),
+                Err(ImageStatus::AccessDenied) => (null_mut(), efi::Status::ACCESS_DENIED),
+                Err(ImageStatus::SecurityViolation(handle)) => (handle, efi::Status::SECURITY_VIOLATION),
+                Err(ImageStatus::LoadError(err)) => return err.into(),
+            };
+
+        // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
+        unsafe { image_handle.write_unaligned(handle) };
+        status
+    }
+
+    pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
+        PROTOCOL_DB.validate_handle(image_handle)?;
+
+        if let Some(private_data) = self.image_data.lock().private_image_data.get_mut(&image_handle) {
+            if private_data.started {
+                Err(EfiError::InvalidParameter)?;
+            }
+        } else {
+            Err(EfiError::InvalidParameter)?;
+        }
+
+        // allocate a buffer for the entry point stack.
+        let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
+
+        perf_image_start_begin(image_handle, create_performance_measurement);
+
+        // define a co-routine that wraps the entry point execution. this doesn't
+        // run until the coroutine.resume() call below.
+        let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
+            let mut private_data = self.image_data.lock();
+
+            // mark the image as started and grab a copy of the private info.
+            let status;
+            if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
+                private_info.started = true;
+                let entry_point = private_info.entry_point;
+
+                // save a pointer to the yielder so that exit() can use it.
+                private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
+
+                // get a copy of the system table pointer to pass to the entry point.
+                let system_table = private_data.system_table;
+                // drop our reference to the private data (i.e. release the lock).
+                drop(private_data);
+
+                // invoke the entry point. Code on the other side of this pointer is
+                // FFI, which is inherently unsafe, but it's not  "technically" unsafe
+                // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
+                // pointer type as "pointer to unsafe function"
+                status = entry_point(image_handle, system_table);
+
+                //safety note: any variables with "Drop" routines that need to run
+                //need to be explicitly dropped before calling exit(). Since exit()
+                //effectively "longjmp"s back to StartImage(), rust automatic
+                //drops will not be triggered.
+                self.exit(image_handle, status, 0, core::ptr::null_mut());
+            } else {
+                status = efi::Status::NOT_FOUND;
+            }
+            status
+        });
+
+        // Save the handle of the previously running image and update the currently
+        // running image to the one we are about to invoke. In the event of nested
+        // calls to StartImage(), the chain of previously running images will
+        // be preserved on the stack of the various StartImage() instances.
+        let mut private_data = self.image_data.lock();
+        let previous_image = private_data.current_running_image;
+        private_data.current_running_image = Some(image_handle);
+        drop(private_data);
+
+        // switch stacks and execute the above defined coroutine to start the image.
+        let status = match coroutine.resume(image_handle) {
+            CoroutineResult::Yield(status) => status,
+            // Note: `CoroutineResult::Return` is unexpected, since it would imply
+            // that exit() failed. TODO: should panic here?
+            CoroutineResult::Return(status) => status,
+        };
+
+        log::info!("start_image entrypoint exit with status: {status:x?}");
+
+        // because we used exit() to return from the coroutine (as opposed to
+        // returning naturally from it), the coroutine is marked as suspended rather
+        // than complete. We need to forcibly mark the coroutine done; otherwise it
+        // will try to use unwind to clean up the co-routine stack (i.e. "drop" any
+        // live objects). This unwind support requires std and will panic if
+        // executed.
+        unsafe { coroutine.force_reset() };
+
+        self.image_data.lock().current_running_image = previous_image;
+
+        perf_image_start_end(image_handle, create_performance_measurement);
+
+        match status {
+            efi::Status::SUCCESS => Ok(()),
+            err => Err(err),
+        }
+    }
+
+    // Transfers control to the entry point of an image that was loaded by
+    // load_image. See EFI_BOOT_SERVICES::StartImage() API definition in UEFI spec
+    // for usage details.
+    // * image_handle - handle of the image to be started.
+    // * exit_data_size - pointer to receive the size, in bytes, of exit_data.
+    //                    if exit_data is null, this is parameter is ignored.
+    // * exit_data - pointer to receive a data buffer with exit data, if any.
+    #[coverage(off)]
+    pub(super) extern "efiapi" fn start_image_efiapi(
+        image_handle: efi::Handle,
+        exit_data_size: *mut usize,
+        exit_data: *mut *mut efi::Char16,
+    ) -> efi::Status {
+        let status = Self::instance().start_image(image_handle);
+
+        // retrieve any exit data that was provided by the entry point.
+        if !exit_data_size.is_null() && !exit_data.is_null() {
+            let private_data = Self::instance().image_data.lock();
+            if let Some(image_data) = private_data.private_image_data.get(&image_handle)
+                && let Some(image_exit_data) = &image_data.exit_data
+                && !exit_data_size.is_null()
+                && !exit_data.is_null()
+            {
+                // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
+                unsafe {
+                    exit_data_size.write_unaligned(image_exit_data.0);
+                    exit_data.write_unaligned(image_exit_data.1);
+                }
+            }
+        }
+
+        let image_type =
+            Self::instance().image_data.lock().private_image_data.get(&image_handle).map(|x| x.pe_info.image_type);
+
+        if status.is_err() || image_type == Some(EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
+            let _result = Self::instance().unload_image(image_handle, true);
+        }
+
+        match status {
+            Ok(()) => efi::Status::SUCCESS,
+            Err(err) => err,
+        }
+    }
+
+    pub fn unload_image(&self, image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
+        PROTOCOL_DB.validate_handle(image_handle)?;
+        let private_data = self.image_data.lock();
+        let private_image_data =
+            private_data.private_image_data.get(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
+        let unload_function = private_image_data.image_info.unload;
+        let started = private_image_data.started;
+        drop(private_data); // release the image lock while unload logic executes as this function may be re-entrant.
+
+        // if the image has been started, request that it unload, and don't unload it if
+        // the unload function doesn't exist or returns an error.
+        if started {
+            if let Some(function) = unload_function {
+                //Safety: this is unsafe (even though rust doesn't think so) because we are calling
+                //into the "unload" function pointer that the image itself set. r_efi doesn't mark
+                //the unload function type as unsafe - so rust reports an "unused_unsafe" since it
+                //doesn't know it's unsafe. We suppress the warning and mark it unsafe anyway as a
+                //warning to the future.
+                #[allow(unused_unsafe)]
+                unsafe {
+                    let status = (function)(image_handle);
+                    if status != efi::Status::SUCCESS {
+                        Err(status)?;
+                    }
+                }
+            } else if !force_unload {
+                Err(EfiError::Unsupported)?;
+            }
+        }
+        let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
+
+        core_remove_debug_image_info_entry(image_handle);
+
+        // close any protocols opened by this image.
+        for handle in handles {
+            let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
+                Err(_) => continue,
+                Ok(protocols) => protocols,
+            };
+            for protocol in protocols {
+                let open_infos = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
+                    Err(_) => continue,
+                    Ok(open_infos) => open_infos,
+                };
+                for open_info in open_infos {
+                    if Some(image_handle) == open_info.agent_handle {
+                        let _result = PROTOCOL_DB.remove_protocol_usage(
+                            handle,
+                            protocol,
+                            open_info.agent_handle,
+                            open_info.controller_handle,
+                            Some(open_info.attributes),
+                        );
+                    }
+                }
+            }
+        }
+
+        // remove the private data for this image from the private_image_data map.
+        // it will get dropped when it goes out of scope at the end of the function and the pages allocated for it
+        // and the image_info box along with it.
+        let private_image_data = self.image_data.lock().private_image_data.remove(&image_handle).unwrap();
+
+        // If something fails to uninstall, then re-insert the private image data back into the map so the protocols
+        // are not deallocated.
+        if private_image_data.uninstall(image_handle).is_err() {
+            self.image_data.lock().private_image_data.insert(image_handle, private_image_data);
+        }
+
+        Ok(())
+    }
+
+    #[coverage(off)]
+    pub(super) extern "efiapi" fn unload_image_efiapi(image_handle: efi::Handle) -> efi::Status {
+        match Self::instance().unload_image(image_handle, false) {
+            Ok(()) => efi::Status::SUCCESS,
+            Err(err) => err,
+        }
+    }
+
+    fn exit(
+        &self,
+        image_handle: efi::Handle,
+        status: efi::Status,
+        exit_data_size: usize,
+        exit_data: *mut efi::Char16,
+    ) -> efi::Status {
+        let started = match self.image_data.lock().private_image_data.get(&image_handle) {
+            Some(image_data) => image_data.started,
+            None => return efi::Status::INVALID_PARAMETER,
+        };
+
+        // if not started, just unload the image.
+        if !started {
+            return match self.unload_image(image_handle, true) {
+                Ok(()) => efi::Status::SUCCESS,
+                Err(_err) => efi::Status::INVALID_PARAMETER,
+            };
+        }
+
+        // image has been started - check the currently running image.
+        let mut private_data = self.image_data.lock();
+        if Some(image_handle) != private_data.current_running_image {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // save the exit data, if present, into the private_image_data for this
+        // image for start_image to retrieve and return.
+        if exit_data_size != 0
+            && !exit_data.is_null()
+            && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
+        {
+            image_data.exit_data = Some(ExitData(exit_data_size, exit_data));
+        }
+
+        // retrieve the yielder that was saved in the start_image entry point
+        // coroutine wrapper.
+        // safety note: this assumes that the top of the image_start_contexts stack
+        // is the currently running image.
+        if let Some(yielder) = private_data.image_start_contexts.pop() {
+            let yielder = unsafe { &*yielder };
+            drop(private_data);
+
+            // safety note: any variables with "Drop" routines that need to run
+            // need to be explicitly dropped before calling suspend(). Since suspend()
+            // effectively "longjmp"s back to StartImage(), rust automatic
+            // drops will not be triggered.
+
+            // transfer control back to start_image by calling the suspend function on
+            // yielder. This will switch stacks back to the start_image that invoked
+            // the entry point coroutine.
+            yielder.suspend(status);
+        }
+
+        //should never reach here, but rust doesn't know that.
+        efi::Status::ACCESS_DENIED
+    }
+
+    // Terminates a loaded EFI image and returns control to boot services.
+    // See EFI_BOOT_SERVICES::Exit() API definition in UEFI spec for usage details.
+    // * image_handle - the handle of the currently running image.
+    // * exit_status - the exit status for the image.
+    // * exit_data_size - the size of the exit_data buffer, if exit_data is not
+    //                    null.
+    // * exit_data - optional buffer of data provided by the caller.
+    #[coverage(off)]
+    pub(super) extern "efiapi" fn exit_efiapi(
+        image_handle: efi::Handle,
+        status: efi::Status,
+        exit_data_size: usize,
+        exit_data: *mut efi::Char16,
+    ) -> efi::Status {
+        Self::instance().exit(image_handle, status, exit_data_size, exit_data)
+    }
+
+    pub(super) extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
+        let mut private_data = Self::instance().image_data.lock();
+
+        for image in private_data.private_image_data.values_mut() {
+            // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
+            let buffer = image.image_buffer.as_ref();
+            if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+                let cache_attrs =
+                    dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
+                        .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
+                        .unwrap_or(DEFAULT_CACHE_ATTR);
+
+                match core_set_memory_space_attributes(
+                    buffer.as_ptr() as efi::PhysicalAddress,
+                    buffer.len() as u64,
+                    cache_attrs,
+                ) {
+                    Ok(_) => {
+                        // success, keep going
+                    }
+                    Err(status) => {
+                        log::error!(
+                            "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
+                            buffer.as_ptr() as efi::PhysicalAddress,
+                            status
+                        );
+                        debug_assert!(false);
+                    }
+                };
+            }
+        }
+
+        if let Err(status) = EVENT_DB.close_event(event) {
+            log::error!("Failed to close image EBS event with status {status:#X?}. This should be okay.");
+        }
+    }
+}
 
 // helper routine that returns an empty loaded_image::Protocol struct.
 fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
@@ -749,42 +1230,6 @@ fn core_load_pe_image(
     }
 
     Ok(private_info)
-}
-
-extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
-    for image in private_data.private_image_data.values_mut() {
-        // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
-        let buffer = image.image_buffer.as_ref();
-        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-            let cache_attrs = dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
-                .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
-                .unwrap_or(DEFAULT_CACHE_ATTR);
-
-            match core_set_memory_space_attributes(
-                buffer.as_ptr() as efi::PhysicalAddress,
-                buffer.len() as u64,
-                cache_attrs,
-            ) {
-                Ok(_) => {
-                    // success, keep going
-                }
-                Err(status) => {
-                    log::error!(
-                        "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
-                        buffer.as_ptr() as efi::PhysicalAddress,
-                        status
-                    );
-                    debug_assert!(false);
-                }
-            };
-        }
-    }
-
-    if let Err(status) = EVENT_DB.close_event(event) {
-        log::error!("Failed to close image EBS event with status {status:#X?}. This should be okay.");
-    }
 }
 
 fn get_file_guid_from_device_path(path: *mut efi::protocols::device_path::Protocol) -> Result<Guid, EfiError> {
@@ -978,7 +1423,8 @@ fn authenticate_image(
 }
 
 /// The status of the image attempting to be loaded.
-pub(super) enum ImageStatus {
+#[derive(Debug)]
+pub enum ImageStatus {
     /// An unexpected error occurred when loading the image
     LoadError(EfiError),
     /// The image was successfully loaded, but failed authentication
@@ -991,457 +1437,6 @@ impl From<EfiError> for ImageStatus {
     fn from(err: EfiError) -> Self {
         ImageStatus::LoadError(err)
     }
-}
-
-/// Loads the image specified by the device path (not yet supported) or slice.
-/// * parent_image_handle - the handle of the image that is loading this one.
-/// * file_path - optional device path describing where to load the image from.
-/// * image - optional slice containing the image data.
-///
-/// One of `file_path` or `image` must be specified.
-/// returns the image handle of the freshly loaded image.
-///
-/// Returns Ok(efi::Handle) if the image was loaded successfully.
-/// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
-///   with security violations, or not at all. See [ImageStatus] for details.
-pub(super) fn core_load_image(
-    boot_policy: bool,
-    parent_image_handle: efi::Handle,
-    file_path: *mut efi::protocols::device_path::Protocol,
-    image: Option<&[u8]>,
-) -> Result<efi::Handle, ImageStatus> {
-    perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
-
-    if image.is_none() && file_path.is_null() {
-        log::error!("failed to load image: image is none or device path is null.");
-        return Err(EfiError::InvalidParameter.into());
-    }
-
-    DxeCoreGlobalImageData::validate_parent(parent_image_handle)?;
-
-    let (image_to_load, from_fv, device_handle, auth_status) = match image {
-        Some(buffer) => DxeCoreGlobalImageData::locate_image_metadata_by_buffer(buffer, file_path),
-        None => DxeCoreGlobalImageData::locate_image_metadata_by_file_path(boot_policy, file_path)?,
-    };
-
-    // authenticate the image
-    let security_status = authenticate_image(file_path, &image_to_load, boot_policy, from_fv, auth_status);
-
-    // If a security violation occurs, we still load the image, but will ultimately return a ImageStatus::SecurityViolation
-    if let Err(err) = security_status
-        && err != EfiError::SecurityViolation
-    {
-        // If the error is AccessDenied, we abort loading completely, as platform policy prohibits the image from being loaded
-        if err == EfiError::AccessDenied {
-            return Err(ImageStatus::AccessDenied);
-        }
-        // Any other errors are unexpected, so we return the actual error.
-        return Err(err.into());
-    }
-
-    // load the image.
-    let mut image_info = empty_image_info();
-    image_info.system_table = PRIVATE_IMAGE_DATA.lock().system_table;
-    image_info.parent_handle = parent_image_handle;
-    image_info.device_handle = device_handle;
-
-    let mut private_info = core_load_pe_image(&image_to_load, image_info)?;
-
-    if let Some(fp) = NonNull::new(file_path) {
-        private_info.set_file_path(fp)?;
-    }
-
-    let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
-
-    let mut private_image_data = PRIVATE_IMAGE_DATA.lock();
-
-    // save the private image data for this image in the private image data map.
-    private_image_data.private_image_data.insert(handle, private_info);
-
-    let private_info = private_image_data
-        .private_image_data
-        .get(&handle)
-        .expect("Image just inserted must exist in private image data map");
-
-    log::info!(
-        "Loaded image at {:#x?} Size={:#x?} EntryPoint={:#x?} {:}",
-        private_info.image_info.image_base,
-        private_info.image_info.image_size,
-        private_info.entry_point as usize,
-        private_info.pe_info.filename_or("<no PDB>"),
-    );
-
-    // register the loaded image with the debug image info configuration table. This is done before the debugger is
-    // notified so that the debugger can access the loaded image protocol before that point, e.g. so
-    // that symbols can be loaded on module breakpoints.
-    core_new_debug_image_info_entry(
-        EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-        private_info.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol,
-        handle,
-    );
-
-    // Notify the debugger of the image load.
-    patina_debugger::notify_module_load(
-        private_info.pe_info.filename_or(""),
-        private_info.image_info.image_base as usize,
-        private_info.image_info.image_size as usize,
-    );
-
-    perf_load_image_end(handle, create_performance_measurement);
-
-    match security_status {
-        Err(EfiError::SecurityViolation) => Err(ImageStatus::SecurityViolation(handle)),
-        Err(_) => unreachable!(), // other errors handled above
-        _ => Ok(handle),
-    }
-}
-
-// Loads the image specified by the device_path (not yet supported) or
-// source_buffer argument. See EFI_BOOT_SERVICES::LoadImage() API definition
-// in UEFI spec for usage details.
-// * boot_policy - indicates whether the image is being loaded by the boot
-//                 manager from the specified device path. ignored if
-//                 source_buffer is not null.
-// * parent_image_handle - the caller's image handle.
-// * device_path - the file path from which the image is loaded.
-// * source_buffer - if not null, pointer to the memory location containing the
-//                   image to be loaded.
-//  * source_size - size in bytes of source_buffer. ignored if source_buffer is
-//                  null.
-//  * image_handle - pointer to the returned image handle that is created on
-//                   successful image load.
-extern "efiapi" fn load_image(
-    boot_policy: efi::Boolean,
-    parent_image_handle: efi::Handle,
-    device_path: *mut efi::protocols::device_path::Protocol,
-    source_buffer: *mut c_void,
-    source_size: usize,
-    image_handle: *mut efi::Handle,
-) -> efi::Status {
-    if image_handle.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    let image = if source_buffer.is_null() {
-        None
-    } else {
-        if source_size == 0 {
-            return efi::Status::LOAD_ERROR;
-        }
-        Some(unsafe { from_raw_parts(source_buffer as *const u8, source_size) })
-    };
-
-    let (handle, status) = match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
-        Ok(handle) => (handle, efi::Status::SUCCESS),
-        Err(ImageStatus::AccessDenied) => (null_mut(), efi::Status::ACCESS_DENIED),
-        Err(ImageStatus::SecurityViolation(handle)) => (handle, efi::Status::SECURITY_VIOLATION),
-        Err(ImageStatus::LoadError(err)) => return err.into(),
-    };
-
-    // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
-    unsafe { image_handle.write_unaligned(handle) };
-    status
-}
-
-// Transfers control to the entry point of an image that was loaded by
-// load_image. See EFI_BOOT_SERVICES::StartImage() API definition in UEFI spec
-// for usage details.
-// * image_handle - handle of the image to be started.
-// * exit_data_size - pointer to receive the size, in bytes, of exit_data.
-//                    if exit_data is null, this is parameter is ignored.
-// * exit_data - pointer to receive a data buffer with exit data, if any.
-extern "efiapi" fn start_image(
-    image_handle: efi::Handle,
-    exit_data_size: *mut usize,
-    exit_data: *mut *mut efi::Char16,
-) -> efi::Status {
-    let status = core_start_image(image_handle);
-
-    // retrieve any exit data that was provided by the entry point.
-    if !exit_data_size.is_null() && !exit_data.is_null() {
-        let private_data = PRIVATE_IMAGE_DATA.lock();
-        if let Some(image_data) = private_data.private_image_data.get(&image_handle)
-            && let Some(image_exit_data) = &image_data.exit_data
-            && !exit_data_size.is_null()
-            && !exit_data.is_null()
-        {
-            // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
-            unsafe {
-                exit_data_size.write_unaligned(image_exit_data.0);
-                exit_data.write_unaligned(image_exit_data.1);
-            }
-        }
-    }
-
-    let image_type = PRIVATE_IMAGE_DATA.lock().private_image_data.get(&image_handle).map(|x| x.pe_info.image_type);
-
-    if status.is_err() || image_type == Some(EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
-        let _result = core_unload_image(image_handle, true);
-    }
-
-    match status {
-        Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err,
-    }
-}
-
-pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
-
-    if let Some(private_data) = PRIVATE_IMAGE_DATA.lock().private_image_data.get_mut(&image_handle) {
-        if private_data.started {
-            Err(EfiError::InvalidParameter)?;
-        }
-    } else {
-        Err(EfiError::InvalidParameter)?;
-    }
-
-    // allocate a buffer for the entry point stack.
-    let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
-
-    perf_image_start_begin(image_handle, create_performance_measurement);
-
-    // define a co-routine that wraps the entry point execution. this doesn't
-    // run until the coroutine.resume() call below.
-    let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
-        let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
-        // mark the image as started and grab a copy of the private info.
-        let status;
-        if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
-            private_info.started = true;
-            let entry_point = private_info.entry_point;
-
-            // save a pointer to the yielder so that exit() can use it.
-            private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
-
-            // get a copy of the system table pointer to pass to the entry point.
-            let system_table = private_data.system_table;
-            // drop our reference to the private data (i.e. release the lock).
-            drop(private_data);
-
-            // invoke the entry point. Code on the other side of this pointer is
-            // FFI, which is inherently unsafe, but it's not  "technically" unsafe
-            // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
-            // pointer type as "pointer to unsafe function"
-            status = entry_point(image_handle, system_table);
-
-            //safety note: any variables with "Drop" routines that need to run
-            //need to be explicitly dropped before calling exit(). Since exit()
-            //effectively "longjmp"s back to StartImage(), rust automatic
-            //drops will not be triggered.
-            exit(image_handle, status, 0, core::ptr::null_mut());
-        } else {
-            status = efi::Status::NOT_FOUND;
-        }
-        status
-    });
-
-    // Save the handle of the previously running image and update the currently
-    // running image to the one we are about to invoke. In the event of nested
-    // calls to StartImage(), the chain of previously running images will
-    // be preserved on the stack of the various StartImage() instances.
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-    let previous_image = private_data.current_running_image;
-    private_data.current_running_image = Some(image_handle);
-    drop(private_data);
-
-    // switch stacks and execute the above defined coroutine to start the image.
-    let status = match coroutine.resume(image_handle) {
-        CoroutineResult::Yield(status) => status,
-        // Note: `CoroutineResult::Return` is unexpected, since it would imply
-        // that exit() failed. TODO: should panic here?
-        CoroutineResult::Return(status) => status,
-    };
-
-    log::info!("start_image entrypoint exit with status: {status:x?}");
-
-    // because we used exit() to return from the coroutine (as opposed to
-    // returning naturally from it), the coroutine is marked as suspended rather
-    // than complete. We need to forcibly mark the coroutine done; otherwise it
-    // will try to use unwind to clean up the co-routine stack (i.e. "drop" any
-    // live objects). This unwind support requires std and will panic if
-    // executed.
-    unsafe { coroutine.force_reset() };
-
-    PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
-
-    perf_image_start_end(image_handle, create_performance_measurement);
-
-    match status {
-        efi::Status::SUCCESS => Ok(()),
-        err => Err(err),
-    }
-}
-
-pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
-    let private_data = PRIVATE_IMAGE_DATA.lock();
-    let private_image_data =
-        private_data.private_image_data.get(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
-    let unload_function = private_image_data.image_info.unload;
-    let started = private_image_data.started;
-    drop(private_data); // release the image lock while unload logic executes as this function may be re-entrant.
-
-    // if the image has been started, request that it unload, and don't unload it if
-    // the unload function doesn't exist or returns an error.
-    if started {
-        if let Some(function) = unload_function {
-            //Safety: this is unsafe (even though rust doesn't think so) because we are calling
-            //into the "unload" function pointer that the image itself set. r_efi doesn't mark
-            //the unload function type as unsafe - so rust reports an "unused_unsafe" since it
-            //doesn't know it's unsafe. We suppress the warning and mark it unsafe anyway as a
-            //warning to the future.
-            #[allow(unused_unsafe)]
-            unsafe {
-                let status = (function)(image_handle);
-                if status != efi::Status::SUCCESS {
-                    Err(status)?;
-                }
-            }
-        } else if !force_unload {
-            Err(EfiError::Unsupported)?;
-        }
-    }
-    let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
-
-    core_remove_debug_image_info_entry(image_handle);
-
-    // close any protocols opened by this image.
-    for handle in handles {
-        let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
-            Err(_) => continue,
-            Ok(protocols) => protocols,
-        };
-        for protocol in protocols {
-            let open_infos = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
-                Err(_) => continue,
-                Ok(open_infos) => open_infos,
-            };
-            for open_info in open_infos {
-                if Some(image_handle) == open_info.agent_handle {
-                    let _result = PROTOCOL_DB.remove_protocol_usage(
-                        handle,
-                        protocol,
-                        open_info.agent_handle,
-                        open_info.controller_handle,
-                        Some(open_info.attributes),
-                    );
-                }
-            }
-        }
-    }
-
-    // remove the private data for this image from the private_image_data map.
-    // it will get dropped when it goes out of scope at the end of the function and the pages allocated for it
-    // and the image_info box along with it.
-    let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
-
-    // If something fails to uninstall, then re-insert the private image data back into the map so the protocols
-    // are not deallocated.
-    if private_image_data.uninstall(image_handle).is_err() {
-        PRIVATE_IMAGE_DATA.lock().private_image_data.insert(image_handle, private_image_data);
-    }
-
-    Ok(())
-}
-
-extern "efiapi" fn unload_image(image_handle: efi::Handle) -> efi::Status {
-    match core_unload_image(image_handle, false) {
-        Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err,
-    }
-}
-
-// Terminates a loaded EFI image and returns control to boot services.
-// See EFI_BOOT_SERVICES::Exit() API definition in UEFI spec for usage details.
-// * image_handle - the handle of the currently running image.
-// * exit_status - the exit status for the image.
-// * exit_data_size - the size of the exit_data buffer, if exit_data is not
-//                    null.
-// * exit_data - optional buffer of data provided by the caller.
-extern "efiapi" fn exit(
-    image_handle: efi::Handle,
-    status: efi::Status,
-    exit_data_size: usize,
-    exit_data: *mut efi::Char16,
-) -> efi::Status {
-    let started = match PRIVATE_IMAGE_DATA.lock().private_image_data.get(&image_handle) {
-        Some(image_data) => image_data.started,
-        None => return efi::Status::INVALID_PARAMETER,
-    };
-
-    // if not started, just unload the image.
-    if !started {
-        return match core_unload_image(image_handle, true) {
-            Ok(()) => efi::Status::SUCCESS,
-            Err(_err) => efi::Status::INVALID_PARAMETER,
-        };
-    }
-
-    // image has been started - check the currently running image.
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-    if Some(image_handle) != private_data.current_running_image {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    // save the exit data, if present, into the private_image_data for this
-    // image for start_image to retrieve and return.
-    if exit_data_size != 0
-        && !exit_data.is_null()
-        && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
-    {
-        image_data.exit_data = Some(ExitData(exit_data_size, exit_data));
-    }
-
-    // retrieve the yielder that was saved in the start_image entry point
-    // coroutine wrapper.
-    // safety note: this assumes that the top of the image_start_contexts stack
-    // is the currently running image.
-    if let Some(yielder) = private_data.image_start_contexts.pop() {
-        let yielder = unsafe { &*yielder };
-        drop(private_data);
-
-        // safety note: any variables with "Drop" routines that need to run
-        // need to be explicitly dropped before calling suspend(). Since suspend()
-        // effectively "longjmp"s back to StartImage(), rust automatic
-        // drops will not be triggered.
-
-        // transfer control back to start_image by calling the suspend function on
-        // yielder. This will switch stacks back to the start_image that invoked
-        // the entry point coroutine.
-        yielder.suspend(status);
-    }
-
-    //should never reach here, but rust doesn't know that.
-    efi::Status::ACCESS_DENIED
-}
-
-/// Initializes image services for the DXE core.
-pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable) {
-    // initialize system table entry in private global.
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-    private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
-
-    // install the image protocol for the dxe_core.
-    private_data.install_dxe_core_image(hob_list, system_table);
-
-    // set up exit boot services callback
-    let _ = EVENT_DB
-        .create_event(
-            efi::EVT_NOTIFY_SIGNAL,
-            efi::TPL_CALLBACK,
-            Some(runtime_image_protection_fixup_ebs),
-            None,
-            Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
-        )
-        .expect("Failed to create callback for runtime image memory protection fixups.");
-
-    //set up imaging services
-    system_table.boot_services_mut().load_image = load_image;
-    system_table.boot_services_mut().start_image = start_image;
-    system_table.boot_services_mut().unload_image = unload_image;
-    system_table.boot_services_mut().exit = exit;
 }
 
 /// A buffer of bytes that is either owned or borrowed.
@@ -1474,9 +1469,11 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::{
+        Core, MockPlatformInfo,
         pecoff::UefiPeInfo,
+        pi_dispatcher::PiDispatcher,
         protocol_db::{self, DXE_CORE_HANDLE},
-        protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface, handle_protocol},
+        protocols::{PROTOCOL_DB, core_install_protocol_interface},
         systemtables::{SYSTEM_TABLE, init_system_table},
         test_collateral, test_support,
     };
@@ -1494,12 +1491,7 @@ mod tests {
         efi,
         protocols::device_path::{End, Hardware, Media, TYPE_END, TYPE_HARDWARE, TYPE_MEDIA},
     };
-    use std::{
-        fs::File,
-        io::Read,
-        ptr::{NonNull, null_mut},
-        slice::from_raw_parts,
-    };
+    use std::{fs::File, io::Read, ptr::NonNull, slice::from_raw_parts};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
@@ -1507,49 +1499,33 @@ mod tests {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
-            init_test_image_support();
             f();
-            // we need the to drop the memory here while the GCD is still valid
-            PRIVATE_IMAGE_DATA.lock().reset();
         })
         .unwrap();
     }
 
-    unsafe fn init_test_image_support() {
-        // SAFETY: Test code - resetting global image data state with test lock held.
-        unsafe { PRIVATE_IMAGE_DATA.lock().reset() };
+    #[test]
+    fn test_simple_init() {
+        with_locked_state(|| {
+            static IMAGE_DATA: ImageData = ImageData::new();
+            assert!(IMAGE_DATA.private_image_data.is_empty());
 
-        const DXE_CORE_MEMORY_SIZE: usize = 0x10000;
-        let dxe_core_memory_base: Vec<u64> = Vec::with_capacity(DXE_CORE_MEMORY_SIZE);
+            static IMAGE_DATA2: tpl_mutex::TplMutex<ImageData> = ImageData::new_locked();
+            assert!(IMAGE_DATA2.lock().private_image_data.is_empty());
+        });
+    }
 
-        let mut private_data = PRIVATE_IMAGE_DATA.lock();
-        let mut binding = SYSTEM_TABLE.lock();
-        let system_table = binding.as_mut().unwrap();
-        private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
+    #[test]
+    fn load_image_invalid_parameter() {
+        with_locked_state(|| {
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
-        let mut image_info = empty_image_info();
-        image_info.system_table = private_data.system_table;
-        image_info.image_base = dxe_core_memory_base.as_ptr() as *mut c_void;
-        image_info.image_size = DXE_CORE_MEMORY_SIZE as u64;
+            let result = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), None);
 
-        let image_info_ptr = &image_info as *const efi::protocols::loaded_image::Protocol;
-        let image_info_ptr = image_info_ptr as *mut c_void;
-
-        // install the loaded_image protocol on a new handle.
-        let _ = match core_install_protocol_interface(
-            Some(protocol_db::DXE_CORE_HANDLE),
-            efi::protocols::loaded_image::PROTOCOL_GUID,
-            image_info_ptr,
-        ) {
-            Err(err) => panic!("Failed to install dxe core image handle: {err:?}"),
-            Ok(handle) => handle,
-        };
-
-        //set up imaging services
-        system_table.boot_services_mut().load_image = load_image;
-        system_table.boot_services_mut().start_image = start_image;
-        system_table.boot_services_mut().unload_image = unload_image;
-        system_table.boot_services_mut().exit = exit;
+            assert!(matches!(result, Err(ImageStatus::LoadError(EfiError::InvalidParameter))));
+        });
     }
 
     #[test]
@@ -1560,18 +1536,15 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(image.as_slice()))
+                .unwrap();
+
+            let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len() as usize;
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -1591,16 +1564,17 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let status = PI_DISPATCHER.load_image(
+                false,
                 protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+                Some(image.as_slice()),
             );
-            assert_eq!(status, efi::Status::SUCCESS);
+            assert!(status.is_ok());
         });
     }
 
@@ -1612,16 +1586,15 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            assert!(
+                PI_DISPATCHER
+                    .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(image.as_slice()),)
+                    .is_ok()
             );
-            assert_eq!(status, efi::Status::SUCCESS);
         });
     }
 
@@ -1633,16 +1606,18 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let result = PI_DISPATCHER.load_image(
+                false,
                 protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+                Some(image.as_slice()),
             );
-            assert_eq!(status, efi::Status::UNSUPPORTED);
+
+            assert!(matches!(result, Err(ImageStatus::LoadError(EfiError::Unsupported))));
         });
     }
 
@@ -1654,16 +1629,16 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            let status = PI_DISPATCHER.load_image(
+                false,
                 protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+                Some(image.as_slice()),
             );
-            assert_eq!(status, efi::Status::LOAD_ERROR);
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
     }
 
@@ -1675,16 +1650,17 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let status = PI_DISPATCHER.load_image(
+                false,
                 protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+                Some(image.as_slice()),
             );
-            assert_eq!(status, efi::Status::LOAD_ERROR);
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
     }
 
@@ -1696,16 +1672,17 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let status = PI_DISPATCHER.load_image(
+                false,
                 protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
+                Some(image.as_slice()),
             );
-            assert_eq!(status, efi::Status::LOAD_ERROR);
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
     }
 
@@ -1717,16 +1694,13 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::LOAD_ERROR);
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            let status =
+                PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image));
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
     }
 
@@ -1737,6 +1711,10 @@ mod tests {
                 File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             // Mock Security Arch protocol
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
@@ -1763,20 +1741,13 @@ mod tests {
                 )
                 .unwrap();
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
 
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -1795,6 +1766,10 @@ mod tests {
                 File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             // Mock Security Arch protocol
             extern "efiapi" fn mock_file_authentication_state(
@@ -1847,20 +1822,13 @@ mod tests {
                 )
                 .unwrap();
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
             assert!(SECURITY2_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
 
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -1879,6 +1847,10 @@ mod tests {
                 File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -1902,27 +1874,23 @@ mod tests {
                 )
                 .unwrap();
 
-            // There should be 1 handle prior to this
+            // The handle / private data count should be 1, which is the dxe core image.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
             // In this result, we expect to get SECURITY_VIOLATION, but the image_handle is successfully populated.
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            assert!(image_handle.is_null());
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SECURITY_VIOLATION);
+            let status =
+                PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image));
+
+            let image_handle = match status {
+                Err(ImageStatus::SecurityViolation(h)) => h,
+                _ => panic!("Expected SecurityViolation error"),
+            };
 
             assert!(!image_handle.is_null());
 
             // Load successful, we should have one more now.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 2);
-            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 1);
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 2);
         });
     }
 
@@ -1933,6 +1901,10 @@ mod tests {
                 File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -1956,29 +1928,16 @@ mod tests {
                 )
                 .unwrap();
 
-            // In this result, we expect to get ACCESS_DENIED, and the pointer is set to null
-            let data = Box::leak(Box::new([15u8; 1])) as *mut [u8; 1] as *mut c_void;
-            let mut image_handle: efi::Handle = data;
-            assert!(!image_handle.is_null());
-
-            // There should be 1 handle prior to this
+            // The handle / private data count should be 1, which is the dxe core image.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::ACCESS_DENIED);
-
-            assert_eq!(image_handle, null_mut());
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            let status =
+                PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image));
+            assert!(matches!(status, Err(ImageStatus::AccessDenied)));
 
             // There should still be only 1 handle
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert!(PRIVATE_IMAGE_DATA.lock().private_image_data.is_empty());
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
         });
     }
 
@@ -1989,6 +1948,10 @@ mod tests {
                 File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -2014,23 +1977,15 @@ mod tests {
 
             // There should be 1 handle prior to this
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PRIVATE_IMAGE_DATA.lock().private_image_data.len(), 0);
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::INVALID_PARAMETER);
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
 
-            assert_eq!(image_handle, null_mut());
+            let status =
+                PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image));
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::InvalidParameter))));
 
             // There should still be only 1 handle
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert!(PRIVATE_IMAGE_DATA.lock().private_image_data.is_empty());
+            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
         });
     }
 
@@ -2042,16 +1997,13 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
             // Getting the image loaded into a buffer that is executable would require OS-specific interactions. This means that
             // all the memory backing our test GCD instance is likely to be marked "NX" - which makes it hard for start_image to
@@ -2068,19 +2020,15 @@ mod tests {
                 ENTRY_POINT_RAN.store(true, core::sync::atomic::Ordering::Relaxed);
                 efi::Status::SUCCESS
             }
-            let mut private_data = PRIVATE_IMAGE_DATA.lock();
+            let mut private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             image_data.entry_point = test_entry_point;
             drop(private_data);
 
-            let mut exit_data_size = 0;
-            let mut exit_data: *mut u16 = core::ptr::null_mut();
-            let status =
-                start_image(image_handle, core::ptr::addr_of_mut!(exit_data_size), core::ptr::addr_of_mut!(exit_data));
-            assert_eq!(status, efi::Status::SUCCESS);
+            PI_DISPATCHER.start_image(image_handle).unwrap();
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
-            let mut private_data = PRIVATE_IMAGE_DATA.lock();
+            let mut private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             assert!(image_data.started);
             drop(private_data);
@@ -2095,16 +2043,15 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            static CORE: Core<MockPlatformInfo> =
+                Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            CORE.pi_dispatcher.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            CORE.override_instance();
+
+            let image_handle = CORE
+                .pi_dispatcher
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
             // Getting the image loaded into a buffer that is executable would require OS-specific interactions. This means that
             // all the memory backing our test GCD instance is likely to be marked "NX" - which makes it hard for start_image to
@@ -2122,19 +2069,22 @@ mod tests {
                 ENTRY_POINT_RAN.store(true, core::sync::atomic::Ordering::Relaxed);
                 efi::Status::UNSUPPORTED
             }
-            let mut private_data = PRIVATE_IMAGE_DATA.lock();
+            let mut private_data = CORE.pi_dispatcher.image_data.lock();
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             image_data.entry_point = test_entry_point;
             drop(private_data);
 
             let mut exit_data_size = 0;
             let mut exit_data: *mut u16 = core::ptr::null_mut();
-            let status =
-                start_image(image_handle, core::ptr::addr_of_mut!(exit_data_size), core::ptr::addr_of_mut!(exit_data));
+            let status = PiDispatcher::<MockPlatformInfo>::start_image_efiapi(
+                image_handle,
+                core::ptr::addr_of_mut!(exit_data_size),
+                core::ptr::addr_of_mut!(exit_data),
+            );
             assert_eq!(status, efi::Status::UNSUPPORTED);
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let private_data = CORE.pi_dispatcher.image_data.lock();
             assert!(!private_data.private_image_data.contains_key(&image_handle));
             drop(private_data);
         });
@@ -2148,21 +2098,17 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
-            assert_eq!(status, efi::Status::SUCCESS);
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
-            let status = unload_image(image_handle);
-            assert_eq!(status, efi::Status::SUCCESS);
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            PI_DISPATCHER.unload_image(image_handle, false).unwrap();
+
+            let private_data = PI_DISPATCHER.image_data.lock();
             assert!(!private_data.private_image_data.contains_key(&image_handle));
         });
     }
@@ -2171,7 +2117,7 @@ mod tests {
     fn locate_image_metadata_by_file_path_should_fail_if_no_file_support() {
         with_locked_state(|| {
             assert_eq!(
-                DxeCoreGlobalImageData::locate_image_metadata_by_file_path(true, core::ptr::null_mut()),
+                ImageData::locate_image_metadata_by_file_path(true, core::ptr::null_mut()),
                 Err(EfiError::InvalidParameter)
             );
 
@@ -2206,10 +2152,7 @@ mod tests {
             ];
             let device_path_ptr = device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
 
-            assert_eq!(
-                DxeCoreGlobalImageData::locate_image_metadata_by_file_path(true, device_path_ptr),
-                Err(EfiError::NotFound)
-            );
+            assert_eq!(ImageData::locate_image_metadata_by_file_path(true, device_path_ptr), Err(EfiError::NotFound));
         });
     }
 
@@ -2415,7 +2358,7 @@ mod tests {
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
             assert_eq!(
-                DxeCoreGlobalImageData::locate_image_metadata_by_file_path(true, device_path_ptr),
+                ImageData::locate_image_metadata_by_file_path(true, device_path_ptr),
                 Ok((image, false, handle, 0))
             );
         });
@@ -2480,7 +2423,7 @@ mod tests {
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
             assert_eq!(
-                DxeCoreGlobalImageData::locate_image_metadata_by_file_path(true, device_path_ptr),
+                ImageData::locate_image_metadata_by_file_path(true, device_path_ptr),
                 Ok((image, false, handle, 0))
             );
         });
@@ -2503,22 +2446,17 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            // Test 1: Full load_image flow
-            let mut image_handle: efi::Handle = core::ptr::null_mut();
-            let status = load_image(
-                false.into(),
-                protocol_db::DXE_CORE_HANDLE,
-                core::ptr::null_mut(),
-                image.as_mut_ptr() as *mut c_void,
-                image.len(),
-                core::ptr::addr_of_mut!(image_handle),
-            );
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
-            // With proper GCD setup, this should succeed
-            assert_eq!(status, efi::Status::SUCCESS);
+            // Test 1: Full load_image flow
+            let image_handle = PI_DISPATCHER
+                .load_image(false, protocol_db::DXE_CORE_HANDLE, core::ptr::null_mut(), Some(&image))
+                .unwrap();
 
             // Verify the image was loaded successfully with correct properties
-            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             assert_ne!(image_data.entry_point as usize, 0);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -2671,7 +2609,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             // Load a valid test image as a template
@@ -2738,7 +2675,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             // Load a valid test image as a template
@@ -2784,7 +2720,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             const STACK_SIZE: usize = 0x10000;
@@ -2815,7 +2750,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -2857,7 +2791,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -2895,7 +2828,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -2930,7 +2862,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -2961,7 +2892,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -2999,7 +2929,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -3040,7 +2969,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -3158,7 +3086,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             // Load the valid image.
@@ -3213,7 +3140,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             // Register the parent device path to a new handle
@@ -3266,6 +3192,60 @@ mod tests {
         .unwrap();
     }
 
+    fn create_dxe_core_hob() -> HobList<'static> {
+        let mut test_file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        let mut image: Vec<u8> = Vec::new();
+        test_file.read_to_end(&mut image).expect("failed to read test file");
+
+        let image = Box::leak(image.into_boxed_slice());
+
+        extern "efiapi" fn entry_point(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
+            efi::Status::SUCCESS
+        }
+
+        let hob = patina::pi::hob::header::Hob {
+            r#type: patina::pi::hob::MEMORY_ALLOCATION,
+            length: core::mem::size_of::<MemoryAllocationModule>() as u16,
+            reserved: 0,
+        };
+        let ma_hob = MemoryAllocationModule {
+            header: hob,
+            alloc_descriptor: MemoryAllocation {
+                name: guids::DXE_CORE,
+                memory_base_address: image.as_ptr() as u64,
+                memory_length: image.len() as u64,
+                memory_type: efi::BOOT_SERVICES_CODE,
+                reserved: [0; 4],
+            },
+            module_name: guids::DXE_CORE,
+            entry_point: entry_point as *const () as u64,
+        };
+        let end_hob = patina::pi::hob::header::Hob {
+            r#type: patina::pi::hob::END_OF_HOB_LIST,
+            length: core::mem::size_of::<patina::pi::hob::header::Hob>() as u16,
+            reserved: 0,
+        };
+
+        let mut hobs = Vec::new();
+        hobs.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(
+                &ma_hob as *const MemoryAllocationModule as *const u8,
+                core::mem::size_of::<MemoryAllocationModule>(),
+            )
+        });
+        hobs.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(
+                &end_hob as *const patina::pi::hob::header::Hob as *const u8,
+                core::mem::size_of::<patina::pi::hob::header::Hob>(),
+            )
+        });
+
+        let mut hob_list = HobList::new();
+        hob_list.discover_hobs(hobs.as_ptr() as *mut c_void);
+
+        hob_list
+    }
+
     #[test]
     fn test_install_dxe_core_image() {
         test_support::with_global_lock(|| {
@@ -3275,7 +3255,6 @@ mod tests {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
                 init_system_table();
-                init_test_image_support();
             }
 
             let mut test_file =
@@ -3283,66 +3262,12 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            extern "efiapi" fn entry_point(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
-                efi::Status::SUCCESS
-            }
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-            let hob = patina::pi::hob::header::Hob {
-                r#type: patina::pi::hob::MEMORY_ALLOCATION,
-                length: core::mem::size_of::<MemoryAllocationModule>() as u16,
-                reserved: 0,
-            };
-            let ma_hob = MemoryAllocationModule {
-                header: hob,
-                alloc_descriptor: MemoryAllocation {
-                    name: guids::DXE_CORE,
-                    memory_base_address: image.as_ptr() as u64,
-                    memory_length: image.len() as u64,
-                    memory_type: efi::BOOT_SERVICES_CODE,
-                    reserved: [0; 4],
-                },
-                module_name: guids::DXE_CORE,
-                entry_point: entry_point as *const () as u64,
-            };
-            let end_hob = patina::pi::hob::header::Hob {
-                r#type: patina::pi::hob::END_OF_HOB_LIST,
-                length: core::mem::size_of::<patina::pi::hob::header::Hob>() as u16,
-                reserved: 0,
-            };
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
-            let mut hobs = Vec::new();
-            hobs.extend_from_slice(unsafe {
-                core::slice::from_raw_parts(
-                    &ma_hob as *const MemoryAllocationModule as *const u8,
-                    core::mem::size_of::<MemoryAllocationModule>(),
-                )
-            });
-            hobs.extend_from_slice(unsafe {
-                core::slice::from_raw_parts(
-                    &end_hob as *const patina::pi::hob::header::Hob as *const u8,
-                    core::mem::size_of::<patina::pi::hob::header::Hob>(),
-                )
-            });
-
-            let mut hob_list = HobList::new();
-            hob_list.discover_hobs(hobs.as_ptr() as *mut c_void);
-
-            let mut out: *mut c_void = core::ptr::null_mut();
-            assert_eq!(
-                efi::Status::SUCCESS,
-                handle_protocol(
-                    DXE_CORE_HANDLE,
-                    &efi::protocols::loaded_image::PROTOCOL_GUID as *const _ as *mut _,
-                    &mut out as *mut *mut c_void
-                )
-            );
-            core_uninstall_protocol_interface(DXE_CORE_HANDLE, efi::protocols::loaded_image::PROTOCOL_GUID, out)
-                .unwrap();
-
-            let mut locked = PRIVATE_IMAGE_DATA.lock();
-            locked.install_dxe_core_image(&hob_list, SYSTEM_TABLE.lock().as_mut().unwrap());
-
-            assert!(locked.private_image_data.contains_key(&DXE_CORE_HANDLE));
+            assert!(PI_DISPATCHER.image_data.lock().private_image_data.contains_key(&DXE_CORE_HANDLE));
         })
         .unwrap();
     }
