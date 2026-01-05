@@ -12,8 +12,7 @@
 ##
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
-##
-name: Publish Documentation
+##name: Publish Documentation
 
 on:
   # Trigger this workflow manually if necessary
@@ -64,5 +63,5 @@ jobs:
       - name: 🚀 Deploy Github Pages Site 🚀
         uses: actions/deploy-pages@v4
         with:
-          token: ${{ github.token }}
+          token: $
           artifact_name: github-pages
