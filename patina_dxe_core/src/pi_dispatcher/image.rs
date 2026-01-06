@@ -37,10 +37,7 @@ use r_efi::efi;
 
 use crate::{
     GCD,
-    config_tables::debug_image_info_table::{
-        EfiDebugImageInfoNormal, core_new_debug_image_info_entry, core_remove_debug_image_info_entry,
-        initialize_debug_image_info_table,
-    },
+    config_tables::debug_image_info_table::{DEBUG_IMAGE_INFO_TABLE, ImageInfoType},
     dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
@@ -586,16 +583,11 @@ impl ImageData {
 
         assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
 
-        let protocol_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
+        let protocol_ptr = NonNull::from(private_image_data.image_info.as_ref());
 
         self.private_image_data.insert(handle, private_image_data);
 
-        initialize_debug_image_info_table(system_table);
-        core_new_debug_image_info_entry(
-            EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-            protocol_ptr,
-            handle,
-        );
+        DEBUG_IMAGE_INFO_TABLE.write().add_entry(ImageInfoType::Normal, protocol_ptr, handle);
     }
 
     /// Validates that the provided parent handle is valid and has a loaded image protocol.
@@ -745,9 +737,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         // register the loaded image with the debug image info configuration table. This is done before the debugger is
         // notified so that the debugger can access the loaded image protocol before that point, e.g. so
         // that symbols can be loaded on module breakpoints.
-        core_new_debug_image_info_entry(
-            EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-            private_info.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol,
+        DEBUG_IMAGE_INFO_TABLE.write().add_entry(
+            ImageInfoType::Normal,
+            NonNull::from(private_info.image_info.as_ref()),
             handle,
         );
 
@@ -981,7 +973,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         }
         let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
-        core_remove_debug_image_info_entry(image_handle);
+        DEBUG_IMAGE_INFO_TABLE.write().remove_entry(image_handle);
 
         // close any protocols opened by this image.
         for handle in handles {

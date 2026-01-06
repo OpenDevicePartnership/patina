@@ -6,392 +6,514 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-use alloc::{boxed::Box, vec, vec::Vec};
-use patina::base::UEFI_PAGE_SIZE;
-use spin::RwLock;
-
-use core::{ffi::c_void, fmt::Debug, mem::size_of, ptr};
-
-use crate::{
-    GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
+use core::{
+    alloc::Layout,
+    ptr::{self, NonNull},
 };
-
-use patina::pi::dxe_services::GcdMemoryType;
-
 use r_efi::efi;
-
-// TODO: (Issue #490) to be sent upstream to r_efi.
+use spin::rwlock::RwLock;
 
 /// GUID for the EFI_DEBUG_IMAGE_INFO_TABLE per section 18.4.3 of UEFI Spec 2.11
 pub const EFI_DEBUG_IMAGE_INFO_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x49152e77, 0x1ada, 0x4764, 0xb7, 0xa2, &[0x7a, 0xfe, 0xfe, 0xd9, 0x5e, 0x8b]);
 
-/// Structure for EFI_DEBUG_IMAGE_INFO_NORMAL, per section 18.4.3 of UEFI Spec 2.11
-/// This structure is used to store information about a loaded image for debugging purposes.
-#[repr(C)]
-#[derive(Debug)]
-pub struct EfiDebugImageInfoNormal {
-    pub image_info_type: u32,
-    pub loaded_image_protocol_instance: *const efi::protocols::loaded_image::Protocol,
-    pub image_handle: efi::Handle,
+/// The global debug image info table instance.
+pub static DEBUG_IMAGE_INFO_TABLE: RwLock<DebugImageInfoData> = DebugImageInfoData::new_locked();
+
+/// The type of debug image info entry.
+pub enum ImageInfoType {
+    /// A normal debug image info entry.
+    Normal,
 }
 
-impl EfiDebugImageInfoNormal {
-    /// UEFI spec defined constant for the image info type field in the EfiDebugImageInfoNormal structure
-    pub const EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL: u32 = 0x1;
+impl ImageInfoType {
+    /// The UEFI constant representing a normal debug image info entry.
+    const EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL: u32 = 0x1;
+
+    /// Converts the ImageInfoType to its corresponding u32 representation.
+    fn to_u32(&self) -> u32 {
+        match self {
+            ImageInfoType::Normal => ImageInfoType::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        }
+    }
 }
 
-/// Union for EFI_DEBUG_IMAGE_INFO, per section 18.4.3 of Uefi Spec 2.11
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub union EfiDebugImageInfo {
-    image_info_type: *const u32,
-    normal_image: *const EfiDebugImageInfoNormal,
+/// Represents a table of debug image information entries.
+///
+/// ## Invariants
+///
+/// - `length` and `capacity` always reflect the actual state of the allocated `data` buffer, ensuring no out-of-bounds
+///   access can occur.
+pub struct DebugImageInfoData {
+    /// The header of the debug image info table. This is what is exposed to UEFI clients.
+    header: DebugImageInfoTableHeader,
+    /// The total capacity of the table.
+    capacity: usize,
 }
 
-/// Structure for the EFI_DEBUG_IMAGE_INFO_TABLE, per section 18.4.3 of UEFI Spec 2.11
+impl DebugImageInfoData {
+    /// Creates a new, empty Debug Image Info Table.
+    const fn new() -> Self {
+        Self { header: DebugImageInfoTableHeader::new(), capacity: 0 }
+    }
+
+    /// Creates a new, empty Debug Image Info Table wrapped in a RwLock.
+    const fn new_locked() -> RwLock<Self> {
+        RwLock::new(Self::new())
+    }
+
+    /// Returns a reference to the header of the debug image info table.
+    pub fn header(&self) -> &DebugImageInfoTableHeader {
+        &self.header
+    }
+
+    /// Returns a pointer to the start of the debug image info table.
+    ///
+    /// This should be used for read-only access.
+    #[inline(always)]
+    fn table(&self) -> &[EfiDebugImageInfo] {
+        self.header.table()
+    }
+
+    /// Returns a mutable pointer to the start of the debug image info table.
+    ///
+    /// This should be used for read-write access.
+    #[inline(always)]
+    fn table_mut(&mut self) -> *mut EfiDebugImageInfo {
+        self.header.table_mut()
+    }
+
+    /// Returns the current number of entries in the table.
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.header.len()
+    }
+
+    /// Returns the current capacity of the table.
+    #[inline(always)]
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Sets the update-in-progress flag.
+    fn lock_table(&mut self) {
+        self.header.set_update_status(
+            self.header.update_status() | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
+        )
+    }
+
+    /// Removes the update-in-progress flag and sets the table-modified flag.
+    fn unlock_table(&mut self) {
+        let update_status = self.header.update_status();
+        self.header.set_update_status(
+            (update_status & !DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
+                | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+        );
+    }
+
+    /// Adds a new entry to the debug image info table.
+    pub fn add_entry(
+        &mut self,
+        image_info_type: ImageInfoType,
+        protocol: NonNull<efi::protocols::loaded_image::Protocol>,
+        handle: efi::Handle,
+    ) {
+        self.lock_table();
+
+        if self.len() == self.capacity() && self.grow().is_err() {
+            log::error!("Failed to add Debug Image Entry for loaded image protocol @ [{:p}]", protocol);
+            return;
+        }
+
+        let entry = EfiDebugImageInfo::new(image_info_type, protocol, handle);
+
+        // SAFETY: Invariants of this struct ensure this addition is within bounds and is aligned for
+        //   EfiDebugImageInfo.
+        unsafe { self.table_mut().cast::<EfiDebugImageInfo>().add(self.len()).write(entry) }
+        self.header.table_size += 1;
+        self.unlock_table();
+    }
+
+    /// Removes the first entry matching the specified handle.
+    pub fn remove_entry(&mut self, handle: efi::Handle) {
+        self.lock_table();
+        if let Some(index) = self.find(handle) {
+            let _ = self.swap_remove(index);
+        }
+        self.unlock_table();
+    }
+
+    /// Finds the index of the first entry matching the specified handle.
+    fn find(&self, handle: efi::Handle) -> Option<usize> {
+        for (index, entry) in self.table().iter().enumerate() {
+            if let Some(entry_handle) = entry.handle()
+                && entry_handle == handle
+            {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
+    /// Removes and returns the entry at the specified index, replacing it with the last entry.
+    ///
+    /// Returns `None` if the index is out of bounds.
+    fn swap_remove(&mut self, index: usize) -> Option<EfiDebugImageInfo> {
+        if index >= self.len() {
+            return None;
+        }
+
+        let data = self.table_mut();
+
+        // SAFETY: Invariants of this struct ensure that index is within bounds and aligned for EfiDebugImageInfo.
+        let value = unsafe { core::ptr::read(data.add(index)) };
+
+        let last = self.len() - 1;
+        if index != last {
+            unsafe { ptr::copy_nonoverlapping(data.add(last), data.add(index), 1) };
+        }
+
+        self.header.table_size -= 1;
+        Some(value)
+    }
+
+    /// Doubles the current capacity of the table.
+    ///
+    /// If the current capacity is zero, sets it to a default initial capacity.
+    fn grow(&mut self) -> Result<(), alloc::alloc::LayoutError> {
+        // DEFAULT_CAPACITY must always be greater than zero.
+        const DEFAULT_CAPACITY: usize = 4;
+        const _: () = assert!(DEFAULT_CAPACITY > 0);
+
+        let data = if self.capacity == 0 {
+            let layout = Layout::array::<EfiDebugImageInfo>(DEFAULT_CAPACITY)?;
+            self.capacity = DEFAULT_CAPACITY;
+
+            // SAFETY: layout is non-zero sized due to DEFAULT_CAPACITY being non-zero
+            unsafe { alloc::alloc::alloc_zeroed(layout) }
+        } else {
+            let old_layout = Layout::array::<EfiDebugImageInfo>(self.capacity)?;
+            let new_capacity = self.capacity * 2;
+            let new_layout = Layout::array::<EfiDebugImageInfo>(new_capacity)?;
+            self.capacity = new_capacity;
+            // SAFETY: layout is the same layout that was used to allocate the original buffer due to the invariants
+            //   of this struct.
+            // SAFETY: new_size is greater than zero du to the `if` branch above ensuring capacity is non-zero.
+            // SAFETY: new_size does not exceed isize::MAX as the `Layout` call would have failed.
+            unsafe { alloc::alloc::realloc(self.table_mut().cast::<u8>(), old_layout, new_layout.size()) }
+        };
+
+        self.header.table = data as *mut EfiDebugImageInfo;
+        Ok(())
+    }
+}
+
+impl Drop for DebugImageInfoData {
+    fn drop(&mut self) {
+        // Call drop on each entry in the table
+        let data = self.table_mut();
+        for i in 0..self.len() {
+            // SAFETY: Invariants of this struct meet the requirements of drop_in_place. e.g.
+            //   - data[i] is owned by this struct and is valid for both reads and writes.
+            //   - data[i] is properly aligned for EfiDebugImageInfo.
+            //   - data[i] is non-noll.
+            //   - data[i] is initialized and thus valid for dropping.
+            unsafe { core::ptr::drop_in_place(data.add(i)) };
+        }
+
+        // Deallocate the data
+        if self.capacity > 0 {
+            let layout = Layout::array::<EfiDebugImageInfo>(self.capacity).unwrap();
+            unsafe {
+                // SAFETY: Invariants of this struct ensure that `data` was allocated with this exact layout.
+                alloc::alloc::dealloc(self.table_mut().cast::<u8>(), layout);
+            }
+        }
+    }
+}
+
+/// The header structure for the UEFI Debug Image Info Table.
+///
+/// ## Invariants
+///
+/// - `table` is either null or points to a valid array of `EfiDebugImageInfo` entries of length `table_size`.
+/// - `table_size` accurately reflects the number of valid entries in `table`.
 #[repr(C)]
-#[derive(Debug)]
 pub struct DebugImageInfoTableHeader {
-    update_status: u32, // This is made not pub to force volatile access to the field, per UEFI spec
-    pub table_size: u32,
-    pub efi_debug_image_info_table: *const EfiDebugImageInfo,
+    update_status: u32,
+    table_size: u32,
+    table: *mut EfiDebugImageInfo,
 }
 
-/// The update status field in the DebugImageInfoTableHeader is used to indicate the status of the table and per
-/// UEFI spec, it should be accessed using volatile reads and writes to ensure that the debugger can read it.
-/// The only way to guarantee this in Rust is to force volatile reads and writes; the member cannot be made volatile
 impl DebugImageInfoTableHeader {
-    /// UEFI spec defined constants for the update status field in the DebugImageInfoTableHeader
+    /// Status flag indicating an update is in progress.
     pub const EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS: u32 = 0x1;
+
+    /// Status flag indicating the table has been modified.
     pub const EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED: u32 = 0x2;
 
-    /// Returns the current update status of the DebugImageInfoTableHeader.
-    pub unsafe fn get_update_status(&self) -> u32 {
+    /// Creates a new, empty Debug Image Info Table Header.
+    const fn new() -> Self {
+        Self { update_status: 0, table_size: 0, table: ptr::null_mut() }
+    }
+
+    /// Returns the current update status.
+    #[inline(always)]
+    fn update_status(&self) -> u32 {
+        // SAFETY: This is a field owned by this struct and is valid for reads.
         unsafe { ptr::read_volatile(&self.update_status) }
     }
 
-    /// Sets the update status of the DebugImageInfoTableHeader.
-    pub unsafe fn set_update_status(&mut self, status: u32) {
-        unsafe { ptr::write_volatile(&mut self.update_status as *mut u32, status) }
+    /// Sets the update status.
+    #[inline(always)]
+    fn set_update_status(&mut self, status: u32) {
+        // SAFETY: This is a field owned by this struct and is valid for writes.
+        unsafe { ptr::write_volatile(&mut self.update_status, status) }
+    }
+
+    /// Returns the current number of entries in the table.
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.table_size as usize
+    }
+
+    /// Returns a mutable pointer to the start of the debug image info table.
+    #[inline(always)]
+    fn table_mut(&mut self) -> *mut EfiDebugImageInfo {
+        // SAFETY: This is a field owned by this struct and is valid for reads.
+        self.table
+    }
+
+    /// Returns a reference to the debug image info table.
+    #[inline(always)]
+    fn table(&self) -> &[EfiDebugImageInfo] {
+        if self.table_size == 0 {
+            return &[];
+        }
+
+        // SAFETY: self.table is non-null due to the table_size check above.
+        // SAFETY: self.table is valid for reads of length table_size and is within a single allocation due to the
+        //   invariants of this struct
+        unsafe { core::slice::from_raw_parts(self.table, self.table_size as usize) }
+    }
+}
+
+// SAFETY: Access to the mutable pointer is gated behind a method that requires &mut self.
+unsafe impl Send for DebugImageInfoTableHeader {}
+// SAFETY: Access to the mutable pointer is gated behind a method that requires &mut self.
+unsafe impl Sync for DebugImageInfoTableHeader {}
+
+/// Structure for a normal debug image info entry, per section 18.4.3 of UEFI Spec 2.11.
+#[repr(C)]
+struct EfiDebugImageInfoNormal {
+    /// The type of debug image info entry. Will be `EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL` for this structure.
+    image_info_type: u32,
+    /// Pointer to the loaded image protocol instance for the image.
+    loaded_image_protocol_instance: *mut efi::protocols::loaded_image::Protocol,
+    /// The handle of the image.
+    image_handle: efi::Handle,
+}
+
+/// A union representing different types of debug image info entries.
+///
+/// each variant must start with a `u32` field representing the image info type, which is used to
+/// determine the actual type of the entry to access.
+///
+/// At present, only one type is defined: EfiDebugImageInfoNormal.
+#[repr(C)]
+union EfiDebugImageInfo {
+    /// Pointer to the image info type field of all variants.
+    image_info_type: *const u32,
+    /// A normal debug image info entry if the type is `EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL`.
+    normal: *const EfiDebugImageInfoNormal,
+}
+
+impl EfiDebugImageInfo {
+    /// Creates a new EfiDebugImageInfo instance of type normal.
+    ///
+    /// This allocates memory for the internal EfiDebugImageInfoNormal structure.
+    fn new(
+        image_info_type: ImageInfoType,
+        protocol: NonNull<efi::protocols::loaded_image::Protocol>,
+        handle: efi::Handle,
+    ) -> Self {
+        Self {
+            normal: alloc::boxed::Box::into_raw(alloc::boxed::Box::new(EfiDebugImageInfoNormal {
+                image_info_type: image_info_type.to_u32(),
+                loaded_image_protocol_instance: protocol.as_ptr(),
+                image_handle: handle,
+            })),
+        }
+    }
+
+    /// Returns the handle associated with this debug image info entry, if the entry type has one.
+    fn handle(&self) -> Option<efi::Handle> {
+        // SAFETY: The invariants of this struct ensure that this pointer is in-fact a valid pointer to EfiDebugImageInfoNormal.
+        let normal = unsafe { &*self.normal };
+        Some(normal.image_handle)
+    }
+}
+
+impl Drop for EfiDebugImageInfo {
+    fn drop(&mut self) {
+        // SAFETY: The invariants of this struct ensure that this pointer was allocated via this instance of EfiDebugImageInfo.
+        let normal = unsafe { alloc::boxed::Box::from_raw(self.normal as *mut EfiDebugImageInfoNormal) };
+        drop(normal);
     }
 }
 
 /// Structure for the EFI_SYSTEM_TABLE_POINTER, per section 18.4.2 of UEFI Spec 2.11.
-#[allow(unused)]
+#[repr(C)]
 pub struct EfiSystemTablePointer {
+    /// The signature of the system table pointer structure. Must be `EFI_SYSTEM_TABLE_SIGNATURE`.
     pub signature: u64,
+    /// The physical address of the EFI system table.
     pub efi_system_table_base: efi::PhysicalAddress,
+    /// The CRC32 checksum of the EFI system table pointer structure.
     pub crc32: u32,
 }
 
-// end to be sent upstream to r_efi
-
-const IMAGE_INFO_TABLE_SIZE: usize = 128; // initial size of the table
-
-/// Metadata structure for the DebugImageInfoTable, which contains the actual table and its size. It is only used
-/// internally to manage the table and is not part of the UEFI spec.
-struct DebugImageInfoTableMetadata<'a> {
-    actual_table_size: u32,
-    table: &'a mut DebugImageInfoTableHeader,
-    slice: Box<[EfiDebugImageInfo]>,
-}
-// Safety: This structure is only accessed under a lock and the data it points to is only modified
-// under that same lock, so it is safe to send and share between threads.
-unsafe impl Sync for DebugImageInfoTableMetadata<'_> {}
-// Safety: See Sync impl above.
-unsafe impl Send for DebugImageInfoTableMetadata<'_> {}
-
-static METADATA_TABLE: RwLock<Option<DebugImageInfoTableMetadata>> = RwLock::new(None);
-
-const ALIGNMENT_SHIFT_4MB: usize = 22;
-
-/// Initializes the EFI_DEBUG_IMAGE_INFO_TABLE_GUID configuration table in the UEFI system table with an empty table.
-pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTable) {
-    let initial_table =
-        vec![EfiDebugImageInfo { normal_image: core::ptr::null() }; IMAGE_INFO_TABLE_SIZE].into_boxed_slice();
-
-    let debug_image_info_table_header = Box::new(DebugImageInfoTableHeader {
-        update_status: 0,
-        table_size: 0,
-        efi_debug_image_info_table: initial_table.as_ptr(),
-    });
-
-    let table_ptr = Box::into_raw(debug_image_info_table_header) as *mut c_void;
-    if core_install_configuration_table(EFI_DEBUG_IMAGE_INFO_TABLE_GUID, table_ptr, system_table).is_err() {
-        log::error!("Failed to install configuration table for EFI_DEBUG_IMAGE_INFO_TABLE_GUID");
-        return;
-    };
-
-    // SAFETY: This is safe because we just allocated the table and we are going to use it immediately
-    let table = Box::new(DebugImageInfoTableMetadata {
-        actual_table_size: IMAGE_INFO_TABLE_SIZE as u32,
-        table: unsafe { &mut *table_ptr.cast::<DebugImageInfoTableHeader>() },
-        slice: initial_table,
-    });
-    *METADATA_TABLE.write() = Some(*table);
-
-    // Now create the EFI_SYSTEM_TABLE_POINTER structure
-    let system_table_pointer = system_table.system_table() as *const _ as u64;
-
-    // we need to align the the pointer to 4MB and near the top of memory
-    let address = match GCD.allocate_memory_space(
-        AllocateType::TopDown(None),
-        GcdMemoryType::SystemMemory,
-        ALIGNMENT_SHIFT_4MB,
-        UEFI_PAGE_SIZE,
-        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-        None,
-    ) {
-        Ok(address) => address,
-        Err(_) => return,
-    };
-
-    let ptr = address as *mut EfiSystemTablePointer;
-
-    // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
-    // pointer, an external debugger does
-    unsafe {
-        ptr::write_volatile(
-            ptr,
-            EfiSystemTablePointer {
-                signature: efi::SYSTEM_TABLE_SIGNATURE,
-                efi_system_table_base: system_table_pointer,
-                crc32: 0,
-            },
-        );
-
-        let crc32 = crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
-
-        ptr::write_volatile(&mut (*ptr).crc32, crc32);
-    }
-
-    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
-        let _ = write!(out, "{address:x}");
-    });
-}
-
-/// This function is called upon image load to create a new entry in the EFI_DEBUG_IMAGE_INFO_TABLE_GUID table.
-pub(crate) fn core_new_debug_image_info_entry(
-    image_info_type: u32,
-    loaded_image_protocol_instance: *const efi::protocols::loaded_image::Protocol,
-    image_handle: efi::Handle,
-) {
-    let mut metadata_table_guard = METADATA_TABLE.write();
-
-    let metadata_table = match metadata_table_guard.as_mut() {
-        Some(table) => table,
-        None => {
-            log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
-            return;
-        }
-    };
-
-    // per UEFI spec, need to mark the table is being updated and preserve the modified bit if set
-    // SAFETY: This is safe because we are accessing the table header under a lock, and we ensure that it is initialized in initialize_debug_image_info_table.
-    let update_status = unsafe { metadata_table.table.get_update_status() };
-    unsafe {
-        metadata_table
-            .table
-            .set_update_status(update_status | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
-    };
-
-    // create our new table
-    if metadata_table.table.table_size >= metadata_table.actual_table_size {
-        // We need to allocate more space for the table
-        let new_table_size = metadata_table.table.table_size + IMAGE_INFO_TABLE_SIZE as u32;
-        let old_table_size = metadata_table.table.table_size;
-
-        let mut new_vec = Vec::with_capacity(new_table_size as usize);
-        new_vec.extend_from_slice(&metadata_table.slice[..old_table_size as usize]);
-        new_vec.extend(core::iter::repeat_n(
-            EfiDebugImageInfo { normal_image: core::ptr::null() },
-            (new_table_size - old_table_size) as usize,
-        ));
-        let new_boxed_slice = new_vec.into_boxed_slice();
-        metadata_table.slice = new_boxed_slice;
-
-        metadata_table.actual_table_size = new_table_size;
-        metadata_table.table.efi_debug_image_info_table = metadata_table.slice.as_ptr();
-    }
-
-    // size here is last_index + 1
-    // SAFETY: This is safe because we are accessing the table header and we ensure that it is initialized
-    let debug_image_info = &mut metadata_table.slice[metadata_table.table.table_size as usize];
-    let debug_image_info_table =
-        Box::new(EfiDebugImageInfoNormal { image_info_type, loaded_image_protocol_instance, image_handle });
-
-    debug_image_info.normal_image = Box::leak(debug_image_info_table);
-    metadata_table.table.table_size += 1;
-
-    // SAFETY: This is safe because we are accessing the table header and we ensure that it is initialized
-    unsafe {
-        let update_status = metadata_table.table.get_update_status();
-        metadata_table.table.set_update_status(
-            (update_status & !DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
-                | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
-        )
-    };
-}
-
-/// This function is called on image unload to remove an entry from the EFI_DEBUG_IMAGE_INFO_TABLE_GUID table.
-pub(crate) fn core_remove_debug_image_info_entry(image_handle: efi::Handle) {
-    let mut metadata_table_guard = METADATA_TABLE.write();
-    let metadata_table = match metadata_table_guard.as_mut() {
-        Some(table) => table,
-        None => {
-            log::error!("EFI_DEBUG_IMAGE_INFO_TABLE_GUID table not initialized");
-            return;
-        }
-    };
-
-    // per UEFI spec, need to mark the table is being updated and preserve the modified bit if set
-    // SAFETY: This is safe because we are accessing the table header under a lock, and we ensure that it is initialized in initialize_debug_image_info_table.
-    let update_status = unsafe { metadata_table.table.get_update_status() };
-    unsafe {
-        metadata_table
-            .table
-            .set_update_status(update_status | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
-    };
-
-    let table_size = metadata_table.table.table_size as usize;
-
-    // Take the pointer from the last entry before the loop to avoid double mutable borrow
-    let mut last_normal_image_ptr: *const EfiDebugImageInfoNormal = core::ptr::null();
-    if table_size > 0 {
-        last_normal_image_ptr = unsafe { metadata_table.slice[table_size - 1].normal_image };
-    }
-
-    // find the entry to remove
-    for i in 0..table_size {
-        let debug_image_info = &mut metadata_table.slice[i];
-
-        // SAFETY: This is safe because we are accessing the table and we ensure that it is initialized
-        let debug_image_info_table = unsafe { &*debug_image_info.normal_image };
-        if debug_image_info_table.image_handle == image_handle {
-            // free the entry by reclaiming it and dropping the Box. The box should go out of scope if we didn't
-            // manually call drop, but let's be explicit since this is the operation we are attempting to do.
-            // SAFETY: This is safe because we are accessing the table and we ensure that it is initialized
-            let boxed_debug_image_info_table =
-                unsafe { Box::from_raw(debug_image_info.normal_image as *mut EfiDebugImageInfoNormal) };
-            drop(boxed_debug_image_info_table);
-
-            if i != table_size - 1 {
-                // if this is not the last entry, we need to move the last entry to this position
-                // SAFETY: This is safe because we are accessing the table and we ensure that it is initialized
-                debug_image_info.normal_image = last_normal_image_ptr;
-            }
-
-            // we either have moved the last entry to this position or we are removing the last entry, in either case
-            // we need to update the table size and the last entry
-            metadata_table.slice[table_size - 1].normal_image = core::ptr::null_mut();
-            metadata_table.table.table_size -= 1;
-            break;
-        }
-    }
-
-    // SAFETY: This is safe because we are accessing the table header and we ensure that it is initialized
-    unsafe {
-        let update_status = metadata_table.table.get_update_status();
-        metadata_table.table.set_update_status(
-            (update_status & !DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
-                | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
-        )
-    };
-}
-
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
-
-    use crate::{
-        config_tables::get_configuration_table,
-        systemtables::{SYSTEM_TABLE, init_system_table},
-        test_support,
-    };
-
     use super::*;
 
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
-            METADATA_TABLE.write().take();
-            unsafe {
-                test_support::init_test_gcd(None);
-                init_system_table();
-            }
-            f();
+    #[test]
+    fn test_init_simple() {
+        let table = DebugImageInfoData::new();
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), 0);
+        assert!(table.table().is_empty());
 
-            METADATA_TABLE.write().take();
-        })
-        .unwrap();
+        let locked_table = DebugImageInfoData::new_locked();
+        let table_ref = locked_table.read();
+        assert_eq!(table_ref.len(), 0);
+        assert_eq!(table_ref.capacity(), 0);
+        assert!(table_ref.table().is_empty());
     }
 
     #[test]
-    fn initialize_debug_image_info_table_should_init_table() {
-        with_locked_state(|| {
-            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+    fn test_add_entry() {
+        let mut table = DebugImageInfoData::new();
 
-            assert!(METADATA_TABLE.read().as_ref().is_some());
-            assert!(get_configuration_table(&EFI_DEBUG_IMAGE_INFO_TABLE_GUID).is_some());
-        });
+        assert_eq!(table.header.table_size, 0);
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), 0);
+
+        table.add_entry(ImageInfoType::Normal, NonNull::dangling(), 0x1234 as efi::Handle);
+
+        assert_eq!(table.header.table_size, 1);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.capacity(), 4); // DEFAULT_CAPACITY
     }
 
     #[test]
-    fn add_image_info_should_update_table() {
-        with_locked_state(|| {
-            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+    fn test_add_entry_require_grow() {
+        let mut table = DebugImageInfoData::new();
 
-            core_new_debug_image_info_entry(
-                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-                core::ptr::null(),
-                0x1234 as efi::Handle,
-            );
-            core_new_debug_image_info_entry(
-                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-                core::ptr::null(),
-                0x5678 as efi::Handle,
-            );
+        for i in 0..5 {
+            table.add_entry(ImageInfoType::Normal, NonNull::dangling(), (0x1000 + i) as efi::Handle);
+        }
 
-            let metadata_table = METADATA_TABLE.read();
-            let metadata_table = metadata_table.as_ref().unwrap();
-
-            assert_eq!(metadata_table.table.table_size, 2);
-
-            // SAFETY: This is safe because we just added an entry
-            let debug_image_info = unsafe { &*metadata_table.slice[0].normal_image };
-            assert_eq!(debug_image_info.image_handle, 0x1234 as efi::Handle);
-
-            let debug_image_info = unsafe { &*metadata_table.slice[1].normal_image };
-            assert_eq!(debug_image_info.image_handle, 0x5678 as efi::Handle);
-        });
+        assert_eq!(table.header.table_size, 5);
+        assert_eq!(table.len(), 5);
+        assert_eq!(table.capacity(), 8); // Grew from 4 to 8
     }
 
     #[test]
-    fn remove_image_info_should_update_table() {
-        with_locked_state(|| {
-            initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
+    fn test_search_entry() {
+        let mut table = DebugImageInfoData::new();
 
-            core_new_debug_image_info_entry(
-                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-                core::ptr::null(),
-                0x1234 as efi::Handle,
-            );
-            core_new_debug_image_info_entry(
-                EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
-                core::ptr::null(),
-                0x5678 as efi::Handle,
-            );
+        for i in 0..3 {
+            table.add_entry(ImageInfoType::Normal, NonNull::dangling(), (0x2000 + i) as efi::Handle);
+        }
 
-            core_remove_debug_image_info_entry(0x1234 as efi::Handle);
+        // Table has been modified
+        assert_eq!(
+            table.header.update_status & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED
+        );
+        assert_eq!(table.find(0x2000 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x2001 as efi::Handle), Some(1));
+        assert_eq!(table.find(0x2002 as efi::Handle), Some(2));
+        assert_eq!(table.find(0x3000 as efi::Handle), None);
+    }
 
-            let metadata_table = METADATA_TABLE.read();
-            let metadata_table = metadata_table.as_ref().unwrap();
+    #[test]
+    fn test_remove_entry_still_find_others() {
+        let mut table = DebugImageInfoData::new();
 
-            assert_eq!(metadata_table.table.table_size, 1);
+        for i in 0..5 {
+            table.add_entry(ImageInfoType::Normal, NonNull::dangling(), (0x4000 + i) as efi::Handle);
+        }
 
-            // SAFETY: This is safe because we just added an entry
-            let debug_image_info = unsafe { &*metadata_table.slice[0].normal_image };
-            assert_eq!(debug_image_info.image_handle, 0x5678 as efi::Handle);
-        });
+        assert_eq!(table.len(), 5);
+
+        // Find all entries
+        assert_eq!(table.find(0x4000 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x4001 as efi::Handle), Some(1));
+        assert_eq!(table.find(0x4002 as efi::Handle), Some(2));
+        assert_eq!(table.find(0x4003 as efi::Handle), Some(3));
+        assert_eq!(table.find(0x4004 as efi::Handle), Some(4));
+
+        // Remove 0x4001, get swapped with 0x4005
+        table.remove_entry(0x4001 as efi::Handle);
+        assert_eq!(table.len(), 4);
+        assert_eq!(table.find(0x4000 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x4004 as efi::Handle), Some(1));
+        assert_eq!(table.find(0x4002 as efi::Handle), Some(2));
+        assert_eq!(table.find(0x4003 as efi::Handle), Some(3));
+        assert_eq!(table.find(0x4001 as efi::Handle), None);
+
+        // Remove 0x4000, get swapped with 0x4003
+        table.remove_entry(0x4000 as efi::Handle);
+        assert_eq!(table.len(), 3);
+        assert_eq!(table.find(0x4003 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x4004 as efi::Handle), Some(1));
+        assert_eq!(table.find(0x4002 as efi::Handle), Some(2));
+        assert_eq!(table.find(0x4000 as efi::Handle), None);
+        assert_eq!(table.find(0x4001 as efi::Handle), None);
+
+        // Remove 0x4002, does not swap as it's the last entry
+        table.remove_entry(0x4002 as efi::Handle);
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.find(0x4003 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x4004 as efi::Handle), Some(1));
+        assert_eq!(table.find(0x4002 as efi::Handle), None);
+        assert_eq!(table.find(0x4000 as efi::Handle), None);
+        assert_eq!(table.find(0x4001 as efi::Handle), None);
+
+        // Remove 0x4003, swaps with 0x4004
+        table.remove_entry(0x4003 as efi::Handle);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.find(0x4004 as efi::Handle), Some(0));
+        assert_eq!(table.find(0x4003 as efi::Handle), None);
+        assert_eq!(table.find(0x4002 as efi::Handle), None);
+        assert_eq!(table.find(0x4000 as efi::Handle), None);
+        assert_eq!(table.find(0x4001 as efi::Handle), None);
+
+        // Remove 0x4004, table is now empty
+        table.remove_entry(0x4004 as efi::Handle);
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.find(0x4004 as efi::Handle), None);
+        assert_eq!(table.find(0x4003 as efi::Handle), None);
+        assert_eq!(table.find(0x4002 as efi::Handle), None);
+        assert_eq!(table.find(0x4000 as efi::Handle), None);
+        assert_eq!(table.find(0x4001 as efi::Handle), None);
+    }
+
+    #[test]
+    fn test_swap_remove_out_of_bounds() {
+        let mut table = DebugImageInfoData::new();
+
+        for i in 0..3 {
+            table.add_entry(ImageInfoType::Normal, NonNull::dangling(), (0x5000 + i) as efi::Handle);
+        }
+
+        assert_eq!(table.len(), 3);
+
+        // Attempt to remove an out-of-bounds index
+        assert!(table.swap_remove(3).is_none());
     }
 }

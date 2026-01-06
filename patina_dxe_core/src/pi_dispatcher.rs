@@ -43,7 +43,15 @@ use image::ImageStatus;
 use section_decompress::CoreExtractor;
 
 use crate::{
-    PlatformInfo, events::EVENT_DB, protocol_db::DXE_CORE_HANDLE, protocols::PROTOCOL_DB, systemtables::EfiSystemTable,
+    PlatformInfo,
+    config_tables::{
+        core_install_configuration_table,
+        debug_image_info_table::{DEBUG_IMAGE_INFO_TABLE, EFI_DEBUG_IMAGE_INFO_TABLE_GUID, EfiSystemTablePointer},
+    },
+    events::EVENT_DB,
+    protocol_db::DXE_CORE_HANDLE,
+    protocols::PROTOCOL_DB,
+    systemtables::EfiSystemTable,
     tpl_mutex::TplMutex,
 };
 
@@ -111,6 +119,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
+        const ALIGNMENT_SHIFT_4MB: usize = 22;
+
         self.image_data.lock().set_system_table(system_table.as_ptr() as *mut _);
         self.image_data.lock().install_dxe_core_image(hob_list, system_table);
 
@@ -144,6 +154,58 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         PROTOCOL_DB
             .register_protocol_notify(firmware_volume_block::PROTOCOL_GUID, event)
             .expect("Failed to register protocol notify on fv protocol.");
+
+        // Perform image related initialization for the debugger.
+        // This includes installing the debug image info table and the system table pointer structure.
+        if core_install_configuration_table(
+            EFI_DEBUG_IMAGE_INFO_TABLE_GUID,
+            DEBUG_IMAGE_INFO_TABLE.read().header() as *const _ as *mut c_void,
+            system_table,
+        )
+        .is_err()
+        {
+            log::error!("Failed to install configuration table for EFI_DEBUG_IMAGE_INFO_TABLE_GUID");
+            return;
+        }
+
+        // Now create the EFI_SYSTEM_TABLE_POINTER structure
+        let system_table_pointer = system_table.system_table() as *const _ as u64;
+
+        // we need to align the the pointer to 4MB and near the top of memory
+        let Ok(address) = crate::GCD.allocate_memory_space(
+            crate::gcd::AllocateType::TopDown(None),
+            patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+            ALIGNMENT_SHIFT_4MB,
+            patina::base::UEFI_PAGE_SIZE,
+            crate::protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+            None,
+        ) else {
+            return;
+        };
+
+        let ptr = address as *mut EfiSystemTablePointer;
+
+        // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
+        // pointer, an external debugger does
+        unsafe {
+            core::ptr::write_volatile(
+                ptr,
+                EfiSystemTablePointer {
+                    signature: efi::SYSTEM_TABLE_SIGNATURE,
+                    efi_system_table_base: system_table_pointer,
+                    crc32: 0,
+                },
+            );
+
+            let crc32 =
+                crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
+
+            core::ptr::write_volatile(&mut (*ptr).crc32, crc32);
+        }
+
+        patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
+            let _ = write!(out, "{address:x}");
+        });
     }
 
     /// Installs any firmware volumes from FV HOBs in the hob list
