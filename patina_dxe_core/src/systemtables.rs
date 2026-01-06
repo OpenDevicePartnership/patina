@@ -8,13 +8,16 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
+use core::{ffi::c_void, mem::size_of, ptr, slice::from_raw_parts};
 
 use alloc::{alloc::Allocator, boxed::Box};
 use patina::{boot_services::BootServices, component::component, pi::error_codes::EFI_NOT_AVAILABLE_YET};
 use r_efi::efi;
 
-use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
+use crate::{
+    GCD, allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, config_tables::debug_image_info_table::EfiSystemTablePointer,
+    tpl_mutex,
+};
 
 pub static SYSTEM_TABLE: tpl_mutex::TplMutex<Option<EfiSystemTable>> =
     tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, None, "StLock");
@@ -719,9 +722,46 @@ unsafe impl Sync for EfiSystemTable {}
 unsafe impl Send for EfiSystemTable {}
 
 pub fn init_system_table() {
+    const ALIGNMENT_SHIFT_4MB: usize = 22;
+
     let mut table = EfiSystemTable::init();
     table.checksum();
     _ = SYSTEM_TABLE.lock().insert(table);
+
+    // Allocate a 4MB aligned `EfiSystemTablePointer` to be compliant with UEFI specification requirements for debugger
+    // usage.
+    let system_table_pointer = SYSTEM_TABLE.lock().as_ref().unwrap().system_table() as *const efi::SystemTable as u64;
+
+    let Ok(address) = GCD.allocate_memory_space(
+        crate::gcd::AllocateType::TopDown(None),
+        patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+        ALIGNMENT_SHIFT_4MB,
+        patina::base::UEFI_PAGE_SIZE,
+        crate::protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+        None,
+    ) else {
+        return;
+    };
+
+    let ptr = address as *mut EfiSystemTablePointer;
+
+    // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
+    // pointer, an external debugger does
+    unsafe {
+        ptr.write(EfiSystemTablePointer {
+            signature: efi::SYSTEM_TABLE_SIGNATURE,
+            efi_system_table_base: system_table_pointer,
+            crc32: 0,
+        });
+
+        let crc32 = crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
+
+        ptr::write_volatile(&mut (*ptr).crc32, crc32);
+    }
+
+    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
+        let _ = write!(out, "{address:x}");
+    });
 }
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table

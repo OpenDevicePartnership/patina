@@ -8,16 +8,11 @@
 //!
 extern crate alloc;
 use alloc::{boxed::Box, vec, vec::Vec};
-use patina::base::UEFI_PAGE_SIZE;
 use spin::RwLock;
 
-use core::{ffi::c_void, fmt::Debug, mem::size_of, ptr};
+use core::{ffi::c_void, fmt::Debug, ptr};
 
-use crate::{
-    GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
-};
-
-use patina::pi::dxe_services::GcdMemoryType;
+use crate::{config_tables::core_install_configuration_table, systemtables::EfiSystemTable};
 
 use r_efi::efi;
 
@@ -105,8 +100,6 @@ unsafe impl Send for DebugImageInfoTableMetadata<'_> {}
 
 static METADATA_TABLE: RwLock<Option<DebugImageInfoTableMetadata>> = RwLock::new(None);
 
-const ALIGNMENT_SHIFT_4MB: usize = 22;
-
 /// Initializes the EFI_DEBUG_IMAGE_INFO_TABLE_GUID configuration table in the UEFI system table with an empty table.
 pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTable) {
     let initial_table =
@@ -131,45 +124,6 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
         slice: initial_table,
     });
     *METADATA_TABLE.write() = Some(*table);
-
-    // Now create the EFI_SYSTEM_TABLE_POINTER structure
-    let system_table_pointer = system_table.system_table() as *const _ as u64;
-
-    // we need to align the the pointer to 4MB and near the top of memory
-    let address = match GCD.allocate_memory_space(
-        AllocateType::TopDown(None),
-        GcdMemoryType::SystemMemory,
-        ALIGNMENT_SHIFT_4MB,
-        UEFI_PAGE_SIZE,
-        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-        None,
-    ) {
-        Ok(address) => address,
-        Err(_) => return,
-    };
-
-    let ptr = address as *mut EfiSystemTablePointer;
-
-    // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
-    // pointer, an external debugger does
-    unsafe {
-        ptr::write_volatile(
-            ptr,
-            EfiSystemTablePointer {
-                signature: efi::SYSTEM_TABLE_SIGNATURE,
-                efi_system_table_base: system_table_pointer,
-                crc32: 0,
-            },
-        );
-
-        let crc32 = crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
-
-        ptr::write_volatile(&mut (*ptr).crc32, crc32);
-    }
-
-    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
-        let _ = write!(out, "{address:x}");
-    });
 }
 
 /// This function is called upon image load to create a new entry in the EFI_DEBUG_IMAGE_INFO_TABLE_GUID table.
