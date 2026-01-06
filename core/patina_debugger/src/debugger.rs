@@ -412,13 +412,14 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         &'static self,
         command: &'static str,
         description: &'static str,
-        callback: crate::MonitorCommandFn,
+        callback: Box<crate::MonitorCommandFn>,
     ) {
         if !self.enabled() {
             return;
         }
 
         self.system_state.lock().add_monitor_command(command, description, callback);
+        log::info!("Added debugger monitor command: {command}");
     }
 }
 

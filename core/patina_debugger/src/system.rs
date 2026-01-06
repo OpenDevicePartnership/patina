@@ -8,7 +8,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::MonitorCommandFn;
 
@@ -29,18 +29,10 @@ impl SystemState {
         &mut self,
         command: &'static str,
         description: &'static str,
-        callback: MonitorCommandFn,
+        callback: Box<MonitorCommandFn>,
     ) {
-        let _monitor = MonitorCallback { command, description, callback };
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "alloc")] {
-                self.monitor_commands.push(_monitor);
-                log::info!("Added debugger monitor command: {command}");
-            }
-            else {
-                log::warn!("Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {command}");
-            }
-        }
+        let monitor = MonitorCallback { command, description, callback };
+        self.monitor_commands.push(monitor);
     }
 
     /// Add a monitor command to the system state. Returns `true` if the command
@@ -134,7 +126,7 @@ pub(crate) struct MonitorCallback {
     pub description: &'static str,
     /// The callback function that will be invoked when the command is executed.
     /// See [MonitorCommandFn] for more details on the function signature.
-    pub callback: MonitorCommandFn,
+    pub callback: Box<MonitorCommandFn>,
 }
 
 #[cfg(feature = "alloc")]
@@ -191,15 +183,35 @@ mod tests {
         let mut system_state = SystemState::new();
         let command = "test_command";
         let description = "This is a test command";
-        let callback: MonitorCommandFn = |args, out| {
+        let callback: Box<MonitorCommandFn> = Box::new(|args, out| {
             let _ = writeln!(out, "Executed with args: {:?}", args.collect::<Vec<_>>());
-        };
+        });
         system_state.add_monitor_command(command, description, callback);
 
         let mut out = String::new();
         let args = &mut "arg1 arg2".split_whitespace();
         assert!(system_state.handle_monitor_command(command, args, &mut out));
         assert_eq!(out, "Executed with args: [\"arg1\", \"arg2\"]\n");
+
+        assert!(!system_state.handle_monitor_command("invalid", args, &mut out));
+    }
+
+    #[test]
+    fn test_add_monitor_command_with_captured_data() {
+        let mut system_state = SystemState::new();
+        let command = "test_command";
+        let description = "This is a test command";
+
+        let x = 5;
+        let callback: Box<MonitorCommandFn> = Box::new(move |_args, out| {
+            let _ = writeln!(out, "Captured state: {}", x);
+        });
+        system_state.add_monitor_command(command, description, callback);
+
+        let mut out = String::new();
+        let args = &mut "arg1 arg2".split_whitespace();
+        assert!(system_state.handle_monitor_command(command, args, &mut out));
+        assert_eq!(out, "Captured state: 5\n");
 
         assert!(!system_state.handle_monitor_command("invalid", args, &mut out));
     }
