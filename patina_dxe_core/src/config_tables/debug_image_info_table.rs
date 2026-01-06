@@ -93,7 +93,6 @@ const IMAGE_INFO_TABLE_SIZE: usize = 128; // initial size of the table
 /// Metadata structure for the DebugImageInfoTable, which contains the actual table and its size. It is only used
 /// internally to manage the table and is not part of the UEFI spec.
 struct DebugImageInfoTableMetadata<'a> {
-    dbg_system_table_pointer_address: efi::PhysicalAddress,
     actual_table_size: u32,
     table: &'a mut DebugImageInfoTableHeader,
     slice: Box<[EfiDebugImageInfo]>,
@@ -127,7 +126,6 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
 
     // SAFETY: This is safe because we just allocated the table and we are going to use it immediately
     let table = Box::new(DebugImageInfoTableMetadata {
-        dbg_system_table_pointer_address: 0,
         actual_table_size: IMAGE_INFO_TABLE_SIZE as u32,
         table: unsafe { &mut *table_ptr.cast::<DebugImageInfoTableHeader>() },
         slice: initial_table,
@@ -169,13 +167,7 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
         ptr::write_volatile(&mut (*ptr).crc32, crc32);
     }
 
-    // Set the system table address for the debugger.
-    METADATA_TABLE.write().as_mut().expect("METADATA_TABLE initialized above").dbg_system_table_pointer_address =
-        address as efi::PhysicalAddress;
-
-    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", |_, out| {
-        let address =
-            METADATA_TABLE.read().as_ref().expect("METADATA_TABLE initialized above").dbg_system_table_pointer_address;
+    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
         let _ = write!(out, "{address:x}");
     });
 }
@@ -340,7 +332,6 @@ mod tests {
             initialize_debug_image_info_table(SYSTEM_TABLE.lock().as_mut().unwrap());
 
             assert!(METADATA_TABLE.read().as_ref().is_some());
-            assert!(METADATA_TABLE.read().as_ref().unwrap().dbg_system_table_pointer_address != 0);
             assert!(get_configuration_table(&EFI_DEBUG_IMAGE_INFO_TABLE_GUID).is_some());
         });
     }
