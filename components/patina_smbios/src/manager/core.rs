@@ -1028,12 +1028,28 @@ mod tests {
     }
 
     #[test]
-    fn test_add_request_handle_error_handleoutofrange() {
+    fn test_add_request_handle_error_handle_out_of_range() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let mut record_data = vec![1u8, 4, 0xFF, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let result = manager.add_from_bytes(None, &record_data);
         assert_eq!(SmbiosError::HandleOutOfRange, result.err().expect("add out of range failed"));
+    }
+
+    #[test]
+    fn test_alloc_new_smbios_handle_error_handle_exhausted() {
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+        'outer: for i in 0..0xFE {
+            for j in 0..0xFF {
+                let mut record_data = vec![1u8, 4, i, j];
+                record_data.extend_from_slice(b"\0\0");
+                if i == 0xFE && j == 0xFF {
+                    assert_eq!(SmbiosError::HandleExhausted, manager.add_from_bytes(None, &record_data).unwrap_err());
+                    break 'outer;
+                }
+                manager.add_from_bytes(None, &record_data).expect("add failed");
+            }
+        }
     }
 
     #[test]
