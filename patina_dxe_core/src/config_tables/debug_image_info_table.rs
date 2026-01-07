@@ -94,19 +94,22 @@ impl DebugImageInfoData {
     }
 
     /// Sets the update-in-progress flag.
-    fn lock_table(&mut self) {
+    fn set_update_in_progress(&mut self) {
         self.header.set_update_status(
             self.header.update_status() | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
         )
     }
 
-    /// Removes the update-in-progress flag and sets the table-modified flag.
-    fn unlock_table(&mut self) {
-        let update_status = self.header.update_status();
+    fn clear_update_in_progress(&mut self) {
         self.header.set_update_status(
-            (update_status & !DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
-                | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+            self.header.update_status() & !DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
         );
+    }
+
+    /// Sets the table-modified flag.
+    fn set_modified(&mut self) {
+        let update_status = self.header.update_status();
+        self.header.set_update_status(update_status | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED)
     }
 
     /// Adds a new entry to the debug image info table.
@@ -116,7 +119,7 @@ impl DebugImageInfoData {
         protocol: NonNull<efi::protocols::loaded_image::Protocol>,
         handle: efi::Handle,
     ) {
-        self.lock_table();
+        self.set_update_in_progress();
 
         if self.len() == self.capacity() && self.grow().is_err() {
             log::error!("Failed to add Debug Image Entry for loaded image protocol @ [{:p}]", protocol);
@@ -129,16 +132,18 @@ impl DebugImageInfoData {
         //   EfiDebugImageInfo.
         unsafe { self.table_mut().cast::<EfiDebugImageInfo>().add(self.len()).write(entry) }
         self.header.table_size += 1;
-        self.unlock_table();
+        self.set_modified();
+        self.clear_update_in_progress();
     }
 
     /// Removes the first entry matching the specified handle.
     pub fn remove_entry(&mut self, handle: efi::Handle) {
-        self.lock_table();
+        self.set_update_in_progress();
         if let Some(index) = self.find(handle) {
             let _ = self.swap_remove(index);
         }
-        self.unlock_table();
+        self.set_modified();
+        self.clear_update_in_progress();
     }
 
     /// Finds the index of the first entry matching the specified handle.
@@ -508,5 +513,50 @@ mod tests {
 
         // Attempt to remove an out-of-bounds index
         assert!(table.swap_remove(3).is_none());
+    }
+
+    #[test]
+    fn test_flag_setting() {
+        let mut table = DebugImageInfoData::new();
+
+        assert_eq!(table.header.update_status(), 0);
+
+        table.set_update_in_progress();
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS
+        );
+
+        table.clear_update_in_progress();
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
+            0
+        );
+
+        table.set_modified();
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED
+        );
+
+        table.set_update_in_progress();
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS
+        );
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED
+        );
+
+        table.clear_update_in_progress();
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS,
+            0
+        );
+        assert_eq!(
+            table.header.update_status() & DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED,
+            DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED
+        );
     }
 }
