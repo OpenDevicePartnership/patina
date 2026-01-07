@@ -206,6 +206,7 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
 }
 
 #[patina_test]
+#[coverage(off)]
 fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::test::Result {
     // Allocate a page, and make sure it is accessible.
     let result = mm.allocate_pages(1, AllocationOptions::new());
