@@ -8,6 +8,8 @@ The Patina DXE Core has several functional and implementation differences from t
   requirements.
 - The [Patina DXE Core Requirements Platform Checklist](patina_dxe_core_requirements_checklist.md) provides an easy
   way for platform integrators to track if they have met all requirements.
+- The [Patina DXE Core Integration Guide](dxe_core.md) provides a detailed guide of how to integrate the DXE core into a
+  platform.
 
 ## Platform Requirements
 
@@ -83,37 +85,19 @@ multiple of 4KB as a page size in order to apply image memory protections. The E
 memory protections on images without this section alignment requirement, but it will dispatch them, depending on
 configuration.
 
-ARM64 DXE_RUNTIME_DRIVERs must have a multiple of 64 KB image section alignment per UEFI spec requirements.
+AArch64 DXE_RUNTIME_DRIVERs must have a multiple of 64 KB image section alignment per UEFI spec requirements.
 This is required to boot operating systems with 16 KB or 64 KB page sizes.
 
 Patina components will have 4 KB section alignment by nature of being compiled into Patina.
 
 The DXE Readiness Tool validates all drivers have a multiple of 4 KB section alignment and reports an error if
-not. It will also validate that ARM64 DXE_RUNTIME_DRIVERs have a multiple of 64KB section alignment.
+not. It will also validate that AArch64 DXE_RUNTIME_DRIVERs have a multiple of 64KB section alignment.
 
 > **Guidance:**
 > All C based drivers must be compiled with a linker flag that enforces a multiple of 4 KB section alignment.
-> For MSVC, this linker flag is `/ALIGN:0x1000` for GCC/CLANG, the flag is `-z common-page-size=0x1000`. This section
-> allows for multiples of 4 KB or 64 KB, depending on driver, but unless a specific use case dictates greater section
-> alignment, then it is recommended to use 4 KB for everything except for ARM64 DXE_RUNTIME_DRIVERs, which should use
-> 64 KB, e.g. `/ALIGN:0x10000` for MSVC and `-z common-page-size=0x10000` for GCC/CLANG.
-
-#### 1.4 CpuDxe Is No Longer Used
-
-EDK II supplies a driver named `CpuDxe` that provides CPU related functionality to a platform. In Patina DXE Core, this
-is part of the core, not offloaded to a driver. As a result, the CPU Arch and memory attributes protocols are owned by
-the Patina DXE Core. MultiProcessor (MP) Services are not part of the core. ARM64 already does not have MP Services
-owned by `CpuDxe`, `ArmPsciMpServicesDxe` owns them. There is an x64 implementation of
-[`MpDxe`](https://github.com/microsoft/mu_basecore/blob/HEAD/UefiCpuPkg/MpDxe/MpDxe.inf) that platforms should add to
-their flash file for use with the Patina DXE Core if MP services are desired.
-
-On ARM64 systems, when Patina assumes ownership of `CpuDxe` it also encompasses the functionality provided by
-`ArmGicDxe`. This is because the GIC is considered a prerequisite for `CpuDxe` to handle interrupts correctly. As such,
-ARM64 platforms also should not include `ArmGicDxe`.
-
-> **Guidance:**
-> Platforms must not include `CpuDxe` in their platforms and instead use CPU services from Patina DXE Core and MP Services
-> from a separate C based driver. ARM64 platforms should not use `ArmGicDxe`.
+> For MSVC/CLANGPDB, this linker flag is `/ALIGN:0x1000` for GCC/CLANGDWARF, the flag is `-z common-page-size=0x1000`.
+> It is recommended to use 4 KB for everything except for AArch64 DXE_RUNTIME_DRIVERs which should use 64 KB i.e.,
+> `/ALIGN:0x10000` for MSVC/CLANGPDB and `-z common-page-size=0x10000` for GCC/CLANGDWARF.
 
 ### 2. Hand Off Block (HOB) Requirements
 
@@ -280,10 +264,85 @@ and MemoryAttributesProtocol->SetMemoryAttributes() calls that pass in EFI_MEMOR
 memory (typically representing device memory) should be marked as executable. For AArch64, the ARM ARM v8 B2.7.2 states
 that having executable device memory (what EFI_MEMORY_UC maps to) is a programming error and has been observed to cause
 crashes due to speculative execution trying instruction fetches from memory that is not ready to be touched or should
-never be touched. For x86 platforms, we still should protect these ranges to prevent devices having access to executable
+never be touched. For x86 platforms, these regions are still protected to prevent devices having access to executable
 memory.
 
-### 4. Known Limitations
+### 4. Architectural Requirements
+
+This section details Patina requirements that are specific to a particular CPU architectural requirements.
+
+#### 4.1 CpuDxe Is No Longer Used
+
+EDK II supplies a driver named `CpuDxe` that provides CPU related functionality to a platform. In Patina DXE Core, this
+is part of the core, not offloaded to a driver. As a result, the CPU Arch and memory attributes protocols are owned by
+the Patina DXE Core. MultiProcessor (MP) Services are not part of the core (see following sections for specific
+guidance on MP Service enabling for specific architectures).
+
+> **Guidance:**
+> Platforms must not include `CpuDxe` in their platforms and instead use CPU services from Patina DXE Core and MP
+> Services from a separate C based driver such as [`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe)
+> for X64 systems or [`ArmPsciMpServicesDxe`](https://github.com/tianocore/edk2/tree/master/ArmPkg/Drivers/ArmPsciMpServicesDxe).
+
+#### 4.2 AArch64-specific requirements
+
+This section details Patina requirements specific to the AArch64 architecture.
+
+##### 4.2.1 AArch64 Generic Interrupt Controller (GIC)
+
+On AArch64 systems, when Patina assumes ownership of `CpuDxe` it also encompasses the functionality provided by the
+`ArmGicDxe` driver which configures the AArch64 GIC. This is because GIC support is a prerequisite for `CpuDxe` to
+handle interrupts correctly. As such, AArch64 platforms also should not include the `ArmGicDxe` driver.
+
+In addition, different AArch64 platforms can place the GIC register set at different locations in the system memory map.
+Consequently, AArch64 platforms must supply the base addresses associated with the GIC as part of the `CpuInfo` struct
+that is part of core configuration.
+
+> **Guidance:**
+> AArch64 platforms should not use the `ArmGicDxe` driver and must supply the base addresses of the GIC in the `CpuInfo`
+> structure.
+
+##### 4.2.2 AArch64 Memory Caching Attribute Requirements for Device Memory
+
+AArch64 brings with it specific architectural requirements around the caching attributes for MMIO peripheral memory.
+For example, marking a region as "Device" may activate alignment checks on memory access to that region, or not marking
+a peripheral MMIO region as Device may allow speculative execution to that region. Since Patina will configure the cache
+attributes of the memory map at startup (rather than, for example, relying on the paging structures that were set up
+prior to DXE start), special care must be taken to ensure that the caching attributes in the Resource HOB v2 that the
+platform produces are appropriate for the regions of memory that they describe.
+
+> **Guidance:**
+> Ensure that the memory map as described via the Resource V2 HOBs is correct for the system, taking into account the
+> special requirements for peripheral memory.
+
+#### 4.3 X64-specific requirements
+
+As described in the general architectural requirements. X64 systems must exclude `CpuDxe`. In addition
+[`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe) should be included in the
+platform flash file as it is used to install the MP Services protocol.
+
+> Note: The [`patina-mtrr`](https://github.com/OpenDevicePartnership/patina-mtrr) repo provides pure-Rust MTRR support
+> for X64 platforms. This can be used indpendently of the Patina DXE Core. It is intended to provide generic MTRR
+> support for Rust-based UEFI environments on X64 platforms.
+
+##### 4.3.1 X64 MM Core and MM Driver Requirements
+
+Due to the [No Traditional SMM](#11-no-traditional-smm) requirement, X64 platforms must ensure that the MM core is of
+module type `MM_CORE_STANDALONE` and all MM drivers are of module type `MM_STANDALONE`. X64 platforms can optionally
+use the MM communication code in the [`patina_mm`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_mm)
+crate to facilitate communication between DXE and MM during the DXE phase. However, this component does not provide
+support during runtime. This is because Patina components are currently not supported during runtime. Because of this,
+it is recommended to use the MM communication code produced by a `DXE_RUNTIME_DRIVER` such as
+([`StandaloneMmPkg/Drivers/MmCommunicationDxe/MmCommunicationDxe`](https://github.com/tianocore/edk2/tree/HEAD/StandaloneMmPkg/Drivers/MmCommunicationDxe))
+for C-driver communication support during boot and the [`MmCommunicator`](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_mm/src/component/communicator.rs)
+component provided in `patina_mm` for MM communication in Patina components.
+
+### 5. Known Limitations
 
 This section details requirements Patina currently has due to limitations in implementation, but that support will be
-added for in the future. Currently, this section is empty.
+added for in the future.
+
+#### 5.1 Synchronous Exception Stack Size limitation on AArch64 Platforms
+
+Presently a hard stack size limitation of 64KB applies to synchronous exceptions on AArch64 platforms. This means, for
+example, that platform panic handlers should not make large allocations on the stack. The following issue tracks this:
+[781](https://github.com/OpenDevicePartnership/patina/issues/781)

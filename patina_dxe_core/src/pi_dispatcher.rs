@@ -10,6 +10,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 mod fv;
+mod image;
 mod section_decompress;
 
 use alloc::{
@@ -25,7 +26,7 @@ use patina::{
         logging::{perf_function_begin, perf_function_end},
         measurement::create_performance_measurement,
     },
-    pi::{fw_fs::ffs, protocols::firmware_volume_block},
+    pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
 };
 use patina_ffs::{
     section::{Section, SectionExtractor},
@@ -38,14 +39,11 @@ use r_efi::efi;
 use mu_rust_helpers::guid::CALLER_ID;
 
 use fv::device_path_bytes_for_fv_file;
+use image::ImageStatus;
 use section_decompress::CoreExtractor;
 
 use crate::{
-    PlatformInfo,
-    events::EVENT_DB,
-    image::{ImageStatus, core_load_image, core_start_image},
-    protocol_db::DXE_CORE_HANDLE,
-    protocols::PROTOCOL_DB,
+    PlatformInfo, events::EVENT_DB, protocol_db::DXE_CORE_HANDLE, protocols::PROTOCOL_DB, systemtables::EfiSystemTable,
     tpl_mutex::TplMutex,
 };
 
@@ -81,6 +79,8 @@ const ALL_ARCH_DEPEX: &[Opcode] = &[
 pub(crate) struct PiDispatcher<P: PlatformInfo> {
     /// State for the dispatcher itself.
     dispatcher_context: TplMutex<DispatcherContext>,
+    /// Image management data for executing images.
+    image_data: TplMutex<image::ImageData>,
     /// State tracking firmware volumes installed by the Patina DXE Core.
     fv_data: TplMutex<fv::FvProtocolData<P>>,
     /// Section extractor used when working with firmware volumes.
@@ -92,9 +92,14 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     pub const fn new(section_extractor: P::Extractor) -> Self {
         Self {
             dispatcher_context: DispatcherContext::new_locked(),
+            image_data: image::ImageData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
             section_extractor: CoreExtractor::new(section_extractor),
         }
+    }
+
+    fn instance<'a>() -> &'a Self {
+        &crate::Core::<P>::instance().pi_dispatcher
     }
 
     /// Displays drivers that were discovered but not dispatched.
@@ -105,7 +110,26 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
-    pub fn init(&self) {
+    pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
+        self.image_data.lock().set_system_table(system_table.as_ptr() as *mut _);
+        self.image_data.lock().install_dxe_core_image(hob_list, system_table);
+
+        system_table.boot_services_mut().load_image = Self::load_image_efiapi;
+        system_table.boot_services_mut().start_image = Self::start_image_efiapi;
+        system_table.boot_services_mut().unload_image = Self::unload_image_efiapi;
+        system_table.boot_services_mut().exit = Self::exit_efiapi;
+
+        // set up exit boot services callback
+        let _ = EVENT_DB
+            .create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_CALLBACK,
+                Some(Self::runtime_image_protection_fixup_ebs),
+                None,
+                Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
+            )
+            .expect("Failed to create callback for runtime image memory protection fixups.");
+
         //set up call back for FV protocol installation.
         let event = EVENT_DB
             .create_event(
@@ -133,7 +157,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Performs a single dispatch iteration.
-    pub fn dispatch(&self) -> Result<bool, EfiError> {
+    pub fn dispatch(&'static self) -> Result<bool, EfiError> {
         if self.dispatcher_context.lock().executing {
             return Err(EfiError::AlreadyStarted);
         }
@@ -189,7 +213,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             if driver.image_handle.is_none() {
                 log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
                 let data = driver.pe32.try_content_as_slice()?;
-                match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(data)) {
+                match self.load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(data)) {
                     Ok(handle) => {
                         driver.image_handle = Some(handle);
                         driver.security_status = efi::Status::SUCCESS;
@@ -212,7 +236,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         dispatch_attempted = true;
                         // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
                         // cases, and a debug output for that is already implemented in core_start_image.
-                        let _status = core_start_image(image_handle);
+                        let _status = self.start_image(image_handle);
                     }
                     efi::Status::SECURITY_VIOLATION => {
                         log::info!(
@@ -307,7 +331,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Performs a full dispatch until no more drivers can be dispatched.
-    pub fn dispatcher(&self) -> Result<(), EfiError> {
+    pub fn dispatcher(&'static self) -> Result<(), EfiError> {
         if self.dispatcher_context.lock().executing {
             return Err(EfiError::AlreadyStarted);
         }
@@ -828,7 +852,6 @@ mod tests {
         with_locked_state(|| {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
-            CORE.pi_dispatcher.init();
         });
     }
 

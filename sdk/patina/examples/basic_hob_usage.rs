@@ -18,7 +18,7 @@ use patina::{
     Guid, OwnedGuid,
     component::{IntoComponent, Storage, component, prelude::*},
 };
-use zerocopy::FromBytes;
+use zerocopy_derive::FromBytes;
 
 /// This struct represents a custom HOB that is a simple cast and does not require any special handling or parsing.
 /// Due to this, The `FromHob` trait can be derived automatically. The `Copy` trait is required for this type so that

@@ -23,6 +23,7 @@ use core::{
 const POOL_SIG: u32 = 0x04151980; //arbitrary number.
 const UEFI_POOL_ALIGN: usize = 8; //per UEFI spec.
 
+#[derive(Debug)]
 struct AllocationInfo {
     signature: u32,
     memory_type: efi::MemoryType,
@@ -158,7 +159,7 @@ where
 
         //must be true for any pool allocation
         if allocation_info.signature != POOL_SIG {
-            debug_assert!(false, "Pool signature is incorrect.");
+            debug_assert!(false, "Pool signature is incorrect: {:#x?}", allocation_info);
             return Err(EfiError::InvalidParameter);
         }
         // check if allocation is from this pool.
@@ -314,6 +315,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             f();
         })
         .unwrap();
@@ -415,6 +417,48 @@ mod tests {
                 assert!(buffer as u64 > base);
                 assert!((buffer as u64) < base + 0x400000);
                 assert_eq!(buffer, prev_buffer);
+            });
+        });
+    }
+
+    #[test]
+    fn test_free_pool_with_invalid_signature() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+
+                init_gcd(&GCD, 0x400000);
+
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_DATA)),
+                    granularity,
+                    LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION,
+                );
+                let ua = UefiAllocator::new(fsb, efi::RUNTIME_SERVICES_DATA);
+
+                let mut buffer: *mut c_void = core::ptr::null_mut();
+
+                // Safety: The allocator has been setup and the buffer pointer is valid for the allocation.
+                assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
+
+                // Corrupt the signature to test validation
+                let (_, offset) = Layout::new::<AllocationInfo>()
+                    .extend(
+                        Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
+                            .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}")),
+                    )
+                    .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
+
+                let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+                // Safety: The allocation_info pointer is valid. It was derived from a buffer pointer above.
+                unsafe {
+                    (*allocation_info).signature = 0x01010101; // Corrupt the signature
+                }
+
+                // Attempting to free should fail with InvalidParameter due to signature mismatch
+                assert_eq!(unsafe { ua.free_pool(buffer) }, Err(EfiError::InvalidParameter));
             });
         });
     }

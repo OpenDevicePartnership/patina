@@ -144,7 +144,7 @@ static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 /// the second argument is a writer that should be used to write the output of the
 /// command. This can be done by directly invoking the [core::fmt::Write] trait methods
 /// or using the `write!` macro.
-pub type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
+pub type MonitorCommandFn = dyn Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync;
 
 /// Trait for debugger interaction. This is required to allow for a global to the
 /// platform specific debugger implementation. For safety, these routines should
@@ -166,8 +166,12 @@ trait Debugger: Sync {
     /// Polls the debugger for any pending interrupts.
     fn poll_debugger(&'static self);
 
-    /// Adds a monitor command to the debugger.
-    fn add_monitor_command(&'static self, cmd: &'static str, description: &'static str, function: MonitorCommandFn);
+    fn add_monitor_command(
+        &'static self,
+        command: &'static str,
+        description: &'static str,
+        callback: alloc::boxed::Box<MonitorCommandFn>,
+    );
 }
 
 #[derive(Debug)]
@@ -280,9 +284,38 @@ pub fn enabled() -> bool {
 /// });
 /// ```
 ///
-pub fn add_monitor_command(cmd: &'static str, description: &'static str, function: MonitorCommandFn) {
+#[cfg(feature = "alloc")]
+pub fn add_monitor_command<F>(cmd: &'static str, description: &'static str, function: F)
+where
+    F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
+{
     if let Some(debugger) = DEBUGGER.get() {
-        debugger.add_monitor_command(cmd, description, function);
+        debugger.add_monitor_command(cmd, description, alloc::boxed::Box::new(function));
+    }
+}
+
+/// Adds a monitor command to the debugger. This may be called before initialization,
+/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// for more details on the callback function expectations.
+///
+/// ## Example
+///
+/// ```rust
+/// patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
+///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
+///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
+/// });
+/// ```
+///
+#[cfg(not(feature = "alloc"))]
+pub fn add_monitor_command<F>(cmd: &'static str, description: &'static str, function: F)
+where
+    F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
+{
+    if let Some(debugger) = DEBUGGER.get() {
+        log::warn!(
+            "Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {command}"
+        );
     }
 }
 

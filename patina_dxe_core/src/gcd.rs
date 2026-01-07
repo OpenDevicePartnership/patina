@@ -177,23 +177,32 @@ impl MemoryProtectionPolicy {
     /// Rule: The EFI_MEMORY_MAP descriptor.attributes field is actually a capability field that must not have
     /// access attributes in it; some OSes treat these as actually set attributes, not capabilities. The runtime
     /// attribute is taken from the attributes, not the capabilities. Persistent memory must have EFI_MEMORY_NV set.
+    /// Runtime services code and data must have the runtime attribute set.
     ///
     /// Arguments
     /// * `attributes` - The memory attributes from the EFI_MEMORY_MAP descriptor
     /// * `capabilities` - The memory capabilities from the EFI_MEMORY_MAP descriptor
     /// * `gcd_memory_type` - The GCD memory type for this region
+    /// * `memory_type` - The UEFI memory type for this region
     ///
     /// Use Case: This is called when building the EFI_MEMORY_MAP to ensure the attributes are correctly set.
     pub(crate) fn apply_efi_memory_map_policy(
         attributes: u64,
         capabilities: u64,
         gcd_memory_type: GcdMemoryType,
+        memory_type: efi::MemoryType,
     ) -> u64 {
         let mut final_attributes =
             capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME) | (attributes & efi::MEMORY_RUNTIME);
 
         if gcd_memory_type == GcdMemoryType::Persistent {
             final_attributes |= efi::MEMORY_NV;
+        }
+
+        if matches!(memory_type, efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA) {
+            // Add the runtime attribute for runtime services code and data as
+            // higher level code will expect this but it is not explicitly tracked.
+            final_attributes |= efi::MEMORY_RUNTIME;
         }
 
         final_attributes
@@ -702,6 +711,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             // SAFETY: Test code - resetting the global GCD state for test isolation.
             // The test lock is used to prevent concurrent access.
             unsafe {
@@ -906,14 +916,32 @@ mod tests {
         let attributes = efi::MEMORY_RUNTIME | efi::MEMORY_WB;
         let capabilities = efi::MEMORY_WB | efi::MEMORY_RO | efi::MEMORY_RUNTIME;
         let gcd_memory_type = GcdMemoryType::Persistent;
-        let result = MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type);
+        let memory_type = efi::CONVENTIONAL_MEMORY;
+        let result =
+            MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type, memory_type);
         assert_eq!(result, efi::MEMORY_NV | efi::MEMORY_RUNTIME | efi::MEMORY_WB);
 
         // Non-persistent, should not set NV, attributes don't have runtime, shouldn't be set
         let attributes = efi::MEMORY_WB;
         let gcd_memory_type = GcdMemoryType::SystemMemory;
-        let result = MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type);
+        let result =
+            MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type, memory_type);
         assert_eq!(result, efi::MEMORY_WB);
+
+        // Runtime services code should have MEMORY_RUNTIME set
+        let attributes = efi::MEMORY_WB;
+        let capabilities = efi::MEMORY_WB | efi::MEMORY_RO | efi::MEMORY_RUNTIME;
+        let gcd_memory_type = GcdMemoryType::SystemMemory;
+        let memory_type = efi::RUNTIME_SERVICES_CODE;
+        let result =
+            MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type, memory_type);
+        assert_eq!(result, efi::MEMORY_WB | efi::MEMORY_RUNTIME);
+
+        // Runtime services data should have MEMORY_RUNTIME set
+        let memory_type = efi::RUNTIME_SERVICES_DATA;
+        let result =
+            MemoryProtectionPolicy::apply_efi_memory_map_policy(attributes, capabilities, gcd_memory_type, memory_type);
+        assert_eq!(result, efi::MEMORY_WB | efi::MEMORY_RUNTIME);
     }
 
     #[test]

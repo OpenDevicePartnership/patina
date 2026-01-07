@@ -82,7 +82,6 @@ mod event_db;
 mod events;
 mod filesystems;
 mod gcd;
-mod image;
 mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
@@ -226,7 +225,7 @@ pub trait MemoryInfo {
     type MemoryInfo = MockMemoryInfo;
     type CpuInfo = MockCpuInfo;
 ))]
-pub trait PlatformInfo {
+pub trait PlatformInfo: 'static {
     /// The platform's memory information and configuration.
     type MemoryInfo: MemoryInfo;
 
@@ -483,7 +482,7 @@ impl<P: PlatformInfo> Core<P> {
     ///
     /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
-    fn core_dispatcher(&self) -> Result<()> {
+    fn core_dispatcher(&'static self) -> Result<()> {
         perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
             // Patina component dispatch
@@ -519,8 +518,7 @@ impl<P: PlatformInfo> Core<P> {
         misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
         config_tables::init_config_tables_support(st.boot_services_mut());
         runtime::init_runtime_support(st.runtime_services_mut());
-        image::init_image_support(self.hob_list(), st);
-        self.pi_dispatcher.init();
+        self.pi_dispatcher.init(self.hob_list(), st);
         self.install_dxe_services_table(st);
         driver_services::init_driver_services(st.boot_services_mut());
 

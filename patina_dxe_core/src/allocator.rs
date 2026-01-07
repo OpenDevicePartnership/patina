@@ -37,7 +37,7 @@ use crate::{
 };
 pub use fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
 use patina::pi::{
-    dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
+    dxe_services::{self, GcdMemoryType},
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
@@ -195,9 +195,20 @@ pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
         protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
         NonNull::from_ref(GCD.memory_type_info(efi::LOADER_CODE)),
         DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-        LOW_TRAFFIC_ALLOC_MIN_EXPANSION,
+        HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
     ),
     efi::LOADER_CODE,
+);
+
+pub static EFI_LOADER_DATA_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
+    SpinLockedFixedSizeBlockAllocator::new(
+        &GCD,
+        protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
+        NonNull::from_ref(GCD.memory_type_info(efi::LOADER_DATA)),
+        DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+        HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
+    ),
+    efi::LOADER_DATA,
 );
 
 pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
@@ -237,9 +248,10 @@ pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocatorWithFsb = UefiAlloc
     efi::RUNTIME_SERVICES_DATA,
 );
 
-pub static STATIC_ALLOCATORS: [(&UefiAllocatorWithFsb, efi::MemoryType); 5] = [
+pub static STATIC_ALLOCATORS: [(&UefiAllocatorWithFsb, efi::MemoryType); 6] = [
     (&EFI_BOOT_SERVICES_DATA_ALLOCATOR, efi::BOOT_SERVICES_DATA),
     (&EFI_LOADER_CODE_ALLOCATOR, efi::LOADER_CODE),
+    (&EFI_LOADER_DATA_ALLOCATOR, efi::LOADER_DATA),
     (&EFI_BOOT_SERVICES_CODE_ALLOCATOR, efi::BOOT_SERVICES_CODE),
     (&EFI_RUNTIME_SERVICES_CODE_ALLOCATOR, efi::RUNTIME_SERVICES_CODE),
     (&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, efi::RUNTIME_SERVICES_DATA),
@@ -432,8 +444,9 @@ impl AllocatorMap {
         // Check static allocators first, then dynamic allocators
         match memory_type {
             efi::BOOT_SERVICES_DATA => Ok(&EFI_BOOT_SERVICES_DATA_ALLOCATOR),
-            efi::LOADER_CODE | efi::BOOT_SERVICES_CODE => Ok(match memory_type {
+            efi::LOADER_CODE | efi::LOADER_DATA | efi::BOOT_SERVICES_CODE => Ok(match memory_type {
                 efi::LOADER_CODE => &EFI_LOADER_CODE_ALLOCATOR,
+                efi::LOADER_DATA => &EFI_LOADER_DATA_ALLOCATOR,
                 efi::BOOT_SERVICES_CODE => &EFI_BOOT_SERVICES_CODE_ALLOCATOR,
                 _ => unreachable!(),
             }),
@@ -496,6 +509,7 @@ impl AllocatorMap {
         match memory_type {
             efi::BOOT_SERVICES_DATA => return Some(&EFI_BOOT_SERVICES_DATA_ALLOCATOR),
             efi::LOADER_CODE => return Some(&EFI_LOADER_CODE_ALLOCATOR),
+            efi::LOADER_DATA => return Some(&EFI_LOADER_DATA_ALLOCATOR),
             efi::BOOT_SERVICES_CODE => return Some(&EFI_BOOT_SERVICES_CODE_ALLOCATOR),
             efi::RUNTIME_SERVICES_CODE => return Some(&EFI_RUNTIME_SERVICES_CODE_ALLOCATOR),
             efi::RUNTIME_SERVICES_DATA => return Some(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR),
@@ -547,6 +561,7 @@ impl AllocatorMap {
         }
     }
 
+    /// Returns the memory type for the given handle, or None if the handle is not found.
     fn memory_type_for_handle(&self, handle: efi::Handle) -> Option<efi::MemoryType> {
         self.find_memory_type_by_handle(handle)
     }
@@ -701,6 +716,11 @@ pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiA
     ALLOCATORS.lock().get_or_create_allocator(memory_type, handle)
 }
 
+/// Returns the memory type for the given handle, or None if the handle is not found.
+pub fn memory_type_for_handle(handle: efi::Handle) -> Option<efi::MemoryType> {
+    ALLOCATORS.lock().memory_type_for_handle(handle)
+}
+
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
     match core_free_pages(memory, pages) {
         Ok(_) => efi::Status::SUCCESS,
@@ -771,124 +791,6 @@ extern "efiapi" fn set_mem(buffer: *mut c_void, size: usize, value: u8) {
     }
 }
 
-fn merge_blocks(
-    mut previous_blocks: Vec<efi::MemoryDescriptor>,
-    current: efi::MemoryDescriptor,
-) -> Vec<efi::MemoryDescriptor> {
-    //if current can be merged with the last block of the previous blocks, merge it.
-    if let Some(descriptor) = previous_blocks.last_mut()
-        && descriptor.r#type == current.r#type
-        && descriptor.attribute == current.attribute
-        && descriptor.physical_start + descriptor.number_of_pages * UEFI_PAGE_SIZE as u64 == current.physical_start
-    {
-        descriptor.number_of_pages += current.number_of_pages;
-        return previous_blocks;
-    }
-    //otherwise, just add the new block on the end of the list.
-    previous_blocks.push(current);
-    previous_blocks
-}
-
-/// Get the memory map descriptors from the GCD.
-///
-/// ## Arguments
-///
-/// * `active_attributes` - Specifies whether the `attributes` field of the memory descriptors should
-///   include the active attributes (true) or capabilities (false) of the memory but not
-///   necessarily the active attributes. The capabilities should be used for memory map generation
-///   as the UEFI specification requires.
-///
-pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
-    let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-
-    // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
-    // after getting the descriptors from the GCD. We would now be invalid if we ended up overflowing a pool and getting
-    // more memory from the GCD. Therefore, we need to pre-allocate memory before we get the GCD descriptors
-    // to ensure we don't overflow the boot services data pool. Let's make sure we have a few extra descriptors
-    let merged_descriptors: Vec<efi::MemoryDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-
-    GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
-
-    //Note: get_memory_descriptors is should already be ordered, so sort is unnecessary.
-    //descriptors.sort_unstable_by(|a, b|a.physical_start.cmp(&b.physical_start));
-
-    Ok(descriptors
-        .iter()
-        .filter_map(|descriptor| {
-            let memory_type = ALLOCATORS.lock().memory_type_for_handle(descriptor.image_handle).or({
-                match descriptor.memory_type {
-                    // free memory not tracked by any allocator.
-                    GcdMemoryType::SystemMemory => Some(efi::CONVENTIONAL_MEMORY),
-
-                    // MMIO. Note: there could also be MMIO tracked by the allocators which would not hit this case.
-                    GcdMemoryType::MemoryMappedIo => {
-                        // we should only be returning runtime MMIO here
-                        if descriptor.attributes & efi::MEMORY_RUNTIME == 0 {
-                            return None;
-                        }
-
-                        Some(efi::MEMORY_MAPPED_IO)
-                    }
-
-                    // Persistent. Note: this type is not allocatable, but might be created by agents other than the core directly
-                    // in the GCD.
-                    GcdMemoryType::Persistent => Some(efi::PERSISTENT_MEMORY),
-
-                    // Unaccepted. Note: this type is not allocatable, but might be created by agents other than the core directly
-                    // in the GCD.
-                    GcdMemoryType::Unaccepted => Some(efi::UNACCEPTED_MEMORY_TYPE),
-
-                    // Reserved.
-                    GcdMemoryType::Reserved => Some(efi::RESERVED_MEMORY_TYPE),
-
-                    // Other memory types are ignored for purposes of the memory map
-                    _ => None,
-                }
-            })?;
-
-            let number_of_pages = uefi_size_to_pages!(descriptor.length as usize) as u64;
-            if number_of_pages == 0 {
-                debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
-                return None; //skip entries for things smaller than a page
-            }
-            if (descriptor.base_address % UEFI_PAGE_SIZE as u64) != 0 {
-                debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
-                return None; //skip entries not page aligned.
-            }
-
-            let mut attributes = match active_attributes {
-                true => descriptor.attributes,
-                false => {
-                    // when we are building the EFI memory map, follow edk2 conventions as OSes will expect that.
-                    // When using the capabilities, drop the runtime attribute and
-                    // pick it up from the active attributes. We also drop the access attributes because
-                    // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
-                    // capabilities.
-                    MemoryProtectionPolicy::apply_efi_memory_map_policy(
-                        descriptor.attributes,
-                        descriptor.capabilities,
-                        descriptor.memory_type,
-                    )
-                }
-            };
-
-            if matches!(memory_type, efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA) {
-                // Add the runtime attribute for runtime services code and data as
-                // higher level code will expect this but it is not explicitly tracked.
-                attributes |= efi::MEMORY_RUNTIME;
-            }
-
-            Some(efi::MemoryDescriptor {
-                r#type: memory_type,
-                physical_start: descriptor.base_address,
-                virtual_start: 0,
-                number_of_pages,
-                attribute: attributes,
-            })
-        })
-        .fold(merged_descriptors, merge_blocks))
-}
-
 extern "efiapi" fn get_memory_map(
     memory_map_size: *mut usize,
     memory_map: *mut efi::MemoryDescriptor,
@@ -913,18 +815,9 @@ extern "efiapi" fn get_memory_map(
     // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
-    let efi_descriptors = match get_memory_map_descriptors(false) {
-        Ok(descriptors) => descriptors,
-        Err(status) => return status.into(),
-    };
-
-    assert_ne!(efi_descriptors.len(), 0);
-
-    let required_map_size = efi_descriptors.len() * mem::size_of::<efi::MemoryDescriptor>();
-
-    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
+    assert_ne!(required_map_size, 0);
     unsafe { memory_map_size.write_unaligned(required_map_size) };
-
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
     }
@@ -933,33 +826,44 @@ extern "efiapi" fn get_memory_map(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    // Rust will try to prevent an unaligned copy, given no one checks whether their points are aligned
-    // treat the slice as a u8 slice and copy the bytes.
-    let efi_descriptors_ptr = efi_descriptors.as_ptr() as *mut u8;
+    let descriptor_count = map_size / mem::size_of::<efi::MemoryDescriptor>();
 
-    // Safety: caller must ensure that memory_map is a valid pointer. It is null-checked above.
-    //         caller must ensure that map_key is a valid pointer if it is not null.
+    // Safety: caller must ensure that memory_map is a valid pointer for at least descriptor_count elements.
+    // It is null-checked above and the size has been validated.
+    let buffer = unsafe { slice::from_raw_parts_mut(memory_map, descriptor_count) };
+
+    let actual_count = match GCD.populate_efi_memory_map(buffer, false) {
+        Ok(count) => count,
+        Err(err) => return err.into(),
+    };
+    let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
+
+    // Write back the actual map size after merging
+    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    unsafe { memory_map_size.write_unaligned(actual_map_size) };
+
+    // Safety: caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
-        core::ptr::copy(efi_descriptors_ptr, memory_map as *mut u8, required_map_size);
-
         if !map_key.is_null() {
-            let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, required_map_size);
-            map_key.write_unaligned(crc32fast::hash(memory_map_as_bytes) as usize);
+            let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, actual_map_size);
+            GCD.set_last_efi_memory_map_key(memory_map_as_bytes);
+            if let Some(key) = GCD.get_last_efi_memory_map_key() {
+                log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {:#X}", key);
+                map_key.write_unaligned(key);
+            }
         }
     }
 
-    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
+    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&buffer[..actual_count]));
 
     efi::Status::SUCCESS
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
-    let mm_desc = get_memory_map_descriptors(false)?;
-    let mm_desc_size = mm_desc.len() * mem::size_of::<efi::MemoryDescriptor>();
-    let mm_desc_bytes: &[u8] = unsafe { slice::from_raw_parts(mm_desc.as_ptr() as *const u8, mm_desc_size) };
-
-    let current_map_key = crc32fast::hash(mm_desc_bytes) as usize;
-    if map_key == current_map_key { Ok(()) } else { Err(EfiError::InvalidParameter) }
+    match GCD.get_last_efi_memory_map_key() {
+        Some(key) if key == map_key => Ok(()),
+        _ => Err(EfiError::InvalidParameter),
+    }
 }
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
@@ -1347,6 +1251,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
         test_support::with_global_lock(|| {
             unsafe {
+                test_support::init_test_logger();
                 test_support::init_test_gcd(Some(gcd_size));
                 test_support::init_test_protocol_db();
                 test_support::reset_allocators();
@@ -1391,7 +1296,7 @@ mod tests {
                 },
                 &[
                     // for test, pick dynamic allocators, since state is easier to clean up for those.
-                    0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, //0x0100 pages of LOADER_DATA
+                    0x0d, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, //0x0100 pages of PAL_CODE
                     0x09, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, //0x0200 pages of ACPI_RECLAIM_MEMORY
                     0x0a, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, //0x0300 pages of ACPI_MEMORY_NVS
                 ],
@@ -1418,8 +1323,8 @@ mod tests {
 
             init_memory_support(&hob_list);
 
-            let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().reserved_range().unwrap();
-            assert_eq!(loader_range.end - loader_range.start, 0x100 * 0x1000);
+            let pal_code_range = ALLOCATORS.lock().get_allocator(efi::PAL_CODE).unwrap().reserved_range().unwrap();
+            assert_eq!(pal_code_range.end - pal_code_range.start, 0x100 * 0x1000);
 
             let reclaim_range =
                 ALLOCATORS.lock().get_allocator(efi::ACPI_RECLAIM_MEMORY).unwrap().reserved_range().unwrap();
@@ -1653,6 +1558,7 @@ mod tests {
 
             for (mem_type, handle) in [
                 (efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
+                (efi::LOADER_DATA, protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE),
                 (efi::BOOT_SERVICES_CODE, protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
                 (efi::BOOT_SERVICES_DATA, protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
                 (efi::RUNTIME_SERVICES_CODE, protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE),
@@ -2088,7 +1994,6 @@ mod tests {
                 core::ptr::addr_of_mut!(version),
             );
             assert_eq!(status, efi::Status::SUCCESS);
-            assert_eq!(memory_map_size, memory_map_buffer.len() * core::mem::size_of::<efi::MemoryDescriptor>());
             assert_eq!(descriptor_size, core::mem::size_of::<efi::MemoryDescriptor>());
             assert_eq!(version, 1);
             assert_ne!(map_key, 0);
@@ -2128,16 +2033,6 @@ mod tests {
             let status = get_memory_map(
                 core::ptr::null_mut(),
                 memory_map_buffer.as_mut_ptr(),
-                core::ptr::addr_of_mut!(map_key),
-                core::ptr::addr_of_mut!(descriptor_size),
-                core::ptr::addr_of_mut!(version),
-            );
-            assert_eq!(status, efi::Status::INVALID_PARAMETER);
-
-            //get_memory_map with non-null size but null map should return invalid parameter
-            let status = get_memory_map(
-                core::ptr::addr_of_mut!(memory_map_size),
-                core::ptr::null_mut(),
                 core::ptr::addr_of_mut!(map_key),
                 core::ptr::addr_of_mut!(descriptor_size),
                 core::ptr::addr_of_mut!(version),

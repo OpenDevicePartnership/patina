@@ -19,14 +19,20 @@ use patina::{
         dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
         hob::{self, EFiMemoryTypeInformation},
     },
-    uefi_pages_to_size,
+    uefi_pages_to_size, uefi_size_to_pages,
 };
 use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use r_efi::efi;
 
 use crate::{
-    GCD, allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, gcd::MemoryProtectionPolicy,
-    protocol_db, protocol_db::INVALID_HANDLE, tpl_mutex,
+    GCD,
+    allocator::{DEFAULT_ALLOCATION_STRATEGY, memory_type_for_handle},
+    ensure, error,
+    events::EVENT_DB,
+    gcd::MemoryProtectionPolicy,
+    protocol_db,
+    protocol_db::INVALID_HANDLE,
+    tpl_mutex,
 };
 use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
 use patina_paging::{MemoryAttributes, PtError, page_allocator::PageAllocator};
@@ -1146,6 +1152,164 @@ impl GCD {
         self.memory_blocks.len()
     }
 
+    /// Merges adjacent EFI memory descriptors in place.
+    ///
+    /// # Arguments
+    /// * `descriptors` - A mutable slice of EFI memory descriptors to be merged.
+    ///
+    /// Returns
+    /// * `usize` - The new count of descriptors after merging.
+    fn merge_blocks_in_place(descriptors: &mut [efi::MemoryDescriptor]) -> usize {
+        if descriptors.is_empty() {
+            return 0;
+        }
+
+        let mut write_idx = 0;
+
+        for read_idx in 0..descriptors.len() {
+            let current = descriptors[read_idx];
+
+            // Try to merge with the previous descriptor
+            if write_idx > 0 {
+                let prev = &mut descriptors[write_idx - 1];
+                if prev.r#type == current.r#type
+                    && prev.attribute == current.attribute
+                    && prev.physical_start + (prev.number_of_pages * UEFI_PAGE_SIZE as u64) == current.physical_start
+                {
+                    // Merge by extending the previous descriptor
+                    prev.number_of_pages += current.number_of_pages;
+                    continue;
+                }
+            }
+
+            if write_idx != read_idx {
+                descriptors[write_idx] = current;
+            }
+            write_idx += 1;
+        }
+
+        write_idx
+    }
+
+    /// Determines if a GCD memory descriptor should be included in the EFI memory map.
+    ///
+    /// Adjusts memory descriptor attributes for the EFI memory map.
+    ///
+    /// ## Arguments
+    ///
+    /// * `descriptor` - The GCD memory space descriptor
+    /// * `memory_type` - The EFI memory type for this descriptor
+    /// * `active_attributes` - If true, use active attributes; if false, use capabilities
+    ///
+    /// Returns
+    /// * `u64` - The adjusted attributes for the EFI memory descriptor.
+    fn adjust_efi_memory_map_descriptor(
+        descriptor: &MemorySpaceDescriptor,
+        memory_type: efi::MemoryType,
+        active_attributes: bool,
+    ) -> u64 {
+        if active_attributes {
+            descriptor.attributes
+        } else {
+            // when we are building the EFI memory map, follow edk2 conventions as OSes will expect that.
+            // When using the capabilities, drop the runtime attribute and
+            // pick it up from the active attributes. We also drop the access attributes because
+            // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
+            // capabilities.
+            MemoryProtectionPolicy::apply_efi_memory_map_policy(
+                descriptor.attributes,
+                descriptor.capabilities,
+                descriptor.memory_type,
+                memory_type,
+            )
+        }
+    }
+
+    /// Counts the number of EFI memory map descriptors needed.
+    ///
+    /// Returns
+    /// * `usize` - The count of EFI memory map descriptors.
+    pub fn memory_descriptor_count_for_efi_memory_map(&self) -> usize {
+        let blocks = &self.memory_blocks;
+        let mut count = 0;
+
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            let descriptor = match mb {
+                MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => descriptor,
+            };
+
+            if memory_type_for_handle(descriptor.image_handle)
+                .or_else(|| descriptor.is_efi_memory_map_descriptor())
+                .is_some()
+            {
+                count += 1;
+            }
+            current = blocks.next_idx(idx);
+        }
+
+        count
+    }
+
+    /// Populates a caller-provided buffer with EFI memory map descriptors.
+    ///
+    /// This function iterates through GCD memory blocks, filters them for inclusion in the
+    /// EFI memory map, converts them to EFI memory descriptors, and writes them directly
+    /// into the provided buffer. Consecutive descriptors with the same type and attributes
+    /// are merged to minimize the memory map size.
+    ///
+    /// ## Arguments
+    ///
+    /// * `buffer` - Mutable slice to populate with EFI memory descriptors. Must have sufficient
+    ///   capacity to hold all descriptors.
+    /// * `active_attributes` - If `true`, use active attributes; if `false`, use capabilities
+    ///   as required by the UEFI specification.
+    ///
+    /// ## Returns
+    ///
+    /// Returns `Ok(count)` with the actual number of descriptors written to the buffer after merging,
+    /// or `Err(EfiError::BufferTooSmall)` if the buffer size is too small.
+    pub fn populate_efi_memory_map(
+        &self,
+        buffer: &mut [efi::MemoryDescriptor],
+        active_attributes: bool,
+    ) -> Result<usize, EfiError> {
+        let blocks = &self.memory_blocks;
+        let mut write_idx = 0;
+
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            let descriptor = match mb {
+                MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => descriptor,
+            };
+
+            if let Some(memory_type) =
+                memory_type_for_handle(descriptor.image_handle).or_else(|| descriptor.is_efi_memory_map_descriptor())
+            {
+                let number_of_pages = uefi_size_to_pages!(descriptor.length as usize) as u64;
+                let attributes = Self::adjust_efi_memory_map_descriptor(descriptor, memory_type, active_attributes);
+
+                let new_descriptor = efi::MemoryDescriptor {
+                    r#type: memory_type,
+                    physical_start: descriptor.base_address,
+                    virtual_start: 0,
+                    number_of_pages,
+                    attribute: attributes,
+                };
+
+                ensure!(write_idx < buffer.len(), EfiError::BufferTooSmall);
+                buffer[write_idx] = new_descriptor;
+                write_idx += 1;
+            }
+            current = blocks.next_idx(idx);
+        }
+
+        // Merge consecutive descriptors with the same type and attributes
+        Ok(Self::merge_blocks_in_place(&mut buffer[..write_idx]))
+    }
+
     //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
     const GCD_MEMORY_TYPE_NAMES: [&'static str; 8] = [
         "NonExist ", // EfiGcdMemoryTypeNonExistent
@@ -1792,6 +1956,7 @@ pub struct SpinLockedGcd {
     page_table: tpl_mutex::TplMutex<Option<Box<dyn PatinaPageTable>>>,
     /// Contains the current memory protection policy
     pub(crate) memory_protection_policy: MemoryProtectionPolicy,
+    last_efi_memory_map_key: tpl_mutex::TplMutex<Option<usize>>,
 }
 
 impl SpinLockedGcd {
@@ -1844,6 +2009,7 @@ impl SpinLockedGcd {
             ],
             page_table: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
             memory_protection_policy: MemoryProtectionPolicy::new(),
+            last_efi_memory_map_key: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "LastEfiMemoryMapKeyLock"),
         }
     }
 
@@ -2623,6 +2789,32 @@ impl SpinLockedGcd {
         self.memory.lock().memory_descriptor_count()
     }
 
+    // returns the current count of efi memory map relevant blocks in the list.
+    pub fn memory_descriptor_count_for_efi_memory_map(&self) -> usize {
+        self.memory.lock().memory_descriptor_count_for_efi_memory_map()
+    }
+
+    /// Populates a caller-provided buffer with EFI memory map descriptors.
+    ///
+    /// This function writes EFI memory descriptors directly into the provided buffer,
+    /// merging consecutive regions with identical type and attributes.
+    ///
+    /// ## Arguments
+    ///
+    /// * `buffer` - Mutable slice to populate with EFI memory descriptors
+    /// * `active_attributes` - If `true`, use active attributes; if `false`, use capabilities
+    ///
+    /// ## Returns
+    ///
+    /// The actual number of descriptors written to the buffer.
+    pub fn populate_efi_memory_map(
+        &self,
+        buffer: &mut [efi::MemoryDescriptor],
+        active_attributes: bool,
+    ) -> Result<usize, EfiError> {
+        self.memory.lock().populate_efi_memory_map(buffer, active_attributes)
+    }
+
     /// Acquires lock and delegates to [`IoGCD::add_io_space`]
     pub fn add_io_space(
         &self,
@@ -2664,6 +2856,23 @@ impl SpinLockedGcd {
     /// Acquires lock and delegates to [`IoGCD::io_descriptor_count`]
     pub fn io_descriptor_count(&self) -> usize {
         self.io.lock().io_descriptor_count()
+    }
+
+    /// Gets the last EFI memory map key (CRC32 hash).
+    ///
+    /// Returns `None` if no memory map key has been set.
+    pub fn get_last_efi_memory_map_key(&self) -> Option<usize> {
+        *self.last_efi_memory_map_key.lock()
+    }
+
+    /// Sets the last EFI memory map key by computing the CRC32 hash of the provided memory map bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_map_bytes` - The byte slice representing the EFI memory map
+    pub fn set_last_efi_memory_map_key(&self, memory_map_bytes: &[u8]) {
+        let key = crc32fast::hash(memory_map_bytes) as usize;
+        *self.last_efi_memory_map_key.lock() = Some(key);
     }
 }
 
@@ -2768,6 +2977,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             f();
         })
         .unwrap();
@@ -5334,6 +5544,562 @@ mod tests {
                 count += 1;
             }
             assert_eq!(count, 0); // Should yield no descriptors
+        });
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_empty() {
+        let mut descriptors: [efi::MemoryDescriptor; 0] = [];
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_single() {
+        let mut descriptors = [efi::MemoryDescriptor {
+            r#type: efi::CONVENTIONAL_MEMORY,
+            physical_start: 0x1000,
+            virtual_start: 0,
+            number_of_pages: 4,
+            attribute: efi::MEMORY_WB,
+        }];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 1);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 4);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_adjacent_same_type_and_attributes() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 4,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x5000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WB,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 1);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 6);
+        assert_eq!(descriptors[0].r#type, efi::CONVENTIONAL_MEMORY);
+        assert_eq!(descriptors[0].attribute, efi::MEMORY_WB);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_different_types() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 4,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::BOOT_SERVICES_DATA,
+                physical_start: 0x5000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WB,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 2);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 4);
+        assert_eq!(descriptors[0].r#type, efi::CONVENTIONAL_MEMORY);
+        assert_eq!(descriptors[1].physical_start, 0x5000);
+        assert_eq!(descriptors[1].number_of_pages, 2);
+        assert_eq!(descriptors[1].r#type, efi::BOOT_SERVICES_DATA);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_different_attributes() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 4,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x5000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WT,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 2);
+        assert_eq!(descriptors[0].attribute, efi::MEMORY_WB);
+        assert_eq!(descriptors[1].attribute, efi::MEMORY_WT);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_non_contiguous() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 4,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x6000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WB,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 2);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 4);
+        assert_eq!(descriptors[1].physical_start, 0x6000);
+        assert_eq!(descriptors[1].number_of_pages, 2);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_multiple_merges() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x3000,
+                virtual_start: 0,
+                number_of_pages: 3,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x6000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WB,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 1);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 6);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_mixed_scenario() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x3000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::BOOT_SERVICES_DATA,
+                physical_start: 0x4000,
+                virtual_start: 0,
+                number_of_pages: 3,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x7000,
+                virtual_start: 0,
+                number_of_pages: 2,
+                attribute: efi::MEMORY_WT,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x9000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WT,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 3);
+        // First two should merge
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[0].number_of_pages, 3);
+        assert_eq!(descriptors[0].r#type, efi::CONVENTIONAL_MEMORY);
+        // Third should remain separate
+        assert_eq!(descriptors[1].physical_start, 0x4000);
+        assert_eq!(descriptors[1].number_of_pages, 3);
+        assert_eq!(descriptors[1].r#type, efi::BOOT_SERVICES_DATA);
+        // Last two should merge
+        assert_eq!(descriptors[2].physical_start, 0x7000);
+        assert_eq!(descriptors[2].number_of_pages, 3);
+        assert_eq!(descriptors[2].attribute, efi::MEMORY_WT);
+    }
+
+    #[test]
+    fn test_merge_blocks_in_place_write_idx_equals_read_idx() {
+        let mut descriptors = [
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x1000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::BOOT_SERVICES_DATA,
+                physical_start: 0x3000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WB,
+            },
+            efi::MemoryDescriptor {
+                r#type: efi::CONVENTIONAL_MEMORY,
+                physical_start: 0x5000,
+                virtual_start: 0,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_WT,
+            },
+        ];
+
+        let result = GCD::merge_blocks_in_place(&mut descriptors);
+        assert_eq!(result, 3);
+        assert_eq!(descriptors[0].physical_start, 0x1000);
+        assert_eq!(descriptors[1].physical_start, 0x3000);
+        assert_eq!(descriptors[2].physical_start, 0x5000);
+    }
+
+    #[test]
+    fn test_adjust_efi_memory_map_descriptor_active_attributes_true() {
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: dxe_services::GcdMemoryType::SystemMemory,
+            base_address: 0x1000,
+            length: UEFI_PAGE_SIZE as u64,
+            capabilities: efi::MEMORY_WB | efi::MEMORY_WT,
+            attributes: efi::MEMORY_WB | efi::MEMORY_XP,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        let result = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::CONVENTIONAL_MEMORY, true);
+
+        // When active_attributes is true, this should return descriptor.attributes directly
+        assert_eq!(result, descriptor.attributes);
+        assert_eq!(result, efi::MEMORY_WB | efi::MEMORY_XP);
+    }
+
+    #[test]
+    fn test_adjust_efi_memory_map_descriptor_active_attributes_false() {
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: dxe_services::GcdMemoryType::SystemMemory,
+            base_address: 0x1000,
+            length: UEFI_PAGE_SIZE as u64,
+            capabilities: efi::MEMORY_WB | efi::MEMORY_WT | efi::MEMORY_UC,
+            attributes: efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RUNTIME,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        let result = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::BOOT_SERVICES_DATA, false);
+
+        // When active_attributes is false, this should call apply_efi_memory_map_policy
+        // to apply the memory protection policy transformation.
+        let expected = MemoryProtectionPolicy::apply_efi_memory_map_policy(
+            descriptor.attributes,
+            descriptor.capabilities,
+            descriptor.memory_type,
+            efi::BOOT_SERVICES_DATA,
+        );
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_adjust_efi_memory_map_descriptor_runtime_memory_type() {
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: dxe_services::GcdMemoryType::SystemMemory,
+            base_address: 0x1000,
+            length: UEFI_PAGE_SIZE as u64,
+            capabilities: efi::MEMORY_WB | efi::MEMORY_RUNTIME,
+            attributes: efi::MEMORY_WB | efi::MEMORY_RUNTIME,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        let result = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::RUNTIME_SERVICES_DATA, false);
+
+        // Verify policy is applied for runtime memory
+        let expected = MemoryProtectionPolicy::apply_efi_memory_map_policy(
+            descriptor.attributes,
+            descriptor.capabilities,
+            descriptor.memory_type,
+            efi::RUNTIME_SERVICES_DATA,
+        );
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_adjust_efi_memory_map_descriptor_mmio_type() {
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: dxe_services::GcdMemoryType::MemoryMappedIo,
+            base_address: 0xF0000000,
+            length: UEFI_PAGE_SIZE as u64,
+            capabilities: efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+            attributes: efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        let result_active = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::MEMORY_MAPPED_IO, true);
+
+        let result_capabilities = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::MEMORY_MAPPED_IO, false);
+
+        // Active attributes should return attributes directly
+        assert_eq!(result_active, descriptor.attributes);
+
+        let expected = MemoryProtectionPolicy::apply_efi_memory_map_policy(
+            descriptor.attributes,
+            descriptor.capabilities,
+            descriptor.memory_type,
+            efi::MEMORY_MAPPED_IO,
+        );
+        assert_eq!(result_capabilities, expected);
+    }
+
+    #[test]
+    fn test_adjust_efi_memory_map_descriptor_various_attribute_combinations() {
+        // Test with various attribute combinations to ensure both paths work correctly
+        let test_cases = vec![
+            (efi::MEMORY_WB, efi::MEMORY_WB | efi::MEMORY_WT),
+            (efi::MEMORY_UC, efi::MEMORY_UC),
+            (efi::MEMORY_WB | efi::MEMORY_XP, efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RP),
+            (efi::MEMORY_RUNTIME | efi::MEMORY_WB, efi::MEMORY_RUNTIME | efi::MEMORY_WB | efi::MEMORY_UC),
+        ];
+
+        for (attributes, capabilities) in test_cases {
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: dxe_services::GcdMemoryType::SystemMemory,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities,
+                attributes,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            let result_active = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::CONVENTIONAL_MEMORY, true);
+            assert_eq!(result_active, attributes, "Failed for attributes={:#x}", attributes);
+
+            let result_capabilities =
+                GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::CONVENTIONAL_MEMORY, false);
+            let expected = MemoryProtectionPolicy::apply_efi_memory_map_policy(
+                attributes,
+                capabilities,
+                dxe_services::GcdMemoryType::SystemMemory,
+                efi::CONVENTIONAL_MEMORY,
+            );
+            assert_eq!(result_capabilities, expected, "Failed for capabilities={:#x}", capabilities);
+        }
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_empty_gcd() {
+        let gcd = GCD::new(48);
+
+        let count = gcd.memory_descriptor_count_for_efi_memory_map();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_unallocated_system_memory() {
+        let (gcd, _) = create_gcd();
+
+        let count = gcd.memory_descriptor_count_for_efi_memory_map();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_runtime_mmio() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add runtime MMIO - should be counted
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::MemoryMappedIo,
+                    0x80000000,
+                    UEFI_PAGE_SIZE * 10,
+                    efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+                )
+            }
+            .expect("Failed to add runtime MMIO");
+
+            gcd.set_memory_space_attributes(0x80000000, UEFI_PAGE_SIZE * 10, efi::MEMORY_UC | efi::MEMORY_RUNTIME)
+                .expect("Failed to set memory space attributes");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Should count: 1 SystemMemory (from create_gcd) + 1 runtime MMIO
+            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+        });
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_mixed_types() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add runtime MMIO
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::MemoryMappedIo,
+                    0x80000000,
+                    UEFI_PAGE_SIZE * 10,
+                    efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+                )
+            }
+            .expect("Failed to add runtime MMIO");
+            gcd.set_memory_space_attributes(0x80000000, UEFI_PAGE_SIZE * 10, efi::MEMORY_UC | efi::MEMORY_RUNTIME)
+                .expect("Failed to set runtime MMIO attributes");
+
+            // Add Persistent memory
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::Persistent,
+                    0x90000000,
+                    UEFI_PAGE_SIZE * 10,
+                    efi::MEMORY_WB,
+                )
+            }
+            .expect("Failed to add Persistent memory");
+            gcd.set_memory_space_attributes(0x90000000, UEFI_PAGE_SIZE * 10, efi::MEMORY_WB)
+                .expect("Failed to set Persistent memory attributes");
+
+            // Add Reserved memory
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::Reserved,
+                    0xA0000000,
+                    UEFI_PAGE_SIZE * 10,
+                    efi::MEMORY_WB,
+                )
+            }
+            .expect("Failed to add Reserved memory");
+            gcd.set_memory_space_attributes(0xA0000000, UEFI_PAGE_SIZE * 10, efi::MEMORY_WB)
+                .expect("Failed to set Reserved memory attributes");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Should count: SystemMemory (from create_gcd) + runtime MMIO + Persistent + Reserved = at least 4
+            assert!(count >= 4, "Expected at least 4 descriptors, got {}", count);
+        });
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_non_runtime_mmio() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add non-runtime MMIO - should not be counted
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::MemoryMappedIo,
+                    0x80000000,
+                    UEFI_PAGE_SIZE * 10,
+                    efi::MEMORY_UC,
+                )
+            }
+            .expect("Failed to add non-runtime MMIO");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Should count: 1 SystemMemory (from create_gcd), non-runtime MMIO is not counted
+            assert_eq!(count, 1);
+        });
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_persistent_memory() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add Persistent memory - should be counted
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::Persistent,
+                    0x100000000,
+                    UEFI_PAGE_SIZE * 100,
+                    efi::MEMORY_WB | efi::MEMORY_NV,
+                )
+            }
+            .expect("Failed to add Persistent memory");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Expect 1 SystemMemory (from create_gcd) + 1 Persistent
+            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+        });
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_unaccepted_memory() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add Unaccepted memory - should be counted
+            unsafe {
+                gcd.add_memory_space(
+                    dxe_services::GcdMemoryType::Unaccepted,
+                    0x200000000,
+                    UEFI_PAGE_SIZE * 50,
+                    efi::MEMORY_WB,
+                )
+            }
+            .expect("Failed to add Unaccepted memory");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Expect 1 SystemMemory (from create_gcd) + 1 Unaccepted
+            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+        });
+    }
+
+    #[test]
+    fn test_memory_descriptor_count_for_efi_memory_map_reserved_memory() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+
+            // Add Reserved memory - should be counted
+            unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x90000000, UEFI_PAGE_SIZE * 20, 0) }
+                .expect("Failed to add Reserved memory");
+
+            let count = gcd.memory_descriptor_count_for_efi_memory_map();
+            // Should count: 1 SystemMemory (from create_gcd) + 1 Reserved
+            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
         });
     }
 }

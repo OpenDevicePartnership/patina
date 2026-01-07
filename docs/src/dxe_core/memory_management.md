@@ -277,6 +277,15 @@ In the Patina DXE Core in release mode, allocating and freeing within the GCD (w
 will return an error that can be handled by the corresponding driver.
 In debug builds, any changes to the memory map following `exit_boot_services` will panic due to an assertion.
 
+## Memory Map Reporting
+
+The Patina DXE Core implements the UEFI specification API for report the memory map. A note about the Patina DXE Core
+implementation of `GetMemoryMap()` is that it will return a memory map size that reflects an unmerged descriptor count
+while the EDK II implementation returns a merged descriptor count. This simplifies the implementation and provides a
+some headroom for additional descriptors that may be added between calls to `GetMemoryMap()`. This means that the
+merged descriptors ultimately written into the caller's buffer may be fewer than the number of descriptors reported by
+`GetMemoryMap()`.
+
 ## Memory Protections
 
 Patina (here called Patina or the core interchangeably) applies strict memory protections while still allowing for PI

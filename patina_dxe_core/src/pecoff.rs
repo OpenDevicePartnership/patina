@@ -497,6 +497,8 @@ pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Resul
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::test_support;
+
     use super::*;
     extern crate std;
 
@@ -504,6 +506,7 @@ mod tests {
 
     #[test]
     fn test_image_bad_signature() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let mut image = *image;
         image.as_mut()[0] = 00;
@@ -514,6 +517,7 @@ mod tests {
 
     #[test]
     fn te_image_info_should_be_correct() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image.te");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -526,6 +530,7 @@ mod tests {
 
     #[test]
     fn pe_image_info_should_be_correct() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -538,6 +543,7 @@ mod tests {
 
     #[test]
     fn msvc_pe_image_info_should_be_correct() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/DisplayEngine512BFileAlignment.efi");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -552,6 +558,7 @@ mod tests {
 
     #[test]
     fn clangpdb_pe_image_info_should_be_correct() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/DisplayEngine32BFileAlignment.efi");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -566,6 +573,7 @@ mod tests {
 
     #[test]
     fn te_load_image_should_load_the_image() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image.te");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -583,6 +591,7 @@ mod tests {
 
     #[test]
     fn te_load_image_should_have_same_info() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -596,6 +605,7 @@ mod tests {
 
     #[test]
     fn pe_load_image_should_load_the_image() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -613,6 +623,7 @@ mod tests {
 
     #[test]
     fn pe_load_image_should_have_same_image_info() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let mut image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -628,6 +639,7 @@ mod tests {
 
     #[test]
     fn test_load_image_with_bad_image_too_short() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let pe_info = UefiPeInfo::parse(image).unwrap();
         let edit_image = &image[0..image.len() - 0x1000];
@@ -642,6 +654,7 @@ mod tests {
 
     #[test]
     fn te_relocate_image_with_reloc_sections_should_work() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
         let reference_image = include_bytes!("../resources/test/te/test_image_with_reloc_section_relocated.bin");
 
@@ -659,6 +672,7 @@ mod tests {
 
     #[test]
     fn te_relocate_to_same_address_should_do_nothing() {
+        test_support::init_test_logger();
         let image1 = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
 
         let image_info = UefiPeInfo::parse(image1).unwrap();
@@ -678,6 +692,7 @@ mod tests {
 
     #[test]
     fn pe_relocate_image_should_relocate_the_image() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -699,6 +714,7 @@ mod tests {
 
     #[test]
     fn pe_relocate_image_should_work_multiple_times() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -721,6 +737,7 @@ mod tests {
 
     #[test]
     fn test_relocate_image_with_missing_reloc_dir() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
         let image_info = UefiPeInfo::parse(image).unwrap();
         let mut loaded_image = vec![0; image_info.size_of_image as usize];
@@ -737,6 +754,7 @@ mod tests {
 
     #[test]
     fn pe_load_resource_section_should_succeed() {
+        test_support::init_test_logger();
         // test_image_<toolchain>_hii.pe32 file is just a copy of TftpDynamicCommand.efi module copied and renamed.
         // the HII resource section layout slightly varies between Linux (GCC) and Windows (MSVC) bulids so both are
         // tested here.
@@ -777,6 +795,7 @@ mod tests {
 
     #[test]
     fn te_load_resource_section_should_succeed() {
+        test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image.te");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
@@ -789,6 +808,7 @@ mod tests {
 
     #[test]
     fn test_load_resource_section_using_size_of_raw_data() {
+        test_support::init_test_logger();
         const RELOC_DIR_ENTRY_INDEX: usize = 5;
         let image = include_bytes!("../resources/test/pe32/test_image_msvc_hii.pe32");
         let mut image_info = UefiPeInfo::parse(image).unwrap();
@@ -800,6 +820,7 @@ mod tests {
 
     #[test]
     fn test_load_resource_section_with_malformed_resource_dir() {
+        test_support::init_test_logger();
         const RELOC_DIR_ENTRY_INDEX: usize = 5;
         let image = include_bytes!("../resources/test/pe32/test_image_msvc_hii.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();

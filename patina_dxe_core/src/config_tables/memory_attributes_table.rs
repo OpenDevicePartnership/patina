@@ -15,7 +15,8 @@ use spin::Once;
 use core::{ffi::c_void, fmt::Debug, mem::size_of, slice};
 
 use crate::{
-    allocator::{MemoryDescriptorSlice, core_allocate_pool, core_free_pool, get_memory_map_descriptors},
+    GCD,
+    allocator::{MemoryDescriptorSlice, core_allocate_pool, core_free_pool},
     config_tables::{core_install_configuration_table, get_configuration_table},
     events::EVENT_DB,
     gcd::MemoryProtectionPolicy,
@@ -142,22 +143,29 @@ pub fn core_install_memory_attributes_table() {
         POST_RTB.call_once(|| {});
     }
 
-    // get the GCD memory map descriptors and filter out the non-runtime sections
-    let desc_list = match get_memory_map_descriptors(true) {
-        Ok(descriptors) => descriptors,
-        Err(_) => {
-            log::error!("Failed to get memory map descriptors.");
-            return;
-        }
+    // Reserve a buffer for the memory map descriptors
+    let descriptor_count = GCD.memory_descriptor_count();
+    let mut desc_buffer = Vec::with_capacity(descriptor_count);
+    desc_buffer.resize(
+        descriptor_count,
+        efi::MemoryDescriptor { r#type: 0, physical_start: 0, virtual_start: 0, number_of_pages: 0, attribute: 0 },
+    );
+
+    let Ok(actual_count) = GCD.populate_efi_memory_map(&mut desc_buffer, true) else {
+        log::error!("Failed to populate memory map descriptors.");
+        return;
     };
 
-    if desc_list.is_empty() {
+    // Truncate to the actual number of descriptors written
+    desc_buffer.truncate(actual_count);
+
+    if desc_buffer.is_empty() {
         log::error!("Failed to install memory attributes table! Could not get memory map descriptors.");
         return;
     }
 
-    // this allocates memory to do the collect, but that's okay because it is boot services memory
-    let mat_desc_list: Vec<efi::MemoryDescriptor> = desc_list
+    // Filter for runtime sections and apply MAT policy
+    let mat_desc_list: Vec<efi::MemoryDescriptor> = desc_buffer
         .iter()
         .filter_map(|descriptor| {
             // we only want the EfiRuntimeServicesCode and EfiRuntimeServicesData sections in the MAT

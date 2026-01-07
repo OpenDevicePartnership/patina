@@ -778,6 +778,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             // SAFETY: Test code only - initializing the test GCD with the test lock held
             // prevents concurrent access during initialization.
             unsafe { test_support::init_test_gcd(Some(0x4000000)) };

@@ -412,7 +412,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         &'static self,
         command: &'static str,
         description: &'static str,
-        callback: crate::MonitorCommandFn,
+        callback: Box<crate::MonitorCommandFn>,
     ) {
         if !self.enabled() {
             return;

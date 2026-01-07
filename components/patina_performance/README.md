@@ -19,54 +19,39 @@ The Patina performance component maintains the infrastructure to report firmware
 - Platforms that need runtime configuration can include the `PerformanceConfigurationProvider` component, which reads a
   `PerformanceConfigHob` and locks the `PerfConfig` values for the session.
 
-## Enabling Performance Measurements
+To enable performance measurements in Patina, add the `Performance` component and provide a `PerfConfig` using
+`configs(mut add: Add<Config>)` in your platform's `ComponentInfo` implementation. For example:
 
-Enabling performance in Patina is done by adding the `Performance` component to the
-[Patina DXE Core](https://crates.io/crates/patina_dxe_core) build.
+```rust
+use patina_performance::component::Performance;
+use patina_performance::component::performance_config_provider::PerformanceConfigurationProvider;
+use patina_dxe_core::*;
 
-```rust,no_run
-# extern crate patina_dxe_core;
-# extern crate patina_performance;
-use patina_dxe_core::Core;
+impl ComponentInfo for ExamplePlatform {
+    fn configs(mut add: Add<Config>) {
+        add.config(patina_performance::config::PerfConfig {
+            enable_component: true,
+            enabled_measurements: {
+                patina::performance::Measurement::DriverBindingStart
+                | patina::performance::Measurement::DriverBindingStop
+                | patina::performance::Measurement::DriverBindingSupport
+                | patina::performance::Measurement::LoadImage
+                | patina::performance::Measurement::StartImage
+            }
+        });
+    }
 
-# let hob_list = core::ptr::null();
-Core::default()
- .init_memory(hob_list)
- .with_component(patina_performance::component::Performance)
- .start()
- .unwrap();
+    fn components(mut add: Add<Component>) {
+        // Add your other components as needed, e.g.:
+        // add.component(AdvancedLoggerComponent::<YourUartType>::new(&LOGGER));
+        add.component(PerformanceConfigurationProvider);
+        add.component(Performance);
+    }
+}
 ```
 
-> **Note:** Performance measurements for a given platform may need to be enabled. For example, if building in
-`patina-qemu`, this build variable should be set to true: `BLD_*_PERF_TRACE_ENABLE=TRUE`.
-
-The Patina performance component uses a feature mask in its configuration to control how performance is measured.
-
-```rust,no_run
-# extern crate patina_dxe_core;
-# extern crate patina_performance;
-# extern crate patina;
-# let hob_list = core::ptr::null();
-use patina_dxe_core::Core;
-
-Core::default()
- .init_memory(hob_list)
- .with_config(patina_performance::config::PerfConfig {
-     enable_component: true,
-     enabled_measurements: {
-        patina::performance::Measurement::DriverBindingStart         // Adds driver binding start measurements.
-        | patina::performance::Measurement::DriverBindingStop        // Adds driver binding stop measurements.
-        | patina::performance::Measurement::DriverBindingSupport     // Adds driver binding support measurements.
-        | patina::performance::Measurement::LoadImage                // Adds load image measurements.
-        | patina::performance::Measurement::StartImage               // Adds start image measurements.
-     }
- })
- .with_component(patina_performance::component::Performance)
- .start()
- .unwrap();
-
-// ...
-```
+> **Note:** The `PerformanceConfigurationProvider` component is optional. Include it if you want to allow runtime
+configuration of performance measurements via a HOB. If you only want static configuration, you can omit it.
 
 ### Enabling Performance Measurements During Boot
 

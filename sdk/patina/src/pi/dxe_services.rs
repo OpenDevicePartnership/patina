@@ -320,6 +320,60 @@ impl MemorySpaceDescriptor {
 
         overlap_start..overlap_end
     }
+
+    /// Determines if this memory descriptor should be included in the EFI memory map.
+    ///
+    /// Only descriptors that meet UEFI requirements and represent allocatable or special memory
+    /// types are included in the EFI memory map.
+    ///
+    /// # Returns
+    /// * `Some(memory_type)` if the descriptor should be included in the EFI memory map
+    /// * `None` if the descriptor should be excluded
+    pub fn is_efi_memory_map_descriptor(&self) -> Option<r_efi::efi::MemoryType> {
+        use crate::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
+
+        // Validate page alignment and size
+        let number_of_pages = ((self.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
+        if number_of_pages == 0 {
+            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
+            return None; // skip entries for things smaller than a page
+        }
+        if !self.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
+            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
+            return None; // skip entries not page aligned
+        }
+
+        // Note: For allocator-tracked memory types, this should be called by the DXE core
+        // after checking memory_type_for_handle(self.image_handle)
+        match self.memory_type {
+            // Free memory not tracked by any allocator.
+            GcdMemoryType::SystemMemory => Some(r_efi::efi::CONVENTIONAL_MEMORY),
+
+            // Note: there could also be MMIO tracked by the allocators which would not hit this case.
+            GcdMemoryType::MemoryMappedIo => {
+                // we should only be returning runtime MMIO here
+                if self.attributes & r_efi::efi::MEMORY_RUNTIME == 0 {
+                    None
+                } else {
+                    Some(r_efi::efi::MEMORY_MAPPED_IO)
+                }
+            }
+
+            // Persistent. Note: this type is not allocatable, but might be created by agents other than the core directly
+            // in the GCD.
+            GcdMemoryType::Persistent => Some(r_efi::efi::PERSISTENT_MEMORY),
+
+            // Unaccepted. Note: this type is not allocatable, but might be created by agents other than the core directly
+            // in the GCD.
+            GcdMemoryType::Unaccepted => Some(r_efi::efi::UNACCEPTED_MEMORY_TYPE),
+
+            // Reserved.
+            GcdMemoryType::Reserved => Some(r_efi::efi::RESERVED_MEMORY_TYPE),
+
+            // Other memory types are ignored for purposes of the memory map
+            _ => None,
+        }
+    }
 }
 
 #[repr(C)]

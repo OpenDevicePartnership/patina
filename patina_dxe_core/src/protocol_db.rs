@@ -452,14 +452,6 @@ impl ProtocolDb {
     ) -> Result<(), EfiError> {
         self.validate_handle(handle)?;
 
-        if let Some(agent) = agent_handle {
-            self.validate_handle(agent)?;
-        }
-
-        if let Some(controller) = controller_handle {
-            self.validate_handle(controller)?;
-        }
-
         let key = handle as usize;
         let handle_instance = self.handles.get_mut(&key).expect("valid handle, but no entry in self.handles");
         let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
@@ -927,6 +919,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             f();
         })
         .unwrap();
@@ -1627,6 +1620,76 @@ mod tests {
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
             assert_eq!(1, protocol_user_list.len());
+            drop(protocol_db);
+        });
+    }
+
+    #[test]
+    fn remove_protocol_usage_should_allow_cleanup_when_agent_handle_is_stale() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
+
+            let uuid = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
+            let guid = efi::Guid::from_bytes(uuid.as_bytes());
+            let interface: *mut c_void = 0x1234 as *mut c_void;
+
+            let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (agent, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+
+            SPIN_LOCKED_PROTOCOL_DB
+                .add_protocol_usage(handle, guid, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .unwrap();
+
+            SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(agent, guid, interface).unwrap();
+
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(
+                handle,
+                guid,
+                Some(agent),
+                Some(controller),
+                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+            );
+            assert_eq!(result, Ok(()));
+
+            let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
+            let usage_list = &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid)).unwrap().usage;
+            assert_eq!(usage_list.len(), 0);
+            drop(protocol_db);
+        });
+    }
+
+    #[test]
+    fn remove_protocol_usage_should_allow_cleanup_when_controller_handle_is_stale() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
+
+            let uuid = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
+            let guid = efi::Guid::from_bytes(uuid.as_bytes());
+            let interface: *mut c_void = 0x1234 as *mut c_void;
+
+            let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (agent, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+
+            SPIN_LOCKED_PROTOCOL_DB
+                .add_protocol_usage(handle, guid, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .unwrap();
+
+            SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(controller, guid, interface).unwrap();
+
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(
+                handle,
+                guid,
+                Some(agent),
+                Some(controller),
+                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+            );
+            assert_eq!(result, Ok(()));
+
+            let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
+            let usage_list = &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid)).unwrap().usage;
+            assert_eq!(usage_list.len(), 0);
             drop(protocol_db);
         });
     }
