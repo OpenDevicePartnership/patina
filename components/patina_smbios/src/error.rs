@@ -32,6 +32,8 @@ pub enum SmbiosError {
     InvalidStringPoolTermination,
     /// String pool area is too small (must be at least 2 bytes)
     StringPoolTooSmall,
+    /// Failed to find the record corresponding to the specified handle in the record table
+    RecordNotFound,
 
     // Handle management errors
     /// All available handles have been exhausted (reached 0xFFFE limit)
@@ -40,6 +42,10 @@ pub enum SmbiosError {
     HandleNotFound,
     /// String index is out of range for the specified record
     StringIndexOutOfRange,
+    /// The specified handle was already used by another record
+    HandleAlreadyStarted,
+    /// The specified handle is out of range
+    HandleOutOfRange,
 
     // Resource allocation errors
     /// Failed to allocate memory for SMBIOS table or entry point
@@ -82,10 +88,14 @@ impl From<SmbiosError> for patina::error::EfiError {
             | SmbiosError::InvalidStringPoolTermination
             | SmbiosError::StringPoolTooSmall
             | SmbiosError::StringIndexOutOfRange
-            | SmbiosError::Type127Managed => patina::error::EfiError::InvalidParameter,
+            | SmbiosError::Type127Managed
+            | SmbiosError::HandleAlreadyStarted
+            | SmbiosError::HandleOutOfRange => patina::error::EfiError::InvalidParameter,
 
             // Not found errors map to NOT_FOUND
-            SmbiosError::HandleNotFound | SmbiosError::NoRecordsAvailable => patina::error::EfiError::NotFound,
+            SmbiosError::HandleNotFound | SmbiosError::NoRecordsAvailable | SmbiosError::RecordNotFound => {
+                patina::error::EfiError::NotFound
+            }
 
             // Version and initialization errors map to UNSUPPORTED
             SmbiosError::UnsupportedVersion | SmbiosError::AlreadyInitialized | SmbiosError::NotInitialized => {

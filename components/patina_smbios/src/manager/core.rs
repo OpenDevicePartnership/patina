@@ -73,8 +73,7 @@ pub struct Smbios30EntryPoint {
 /// Manages SMBIOS records, handles, and table generation.
 pub struct SmbiosManager {
     pub(super) records: RefCell<Vec<SmbiosRecord>>,
-    pub(super) next_handle: RefCell<SmbiosHandle>,
-    pub(super) freed_handles: RefCell<Vec<SmbiosHandle>>,
+    pub(super) used_handles: RefCell<Vec<SmbiosHandle>>,
     pub major_version: u8,
     pub minor_version: u8,
     entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
@@ -114,8 +113,7 @@ impl SmbiosManager {
 
         Ok(Self {
             records: RefCell::new(Vec::new()),
-            next_handle: RefCell::new(1),
-            freed_handles: RefCell::new(Vec::new()),
+            used_handles: RefCell::new(Vec::new()),
             major_version,
             minor_version,
             entry_point_64: RefCell::new(None),
@@ -175,7 +173,7 @@ impl SmbiosManager {
         // which rejects Type 127 to prevent external callers from adding it
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, self.allocate_handle()?);
+        let header = SmbiosTableHeader::new(127, 4, self.alloc_new_smbios_handle()?);
         let record = SmbiosRecord::new(header, None, bytes, 0);
         self.records.borrow_mut().push(record);
 
@@ -297,32 +295,82 @@ impl SmbiosManager {
         strings
     }
 
-    /// Allocate a new handle using a free list for efficient O(1) allocation
+    /// This function is called when the request handle is NOT FFFE.
     ///
-    /// This implementation maintains a free list of previously freed handles to avoid
-    /// O(n) searches through all records. The allocation strategy is:
-    /// 1. If freed_handles is non-empty, pop and reuse a freed handle
-    /// 2. Otherwise, use next_handle and increment it
-    /// 3. If next_handle reaches the reserved range (0xFFFE), wrap to 1
-    /// 4. If all handles are exhausted, return OutOfResources
-    pub(super) fn allocate_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
-        // First, try to reuse a freed handle (most efficient)
-        if let Some(handle) = self.freed_handles.borrow_mut().pop() {
-            return Ok(handle);
+    /// Checks if the handle is within valid range (0..FFFE) and its availability.
+    ///
+    /// # Arguments
+    ///
+    /// * `&SmbiosHandle` - reference to the requested handle
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(SmbiosHandle)` with if the handle is within range and not used.
+    ///
+    /// # Errors
+    ///
+    /// If the handle is not within valid range, returns SmbiosError::HandleOutOfRange.
+    /// If the handle is already in use, returns SmbiosError::HandleAlreadyStarted.
+    fn add_request_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
+        if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(request_handle) {
+            log::error!("add_request_handle - HandleOutOfRange");
+            return Err(SmbiosError::HandleOutOfRange);
         }
 
-        // No freed handles available, use next_handle
-        let candidate = *self.next_handle.borrow();
-
-        // Check if we've exhausted the handle space
-        // Valid handles are 1..=0xFEFF (0xFFFE and 0xFFFF are reserved)
-        if candidate >= SMBIOS_HANDLE_PI_RESERVED {
-            // All handles exhausted
-            return Err(SmbiosError::HandleExhausted);
+        if self.used_handles.borrow().contains(request_handle) {
+            log::error!("add_request_handle - HandleAlreadyStarted");
+            return Err(SmbiosError::HandleAlreadyStarted);
         }
 
-        *self.next_handle.borrow_mut() = candidate + 1;
-        Ok(candidate)
+        self.used_handles.borrow_mut().push(*request_handle);
+        Ok(*request_handle)
+    }
+
+    /// This function is called when the request handle is FFFE.
+    ///
+    /// Allocates a new unique handle if available.
+    ///
+    /// # Arguments
+    ///
+    /// * `&SmbiosHandle` - reference to the requested handle
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(SmbiosHandle)` with if there is still an available handle.
+    ///
+    /// # Errors
+    ///
+    /// If there is no available handle, return SmbiosError::HandleExhausted.
+    fn alloc_new_smbios_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
+        if let Some(handle) = (0..SMBIOS_HANDLE_PI_RESERVED).find(|x| !self.used_handles.borrow().contains(x)) {
+            self.used_handles.borrow_mut().push(handle);
+            Ok(handle)
+        } else {
+            log::error!("alloc_new_smbios_handle - HandleExhausted");
+            Err(SmbiosError::HandleExhausted)
+        }
+    }
+
+    /// Get a SMBIOS handle based on the requested handle
+    ///
+    /// Follow PI spec, if the requested handle is FFFEh, then call alloc_new_smbios_handle to
+    /// get a unique handle. Otherwise, call add_request_handle to check if the handle is
+    /// already in use. If it is not, then use the requested handle as is.
+    ///
+    /// # Arguments
+    ///
+    /// * `&SmbiosHandle` - reference to the requested handle
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(SmbiosHandle)` with the assigned handle, or an error if the handle is already
+    /// in used.
+    pub(crate) fn get_smbios_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
+        if *request_handle == SMBIOS_HANDLE_PI_RESERVED {
+            self.alloc_new_smbios_handle()
+        } else {
+            self.add_request_handle(request_handle)
+        }
     }
 
     /// Build SMBIOS table data and entry point using pre-allocated buffers
@@ -516,6 +564,7 @@ impl SmbiosManager {
     ) -> Result<SmbiosHandle, SmbiosError> {
         // Step 1: Validate minimum size for header (at least 4 bytes)
         if record_data.len() < core::mem::size_of::<SmbiosTableHeader>() {
+            log::error!("Error - minimum size for header is too small");
             return Err(SmbiosError::RecordTooSmall);
         }
 
@@ -527,12 +576,14 @@ impl SmbiosManager {
         // Step 3: Reject Type 127 End-of-Table marker - it's automatically managed
         // The manager adds Type 127 during initialization, and it must remain unique and last
         if header.record_type == 127 {
+            log::error!("add_from_bytes - Reject Type 127 End-of-Table marker");
             return Err(SmbiosError::Type127Managed);
         }
 
         // Step 4: Validate header->length is <= (record_data.length - 2) for string pool
         // The string pool needs at least 2 bytes for the double-null terminator
         if (header.length as usize + 2) > record_data.len() {
+            log::error!("add_from_bytes - double terminator RecordTooSmall");
             return Err(SmbiosError::RecordTooSmall);
         }
 
@@ -541,14 +592,15 @@ impl SmbiosManager {
         let string_pool_area = &record_data[string_pool_start..];
 
         if string_pool_area.len() < 2 {
+            log::error!("add_from_bytes - string pool too small");
             return Err(SmbiosError::StringPoolTooSmall);
         }
 
         let string_count = Self::validate_and_count_strings(string_pool_area)?;
 
         // If all validation passes, allocate handle and build record
-        let smbios_handle = self.allocate_handle()?;
-
+        let request_handle = header.handle;
+        let smbios_handle = self.get_smbios_handle(&request_handle)?;
         let record_header =
             SmbiosTableHeader { record_type: header.record_type, length: header.length, handle: smbios_handle };
 
@@ -659,14 +711,20 @@ impl SmbiosManager {
             .borrow()
             .iter()
             .position(|r| r.header.handle == smbios_handle)
-            .ok_or(SmbiosError::HandleNotFound)?;
+            .ok_or(SmbiosError::RecordNotFound)?;
 
         self.records.borrow_mut().remove(pos);
 
-        // Add the freed handle to the free list for reuse
-        // Only add valid handles (1..0xFFFE) to the free list
-        if (1..SMBIOS_HANDLE_PI_RESERVED).contains(&smbios_handle) {
-            self.freed_handles.borrow_mut().push(smbios_handle);
+        // update the self.used_handles
+        if (0..SMBIOS_HANDLE_PI_RESERVED).contains(&smbios_handle) {
+            let pos_handle = self
+                .used_handles
+                .borrow()
+                .iter()
+                .position(|h| *h == smbios_handle)
+                .ok_or(SmbiosError::HandleNotFound)?;
+
+            self.used_handles.borrow_mut().swap_remove(pos_handle);
         }
 
         Ok(())
@@ -931,38 +989,55 @@ mod tests {
     }
 
     #[test]
-    fn test_allocate_handle_sequential() {
+    fn test_alloc_new_smbios_handle_sequential() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let handle1 = manager.allocate_handle().expect("allocation failed");
+        let handle0 = manager.alloc_new_smbios_handle().expect("allocation failed");
+        assert_eq!(handle0, 0);
+        let handle1 = manager.alloc_new_smbios_handle().expect("allocation failed");
         assert_eq!(handle1, 1);
-        let handle2 = manager.allocate_handle().expect("allocation failed");
-        assert_eq!(handle2, 2);
     }
 
     #[test]
-    fn test_allocate_handle_wraps_at_max() {
+    fn test_get_smbios_handle_sequential() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        *manager.next_handle.borrow_mut() = 0xFFFD;
-        let handle1 = manager.allocate_handle().expect("allocation failed");
-        assert_eq!(handle1, 0xFFFD);
-        assert_eq!(manager.allocate_handle(), Err(SmbiosError::HandleExhausted));
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
+        record_data.extend_from_slice(b"\0\0");
+        let handle0 = manager.add_from_bytes(None, &record_data).expect("add failed");
+        assert_eq!(handle0, 0);
+        let mut record_data = vec![2u8, 4, 0xFE, 0xFF];
+        record_data.extend_from_slice(b"\0\0");
+        let handle1 = manager.add_from_bytes(None, &record_data).expect("add failed");
+        assert_eq!(handle1, 1);
     }
 
     #[test]
-    fn test_allocate_handle_uses_free_list() {
+    fn test_add_request_handle_error_handlealreadystarted() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        manager.freed_handles.borrow_mut().push(100);
-        manager.freed_handles.borrow_mut().push(50);
-        let handle1 = manager.allocate_handle().expect("allocation failed");
-        assert_eq!(handle1, 50);
-        let handle2 = manager.allocate_handle().expect("allocation failed");
-        assert_eq!(handle2, 100);
-        let handle3 = manager.allocate_handle().expect("allocation failed");
-        assert_eq!(handle3, 1);
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
+        record_data.extend_from_slice(b"\0\0");
+        let handle0 = manager.add_from_bytes(None, &record_data).expect("add failed");
+        assert_eq!(handle0, 0);
+        let mut record_data = vec![2u8, 4, 0xFE, 0xFF];
+        record_data.extend_from_slice(b"\0\0");
+        let handle1 = manager.add_from_bytes(None, &record_data).expect("add failed");
+        assert_eq!(handle1, 1);
+        let mut record_data = vec![1u8, 4, 0x01, 0x00];
+        record_data.extend_from_slice(b"\0\0");
+        let result = manager.add_from_bytes(None, &record_data);
+        assert_eq!(SmbiosError::HandleAlreadyStarted, result.err().expect("add duplicate failed"));
     }
 
     #[test]
-    fn test_allocate_handle_with_gaps() {
+    fn test_add_request_handle_error_handleoutofrange() {
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+        let mut record_data = vec![1u8, 4, 0xFF, 0xFF];
+        record_data.extend_from_slice(b"\0\0");
+        let result = manager.add_from_bytes(None, &record_data);
+        assert_eq!(SmbiosError::HandleOutOfRange, result.err().expect("add out of range failed"));
+    }
+
+    #[test]
+    fn test_alloc_new_smbios_handle_with_gaps() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
         let bytes1 = build_test_record_with_strings(&header1, &[]);
@@ -983,11 +1058,11 @@ mod tests {
     #[test]
     fn test_handle_reuse_after_remove() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let mut record_data = vec![1u8, 4, 0, 0];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let handle1 = manager.add_from_bytes(None, &record_data).expect("add failed");
         manager.remove(handle1).expect("remove failed");
-        let mut record_data2 = vec![2u8, 4, 0, 0];
+        let mut record_data2 = vec![2u8, 4, 0xFE, 0xFF];
         record_data2.extend_from_slice(b"\0\0");
         let handle2 = manager.add_from_bytes(None, &record_data2).expect("add failed");
         assert_eq!(handle1, handle2);
@@ -1064,11 +1139,11 @@ mod tests {
     #[test]
     fn test_remove_success() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let mut record_data = vec![1u8, 4, 0, 0];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
         assert!(manager.remove(handle).is_ok());
-        assert_eq!(manager.remove(handle), Err(SmbiosError::HandleNotFound));
+        assert_eq!(manager.remove(handle), Err(SmbiosError::RecordNotFound));
     }
 
     #[test]
@@ -1082,18 +1157,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_reserved_handle_not_added_to_free_list() {
-        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let mut record_data = vec![1u8, 4, 0, 0];
-        record_data.extend_from_slice(b"\0\0");
-        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
-        manager.remove(handle).expect("remove failed");
-        let freed = manager.freed_handles.borrow();
-        assert_eq!(freed.len(), 1);
-        assert_eq!(freed[0], handle);
-    }
-
-    #[test]
     fn test_iteration() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
 
@@ -1102,7 +1165,7 @@ mod tests {
 
         // Add test records: types [1, 2, 1, 3, 1]
         for record_type in [1u8, 2, 1, 3, 1] {
-            let mut record_data = vec![record_type, 4, 0, 0];
+            let mut record_data = vec![record_type, 4, 0xFE, 0xFF];
             record_data.extend_from_slice(b"\0\0");
             manager.add_from_bytes(None, &record_data).expect("add failed");
         }
@@ -1127,7 +1190,7 @@ mod tests {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let handles: Vec<SmbiosHandle> = (1..=3)
             .map(|i| {
-                let mut record_data = vec![i, 4, 0, 0];
+                let mut record_data = vec![i, 4, i, 0];
                 record_data.extend_from_slice(b"\0\0");
                 manager.add_from_bytes(None, &record_data).expect("add failed")
             })
@@ -1212,7 +1275,7 @@ mod tests {
     #[test]
     fn test_add_from_bytes_updates_handle_in_data() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let mut record_data = vec![1u8, 4, 0xFF, 0xFF];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let assigned_handle = manager.add_from_bytes(None, &record_data).expect("add failed");
         let records = manager.records.borrow();
@@ -1364,12 +1427,12 @@ mod tests {
         // Manually add Type 127 to simulate allocate_buffers behavior
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(127, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, bytes, 0);
         manager.records.borrow_mut().push(record);
 
         // Now add a Type 1 record
-        let mut record_data = vec![1u8, 4, 0, 0];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         manager.add_from_bytes(None, &record_data).expect("add failed");
 
@@ -1388,13 +1451,13 @@ mod tests {
         // Manually add Type 127
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(127, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, bytes, 0);
         manager.records.borrow_mut().push(record);
 
         // Add multiple records of different types
         for record_type in [1u8, 2, 3, 0, 4] {
-            let mut record_data = vec![record_type, 4, 0, 0];
+            let mut record_data = vec![record_type, 4, 0xFE, 0xFF];
             record_data.extend_from_slice(b"\0\0");
             manager.add_from_bytes(None, &record_data).expect("add failed");
         }
@@ -1416,14 +1479,14 @@ mod tests {
         // Add Type 127 in the middle
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(127, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, bytes, 0);
         manager.records.borrow_mut().push(record);
 
         // Add another non-Type-127 record after it (manually, bypassing add_from_bytes)
         let mut record_data = vec![1u8, 4, 0, 0];
         record_data.extend_from_slice(b"\0\0");
-        let header = SmbiosTableHeader::new(1, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(1, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, record_data, 0);
         manager.records.borrow_mut().push(record);
 
@@ -1447,14 +1510,14 @@ mod tests {
         // Add Type 127 first
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(127, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, bytes, 0);
         manager.records.borrow_mut().push(record);
 
         // Add another record after Type 127 (violates invariant)
         let mut record_data = vec![1u8, 4, 0, 0];
         record_data.extend_from_slice(b"\0\0");
-        let header = SmbiosTableHeader::new(1, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(1, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, record_data, 0);
         manager.records.borrow_mut().push(record);
 
@@ -1600,13 +1663,13 @@ mod tests {
         // Manually add Type 127
         let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, manager.allocate_handle().unwrap());
+        let header = SmbiosTableHeader::new(127, 4, manager.alloc_new_smbios_handle().unwrap());
         let record = SmbiosRecord::new(header, None, bytes, 0);
         let type127_handle = record.header.handle;
         manager.records.borrow_mut().push(record);
 
         // Add a regular record
-        let mut record_data = vec![1u8, 4, 0, 0];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
 
@@ -1751,7 +1814,7 @@ mod tests {
         manager.allocate_buffers(memory_manager).expect("allocate_buffers failed");
 
         // Add a Type 1 record
-        let mut record_data = vec![1u8, 4, 0, 0];
+        let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         manager.add_from_bytes(None, &record_data).expect("add failed");
 
@@ -1794,7 +1857,7 @@ mod tests {
 
         // Add multiple records
         for record_type in [1u8, 2, 3] {
-            let mut record_data = vec![record_type, 4, 0, 0];
+            let mut record_data = vec![record_type, 4, 0xFE, 0xFF];
             record_data.extend_from_slice(b"\0\0");
             manager.add_from_bytes(None, &record_data).expect("add failed");
         }
