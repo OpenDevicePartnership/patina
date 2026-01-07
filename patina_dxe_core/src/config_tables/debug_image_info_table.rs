@@ -29,10 +29,11 @@ pub enum ImageInfoType {
 impl ImageInfoType {
     /// The UEFI constant representing a normal debug image info entry.
     const EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL: u32 = 0x1;
+}
 
-    /// Converts the ImageInfoType to its corresponding u32 representation.
-    fn to_u32(&self) -> u32 {
-        match self {
+impl From<ImageInfoType> for u32 {
+    fn from(value: ImageInfoType) -> Self {
+        match value {
             ImageInfoType::Normal => ImageInfoType::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
         }
     }
@@ -42,12 +43,13 @@ impl ImageInfoType {
 ///
 /// ## Invariants
 ///
-/// - `length` and `capacity` always reflect the actual state of the allocated `data` buffer, ensuring no out-of-bounds
-///   access can occur.
+/// - `header.table_size` and `capacity` always reflect the actual state of the allocated bytes buffer pointed to by
+///   `header.table`, ensuring no out-of-bounds access can occur.
 pub struct DebugImageInfoData {
     /// The header of the debug image info table. This is what is exposed to UEFI clients.
     header: DebugImageInfoTableHeader,
-    /// The total capacity of the table.
+    /// The total number of [EfiDebugImageInfo] entries able to be added to the the table before an reallocation is
+    /// needed.
     capacity: usize,
 }
 
@@ -70,7 +72,6 @@ impl DebugImageInfoData {
     /// Returns a pointer to the start of the debug image info table.
     ///
     /// This should be used for read-only access.
-    #[inline(always)]
     fn table(&self) -> &[EfiDebugImageInfo] {
         self.header.table()
     }
@@ -78,19 +79,16 @@ impl DebugImageInfoData {
     /// Returns a mutable pointer to the start of the debug image info table.
     ///
     /// This should be used for read-write access.
-    #[inline(always)]
     fn table_mut(&mut self) -> *mut EfiDebugImageInfo {
         self.header.table_mut()
     }
 
     /// Returns the current number of entries in the table.
-    #[inline(always)]
     fn len(&self) -> usize {
         self.header.len()
     }
 
     /// Returns the current capacity of the table.
-    #[inline(always)]
     fn capacity(&self) -> usize {
         self.capacity
     }
@@ -183,7 +181,7 @@ impl DebugImageInfoData {
     /// If the current capacity is zero, sets it to a default initial capacity.
     fn grow(&mut self) -> Result<(), alloc::alloc::LayoutError> {
         // DEFAULT_CAPACITY must always be greater than zero.
-        const DEFAULT_CAPACITY: usize = 4;
+        const DEFAULT_CAPACITY: usize = 16;
         const _: () = assert!(DEFAULT_CAPACITY > 0);
 
         let data = if self.capacity == 0 {
@@ -199,7 +197,7 @@ impl DebugImageInfoData {
             self.capacity = new_capacity;
             // SAFETY: layout is the same layout that was used to allocate the original buffer due to the invariants
             //   of this struct.
-            // SAFETY: new_size is greater than zero du to the `if` branch above ensuring capacity is non-zero.
+            // SAFETY: new_size is greater than zero due to the if branch above ensuring capacity is non-zero.
             // SAFETY: new_size does not exceed isize::MAX as the `Layout` call would have failed.
             unsafe { alloc::alloc::realloc(self.table_mut().cast::<u8>(), old_layout, new_layout.size()) }
         };
@@ -217,7 +215,7 @@ impl Drop for DebugImageInfoData {
             // SAFETY: Invariants of this struct meet the requirements of drop_in_place. e.g.
             //   - data[i] is owned by this struct and is valid for both reads and writes.
             //   - data[i] is properly aligned for EfiDebugImageInfo.
-            //   - data[i] is non-noll.
+            //   - data[i] is non-null.
             //   - data[i] is initialized and thus valid for dropping.
             unsafe { core::ptr::drop_in_place(data.add(i)) };
         }
@@ -259,34 +257,29 @@ impl DebugImageInfoTableHeader {
     }
 
     /// Returns the current update status.
-    #[inline(always)]
     fn update_status(&self) -> u32 {
         // SAFETY: This is a field owned by this struct and is valid for reads.
         unsafe { ptr::read_volatile(&self.update_status) }
     }
 
     /// Sets the update status.
-    #[inline(always)]
     fn set_update_status(&mut self, status: u32) {
         // SAFETY: This is a field owned by this struct and is valid for writes.
         unsafe { ptr::write_volatile(&mut self.update_status, status) }
     }
 
     /// Returns the current number of entries in the table.
-    #[inline(always)]
     fn len(&self) -> usize {
         self.table_size as usize
     }
 
     /// Returns a mutable pointer to the start of the debug image info table.
-    #[inline(always)]
     fn table_mut(&mut self) -> *mut EfiDebugImageInfo {
         // SAFETY: This is a field owned by this struct and is valid for reads.
         self.table
     }
 
     /// Returns a reference to the debug image info table.
-    #[inline(always)]
     fn table(&self) -> &[EfiDebugImageInfo] {
         if self.table_size == 0 {
             return &[];
@@ -299,9 +292,9 @@ impl DebugImageInfoTableHeader {
     }
 }
 
-// SAFETY: Access to the mutable pointer is gated behind a method that requires &mut self.
+// SAFETY: Access to the mutable pointer is gated behind methods that requires &mut self.
 unsafe impl Send for DebugImageInfoTableHeader {}
-// SAFETY: Access to the mutable pointer is gated behind a method that requires &mut self.
+// SAFETY: Access to the mutable pointer is gated behind methods that requires &mut self.
 unsafe impl Sync for DebugImageInfoTableHeader {}
 
 /// Structure for a normal debug image info entry, per section 18.4.3 of UEFI Spec 2.11.
@@ -340,7 +333,7 @@ impl EfiDebugImageInfo {
     ) -> Self {
         Self {
             normal: alloc::boxed::Box::into_raw(alloc::boxed::Box::new(EfiDebugImageInfoNormal {
-                image_info_type: image_info_type.to_u32(),
+                image_info_type: image_info_type.into(),
                 loaded_image_protocol_instance: protocol.as_ptr(),
                 image_handle: handle,
             })),
@@ -405,20 +398,20 @@ mod tests {
 
         assert_eq!(table.header.table_size, 1);
         assert_eq!(table.len(), 1);
-        assert_eq!(table.capacity(), 4); // DEFAULT_CAPACITY
+        assert_eq!(table.capacity(), 16); // DEFAULT_CAPACITY
     }
 
     #[test]
     fn test_add_entry_require_grow() {
         let mut table = DebugImageInfoData::new();
 
-        for i in 0..5 {
+        for i in 0..17 {
             table.add_entry(ImageInfoType::Normal, NonNull::dangling(), (0x1000 + i) as efi::Handle);
         }
 
-        assert_eq!(table.header.table_size, 5);
-        assert_eq!(table.len(), 5);
-        assert_eq!(table.capacity(), 8); // Grew from 4 to 8
+        assert_eq!(table.header.table_size, 17);
+        assert_eq!(table.len(), 17);
+        assert_eq!(table.capacity(), 32); // Grew from 16 to 32
     }
 
     #[test]

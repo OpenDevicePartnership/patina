@@ -165,7 +165,6 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         .is_err()
         {
             log::error!("Failed to install configuration table for EFI_DEBUG_IMAGE_INFO_TABLE_GUID");
-            return;
         }
 
         // Now create the EFI_SYSTEM_TABLE_POINTER structure
