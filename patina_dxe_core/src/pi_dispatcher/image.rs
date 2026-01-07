@@ -973,7 +973,15 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         }
         let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
-        DEBUG_IMAGE_INFO_TABLE.write().remove_entry(image_handle);
+        // Remove the debug image info table entry for this image.
+        if let Some(mut table) = DEBUG_IMAGE_INFO_TABLE.try_write() {
+            table.remove_entry(image_handle);
+        } else {
+            debug_assert!(
+                false,
+                "Failed to remove debug image info table entry during unload_image, re-entrant lock detected."
+            );
+        }
 
         // close any protocols opened by this image.
         for handle in handles {

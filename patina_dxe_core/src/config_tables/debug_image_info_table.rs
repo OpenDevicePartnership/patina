@@ -45,6 +45,13 @@ impl From<ImageInfoType> for u32 {
 ///
 /// - `header.table_size` and `capacity` always reflect the actual state of the allocated bytes buffer pointed to by
 ///   `header.table`, ensuring no out-of-bounds access can occur.
+///
+/// ## Warning
+///
+/// The above invariants are only upheld on the assumption that this struct is the sole modifier of the underlying
+/// table. This cannot be guaranteed due to the fact that the table pointer ([DebugImageInfoTableHeader]) is exposed
+/// publicly via the UEFI configuration table mechanism. It is expected that this table is read-only when accessed
+/// via this mechanism, but this cannot be enforced.
 pub struct DebugImageInfoData {
     /// The header of the debug image info table, which is registered as a UEFI configuration table.
     header: DebugImageInfoTableHeader,
