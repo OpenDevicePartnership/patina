@@ -14,11 +14,8 @@ use r_efi::efi;
 use spin::rwlock::RwLock;
 
 /// GUID for the EFI_DEBUG_IMAGE_INFO_TABLE per section 18.4.3 of UEFI Spec 2.11
-pub const EFI_DEBUG_IMAGE_INFO_TABLE_GUID: efi::Guid =
+pub(super) const EFI_DEBUG_IMAGE_INFO_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x49152e77, 0x1ada, 0x4764, 0xb7, 0xa2, &[0x7a, 0xfe, 0xfe, 0xd9, 0x5e, 0x8b]);
-
-/// The global debug image info table instance.
-pub static DEBUG_IMAGE_INFO_TABLE: RwLock<DebugImageInfoData> = DebugImageInfoData::new_locked();
 
 /// The type of debug image info entry.
 pub enum ImageInfoType {
@@ -52,7 +49,7 @@ impl From<ImageInfoType> for u32 {
 /// table. This cannot be guaranteed due to the fact that the table pointer ([DebugImageInfoTableHeader]) is exposed
 /// publicly via the UEFI configuration table mechanism. It is expected that this table is read-only when accessed
 /// via this mechanism, but this cannot be enforced.
-pub struct DebugImageInfoData {
+pub(super) struct DebugImageInfoData {
     /// The header of the debug image info table, which is registered as a UEFI configuration table.
     header: DebugImageInfoTableHeader,
     /// The total number of [EfiDebugImageInfo] entries able to be added to the the table before an reallocation is
@@ -67,7 +64,7 @@ impl DebugImageInfoData {
     }
 
     /// Creates a new, empty Debug Image Info Table wrapped in a RwLock.
-    const fn new_locked() -> RwLock<Self> {
+    pub(super) const fn new_locked() -> RwLock<Self> {
         RwLock::new(Self::new())
     }
 
@@ -128,7 +125,7 @@ impl DebugImageInfoData {
     }
 
     /// Adds a new entry to the debug image info table.
-    pub fn add_entry(
+    pub(super) fn add_entry(
         &mut self,
         image_info_type: ImageInfoType,
         protocol: NonNull<efi::protocols::loaded_image::Protocol>,
@@ -152,7 +149,7 @@ impl DebugImageInfoData {
     }
 
     /// Removes the first entry matching the specified handle.
-    pub fn remove_entry(&mut self, handle: efi::Handle) {
+    pub(super) fn remove_entry(&mut self, handle: efi::Handle) {
         self.modify(|s| {
             if let Some(index) = s.find(handle) {
                 let _ = s.swap_remove(index);

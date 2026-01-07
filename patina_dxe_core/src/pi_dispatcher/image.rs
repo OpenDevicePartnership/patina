@@ -37,13 +37,13 @@ use r_efi::efi;
 
 use crate::{
     GCD,
-    config_tables::debug_image_info_table::{DEBUG_IMAGE_INFO_TABLE, ImageInfoType},
     dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
     gcd::MemoryProtectionPolicy,
     memory_manager::CoreMemoryManager,
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
+    pi_dispatcher::debug_image_info_table::{DebugImageInfoData, ImageInfoType},
     protocol_db,
     protocols::{
         PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path, core_uninstall_protocol_interface,
@@ -533,7 +533,12 @@ impl ImageData {
     }
 
     /// Finds the DXE Core memory allocation module HOB and uses it to produce the loaded image protocol.
-    pub(super) fn install_dxe_core_image(&mut self, hob_list: &HobList, system_table: &mut EfiSystemTable) {
+    pub(super) fn install_dxe_core_image(
+        &mut self,
+        hob_list: &HobList,
+        system_table: &mut EfiSystemTable,
+        debug_image_data: &mut DebugImageInfoData,
+    ) {
         let dxe_core_hob = hob_list
             .iter()
             .find_map(|hob| {
@@ -587,7 +592,7 @@ impl ImageData {
 
         self.private_image_data.insert(handle, private_image_data);
 
-        DEBUG_IMAGE_INFO_TABLE.write().add_entry(ImageInfoType::Normal, protocol_ptr, handle);
+        debug_image_data.add_entry(ImageInfoType::Normal, protocol_ptr, handle);
     }
 
     /// Validates that the provided parent handle is valid and has a loaded image protocol.
@@ -737,7 +742,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         // register the loaded image with the debug image info configuration table. This is done before the debugger is
         // notified so that the debugger can access the loaded image protocol before that point, e.g. so
         // that symbols can be loaded on module breakpoints.
-        DEBUG_IMAGE_INFO_TABLE.write().add_entry(
+        self.debug_image_data.write().add_entry(
             ImageInfoType::Normal,
             NonNull::from(private_info.image_info.as_ref()),
             handle,
@@ -974,7 +979,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
         // Remove the debug image info table entry for this image.
-        if let Some(mut table) = DEBUG_IMAGE_INFO_TABLE.try_write() {
+        if let Some(mut table) = self.debug_image_data.try_write() {
             table.remove_entry(image_handle);
         } else {
             debug_assert!(

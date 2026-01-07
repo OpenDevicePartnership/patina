@@ -6,7 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-pub(crate) mod debug_image_info_table;
 pub(crate) mod memory_attributes_table;
 
 use alloc::{boxed::Box, vec};

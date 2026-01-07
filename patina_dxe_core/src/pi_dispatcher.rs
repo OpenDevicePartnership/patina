@@ -9,6 +9,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+mod debug_image_info_table;
 mod fv;
 mod image;
 mod section_decompress;
@@ -35,24 +36,18 @@ use patina_ffs::{
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use r_efi::efi;
+use spin::RwLock;
 
 use mu_rust_helpers::guid::CALLER_ID;
 
+use debug_image_info_table::EfiSystemTablePointer;
 use fv::device_path_bytes_for_fv_file;
 use image::ImageStatus;
 use section_decompress::CoreExtractor;
 
 use crate::{
-    PlatformInfo,
-    config_tables::{
-        core_install_configuration_table,
-        debug_image_info_table::{DEBUG_IMAGE_INFO_TABLE, EFI_DEBUG_IMAGE_INFO_TABLE_GUID, EfiSystemTablePointer},
-    },
-    events::EVENT_DB,
-    protocol_db::DXE_CORE_HANDLE,
-    protocols::PROTOCOL_DB,
-    systemtables::EfiSystemTable,
-    tpl_mutex::TplMutex,
+    PlatformInfo, config_tables::core_install_configuration_table, events::EVENT_DB, protocol_db::DXE_CORE_HANDLE,
+    protocols::PROTOCOL_DB, systemtables::EfiSystemTable, tpl_mutex::TplMutex,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -89,6 +84,8 @@ pub(crate) struct PiDispatcher<P: PlatformInfo> {
     dispatcher_context: TplMutex<DispatcherContext>,
     /// Image management data for executing images.
     image_data: TplMutex<image::ImageData>,
+    /// Debug image data managing the debug image info table published as a configuration table.
+    debug_image_data: RwLock<debug_image_info_table::DebugImageInfoData>,
     /// State tracking firmware volumes installed by the Patina DXE Core.
     fv_data: TplMutex<fv::FvProtocolData<P>>,
     /// Section extractor used when working with firmware volumes.
@@ -101,6 +98,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         Self {
             dispatcher_context: DispatcherContext::new_locked(),
             image_data: image::ImageData::new_locked(),
+            debug_image_data: debug_image_info_table::DebugImageInfoData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
             section_extractor: CoreExtractor::new(section_extractor),
         }
@@ -122,7 +120,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
         self.image_data.lock().set_system_table(system_table.as_ptr() as *mut _);
-        self.image_data.lock().install_dxe_core_image(hob_list, system_table);
+        self.image_data.lock().install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
 
         system_table.boot_services_mut().load_image = Self::load_image_efiapi;
         system_table.boot_services_mut().start_image = Self::start_image_efiapi;
@@ -158,8 +156,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         // Perform image related initialization for the debugger.
         // This includes installing the debug image info table and the system table pointer structure.
         if core_install_configuration_table(
-            EFI_DEBUG_IMAGE_INFO_TABLE_GUID,
-            DEBUG_IMAGE_INFO_TABLE.read().header() as *const _ as *mut c_void,
+            debug_image_info_table::EFI_DEBUG_IMAGE_INFO_TABLE_GUID,
+            self.debug_image_data.read().header() as *const _ as *mut c_void,
             system_table,
         )
         .is_err()
