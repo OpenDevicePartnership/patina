@@ -18,7 +18,7 @@ pub(super) const EFI_DEBUG_IMAGE_INFO_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x49152e77, 0x1ada, 0x4764, 0xb7, 0xa2, &[0x7a, 0xfe, 0xfe, 0xd9, 0x5e, 0x8b]);
 
 /// The type of debug image info entry.
-pub enum ImageInfoType {
+pub(super) enum ImageInfoType {
     /// A normal debug image info entry.
     Normal,
 }
@@ -69,7 +69,7 @@ impl DebugImageInfoData {
     }
 
     /// Returns a reference to the header of the debug image info table.
-    pub fn header(&self) -> &DebugImageInfoTableHeader {
+    pub(super) fn header(&self) -> &DebugImageInfoTableHeader {
         &self.header
     }
 
@@ -254,7 +254,7 @@ impl Drop for DebugImageInfoData {
 /// - `table` is either null or points to a valid array of `EfiDebugImageInfo` entries of length `table_size`.
 /// - `table_size` accurately reflects the number of valid entries in `table`.
 #[repr(C)]
-pub struct DebugImageInfoTableHeader {
+pub(super) struct DebugImageInfoTableHeader {
     update_status: u32,
     table_size: u32,
     table: *mut EfiDebugImageInfo,
@@ -262,10 +262,10 @@ pub struct DebugImageInfoTableHeader {
 
 impl DebugImageInfoTableHeader {
     /// Status flag indicating an update is in progress.
-    pub const EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS: u32 = 0x1;
+    const EFI_DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS: u32 = 0x1;
 
     /// Status flag indicating the table has been modified.
-    pub const EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED: u32 = 0x2;
+    const EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED: u32 = 0x2;
 
     /// Creates a new, empty Debug Image Info Table Header.
     const fn new() -> Self {
@@ -374,7 +374,7 @@ impl Drop for EfiDebugImageInfo {
 
 /// Structure for the EFI_SYSTEM_TABLE_POINTER, per section 18.4.2 of UEFI Spec 2.11.
 #[repr(C)]
-pub struct EfiSystemTablePointer {
+pub(super) struct EfiSystemTablePointer {
     /// The signature of the system table pointer structure. Must be `EFI_SYSTEM_TABLE_SIGNATURE`.
     pub signature: u64,
     /// The physical address of the EFI system table.
