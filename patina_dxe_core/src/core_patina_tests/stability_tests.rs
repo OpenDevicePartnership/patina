@@ -170,7 +170,7 @@ fn page_table_tests_1gb_split() -> patina::test::Result {
     // let's give 'em a break if they don't have a free gig laying around
     if let Ok(addr) = addr {
         u_assert_eq!(addr % SIZE_1GB, 0);
-        GCD.set_memory_space_attributes(addr, SIZE_1GB, efi::MEMORY_XP | efi::MEMORY_RO)
+        GCD.set_memory_space_attributes(addr, SIZE_1GB, efi::MEMORY_XP | efi::MEMORY_RO | efi::MEMORY_WB)
             .map_err(|_| "Failed to set attributes on 1GB region")?;
 
         // SAFETY: We just allocated this memory and it is marked read only, so it is safe to read from it.
@@ -190,7 +190,7 @@ fn page_table_tests_1gb_split() -> patina::test::Result {
         u_assert_eq!(pte_state.next_address, addr as u64);
         u_assert!(pte_state.present);
 
-        GCD.set_memory_space_attributes(addr, SIZE_4KB, efi::MEMORY_XP)
+        GCD.set_memory_space_attributes(addr, SIZE_4KB, efi::MEMORY_XP | efi::MEMORY_WB)
             .map_err(|_| "Failed to set attributes on 4KB region")?;
 
         // SAFETY: We just allocated this memory and marked it writeable, so it is safe to write/read
