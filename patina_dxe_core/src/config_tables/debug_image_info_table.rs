@@ -46,7 +46,7 @@ impl From<ImageInfoType> for u32 {
 /// - `header.table_size` and `capacity` always reflect the actual state of the allocated bytes buffer pointed to by
 ///   `header.table`, ensuring no out-of-bounds access can occur.
 pub struct DebugImageInfoData {
-    /// The header of the debug image info table. This is what is exposed to UEFI clients.
+    /// The header of the debug image info table, which is registered as a UEFI configuration table.
     header: DebugImageInfoTableHeader,
     /// The total number of [EfiDebugImageInfo] entries able to be added to the the table before an reallocation is
     /// needed.
@@ -69,7 +69,7 @@ impl DebugImageInfoData {
         &self.header
     }
 
-    /// Returns a pointer to the start of the debug image info table.
+    /// Returns an immutable slice of table entries.
     ///
     /// This should be used for read-only access.
     fn table(&self) -> &[EfiDebugImageInfo] {
@@ -112,6 +112,14 @@ impl DebugImageInfoData {
         self.header.set_update_status(update_status | DebugImageInfoTableHeader::EFI_DEBUG_IMAGE_INFO_TABLE_MODIFIED)
     }
 
+    /// Allows for safe modification of the table while managing update flags.
+    fn modify(&mut self, f: impl FnOnce(&mut Self)) {
+        self.set_update_in_progress();
+        f(self);
+        self.set_modified();
+        self.clear_update_in_progress();
+    }
+
     /// Adds a new entry to the debug image info table.
     pub fn add_entry(
         &mut self,
@@ -119,31 +127,30 @@ impl DebugImageInfoData {
         protocol: NonNull<efi::protocols::loaded_image::Protocol>,
         handle: efi::Handle,
     ) {
-        self.set_update_in_progress();
+        self.modify(|s| {
+            if s.len() == s.capacity()
+                && let Err(e) = s.grow()
+            {
+                log::error!("Failed to add Debug Image Entry: Err [{e:?}]");
+                return;
+            }
 
-        if self.len() == self.capacity() && self.grow().is_err() {
-            log::error!("Failed to add Debug Image Entry for loaded image protocol @ [{:p}]", protocol);
-            return;
-        }
+            let entry = EfiDebugImageInfo::new(image_info_type, protocol, handle);
 
-        let entry = EfiDebugImageInfo::new(image_info_type, protocol, handle);
-
-        // SAFETY: Invariants of this struct ensure this addition is within bounds and is aligned for
-        //   EfiDebugImageInfo.
-        unsafe { self.table_mut().cast::<EfiDebugImageInfo>().add(self.len()).write(entry) }
-        self.header.table_size += 1;
-        self.set_modified();
-        self.clear_update_in_progress();
+            // SAFETY: Invariants of this struct ensure this addition is within bounds and is aligned for
+            //   EfiDebugImageInfo.
+            unsafe { s.table_mut().cast::<EfiDebugImageInfo>().add(s.len()).write(entry) }
+            s.header.table_size += 1;
+        });
     }
 
     /// Removes the first entry matching the specified handle.
     pub fn remove_entry(&mut self, handle: efi::Handle) {
-        self.set_update_in_progress();
-        if let Some(index) = self.find(handle) {
-            let _ = self.swap_remove(index);
-        }
-        self.set_modified();
-        self.clear_update_in_progress();
+        self.modify(|s| {
+            if let Some(index) = s.find(handle) {
+                let _ = s.swap_remove(index);
+            }
+        });
     }
 
     /// Finds the index of the first entry matching the specified handle.
