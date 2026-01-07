@@ -1024,7 +1024,7 @@ mod tests {
         let mut record_data = vec![1u8, 4, 0x01, 0x00];
         record_data.extend_from_slice(b"\0\0");
         let result = manager.add_from_bytes(None, &record_data);
-        assert_eq!(SmbiosError::HandleAlreadyStarted, result.err().expect("add duplicate failed"));
+        assert_eq!(SmbiosError::HandleAlreadyStarted, result.expect_err("add duplicate failed"));
     }
 
     #[test]
@@ -1033,7 +1033,7 @@ mod tests {
         let mut record_data = vec![1u8, 4, 0xFF, 0xFF];
         record_data.extend_from_slice(b"\0\0");
         let result = manager.add_from_bytes(None, &record_data);
-        assert_eq!(SmbiosError::HandleOutOfRange, result.err().expect("add out of range failed"));
+        assert_eq!(SmbiosError::HandleOutOfRange, result.expect_err("add out of range failed"));
     }
 
     #[test]
