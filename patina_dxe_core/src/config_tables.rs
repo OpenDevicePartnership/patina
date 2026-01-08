@@ -50,7 +50,8 @@ pub fn core_install_configuration_table(
     vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
 ) -> Result<Option<NonNull<c_void>>, EfiError> {
-    let system_table = efi_system_table.as_mut();
+    let mut system_table = efi_system_table.get();
+
     //if a table is already present, reconstruct it from the pointer and length in the st.
     let old_cfg_table = if system_table.configuration_table.is_null() {
         assert_eq!(system_table.number_of_table_entries, 0);
@@ -92,11 +93,10 @@ pub fn core_install_configuration_table(
                     old_vendor_table_ptr = NonNull::new(entry.vendor_table);
                     current_table.retain(|x| x.vendor_guid != vendor_guid);
                 } else {
-                    //entry does not exist, we can't delete it. We have to put the original box back
-                    //in the config table so it doesn't get dropped though. Pointer should be the same
-                    //so we should not need to recompute CRC.
-                    system_table.configuration_table =
-                        Box::into_raw_with_allocator(cfg_table).0 as *mut efi::ConfigurationTable;
+                    // Entry does not exist, so we can't delete it. Thus we leave the system table unmodified, but
+                    // since we reconstructed the Box with the config table pointer we got from the system table,
+                    // we need to forget it here to avoid dropping it and freeing the memory while it is still used.
+                    core::mem::forget(cfg_table);
                     return Err(EfiError::NotFound);
                 }
             }
@@ -126,8 +126,8 @@ pub fn core_install_configuration_table(
         let new_table = new_table.to_vec_in(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR).into_boxed_slice();
         system_table.configuration_table = Box::into_raw_with_allocator(new_table).0 as *mut efi::ConfigurationTable;
     }
-    //since we modified the system table, re-calculate CRC.
-    efi_system_table.checksum();
+
+    efi_system_table.set(system_table);
 
     //signal the table guid as an event group
     EVENT_DB.signal_group(vendor_guid);
@@ -140,7 +140,7 @@ pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>
     let st_guard = SYSTEM_TABLE.lock();
     let st = st_guard.as_ref()?;
 
-    let system_table = st.as_ref();
+    let system_table = st.get();
     if system_table.configuration_table.is_null() || system_table.number_of_table_entries == 0 {
         return None;
     }
@@ -156,8 +156,10 @@ pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>
     None
 }
 
-pub fn init_config_tables_support(bs: &mut efi::BootServices) {
+pub fn init_config_tables_support(st: &mut EfiSystemTable) {
+    let mut bs = st.boot_services().get();
     bs.install_configuration_table = install_configuration_table;
+    st.boot_services().set(bs);
 }
 
 #[cfg(test)]

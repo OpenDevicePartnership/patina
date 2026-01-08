@@ -30,19 +30,19 @@ use variable_services::{GetVariableStatus, VariableInfo};
 ///
 /// UEFI Spec Documentation: [8. Services - RuntimeServices](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html)
 pub struct StandardRuntimeServices {
-    efi_runtime_services: Once<&'static efi::RuntimeServices>,
+    efi_runtime_services: Once<*mut efi::RuntimeServices>,
 }
 
-// Safety: efi::BootServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
-// within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_boot_services reference
-// itself, that is protected by the Once wrapper.
+// Safety: efi::RuntimeServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
+// within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_runtime_services pointer
+// itself, that is protected by the Once wrapper and is not expected to change once initialized.
 unsafe impl Sync for StandardRuntimeServices {}
 // Safety: See Sync impl above.
 unsafe impl Send for StandardRuntimeServices {}
 
 impl StandardRuntimeServices {
     /// Create a new StandardRuntimeServices with the provided [efi::RuntimeServices].
-    pub fn new(efi_runtime_services: &'static efi::RuntimeServices) -> Self {
+    pub fn new(efi_runtime_services: *mut efi::RuntimeServices) -> Self {
         let this = StandardRuntimeServices::new_uninit();
         this.init(efi_runtime_services);
         this
@@ -54,7 +54,8 @@ impl StandardRuntimeServices {
     }
 
     /// Initialized the StandardRuntimeServices.
-    pub fn init(&self, efi_runtime_services: &'static efi::RuntimeServices) {
+    pub fn init(&self, efi_runtime_services: *mut efi::RuntimeServices) {
+        assert!(!efi_runtime_services.is_null(), "Cannot initialize StandardRuntimeServices with null pointer!");
         self.efi_runtime_services.call_once(|| efi_runtime_services);
     }
 
@@ -63,9 +64,10 @@ impl StandardRuntimeServices {
         self.efi_runtime_services.is_completed()
     }
 
-    fn efi_runtime_services(&self) -> &efi::RuntimeServices {
-        // SAFETY: Runtime services lifetime is expected to live long enough.
-        self.efi_runtime_services.get().expect("Standard Runtime Services is not initialized!")
+    /// Returns the Runtime Services pointer. Panics if uninitialized.
+    pub fn as_mut_ptr(&self) -> *mut efi::RuntimeServices {
+        // constructors guarantee that if initialized, the pointer is not null.
+        *self.efi_runtime_services.get().expect("Standard Runtime Services is not initialized!")
     }
 }
 
@@ -78,7 +80,7 @@ impl AsRef<StandardRuntimeServices> for StandardRuntimeServices {
 impl Clone for StandardRuntimeServices {
     fn clone(&self) -> Self {
         if let Some(efi_runtime_services) = self.efi_runtime_services.get() {
-            Self::new(efi_runtime_services)
+            Self::new(*efi_runtime_services)
         } else {
             Self::new_uninit()
         }
@@ -93,21 +95,24 @@ impl Debug for StandardRuntimeServices {
                 .field("efi_runtime_services", &"Not Initialized")
                 .finish();
         }
-
+        // SAFETY: assume that runtime services struct is not being externally modified while static reference is in use
+        // In this case, if the struct is being modified, the debug print may be inaccurate, but it won't cause
+        // undefined behavior beyond that.
+        let rt = unsafe { &*self.as_mut_ptr() };
         f.debug_struct("StandardRuntimeServices")
-            .field("get_variable", &(self.efi_runtime_services().get_variable))
-            .field("get_next_variable_name", &(self.efi_runtime_services().get_next_variable_name))
-            .field("set_variable", &(self.efi_runtime_services().set_variable))
-            .field("query_variable_info", &(self.efi_runtime_services().query_variable_info))
-            .field("get_time", &(self.efi_runtime_services().get_time))
-            .field("set_time", &(self.efi_runtime_services().set_time))
-            .field("get_wakeup_time", &(self.efi_runtime_services().get_wakeup_time))
-            .field("set_wakeup_time", &(self.efi_runtime_services().set_wakeup_time))
-            .field("set_virtual_address_map", &(self.efi_runtime_services().set_virtual_address_map))
-            .field("convert_pointer", &(self.efi_runtime_services().convert_pointer))
-            .field("reset_system", &(self.efi_runtime_services().reset_system))
-            .field("get_next_high_mono_count", &(self.efi_runtime_services().get_next_high_mono_count))
-            .field("update_capsule", &(self.efi_runtime_services().update_capsule))
+            .field("get_variable", &rt.get_variable)
+            .field("get_next_variable_name", &rt.get_next_variable_name)
+            .field("set_variable", &rt.set_variable)
+            .field("query_variable_info", &rt.query_variable_info)
+            .field("get_time", &rt.get_time)
+            .field("set_time", &rt.set_time)
+            .field("get_wakeup_time", &rt.get_wakeup_time)
+            .field("set_wakeup_time", &rt.set_wakeup_time)
+            .field("set_virtual_address_map", &rt.set_virtual_address_map)
+            .field("convert_pointer", &rt.convert_pointer)
+            .field("reset_system", &rt.reset_system)
+            .field("get_next_high_mono_count", &rt.get_next_high_mono_count)
+            .field("update_capsule", &rt.update_capsule)
             .finish()
     }
 }
@@ -319,7 +324,17 @@ impl RuntimeServices for StandardRuntimeServices {
         attributes: u32,
         data: &[u8],
     ) -> Result<(), efi::Status> {
-        let set_variable = self.efi_runtime_services().set_variable;
+        // SAFETY: If this function pointer is modified in an event callback/interrupt while the read is in progress
+        // or if this function is invoked in a callback/interrupt that interrupts an external agent that is modifying
+        // the runtime services struct, then an incorrect function pointer might be returned that is composed of parts
+        // of the pointer from before and after the interrupt. Function pointer read/write operations could consist of
+        // several instructions - not necessarily a single atomic operation. The safety of this code therefore relies on
+        // the assumption that the runtime services struct is not being modified in such a manner, which is true for all
+        // known external modifiers of the struct in EDK2. If this code requires stronger guarantees in the future, then
+        // synchronization with external modifications may be needed, or the table could be copied to local storage and
+        // verified (via CRC) before use with an error returned on mismatch. Present use cases for external modification
+        // of runtime services don't merit such complexity at this time.
+        let set_variable = unsafe { (*self.as_mut_ptr()).set_variable };
         if set_variable as usize == 0 {
             debug_assert!(false, "SetVariable has not initialized in the Runtime Services Table.");
             return Err(efi::Status::NOT_FOUND);
@@ -342,7 +357,8 @@ impl RuntimeServices for StandardRuntimeServices {
         namespace: &efi::Guid,
         data: Option<&mut [u8]>,
     ) -> GetVariableStatus {
-        let get_variable = self.efi_runtime_services().get_variable;
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let get_variable = unsafe { (*self.as_mut_ptr()).get_variable };
         if get_variable as usize == 0 {
             debug_assert!(false, "GetVariable has not initialized in the Runtime Services Table.");
             return GetVariableStatus::Error(efi::Status::NOT_FOUND);
@@ -381,7 +397,8 @@ impl RuntimeServices for StandardRuntimeServices {
         next_name: &mut Vec<u16>,
         next_namespace: &mut efi::Guid,
     ) -> Result<(), efi::Status> {
-        let get_next_variable_name = self.efi_runtime_services().get_next_variable_name;
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let get_next_variable_name = unsafe { (*self.as_mut_ptr()).get_next_variable_name };
         if get_next_variable_name as usize == 0 {
             debug_assert!(false, "GetNextVariableName has not initialized in the Runtime Services Table.");
             return Err(efi::Status::NOT_FOUND);
@@ -427,7 +444,8 @@ impl RuntimeServices for StandardRuntimeServices {
     }
 
     fn query_variable_info(&self, attributes: u32) -> Result<VariableInfo, efi::Status> {
-        let query_variable_info = self.efi_runtime_services().query_variable_info;
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let query_variable_info = unsafe { (*self.as_mut_ptr()).query_variable_info };
         if query_variable_info as usize == 0 {
             debug_assert!(false, "QueryVariableInfo has not initialized in the Runtime Services Table.");
             return Err(efi::Status::NOT_FOUND);
@@ -458,7 +476,7 @@ pub(crate) mod test {
 
     macro_rules! runtime_services {
         ($($efi_services:ident = $efi_service_fn:ident),*) => {{
-            // SAFETY: This is only used in tests. A zero sized RuntimeServices struct is created
+            // SAFETY: This is only used in tests. A zero-initialized RuntimeServices struct is created
             // and only the specified function pointers are initialized with valid function
             // implementations. The RuntimeServices wrapper will handle uninitialized fields.
             let efi_runtime_services = Box::leak(Box::new(unsafe {
@@ -710,7 +728,7 @@ pub(crate) mod test {
     #[should_panic(expected = "Standard Runtime Services is not initialized!")]
     fn test_that_accessing_uninit_runtime_services_should_panic() {
         let rs = StandardRuntimeServices::new_uninit();
-        rs.efi_runtime_services();
+        rs.as_mut_ptr();
     }
 
     #[test]
@@ -893,5 +911,13 @@ pub(crate) mod test {
 
         assert!(status.is_err());
         assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_debug_output_should_not_crash() {
+        let runtime_services = runtime_services!();
+        let debug_str = format!("{:?}", runtime_services);
+        assert!(!debug_str.is_empty());
+        assert!(debug_str.contains("StandardRuntimeServices"));
     }
 }

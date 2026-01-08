@@ -20,6 +20,7 @@ use crate::{
     driver_services::{core_connect_controller, core_disconnect_controller},
     events::{EVENT_DB, signal_event},
     protocol_db::{DXE_CORE_HANDLE, SpinLockedProtocolDb},
+    systemtables::EfiSystemTable,
     tpl_mutex,
 };
 
@@ -797,13 +798,14 @@ extern "efiapi" fn locate_device_path(
     efi::Status::SUCCESS
 }
 
-pub fn init_protocol_support(bs: &mut efi::BootServices) {
+pub fn init_protocol_support(st: &mut EfiSystemTable) {
+    let mut bs = st.boot_services().get();
+
     //This bit of trickery is needed because r_efi definition of (Un)InstallMultipleProtocolInterfaces
     //is not variadic, due to rust only supporting variadic for "unsafe extern C" and not "efiapi"
-    //until very recently. For x86_64 "efiapi" and "extern C" match, so we can get away with a
-    //transmute here. Fixing it for other architectures more generally would require an upstream
-    //change in r_efi to pick up. There is also a bug in r_efi definition for
-    //uninstall_multiple_program_interfaces - per spec, the first argument is a handle, but
+    //until rust 1.91. For our purposes "efiapi" and "extern C" match, so we can get away with a
+    //transmute here. Fixing it properly would require an upstream change in r_efi to pick up. There is also a bug in
+    //the r_efi definition for uninstall_multiple_protocol_interfaces - per spec, the first argument is a handle, but
     //r_efi has it as *mut handle.
     bs.install_multiple_protocol_interfaces = unsafe {
         let ptr = install_multiple_protocol_interfaces as *const ();
@@ -829,4 +831,6 @@ pub fn init_protocol_support(bs: &mut efi::BootServices) {
     bs.locate_handle_buffer = locate_handle_buffer;
     bs.locate_protocol = locate_protocol;
     bs.locate_device_path = locate_device_path;
+
+    st.boot_services().set(bs);
 }

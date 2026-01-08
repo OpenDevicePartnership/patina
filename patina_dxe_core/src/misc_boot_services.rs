@@ -16,7 +16,11 @@ use r_efi::efi;
 use spin::Once;
 
 use crate::{
-    GCD, allocator::terminate_memory_map, events::EVENT_DB, protocols::PROTOCOL_DB, systemtables::SYSTEM_TABLE,
+    GCD,
+    allocator::terminate_memory_map,
+    events::EVENT_DB,
+    protocols::PROTOCOL_DB,
+    systemtables::{EfiSystemTable, SYSTEM_TABLE},
 };
 
 struct ArchProtocolPtr<T>(Once<*mut T>);
@@ -224,12 +228,15 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     interrupts::disable_interrupts();
 
     // Clear non-runtime services from the EFI System Table
-    SYSTEM_TABLE
-        .lock()
-        .as_mut()
-        .expect("The System Table pointer is null. This is invalid.")
-        .clear_boot_time_services();
-
+    // SAFETY: the required invariant is that this must only be after the exit_boot_services handler is invoked.
+    // This is the exit_boot_services handler, so the invariant is upheld.
+    unsafe {
+        SYSTEM_TABLE
+            .lock()
+            .as_mut()
+            .expect("The System Table pointer is null. This is invalid.")
+            .clear_boot_time_services();
+    }
     match PROTOCOL_DB.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
         Ok(rt_arch_ptr) => {
             let rt_arch_ptr = rt_arch_ptr as *mut protocols::runtime::Protocol;
@@ -245,11 +252,13 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     efi::Status::SUCCESS
 }
 
-pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
+pub fn init_misc_boot_services_support(st: &mut EfiSystemTable) {
+    let mut bs = st.boot_services().get();
     bs.calculate_crc32 = calculate_crc32;
     bs.exit_boot_services = exit_boot_services;
     bs.stall = stall;
     bs.set_watchdog_timer = set_watchdog_timer;
+    st.boot_services().set(bs);
 
     //set up call back for metronome arch protocol installation.
     let event = EVENT_DB
@@ -281,34 +290,6 @@ mod tests {
     use core::{ffi::c_void, ptr};
     use patina::pi::protocols::watchdog;
     use r_efi::efi;
-    use std::cell::UnsafeCell;
-
-    // Define a global static variable to store the Boot Services pointer
-    struct BootServicesWrapper {
-        boot_services: UnsafeCell<Option<&'static mut efi::BootServices>>,
-    }
-
-    // SAFETY: Access is serialized through test_support::with_global_lock to prevent
-    // concurrent mutations.
-    unsafe impl Sync for BootServicesWrapper {}
-
-    static BOOT_SERVICES: BootServicesWrapper = BootServicesWrapper { boot_services: UnsafeCell::new(None) };
-
-    // Function to initialize the global Boot Services pointer
-    pub fn initialize_boot_services(bs: &'static mut efi::BootServices) {
-        // SAFETY: Test code only - UnsafeCell mutation is serialized through the test
-        // lock in with_global_lock.
-        unsafe {
-            *BOOT_SERVICES.boot_services.get() = Some(bs);
-        }
-    }
-
-    // Helper function to get a static reference from the system table
-    unsafe fn get_static_boot_services(bs: &mut efi::BootServices) -> &'static mut efi::BootServices {
-        // SAFETY: The SYSTEM_TABLE is a static global that lives for the entire program duration
-        // The boot services within it have the same lifetime as the system table itself
-        unsafe { core::mem::transmute(bs) }
-    }
 
     fn with_locked_state<F>(f: F)
     where
@@ -334,26 +315,20 @@ mod tests {
     #[test]
     fn test_init_misc_boot_services_support() {
         with_locked_state(|st| {
-            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
-            // because the system table has a static lifetime that outlives this test scope.
-            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
-            init_misc_boot_services_support(st.boot_services_mut());
+            init_misc_boot_services_support(st);
         });
     }
 
     #[test]
     fn test_misc_calc_crc32() {
         with_locked_state(|st| {
-            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
-            // because the system table has a static lifetime that outlives this test scope.
-            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
-            init_misc_boot_services_support(st.boot_services_mut());
+            init_misc_boot_services_support(st);
 
             static BUFFER: [u8; 16] = [0; 16];
             let mut data_crc: u32 = 0;
 
             // Test case 1: Valid parameters - successful CRC32 calculation
-            let status = (st.boot_services_mut().calculate_crc32)(
+            let status = (st.boot_services().get().calculate_crc32)(
                 BUFFER.as_ptr() as *mut c_void,
                 BUFFER.len(),
                 &mut data_crc as *mut u32,
@@ -371,8 +346,11 @@ mod tests {
             }
 
             // Test case 2: Zero data size - should return INVALID_PARAMETER
-            let status =
-                (st.boot_services_mut().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &mut data_crc as *mut u32);
+            let status = (st.boot_services().get().calculate_crc32)(
+                BUFFER.as_ptr() as *mut c_void,
+                0,
+                &mut data_crc as *mut u32,
+            );
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Zero data size correctly returned INVALID_PARAMETER");
             } else {
@@ -380,7 +358,7 @@ mod tests {
             }
 
             // Test case 3: Null data pointer - should return INVALID_PARAMETER
-            let status = (st.boot_services_mut().calculate_crc32)(
+            let status = (st.boot_services().get().calculate_crc32)(
                 core::ptr::null_mut(),
                 BUFFER.len(),
                 &mut data_crc as *mut u32,
@@ -392,7 +370,7 @@ mod tests {
             }
 
             // Test case 4: Null output pointer - should return INVALID_PARAMETER
-            let status = (st.boot_services_mut().calculate_crc32)(
+            let status = (st.boot_services().get().calculate_crc32)(
                 BUFFER.as_ptr() as *mut c_void,
                 BUFFER.len(),
                 core::ptr::null_mut(),
@@ -407,13 +385,10 @@ mod tests {
     #[test]
     fn test_misc_watchdog_timer() {
         with_locked_state(|st| {
-            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
-            // because the system table has a static lifetime that outlives this test scope.
-            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
-            init_misc_boot_services_support(st.boot_services_mut());
+            init_misc_boot_services_support(st);
 
             // Test case 1: Set watchdog timer with null data - should return NOT_READY (no watchdog available in test)
-            let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
+            let status = (st.boot_services().get().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer correctly returned NOT_READY (no watchdog protocol)");
             } else {
@@ -421,7 +396,7 @@ mod tests {
             }
 
             // Test case 2: Disable watchdog timer with null data - should return NOT_READY
-            let status = (st.boot_services_mut().set_watchdog_timer)(0, 0, 0, ptr::null_mut());
+            let status = (st.boot_services().get().set_watchdog_timer)(0, 0, 0, ptr::null_mut());
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer correctly returned NOT_READY");
             } else {
@@ -432,7 +407,7 @@ mod tests {
             let data_ptr = data.as_ptr() as *mut efi::Char16;
 
             // Test case 3: Set the watchdog timer with non-null data - should return NOT_READY
-            let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, data.len(), data_ptr);
+            let status = (st.boot_services().get().set_watchdog_timer)(300, 0, data.len(), data_ptr);
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer with data correctly returned NOT_READY");
             } else {
@@ -440,7 +415,7 @@ mod tests {
             }
 
             // Test case 4: Disable the watchdog timer with non-null data - should return NOT_READY
-            let status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
+            let status = (st.boot_services().get().set_watchdog_timer)(0, 0, data.len(), data_ptr);
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer with data correctly returned NOT_READY");
             } else {
@@ -475,7 +450,7 @@ mod tests {
                 WATCHDOG_ARCH_PTR.init(&watchdog as *const _ as *mut c_void);
             };
             // Test case 5: Set watchdog timer with null data - should return SUCCESS (watchdog protocol available)
-            let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
+            let status = (st.boot_services().get().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
             if status == efi::Status::SUCCESS {
                 log::debug!("Set watchdog timer correctly returned SUCCESS (watchdog protocol available)");
                 assert!(SET_PERIOD_CALLED.is_completed(), "set_timer_period was not called during set_watchdog_timer.");
@@ -487,13 +462,10 @@ mod tests {
     #[test]
     fn test_misc_stall() {
         with_locked_state(|st| {
-            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
-            // because the system table has a static lifetime that outlives this test scope.
-            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
-            init_misc_boot_services_support(st.boot_services_mut());
+            init_misc_boot_services_support(st);
 
             // Test case 1: Normal stall duration - should return NOT_READY (no metronome available in test)
-            let status = (st.boot_services_mut().stall)(10000);
+            let status = (st.boot_services().get().stall)(10000);
             if status == efi::Status::NOT_READY {
                 log::debug!("Stall function correctly returned NOT_READY (no metronome protocol)");
             } else {
@@ -501,7 +473,7 @@ mod tests {
             }
 
             // Test case 2: Zero microseconds stall - should return NOT_READY
-            let status = (st.boot_services_mut().stall)(0);
+            let status = (st.boot_services().get().stall)(0);
             if status == efi::Status::NOT_READY {
                 log::debug!("Zero stall correctly returned NOT_READY");
             } else {
@@ -509,7 +481,7 @@ mod tests {
             }
 
             // Test case 3: Maximum stall duration - should return NOT_READY
-            let status = (st.boot_services_mut().stall)(usize::MAX);
+            let status = (st.boot_services().get().stall)(usize::MAX);
             if status == efi::Status::NOT_READY {
                 log::debug!("Maximum stall correctly returned NOT_READY");
             } else {
@@ -538,7 +510,7 @@ mod tests {
             }
 
             // Test case 4: Normal stall duration - should return SUCCESS (metronome protocol available)
-            let status = (st.boot_services_mut().stall)(10000);
+            let status = (st.boot_services().get().stall)(10000);
             if status == efi::Status::SUCCESS {
                 log::debug!("Stall function correctly returned SUCCESS (metronome protocol available)");
                 assert!(WAIT_FOR_TICK_CALLED.is_completed(), "wait_for_tick was not called during stall.");
@@ -552,10 +524,10 @@ mod tests {
     fn test_misc_exit_boot_services() {
         with_locked_state(|st| {
             let valid_map_key: usize = 0x2000;
-            init_misc_boot_services_support(st.boot_services_mut());
+            init_misc_boot_services_support(st);
             // Call exit_boot_services with a valid map_key
             let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
-            let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
+            let _status = (st.boot_services().get().exit_boot_services)(handle, valid_map_key);
         });
     }
 }

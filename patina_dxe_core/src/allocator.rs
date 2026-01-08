@@ -1225,7 +1225,8 @@ pub fn init_memory_support(hob_list: &HobList) {
     }
 }
 
-pub fn install_memory_services(bs: &mut efi::BootServices) {
+pub fn install_memory_services(st: &mut EfiSystemTable) {
+    let mut bs = st.boot_services().get();
     bs.allocate_pages = allocate_pages;
     bs.free_pages = free_pages;
     bs.allocate_pool = allocate_pool;
@@ -1233,6 +1234,7 @@ pub fn install_memory_services(bs: &mut efi::BootServices) {
     bs.copy_mem = copy_mem;
     bs.set_mem = set_mem;
     bs.get_memory_map = get_memory_map;
+    st.boot_services().set(bs);
 }
 
 // Resets the ALLOCATOR map to empty and resets the static allocators for test purposes.
@@ -1278,17 +1280,17 @@ mod tests {
     #[test]
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
-        let boot_services = core::mem::MaybeUninit::zeroed();
-        // SAFETY: caller must guarantee that the MaybeUninit content used in assume_init()
-        // is initialized; boot_services is initialized above and is not a reference.
-        let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-        install_memory_services(&mut boot_services);
-        assert!(boot_services.allocate_pages == allocate_pages);
-        assert!(boot_services.free_pages == free_pages);
-        assert!(boot_services.allocate_pool == allocate_pool);
-        assert!(boot_services.free_pool == free_pool);
-        assert!(boot_services.copy_mem == copy_mem);
-        assert!(boot_services.get_memory_map == get_memory_map);
+        with_locked_state(0x4000000, || {
+            let mut st = EfiSystemTable::allocate_new_table();
+            install_memory_services(&mut st);
+            let bs = st.boot_services().get();
+            assert!(bs.allocate_pages == allocate_pages);
+            assert!(bs.free_pages == free_pages);
+            assert!(bs.allocate_pool == allocate_pool);
+            assert!(bs.free_pool == free_pool);
+            assert!(bs.copy_mem == copy_mem);
+            assert!(bs.get_memory_map == get_memory_map);
+        })
     }
 
     #[test]

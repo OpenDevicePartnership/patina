@@ -119,13 +119,15 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
-        self.image_data.lock().set_system_table(system_table.as_ptr() as *mut _);
+        self.image_data.lock().set_system_table(system_table.as_mut_ptr() as *mut _);
         self.image_data.lock().install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
 
-        system_table.boot_services_mut().load_image = Self::load_image_efiapi;
-        system_table.boot_services_mut().start_image = Self::start_image_efiapi;
-        system_table.boot_services_mut().unload_image = Self::unload_image_efiapi;
-        system_table.boot_services_mut().exit = Self::exit_efiapi;
+        let mut bs = system_table.boot_services().get();
+        bs.load_image = Self::load_image_efiapi;
+        bs.start_image = Self::start_image_efiapi;
+        bs.unload_image = Self::unload_image_efiapi;
+        bs.exit = Self::exit_efiapi;
+        system_table.boot_services().set(bs);
 
         // set up exit boot services callback
         let _ = EVENT_DB
@@ -166,7 +168,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Now create the EFI_SYSTEM_TABLE_POINTER structure
-        let system_table_pointer = system_table.system_table() as *const _ as u64;
+        let system_table_pointer = system_table.as_mut_ptr() as *const _ as u64;
 
         // we need to align the the pointer to 4MB and near the top of memory
         let Ok(address) = crate::GCD.allocate_memory_space(

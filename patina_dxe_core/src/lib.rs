@@ -511,16 +511,16 @@ impl<P: PlatformInfo> Core<P> {
         let mut st = systemtables::SYSTEM_TABLE.lock();
         let st = st.as_mut().expect("System Table not initialized!");
 
-        allocator::install_memory_services(st.boot_services_mut());
+        allocator::install_memory_services(st);
         gcd::init_paging(self.hob_list());
-        events::init_events_support(st.boot_services_mut());
-        protocols::init_protocol_support(st.boot_services_mut());
-        misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
-        config_tables::init_config_tables_support(st.boot_services_mut());
-        runtime::init_runtime_support(st.runtime_services_mut());
+        events::init_events_support(st);
+        protocols::init_protocol_support(st);
+        misc_boot_services::init_misc_boot_services_support(st);
+        config_tables::init_config_tables_support(st);
+        runtime::init_runtime_support();
         self.pi_dispatcher.init(self.hob_list(), st);
         self.install_dxe_services_table(st);
-        driver_services::init_driver_services(st.boot_services_mut());
+        driver_services::init_driver_services(st);
 
         memory_attributes_protocol::install_memory_attributes_protocol();
 
@@ -539,8 +539,10 @@ impl<P: PlatformInfo> Core<P> {
 
         memory_attributes_table::init_memory_attributes_table_support();
 
-        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(st.boot_services()));
-        self.component_dispatcher.lock().set_runtime_services(StandardRuntimeServices::new(st.runtime_services()));
+        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(st.boot_services().as_mut_ptr()));
+        self.component_dispatcher
+            .lock()
+            .set_runtime_services(StandardRuntimeServices::new(st.runtime_services().as_mut_ptr()));
 
         Ok(())
     }

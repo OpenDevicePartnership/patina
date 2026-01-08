@@ -934,11 +934,11 @@ mod tests {
         // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
         // instead, so that the pointer to the boot services table is not null.
         #[allow(invalid_value)]
-        let efi_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+        let mut efi_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
 
         // SAFETY: Test code - Creating StandardBootServices from a zeroed BootServices struct for testing.
         // This is acceptable in test code as we're only checking parameter validation logic.
-        let bs = unsafe { StandardBootServices::new(&*efi_bs.as_ptr()) };
+        let bs = StandardBootServices::new(efi_bs.as_mut_ptr());
 
         storage.set_boot_services(bs);
 
@@ -971,12 +971,11 @@ mod tests {
         // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
         // instead, so that the pointer to the boot services table is not null.
         #[allow(invalid_value)]
-        let efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
+        let mut efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
 
         // SAFETY: Test code - Creating StandardRuntimeServices from a zeroed RuntimeServices struct for testing.
         // This is acceptable in test code as we're only checking parameter validation logic.
-        let rt = unsafe { StandardRuntimeServices::new(&*efi_rt.as_ptr()) };
-
+        let rt = StandardRuntimeServices::new(efi_rt.as_mut_ptr());
         storage.set_runtime_services(rt);
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();

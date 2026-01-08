@@ -2249,18 +2249,18 @@ mod tests {
             let st = st_guard.as_mut().expect("System Table not initialized");
 
             // Before: no configuration tables are expected on a fresh init
-            assert_eq!(st.system_table().number_of_table_entries, 0);
+            assert_eq!(st.get().number_of_table_entries, 0);
 
             // Act: install the DXE Services table
             CORE.install_dxe_services_table(st);
 
             // After: one entry should exist and match DXE_SERVICES_TABLE_GUID
-            let st_ref = st.system_table();
-            assert_eq!(st_ref.number_of_table_entries, 1);
-            assert!(!st_ref.configuration_table.is_null());
+            let st_raw = st.get();
+            assert_eq!(st_raw.number_of_table_entries, 1);
+            assert!(!st_raw.configuration_table.is_null());
 
             let entries =
-                unsafe { core::slice::from_raw_parts(st_ref.configuration_table, st_ref.number_of_table_entries) };
+                unsafe { core::slice::from_raw_parts(st_raw.configuration_table, st_raw.number_of_table_entries) };
 
             let entry = entries
                 .iter()
