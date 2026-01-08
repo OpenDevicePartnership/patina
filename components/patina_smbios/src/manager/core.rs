@@ -12,7 +12,7 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
 use patina::{base::SIZE_64KB, uefi_size_to_pages};
 use r_efi::{
@@ -73,7 +73,7 @@ pub struct Smbios30EntryPoint {
 /// Manages SMBIOS records, handles, and table generation.
 pub struct SmbiosManager {
     pub(super) records: RefCell<Vec<SmbiosRecord>>,
-    pub(super) used_handles: RefCell<Vec<SmbiosHandle>>,
+    pub(super) used_handles: RefCell<BTreeSet<SmbiosHandle>>,
     pub major_version: u8,
     pub minor_version: u8,
     entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
@@ -113,7 +113,7 @@ impl SmbiosManager {
 
         Ok(Self {
             records: RefCell::new(Vec::new()),
-            used_handles: RefCell::new(Vec::new()),
+            used_handles: RefCell::new(BTreeSet::new()),
             major_version,
             minor_version,
             entry_point_64: RefCell::new(None),
@@ -317,13 +317,12 @@ impl SmbiosManager {
             return Err(SmbiosError::HandleOutOfRange);
         }
 
-        if self.used_handles.borrow().contains(request_handle) {
+        if self.used_handles.borrow_mut().insert(*request_handle) {
+            Ok(*request_handle)
+        } else {
             log::error!("add_request_handle - HandleInUse");
-            return Err(SmbiosError::HandleInUse);
+            Err(SmbiosError::HandleInUse)
         }
-
-        self.used_handles.borrow_mut().push(*request_handle);
-        Ok(*request_handle)
     }
 
     /// This function is called when the request handle is FFFE.
@@ -342,13 +341,14 @@ impl SmbiosManager {
     ///
     /// If there is no available handle, return SmbiosError::HandleExhausted.
     fn alloc_new_smbios_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
-        if let Some(handle) = (0..SMBIOS_HANDLE_PI_RESERVED).find(|x| !self.used_handles.borrow().contains(x)) {
-            self.used_handles.borrow_mut().push(handle);
-            Ok(handle)
-        } else {
-            log::error!("alloc_new_smbios_handle - HandleExhausted");
-            Err(SmbiosError::HandleExhausted)
+        for handle in 0..SMBIOS_HANDLE_PI_RESERVED {
+            if self.used_handles.borrow_mut().insert(handle) {
+                return Ok(handle);
+            }
         }
+
+        log::error!("alloc_new_smbios_handle - HandleExhausted");
+        Err(SmbiosError::HandleExhausted)
     }
 
     /// Get a SMBIOS handle based on the requested handle
@@ -719,20 +719,10 @@ impl SmbiosManager {
 
         self.records.borrow_mut().remove(pos);
 
-        // update the self.used_handles
-        let pos_handle = match self.used_handles.borrow().iter().position(|h| *h == smbios_handle) {
-            Some(p) => p,
-            None => {
-                debug_assert!(
-                    false,
-                    "If a SMBIOS record exists, there must be a SMBIOS handle associated with that record"
-                );
-                return Err(SmbiosError::HandleNotFound);
-            }
-        };
-
-        self.used_handles.borrow_mut().swap_remove(pos_handle);
-
+        // update the self.used_handles.
+        // remove() should never return false in this case because if a record exists, its handle
+        // was registered in used_handles when it was added via get_smbios_handle().
+        self.used_handles.borrow_mut().remove(&smbios_handle);
         Ok(())
     }
 
@@ -1101,7 +1091,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_string_handle_not_found() {
+    fn test_update_string_record_not_found() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         assert_eq!(manager.update_string(999, 1, "test"), Err(SmbiosError::RecordNotFound));
     }

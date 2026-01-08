@@ -206,6 +206,8 @@ impl SmbiosProtocol {
             Err(SmbiosError::InvalidStringPoolTermination) => efi::Status::INVALID_PARAMETER,
             Err(SmbiosError::StringPoolTooSmall) => efi::Status::BUFFER_TOO_SMALL,
             Err(SmbiosError::HandleExhausted) => efi::Status::OUT_OF_RESOURCES,
+            Err(SmbiosError::HandleOutOfRange) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::HandleInUse) => efi::Status::INVALID_PARAMETER,
             Err(SmbiosError::AllocationFailed) => efi::Status::OUT_OF_RESOURCES,
             Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
             Err(e) => {
@@ -262,7 +264,7 @@ impl SmbiosProtocol {
                 efi::Status::SUCCESS
             }
             Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
+            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
             Err(SmbiosError::StringIndexOutOfRange) => efi::Status::INVALID_PARAMETER,
             Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
             Err(_) => efi::Status::DEVICE_ERROR,
@@ -295,7 +297,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
+            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
             Err(_) => efi::Status::DEVICE_ERROR,
         }
     }
