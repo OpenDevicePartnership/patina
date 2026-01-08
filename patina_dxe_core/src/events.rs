@@ -759,7 +759,7 @@ mod tests {
             assert_eq!(result, efi::Status::SUCCESS);
 
             //raise TPL to callback than event
-            let _old_tpl = raise_tpl(efi::TPL_CALLBACK);
+            let old_tpl = raise_tpl(efi::TPL_CALLBACK);
 
             // Signal the event
             let result = signal_event(event);
@@ -781,6 +781,7 @@ mod tests {
             // Clean up
             let _ = close_event(event);
             let _ = close_event(event2);
+            restore_tpl(old_tpl);
         });
     }
 
