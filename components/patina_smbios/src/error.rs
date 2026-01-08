@@ -43,7 +43,7 @@ pub enum SmbiosError {
     /// String index is out of range for the specified record
     StringIndexOutOfRange,
     /// The specified handle was already used by another record
-    HandleAlreadyStarted,
+    HandleInUse,
     /// The specified handle is out of range
     HandleOutOfRange,
 
@@ -89,7 +89,7 @@ impl From<SmbiosError> for patina::error::EfiError {
             | SmbiosError::StringPoolTooSmall
             | SmbiosError::StringIndexOutOfRange
             | SmbiosError::Type127Managed
-            | SmbiosError::HandleAlreadyStarted
+            | SmbiosError::HandleInUse
             | SmbiosError::HandleOutOfRange => patina::error::EfiError::InvalidParameter,
 
             // Not found errors map to NOT_FOUND

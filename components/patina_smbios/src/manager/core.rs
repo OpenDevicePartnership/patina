@@ -310,7 +310,7 @@ impl SmbiosManager {
     /// # Errors
     ///
     /// If the handle is not within valid range, returns SmbiosError::HandleOutOfRange.
-    /// If the handle is already in use, returns SmbiosError::HandleAlreadyStarted.
+    /// If the handle is already in use, returns SmbiosError::HandleInUse.
     fn add_request_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
         if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(request_handle) {
             log::error!("add_request_handle - HandleOutOfRange");
@@ -318,8 +318,8 @@ impl SmbiosManager {
         }
 
         if self.used_handles.borrow().contains(request_handle) {
-            log::error!("add_request_handle - HandleAlreadyStarted");
-            return Err(SmbiosError::HandleAlreadyStarted);
+            log::error!("add_request_handle - HandleInUse");
+            return Err(SmbiosError::HandleInUse);
         }
 
         self.used_handles.borrow_mut().push(*request_handle);
@@ -364,7 +364,7 @@ impl SmbiosManager {
     /// # Returns
     ///
     /// Returns `Ok(SmbiosHandle)` with the assigned handle, or an error if the handle is already
-    /// in used.
+    /// in use.
     pub(crate) fn get_smbios_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
         if *request_handle == SMBIOS_HANDLE_PI_RESERVED {
             self.alloc_new_smbios_handle()
@@ -564,7 +564,7 @@ impl SmbiosManager {
     ) -> Result<SmbiosHandle, SmbiosError> {
         // Step 1: Validate minimum size for header (at least 4 bytes)
         if record_data.len() < core::mem::size_of::<SmbiosTableHeader>() {
-            log::error!("Error - minimum size for header is too small");
+            log::error!("add_from_bytes - minimum size for header is too small");
             return Err(SmbiosError::RecordTooSmall);
         }
 
@@ -650,7 +650,7 @@ impl SmbiosManager {
             .borrow()
             .iter()
             .position(|r| r.header.handle == smbios_handle)
-            .ok_or(SmbiosError::HandleNotFound)?;
+            .ok_or(SmbiosError::RecordNotFound)?;
 
         // Borrow the record
         let mut records = self.records.borrow_mut();
@@ -706,6 +706,10 @@ impl SmbiosManager {
 
     /// Remove an SMBIOS record
     pub fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
+        if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(&smbios_handle) {
+            return Err(SmbiosError::HandleOutOfRange);
+        }
+
         let pos = self
             .records
             .borrow()
@@ -716,16 +720,18 @@ impl SmbiosManager {
         self.records.borrow_mut().remove(pos);
 
         // update the self.used_handles
-        if (0..SMBIOS_HANDLE_PI_RESERVED).contains(&smbios_handle) {
-            let pos_handle = self
-                .used_handles
-                .borrow()
-                .iter()
-                .position(|h| *h == smbios_handle)
-                .ok_or(SmbiosError::HandleNotFound)?;
+        let pos_handle = match self.used_handles.borrow().iter().position(|h| *h == smbios_handle) {
+            Some(p) => p,
+            None => {
+                debug_assert!(
+                    false,
+                    "If a SMBIOS record exists, there must be a SMBIOS handle associated with that record"
+                );
+                return Err(SmbiosError::HandleNotFound);
+            }
+        };
 
-            self.used_handles.borrow_mut().swap_remove(pos_handle);
-        }
+        self.used_handles.borrow_mut().swap_remove(pos_handle);
 
         Ok(())
     }
@@ -1011,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_request_handle_error_handlealreadystarted() {
+    fn test_add_request_handle_error_handle_in_use() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let mut record_data = vec![1u8, 4, 0xFE, 0xFF];
         record_data.extend_from_slice(b"\0\0");
@@ -1024,7 +1030,7 @@ mod tests {
         let mut record_data = vec![1u8, 4, 0x01, 0x00];
         record_data.extend_from_slice(b"\0\0");
         let result = manager.add_from_bytes(None, &record_data);
-        assert_eq!(SmbiosError::HandleAlreadyStarted, result.expect_err("add duplicate failed"));
+        assert_eq!(SmbiosError::HandleInUse, result.expect_err("add duplicate failed"));
     }
 
     #[test]
@@ -1097,7 +1103,7 @@ mod tests {
     #[test]
     fn test_update_string_handle_not_found() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        assert_eq!(manager.update_string(999, 1, "test"), Err(SmbiosError::HandleNotFound));
+        assert_eq!(manager.update_string(999, 1, "test"), Err(SmbiosError::RecordNotFound));
     }
 
     #[test]
