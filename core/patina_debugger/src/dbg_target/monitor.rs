@@ -32,6 +32,7 @@ Mod commands:
     break [module] - Set load breakpoint for a module.
     breakall - Break on all module loads.
     clear - clear all module breakpoints.
+    count - Show number of loaded modules.
 ";
 
 impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
@@ -155,6 +156,10 @@ impl PatinaTarget {
                 if printed == 0 {
                     let _ = out.write_str("No modules.");
                 }
+            }
+            Some("count") => {
+                let module_count = state.modules.get_modules().len();
+                let _ = writeln!(out, "{module_count}");
             }
             _ => {
                 let _ = out.write_str(MOD_HELP);
