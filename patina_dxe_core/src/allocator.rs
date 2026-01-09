@@ -568,6 +568,8 @@ impl AllocatorMap {
 
     // resets the ALLOCATOR map to empty and resets the static allocators.
     #[cfg(test)]
+    // SAFETY: Caller must ensure that no allocations are active and that no other
+    // contexts can concurrently access the allocator during this call.
     unsafe fn reset(&mut self) {
         self.map.clear();
         let _ = for_each_static_allocator!(alloc => {
@@ -608,7 +610,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
     match ALLOCATORS.lock().get_or_create_allocator(pool_type, handle) {
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
-
+            // SAFETY: buffer is declared above, we pass the address which guarantees it is a valid pointer.
             unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)).map(|_| buffer) }
         }
         Err(err) => Err(err),
@@ -627,6 +629,8 @@ pub fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
         return Err(EfiError::InvalidParameter);
     }
     let allocators = ALLOCATORS.lock();
+    // SAFETY: caller must ensure that buffer is a valid pointer and that it was
+    // originally allocated via allocate_pool(). It is null-checked above.
     unsafe {
         if for_each_static_allocator!(alloc => alloc.free_pool(buffer).is_ok())
             || allocators.iter_dynamic().any(|allocator| allocator.free_pool(buffer).is_ok())
@@ -746,6 +750,8 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 
     let mut memory_type = efi::CONVENTIONAL_MEMORY;
 
+    // SAFETY: caller must ensure that memory is a valid address and that they have
+    // exclusive ownership of this memory. It is validated above.
     let res = unsafe {
         if try_each_static_allocator!(memory_type, alloc => {
             alloc.free_pages(memory as usize, pages)
@@ -817,6 +823,7 @@ extern "efiapi" fn get_memory_map(
 
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
     assert_ne!(required_map_size, 0);
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(required_map_size) };
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
@@ -1229,8 +1236,13 @@ pub fn install_memory_services(bs: &mut efi::BootServices) {
 }
 
 // Resets the ALLOCATOR map to empty and resets the static allocators for test purposes.
+// SAFETY: caller must ensure that they have exclusive access such that no other context
+// can modify any global state while it's being reset. A global lock is required.
 #[cfg(test)]
 pub(crate) unsafe fn reset_allocators() {
+    // SAFETY: call resets global allocator state. Should only be called when no
+    // allocations are active. A lock is used to ensure exclusive access preventing
+    // use while reset occurs.
     unsafe { ALLOCATORS.lock().reset() };
 }
 
@@ -1249,6 +1261,9 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
         test_support::with_global_lock(|| {
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 test_support::init_test_logger();
                 test_support::init_test_gcd(Some(gcd_size));
@@ -1264,6 +1279,8 @@ mod tests {
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
         let boot_services = core::mem::MaybeUninit::zeroed();
+        // SAFETY: caller must guarantee that the MaybeUninit content used in assume_init()
+        // is initialized; boot_services is initialized above and is not a reference.
         let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
         install_memory_services(&mut boot_services);
         assert!(boot_services.allocate_pages == allocate_pages);
@@ -1278,6 +1295,9 @@ mod tests {
     fn init_memory_support_should_process_memory_bucket_hobs() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x1000000);
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1341,6 +1361,9 @@ mod tests {
         // to the GCD. This should cause set_memory_space_attributes to fail with NotFound.
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x1000000);
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1384,6 +1407,9 @@ mod tests {
             // 4 MiB of test memory is required because allocator expansion during initialization
             // may need to handle large allocations for memory buckets and HOBs.
             let physical_hob_list = build_test_hob_list(0x400000);
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1506,6 +1532,9 @@ mod tests {
             // 4 MiB of test memory is required because allocator expansion during initialization
             // may need to handle large allocations for memory buckets and HOBs.
             let physical_hob_list = build_test_hob_list(0x400000);
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1528,6 +1557,9 @@ mod tests {
             // 4 MiB of test memory is required because allocator expansion during initialization
             // may need to handle large allocations for memory buckets and HOBs.
             let physical_hob_list = build_test_hob_list(0x400000);
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
