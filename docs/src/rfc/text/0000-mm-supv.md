@@ -347,7 +347,7 @@ current page table but compare it against the snapshot reported during ready to 
 Note that if memory policy is queried before ready to lock event, the MM supervisor will produce a report based on the
 current page table and lock down the unblock requests going forward.
 
-The produced report will be concatenated with the platform supplied policy of 4 other categories and hand off to the non-MM
+The produced report will be concatenated with the platform supplied policy of 4 other categories and handed off to the non-MM
 environment supplied buffer for attestation purposes.
 
 #### Supervisor Pool Allocator
