@@ -12,7 +12,7 @@ use alloc::{boxed::Box, vec};
 use core::{
     ffi::c_void,
     ptr::{NonNull, slice_from_raw_parts_mut},
-    slice::from_raw_parts,
+    slice::{from_raw_parts, from_raw_parts_mut},
 };
 use patina::error::EfiError;
 use r_efi::efi;
@@ -52,79 +52,69 @@ pub fn core_install_configuration_table(
 ) -> Result<Option<NonNull<c_void>>, EfiError> {
     let mut system_table = efi_system_table.get();
 
-    //if a table is already present, reconstruct it from the pointer and length in the st.
-    let old_cfg_table = if system_table.configuration_table.is_null() {
-        assert_eq!(system_table.number_of_table_entries, 0);
-        None
-    } else {
-        // SAFETY: efi_system_table is an EfiSystemTable as enforced by the input argument.
-        // We have guaranteed that system_table.configuration_table is non-null and this logic
-        // enforces that if it is non-null it points to a valid slice.
-        let ct_slice_box = unsafe {
-            Box::from_raw_in(
-                slice_from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),
-                &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
-            )
-        };
-        Some(ct_slice_box)
-    };
-
-    let mut old_vendor_table_ptr = None;
-    // construct the new table contents as a vector.
-    let new_table = match old_cfg_table {
-        Some(cfg_table) => {
-            // a configuration table list is already present.
-            let mut current_table = cfg_table.to_vec();
-            let existing_entry = current_table.iter_mut().find(|x| x.vendor_guid == vendor_guid);
-            if !vendor_table.is_null() {
-                // vendor_table is not null; we are adding or modifying an entry.
-                if let Some(entry) = existing_entry {
-                    //entry exists, modify it.
-                    old_vendor_table_ptr = NonNull::new(entry.vendor_table);
-                    entry.vendor_table = vendor_table;
-                } else {
-                    //entry doesn't exist, add it.
-                    current_table.push(efi::ConfigurationTable { vendor_guid, vendor_table });
-                }
+    let (updated_table, old_vendor_table_ptr) = match system_table.configuration_table {
+        existing_tbl_ptr if existing_tbl_ptr.is_null() => {
+            // existing table is empty.
+            if vendor_table.is_null() {
+                // trying to delete a non-existing table
+                return Err(EfiError::NotFound);
             } else {
-                //vendor_table is none; we are deleting an entry.
+                // adding a new table to an empty configuration table list
+                (vec![efi::ConfigurationTable { vendor_guid, vendor_table }], None)
+            }
+        }
+        existing_table_ptr => {
+            // existing table is present. Make a copy of it as a Vec to process the updates.
+            // SAFETY: existing_table_ptr is non-null, and number_of_table_entries is valid.
+            let mut updated_table =
+                unsafe { from_raw_parts_mut(existing_table_ptr, system_table.number_of_table_entries).to_vec() };
+            let existing_entry = updated_table.iter_mut().find(|x| x.vendor_guid == vendor_guid);
+            if vendor_table.is_null() {
+                // deleting an entry.
                 if let Some(entry) = existing_entry {
                     //entry exists, we can delete it
-                    old_vendor_table_ptr = NonNull::new(entry.vendor_table);
-                    current_table.retain(|x| x.vendor_guid != vendor_guid);
+                    let old_vendor_table_ptr = NonNull::new(entry.vendor_table);
+                    updated_table.retain(|x| x.vendor_guid != vendor_guid);
+                    (updated_table, old_vendor_table_ptr)
                 } else {
-                    // Entry does not exist, so we can't delete it. Thus we leave the system table unmodified, but
-                    // since we reconstructed the Box with the config table pointer we got from the system table,
-                    // we need to forget it here to avoid dropping it and freeing the memory while it is still used.
-                    core::mem::forget(cfg_table);
+                    //entry doesn't exist, can't delete it.
                     return Err(EfiError::NotFound);
                 }
-            }
-            current_table
-        }
-        None => {
-            // config table list doesn't exist.
-            if !vendor_table.is_null() {
-                // table is some, meaning we should create the list and add this as the new entry.
-                vec![efi::ConfigurationTable { vendor_guid, vendor_table }]
             } else {
-                // table is null, but can't delete a table entry in a list that doesn't exist.
-                //since the list doesn't exist, we can leave the (null) pointer in the st alone.
-                return Err(EfiError::NotFound);
+                // adding or modifying an entry.
+                if let Some(entry) = existing_entry {
+                    //entry exists, modify it.
+                    let old_vendor_table_ptr = NonNull::new(entry.vendor_table);
+                    entry.vendor_table = vendor_table;
+                    (updated_table, old_vendor_table_ptr)
+                } else {
+                    //entry doesn't exist, add it.
+                    updated_table.push(efi::ConfigurationTable { vendor_guid, vendor_table });
+                    (updated_table, None)
+                }
             }
         }
     };
 
-    if new_table.is_empty() {
-        // if empty, just set config table ptr to null
+    // Updating the table. Reclaim the old table (if present) so it'll get dropped by the runtime allocator.
+    if !system_table.configuration_table.is_null() {
+        unsafe {
+            let _old_boxed_table = Box::from_raw_in(
+                slice_from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),
+                &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
+            );
+        }
+    }
+
+    if updated_table.is_empty() {
         system_table.number_of_table_entries = 0;
         system_table.configuration_table = core::ptr::null_mut();
     } else {
-        //Box up the new table and put it in the system table. The old table (if any) will be dropped
-        //when old_cfg_table goes out of scope at the end of the function.
-        system_table.number_of_table_entries = new_table.len();
-        let new_table = new_table.to_vec_in(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR).into_boxed_slice();
-        system_table.configuration_table = Box::into_raw_with_allocator(new_table).0 as *mut efi::ConfigurationTable;
+        // Move the updated table into an allocation in the runtime services data allocator.
+        system_table.number_of_table_entries = updated_table.len();
+        let updated_table = updated_table.to_vec_in(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR).into_boxed_slice();
+        system_table.configuration_table =
+            Box::into_raw_with_allocator(updated_table).0 as *mut efi::ConfigurationTable;
     }
 
     efi_system_table.set(system_table);
