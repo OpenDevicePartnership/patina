@@ -440,7 +440,7 @@ The Rust MM supervisor should consist of the following main components:
 | MM services table | The MM services table (gMmst) for MM user mode | BSP | To be implemented |
 | Driver Dispatcher | The driver dispatcher for dispatching MM user mode drivers | BSP | Similar to patina_dxe_core dispatcher, but needs some adaptations |
 | Page Table Manager | The page table manager for requesting page operations through supervisor syscall interface | BSP | To be implemented |
-| Pool Allocator | The pool allocator for supervisor mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
+| Pool Allocator | The pool allocator for user mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
 | Shim MP Services | The MP services that requests supervisor to perform operations on behalf of MM user mode | BSP | To be implemented |
 
 ### Telemetry Reporting and Fail Fast Mechanism
