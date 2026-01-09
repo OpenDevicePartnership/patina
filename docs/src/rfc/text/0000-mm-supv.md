@@ -194,7 +194,7 @@ between supervisor and normal world (aka. `MM_BUFFER_STATUS`).
 
 #### MMI Management
 
-Regardless of the target, the Rust MM supervisor will copy the entire MM communication buffer to the into corresponding
+Regardless of the target, the Rust MM supervisor will copy the entire MM communication buffer into the corresponding
 MMRAM region, specific to the targeting mode, to ensure data integrity and protect from DMA based data tampering.
 
 If it is targeted for supervisor, the Rust MM supervisor will locate the appropriate supervisor handler and try to dispatch
