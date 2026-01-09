@@ -365,7 +365,7 @@ handling the MMI.
 After rendezvous, the Rust MM supervisor will perform necessary BSP elections and put the APs into the holding pen, and wait
 for the BSP to complete the MMI handling before releasing the APs back to normal execution.
 
-Should either the MMI handlers needs to send signals to all processors to perform certain operations, or the BSP that handles
+Should either the MMI handlers need to send signals to all processors to perform certain operations, or the BSP that handles
 the MMI needs to write to the command buffer with provided function pointer and arguments for APs to execute, the Rust MM
 supervisor will flush the page tables to ensure all processors have the most up-to-date view of memory, and then dispatch
 to the function pointer that is requested.
