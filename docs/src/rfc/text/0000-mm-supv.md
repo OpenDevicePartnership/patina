@@ -421,7 +421,7 @@ When the supervisor demotes to MM user mode for Ring3 broker execution, RCX will
 
 ### Telemetry Reporting and Fail Fast Mechanism
 
-The telemetry reporting and fail fast mechanism will be hosted in the Rust ring3 broker in a form of component. So that
+The telemetry reporting and fail fast mechanism will be hosted in the Rust ring3 broker in the form of a component so that
 the coverage will be comprehensive since the boot phase.
 
 When this operation is invoked from supervisor mode, the Rust MM supervisor will pass the some information from the exception
