@@ -461,7 +461,7 @@ of the MM environment.
 Given the supervisor loader has been separated from the MM core, and the prepared data is handed off to the Rust MM supervisor
 as data _section_, we can minimize the security rules needed for SEA to inspect the passed data section for attestation purposes.
 
-In addition, for the remainging global data that is needed by the Rust MM supervisor, we can keep applying the derelocation
+In addition, for the remaining global data that is needed by the Rust MM supervisor, we can keep applying the derelocation
 techniques from SEA against the rules for MM core verification.
 
 ## Guide-Level Explanation
