@@ -5,7 +5,7 @@ This RFC proposes a Rust-based supervisor to manage management mode (MM) operati
 ## Change Log
 
 - 2025-10-27: Initial RFC created.
-- 2025-01-09: Update data handoff to HOB based model and lock down the memory unblock requests after foundation setup.
+- 2025-01-09: Updated data handoff to HOB based model, advanced lock down event, added nutrient content tables.
 
 ## Motivation
 
@@ -118,7 +118,7 @@ separated the critical jump pointers to data sections, allowing for easier inspe
 
 The main differences will be:
 
-1. The MMI entry point will need to handle MMI targetting evaluation (supervisor vs Ring3 broker)
+1. The MMI entry point will need to handle MMI targeting evaluation (supervisor vs Ring3 broker)
 2. The MMI entry point will need to fix up an extra jump pointer to the Ring3 broker entry point
 3. The MMI entry point will enforce SMAP in CR4 for MM user mode execution
 
@@ -376,6 +376,22 @@ the requested operation. During the operation, should the user mode operations r
 will trigger syscall interrupts to transition back to supervisor mode to handle the requests, if this is allowed by the
 security policies.
 
+#### Rust MM Supervisor `Nutrient` Content
+
+With the above design in place, the first attempt will keep the Rust MM supervisor in parallel with the patina_dxe_core.
+The Rust MM supervisor should consist of the following main components:
+
+| Component | Description | Executor | Status |
+| - | - | - | - |
+| Core Rendezvous | The frontier after processor come out of the MMI entry block | All processors | To be implemented |
+| Syscall Dispatcher | The syscall dispatcher for handling syscalls from MM user mode | All processors | To be implemented, as part of patina-isolation crate |
+| Privilege Manager | The privilege manager for managing callgates and TSS for ring transitions | All processors | To be implemented, as part of patina-isolation crate |
+| Exception Handler | The exception handler for handling exceptions in supervisor mode | All processors | patina_internal_cpu |
+| Initialization Routine | The one-time initialization routine for the Rust MM supervisor | BSP | Similar to the entrypoint of patina_dxe_core, but needs some heavy adaptations |
+| MMI Ring 0 Handler Dispatcher | The MMI handler dispatcher for handling incoming MMIs targeting Ring 0 | BSP | To be implemented |
+| Page Table Manager | The page table manager for managing page tables for both supervisor and user modes | BSP | patina-paging |
+| Pool Allocator | The pool allocator for supervisor mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
+
 ### MM Ring3 Broker in Rust
 
 This component will run in the MM user mode, providing a safe interface for MM clients to interact with the MM supervisor.
@@ -394,14 +410,7 @@ This component will be responsible for:
 - Registering and dispatching fundamental events during boot phase for MM user mode
 - Dispatching other MM user mode drivers
 
-#### Commonality between Architectures
-
-The initialization routine and pool allocator will be common between x86_64 and AArch64 architectures and could be inherited
-from the Patina framework with minimal adaptations.
-
-The same applies to the protocol database, event registration and dispatching, and dispatching of MM user mode drivers.
-
-##### X64 Ring3 Broker Bootstrapping
+#### X64 Ring3 Broker Bootstrapping
 
 This section will detail the x86_64 specific bootstrapping steps for the Ring3 broker.
 
@@ -417,6 +426,22 @@ The entry point will support 3 types of invocations:
 - Exception Handling: Invocations from the supervisor to log exceptions.
 
 When the supervisor demotes to MM user mode for Ring3 broker execution, RCX will contain the opcode for needed operation.
+
+#### MM Ring3 Broker `Nutrient` Content
+
+With the above design in place, the first attempt will keep the ring3 broker in parallel with the patina_dxe_core.
+The Rust MM supervisor should consist of the following main components:
+
+| Component | Description | Executor | Status |
+| - | - | - | - |
+| Initialization Routine | The one-time initialization routine for the ring3 broker | BSP | Similar to the entrypoint of patina_dxe_core, but needs some moderate adaptations |
+| Protocol Database | The protocol database for MM user mode | BSP | patina_dxe_core protocol DB, needs file relocation and non-TPL based lock |
+| MMI Handler Database | The MMI handler database for MM user mode | BSP | To be implemented |
+| MM services table | The MM services table (gMmst) for MM user mode | BSP | To be implemented |
+| Driver Dispatcher | The driver dispatcher for dispatching MM user mode drivers | BSP | Similar to patina_dxe_core dispatcher, but needs some adaptations |
+| Page Table Manager | The page table manager for requesting page operations through supervisor syscall interface | BSP | To be implemented |
+| Pool Allocator | The pool allocator for supervisor mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
+| Shim MP Services | The MP services that requests supervisor to perform operations on behalf of MM user mode | BSP | To be implemented |
 
 ### Telemetry Reporting and Fail Fast Mechanism
 
