@@ -76,6 +76,7 @@ words:
   - fnent
   - funty
   - fvmain
+  - fxsave
   - gantt
   - gdbstub
   - genfw
@@ -149,6 +150,7 @@ words:
   - pyserial
   - pywin
   - qword
+  - rdmsr
   - rdtsc
   - reentrancy
   - regsvr
@@ -162,6 +164,7 @@ words:
   - smiport
   - smram
   - swmmis
+  - syscall
   - sysreg
   - tiano
   - tianocore
@@ -178,6 +181,7 @@ words:
   - unmaps
   - unrecovered
   - unregisters
+  - unreg
   - unspec
   - unsynchronized
   - vcvarsamd
@@ -188,6 +192,7 @@ words:
   - wbinvd
   - windbg
   - withf
+  - wrmsr
   - xdata
   - xtask
   - zbuild

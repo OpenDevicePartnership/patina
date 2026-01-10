@@ -224,7 +224,7 @@ between different processors.
 
 The expected syscall operations will be the same as the existing C implementation, including:
 
-```c
+```rust
 // ======================================================================================
 //
 // Define syscall method
@@ -268,7 +268,7 @@ typedef enum {
   SMM_SC_SVST_READ_2  = 0x10021,
   SMM_MM_UNBLOCKED    = 0x10022,
   SMM_MM_IS_COMM_BUFF = 0x10023,
-} SMM_SYS_CALL;
+};
 ```
 
 Note that the new supervisor interfaces (from 0x10000 and above) will be exclusive to the MM supervisor based implementation
@@ -313,7 +313,7 @@ The Rust MM supervisor will manage the page tables for both supervisor and MM us
 As the MM core does not have a GCD, it will need to manage the page tables directly. In the foundation setup phase, the
 Rust MM supervisor loader will allocate a dedicated page pool for page table usage and security policy reporting.
 
-The loader will then set up the initial page tables, including mapping all necessary MMRAM regions, unmapping non-MMRAM
+The loader will then set up the initial page tables, including mapping all necessary MMRAM regions, un-mapping non-MMRAM
 regions, and unblock the regions requested from non-MM environments.
 
 At the end of the MM foundation setup, the loader will page table to read-only to prevent tampering from MM code, marking
@@ -506,7 +506,7 @@ Given the supervisor loader has been separated from the MM core, and the prepare
 as data _section_, we can minimize the security rules needed for SEA to inspect the passed data section for attestation
 purposes.
 
-In addition, for the remaining global data that is needed by the Rust MM supervisor, we can keep applying the derelocation
+In addition, for the remaining global data that is needed by the Rust MM supervisor, we can keep applying the de-relocation
 techniques from SEA against the rules for MM core verification.
 
 ## Guide-Level Explanation
@@ -558,7 +558,7 @@ configurations and tools.
 The Rust MM supervisor will integrate with SMM Enhanced Attestation (SEA) to enhance the security of the MM environment.
 This will involve minimizing the security rules needed for SEA to inspect the passed data section for attestation purposes.
 In addition, for the remaining global data that is needed by the Rust MM supervisor, we will
-apply the derelocation techniques from SEA against the rules for MM core verification.
+apply the de-relocation techniques from SEA against the rules for MM core verification.
 
 In this new model, only the Rust MM supervisor will be inspected for its global state, which will have a smaller attack
 surface and given a fewer number of functions and thus global variables to inspect.
