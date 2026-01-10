@@ -166,6 +166,7 @@ words:
   - swmmis
   - syscall
   - sysreg
+  - sysret
   - tiano
   - tianocore
   - tolnay

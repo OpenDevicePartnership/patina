@@ -277,10 +277,10 @@ and will not have corresponding verification against the platform policies.
 However, for a given non legacy syscall, the Rust MM supervisor must ensure that the supplied pointers and buffers are valid
 and exclusively point to user mode MMRAM regions.
 
-For the legacy syscalls (from 0x0000 to 0xFFFF), the Rust MM supervisor will verify the requested operations against the
+For the legacy syscall (from 0x0000 to 0xFFFF), the Rust MM supervisor will verify the requested operations against the
 platform supplied security policies before executing them. See the next section for more details on security policies.
 
-For page allocation and free syscalls, the Rust MM supervisor will manage a dedicated page pool for MM user mode allocations.
+For page allocation and free syscall, the Rust MM supervisor will manage a dedicated page pool for MM user mode allocations.
 
 #### Security Policies Logic
 
@@ -384,7 +384,7 @@ The Rust MM supervisor should consist of the following main components:
 | Component | Description | Executor | Status |
 | - | - | - | - |
 | Core Rendezvous | The frontier after processor come out of the MMI entry block | All processors | To be implemented |
-| Syscall Dispatcher | The syscall dispatcher for handling syscalls from MM user mode | All processors | To be implemented, as part of patina-isolation crate |
+| Syscall Dispatcher | The syscall dispatcher for handling  from MM user mode | All processors | To be implemented, as part of patina-isolation crate |
 | Privilege Manager | The privilege manager for managing callgates and TSS for ring transitions | All processors | To be implemented, as part of patina-isolation crate |
 | Exception Handler | The exception handler for handling exceptions in supervisor mode | All processors | patina_internal_cpu |
 | Initialization Routine | The one-time initialization routine for the Rust MM supervisor | BSP | Similar to the entrypoint of patina_dxe_core, but needs some heavy adaptations |
@@ -395,7 +395,7 @@ The Rust MM supervisor should consist of the following main components:
 ### MM Ring3 Broker in Rust
 
 This component will run in the MM user mode, providing a safe interface for MM clients to interact with the MM supervisor.
-The elevated operations will be requested through syscalls, which will be handled by the Rust MM supervisor after security
+The elevated operations will be requested through syscall, which will be handled by the Rust MM supervisor after security
 policy guided adjudication.
 
 This component will be responsible for:
@@ -404,7 +404,7 @@ This component will be responsible for:
 - Setting up telemetry reporting and fail fast component
 - Providing shim version of MP services
 - Hosting pool allocator for MM user mode allocations
-- Hosting page allocator for MM user mode through syscalls
+- Hosting page allocator for MM user mode through syscall
 - Hosting protocol database for MM user mode
 - Hosting MMI handler database for MM user mode
 - Registering and dispatching fundamental events during boot phase for MM user mode
@@ -544,7 +544,7 @@ to the appropriate handlers in the Rust MM supervisor.
 ### User-Level Explanation
 
 A regular MM standalone MM driver will be execute in the MM user mode, and will interact with the MM supervisor through
-syscalls. The Rust MM supervisor will handle these syscalls, manage memory and page tables, and enforce security policies.
+syscall. The Rust MM supervisor will handle these syscall, manage memory and page tables, and enforce security policies.
 
 The MM Ring3 broker will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
 required by MM clients, such as memory allocation, protocol database access, and MMI handler registration.
