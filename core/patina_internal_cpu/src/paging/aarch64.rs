@@ -97,7 +97,7 @@ mod tests {
 
         let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
-        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
         assert!(result.is_ok());
     }
 
@@ -121,7 +121,7 @@ mod tests {
 
         let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
-        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
         assert!(result.is_ok());
     }
 
@@ -131,13 +131,13 @@ mod tests {
 
         mock_page_table
             .expect_query_memory_region()
-            .returning(|_, _| Ok(MemoryAttributes::Writeback | MemoryAttributes::Uncacheable));
+            .returning(|_, _| Ok(MemoryAttributes::Writeback | MemoryAttributes::Uncached));
 
         let paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
         let result = paging.query_memory_region(0x1000, 0x1000);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), MemoryAttributes::Writeback | MemoryAttributes::Uncacheable);
+        assert_eq!(result.unwrap(), MemoryAttributes::Writeback | MemoryAttributes::Uncached);
     }
 
     #[test]

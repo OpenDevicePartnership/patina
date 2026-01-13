@@ -5142,7 +5142,7 @@ mod tests {
             let length = 0x1000;
 
             // Test Uncacheable
-            let result = GCD.set_paging_attributes(base_address, length, MemoryAttributes::Uncacheable.bits());
+            let result = GCD.set_paging_attributes(base_address, length, MemoryAttributes::Uncached.bits());
             assert!(result.is_ok());
 
             // Test WriteThrough - should overwrite the previous mapping
@@ -5163,7 +5163,7 @@ mod tests {
 
             // Should have 3 map operations recorded
             assert_eq!(mapped.len(), 3);
-            assert_eq!(mapped[0], (base_address as u64, length as u64, MemoryAttributes::Uncacheable));
+            assert_eq!(mapped[0], (base_address as u64, length as u64, MemoryAttributes::Uncached));
             assert_eq!(mapped[1], (base_address as u64, length as u64, MemoryAttributes::WriteThrough));
             assert_eq!(mapped[2], (base_address as u64, length as u64, MemoryAttributes::WriteCombining));
 
@@ -5294,7 +5294,7 @@ mod tests {
             // Map multiple non-overlapping regions
             let regions = [
                 (0x1000, 0x1000, MemoryAttributes::Writeback),
-                (0x3000, 0x2000, MemoryAttributes::Uncacheable),
+                (0x3000, 0x2000, MemoryAttributes::Uncached),
                 (0x6000, 0x1000, MemoryAttributes::WriteCombining),
             ];
 
@@ -5314,13 +5314,13 @@ mod tests {
             // Should have 3 map operations recorded
             assert_eq!(mapped.len(), 3);
             assert_eq!(mapped[0], (0x1000, 0x1000, MemoryAttributes::Writeback));
-            assert_eq!(mapped[1], (0x3000, 0x2000, MemoryAttributes::Uncacheable));
+            assert_eq!(mapped[1], (0x3000, 0x2000, MemoryAttributes::Uncached));
             assert_eq!(mapped[2], (0x6000, 0x1000, MemoryAttributes::WriteCombining));
 
             // Current mappings should show all 3 regions (no overlaps)
             assert_eq!(current_mappings.len(), 3);
             assert!(current_mappings.contains(&(0x1000, 0x1000, MemoryAttributes::Writeback)));
-            assert!(current_mappings.contains(&(0x3000, 0x2000, MemoryAttributes::Uncacheable)));
+            assert!(current_mappings.contains(&(0x3000, 0x2000, MemoryAttributes::Uncached)));
             assert!(current_mappings.contains(&(0x6000, 0x1000, MemoryAttributes::WriteCombining)));
         });
     }
@@ -5347,7 +5347,7 @@ mod tests {
             let overlapping_base = 0x1800;
             let overlapping_length = 0x1000;
             let result =
-                GCD.set_paging_attributes(overlapping_base, overlapping_length, MemoryAttributes::Uncacheable.bits());
+                GCD.set_paging_attributes(overlapping_base, overlapping_length, MemoryAttributes::Uncached.bits());
             assert!(result.is_ok());
 
             // Manually drop the page table to release the reference
@@ -5361,14 +5361,14 @@ mod tests {
             // Should have 2 map operations recorded
             assert_eq!(mapped.len(), 2);
             assert_eq!(mapped[0], (base_address as u64, length as u64, MemoryAttributes::Writeback));
-            assert_eq!(mapped[1], (overlapping_base as u64, overlapping_length as u64, MemoryAttributes::Uncacheable));
+            assert_eq!(mapped[1], (overlapping_base as u64, overlapping_length as u64, MemoryAttributes::Uncached));
 
             // Current mappings should show the overlapping region replaced the original
             // (MockPageTable removes overlapping regions when adding new ones)
             assert_eq!(current_mappings.len(), 1);
             assert_eq!(
                 current_mappings[0],
-                (overlapping_base as u64, overlapping_length as u64, MemoryAttributes::Uncacheable)
+                (overlapping_base as u64, overlapping_length as u64, MemoryAttributes::Uncached)
             );
         });
     }

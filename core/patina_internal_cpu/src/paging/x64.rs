@@ -72,7 +72,7 @@ where
         // start by getting the caching attributes as we need to return those even if the page is unmapped in the
         // page table
         let cache_attr = match self.mtrr.get_memory_attribute(address) {
-            MtrrMemoryCacheType::Uncacheable => CacheAttributeValue::Valid(MemoryAttributes::Uncacheable),
+            MtrrMemoryCacheType::Uncacheable => CacheAttributeValue::Valid(MemoryAttributes::Uncached),
             MtrrMemoryCacheType::WriteCombining => CacheAttributeValue::Valid(MemoryAttributes::WriteCombining),
             MtrrMemoryCacheType::WriteThrough => CacheAttributeValue::Valid(MemoryAttributes::WriteThrough),
             MtrrMemoryCacheType::WriteProtected => CacheAttributeValue::Valid(MemoryAttributes::WriteProtect),
@@ -109,7 +109,7 @@ fn apply_caching_attributes<M: Mtrr>(
         }
 
         let cache_type = match cache_attributes {
-            MemoryAttributes::Uncacheable => MtrrMemoryCacheType::Uncacheable,
+            MemoryAttributes::Uncached => MtrrMemoryCacheType::Uncacheable,
             MemoryAttributes::WriteCombining => MtrrMemoryCacheType::WriteCombining,
             MemoryAttributes::WriteThrough => MtrrMemoryCacheType::WriteThrough,
             MemoryAttributes::WriteProtect => MtrrMemoryCacheType::WriteProtected,
@@ -216,7 +216,7 @@ mod tests {
 
         let mut paging = EfiCpuPagingX64 { paging: mock_page_table, mtrr: mock_mtrr };
 
-        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
         assert!(result.is_ok());
     }
 
@@ -245,7 +245,7 @@ mod tests {
 
         let mut paging = EfiCpuPagingX64 { paging: mock_page_table, mtrr: mock_mtrr };
 
-        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
         assert!(result.is_ok());
     }
 
@@ -261,6 +261,6 @@ mod tests {
 
         let result = paging.query_memory_region(0x1000, 0x1000);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), MemoryAttributes::Writeback | MemoryAttributes::Uncacheable);
+        assert_eq!(result.unwrap(), MemoryAttributes::Writeback | MemoryAttributes::Uncached);
     }
 }
