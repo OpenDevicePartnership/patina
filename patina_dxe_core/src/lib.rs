@@ -565,16 +565,16 @@ impl<P: PlatformInfo> Core<P> {
 
     /// Starts the core, dispatching all drivers.
     fn start_dispatcher(&'static self, physical_hob_list: *mut c_void) -> Result<()> {
+        log::info!("Initializing System Table");
+        self.initialize_system_table(physical_hob_list)?;
+        log::info!("Finished.");
+
         log::info!("Registering platform components");
         self.apply_component_info();
         log::info!("Finished.");
 
         log::info!("Registering default components");
         self.add_core_components();
-        log::info!("Finished.");
-
-        log::info!("Initializing System Table");
-        self.initialize_system_table(physical_hob_list)?;
         log::info!("Finished.");
 
         log::info!("Parsing HOB list for Guided HOBs.");

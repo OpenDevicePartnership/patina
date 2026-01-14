@@ -105,7 +105,7 @@ use core::{
 use alloc::{borrow::Cow, boxed::Box};
 
 use crate::{
-    boot_services::StandardBootServices,
+    boot_services::{BootServices, StandardBootServices},
     component::{
         metadata::MetaData,
         service::IntoService,
@@ -708,6 +708,80 @@ unsafe impl Param for StandardRuntimeServices {
 
     fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         Ok(())
+    }
+}
+
+/// A handle for self-identification of a component.
+///
+/// Currently only contains an EFI handle used for direct interaction with UEFI services.
+#[derive(Debug, Clone, Copy)]
+pub struct Handle(r_efi::efi::Handle);
+
+impl Handle {
+    /// Creates an instance of Handle from the given EFI handle.
+    ///
+    /// This function is intended for testing purposes only.
+    pub fn mock(handle: r_efi::efi::Handle) -> Self {
+        Self(handle)
+    }
+
+    /// Returns Self as the EFI handle associated with the component.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// use patina::component::params::Handle;
+    /// use patina::boot_services::{BootServices, StandardBootServices};
+    ///
+    /// fn my_component(handle: Handle, bs: StandardBootServices) {
+    ///    unsafe {
+    ///      assert!(bs.handle_protocol::<r_efi::protocols::disk_io::Protocol>(handle.efi_handle()).is_err_and(|e| {
+    ///        matches!(e, r_efi::efi::Status::NOT_FOUND)
+    ///      }));
+    ///    }
+    /// }
+    /// ```
+    pub fn efi_handle(&self) -> r_efi::efi::Handle {
+        self.0
+    }
+}
+
+// SAFETY: Handle parameter does not require storage access, so no tracking is needed.
+unsafe impl Param for Handle {
+    type State = usize;
+    type Item<'storage, 'state> = Self;
+
+    unsafe fn get_param<'state>(
+        state: &'state Self::State,
+        _storage: UnsafeStorageCell<'_>,
+    ) -> Self::Item<'static, 'state> {
+        let state = *state;
+        Self(state as r_efi::efi::Handle)
+    }
+
+    fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
+        true
+    }
+
+    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        const PATINA_COMPONENT_GUID: crate::BinaryGuid =
+            crate::BinaryGuid::from_string("3346877B-C962-4A34-A42D-50B8437B827D");
+
+        // SAFETY: We are installing a marker protocol, so the interface is expected to be null.
+        let result = unsafe {
+            storage.boot_services().install_protocol_interface_unchecked(
+                None,
+                &PATINA_COMPONENT_GUID,
+                core::ptr::null_mut(),
+            )
+        };
+
+        match result {
+            Ok(handle) => Ok(handle as usize),
+            Err(e) => {
+                Err(Cow::from(alloc::format!("Failed to install Patina component marker protocol interface: {:?}", e)))
+            }
+        }
     }
 }
 
