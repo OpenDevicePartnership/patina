@@ -1226,7 +1226,7 @@ fn core_load_pe_image(
 
     // If we are not NX compatible and a runtime driver, we need to attempt to activate compatibility mode.
     // Otherwise apply the memory protections.
-    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER && !private_info.pe_info.nx_compat {
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat {
         private_info.activate_compatibility_mode()?;
     } else {
         // finally, update the GCD attributes for this image so that code sections have RO set and data sections
