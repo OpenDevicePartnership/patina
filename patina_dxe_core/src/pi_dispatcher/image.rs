@@ -1224,7 +1224,8 @@ fn core_load_pe_image(
 
     private_info.load_resource_section(image)?;
 
-    // If we are not NX compatible and a runtime driver, we need to attempt to activate compatibility mode.
+    // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
+    // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
     if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat {
         private_info.activate_compatibility_mode()?;
