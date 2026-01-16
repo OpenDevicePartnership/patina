@@ -1258,9 +1258,19 @@ impl BootServices for StandardBootServices {
             _ => ptr::null_mut(),
         };
 
-        // Use to get the buffer_size
+        // Expect locate to return BUFFER_TOO_SMALL to get the buffer_size
         let mut buffer_size = 0;
-        locate_handle(search_type.into(), protocol, search_key, ptr::addr_of_mut!(buffer_size), ptr::null_mut());
+        match locate_handle(
+            search_type.into(),
+            protocol,
+            search_key,
+            ptr::addr_of_mut!(buffer_size),
+            ptr::null_mut(),
+        ) {
+            s if s == efi::Status::BUFFER_TOO_SMALL => (),
+            s if s.is_error() => return Err(s),
+            _ => return Err(efi::Status::PROTOCOL_ERROR),
+        }
 
         let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, buffer_size)?;
 
