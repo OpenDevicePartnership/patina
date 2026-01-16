@@ -513,7 +513,6 @@ impl ProtocolDb {
     }
 
     fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
-
         // Modeling EDK2 behavior, enumerate handles *already* installed, not only future installs
         let mut fresh_handles = BTreeSet::new();
         for (key, handle_data) in self.handles.iter() {
@@ -2036,7 +2035,8 @@ mod tests {
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             // Create existing protocol
-            let existing_handle = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
+            let existing_handle =
+                SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
 
             let event = 0x8765 as *mut c_void;
             let reg = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event).unwrap();
