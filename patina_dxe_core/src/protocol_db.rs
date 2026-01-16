@@ -2038,7 +2038,7 @@ mod tests {
             let existing_handle =
                 SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
 
-            // Register for notificaiton
+            // Register for notification
             let event = 0x8765 as *mut c_void;
             let reg = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event).unwrap();
 
