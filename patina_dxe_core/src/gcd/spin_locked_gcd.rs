@@ -386,7 +386,7 @@ impl GCD {
         });
 
         self.memory_blocks
-            .resize(unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) });
+            .expand(unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) });
 
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
@@ -1402,7 +1402,7 @@ impl IoGCD {
     fn init_io_blocks(&mut self) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
 
-        self.io_blocks.resize(unsafe {
+        self.io_blocks.expand(unsafe {
             Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
                 .as_mut()
                 .expect("RBT given null pointer in initialization.")

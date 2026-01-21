@@ -56,6 +56,9 @@ pub fn core_install_configuration_table(
         assert_eq!(system_table.number_of_table_entries, 0);
         None
     } else {
+        // SAFETY: efi_system_table is an EfiSystemTable as enforced by the input argument.
+        // We have guaranteed that system_table.configuration_table is non-null and this logic
+        // enforces that if it is non-null it points to a valid slice.
         let ct_slice_box = unsafe {
             Box::from_raw_in(
                 slice_from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),
@@ -167,6 +170,9 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
+            // SAFETY: multiple functions modify global state. Functions are
+            // called within a global lock to ensure exclusive access during
+            // initialization.
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::reset_allocators();

@@ -47,6 +47,7 @@ fn get_platform_driver_override_bindings(
     {
         Err(_) => return Vec::new(),
         Ok(protocol) => unsafe {
+            // SAFETY: locate_protocol guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
             (protocol as *mut efi::protocols::platform_driver_override::Protocol).as_mut().expect("bad protocol ptr")
         },
     };
@@ -80,6 +81,7 @@ fn get_family_override_bindings() -> Vec<*mut efi::protocols::driver_binding::Pr
     for handle in driver_binding_handles {
         match PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::driver_family_override::PROTOCOL_GUID) {
             Ok(protocol) => {
+                // SAFETY: get_interface_for_handle guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
                 let driver_override_protocol = unsafe {
                     (protocol as *mut efi::protocols::driver_family_override::Protocol)
                         .as_mut()
@@ -103,6 +105,7 @@ fn get_bus_specific_override_bindings(
         .get_interface_for_handle(controller_handle, efi::protocols::bus_specific_driver_override::PROTOCOL_GUID)
     {
         Err(_) => return Vec::new(),
+        // SAFETY: get_interface_for_handle guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
         Ok(protocol) => unsafe {
             (protocol as *mut efi::protocols::bus_specific_driver_override::Protocol)
                 .as_mut()
@@ -133,6 +136,9 @@ fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protoco
         Ok(handles) => get_bindings_for_handles(handles),
     };
 
+    // SAFETY: driver_bindings must contain valid pointers/handles (a & b as well as *a & *b)
+    // when sort_unstable_by() is called. If .locate_handles() returns 'Ok' and handles is
+    // not empty, we rely on get_bindings_for_handles to return a valid Vec.
     driver_bindings.sort_unstable_by(|a, b| unsafe { (*(*b)).version.cmp(&(*(*a)).version) });
 
     driver_bindings
@@ -162,6 +168,7 @@ fn authenticate_connect(
             };
 
             if let Ok(mut file_path) = file_path {
+                // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
                 let security2 = unsafe {
                     (security2_ptr as *mut patina::pi::protocols::security2::Protocol)
                         .as_ref()
@@ -222,6 +229,8 @@ fn core_connect_single_controller(
     loop {
         let mut started_drivers = Vec::new();
         for driver_binding_interface in driver_candidates.clone() {
+            // SAFETY: driver_binding_interface is a clone of driver_candidates which is created above.
+            // The pointer should be valid as long as driver_candidates is successfully allocated.
             let driver_binding = unsafe { &mut *(driver_binding_interface) };
             let device_path = remaining_device_path.or(Some(core::ptr::null_mut())).expect("must be some");
 
@@ -323,7 +332,9 @@ pub unsafe fn core_connect_controller(
 
     if recursive {
         for child in PROTOCOL_DB.get_child_handles(handle) {
-            //ignore the return value to match behavior of edk2 reference.
+            // ignore the return value to match behavior of edk2 reference.
+            // SAFETY: We do not remove any of these handles during this call, though it is
+            // possible for a different entity at another TPL to do so.
             _ = unsafe { core_connect_controller(child, Vec::new(), None, true) };
         }
     }
@@ -491,6 +502,8 @@ pub unsafe fn core_disconnect_controller(
             .get_interface_for_handle(driver_handle, efi::protocols::driver_binding::PROTOCOL_GUID)
             .or(Err(EfiError::InvalidParameter))?;
         let driver_binding_interface = driver_binding_interface as *mut efi::protocols::driver_binding::Protocol;
+        // SAFETY: driver_binding_interface is validated above, would have been caught with the .or and ? above with
+        // the loop being terminated.
         let driver_binding = unsafe { &mut *(driver_binding_interface) };
 
         let mut status = efi::Status::SUCCESS;
@@ -519,8 +532,17 @@ extern "efiapi" fn disconnect_controller(
     driver_image_handle: efi::Handle,
     child_handle: efi::Handle,
 ) -> efi::Status {
+    if controller_handle.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
+
     let driver_image_handle = NonNull::new(driver_image_handle).map(|x| x.as_ptr());
     let child_handle = NonNull::new(child_handle).map(|x| x.as_ptr());
+    // SAFETY: Caller must ensure controller_handle is valid for the duration of the call.
+    // driver_image_handle and child_handle are both created above using NonNull which should
+    // guarantee they are non-null pointers. controller_handle is validated above. We do not
+    // remove any of these handles during this call, though it is possible for a different
+    // entity at another TPL to do so.
     unsafe {
         match core_disconnect_controller(controller_handle, driver_image_handle, child_handle) {
             Err(err) => err.into(),
@@ -554,6 +576,8 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             test_support::init_test_logger();
+            // SAFETY: init_test_protocol_db modifies global state. It is being called within a
+            // lock to have exclusive mutable access to the protocol database.
             unsafe {
                 test_support::init_test_protocol_db();
             }
@@ -761,6 +785,8 @@ mod tests {
             assert_eq!(bindings.len(), 2);
 
             // Verify the binding versions
+            // SAFETY: The length of bindings is being verified above. This should guarantee
+            // bindings contains at least two valid elements which are checked below.
             unsafe {
                 assert_eq!((*bindings[0]).version, 10);
                 assert_eq!((*bindings[1]).version, 20);
@@ -972,6 +998,8 @@ mod tests {
 
             // First binding should be from handle2 (version 200)
             // Second binding should be from handle1 (version 100)
+            // SAFETY: The length of bindings is being verified above. This should guarantee
+            // bindings contains at least two valid elements which are checked below.
             unsafe {
                 assert_eq!((*bindings[0]).version, 20); // handle2's binding version
                 assert_eq!((*bindings[1]).version, 10); // handle1's binding version
@@ -1019,6 +1047,8 @@ mod tests {
             assert_eq!(bindings.len(), 3);
 
             // Verify the correct order by version (descending)
+            // SAFETY: The length of bindings is being verified above. This should guarantee
+            // bindings contains at least three valid elements which are checked below.
             unsafe {
                 assert_eq!((*bindings[0]).version, 30); // handle2's binding - highest version
                 assert_eq!((*bindings[1]).version, 20); // handle3's binding - middle version
@@ -1225,6 +1255,9 @@ mod tests {
             START_CALL_COUNT.store(0, Ordering::SeqCst);
 
             // Test 1: Basic connection (non-recursive)
+            // SAFETY: Both controller_handle and driver_handle are required to be valid. Both are
+            // set via an .unwrap() call from an .install_protocol_interface() call. These calls
+            // would panic if an error was returned.
             unsafe {
                 let result = core_connect_controller(
                     controller_handle,
@@ -1263,6 +1296,9 @@ mod tests {
                 .unwrap();
 
             // Test recursive connection
+            // SAFETY: Both controller_handle and driver_handle are required to be valid. Both are
+            // set via an .unwrap() call from an .install_protocol_interface() call. These calls
+            // would panic if an error was returned.
             unsafe {
                 let result = core_connect_controller(
                     controller_handle,
@@ -1285,6 +1321,10 @@ mod tests {
             SUPPORTED_CALL_COUNT.store(0, Ordering::SeqCst);
             START_CALL_COUNT.store(0, Ordering::SeqCst);
 
+            // SAFETY: controller_handle, driver_handle and end_path_ptr are required to be valid.
+            // controller_handle and driver_handle are set via an .unwrap() call from an
+            // .install_protocol_interface() call. These calls would panic if an error was returned.
+            // end_path_ptr was set via Box::into_raw which is guaranteed to return a non-null pointer.
             unsafe {
                 let result = core_connect_controller(
                     controller_handle,
@@ -1432,6 +1472,8 @@ mod tests {
                     .unwrap();
 
                 // Test disconnect without specifying driver or child
+                // SAFETY: controller_handle is required to be valid. It was set via an .unwrap() call
+                // from an .install_protocol_interface() call. This call would panic if an error was returned.
                 unsafe {
                     let result = core_disconnect_controller(controller_handle, None, None);
                     assert!(result.is_ok(), "Should successfully disconnect all drivers");
@@ -1538,6 +1580,8 @@ mod tests {
             LAST_CHILD_COUNT.store(999, Ordering::SeqCst); // Set to invalid value to detect changes
 
             // Test disconnect - should call stop function
+            // SAFETY: controller_handle is required to be valid. It was set via an .unwrap() call
+            // from an .install_protocol_interface() call. This call would panic if an error was returned.
             unsafe {
                 let result = core_disconnect_controller(controller_handle, None, None);
                 assert!(result.is_ok(), "disconnect should succeed");
@@ -1657,6 +1701,9 @@ mod tests {
             // Test disconnect with specific child handle (which is the ONLY child)
             // This should trigger: is_only_child = total_children == child_handles.len() = true
             // Because: total_children = 1, child_handles.retain() keeps 1 child, so 1 == 1
+            // SAFETY: Both controller_handle and child_handle are required to be valid. Both were set
+            // via an .unwrap() call from an .install_protocol_interface() call. These calls would panic
+            // if an error was returned.
             unsafe {
                 let result = core_disconnect_controller(controller_handle, None, Some(child_handle));
                 assert!(result.is_ok(), "disconnect should succeed");
@@ -1690,6 +1737,10 @@ mod tests {
             let invalid_driver_handle = 0x9999 as efi::Handle;
 
             // Test disconnect with invalid driver handle
+            // SAFETY: Both controller_handle and invalid_driver_handle are required to be valid.
+            // controller_handle is set via an .unwrap() call from an .install_protocol_interface()
+            // call. This call would panic if an error was returned. invalid_driver_handle is
+            // statically set to 0x9999 which guarantees it is non-null.
             unsafe {
                 let result = core_disconnect_controller(
                     controller_handle,
@@ -1726,6 +1777,10 @@ mod tests {
             let invalid_child_handle = 0x8888 as efi::Handle;
 
             // Test disconnect with invalid child handle
+            // SAFETY: Both controller_handle and invalid_child_handle are required to be valid.
+            // controller_handle is set via an .unwrap() call from an .install_protocol_interface()
+            // call. This call would panic if an error was returned. invalid_child_handle is
+            // statically set to 0x8888 which guarantees it is non-null.
             unsafe {
                 let result = core_disconnect_controller(
                     controller_handle,

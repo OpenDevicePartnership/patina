@@ -34,7 +34,7 @@ where
     ///
     /// This is useful for creating a tree at compile time and replacing the memory later. Use
     /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
-    /// [resize](Self::resize) to replace the memory later.
+    /// [expand](Self::expand) to replace the memory later.
     pub const fn new() -> Self {
         Rbt { storage: Storage::new(), root: Cell::new(core::ptr::null_mut()) }
     }
@@ -843,11 +843,18 @@ impl<'a, D> Rbt<'a, D>
 where
     D: SliceKey + Copy + 'a,
 {
-    /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
-    pub fn resize(&mut self, slice: &'a mut [u8]) {
+    /// Expands the tree's storage capacity to a new, larger buffer.
+    ///
+    /// This function cannot shrink the storage capacity - it only allows expansion.
+    /// All nodes are copied to the new buffer to preserve the tree structure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new slice is smaller than the current capacity.
+    pub fn expand(&mut self, slice: &'a mut [u8]) {
         let root = (!self.root.get().is_null()).then(|| self.storage.idx(self.root.get()));
 
-        self.storage.resize(slice);
+        self.storage.expand(slice);
 
         if let Some(idx) = root {
             self.root.set(self.storage.get_mut(idx).expect("Pointer Exists."));
@@ -1773,11 +1780,11 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_resize() {
+    fn test_simple_expand() {
         let mut rbt = Rbt::<usize>::new();
 
         let mut mem = [0; 20 * node_size::<usize>()];
-        rbt.resize(&mut mem);
+        rbt.expand(&mut mem);
 
         for i in 0..10 {
             assert!(rbt.add(i).is_ok());
@@ -1789,7 +1796,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resize_with_existing_data() {
+    fn test_expand_with_existing_data() {
         let mut mem = [0; 10 * node_size::<usize>()];
         let mut rbt = Rbt::<usize>::with_capacity(&mut mem);
 
@@ -1801,7 +1808,7 @@ mod tests {
         }
 
         let mut new_mem = [0; 20 * node_size::<usize>()];
-        rbt.resize(&mut new_mem);
+        rbt.expand(&mut new_mem);
 
         assert_eq!(rbt.len(), 10);
         assert_eq!(rbt.capacity(), 20);
