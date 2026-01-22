@@ -41,6 +41,7 @@ words:
   - armasm
   - autocfg
   - bitvec
+  - bootx
   - bucketize
   - bumpalo
   - cbindgen
