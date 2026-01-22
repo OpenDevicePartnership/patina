@@ -816,10 +816,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_can_be_accessed_while_unlocked() {
+    fn test_config_can_be_accessed_when_locked() {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
+        // Config::init_state adds config which is locked by default
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(Config::<i32>::try_validate(&id, (&storage).into()).is_ok());
@@ -849,7 +850,9 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
+        // Config::init_state adds config which is locked by default, so ConfigMut cannot access it
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
+
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
                 .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32> not available.")
@@ -931,16 +934,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
-        // instead, so that the pointer to the boot services table is not null.
-        #[allow(invalid_value)]
-        let mut efi_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
-
-        // SAFETY: Test code - Creating StandardBootServices from a zeroed BootServices struct for testing.
-        // This is acceptable in test code as we're only checking parameter validation logic.
-        let bs = StandardBootServices::new(efi_bs.as_mut_ptr());
-
-        storage.set_boot_services(bs);
+        let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+        storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardBootServices as Param>::try_validate(&(), (&storage).into()).is_ok());
@@ -968,15 +963,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
-        // instead, so that the pointer to the boot services table is not null.
-        #[allow(invalid_value)]
-        let mut efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
-
-        // SAFETY: Test code - Creating StandardRuntimeServices from a zeroed RuntimeServices struct for testing.
-        // This is acceptable in test code as we're only checking parameter validation logic.
-        let rt = StandardRuntimeServices::new(efi_rt.as_mut_ptr());
-        storage.set_runtime_services(rt);
+        let mut mock_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
+        storage.set_runtime_services(StandardRuntimeServices::new(mock_rt.as_mut_ptr()));
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardRuntimeServices as Param>::try_validate(&(), (&storage).into()).is_ok());
