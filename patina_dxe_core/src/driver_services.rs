@@ -289,7 +289,7 @@ fn core_connect_single_controller(
         return Ok(());
     }
 
-    // Safety: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
+    // SAFETY: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
     if let Some(device_path) = remaining_device_path
         && unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
     {
@@ -354,14 +354,14 @@ extern "efiapi" fn connect_controller(
         let mut current_ptr = driver_image_handle;
         let mut handles: Vec<efi::Handle> = Vec::new();
         loop {
-            // Safety: caller must ensure that driver_image_handle is a valid pointer to a null-terminated list of
+            // SAFETY: caller must ensure that driver_image_handle is a valid pointer to a null-terminated list of
             // handles if it is not null.
             let current_val = unsafe { current_ptr.read_unaligned() };
             if current_val.is_null() {
                 break;
             }
             handles.push(current_val);
-            // Safety: caller guarantees a null-terminated list, so safe to advance to the next pointer as the null-terminator
+            // SAFETY: caller guarantees a null-terminated list, so safe to advance to the next pointer as the null-terminator
             // has just been checked above.
             current_ptr = unsafe { current_ptr.add(1) };
         }
@@ -370,7 +370,7 @@ extern "efiapi" fn connect_controller(
     // remaining_device_path is passed in and may not have proper alignment.
     let device_path = if remaining_device_path.is_null() { None } else { Some(remaining_device_path) };
 
-    // Safety: caller must ensure that device_path is a valid pointer to a device path structure if it is not null.
+    // SAFETY: caller must ensure that device_path is a valid pointer to a device path structure if it is not null.
     unsafe {
         match core_connect_controller(handle, driver_handles, device_path, recursive.into()) {
             Err(err) => err.into(),

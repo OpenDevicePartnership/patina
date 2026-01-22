@@ -16,17 +16,17 @@ production systems and required security patches.
 
 The are actual CVEs found in UEFI firmware that could have been prevented with the memory safety features in Rust.
 
-| CVE ID | CVSS Score | Vulnerability Type | Potential Rust Prevention Mechanism |
-|--------|------------|-------------------|------------------------------------|
-| [CVE-2023-45230](https://nvd.nist.gov/vuln/detail/CVE-2023-45230) | 8.3 (HIGH) | Buffer Overflow in DHCPv6 | Automatic slice bounds checking |
-| [CVE-2022-36765](https://nvd.nist.gov/vuln/detail/CVE-2022-36765) | 7.0 (HIGH) | Integer Overflow in CreateHob() | Checked arithmetic operations |
-| [CVE-2023-45229](https://nvd.nist.gov/vuln/detail/CVE-2023-45229) | 6.5 (MEDIUM) | Out-of-Bounds Read in DHCPv6 | Slice bounds verification |
-| [CVE-2014-8271](https://nvd.nist.gov/vuln/detail/CVE-2014-8271) | 6.8 (MEDIUM) | Buffer Overflow in Variable Processing | Dynamic Vec sizing eliminates fixed buffers |
-| [CVE-2023-45233](https://nvd.nist.gov/vuln/detail/CVE-2023-45233) | 7.5 (HIGH) | Infinite Loop in IPv6 Parsing | Iterator patterns with explicit termination |
-| [CVE-2021-38575](https://nvd.nist.gov/vuln/detail/CVE-2021-38575) | 8.1 (HIGH) | Remote Buffer Overflow in iSCSI | Slice-based network parsing with bounds checking |
-| [CVE-2019-14563](https://nvd.nist.gov/vuln/detail/CVE-2019-14563) | 7.8 (HIGH) | Integer Truncation | Explicit type conversions with error handling |
-| [CVE-2024-1298](https://nvd.nist.gov/vuln/detail/CVE-2024-1298) | 6.0 (MEDIUM) | Division by Zero from Integer Overflow | Checked arithmetic prevents overflow-induced division by zero |
-| [CVE-2014-4859](https://nvd.nist.gov/vuln/detail/CVE-2014-4859) | Not specified | Integer Overflow in Capsule Update | Safe arithmetic with explicit overflow checking |
+| CVE ID                                                            | CVSS Score    | Vulnerability Type                     | Potential Rust Prevention Mechanism                           |
+| ----------------------------------------------------------------- | ------------- | -------------------------------------- | ------------------------------------------------------------- |
+| [CVE-2023-45230](https://nvd.nist.gov/vuln/detail/CVE-2023-45230) | 8.3 (HIGH)    | Buffer Overflow in DHCPv6              | Automatic slice bounds checking                               |
+| [CVE-2022-36765](https://nvd.nist.gov/vuln/detail/CVE-2022-36765) | 7.0 (HIGH)    | Integer Overflow in CreateHob()        | Checked arithmetic operations                                 |
+| [CVE-2023-45229](https://nvd.nist.gov/vuln/detail/CVE-2023-45229) | 6.5 (MEDIUM)  | Out-of-Bounds Read in DHCPv6           | Slice bounds verification                                     |
+| [CVE-2014-8271](https://nvd.nist.gov/vuln/detail/CVE-2014-8271)   | 6.8 (MEDIUM)  | Buffer Overflow in Variable Processing | Dynamic Vec sizing eliminates fixed buffers                   |
+| [CVE-2023-45233](https://nvd.nist.gov/vuln/detail/CVE-2023-45233) | 7.5 (HIGH)    | Infinite Loop in IPv6 Parsing          | Iterator patterns with explicit termination                   |
+| [CVE-2021-38575](https://nvd.nist.gov/vuln/detail/CVE-2021-38575) | 8.1 (HIGH)    | Remote Buffer Overflow in iSCSI        | Slice-based network parsing with bounds checking              |
+| [CVE-2019-14563](https://nvd.nist.gov/vuln/detail/CVE-2019-14563) | 7.8 (HIGH)    | Integer Truncation                     | Explicit type conversions with error handling                 |
+| [CVE-2024-1298](https://nvd.nist.gov/vuln/detail/CVE-2024-1298)   | 6.0 (MEDIUM)  | Division by Zero from Integer Overflow | Checked arithmetic prevents overflow-induced division by zero |
+| [CVE-2014-4859](https://nvd.nist.gov/vuln/detail/CVE-2014-4859)   | Not specified | Integer Overflow in Capsule Update     | Safe arithmetic with explicit overflow checking               |
 
 ## Vulnerability Classes Eliminated by Rust
 
@@ -342,7 +342,7 @@ fn safe_wrapper(ptr: *const u8) -> Option<u8> {
     }
 
     unsafe {
-        // Safety: We checked for null above
+        // SAFETY: We checked for null above
         Some(*ptr)
     }
 }
@@ -373,7 +373,7 @@ The Rust compiler and tools in the ecosystem enforce that unsafe functions docum
 unsafe fn parse_network_packet(data_ptr: *const u8, len: usize) -> Result<Packet, ParseError> {
     // Implementation that works with raw bytes from network
     let slice = unsafe {
-        // Safety: Caller guarantees ptr and len are valid
+        // SAFETY: Caller guarantees ptr and len are valid
         std::slice::from_raw_parts(data_ptr, len)
     };
 
@@ -423,7 +423,7 @@ impl NetworkBuffer {
 
         // All unsafe operations are contained within this implementation
         unsafe {
-            // Safety: We verified bounds above and self.data is always valid
+            // SAFETY: We verified bounds above and self.data is always valid
             let ptr = self.data.as_ptr().add(offset);
             let remaining = self.len() - offset;
             parse_network_packet(ptr, remaining).map_err(|_| NetworkError::OffsetOutOfBounds())

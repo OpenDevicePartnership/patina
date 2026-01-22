@@ -142,7 +142,7 @@ mod tests {
         impl CpuInfo for TestPlatform {
             #[cfg(target_arch = "aarch64")]
             fn gic_bases() -> GicBases {
-                // Safety: Call is exclusive to the GicBases instance.
+                // SAFETY: Call is exclusive to the GicBases instance.
                 unsafe { GicBases::new(0, 0) }
             }
         }

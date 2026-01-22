@@ -34,14 +34,14 @@ impl<T> ArchProtocolPtr<T> {
         self.0.get().copied()
     }
 
-    // Safety: ptr must be a valid pointer to T and init must only be called once.
+    // SAFETY: ptr must be a valid pointer to T and init must only be called once.
     unsafe fn init(&self, ptr: *mut c_void) {
         assert!(!self.0.is_completed(), "Attempted to set ArchProtocolPtr more than once.");
         let _ = self.0.call_once(|| ptr as *mut T);
     }
 }
 
-// Safety: ArchProtocolPtr is Send/Sync because the pointer it wraps is initialized in a thread-safe manner (using
+// SAFETY: ArchProtocolPtr is Send/Sync because the pointer it wraps is initialized in a thread-safe manner (using
 // `Once`), and the pointer itself is never used to mutate data.
 unsafe impl<T> Send for ArchProtocolPtr<T> {}
 unsafe impl<T> Sync for ArchProtocolPtr<T> {}
@@ -64,7 +64,7 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
     if data.is_null() || data_size == 0 || crc_32.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
-    // Safety: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
+    // SAFETY: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
         let buffer = from_raw_parts(data as *mut u8, data_size);
         crc_32.write_unaligned(crc32fast::hash(buffer));
@@ -77,7 +77,7 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
 // Execution of the processor is not yielded for the duration of the stall.
 extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
     if let Some(metronome_ptr) = METRONOME_ARCH_PTR.get() {
-        // Safety: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
+        // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
         let metronome = unsafe { metronome_ptr.as_mut().unwrap() };
         let ticks_100ns: u128 = (microseconds as u128) * 10;
         let mut ticks = ticks_100ns / metronome.tick_period as u128;
@@ -117,7 +117,7 @@ extern "efiapi" fn set_watchdog_timer(
 ) -> efi::Status {
     const WATCHDOG_TIMER_CALIBRATE_PER_SECOND: u64 = 10000000;
     if let Some(watchdog_ptr) = WATCHDOG_ARCH_PTR.get() {
-        // Safety: watchdog_ptr is guaranteed to be a valid pointer to the watchdog protocol if it is Some.
+        // SAFETY: watchdog_ptr is guaranteed to be a valid pointer to the watchdog protocol if it is Some.
         let watchdog = unsafe { watchdog_ptr.as_mut().unwrap() };
         let timeout = (timeout as u64).saturating_mul(WATCHDOG_TIMER_CALIBRATE_PER_SECOND);
         let status = (watchdog.set_timer_period)(watchdog_ptr, timeout);
@@ -136,7 +136,7 @@ extern "efiapi" fn set_watchdog_timer(
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
         Ok(metronome_arch_ptr) => {
-            // Safety: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
+            // SAFETY: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
             // associated with the metronome arch guid.
             assert!(!metronome_arch_ptr.is_null(), "Located metronome protocol pointer is null.");
             unsafe { METRONOME_ARCH_PTR.init(metronome_arch_ptr) };
@@ -154,7 +154,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
         Ok(watchdog_arch_ptr) => {
-            // Safety: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
+            // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
             // associated with the watchdog arch guid.
             assert!(!watchdog_arch_ptr.is_null(), "Located watchdog protocol pointer is null.");
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };

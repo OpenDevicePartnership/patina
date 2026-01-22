@@ -74,7 +74,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
         hw_interrupt_protocol.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
@@ -88,7 +88,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
         if let Err(err) =
@@ -108,7 +108,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
         if let Err(err) =
@@ -129,14 +129,14 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
         let enable =
             hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
         match enable {
             Ok(enable) => {
-                // Safety: caller must ensure that state is a valid pointer. It is null-checked above.
+                // SAFETY: caller must ensure that state is a valid pointer. It is null-checked above.
                 unsafe { state.write_unaligned(enable) }
                 efi::Status::SUCCESS
             }
@@ -152,7 +152,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
         if let Err(err) =
@@ -225,7 +225,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         hw_interrupt2_protocol.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
     }
@@ -238,7 +238,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         if let Err(err) =
             hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
@@ -257,7 +257,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         if let Err(err) =
             hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
@@ -277,7 +277,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         let enable =
             hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
@@ -297,7 +297,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
         if this.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         if let Err(err) =
             hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
@@ -317,7 +317,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         let level = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
         match level {
@@ -338,7 +338,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
         if let Err(err) = hw_interrupt2_protocol
             .hw_interrupt_handler

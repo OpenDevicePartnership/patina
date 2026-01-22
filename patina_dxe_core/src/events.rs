@@ -52,7 +52,7 @@ extern "efiapi" fn create_event(
 
     match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
-            // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
+            // SAFETY: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
             efi::Status::SUCCESS
         }
@@ -81,12 +81,12 @@ extern "efiapi" fn create_event_ex(
         _ => (),
     }
 
-    // Safety: caller must ensure that event_group is a valid pointer if not null.
+    // SAFETY: caller must ensure that event_group is a valid pointer if not null.
     let event_group = if !event_group.is_null() { Some(unsafe { event_group.read_unaligned() }) } else { None };
 
     match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
-            // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
+            // SAFETY: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
             efi::Status::SUCCESS
         }
@@ -128,12 +128,12 @@ extern "efiapi" fn wait_for_event(
     loop {
         let mut event_ptr = event_array;
         for index in 0..number_of_events {
-            // Safety: caller must ensure that event_array is a valid pointer and number_of_events is correct. event_array is null-checked above.
+            // SAFETY: caller must ensure that event_array is a valid pointer and number_of_events is correct. event_array is null-checked above.
             let event = unsafe { event_ptr.read_unaligned() };
             match check_event(event) {
                 efi::Status::NOT_READY => (),
                 status => {
-                    // Safety: caller must ensure that out_index is a valid pointer if it is not null.
+                    // SAFETY: caller must ensure that out_index is a valid pointer if it is not null.
                     if !out_index.is_null() {
                         unsafe {
                             out_index.write_unaligned(index);
@@ -142,7 +142,7 @@ extern "efiapi" fn wait_for_event(
                     return status;
                 }
             }
-            // Safety: caller must ensure that event_array is a valid pointer and number_of_events is correct. event_array is null-checked above.
+            // SAFETY: caller must ensure that event_array is a valid pointer and number_of_events is correct. event_array is null-checked above.
             event_ptr = unsafe { event_ptr.add(1) };
         }
 

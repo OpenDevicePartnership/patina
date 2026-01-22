@@ -30,7 +30,7 @@ pub unsafe trait ProtocolInterface {
 
 macro_rules! impl_r_efi_protocol {
     ($protocol:ident) => {
-        // Safety: This macro implements ProtocolInterface for r_efi protocol types. The PROTOCOL_GUID constant
+        // SAFETY: This macro implements ProtocolInterface for r_efi protocol types. The PROTOCOL_GUID constant
         // from r_efi matches the protocol interface layout by design - r_efi provides the canonical UEFI
         // protocol definitions and GUIDs from the UEFI specification. The Protocol struct layout matches
         // the UEFI protocol interface requirements.

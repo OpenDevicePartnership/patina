@@ -117,15 +117,15 @@ impl<T: ?Sized + fmt::Display, B: BootServices> fmt::Display for TplMutexGuard<'
     }
 }
 
-// Safety: TplMutex is Sync because it ensures exclusive access to T through TPL-based locking.
+// SAFETY: TplMutex is Sync because it ensures exclusive access to T through TPL-based locking.
 // The lock/unlock operations at TPL_HIGH_LEVEL prevent concurrent access. T must be Send to
 // allow transfer between threads, and the mutex ensures only one thread accesses T at a time.
 unsafe impl<T: ?Sized + Send, B: BootServices + Send> Sync for TplMutex<T, B> {}
-// Safety: TplMutex is Send because it owns T (which is Send) and uses TPL locking to ensure
+// SAFETY: TplMutex is Send because it owns T (which is Send) and uses TPL locking to ensure
 // thread-safe access. The mutex can be safely transferred between threads.
 unsafe impl<T: ?Sized + Send, B: BootServices + Send> Send for TplMutex<T, B> {}
 
-// Safety: TplMutexGuard is Sync when T is Sync because the guard represents exclusive access
+// SAFETY: TplMutexGuard is Sync when T is Sync because the guard represents exclusive access
 // to T through the TPL mutex. The guard can be shared across threads safely.
 unsafe impl<T: ?Sized + Sync, B: BootServices> Sync for TplMutexGuard<'_, T, B> {}
 

@@ -677,7 +677,7 @@ unsafe impl Param for StandardBootServices {
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
-        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        // SAFETY: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.boot_services().is_init()
     }
 
@@ -702,7 +702,7 @@ unsafe impl Param for StandardRuntimeServices {
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
-        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        // SAFETY: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.runtime_services().is_init()
     }
 

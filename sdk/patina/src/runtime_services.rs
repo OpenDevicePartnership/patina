@@ -33,11 +33,11 @@ pub struct StandardRuntimeServices {
     efi_runtime_services: Once<*mut efi::RuntimeServices>,
 }
 
-// Safety: efi::RuntimeServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
+// SAFETY: efi::RuntimeServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
 // within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_runtime_services pointer
 // itself, that is protected by the Once wrapper and is not expected to change once initialized.
 unsafe impl Sync for StandardRuntimeServices {}
-// Safety: See Sync impl above.
+// SAFETY: See Sync impl above.
 unsafe impl Send for StandardRuntimeServices {}
 
 impl StandardRuntimeServices {

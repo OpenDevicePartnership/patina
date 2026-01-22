@@ -28,7 +28,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
         return efi::Status::INVALID_PARAMETER;
     }
 
-    // Safety: caller must ensure that table_guid is a valid pointer. It is null-checked above.
+    // SAFETY: caller must ensure that table_guid is a valid pointer. It is null-checked above.
     let table_guid = unsafe { table_guid.read_unaligned() };
 
     let mut st_guard = SYSTEM_TABLE.lock();
@@ -135,7 +135,7 @@ pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>
         return None;
     }
 
-    // Safety: system table exists, and configuration is non-null, and number_of_table_entries is non-zero.
+    // SAFETY: system table exists, and configuration is non-null, and number_of_table_entries is non-zero.
     let ct_slice = unsafe { from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
 
     for entry in ct_slice {

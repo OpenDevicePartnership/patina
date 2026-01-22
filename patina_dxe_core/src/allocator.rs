@@ -592,7 +592,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
 
     match core_allocate_pool(pool_type, size) {
         Err(err) => err.into(),
-        // Safety: caller must ensure that buffer is a valid pointer. It is null-checked above.
+        // SAFETY: caller must ensure that buffer is a valid pointer. It is null-checked above.
         Ok(allocation) => unsafe {
             buffer.write_unaligned(allocation);
             efi::Status::SUCCESS
@@ -678,12 +678,12 @@ pub fn core_allocate_pages(
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
-                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                    // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::TopDown(Some(address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
-                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                    // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::Address(address as usize), pages, alignment)
                 }
@@ -691,7 +691,7 @@ pub fn core_allocate_pages(
             };
 
             if let Ok(ptr) = result {
-                // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                 unsafe { memory.write_unaligned(ptr.expose_provenance().get() as u64) }
                 Ok(())
             } else {
@@ -785,12 +785,12 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 }
 
 extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void, length: usize) {
-    // Safety: caller must ensure that the source and destination are valid for length bytes.
+    // SAFETY: caller must ensure that the source and destination are valid for length bytes.
     unsafe { core::ptr::copy(source as *mut u8, destination as *mut u8, length) }
 }
 
 extern "efiapi" fn set_mem(buffer: *mut c_void, size: usize, value: u8) {
-    // Safety: caller must ensure that the buffer is valid for size bytes.
+    // SAFETY: caller must ensure that the buffer is valid for size bytes.
     unsafe {
         let dst_buffer = from_raw_parts_mut(buffer as *mut u8, size);
         dst_buffer.fill(value);
@@ -809,16 +809,16 @@ extern "efiapi" fn get_memory_map(
     }
 
     if !descriptor_size.is_null() {
-        // Safety: caller must ensure that descriptor_size is a valid pointer if it is not null.
+        // SAFETY: caller must ensure that descriptor_size is a valid pointer if it is not null.
         unsafe { descriptor_size.write_unaligned(mem::size_of::<efi::MemoryDescriptor>()) };
     }
 
     if !descriptor_version.is_null() {
-        // Safety: caller must ensure that descriptor_version is a valid pointer if it is not null.
+        // SAFETY: caller must ensure that descriptor_version is a valid pointer if it is not null.
         unsafe { descriptor_version.write_unaligned(efi::MEMORY_DESCRIPTOR_VERSION) };
     }
 
-    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
@@ -835,7 +835,7 @@ extern "efiapi" fn get_memory_map(
 
     let descriptor_count = map_size / mem::size_of::<efi::MemoryDescriptor>();
 
-    // Safety: caller must ensure that memory_map is a valid pointer for at least descriptor_count elements.
+    // SAFETY: caller must ensure that memory_map is a valid pointer for at least descriptor_count elements.
     // It is null-checked above and the size has been validated.
     let buffer = unsafe { slice::from_raw_parts_mut(memory_map, descriptor_count) };
 
@@ -846,10 +846,10 @@ extern "efiapi" fn get_memory_map(
     let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
 
     // Write back the actual map size after merging
-    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(actual_map_size) };
 
-    // Safety: caller must ensure that map_key is a valid pointer if it is not null.
+    // SAFETY: caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
         if !map_key.is_null() {
             let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, actual_map_size);
@@ -1181,7 +1181,7 @@ pub fn init_memory_support(hob_list: &HobList) {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
-                // Safety: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
+                // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
                 // requirement for EfiMemoryTypeInformation), and length is calculated above to fit within the
                 // Guid HOB data. Assert if alignment is not as expected.
                 assert_eq!(memory_type_slice_ptr.align_offset(mem::align_of::<EFiMemoryTypeInformation>()), 0);
@@ -1754,7 +1754,7 @@ mod tests {
             let allocator = &EFI_BOOT_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
@@ -1771,7 +1771,7 @@ mod tests {
             let allocator = &EFI_BOOT_SERVICES_CODE_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
@@ -1791,7 +1791,7 @@ mod tests {
             let allocator = &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
