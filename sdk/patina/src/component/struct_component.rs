@@ -188,14 +188,21 @@ mod tests {
     fn test_component_run_handling_works_as_expected() {
         let mut storage = crate::component::storage::Storage::new();
 
+        // Test component with Config<i32> - requires locked configs
         let mut test_struct = TestStructSuccess { x: 5 }.into_component();
         test_struct.initialize(&mut storage);
+        storage.lock_configs(); // Lock configs so Config<i32> is accessible
         assert!(test_struct.run(&mut storage).is_ok_and(|res| res));
 
         let mut test_enum = TestEnumSuccess::A.into_component();
         test_enum.initialize(&mut storage);
         assert!(test_enum.run(&mut storage).is_ok_and(|res| res));
 
+        // Unlock configs for the next test
+        let config_id = storage.register_config::<u32>();
+        storage.unlock_config(config_id);
+
+        // Test component with ConfigMut<u32> - configs are now locked, so it should fail
         let mut test_struct = TestStructNotDispatched { x: 5 }.into_component();
         test_struct.initialize(&mut storage);
         storage.lock_configs(); // Lock it so the ConfigMut can't be accessed
