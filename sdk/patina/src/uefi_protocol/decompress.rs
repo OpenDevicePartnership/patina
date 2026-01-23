@@ -9,7 +9,6 @@
 use core::ffi::c_void;
 
 use crate::uefi_protocol::ProtocolInterface;
-use goblin::pe::debug;
 use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
 use r_efi::efi;
 

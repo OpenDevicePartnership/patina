@@ -19,7 +19,7 @@ pub mod variable_services;
 use mockall::automock;
 
 use alloc::vec::Vec;
-use core::{ffi::c_void, fmt::Debug, panic, ptr};
+use core::{ffi::c_void, fmt::Debug, ptr};
 use spin::Once;
 
 use r_efi::efi;
@@ -55,9 +55,7 @@ impl StandardRuntimeServices {
 
     /// Initialized the StandardRuntimeServices.
     pub fn init(&self, efi_runtime_services: *mut efi::RuntimeServices) {
-        if efi_runtime_services.is_null() {
-            panic!("Attempted to initialize Standard Runtime Services with null pointer");
-        }
+        assert!(!efi_runtime_services.is_null(), "Cannot initialize StandardRuntimeServices with null pointer!");
         self.efi_runtime_services.call_once(|| efi_runtime_services);
     }
 
@@ -426,16 +424,10 @@ impl RuntimeServices for StandardRuntimeServices {
             if status == efi::Status::BUFFER_TOO_SMALL && first_try {
                 first_try = false;
 
-                if next_name_size <= next_name.len() {
-                    debug_assert!(
-                        false,
-                        "GetNextVariableName returned BUFFER_TOO_SMALL but the provided buffer is already large enough."
-                    );
-                    log::error!(
-                        "GetNextVariableName returned BUFFER_TOO_SMALL but the provided buffer is already large enough."
-                    );
-                    return Err(efi::Status::INVALID_PARAMETER);
-                }
+                assert!(
+                    next_name_size > next_name.len(),
+                    "get_next_variable_name requested smaller buffer on BUFFER_TOO_SMALL."
+                );
 
                 // Resize name to be able to fit the size of the next name
                 next_name.resize(next_name_size, 0);
