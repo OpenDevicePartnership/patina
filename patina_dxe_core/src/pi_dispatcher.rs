@@ -20,13 +20,9 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void};
-use mu_rust_helpers::{function, guid::guid_fmt};
+use mu_rust_helpers::{guid::guid_fmt};
 use patina::{
     error::EfiError,
-    performance::{
-        logging::{perf_function_begin, perf_function_end},
-        measurement::create_performance_measurement,
-    },
     pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
 };
 use patina_ffs::{
@@ -37,8 +33,6 @@ use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use r_efi::efi;
 use spin::RwLock;
-
-use mu_rust_helpers::guid::CALLER_ID;
 
 use debug_image_info_table::EfiSystemTablePointer;
 use fv::device_path_bytes_for_fv_file;

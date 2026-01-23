@@ -118,15 +118,10 @@ use core::{
 
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
-use mu_rust_helpers::{function, guid::CALLER_ID};
 use patina::{
     boot_services::StandardBootServices,
     component::IntoComponent,
     error::{self, Result},
-    performance::{
-        logging::{perf_function_begin, perf_function_end},
-        measurement::create_performance_measurement,
-    },
     pi::{
         hob::{HobList, get_pi_hob_list_size},
         protocols::{bds, status_code},
