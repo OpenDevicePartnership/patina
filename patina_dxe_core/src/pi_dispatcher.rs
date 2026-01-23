@@ -20,7 +20,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void};
-use mu_rust_helpers::{guid::guid_fmt};
+use mu_rust_helpers::guid::guid_fmt;
 use patina::{
     error::EfiError,
     pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
