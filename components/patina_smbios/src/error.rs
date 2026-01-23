@@ -32,14 +32,18 @@ pub enum SmbiosError {
     InvalidStringPoolTermination,
     /// String pool area is too small (must be at least 2 bytes)
     StringPoolTooSmall,
+    /// Failed to find the record corresponding to the specified handle in the record table
+    RecordNotFound,
 
     // Handle management errors
     /// All available handles have been exhausted (reached 0xFFFE limit)
     HandleExhausted,
-    /// The specified handle was not found in the record table
-    HandleNotFound,
     /// String index is out of range for the specified record
     StringIndexOutOfRange,
+    /// The specified handle was already used by another record
+    HandleInUse,
+    /// The specified handle is out of range
+    HandleOutOfRange,
 
     // Resource allocation errors
     /// Failed to allocate memory for SMBIOS table or entry point
@@ -82,10 +86,12 @@ impl From<SmbiosError> for patina::error::EfiError {
             | SmbiosError::InvalidStringPoolTermination
             | SmbiosError::StringPoolTooSmall
             | SmbiosError::StringIndexOutOfRange
-            | SmbiosError::Type127Managed => patina::error::EfiError::InvalidParameter,
+            | SmbiosError::Type127Managed
+            | SmbiosError::HandleInUse
+            | SmbiosError::HandleOutOfRange => patina::error::EfiError::InvalidParameter,
 
             // Not found errors map to NOT_FOUND
-            SmbiosError::HandleNotFound | SmbiosError::NoRecordsAvailable => patina::error::EfiError::NotFound,
+            SmbiosError::NoRecordsAvailable | SmbiosError::RecordNotFound => patina::error::EfiError::NotFound,
 
             // Version and initialization errors map to UNSUPPORTED
             SmbiosError::UnsupportedVersion | SmbiosError::AlreadyInitialized | SmbiosError::NotInitialized => {
@@ -117,14 +123,17 @@ mod tests {
             SmbiosError::InvalidStringPoolTermination,
             SmbiosError::StringPoolTooSmall,
             SmbiosError::HandleExhausted,
-            SmbiosError::HandleNotFound,
+            SmbiosError::RecordNotFound,
             SmbiosError::StringIndexOutOfRange,
             SmbiosError::AllocationFailed,
+            SmbiosError::HandleExhausted,
             SmbiosError::NoRecordsAvailable,
             SmbiosError::AlreadyInitialized,
             SmbiosError::NotInitialized,
             SmbiosError::UnsupportedVersion,
             SmbiosError::Type127Managed,
+            SmbiosError::HandleInUse,
+            SmbiosError::HandleOutOfRange,
             SmbiosError::TableDirectlyModified,
         ];
 
@@ -174,8 +183,14 @@ mod tests {
         let efi_err: patina::error::EfiError = SmbiosError::Type127Managed.into();
         assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
 
+        let efi_err: patina::error::EfiError = SmbiosError::HandleInUse.into();
+        assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+
+        let efi_err: patina::error::EfiError = SmbiosError::HandleOutOfRange.into();
+        assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+
         // Test not found errors map to NOT_FOUND
-        let efi_err: patina::error::EfiError = SmbiosError::HandleNotFound.into();
+        let efi_err: patina::error::EfiError = SmbiosError::RecordNotFound.into();
         assert_eq!(efi_err, patina::error::EfiError::NotFound);
 
         let efi_err: patina::error::EfiError = SmbiosError::NoRecordsAvailable.into();

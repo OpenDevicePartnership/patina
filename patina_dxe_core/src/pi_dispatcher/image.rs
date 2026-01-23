@@ -809,7 +809,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                 Err(ImageStatus::LoadError(err)) => return err.into(),
             };
 
-        // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
+        // SAFETY: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
         unsafe { image_handle.write_unaligned(handle) };
         status
     }
@@ -926,7 +926,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                 && !exit_data_size.is_null()
                 && !exit_data.is_null()
             {
-                // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
+                // SAFETY: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
                 unsafe {
                     exit_data_size.write_unaligned(image_exit_data.0);
                     exit_data.write_unaligned(image_exit_data.1);
@@ -1224,9 +1224,10 @@ fn core_load_pe_image(
 
     private_info.load_resource_section(image)?;
 
-    // If we are not NX compatible and a runtime driver, we need to attempt to activate compatibility mode.
+    // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
+    // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
-    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER && !private_info.pe_info.nx_compat {
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat {
         private_info.activate_compatibility_mode()?;
     } else {
         // finally, update the GCD attributes for this image so that code sections have RO set and data sections

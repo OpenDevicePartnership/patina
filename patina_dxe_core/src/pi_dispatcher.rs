@@ -119,13 +119,15 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
-        self.image_data.lock().set_system_table(system_table.as_ptr() as *mut _);
+        self.image_data.lock().set_system_table(system_table.as_mut_ptr() as *mut _);
         self.image_data.lock().install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
 
-        system_table.boot_services_mut().load_image = Self::load_image_efiapi;
-        system_table.boot_services_mut().start_image = Self::start_image_efiapi;
-        system_table.boot_services_mut().unload_image = Self::unload_image_efiapi;
-        system_table.boot_services_mut().exit = Self::exit_efiapi;
+        let mut bs = system_table.boot_services().get();
+        bs.load_image = Self::load_image_efiapi;
+        bs.start_image = Self::start_image_efiapi;
+        bs.unload_image = Self::unload_image_efiapi;
+        bs.exit = Self::exit_efiapi;
+        system_table.boot_services().set(bs);
 
         // set up exit boot services callback
         let _ = EVENT_DB
@@ -166,7 +168,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Now create the EFI_SYSTEM_TABLE_POINTER structure
-        let system_table_pointer = system_table.system_table() as *const _ as u64;
+        let system_table_pointer = system_table.as_mut_ptr() as *const _ as u64;
 
         // we need to align the the pointer to 4MB and near the top of memory
         let Ok(address) = crate::GCD.allocate_memory_space(
@@ -332,7 +334,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
                         // Check if this FV is already installed (using the FV name GUID)
                         let fv_name_guid = {
-                            // Safety: fv_data is a valid FV section allocated above
+                            // SAFETY: fv_data is a valid FV section allocated above
                             let volume = match unsafe { VolumeRef::new_from_address(fv_data.as_ptr() as u64) } {
                                 Ok(vol) => vol,
                                 Err(e) => {
@@ -363,7 +365,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                             dispatcher.fv_section_data.last().expect("freshly pushed fv section data must be valid");
 
                         let volume_address: u64 = data_ptr.as_ptr() as u64;
-                        // Safety: FV section data is stored in the dispatcher and is valid until end of UEFI (nothing drops it).
+                        // SAFETY: FV section data is stored in the dispatcher and is valid until end of UEFI (nothing drops it).
                         let res = unsafe {
                             self.fv_data
                                 .lock()
@@ -432,7 +434,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             };
             let fvb_ptr = ptr as *mut firmware_volume_block::Protocol;
 
-            // Safety: fvb_ptr is obtained from a valid handle that has a FVB protocol instance
+            // SAFETY: fvb_ptr is obtained from a valid handle that has a FVB protocol instance
             // and the as_ref() call checks for null
             let Some(fvb) = (unsafe { fvb_ptr.as_ref() }) else {
                 continue;
@@ -444,7 +446,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 continue;
             }
 
-            // Safety: fv_address is checked for being non-zero above
+            // SAFETY: fv_address is checked for being non-zero above
             let Ok(volume) = (unsafe { VolumeRef::new_from_address(fv_address) }) else {
                 continue;
             };
@@ -630,7 +632,7 @@ impl DispatcherContext {
                 let fv_device_path =
                     fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
 
-                // Safety: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV,
+                // SAFETY: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV,
                 // and that the memory backing the FVB is essentially permanent while the dispatcher is running (i.e.
                 // that no one uninstalls the FVB protocol and frees the memory).
                 let fv = match unsafe { VolumeRef::new_from_address(fv_address) } {
@@ -926,7 +928,7 @@ mod tests {
         with_locked_state(|| {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -973,7 +975,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1009,7 +1011,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1045,7 +1047,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let fv_phys_addr = fv_raw.expose_provenance() as u64;
             let handle =
                 unsafe { CORE.pi_dispatcher.fv_data.lock().install_firmware_volume(fv_phys_addr, None).unwrap() };
@@ -1080,7 +1082,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1109,7 +1111,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1139,7 +1141,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let _ = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1197,7 +1199,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1228,7 +1230,7 @@ mod tests {
         with_locked_state(|| {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
@@ -1308,7 +1310,7 @@ mod tests {
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
-            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle =
                 unsafe { CORE.pi_dispatcher.fv_data.lock().install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 

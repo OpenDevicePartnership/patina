@@ -119,7 +119,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<fvb::attributes::EfiFvbAttributes2, EfiError> {
         let physical_address = self.get_fvb_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address)? };
         Ok(fv.attributes())
@@ -143,7 +143,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<(usize, usize), EfiError> {
         let physical_address = self.get_fvb_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address)? };
 
@@ -164,7 +164,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<&'static [u8], EfiError> {
         let physical_address = self.get_fvb_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address) }?;
         let Ok(lba) = lba.try_into() else {
@@ -180,7 +180,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         }
 
         let lba_start = (physical_address as usize).saturating_add(lba_base_addr).saturating_add(offset) as *mut u8;
-        // Safety: lba_start is calculated from the base address of a valid FV, plus an offset and offset+num_bytes.
+        // SAFETY: lba_start is calculated from the base address of a valid FV, plus an offset and offset+num_bytes.
         // consistency of this data is guaranteed by checks on instantiation of the VolumeRef.
         // The FV data is expected to be 'static (i.e. permanently mapped) for the lifetime of the system.
         unsafe { Ok(slice::from_raw_parts(lba_start, bytes_to_read)) }
@@ -193,7 +193,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<fv::attributes::EfiFvAttributes, EfiError> {
         let physical_address = self.get_fv_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address)? };
 
@@ -208,7 +208,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<FileRef<'_>, EfiError> {
         let physical_address = self.get_fv_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address) }?;
 
@@ -254,7 +254,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ) -> Result<(efi::Guid, fv::file::EfiFvFileAttributes, usize, fv::EfiFvFileType), EfiError> {
         let physical_address = self.get_fv_address(protocol).ok_or(EfiError::NotFound)?;
 
-        // Safety: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+        // SAFETY: physical_address must point to a valid FV (i.e. private_data is correctly constructed and
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address) }?;
 
@@ -372,7 +372,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         base_address: u64,
         parent_handle: Option<efi::Handle>,
     ) -> Result<efi::Handle, EfiError> {
-        // Safety: Caller must meet the safety requirements of this function.
+        // SAFETY: Caller must meet the safety requirements of this function.
         let handle = unsafe { self.install_fv_device_path_protocol(None, base_address)? };
         self.install_fvb_protocol(Some(handle), parent_handle, base_address)?;
         self.install_fv_protocol(Some(handle), parent_handle, base_address)?;
@@ -386,10 +386,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         for fv in fv_hobs {
             // construct a FirmwareVolume struct to verify sanity.
-            // Safety: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
+            // SAFETY: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
             let fv_slice = unsafe { slice::from_raw_parts(fv.base_address as *const u8, fv.length as usize) };
             VolumeRef::new(fv_slice)?;
-            // Safety: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
+            // SAFETY: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
             unsafe { self.install_firmware_volume(fv.base_address, None) }?;
         }
         Ok(())
@@ -405,7 +405,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         handle: Option<efi::Handle>,
         base_address: u64,
     ) -> Result<efi::Handle, EfiError> {
-        // Safety: caller must ensure that base_address is valid.
+        // SAFETY: caller must ensure that base_address is valid.
         let fv = unsafe { VolumeRef::new_from_address(base_address) }?;
 
         let device_path_ptr = match fv.fv_name() {
@@ -468,7 +468,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         match Self::instance().fvb_get_attributes(protocol) {
             Err(err) => return err.into(),
-            // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+            // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
             Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
         };
 
@@ -498,7 +498,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         match Self::instance().fvb_get_physical_address(protocol) {
             Err(err) => return err.into(),
-            // Safety: caller must provide a valid pointer to receive the address. It is null-checked above.
+            // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
             Ok(physical_address) => unsafe { address.write_unaligned(physical_address) },
         };
 
@@ -525,7 +525,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok((size, remaining_blocks)) => (size, remaining_blocks),
         };
 
-        // Safety: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
+        // SAFETY: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
         unsafe {
             block_size.write_unaligned(size);
             number_of_blocks.write_unaligned(remaining_blocks);
@@ -550,7 +550,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        // Safety: caller must provide valid pointers for num_bytes and buffer. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for num_bytes and buffer. They are null-checked above.
         let bytes_to_read = unsafe { *num_bytes };
 
         let data = match Self::instance().fvb_read(protocol, lba, offset, bytes_to_read) {
@@ -559,13 +559,13 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         };
 
         if data.len() > bytes_to_read {
-            // Safety: caller must provide a valid pointer for num_bytes. It is null-checked above.
+            // SAFETY: caller must provide a valid pointer for num_bytes. It is null-checked above.
             unsafe { num_bytes.write_unaligned(data.len()) };
             return efi::Status::BUFFER_TOO_SMALL;
         }
 
         // copy from memory into the destination buffer to do the read.
-        // Safety: buffer must be valid for writes of at least bytes_to_read length. It is null-checked above, and
+        // SAFETY: buffer must be valid for writes of at least bytes_to_read length. It is null-checked above, and
         // the caller must ensure that the buffer is large enough to hold the data being read.
         unsafe {
             let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, data.len());
@@ -613,7 +613,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok(attrs) => attrs,
         };
 
-        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
         unsafe { fv_attributes.write_unaligned(fv_attributes_data) };
 
         efi::Status::SUCCESS
@@ -650,9 +650,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        // Safety: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
         let local_buffer_size = unsafe { buffer_size.read_unaligned() };
-        // Safety: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
         let name = unsafe { name_guid.read_unaligned() };
 
         let this = Self::instance();
@@ -662,7 +662,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         };
 
         // update file metadata output pointers (buffer_size is written later).
-        // Safety: caller must provide valid pointers for found_type and file_attributes. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for found_type and file_attributes. They are null-checked above.
         unsafe {
             found_type.write_unaligned(file.file_type_raw());
             file_attributes.write_unaligned(file.fv_attributes());
@@ -672,14 +672,14 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         if buffer.is_null() {
             // The caller just wants file meta data, no need to read file data.
-            // Safety: The caller must provide a valid pointer for buffer_size. It is null-checked above.
+            // SAFETY: The caller must provide a valid pointer for buffer_size. It is null-checked above.
             unsafe {
                 buffer_size.write_unaligned(file.content().len());
             }
             return efi::Status::SUCCESS;
         }
 
-        // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
+        // SAFETY: caller must provide a valid pointer for buffer. It is null-checked above.
         let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
         // Determine the size to copy and the return status. For compatibility with existing callers to this function,
@@ -700,7 +700,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             //allocate it via allocate_pool.
             match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.content().len()) {
                 Err(err) => return err.into(),
-                // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
+                // SAFETY: caller must provide a valid pointer for buffer. It is null-checked above.
                 Ok(allocation) => unsafe {
                     local_buffer_ptr = allocation;
                     buffer.write_unaligned(local_buffer_ptr);
@@ -714,13 +714,13 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             (file.content().len(), efi::Status::SUCCESS)
         };
 
-        // Safety: The caller must provide a valid pointer for buffer_size. It is null-checked above.
+        // SAFETY: The caller must provide a valid pointer for buffer_size. It is null-checked above.
         unsafe {
             buffer_size.write_unaligned(copy_size);
         }
 
         // convert pointer+size into a slice and copy the file data (truncated if necessary).
-        // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
+        // SAFETY: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
         // and is of sufficient size to contain the data.
         let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
         out_buffer.copy_from_slice(&file.content()[..copy_size]);
@@ -746,7 +746,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        // Safety: caller must provide valid pointer for name_guid. It is null-checked above.
+        // SAFETY: caller must provide valid pointer for name_guid. It is null-checked above.
         let name = unsafe { name_guid.read_unaligned() };
 
         let extractor = &Core::<P>::instance().pi_dispatcher.section_extractor;
@@ -762,7 +762,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         };
 
         // get the buffer_size and buffer parameters from caller.
-        // Safety: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
+        // SAFETY: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
         // buffer are valid.
         let mut local_buffer_size = unsafe { buffer_size.read_unaligned() };
         let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
@@ -774,7 +774,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             //allocate it via allocate_pool.
             match core_allocate_pool(efi::BOOT_SERVICES_DATA, section_data.len()) {
                 Err(err) => return err.into(),
-                // Safety: caller is required to guarantee that buffer_size and buffer are valid.
+                // SAFETY: caller is required to guarantee that buffer_size and buffer are valid.
                 Ok(allocation) => unsafe {
                     local_buffer_size = section_data.len();
                     local_buffer_ptr = allocation;
@@ -784,7 +784,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             }
         } else {
             // update buffer size output for the caller
-            // Safety: null-checked at the start of the routine, but caller is required to guarantee buffer_size is valid.
+            // SAFETY: null-checked at the start of the routine, but caller is required to guarantee buffer_size is valid.
             unsafe {
                 buffer_size.write_unaligned(section_data.len());
             }
@@ -798,7 +798,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // larger than the section_data, we could inadvertently copy beyond the section_data slice.
         let copy_size = core::cmp::min(section_data.len(), local_buffer_size);
 
-        // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool and
+        // SAFETY: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool and
         // is of sufficient size to contain the data. We copy the minimum of section_data.len() and local_buffer_size to ensure we do not
         // copy beyond the bounds of either buffer.
         let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
@@ -836,9 +836,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        // Safety: caller must provide valid pointers for key and file_type. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for key and file_type. They are null-checked above.
         let local_key = unsafe { (key as *mut usize).read_unaligned() };
-        // Safety: caller must provide valid pointers for key and file_type. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for key and file_type. They are null-checked above.
         let local_file_type = unsafe { file_type.read_unaligned() };
 
         if local_file_type >= ffs::file::raw::r#type::FFS_MIN {
@@ -851,7 +851,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
                 Ok((name, attrs, size, file_type)) => (name, attrs, size, file_type),
             };
 
-        // Safety: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
+        // SAFETY: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
         unsafe {
             (key as *mut usize).write_unaligned(local_key.saturating_add(1));
             name_guid.write_unaligned(file_name);
@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn test_fv_init_core() {
         test_support::with_global_lock(|| {
-            // Safety: global lock ensures exclusive access to the private data.
+            // SAFETY: global lock ensures exclusive access to the private data.
             fn gen_firmware_volume2() -> hob::FirmwareVolume2 {
                 let header =
                     hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume2>() as u16, reserved: 0 };
@@ -1093,7 +1093,7 @@ mod tests {
 
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
-            // Safety: fv was leaked above to ensure that the buffer is valid and immutable for the rest of the test.
+            // SAFETY: fv was leaked above to ensure that the buffer is valid and immutable for the rest of the test.
             let _handle =
                 unsafe { CORE.pi_dispatcher.fv_data.lock().install_fv_device_path_protocol(None, base_address) };
 
@@ -1101,7 +1101,7 @@ mod tests {
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
-            // Safety: global lock ensures exclusive access to the private data.
+            // SAFETY: global lock ensures exclusive access to the private data.
             CORE.pi_dispatcher.fv_data.lock().fv_metadata.clear();
             assert!(CORE.pi_dispatcher.fv_data.lock().fv_metadata.is_empty());
 
@@ -1173,7 +1173,7 @@ mod tests {
             });
             let fvb_intf_data_n_mut = fvb_intf_data_n.as_mut() as *mut pi::protocols::firmware_volume_block::Protocol;
 
-            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // SAFETY: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. It uses direct memory allocations to create buffers for testing FFI
             // functions.
             unsafe {
@@ -1674,7 +1674,7 @@ mod tests {
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
-            // Safety: global lock ensures exclusive access to the private data.
+            // SAFETY: global lock ensures exclusive access to the private data.
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
 
@@ -1687,7 +1687,7 @@ mod tests {
             CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), private_data);
             let fv_ptr1: *const pi::protocols::firmware_volume::Protocol = fv_ptr.as_ptr();
 
-            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // SAFETY: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. It uses direct memory management to test fv FFI primitives.
             unsafe {
                 let layout = Layout::from_size_align(1000, 8).unwrap();
@@ -1763,7 +1763,7 @@ mod tests {
 
             let fv_ptr1: *const pi::protocols::firmware_volume::Protocol = fv_ptr.as_ptr();
 
-            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // SAFETY: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. This unsafe section encompasses all of the logic for the remaining
             // test since this is test code.
             unsafe {
@@ -1892,7 +1892,7 @@ mod tests {
 
             let fv_ptr1 = fv_ptr.as_ptr();
 
-            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // SAFETY: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. This unsafe section encompasses all of the logic for the remaining
             // test since this is test code.
             unsafe {

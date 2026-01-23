@@ -298,10 +298,8 @@ mod tests {
         communicator_ptr: *const MmCommunicator,
     ) -> Box<ProtocolNotifyContext> {
         let mock_bs = Box::leak(Box::new([0u8; core::mem::size_of::<r_efi::system::BootServices>()]));
-        let bs_ptr = mock_bs.as_ptr() as *const r_efi::system::BootServices;
-        // SAFETY: bs_ptr points to an aligned mock buffer that was just created.
-        // This is only used for test purposes and the pointer lifetime is managed by the leaked Box.
-        let bs = StandardBootServices::new(unsafe { &*bs_ptr });
+        let bs_ptr = mock_bs.as_mut_ptr() as *mut r_efi::system::BootServices;
+        let bs = StandardBootServices::new(bs_ptr);
 
         Box::new(ProtocolNotifyContext {
             boot_services: bs,

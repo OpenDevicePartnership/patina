@@ -278,7 +278,7 @@ impl Section {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // Safety: buffer is large enough to contain the header.
+        // SAFETY: buffer is large enough to contain the header.
         let section_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const section::Header) };
 
         // Determine section size and start of section content
@@ -289,7 +289,7 @@ impl Section {
                 if buffer.len() < ext_header_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to contain extended header.
+                // SAFETY: buffer is large enough to contain extended header.
                 let ext_header = unsafe {
                     ptr::read_unaligned(buffer.as_ptr() as *const section::header::CommonSectionHeaderExtended)
                 };
@@ -316,7 +316,7 @@ impl Section {
                 if buffer.len() < section_data_offset + compression_header_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to hold the compression header.
+                // SAFETY: buffer is large enough to hold the compression header.
                 let compression_header = unsafe {
                     ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Compression)
                 };
@@ -334,7 +334,7 @@ impl Section {
                 if buffer.len() < section_data_offset + guid_header_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to hold the GuidDefined header.
+                // SAFETY: buffer is large enough to hold the GuidDefined header.
                 let guid_defined_header = unsafe {
                     ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::GuidDefined)
                 };
@@ -356,7 +356,7 @@ impl Section {
                 if buffer.len() < section_data_offset + version_header_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to hold the version header.
+                // SAFETY: buffer is large enough to hold the version header.
                 let version_header = unsafe {
                     ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Version)
                 };
@@ -371,7 +371,7 @@ impl Section {
                 if buffer.len() < section_data_offset + freeform_subtype_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to hold the freeform header type
+                // SAFETY: buffer is large enough to hold the freeform header type
                 let freeform_header = unsafe {
                     ptr::read_unaligned(
                         buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid

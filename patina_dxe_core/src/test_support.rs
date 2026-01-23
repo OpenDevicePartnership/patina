@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::{GCD, protocols::PROTOCOL_DB};
+use crate::{GCD, allocator::DEFAULT_PAGE_ALLOCATION_GRANULARITY, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
 use patina::{
     guids::ZERO,
@@ -211,13 +211,16 @@ pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Res
 
 /// Allocates a chunk of memory of the specified size from the system allocator.
 ///
+/// The memory allocated will be 64Kb aligned to simplify alignment requirements such
+/// as AArch64 runtime memory.
+///
 /// ## Safety
 /// This function is intended for test code only. The caller must ensure that the size is valid
 /// for allocation.
 pub(crate) unsafe fn get_memory(size: usize) -> &'static mut [u8] {
     // SAFETY: Test code - allocates memory from the system allocator with UEFI page alignment.
     // The returned slice is intentionally leaked for test simplicity and valid for 'static lifetime.
-    let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+    let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x10000).unwrap()) };
     // SAFETY: The allocated pointer is valid for `size` bytes and properly aligned.
     unsafe { core::slice::from_raw_parts_mut(addr, size) }
 }
@@ -285,16 +288,17 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     // SAFETY: Test code - allocates memory for the test HOB list.
     let mem = unsafe { get_memory(mem_size as usize) };
     let mem_base = mem.as_mut_ptr() as u64;
+    assert!(mem_size >= 0x1B0000);
 
     // Build a test HOB list that describes memory layout as follows:
     //
     // Base:         offset 0                   ************
     // HobList:      offset base+0              HOBS
     // Empty:        offset base+HobListSize    N/A
-    // SystemMemory  offset base+0xE0000        SystemMemory (resource_descriptor1)
-    // Reserved      offset base+0xF0000        Untested SystemMemory (resource_descriptor2)
-    // FreeMemory    offset base+0x100000       FreeMemory (phit)
-    // End           offset base+0x200000       ************
+    // SystemMemory  offset base+0x0E0000       SystemMemory (resource_descriptor1)
+    // Reserved      offset base+0x190000       Untested SystemMemory (resource_descriptor2)
+    // FreeMemory    offset base+0x1A0000       FreeMemory (phit)
+    // End           offset base+mem_size       ************
     //
     // The test HOB list will also include resource descriptor hobs that describe MMIO/IO as follows:
     // MMIO at 0x10000000 size 0x1000000 (resource_descriptor3)
@@ -304,9 +308,15 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     // Reserved Legacy I/O at 0x0000 size 0x1000 (resource_descriptor7)
     //
     // The test HOB list will also include resource allocation hobs that describe allocations as follows:
-    // A Memory Allocation Hob for each memory type. This will be placed in the SystemMemory region at base+0xE0000 as
-    // 4K allocations. There is also a Memory Allocation Hob for MMIO space at 0x10000000 for 0x2000 bytes.
-    // A Firmware Volume HOB located in the FirmwareDevice region at 0x10000000
+    // A Memory Allocation Hob for each memory type. This will be placed in the SystemMemory region at base+0xE0000 with
+    // appropriate granularity for each type (64KB for runtime types on aarch64, 4KB otherwise). There is also a Memory
+    // Allocation Hob for MMIO space at 0x10000000 for 0x2000 bytes. A Firmware Volume HOB located in the FirmwareDevice
+    // region at 0x10000000
+    //
+    // The system memory is of length 0xB0000 bytes. This includes 0xA0000 for the regular allocations plus 0x10000 for
+    // potential stack allocations. 0xA0000 bytes allows for each memory type to be aligned up to 64kb. Really, only
+    // 0x70000 bytes is needed for that in the current layout of allocation hobs, but leaving room provides flexibility
+    // for future changes.
     //
     let phit = hob::PhaseHandoffInformationTable {
         header: header::Hob {
@@ -319,11 +329,13 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         memory_top: mem_base + mem_size,
         memory_bottom: mem_base,
         free_memory_top: mem_base + mem_size,
-        free_memory_bottom: mem_base + 0x100000,
+        free_memory_bottom: mem_base + 0x1A0000,
         end_of_hob_list: mem_base
             + core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u64
             + core::mem::size_of::<hob::Cpu>() as u64
             + (core::mem::size_of::<ResourceDescriptorV2>() as u64) * 7
+            + (core::mem::size_of::<hob::MemoryAllocation>() as u64) * 11  // 10 memory type allocations + 1 MMIO
+            + core::mem::size_of::<hob::FirmwareVolume>() as u64
             + core::mem::size_of::<header::Hob>() as u64,
     };
 
@@ -345,7 +357,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xE0000,
-            resource_length: 0x10000,
+            resource_length: 0xB0000,
         },
         attributes: efi::MEMORY_WB,
     };
@@ -360,7 +372,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
-            physical_start: mem_base + 0xF0000,
+            physical_start: mem_base + 0x190000,
             resource_length: 0x10000,
         },
         attributes: efi::MEMORY_WB,
@@ -516,7 +528,8 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         cursor = cursor.offset(resource_descriptor7.v1.header.length as isize);
 
         //memory allocation HOBs.
-        for (idx, memory_type) in [
+        let mut address: u64 = resource_descriptor1.v1.physical_start;
+        for memory_type in [
             efi::RESERVED_MEMORY_TYPE,
             efi::LOADER_CODE,
             efi::LOADER_DATA,
@@ -529,15 +542,28 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             efi::PAL_CODE,
         ]
         .iter()
-        .enumerate()
         {
-            allocation_hob_template.alloc_descriptor.memory_base_address =
-                resource_descriptor1.v1.physical_start + idx as u64 * 0x1000;
+            let granularity = match *memory_type {
+                efi::RESERVED_MEMORY_TYPE
+                | efi::RUNTIME_SERVICES_CODE
+                | efi::RUNTIME_SERVICES_DATA
+                | efi::ACPI_MEMORY_NVS => crate::allocator::RUNTIME_PAGE_ALLOCATION_GRANULARITY,
+                _ => DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            } as u64;
+
+            // Make sure the memory region is aligned as needed.
+            address = patina::base::align_up(address, granularity).unwrap();
+            allocation_hob_template.alloc_descriptor.memory_base_address = address;
             allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
+            allocation_hob_template.alloc_descriptor.memory_length = granularity;
 
             core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
             cursor = cursor.offset(allocation_hob_template.header.length as isize);
+            address += granularity;
         }
+
+        // Double check this never over-runs the memory region.
+        assert!(address <= resource_descriptor1.v1.physical_start + resource_descriptor1.v1.resource_length);
 
         // memory allocation HOB for MMIO space
         allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.v1.physical_start;

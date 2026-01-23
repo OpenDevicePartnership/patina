@@ -115,7 +115,7 @@ impl Default for ComponentDispatcher {
     }
 }
 
-/// Safety: The ComponentDispatcher is `Send` as all data stored within this structure is owned by it, and not shared.
+/// SAFETY: The ComponentDispatcher is `Send` as all data stored within this structure is owned by it, and not shared.
 unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {

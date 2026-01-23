@@ -456,7 +456,6 @@ pub struct Sata {
     pub lun: u16,
 }
 
-#[coverage(off)]
 impl Sata {
     /// The on-wire size of Sata data (without header): 2 + 2 + 2 = 6 bytes.
     const DATA_SIZE: usize = 6;
@@ -472,7 +471,6 @@ impl Sata {
     }
 }
 
-#[coverage(off)]
 impl super::device_path_node::DevicePathNode for Sata {
     fn header(&self) -> super::device_path_node::Header {
         super::device_path_node::Header {
@@ -497,7 +495,6 @@ impl super::device_path_node::DevicePathNode for Sata {
     }
 }
 
-#[coverage(off)]
 impl core::fmt::Debug for Sata {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Sata")
@@ -508,14 +505,12 @@ impl core::fmt::Debug for Sata {
     }
 }
 
-#[coverage(off)]
 impl Display for Sata {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Sata").field(&self.hba_port).field(&self.port_multiplier_port).field(&self.lun).finish()
     }
 }
 
-#[coverage(off)]
 impl TryIntoCtx<scroll::Endian> for Sata {
     type Error = scroll::Error;
 
@@ -528,7 +523,6 @@ impl TryIntoCtx<scroll::Endian> for Sata {
     }
 }
 
-#[coverage(off)]
 impl TryFromCtx<'_, scroll::Endian> for Sata {
     type Error = scroll::Error;
 
@@ -552,7 +546,6 @@ pub struct NvmExpress {
     pub eui64: u64,
 }
 
-#[coverage(off)]
 impl NvmExpress {
     /// The on-wire size of NvmExpress data (without header): 4 bytes NSID + 8 bytes EUI64.
     const DATA_SIZE: usize = 4 + 8;
@@ -567,7 +560,6 @@ impl NvmExpress {
     }
 }
 
-#[coverage(off)]
 impl super::device_path_node::DevicePathNode for NvmExpress {
     fn header(&self) -> super::device_path_node::Header {
         super::device_path_node::Header {
@@ -591,21 +583,18 @@ impl super::device_path_node::DevicePathNode for NvmExpress {
     }
 }
 
-#[coverage(off)]
 impl core::fmt::Debug for NvmExpress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("NvmExpress").field("namespace_id", &self.namespace_id).field("eui64", &self.eui64).finish()
     }
 }
 
-#[coverage(off)]
 impl Display for NvmExpress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("NvmExpress").field(&self.namespace_id).field(&self.eui64).finish()
     }
 }
 
-#[coverage(off)]
 impl TryIntoCtx<scroll::Endian> for NvmExpress {
     type Error = scroll::Error;
 
@@ -617,7 +606,6 @@ impl TryIntoCtx<scroll::Endian> for NvmExpress {
     }
 }
 
-#[coverage(off)]
 impl TryFromCtx<'_, scroll::Endian> for NvmExpress {
     type Error = scroll::Error;
 
@@ -649,7 +637,6 @@ pub struct HardDrive {
     pub signature_type: u8,
 }
 
-#[coverage(off)]
 impl HardDrive {
     /// The on-wire size of HardDrive data (without header).
     const DATA_SIZE: usize = 4 + 8 + 8 + 16 + 1 + 1; // 38 bytes
@@ -683,7 +670,6 @@ impl HardDrive {
     }
 }
 
-#[coverage(off)]
 impl super::device_path_node::DevicePathNode for HardDrive {
     fn header(&self) -> super::device_path_node::Header {
         super::device_path_node::Header {
@@ -713,7 +699,6 @@ impl super::device_path_node::DevicePathNode for HardDrive {
     }
 }
 
-#[coverage(off)]
 impl core::fmt::Debug for HardDrive {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("HardDrive")
@@ -726,14 +711,12 @@ impl core::fmt::Debug for HardDrive {
     }
 }
 
-#[coverage(off)]
 impl Display for HardDrive {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "HD({}, GPT, ...)", self.partition_number)
     }
 }
 
-#[coverage(off)]
 impl TryIntoCtx<scroll::Endian> for HardDrive {
     type Error = scroll::Error;
 
@@ -751,7 +734,6 @@ impl TryIntoCtx<scroll::Endian> for HardDrive {
     }
 }
 
-#[coverage(off)]
 impl TryFromCtx<'_, scroll::Endian> for HardDrive {
     type Error = scroll::Error;
 
@@ -790,7 +772,6 @@ pub struct FilePath {
     pub path: String,
 }
 
-#[coverage(off)]
 impl FilePath {
     /// Create a new FilePath device path node from a path string.
     pub fn new(path: impl Into<String>) -> Self {
@@ -805,7 +786,6 @@ impl FilePath {
     }
 }
 
-#[coverage(off)]
 impl super::device_path_node::DevicePathNode for FilePath {
     fn header(&self) -> super::device_path_node::Header {
         super::device_path_node::Header {
@@ -834,21 +814,18 @@ impl super::device_path_node::DevicePathNode for FilePath {
     }
 }
 
-#[coverage(off)]
 impl core::fmt::Debug for FilePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FilePath").field("path", &self.path).finish()
     }
 }
 
-#[coverage(off)]
 impl Display for FilePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.path)
     }
 }
 
-#[coverage(off)]
 impl TryIntoCtx<scroll::Endian> for FilePath {
     type Error = scroll::Error;
 
@@ -865,7 +842,6 @@ impl TryIntoCtx<scroll::Endian> for FilePath {
     }
 }
 
-#[coverage(off)]
 impl TryFromCtx<'_, scroll::Endian> for FilePath {
     type Error = scroll::Error;
 
@@ -889,5 +865,144 @@ impl TryFromCtx<'_, scroll::Endian> for FilePath {
         }
 
         Ok((Self { path }, offset))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use scroll::{Pread, Pwrite};
+
+    #[test]
+    fn test_sata_new() {
+        let sata = Sata::new(1, 0xFFFF, 0);
+        assert_eq!(sata.hba_port, 1);
+        assert_eq!(sata.port_multiplier_port, 0xFFFF);
+        assert_eq!(sata.lun, 0);
+    }
+
+    #[test]
+    fn test_sata_serialization_roundtrip() {
+        let sata = Sata::new(2, 0, 1);
+        let mut buf = [0u8; 6];
+        let written = buf.pwrite_with(sata.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 6);
+
+        let parsed: Sata = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.hba_port, 2);
+        assert_eq!(parsed.port_multiplier_port, 0);
+        assert_eq!(parsed.lun, 1);
+    }
+
+    #[test]
+    fn test_sata_display() {
+        let sata = Sata::new(1, 0xFFFF, 0);
+        let display = std::format!("{}", sata);
+        assert!(display.contains("Sata"));
+    }
+
+    #[test]
+    fn test_nvme_new() {
+        let nvme = NvmExpress::new(1, 0x123456789ABCDEF0);
+        assert_eq!(nvme.namespace_id, 1);
+        assert_eq!(nvme.eui64, 0x123456789ABCDEF0);
+    }
+
+    #[test]
+    fn test_nvme_serialization_roundtrip() {
+        let nvme = NvmExpress::new(1, 0xDEADBEEF12345678);
+        let mut buf = [0u8; 12];
+        let written = buf.pwrite_with(nvme.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 12);
+
+        let parsed: NvmExpress = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.namespace_id, 1);
+        assert_eq!(parsed.eui64, 0xDEADBEEF12345678);
+    }
+
+    #[test]
+    fn test_nvme_display() {
+        let nvme = NvmExpress::new(1, 0);
+        let display = std::format!("{}", nvme);
+        assert!(display.contains("NvmExpress"));
+    }
+
+    #[test]
+    fn test_hard_drive_new_gpt() {
+        let guid = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10];
+        let hd = HardDrive::new_gpt(1, 2048, 1000000, guid);
+        assert_eq!(hd.partition_number, 1);
+        assert_eq!(hd.partition_start, 2048);
+        assert_eq!(hd.partition_size, 1000000);
+        assert_eq!(hd.partition_signature, guid);
+        assert_eq!(hd.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(hd.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_serialization_roundtrip() {
+        let guid = [0xAA; 16];
+        let hd = HardDrive::new_gpt(2, 4096, 500000, guid);
+        // DATA_SIZE = 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx)
+        let mut buf = [0u8; 38];
+        let written = buf.pwrite_with(hd.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 38);
+
+        let parsed: HardDrive = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.partition_number, 2);
+        assert_eq!(parsed.partition_start, 4096);
+        assert_eq!(parsed.partition_size, 500000);
+        assert_eq!(parsed.partition_signature, guid);
+        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_display() {
+        let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
+        let display = std::format!("{}", hd);
+        assert!(display.contains("HD"));
+    }
+
+    #[test]
+    fn test_file_path_new() {
+        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
+        assert_eq!(fp.path, "\\EFI\\BOOT\\BOOTX64.EFI");
+    }
+
+    #[test]
+    fn test_file_path_serialization_roundtrip() {
+        let fp = FilePath::new("\\test.efi");
+        // UTF-16: 9 chars (\test.efi) + null = 10 * 2 = 20 bytes
+        let mut buf = [0u8; 20];
+        let written = buf.pwrite_with(fp.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 20);
+
+        let parsed: FilePath = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.path, "\\test.efi");
+    }
+
+    #[test]
+    fn test_file_path_display() {
+        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
+        let display = std::format!("{}", fp);
+        assert_eq!(display, "\\EFI\\BOOT\\BOOTX64.EFI");
+    }
+
+    #[test]
+    fn test_file_path_utf16_encoding() {
+        let fp = FilePath::new("A");
+        // 'A' (0x0041) + null (0x0000) = 4 bytes
+        let mut buf = [0u8; 4];
+        let written = buf.pwrite_with(fp, 0, scroll::LE).unwrap();
+        assert_eq!(written, 4);
+        // UTF-16LE: 'A' = 0x41, 0x00
+        assert_eq!(buf[0], 0x41);
+        assert_eq!(buf[1], 0x00);
+        // Null terminator
+        assert_eq!(buf[2], 0x00);
+        assert_eq!(buf[3], 0x00);
     }
 }

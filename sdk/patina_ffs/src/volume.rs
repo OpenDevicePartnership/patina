@@ -71,7 +71,7 @@ impl<'a> VolumeRef<'a> {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // Safety: buffer is large enough to contain the header.
+        // SAFETY: buffer is large enough to contain the header.
         let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const fv::Header) };
 
         // Signature must be ASCII '_FVH'

@@ -113,7 +113,7 @@ impl EfiCpuX64 {
 
     fn initialize_fpu(&self) {
         #[cfg(all(not(test), target_arch = "x86_64"))]
-        // Safety: This assembly writes only hard coded values to CR4 register, and MMX and FPU control words. No
+        // SAFETY: This assembly writes only hard coded values to CR4 register, and MMX and FPU control words. No
         // inputs are used that could violate memory safety.
         unsafe {
             // sdm vol. 1, x87 FPU Control Word configuration
@@ -154,7 +154,7 @@ impl Cpu for EfiCpuX64 {
                 self.asm_wbinvd();
                 Ok(())
             }
-            CpuFlushType::EFiCpuFlushTypeInvalidate => {
+            CpuFlushType::EfiCpuFlushTypeInvalidate => {
                 self.asm_invd();
                 Ok(())
             }
@@ -210,7 +210,7 @@ mod tests {
 
         let start: efi::PhysicalAddress = 0;
         let length: u64 = 0;
-        let flush_type: CpuFlushType = CpuFlushType::EFiCpuFlushTypeInvalidate;
+        let flush_type: CpuFlushType = CpuFlushType::EfiCpuFlushTypeInvalidate;
         assert_eq!(x64_cpu_init.flush_data_cache(start, length, flush_type), Ok(()));
 
         let start: efi::PhysicalAddress = 0;

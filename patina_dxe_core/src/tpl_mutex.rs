@@ -111,7 +111,7 @@ impl<T: ?Sized + fmt::Display> fmt::Display for TplGuard<'_, T> {
 impl<'a, T: ?Sized> Deref for TplGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &'a T {
-        // Safety: data is only accessible through the guard, which guarantees mutual exclusion since no higher TPL can
+        // SAFETY: data is only accessible through the guard, which guarantees mutual exclusion since no higher TPL can
         // obtain the lock without panic, and no code at equal or lower TPL can interrupt while the lock is held.
         unsafe { self.mutex.data.get().as_ref().expect("TplMutex data pointer should not be null") }
     }
@@ -119,7 +119,7 @@ impl<'a, T: ?Sized> Deref for TplGuard<'a, T> {
 
 impl<'a, T: ?Sized> DerefMut for TplGuard<'a, T> {
     fn deref_mut(&mut self) -> &'a mut T {
-        // Safety: data is only accessible through the guard, which guarantees mutual exclusion since no higher TPL can
+        // SAFETY: data is only accessible through the guard, which guarantees mutual exclusion since no higher TPL can
         // obtain the lock without panic, and no code at equal or lower TPL can interrupt while the lock is held.
         unsafe { self.mutex.data.get().as_mut().expect("TplMutex data pointer should not be null") }
     }

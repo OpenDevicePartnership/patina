@@ -105,7 +105,7 @@ impl AArch64InterruptInitializer {
         }
 
         // Convert raw GIC address pointers to appropriate types.
-        // Safety: function safety requirements guarantee exclusive access to the GICR registers.
+        // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         let (gicd, gicr) = unsafe {
             let gicd = UniqueMmioPointer::new(NonNull::new(gicd_base as _).ok_or(EfiError::InvalidParameter)?);
             let gicr = NonNull::new(gicr_base as _).ok_or(EfiError::InvalidParameter)?;
@@ -119,7 +119,7 @@ impl AArch64InterruptInitializer {
         let mpidr = read_sysreg!(MPIDR_EL1) & MPIDR_AFFINITY_MASK;
         log::debug!("Current CPU MPIDR: {:#x}", mpidr);
         // Support for GIC v4 is backward compatible with GIC v3, so always enable it.
-        // Safety: function safety requirements guarantee exclusive access to the GICR registers.
+        // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         for (index, redistributor) in unsafe { GicRedistributorIterator::new(gicr, true) }.enumerate() {
             r_count = index + 1;
             if redistributor.typer().core_mpidr() == mpidr {
@@ -153,12 +153,12 @@ impl AArch64InterruptInitializer {
         // Enable gic distributor
         // Enable support for GICv4; this is backward compatible with GICv3, so always enable it.
 
-        // Safety: function safety requirements guarantee exclusive access to the GICR registers.
+        // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         let mut gic_v3 = unsafe { GicV3::new(gicd, gicr, r_count, true) };
         gic_v3.setup(cpu_r_idx);
 
         // Set binary point reg to 0x7 (no preemption)
-        // Safety: this is a legal value for BPR1 register.
+        // SAFETY: this is a legal value for BPR1 register.
         // Refer to "Arm Generic Interrupt Controller Architecture Specification GIC
         // architecture version 3 and Version 4" (Arm IHI 0069H.b ID041224)
         // 12.2.5: "ICC_BPR1_EL1, Interrupt Controller Binary Point Register 1"

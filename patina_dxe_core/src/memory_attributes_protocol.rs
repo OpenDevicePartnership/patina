@@ -75,7 +75,7 @@ extern "efiapi" fn get_memory_attributes(
     }
 
     if let Some(attrs) = found_attrs {
-        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
         unsafe { attributes.write_unaligned(attrs) };
         efi::Status::SUCCESS
     } else {

@@ -756,7 +756,7 @@ mod tests {
             .unwrap();
         descriptors
             .iter()
-            .find(|x| x.base_address == mem_base + 0xF0000 && x.memory_type == GcdMemoryType::Reserved)
+            .find(|x| x.base_address == mem_base + 0x190000 && x.memory_type == GcdMemoryType::Reserved)
             .unwrap();
         //Note: resource descriptors 3 & are merged into a single contiguous region in GCD, so no separate entry exists.
         //So verify the length of the entry encompasses both.

@@ -122,7 +122,7 @@ where
     pub fn run(&mut self, storage: UnsafeStorageCell) -> Result<bool, &'static str> {
         let mut metadata = MetaData::default();
 
-        // Safety: init_state requires mutable access to storage. UnsafeStorageCell provides controlled access.
+        // SAFETY: init_state requires mutable access to storage. UnsafeStorageCell provides controlled access.
         // This is the initialization phase before parameter validation.
         let param_state = match Func::Param::init_state(unsafe { storage.storage_mut() }, &mut metadata) {
             Ok(param_state) => param_state,
@@ -137,7 +137,7 @@ where
             return Ok(false);
         }
 
-        // Safety: Parameter was successfully validated by try_validate. get_param extracts the validated parameter
+        // SAFETY: Parameter was successfully validated by try_validate. get_param extracts the validated parameter
         // from storage using the param_state that was initialized above.
         let param_value = unsafe { Func::Param::get_param(&param_state, storage) };
 

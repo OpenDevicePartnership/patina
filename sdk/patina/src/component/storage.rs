@@ -300,24 +300,18 @@ impl Storage {
     }
 
     /// Adds a default valued config datum to the storage if it does not exist.
-    ///
-    /// Default configs are created unlocked so that `ConfigMut<T>` can modify them.
     pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> usize {
         let idx = self.register_config::<C>();
         if !self.configs.contains(idx) {
-            self.configs.insert(idx, RefCell::new(ConfigRaw::new(false, Box::<C>::default())));
+            self.configs.insert(idx, RefCell::new(ConfigRaw::new(true, Box::<C>::default())));
         }
         idx
     }
 
     /// Adds a config datum to the storage, overwriting an existing value if it exists.
-    ///
-    /// Configs are created unlocked so that components with `ConfigMut<T>` can modify them
-    /// during the first dispatch phase. Call `lock_configs()` to lock all configs before
-    /// dispatching components that require `Config<T>` (immutable access).
     pub fn add_config<C: Default + 'static>(&mut self, config: C) {
         let id = self.register_config::<C>();
-        self.configs.insert(id, RefCell::new(ConfigRaw::new(false, Box::new(config))));
+        self.configs.insert(id, RefCell::new(ConfigRaw::new(true, Box::new(config))));
     }
 
     /// Attempts to retrieve a config datum from the storage.
@@ -454,12 +448,12 @@ impl Storage {
 #[derive(Copy, Clone)]
 pub struct UnsafeStorageCell<'s>(*mut Storage, PhantomData<(&'s Storage, &'s UnsafeCell<Storage>)>);
 
-// Safety: UnsafeStorageCell wraps a raw pointer but does not own the data. The lifetime specifier ensures the pointer
+// SAFETY: UnsafeStorageCell wraps a raw pointer but does not own the data. The lifetime specifier ensures the pointer
 // remains valid. Send is safe because the wrapper doesn't allow unsynchronized access. All access goes through
 // unsafe methods that require the caller to ensure proper synchronization. The PhantomData ties the lifetime
 // to the storage reference, preventing the cell from outliving the storage.
 unsafe impl Send for UnsafeStorageCell<'_> {}
-// Safety: Sync is safe because UnsafeStorageCell provides controlled access to storage through unsafe methods
+// SAFETY: Sync is safe because UnsafeStorageCell provides controlled access to storage through unsafe methods
 // that place the synchronization burden on the caller. The wrapper itself contains no mutable state - just a
 // raw pointer and phantom data. Multiple threads can hold UnsafeStorageCell instances safely as long as they
 // follow the access rules documented on storage() and storage_mut().
@@ -509,7 +503,7 @@ impl<'s> UnsafeStorageCell<'s> {
     ///     mutable borrow is active.
     #[inline]
     pub unsafe fn storage_mut(self) -> &'s mut Storage {
-        // Safety:
+        // SAFETY:
         // - caller ensures the created `&mut Storage` is the only borrow of the storage.
         unsafe { &mut *self.0 }
     }
@@ -525,7 +519,7 @@ impl<'s> UnsafeStorageCell<'s> {
     /// - there must be no live exclusive borrow of storage
     #[inline]
     pub unsafe fn storage(self) -> &'s Storage {
-        // Safety:
+        // SAFETY:
         // - caller ensures there is no `&mut Storage`
         // - caller ensures there is no mutable borrows of storage data. This means the caller
         //   cannot misuse the returned `&World`.
@@ -533,7 +527,7 @@ impl<'s> UnsafeStorageCell<'s> {
     }
 }
 
-// Safety: &mut Storage parameter provides exclusive access to the entire storage. The Param implementation
+// SAFETY: &mut Storage parameter provides exclusive access to the entire storage. The Param implementation
 // ensures exclusive access by tracking config reads/writes in MetaData. init_state() asserts no conflicting
 // config access exists and marks all configs as exclusively written. get_param() uses storage_mut() which
 // requires the UnsafeStorageCell was created from mutable storage access.
@@ -541,14 +535,14 @@ unsafe impl Param for &mut Storage {
     type State = ();
     type Item<'storage, 'state> = &'storage mut Storage;
 
-    // Safety: UnsafeStorageCell was created from &mut Storage (validated by init_state). storage_mut()
+    // SAFETY: UnsafeStorageCell was created from &mut Storage (validated by init_state). storage_mut()
     // returns the underlying mutable reference. The Param trait ensures this is the only active borrow
     // of storage data.
     unsafe fn get_param<'storage, 'state>(
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // Safety: UnsafeStorageCell was created with exclusive access. init_state ensured no conflicting
+        // SAFETY: UnsafeStorageCell was created with exclusive access. init_state ensured no conflicting
         // config access. storage_mut() safety requirements are met by the Param trait.
         unsafe { storage.storage_mut() }
     }
@@ -583,21 +577,21 @@ unsafe impl Param for &mut Storage {
     }
 }
 
-// Safety: &Storage parameter provides shared immutable access to the entire storage. The Param implementation
+// SAFETY: &Storage parameter provides shared immutable access to the entire storage. The Param implementation
 // ensures no conflicting mutable access exists by checking that no ConfigMut<T> parameters have been registered
 // (which would require mutable config access). get_param() uses storage() which only requires immutable access.
 unsafe impl Param for &Storage {
     type State = ();
     type Item<'storage, 'state> = &'storage Storage;
 
-    // Safety: UnsafeStorageCell provides access to storage. storage() returns an immutable reference.
+    // SAFETY: UnsafeStorageCell provides access to storage. storage() returns an immutable reference.
     // init_state() ensured no conflicting mutable config access exists. The Param protocol ensures this
     // shared access is safe.
     unsafe fn get_param<'storage, 'state>(
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // Safety: storage() requires no exclusive borrows of storage data. init_state verified no
+        // SAFETY: storage() requires no exclusive borrows of storage data. init_state verified no
         // ConfigMut<T> access exists that would create conflicting mutable access.
         unsafe { storage.storage() }
     }
