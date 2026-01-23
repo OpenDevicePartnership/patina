@@ -711,6 +711,83 @@ unsafe impl Param for StandardRuntimeServices {
     }
 }
 
+/// A UEFI handle that can be used in various UEFI boot service calls.
+///
+/// This is commonly used as the parent image handle for `LoadImage()` calls when loading
+/// boot applications. Per the UEFI specification, the parent image handle must be a valid
+/// image handle (one that has the LoadedImage protocol installed).
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// use patina::component::{component, params::Handle};
+/// use patina::boot_services::BootServices;
+/// use patina::error::Result;
+///
+/// struct BootLoader;
+///
+/// #[component]
+/// impl BootLoader {
+///     fn entry_point(self, bs: StandardBootServices, image_handle: Handle) -> Result<()> {
+///         // Use image_handle as the parent when loading a boot application
+///         let loaded_image = bs.load_image(
+///             false,
+///             *image_handle,
+///             device_path,
+///             None,
+///             0,
+///         )?;
+///         Ok(())
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Handle {
+    handle: r_efi::efi::Handle,
+}
+
+impl Handle {
+    /// Creates a mock Handle for testing purposes.
+    #[cfg(any(test, feature = "mockall"))]
+    pub fn mock(handle: r_efi::efi::Handle) -> Self {
+        Self { handle }
+    }
+}
+
+impl core::ops::Deref for Handle {
+    type Target = r_efi::efi::Handle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handle
+    }
+}
+
+// SAFETY: Handle parameter provides access to the DXE Core's image handle.
+// Access is validated by checking if the handle has been set in storage.
+unsafe impl Param for Handle {
+    type State = ();
+    type Item<'storage, 'state> = Self;
+
+    unsafe fn get_param<'state>(
+        _state: &'state Self::State,
+        storage: UnsafeStorageCell<'_>,
+    ) -> Self::Item<'static, 'state> {
+        // SAFETY: Image handle is immutably borrowed from storage.
+        // validate() ensures the handle is set before get_param is called.
+        let handle = unsafe { storage.storage() }.image_handle().expect("image_handle validated as Some in validate()");
+        Handle { handle }
+    }
+
+    fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
+        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        unsafe { storage.storage() }.image_handle().is_some()
+    }
+
+    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(())
+    }
+}
+
 macro_rules! impl_component_param_tuple {
     ($($param: ident), *) => {
         #[allow(non_snake_case)]
