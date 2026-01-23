@@ -76,8 +76,19 @@ impl MemoryManager for CoreMemoryManager {
         }
     }
 
+    // Frees a pool allocated with `allocate_pages`.
+    //
+    //  # Safety
+    // Freeing from a raw address of unknown allocation size is inherently unsafe.
+    // For this function to operate safely, the caller must ensure that:
+    // 1. The address is valid: non-null and correctly page-aligned.
+    // 2. The buffer at `memory` was originally allocated by `allocate_pages`.
+    // 3. The address must refer to the start of the allocation, not an offset within it.
+    // 4. The allocation at `memory` must not have been freed previously.
+    // 5. No aliased references to the allocation should exist after this call.
+    // 6. The `pages` parameter must match the number of pages originally allocated.
     unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
-        let result = core_free_pages(address as efi::PhysicalAddress, page_count);
+        let result = unsafe { core_free_pages(address as efi::PhysicalAddress, page_count) };
         match result {
             Ok(_) => Ok(()),
             Err(EfiError::NotFound) => Err(MemoryError::InvalidAddress),

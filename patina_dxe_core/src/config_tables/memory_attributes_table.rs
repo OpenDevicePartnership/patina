@@ -201,42 +201,43 @@ pub fn core_install_memory_attributes_table() {
                 return;
             }
 
-            // this ends up being a large unsafe block because we have to dereference the raw pointer core_allocate_pool
-            // gave us and convert it to a real type and back in order to install it
+            // SAFETY: `mat_ptr` is non-null and was successfully allocated with sufficient size above.
+            let mat = &mut unsafe { *mat_ptr };
+            mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
+            mat.number_of_entries = mat_desc_list.len() as u32;
+            mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
+            mat.reserved = 0;
+
+            let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
+
+            // SAFETY: `copy_ptr` was previously allocated to be valid for `buffer_size`
+            // and points to a buffer of `mat_desc_list.len()` `efi::MemoryDescriptor` entries.
+            // `mat_descriptors_ptr` is converted from a valid Vec of equivalent size.
             unsafe {
-                let mat = &mut *mat_ptr;
-                mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
-                mat.number_of_entries = mat_desc_list.len() as u32;
-                mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
-                mat.reserved = 0;
+                core::ptr::copy(mat_descriptors_ptr, copy_ptr, mat_desc_list.len() * size_of::<efi::MemoryDescriptor>())
+            };
 
-                let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
+            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+            let st = st_guard.as_mut().expect("System table support not initialized");
 
-                core::ptr::copy(
-                    mat_descriptors_ptr,
-                    copy_ptr,
-                    mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
-                );
-
-                let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-                let st = st_guard.as_mut().expect("System table support not initialized");
-
-                match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
-                    Err(status) => {
-                        log::error!("Failed to install MAT table! Status {status:#X?}");
-                        if let Err(err) = core_free_pool(void_ptr) {
-                            log::error!("Error freeing newly allocated MAT pointer: {err:#X?}");
-                        }
-                        return;
+            match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
+                Err(status) => {
+                    log::error!("Failed to install MAT table! Status {status:#X?}");
+                    // SAFETY: `void_ptr` is the same pointer that was allocated above and has not yet been freed.
+                    // It is not referenced after this point.
+                    if let Err(err) = unsafe { core_free_pool(void_ptr) } {
+                        log::error!("Error freeing newly allocated MAT pointer: {err:#X?}");
                     }
-                    Ok(Some(current_ptr)) => {
-                        // free the old MAT table if we have one
-                        if let Err(err) = core_free_pool(current_ptr.as_ptr()) {
-                            log::error!("Error freeing previous MAT pointer: {err:#X?}");
-                        }
-                    }
-                    Ok(None) => (),
+                    return;
                 }
+                Ok(Some(current_ptr)) => {
+                    // SAFETY: `current_ptr` is a valid, previously installed configuration table.
+                    // Since it has been replaced, it is no longer referenced after this point.
+                    if let Err(err) = unsafe { core_free_pool(current_ptr.as_ptr()) } {
+                        log::error!("Error freeing previous MAT pointer: {err:#X?}");
+                    }
+                }
+                Ok(None) => (),
             }
 
             log::info!("Dumping MAT: {:?}", MemoryAttributesTable(mat_ptr));

@@ -617,14 +617,35 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
     }
 }
 
+// Frees a pool allocated with `core_allocate_pool`.
+//
+//  # Safety
+// Freeing from a raw pointer is inherently unsafe.
+// For this function to operate safely, the caller must ensure that:
+// 1. The buffer pointer is valid: non-null and correctly aligned.
+// 2. The buffer was originally allocated by `core_allocate_pool` and was returned by one of the static or dynamic allocators.
+// 3. The buffer must refer to the start of the allocation, not an offset within it.
+// 4. The buffer must not have been freed previously.
+// 5. No aliased references to the buffer should exist after this call.
 extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
-    match core_free_pool(buffer) {
+    // SAFETY: If all caller preconditions are met, `core_free_pool` is safe to call.
+    match unsafe { core_free_pool(buffer) } {
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => status.into(),
     }
 }
 
-pub fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
+// Frees a pool allocated with `core_allocate_pool`.
+//
+//  # Safety
+// Freeing from a raw pointer is inherently unsafe.
+// For this function to operate safely, the caller must ensure that:
+// 1. The buffer pointer is valid: non-null and correctly aligned.
+// 2. The buffer was originally allocated by `core_allocate_pool` and was returned by one of the static or dynamic allocators.
+// 3. The buffer must refer to the start of the allocation, not an offset within it.
+// 4. The buffer must not have been freed previously.
+// 5. No aliased references to the buffer should exist after this call.
+pub unsafe fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
     if buffer.is_null() {
         return Err(EfiError::InvalidParameter);
     }
@@ -725,14 +746,37 @@ pub fn memory_type_for_handle(handle: efi::Handle) -> Option<efi::MemoryType> {
     ALLOCATORS.lock().memory_type_for_handle(handle)
 }
 
+// Frees a pool allocated with `allocate_pages`.
+//
+//  # Safety
+// Freeing from a raw address of unknown allocation size is inherently unsafe.
+// For this function to operate safely, the caller must ensure that:
+// 1. The address is valid: non-null and correctly page-aligned.
+// 2. The buffer at `memory` was originally allocated by `core_allocate_pages`.
+// 3. The address must refer to the start of the allocation, not an offset within it.
+// 4. The allocation at `memory` must not have been freed previously.
+// 5. No aliased references to the allocation should exist after this call.
+// 6. The `pages` parameter must match the number of pages originally allocated.
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
-    match core_free_pages(memory, pages) {
+    // SAFETY: If all caller preconditions are met, `core_free_pages` is safe to call.
+    match unsafe { core_free_pages(memory, pages) } {
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => status.into(),
     }
 }
 
-pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(), EfiError> {
+// Frees a pool allocated with `core_allocate_pages`.
+//
+//  # Safety
+// Freeing from a raw address of unknown allocation size is inherently unsafe.
+// For this function to operate safely, the caller must ensure that:
+// 1. The address is valid: non-null and correctly page-aligned.
+// 2. The buffer at `memory` was originally allocated by `core_allocate_pages`.
+// 3. The address must refer to the start of the allocation, not an offset within it.
+// 4. The allocation at `memory` must not have been freed previously.
+// 5. No aliased references to the allocation should exist after this call.
+// 6. The `pages` parameter must match the number of pages originally allocated.
+pub unsafe fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(), EfiError> {
     let size = match pages.checked_mul(UEFI_PAGE_SIZE) {
         Some(size) => size,
         None => return Err(EfiError::InvalidParameter),
@@ -750,8 +794,8 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 
     let mut memory_type = efi::CONVENTIONAL_MEMORY;
 
-    // SAFETY: caller must ensure that memory is a valid address and that they have
-    // exclusive ownership of this memory. It is validated above.
+    // SAFETY: If all caller preconditions are met, the memory address should be a valid allocation from one of the allocators
+    // and can safely be freed.
     let res = unsafe {
         if try_each_static_allocator!(memory_type, alloc => {
             alloc.free_pages(memory as usize, pages)
