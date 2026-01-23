@@ -665,6 +665,9 @@ mod tests {
         storage.add_config(1_i32);
         storage.add_service(Recorder::default());
 
+        // Lock configs so Config<i32> is accessible
+        storage.lock_configs();
+
         let test_case = &TEST_CASE1;
         let mut test_data = TestData::new(&storage, false, test_case, None);
 
