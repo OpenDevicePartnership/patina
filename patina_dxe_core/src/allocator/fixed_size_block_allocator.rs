@@ -675,7 +675,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         self.gcd.free_memory_space_preserving_ownership(reserved_block_addr, reserved_block_len)?;
 
         self.lock().set_reserved_range(NonNull::slice_from_raw_parts(
-            NonNull::new(reserved_block_addr as *mut u8).unwrap(),
+            NonNull::new(reserved_block_addr as *mut u8).ok_or(EfiError::OutOfResources)?,
             reserved_block_len,
         ))
     }

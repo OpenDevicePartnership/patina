@@ -847,7 +847,7 @@ mod test {
         if section.section_type() == Some(ffs::section::Type::UserInterface) {
             let display_name_chars: Vec<u16> = section
                 .try_content_as_slice()
-                .unwrap()
+                .ok()?
                 .chunks(2)
                 .map(|x| u16::from_le_bytes(x.try_into().unwrap()))
                 .collect();

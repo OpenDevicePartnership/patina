@@ -81,7 +81,7 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
 extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
     if let Some(metronome_ptr) = METRONOME_ARCH_PTR.get() {
         // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
-        let metronome = unsafe { metronome_ptr.as_mut().unwrap() };
+        let metronome = unsafe { metronome_ptr.as_mut().expect("Metronome pointer should not be null.") };
         let ticks_100ns: u128 = (microseconds as u128) * 10;
         let mut ticks = ticks_100ns / metronome.tick_period as u128;
         while ticks > u32::MAX as u128 {
@@ -121,7 +121,7 @@ extern "efiapi" fn set_watchdog_timer(
     const WATCHDOG_TIMER_CALIBRATE_PER_SECOND: u64 = 10000000;
     if let Some(watchdog_ptr) = WATCHDOG_ARCH_PTR.get() {
         // SAFETY: watchdog_ptr is guaranteed to be a valid pointer to the watchdog protocol if it is Some.
-        let watchdog = unsafe { watchdog_ptr.as_mut().unwrap() };
+        let watchdog = unsafe { watchdog_ptr.as_mut().expect("Watchdog pointer should not be null.") };
         let timeout = (timeout as u64).saturating_mul(WATCHDOG_TIMER_CALIBRATE_PER_SECOND);
         let status = (watchdog.set_timer_period)(watchdog_ptr, timeout);
         if status.is_error() {

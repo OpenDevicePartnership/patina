@@ -106,7 +106,7 @@ pub trait Interval: Clone + Ord {
 
         let mut result = vec![sorted[0].clone()];
         for current in sorted.into_iter().skip(1) {
-            let last = result.last_mut().unwrap();
+            let last = result.last_mut().expect("Intervals should not be empty here.");
             if let Some(merged) = last.try_merge(current) {
                 *last = merged;
             } else {
