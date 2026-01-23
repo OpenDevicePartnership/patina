@@ -483,7 +483,6 @@ impl<P: PlatformInfo> Core<P> {
     /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&'static self) -> Result<()> {
-        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
             // Patina component dispatch
             let dispatched = self.component_dispatcher.lock().dispatch();
@@ -499,7 +498,6 @@ impl<P: PlatformInfo> Core<P> {
                 break;
             }
         }
-        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
         Ok(())
     }

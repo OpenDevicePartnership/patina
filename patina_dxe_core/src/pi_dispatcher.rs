@@ -397,14 +397,10 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             return Err(EfiError::AlreadyStarted);
         }
 
-        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
-
         let mut something_dispatched = false;
         while self.dispatch()? {
             something_dispatched = true;
         }
-
-        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
         if something_dispatched { Ok(()) } else { Err(EfiError::NotFound) }
     }
