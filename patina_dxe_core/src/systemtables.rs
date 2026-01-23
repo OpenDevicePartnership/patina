@@ -749,11 +749,11 @@ impl EfiSystemTable {
 
     /// Writes the given System Table into the stored pointer and updates the checksum.
     pub fn set(&mut self, new_table: efi::SystemTable) {
-        if new_table.runtime_services.is_null() {
-            panic!("Attempted to set System Table with null Runtime Services pointer");
-        }
         if new_table.boot_services.is_null() {
             panic!("Attempted to set System Table with null Boot Services pointer");
+        }
+        if new_table.runtime_services.is_null() {
+            panic!("Attempted to set System Table with null Runtime Services pointer");
         }
         // SAFETY: structure construction ensures pointer is valid.
         unsafe {
