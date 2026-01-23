@@ -202,7 +202,7 @@ pub fn core_install_memory_attributes_table() {
             }
 
             // SAFETY: `mat_ptr` is non-null and was successfully allocated with sufficient size above.
-            let mat = &mut unsafe { *mat_ptr };
+            let mat = unsafe { &mut *mat_ptr };
             mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
             mat.number_of_entries = mat_desc_list.len() as u32;
             mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
