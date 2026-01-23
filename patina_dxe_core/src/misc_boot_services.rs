@@ -161,8 +161,8 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
         Ok(watchdog_arch_ptr) => {
             // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
             // associated with the watchdog arch guid.
-            if metronome_arch_ptr.is_null() {
-                panic!("Located metronome protocol pointer is null.");
+            if watchdog_arch_ptr.is_null() {
+                panic!("Located watchdog protocol pointer is null.");
             }
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
