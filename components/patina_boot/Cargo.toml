@@ -1,0 +1,25 @@
+[package]
+name = "patina_boot"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "Boot orchestration components for Patina firmware."
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+patina = { workspace = true, features = ["unstable-device-path"] }
+patina_macro = { workspace = true }
+r-efi = { workspace = true }
+
+[dev-dependencies]
+patina = { path = "../../sdk/patina", features = ["mockall", "unstable-device-path"] }
+mockall = { workspace = true }
+
+[features]
+default = []
+std = []
