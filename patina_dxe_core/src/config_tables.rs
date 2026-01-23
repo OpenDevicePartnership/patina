@@ -50,7 +50,7 @@ pub fn core_install_configuration_table(
     vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
 ) -> Result<Option<NonNull<c_void>>, EfiError> {
-    let mut system_table: efi::SystemTable = efi_system_table.get();
+    let mut system_table = efi_system_table.get();
 
     let (updated_table, old_vendor_table_ptr) = match system_table.configuration_table {
         existing_tbl_ptr if existing_tbl_ptr.is_null() => {
