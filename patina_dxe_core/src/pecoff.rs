@@ -298,7 +298,11 @@ pub fn relocate_image(
         .ok_or(error::Error::BufferTooShort(dir.size as usize, "image"))?;
 
     let mut relocation_block = parse_relocation_blocks(relocation_data)?;
-    assert!(prev_reloc_blocks.is_empty() || relocation_block.len() == prev_reloc_blocks.len());
+    if !prev_reloc_blocks.is_empty() && relocation_block.len() != prev_reloc_blocks.len() {
+        debug_assert!(false, "Previous relocation blocks length does not match current relocation blocks length.");
+        log::error!("Previous relocation blocks length does not match current relocation blocks length.");
+        return Err(error::Error::RelocationBlockLengthMismatch);
+    }
     for (block_idx, reloc_block) in relocation_block.iter_mut().enumerate() {
         for (reloc_idx, reloc) in reloc_block.relocations.iter_mut().enumerate() {
             let fixup_type = reloc.type_and_offset >> 12;

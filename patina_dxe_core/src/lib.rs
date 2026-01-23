@@ -365,8 +365,13 @@ impl<P: PlatformInfo> Core<P> {
 
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
-        assert!(self.set_instance(), "DXE Core instance was already set!");
-        assert!(!physical_hob_list.is_null(), "The DXE Core requires a non-null HOB list pointer.");
+        if !self.set_instance() {
+            panic!("DXE Core instance was already set!");
+        }
+
+        if physical_hob_list.is_null() {
+            panic!("DXE Core entry point called with null HOB list pointer!");
+        }
 
         let relocated_hob_list = self.init_memory(physical_hob_list);
 
@@ -442,7 +447,10 @@ impl<P: PlatformInfo> Core<P> {
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
-        assert!(self.set_hob_list(hob_list).is_ok());
+        if self.set_hob_list(hob_list).is_err() {
+            log::error!("HOB list was already set!");
+            debug_assert!(false, "HOB list was already set!");
+        }
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.

@@ -594,7 +594,12 @@ impl ImageData {
         )
         .unwrap_or_else(|err| panic!("Failed to install dxe core image handle: {err:?}"));
 
-        assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
+        if handle != protocol_db::DXE_CORE_HANDLE {
+            panic!(
+                "DXE Core image was installed with DXE_CORE_HANDLE but got {:?} after `install_protocol_interface`",
+                handle
+            );
+        }
 
         let protocol_ptr = NonNull::from(private_image_data.image_info.as_ref());
 

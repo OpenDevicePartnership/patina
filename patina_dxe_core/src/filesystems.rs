@@ -123,9 +123,12 @@ impl SimpleFile<'_> {
 
         EfiError::status_to_result(status)?;
 
+        if file_size > file_buffer.len() {
+            return Err(EfiError::DeviceError);
+        }
+
         //in case the read somehow returned fewer bytes than indicated by get_size, truncate the vector returned to the
         //actual read size.
-        assert!(file_size <= file_buffer.len());
         if file_size < file_buffer.len() { Ok(file_buffer[0..file_size].to_vec()) } else { Ok(file_buffer) }
     }
 }

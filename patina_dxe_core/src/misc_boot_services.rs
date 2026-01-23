@@ -36,7 +36,10 @@ impl<T> ArchProtocolPtr<T> {
 
     // SAFETY: ptr must be a valid pointer to T and init must only be called once.
     unsafe fn init(&self, ptr: *mut c_void) {
-        assert!(!self.0.is_completed(), "Attempted to set ArchProtocolPtr more than once.");
+        if self.0.is_completed() {
+            log::error!("Attempted to initialize ArchProtocolPtr more than once.");
+            return;
+        }
         let _ = self.0.call_once(|| ptr as *mut T);
     }
 }
@@ -138,7 +141,9 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
         Ok(metronome_arch_ptr) => {
             // SAFETY: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
             // associated with the metronome arch guid.
-            assert!(!metronome_arch_ptr.is_null(), "Located metronome protocol pointer is null.");
+            if metronome_arch_ptr.is_null() {
+                panic!("Located metronome protocol pointer is null.");
+            }
             unsafe { METRONOME_ARCH_PTR.init(metronome_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for metronome_arch_available due to error {status_err:?}");
@@ -156,7 +161,9 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
         Ok(watchdog_arch_ptr) => {
             // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
             // associated with the watchdog arch guid.
-            assert!(!watchdog_arch_ptr.is_null(), "Located watchdog protocol pointer is null.");
+            if metronome_arch_ptr.is_null() {
+                panic!("Located metronome protocol pointer is null.");
+            }
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for watchdog_arch_available due to error {status_err:?}");

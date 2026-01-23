@@ -484,8 +484,12 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     log::info!("free_memory_capabilities: {free_memory_capabilities:#x?}");
 
     // make sure the PHIT is present and it was reasonable.
-    assert!(free_memory_size > 0, "Not enough free memory for DXE core to start");
-    assert!(memory_start < memory_end, "Not enough memory available for DXE core to start.");
+    if free_memory_size == 0 {
+        panic!("PHIT HOB indicates no free memory available for DXE core to start. Free memory size = 0.");
+    }
+    if memory_end <= memory_start {
+        panic!("PHIT HOB indicates no memory available for DXE core to start. Memory end <= memory start.");
+    }
 
     // initialize the GCD with an initial memory space. Note: this will fail if GCD.init() above didn't happen.
     // SAFETY: We are directly using the free memory space from the PHIT HOB, which must be valid and reserved for use

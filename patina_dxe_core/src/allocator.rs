@@ -821,7 +821,10 @@ extern "efiapi" fn get_memory_map(
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
-    assert_ne!(required_map_size, 0);
+    debug_assert!(required_map_size != 0);
+    if required_map_size == 0 {
+        return efi::Status::OUT_OF_RESOURCES;
+    }
     // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(required_map_size) };
     if map_size < required_map_size {
@@ -1055,6 +1058,70 @@ fn process_hob_allocations(hob_list: &HobList) {
         };
     }
 
+<<<<<<< HEAD
+=======
+    // Find the stack hob and set attributes.
+    if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+        patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            if desc.name == HOB_MEMORY_ALLOC_STACK =>
+        {
+            Some(desc)
+        }
+        _ => None,
+    }) {
+        log::trace!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
+        let stack_address = stack_hob.memory_base_address;
+        let stack_length = stack_hob.memory_length;
+
+        if (stack_address == 0 || stack_length == 0) {
+            panic!("Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}");
+        }
+
+        match GCD.get_memory_descriptor_for_address(stack_address) {
+            Ok(gcd_desc) => {
+                // Set Stack region to execute protect. We use the allocated memory protection policy here because
+                // that matches our standard policy
+                let attributes =
+                    GCD.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                match GCD.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            stack_length,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
+                }
+                // Set Guard page to read protect. We keep the NX and cache attributes from above
+                match GCD.set_memory_space_attributes(
+                    stack_address as usize,
+                    UEFI_PAGE_SIZE,
+                    MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
+                ) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            UEFI_PAGE_SIZE,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
+                }
+            }
+            Err(_) => {
+                log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
+            }
+        }
+    } else {
+        panic!("No stack hob found");
+    }
+
+>>>>>>> bcda849c (fix asserts)
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
     // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
@@ -1121,7 +1188,9 @@ pub fn init_memory_support(hob_list: &HobList) {
                 // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
                 // requirement for EfiMemoryTypeInformation), and length is calculated above to fit within the
                 // Guid HOB data. Assert if alignment is not as expected.
-                assert_eq!(memory_type_slice_ptr.align_offset(mem::align_of::<EFiMemoryTypeInformation>()), 0);
+                if memory_type_slice_ptr.align_offset(mem::align_of::<EFiMemoryTypeInformation>()) != 0 {
+                    panic!("Memory Type Info HOB data is not correctly 8-byte aligned for EFiMemoryTypeInformation structure.");
+                }
                 let memory_type_info = unsafe { slice::from_raw_parts(memory_type_slice_ptr, memory_type_slice_len) };
 
                 Some(memory_type_info)

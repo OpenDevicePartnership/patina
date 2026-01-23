@@ -293,8 +293,13 @@ impl FixedSizeBlockAllocator {
             Some(index) => {
                 let new_node = BlockListNode { next: self.list_heads[index].take() };
                 // verify that block has size and alignment required for storing node
-                assert!(size_of::<BlockListNode>() <= BLOCK_SIZES[index]);
-                assert!(align_of::<BlockListNode>() <= BLOCK_SIZES[index]);
+                if size_of::<BlockListNode>() > BLOCK_SIZES[index] || align_of::<BlockListNode>() > BLOCK_SIZES[index] {
+                    panic!(
+                        "FSB deallocating block too small to store BlockListNode. \
+                            This should never happen since BlockListNode is a single pointer and all block sizes are >= 8 bytes. \
+                            This indicates corruption of the allocator's internal state. "
+                    );
+                }
                 let new_node_ptr = ptr.as_ptr() as *mut BlockListNode;
                 unsafe {
                     new_node_ptr.write(new_node);

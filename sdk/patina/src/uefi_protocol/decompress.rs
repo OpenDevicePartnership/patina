@@ -9,6 +9,7 @@
 use core::ffi::c_void;
 
 use crate::uefi_protocol::ProtocolInterface;
+use goblin::pe::debug;
 use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
 use r_efi::efi;
 
@@ -89,8 +90,11 @@ impl EfiDecompressProtocol {
         _scratch_buffer: *mut c_void,
         _scratch_size: u32,
     ) -> efi::Status {
-        assert!(!source_buffer.is_null());
-        assert!(!destination_buffer.is_null());
+        if source_buffer.is_null() || destination_buffer.is_null() {
+            debug_assert!(false, "EfiDecompressProtocol::decompress called with null pointer");
+            log::error!("EfiDecompressProtocol::decompress called with null pointer");
+            return efi::Status::INVALID_PARAMETER;
+        }
 
         // SAFETY: source_buffer and destination_buffer pointers are validated as non-null.
         // Sizes are provided by caller and trusted to match the buffer allocations.
