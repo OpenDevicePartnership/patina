@@ -364,6 +364,17 @@ mod tests {
                 crate::test_support::reset_allocators();
                 crate::test_support::init_test_protocol_db();
             }
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                unsafe {
+                    crate::GCD.reset();
+                    crate::PROTOCOL_DB.reset();
+                    crate::allocator::reset_allocators();
+                }
+            });
+
             f();
         })
         .unwrap();

@@ -305,6 +305,15 @@ mod tests {
             }
             crate::systemtables::init_system_table();
 
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                unsafe {
+                    crate::GCD.reset();
+                    crate::PROTOCOL_DB.reset();
+                }
+            });
+
             let mut st_guard = systemtables::SYSTEM_TABLE.lock();
             let st = st_guard.as_mut().expect("System Table not initialized!");
             f(st);

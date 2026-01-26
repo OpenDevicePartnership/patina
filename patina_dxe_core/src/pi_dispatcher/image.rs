@@ -1505,6 +1505,14 @@ mod tests {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                crate::GCD.reset();
+                crate::PROTOCOL_DB.reset();
+            });
+
             f();
         })
         .unwrap();

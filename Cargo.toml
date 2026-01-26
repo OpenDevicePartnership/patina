@@ -65,7 +65,7 @@ criterion = { version = "^0.5" }
 env_logger = "0.11"
 mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
-ruint = { version = "1" }
+ruint = { version = "1.17.1" }
 serial_test = { version = "3.0" }
 winapi = { version = "0.3" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

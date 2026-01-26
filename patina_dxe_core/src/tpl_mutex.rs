@@ -149,9 +149,13 @@ mod tests {
             test_support::init_test_logger();
             raise_tpl(efi::TPL_HIGH_LEVEL);
             restore_tpl(efi::TPL_APPLICATION);
+
+            let _guard = test_support::StateGuard::new(|| {
+                raise_tpl(efi::TPL_HIGH_LEVEL);
+                restore_tpl(efi::TPL_APPLICATION);
+            });
+
             f();
-            raise_tpl(efi::TPL_HIGH_LEVEL);
-            restore_tpl(efi::TPL_APPLICATION);
         });
         match result {
             Ok(()) => {}

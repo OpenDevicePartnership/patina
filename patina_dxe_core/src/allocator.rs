@@ -1261,18 +1261,59 @@ mod tests {
     use patina::pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
+    enum GcdInit {
+        /// Initializes a simple test GCD (via init_test_gcd()) with the given size.
+        WithSize(usize),
+        /// Initializes a GCD with the given HOB list size (via build_test_hob_list()).
+        WithHobList(usize),
+    }
+
+    /// Initializes global state with either a test GCD or a HOB list, then runs the given
+    /// closure `f` with the physical HOB list pointer (or null if a test GCD was used).
+    ///
+    /// Cleans up global state after `f` returns.
+    fn with_locked_state<F: Fn(*const c_void) + std::panic::RefUnwindSafe>(gcd_init: GcdInit, f: F) {
         test_support::with_global_lock(|| {
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                test_support::init_test_logger();
-                test_support::init_test_gcd(Some(gcd_size));
-                test_support::init_test_protocol_db();
-                test_support::reset_allocators();
-            }
-            f();
+            let physical_hob_list = match gcd_init {
+                GcdInit::WithSize(gcd_size) => {
+                    // SAFETY: multiple functions modify global state. Functions are
+                    // called within a global lock to ensure exclusive access during
+                    // initialization.
+                    unsafe {
+                        test_support::init_test_logger();
+                        test_support::init_test_gcd(Some(gcd_size));
+                        test_support::init_test_protocol_db();
+                        test_support::reset_allocators();
+                    }
+                    core::ptr::null()
+                }
+                GcdInit::WithHobList(hob_size) => {
+                    let physical_hob_list = build_test_hob_list(hob_size as u64);
+                    // SAFETY: multiple functions modify global state. Functions are
+                    // called within a global lock to ensure exclusive access during
+                    // initialization.
+                    unsafe {
+                        test_support::init_test_logger();
+                        gcd::init_gcd(physical_hob_list);
+                        test_support::init_test_protocol_db();
+                        test_support::reset_allocators();
+                    }
+                    physical_hob_list
+                }
+            };
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                unsafe {
+                    GCD.reset();
+                    PROTOCOL_DB.reset();
+                    reset_allocators();
+                    ALLOCATORS.lock().reset();
+                }
+            });
+
+            f(physical_hob_list);
         })
         .unwrap();
     }
@@ -1280,7 +1321,7 @@ mod tests {
     #[test]
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             let mut st = EfiSystemTable::allocate_new_table();
             install_memory_services(&mut st);
             let bs = st.boot_services().get();
@@ -1295,18 +1336,7 @@ mod tests {
 
     #[test]
     fn init_memory_support_should_process_memory_bucket_hobs() {
-        test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x1000000);
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        with_locked_state(GcdInit::WithHobList(0x1000000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
@@ -1354,25 +1384,13 @@ mod tests {
             let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().reserved_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
         })
-        .unwrap();
     }
 
     #[test]
     fn process_hob_allocations_should_handle_stack_attribute_set_failure() {
         // A stack HOB is created but the corresponding memory region is not added
         // to the GCD. This should cause set_memory_space_attributes to fail with NotFound.
-        test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x1000000);
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                reset_allocators();
-            }
-
+        with_locked_state(GcdInit::WithHobList(0x1000000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
@@ -1400,25 +1418,13 @@ mod tests {
             // is not in the GCD, but should continue processing without panicking
             process_hob_allocations(&hob_list);
         })
-        .unwrap();
     }
 
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        // 4 MiB of test memory is required because allocator expansion during initialization
+        // may need to handle large allocations for memory buckets and HOBs.
+        with_locked_state(GcdInit::WithHobList(0x400000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
@@ -1524,51 +1530,27 @@ mod tests {
             assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
             assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         })
-        .unwrap();
     }
 
     #[test]
     #[should_panic]
     fn should_have_stack_hob() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        // 4 MiB of test memory is required because allocator expansion during initialization
+        // may need to handle large allocations for memory buckets and HOBs.
+        with_locked_state(GcdInit::WithHobList(0x400000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
             init_memory_support(&hob_list);
         })
-        .unwrap();
     }
 
     #[test]
     #[should_panic]
     fn should_have_non_zero_stack_base_address_length() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            // SAFETY: multiple functions modify global state. Functions are
-            // called within a global lock to ensure exclusive access during
-            // initialization.
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        // 4 MiB of test memory is required because allocator expansion during initialization
+        // may need to handle large allocations for memory buckets and HOBs.
+        with_locked_state(GcdInit::WithHobList(0x400000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
@@ -1590,7 +1572,6 @@ mod tests {
 
             init_memory_support(&hob_list);
         })
-        .unwrap();
     }
 
     #[test]
@@ -1600,7 +1581,7 @@ mod tests {
 
     #[test]
     fn well_known_allocators_should_be_retrievable() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             let allocators = ALLOCATORS.lock();
 
             for (mem_type, handle) in [
@@ -1619,7 +1600,7 @@ mod tests {
 
     #[test]
     fn new_allocators_should_be_created_on_demand() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             for (mem_type, handle) in [
                 (efi::RESERVED_MEMORY_TYPE, protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
                 (efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
@@ -1686,7 +1667,7 @@ mod tests {
     // metadata.
     #[test]
     fn linked_list_hole_list_struct_should_be_accounted_for() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 0x2B2FA0).unwrap();
             assert!(!ptr.is_null());
         });
@@ -1694,7 +1675,7 @@ mod tests {
 
     #[test]
     fn allocate_pool_should_allocate_pool() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let mut buffer_ptr = core::ptr::null_mut();
 
             // test that disallowed types cannot be allocated
@@ -1732,7 +1713,7 @@ mod tests {
 
     #[test]
     fn free_pool_should_free_pool() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let mut buffer_ptr = core::ptr::null_mut();
             assert_eq!(
                 allocate_pool(efi::BOOT_SERVICES_DATA, 0x1000, core::ptr::addr_of_mut!(buffer_ptr)),
@@ -1750,7 +1731,7 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_high_traffic() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_BOOT_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
@@ -1767,7 +1748,7 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_low_traffic() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_BOOT_SERVICES_CODE_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
@@ -1787,7 +1768,7 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_low_traffic_runtime() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
@@ -1807,7 +1788,7 @@ mod tests {
 
     #[test]
     fn allocate_pages_should_allocate_pages() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             //test test null memory pointer fails with invalid param.
             assert_eq!(
                 allocate_pages(
@@ -1952,7 +1933,7 @@ mod tests {
 
     #[test]
     fn free_pages_error_scenarios_should_be_handled_properly() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             assert_eq!(free_pages(0x12345000, !0xFFF), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(!0xFFF, 0x10), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(0x12345678, 1), efi::Status::INVALID_PARAMETER);
@@ -1977,7 +1958,7 @@ mod tests {
 
     #[test]
     fn get_memory_map_should_return_a_memory_map() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             //reserve some pages in the runtime services data allocator.
             ALLOCATORS.lock().get_allocator(efi::RUNTIME_SERVICES_DATA).unwrap().reserve_memory_pages(0x100).unwrap();
 
@@ -2090,7 +2071,7 @@ mod tests {
 
     #[test]
     fn terminate_map_should_validate_the_map_key() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             // allocate some "custom" type pages to create something interesting to find in the map.
             let mut buffer_ptr: *mut u8 = core::ptr::null_mut();
             assert_eq!(

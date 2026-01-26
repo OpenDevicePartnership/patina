@@ -73,6 +73,44 @@ impl<T> TestOnce<T> {
 /// respectively).
 static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// A guard that executes cleanup logic when dropped.
+///
+/// This guard is useful for ensuring that global state is properly reset after test execution,
+/// including when tests panic, preventing state pollution between tests that could cause
+/// non-deterministic failures.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::test_support::StateGuard;
+///
+/// fn with_reset_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+///     let _guard = StateGuard::new(|| {
+///         // Cleanup code that runs even if f() panics
+///         reset_global_state();
+///     });
+///     f();
+/// }
+/// ```
+pub struct StateGuard<F: FnMut()> {
+    cleanup: F,
+}
+
+impl<F: FnMut()> StateGuard<F> {
+    /// Creates a new StateGuard with the specified cleanup function.
+    ///
+    /// The cleanup function will be called when the guard is dropped, even if a panic occurs.
+    pub fn new(cleanup: F) -> Self {
+        Self { cleanup }
+    }
+}
+
+impl<F: FnMut()> Drop for StateGuard<F> {
+    fn drop(&mut self) {
+        (self.cleanup)();
+    }
+}
+
 pub struct MockPageTable {
     mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
