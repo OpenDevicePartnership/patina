@@ -19,7 +19,7 @@ use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerTyp
 const NUM_EXCEPTION_TYPES: ExceptionType = if cfg!(test) || cfg!(target_arch = "x86_64") {
     256
 } else if cfg!(target_arch = "aarch64") {
-    3
+    4
 } else {
     panic!("Unimplemented architecture!");
 };
