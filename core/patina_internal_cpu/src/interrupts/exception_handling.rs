@@ -17,7 +17,7 @@ use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerTyp
 
 // Architecture-specific exception type counts.
 // x86_64: 256 IDT entries
-// AArch64: 4 types (Synchronous, IRQ, FIQ, SError) - see exception_handler.asm:109-112
+// AArch64: 4 types (Synchronous, IRQ, FIQ, SError)
 const NUM_EXCEPTION_TYPES_X86_64: usize = 256;
 const NUM_EXCEPTION_TYPES_AARCH64: usize = 4;
 
@@ -222,9 +222,7 @@ mod tests {
     #[test]
     fn test_num_exception_types() {
         // Verify expected exception type counts per architecture.
-        // If changing these values, verify they match the assembly definitions:
-        // - x86_64: interrupt_handler.asm (256 IDT entries)
-        // - AArch64: exception_handler.asm:109-112 (Synchronous, IRQ, FIQ, SError)
+        // If changing these values, verify they match the assembly definitions.
         assert_eq!(NUM_EXCEPTION_TYPES_X86_64, 256);
         assert_eq!(NUM_EXCEPTION_TYPES_AARCH64, 4);
     }
