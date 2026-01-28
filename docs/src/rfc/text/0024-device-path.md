@@ -1,6 +1,8 @@
-# RFC: `Move CPU functionality into Patina Core`
+# RFC: Consolidate and Reorganize Device Path Functionality
 
-// TODO: SHERRY make copilot write this
+## Summary
+
+This RFC proposes consolidating all Device Path Protocol functionality, currently scattered across multiple Patina crates, into a single `device_path` module within the Patina SDK. The reorganization addresses issues with disorganized struct definitions, fragmented parsing functionality, and improper usage of internal crates by external components. The proposal also introduces improved node construction patterns that fix internal header fields and expose only necessary parameters through public constructors.
 
 ## Change Log
 
@@ -25,7 +27,6 @@ The Patina SDK provides shared primitives used in the rest of the Patina core. F
 
 1. Consolidate all Device Path functionality into the Patina SDK crate
 2. Clearly delineate internal vs. external functionality within the SDK
-
 
 ## Requirements
 
@@ -62,11 +63,61 @@ The following crates incorrectly use `patina_internal_device_path`, which should
 
 ## Rust Code Design
 
-- device_path: types.rs
-- device_paths: parse.rs
-- additional stuff???
-- is this tuff in Patina 💀💀☠️☠️☠️
+All device path functionality will be moved to the Patina SDK.
 
-## Guide-Level Explanation
+```text
+└── sdk/patina
+    ├── src
+        ├── arch
+        ├── ...
+        ├── device_path
+            ├── node.rs
+            ├── traversal.rs
+```
 
-N/A
+`node.rs` includes all Device Path struct variations, such as `MediaFwVolDevicePath`. `traversal.rs` includes all Device Path traversal functionality, such as `DevicePathWalker`.
+
+The crates that use `patina_internal_device_path` will have to use `patina` as a dependency instead. This includes `patina_performance` and `patina_dxe_core`. This should not present any issues as both these crates already reference other functionality inside `patina`.
+
+### Node Construction Improvements
+By putting functionality into the Patina SDK, we are also able to control usage and initialization of Device Path structs. A major improvement to the current scheme of initializing raw fields in Device Path nodes would be to fix internal fields and only allow crates to construct nodes through `pub` functions.
+
+For a certain node type, the header should be fixed. As such, internally in the SDK, we can set these fields in the constructor to their fixed values.
+
+```rust
+/* NEW IMPLEMENTATION */
+#[repr(C)]
+pub struct MediaFwVolDevicePath {
+    header: efi::protocols::device_path::Protocol,
+    name: efi::Guid,
+}
+
+impl MediaFwVolDevicePath {
+    pub fn new(name: efi::Guid) -> Self {
+        Self {
+            header: efi::protocols::device_path::Protocol {
+                r#type: efi::protocols::device_path::TYPE_MEDIA, // fixed type
+                sub_type: efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_VOLUME, // fixed subtype
+                length: std::mem::size_of::<Self>() as u16, // fixed size
+            },
+            name,
+        }
+    }
+}
+
+MediaFwVolDevicePath::new(efi::Guid(...));
+
+/* CURRENT IMPLEMENTATION 
+MediaFwVolDevicePath {
+    header: efi::protocols::device_path::Protocol {
+        r#type: efi::protocols::device_path::TYPE_MEDIA,
+        sub_type,
+        length: [
+            (mem::size_of::<MediaFwVolDevicePath>() & 0xff) as u8,
+            ((mem::size_of::<MediaFwVolDevicePath>() >> 8) & 0xff) as u8,
+        ],
+    },
+    name,
+}
+*/
+```

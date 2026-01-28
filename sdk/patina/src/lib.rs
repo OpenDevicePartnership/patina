@@ -37,6 +37,7 @@ pub mod arch;
 pub mod base;
 pub mod boot_services;
 pub mod component;
+pub mod device_path;
 pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
