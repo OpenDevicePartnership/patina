@@ -26,7 +26,7 @@ See reference: [PI specification v1.9](https://uefi.org/specs/PI/1.9/V4_Overview
 
 ### MM Supervisor
 
-A project MU component implements a standalone MM supervisor in C. This component provides supervised MM functionality.
+A [project MU module](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This module provides supervised MM functionality.
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
 code. However, it lacks the safety and modern features that Rust can offer.
 
@@ -71,11 +71,11 @@ Current C implementation of the MM supervisor is based on the Project MU framewo
 Specifically, this module includes the functionality Standalone MM core, PiSmmCpuDxeSmm and the page table management portion
 of the PiSmmCore as well as the privilege management component.
 
-The current core services can be found in this illustrated diagram:
+The current core services for the existing C implementation can be found in this illustrated diagram:
 ![Current C-based Supervisor](0000-mm-supv/c-supervisor-flowchart.png)
 
 The launching of the MM supervisor is done through the MM supervisor specific IPL, which is responsible for opening the
-MMRAMs, locating the "standalone MM supervisor core", executing it in MMRAM.
+MMRAM regions, locating the "standalone MM supervisor core", executing it in MMRAM.
 
 Upon executing, the MM supervisor initializes the memory services, copies all reported HOBs from the non-MM environment,
 sets up basic stack buffer for all processors and both supervisor and user modes, sets up the necessary page tables, sets
@@ -110,8 +110,8 @@ drivers (in contrast to runtime drivers).
 
 ### MMI Entry Point
 
-This entry point is the assembly routine responsible for handling incoming MMIs. It will transition the CPU from 16bit mode
-all the way to 64bit mode, setting up the necessary environment for MM execution.
+This entry point is the assembly routine responsible for handling incoming MMIs. It will transition the CPU from 16-bit real mode
+all the way to 64-bit long mode, setting up the necessary environment for MM execution.
 
 This section is expected to be mostly similar to an implementation for Project MU's SMM Enhanced Attestation (SEA), which
 separated the critical jump pointers to data sections, allowing for easier inspection and updates.
@@ -137,7 +137,7 @@ The MM foundation setup involves the following key tasks:
 - Initialize IDT and GDT content for MM execution
 - Setup page tables for MM protections
 - Map all the regions from MMRAM
-- Block access to non MMRAM regions by default
+- Block access to non MMRAM regions from MM by default
 - Unblock access to necessary non-MM regions based on reported HOBs
 - Register MM supervisor handlers for needed events
 - Prepare necessary MM communication buffers based on reported hobs
@@ -278,7 +278,7 @@ However, for a given non legacy syscall, the Rust MM supervisor must ensure that
 and exclusively point to user mode MMRAM regions.
 
 For the legacy syscall (from 0x0000 to 0xFFFF), the Rust MM supervisor will verify the requested operations against the
-platform supplied security policies before executing them. See the next section for more details on security policies.
+platform supplied security policies before executing them.
 
 For page allocation and free syscall, the Rust MM supervisor will manage a dedicated page pool for MM user mode allocations.
 
