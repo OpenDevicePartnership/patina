@@ -26,6 +26,58 @@ use patina::component::{
 /// Responsible for providing performance configuration information to other performance components.
 pub struct PerformanceConfigurationProvider;
 
+/// Converts EDK II's PcdPerformanceLibraryPropertyMask format to Patina's enabled_measurements format.
+///
+/// EDK II uses "disable bits" (BIT1-6 set = disabled), while Patina uses "enable bits" (bit set = enabled).
+///
+/// ## EDK II Format (PcdPerformanceLibraryPropertyMask)
+/// - BIT0: Enable Performance Measurement (master switch, not used here - handled by enable_component)
+/// - BIT1: DISABLE Start Image Logging
+/// - BIT2: DISABLE Load Image logging
+/// - BIT3: DISABLE Binding Support logging
+/// - BIT4: DISABLE Binding Start logging
+/// - BIT5: DISABLE Binding Stop logging
+/// - BIT6: DISABLE all other general Perfs
+///
+/// ## Patina Format (enabled_measurements)
+/// - BIT0 (1): ENABLE StartImage
+/// - BIT1 (2): ENABLE LoadImage
+/// - BIT2 (4): ENABLE DriverBindingSupport
+/// - BIT3 (8): ENABLE DriverBindingStart
+/// - BIT4 (16): ENABLE DriverBindingStop
+///
+/// ## Example
+/// - EDK II `0x01` (only BIT0 set, no disable bits) → Patina `0x1F` (all enabled)
+/// - EDK II `0x03` (BIT0 + BIT1) → Patina `0x1E` (StartImage disabled)
+fn convert_edk2_mask_to_patina(edk2_mask: u32) -> u32 {
+    use patina::performance::Measurement;
+
+    let mut patina_mask: u32 = 0;
+
+    // EDK II BIT1 = DISABLE StartImage → if NOT set, enable in Patina
+    if edk2_mask & (1 << 1) == 0 {
+        patina_mask |= Measurement::StartImage as u32;
+    }
+    // EDK II BIT2 = DISABLE LoadImage
+    if edk2_mask & (1 << 2) == 0 {
+        patina_mask |= Measurement::LoadImage as u32;
+    }
+    // EDK II BIT3 = DISABLE BindingSupport
+    if edk2_mask & (1 << 3) == 0 {
+        patina_mask |= Measurement::DriverBindingSupport as u32;
+    }
+    // EDK II BIT4 = DISABLE BindingStart
+    if edk2_mask & (1 << 4) == 0 {
+        patina_mask |= Measurement::DriverBindingStart as u32;
+    }
+    // EDK II BIT5 = DISABLE BindingStop
+    if edk2_mask & (1 << 5) == 0 {
+        patina_mask |= Measurement::DriverBindingStop as u32;
+    }
+
+    patina_mask
+}
+
 /// A HOB that contains Patina Performance component configuration information.
 ///
 /// HOB GUID values for reference:
@@ -73,7 +125,8 @@ impl PerformanceConfigurationProvider {
             log::trace!("The Patina Performance component is disabled per HOB configuration.");
         } else {
             log::trace!("The Patina Performance component is enabled per HOB configuration.");
-            config_mut.enabled_measurements = perf_config_hob.enabled_measurements;
+            // Convert EDK II "disable bits" format to Patina "enable bits" format
+            config_mut.enabled_measurements = convert_edk2_mask_to_patina(perf_config_hob.enabled_measurements);
         }
 
         log::trace!("Outgoing MM Configuration: {:?}", *config_mut);
