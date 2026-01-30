@@ -37,7 +37,7 @@ pub struct PerformanceConfigurationProvider;
 /// - BIT3: DISABLE Binding Support logging
 /// - BIT4: DISABLE Binding Start logging
 /// - BIT5: DISABLE Binding Stop logging
-/// - BIT6: DISABLE all other general Perfs
+/// - BIT6: DISABLE all other general Performance Measurements (not used here)
 ///
 /// ## Patina Format (enabled_measurements)
 /// - BIT0 (1): ENABLE StartImage
