@@ -9,7 +9,7 @@ This RFC proposes a Rust-based supervisor to manage management mode (MM) operati
 
 ## Motivation
 
-Supervision in MM is critical for secure and reliable firmware execution, as it handles sensitive tasks such as
+Privilege separation in MM is critical for secure and reliable firmware execution, as MM code handles sensitive tasks such as
 system management interrupts (SMIs) and other privileged operations. By implementing the MM supervisor in Rust,
 we aim to leverage Rust's safety guarantees, memory management, and concurrency features to enhance the robustness
 of MM operations.
