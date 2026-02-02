@@ -666,7 +666,7 @@ mod tests {
             .with_validation(|descriptors| {
                 MemoryMapValidation::new()
                     .expect_memory_types(vec![efi::CONVENTIONAL_MEMORY])
-                    .expect_total_memory_mb(32)
+                    .expect_total_memory_mb(64)
                     .validate(descriptors)
             });
 

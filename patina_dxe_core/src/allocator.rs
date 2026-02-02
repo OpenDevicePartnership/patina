@@ -821,6 +821,10 @@ extern "efiapi" fn get_memory_map(
     // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
+    // Required map size is the unmerged size. This will be much larger than the actual size needed after merging.
+    // This is done for two reasons:
+    //   - It allows us to avoid allocating memory in get_memory_map() to calculate the merged size
+    //   - It helps prevent issues where callers do not allocate enough space, such as bootloaders across EBS calls
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
     assert_ne!(required_map_size, 0);
     // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
@@ -844,10 +848,6 @@ extern "efiapi" fn get_memory_map(
         Err(err) => return err.into(),
     };
     let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
-
-    // Write back the actual map size after merging
-    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
-    unsafe { memory_map_size.write_unaligned(actual_map_size) };
 
     // SAFETY: caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
