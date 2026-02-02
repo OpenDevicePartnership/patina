@@ -22,10 +22,82 @@ use patina::{
     runtime_services::RuntimeServices,
     uefi_protocol::device_path::DevicePathBuf,
 };
-use r_efi::{efi, system::EVENT_GROUP_READY_TO_BOOT};
+use r_efi::{efi, protocols::simple_text_input, system::EVENT_GROUP_READY_TO_BOOT};
 
 /// Watchdog timeout in seconds per UEFI Specification Section 3.1.2.
 const WATCHDOG_TIMEOUT_SECONDS: usize = 300; // 5 minutes
+
+/// Check if a hotkey was pressed during boot.
+///
+/// Reads any pending keystrokes from all SimpleTextInput protocol instances
+/// and returns `true` if any key matches the specified scancode.
+///
+/// This is a non-blocking check that consumes any buffered keystrokes.
+///
+/// # Arguments
+///
+/// * `boot_services` - Boot services interface
+/// * `hotkey_scancode` - The scancode to check for (e.g., 0x16 for F12)
+///
+/// # Returns
+///
+/// Returns `true` if the hotkey was detected, `false` otherwise.
+pub fn detect_hotkey<B: BootServices>(boot_services: &B, hotkey_scancode: u16) -> bool {
+    // Locate all SimpleTextInput handles
+    let handles =
+        match boot_services.locate_handle_buffer(HandleSearchType::ByProtocol(&simple_text_input::PROTOCOL_GUID)) {
+            Ok(handles) => handles,
+            Err(_) => return false,
+        };
+
+    // SAFETY: Handles are valid from locate_handle_buffer, protocol_ptr is valid from handle_protocol
+    unsafe { detect_hotkey_from_handles(boot_services, &handles, hotkey_scancode) }
+}
+
+/// Inner hotkey detection loop over handles.
+///
+/// This function is separated from `detect_hotkey` because it uses raw protocol
+/// function pointers that cannot be unit tested with mocks. Integration tests
+/// verify this code path on real hardware/emulators.
+///
+/// # Safety
+///
+/// - `handles` must contain valid handles obtained from `locate_handle_buffer`
+/// - Each handle must support the `SimpleTextInput` protocol for `handle_protocol` to succeed
+#[coverage(off)] // Uses raw protocol function pointers - tested via integration tests
+unsafe fn detect_hotkey_from_handles<B: BootServices>(
+    boot_services: &B,
+    handles: &[efi::Handle],
+    hotkey_scancode: u16,
+) -> bool {
+    for &handle in handles.iter() {
+        // Get the protocol interface for this handle
+        // SAFETY: handle is valid per function contract (from locate_handle_buffer)
+        let protocol_ptr = match unsafe { boot_services.handle_protocol::<simple_text_input::Protocol>(handle) } {
+            Ok(ptr) => ptr,
+            Err(_) => continue,
+        };
+
+        // Read any pending keystrokes (non-blocking)
+        // The protocol will return NOT_READY if no key is available
+        loop {
+            let mut key = simple_text_input::InputKey::default();
+            let status = (protocol_ptr.read_key_stroke)(protocol_ptr, &mut key);
+
+            if status == efi::Status::SUCCESS {
+                if key.scan_code == hotkey_scancode {
+                    return true;
+                }
+                // Key didn't match, continue reading to drain buffer
+            } else {
+                // NOT_READY or error - no more keys in buffer
+                break;
+            }
+        }
+    }
+
+    false
+}
 
 /// Load and start a boot image with UEFI spec compliance.
 ///
@@ -84,6 +156,13 @@ pub fn boot_from_device_path<B: BootServices>(
 /// # Returns
 ///
 /// Returns `Ok(())` when device topology enumeration is complete.
+///
+/// # Coverage
+///
+/// This function is marked `#[coverage(off)]` because `BootServicesBox` return
+/// values from `locate_handle_buffer` cannot be created in unit tests. The
+/// function is tested via integration tests on real hardware/emulators.
+#[coverage(off)] // BootServicesBox return type cannot be mocked - tested via integration tests
 pub fn connect_all<B: BootServices>(boot_services: &B) -> Result<()> {
     // Loop until the number of handles stabilizes, indicating device topology is complete.
     // This is needed because connecting a PCI bus creates new handles for PCI devices,
@@ -211,6 +290,7 @@ pub fn discover_console_devices<B: BootServices, R: RuntimeServices>(
 }
 
 /// No-op event callback for signal-only events.
+#[coverage(off)] // Extern callback - tested via integration tests
 extern "efiapi" fn signal_event_noop(_event: *mut core::ffi::c_void, _context: *mut ()) {}
 
 #[cfg(test)]
@@ -426,5 +506,16 @@ mod tests {
 
         let result = boot_from_device_path(&mock, dummy_parent_handle(), &device_path);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_hotkey_no_input_handles() {
+        let mut mock = MockBootServices::new();
+
+        // No SimpleTextInput handles found
+        mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
+
+        let result = detect_hotkey(&mock, 0x16); // F12
+        assert!(!result);
     }
 }
