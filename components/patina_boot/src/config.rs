@@ -27,6 +27,8 @@ use patina::uefi_protocol::device_path::DevicePathBuf;
 /// let options = BootOptions::new()
 ///     .with_device(nvme_device_path)
 ///     .with_device(usb_device_path)
+///     .with_hotkey(0x16) // F12 (UEFI scan code)
+///     .with_hotkey_device(usb_device_path) // Boot from USB when F12 pressed
 ///     .with_failure_handler(|| show_error_screen());
 /// ```
 #[derive(Default)]
@@ -35,6 +37,8 @@ pub struct BootOptions {
     devices: Vec<DevicePathBuf>,
     /// Optional hotkey for boot override (e.g., F12 for boot menu).
     hotkey: Option<u16>,
+    /// Alternate boot device paths used when hotkey is detected.
+    hotkey_devices: Vec<DevicePathBuf>,
     /// Handler called when all boot options fail.
     failure_handler: Option<Box<dyn Fn() + Send + Sync>>,
 }
@@ -53,12 +57,26 @@ impl BootOptions {
         self
     }
 
-    /// Add a hotkey scancode for boot override (not yet implemented).
+    /// Add a hotkey scancode for boot override.
     ///
-    /// This field is reserved for future boot menu functionality.
-    /// Currently, the hotkey is stored but not acted upon.
+    /// When this hotkey is detected during boot, the orchestrator will use
+    /// the alternate boot options configured via [`with_hotkey_device`](Self::with_hotkey_device)
+    /// instead of the primary boot devices.
+    ///
+    /// Note: Hotkey detection reads and consumes all pending keystrokes from the
+    /// keyboard buffer. Any keys pressed before detection will not be available
+    /// to subsequent code.
     pub fn with_hotkey(mut self, scancode: u16) -> Self {
         self.hotkey = Some(scancode);
+        self
+    }
+
+    /// Add an alternate boot device path used when the hotkey is detected.
+    ///
+    /// Hotkey devices are tried in the order they are added, but only when
+    /// the configured hotkey is detected during boot.
+    pub fn with_hotkey_device(mut self, device: DevicePathBuf) -> Self {
+        self.hotkey_devices.push(device);
         self
     }
 
@@ -79,6 +97,11 @@ impl BootOptions {
     /// Returns an iterator over all configured boot device paths.
     pub fn devices(&self) -> impl Iterator<Item = &DevicePathBuf> {
         self.devices.iter()
+    }
+
+    /// Returns an iterator over alternate boot device paths used when hotkey is detected.
+    pub fn hotkey_devices(&self) -> impl Iterator<Item = &DevicePathBuf> {
+        self.hotkey_devices.iter()
     }
 
     /// Call the failure handler if configured.
@@ -136,8 +159,43 @@ mod tests {
 
     #[test]
     fn test_with_hotkey() {
-        let options = BootOptions::new().with_hotkey(0x86); // F12
-        assert_eq!(options.hotkey(), Some(0x86));
+        let options = BootOptions::new().with_hotkey(0x16); // F12
+        assert_eq!(options.hotkey(), Some(0x16));
+    }
+
+    #[test]
+    fn test_with_hotkey_device() {
+        let device = create_test_device_path();
+        let options = BootOptions::new().with_hotkey_device(device);
+        assert_eq!(options.hotkey_devices().count(), 1);
+    }
+
+    #[test]
+    fn test_with_multiple_hotkey_devices() {
+        let device1 = create_test_device_path();
+        let device2 = create_test_device_path();
+        let options = BootOptions::new().with_hotkey_device(device1).with_hotkey_device(device2);
+        assert_eq!(options.hotkey_devices().count(), 2);
+    }
+
+    #[test]
+    fn test_hotkey_with_hotkey_devices() {
+        let primary = create_test_device_path();
+        let alternate = create_test_device_path();
+        let options = BootOptions::new()
+            .with_device(primary)
+            .with_hotkey(0x16) // F12
+            .with_hotkey_device(alternate);
+
+        assert_eq!(options.devices().count(), 1);
+        assert_eq!(options.hotkey(), Some(0x16));
+        assert_eq!(options.hotkey_devices().count(), 1);
+    }
+
+    #[test]
+    fn test_default_has_no_hotkey_devices() {
+        let options = BootOptions::default();
+        assert_eq!(options.hotkey_devices().count(), 0);
     }
 
     #[test]
