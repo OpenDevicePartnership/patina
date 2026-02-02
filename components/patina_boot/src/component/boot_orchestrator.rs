@@ -15,8 +15,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+extern crate alloc;
+
 use patina::{
-    boot_services::{BootServices, StandardBootServices, protocol_handler::HandleSearchType},
+    boot_services::StandardBootServices,
     component::{
         component,
         params::{Config, Handle},
@@ -24,7 +26,6 @@ use patina::{
     error::{EfiError, Result},
     runtime_services::StandardRuntimeServices,
 };
-use r_efi::efi;
 
 use crate::{config::BootOptions, helpers};
 
@@ -47,9 +48,10 @@ impl BootOrchestrator {
     /// 1. Connect all controllers for device enumeration
     /// 2. Signal EndOfDxe (security components perform lockdown)
     /// 3. Discover consoles
-    /// 4. Signal ReadyToBoot
-    /// 5. Execute boot options from config
-    /// 6. If all boot options fail, call failure handler
+    /// 4. Check for hotkey press; if detected, use alternate boot options
+    /// 5. Signal ReadyToBoot
+    /// 6. Execute boot options from config (or hotkey_devices if hotkey detected)
+    /// 7. If all boot options fail, call failure handler
     #[coverage(off)] // Component integration - tested via integration tests
     fn entry_point(
         self,
@@ -61,29 +63,34 @@ impl BootOrchestrator {
         helpers::connect_all(boot_services.as_ref())?;
         helpers::signal_bds_phase_entry(boot_services.as_ref())?;
         helpers::discover_console_devices(boot_services.as_ref(), runtime_services.as_ref())?;
-        helpers::signal_ready_to_boot(boot_services.as_ref())?;
 
-        // Use the provided image handle, or fall back to finding one via LocateHandleBuffer.
-        // Per UEFI spec, the parent handle must be a valid image handle (has LoadedImage protocol).
-        let parent_handle = if let Some(handle) = image_handle {
-            *handle
+        // Check for hotkey press after devices are connected and consoles discovered
+        let use_hotkey_devices = if let Some(hotkey) = boot_options.hotkey() {
+            helpers::detect_hotkey(boot_services.as_ref(), hotkey)
         } else {
-            log::warn!("Handle not provided, falling back to LocateHandleBuffer");
-            let image_handles = boot_services
-                .locate_handle_buffer(HandleSearchType::ByProtocol(&efi::protocols::loaded_image::PROTOCOL_GUID))
-                .map_err(|status| {
-                    log::error!("Failed to locate image handles: {:?}", status);
-                    EfiError::from(status)
-                })?;
-
-            image_handles.first().copied().ok_or_else(|| {
-                log::error!("No image handles available for parent handle");
-                EfiError::NotReady
-            })?
+            false
         };
 
-        for device_path in boot_options.devices() {
-            match helpers::boot_from_device_path(boot_services.as_ref(), parent_handle, device_path) {
+        helpers::signal_ready_to_boot(boot_services.as_ref())?;
+
+        // Per UEFI spec, the parent handle must be a valid image handle (has LoadedImage protocol).
+        // The Handle must be provided by the component framework - we cannot safely guess
+        // which handle is correct from the handle database as ordering is not guaranteed.
+        let parent_handle = image_handle.ok_or_else(|| {
+            log::error!("Handle not provided - required for LoadImage parent handle");
+            EfiError::InvalidParameter
+        })?;
+
+        // Select boot devices based on hotkey detection
+        let boot_devices: alloc::vec::Vec<_> = if use_hotkey_devices {
+            log::info!("Using alternate boot options (hotkey detected)");
+            boot_options.hotkey_devices().collect()
+        } else {
+            boot_options.devices().collect()
+        };
+
+        for device_path in boot_devices {
+            match helpers::boot_from_device_path(boot_services.as_ref(), *parent_handle, device_path) {
                 Ok(()) => {
                     // Boot image returned control (e.g., EFI application exited).
                     // Continue to try next boot option.
