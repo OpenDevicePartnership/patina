@@ -52,7 +52,7 @@ installed by the Patina ACPI component.
 The Patina ACPI component supports ACPI 2.0+ only, with one important caveat.
 
 In order to be compatible with current Windows OS code, the FACS is produced within a 32-bit address range to prevent
-overflow in the kernel. This supports both ACPI 1.0 and ACPI 2.0, as both the `firmware_ctrl` (32-bit) and 
+overflow in the kernel. This supports both ACPI 1.0 and ACPI 2.0, as both the `firmware_ctrl` (32-bit) and
 `x_firmware_ctrl` (64-bit) fields in the FADT are set to the address of the FACS. Code that utilizes the FACS can choose
 to read either field.
 
@@ -122,7 +122,7 @@ let my_acpi_table: MyAcpiTable = acpi_table_service.get_acpi_table::<MyAcpiTable
 ```
 
 Both `get_acpi_table` and `get_acpi_table_unchecked` require the caller to provide the expected type of the table.
-`get_acpi_table` will verify that the type matches the original type at installation, while `get_acpi_table_unchecked` 
+`get_acpi_table` will verify that the type matches the original type at installation, while `get_acpi_table_unchecked`
 does not. **Only use `get_acpi_table_unchecked` if you are attempting to cast a table to a known safe type that matches
 the structure of the table.**
 

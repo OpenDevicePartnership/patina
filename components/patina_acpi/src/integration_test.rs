@@ -1,4 +1,4 @@
-//! ACPI Service Q35 Integration Test.
+//! ACPI Service Platform Integration Tests.
 //!
 //! Defines basic integration tests for the ACPI service interface.
 //!
@@ -6,7 +6,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 
 use core::{ffi::c_void, mem};
 
@@ -18,7 +18,7 @@ use patina::{
 use r_efi::efi;
 
 use crate::{
-    acpi::ACPI_TABLE_INFO,
+    acpi::STANDARD_ACPI_PROVIDER,
     acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
     acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
     service::AcpiTableManager,
@@ -51,13 +51,13 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
 
     // Get the dummy FADT and verify its contents.
     let fadt = table_manager.get_acpi_table::<AcpiFadt>(table_key).expect("Should get dummy FADT");
-    assert_eq!(fadt.header.signature, signature::FADT, "Signature should match dummy FADT");
+    assert_eq!(fadt.signature(), signature::FADT, "Signature should match dummy FADT");
     assert!(fadt.x_firmware_ctrl() > 0, "Should have installed FACS");
 
     // Uninstall the dummy table.
     table_manager.uninstall_acpi_table(table_key).expect("Delete should succeed");
 
-    // get(0) should now fail.
+    // get() should now fail.
     assert!(table_manager.get_acpi_table::<AcpiFadt>(table_key).is_err(), "Table should no longer be accessible");
 
     Ok(())
@@ -66,8 +66,8 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
 #[coverage(off)]
 #[patina_test]
 fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
-    // Hack that is necessary since all tests share a global `ACPI_TABLE_INFO`.
-    ACPI_TABLE_INFO.acpi_tables.write().clear();
+    // Hack that is necessary since all tests share a global `STANDARD_ACPI_PROVIDER`.
+    STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
 
     // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
@@ -110,7 +110,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     assert_eq!(get_result, efi::Status::SUCCESS, "Get table should succeed");
     // SAFETY: `table_buf` is valid and directly constructed from the dummy FADT.
     let retrieved_table = unsafe { &*table_buf };
-    assert_eq!(retrieved_table.signature, signature::FADT, "Signature should match installed FADT");
+    assert_eq!(retrieved_table.signature(), signature::FADT, "Signature should match installed FADT");
     assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
     assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
 

@@ -6,7 +6,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use core::any::TypeId;
 
@@ -141,7 +141,7 @@ impl AcpiTableManager {
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
     pub fn iter_tables(&self) -> Vec<AcpiTable> {
-        self.provider_service.iter_tables()
+        self.provider_service.collect_tables()
     }
 }
 
@@ -162,7 +162,7 @@ pub(crate) trait AcpiProvider {
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
 
     /// Returns all currently installed tables in an iterable format.
-    fn iter_tables(&self) -> Vec<AcpiTable>;
+    fn collect_tables(&self) -> Vec<AcpiTable>;
 }
 
 #[cfg(test)]
@@ -195,7 +195,7 @@ mod tests {
         };
 
         let mut mock_acpi_provider = MockAcpiProvider::new();
-        mock_acpi_provider.expect_get_acpi_table().returning(move |_table_key| Ok(table));
+        mock_acpi_provider.expect_get_acpi_table().returning(move |_table_key| Ok(table.clone()));
         let provider = AcpiTableManager {
             provider_service: Service::mock(Box::new(mock_acpi_provider)),
             memory_manager: Service::mock(Box::new(StdMemoryManager::new())),

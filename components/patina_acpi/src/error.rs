@@ -6,7 +6,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use r_efi::efi;
@@ -46,8 +46,8 @@ pub enum AcpiError {
     TableNotifyFailed,
     /// The ACPI HOB is present in the HOB list, but points to a null RSDP.
     NullRsdpFromHob,
-    /// The ACPI HOB is present in the HOB list, but points to a null XSDT.
-    XsdtNotInitializedFromHob,
+    /// The RSDP is present but points to a null XSDT.
+    NullXsdt,
     /// The table was not installed properly and thus cannot be uninstalled or deleted.
     TableNotPresentInMemory,
     /// There was an attempt to install a null table pointer.
@@ -64,10 +64,19 @@ pub enum AcpiError {
     XsdtOverflow,
     /// There was an attempt to install an XSDT when one already exists.
     XsdtAlreadyInstalled,
+    /// There was an attempt to access the XSDT before initialization.
+    XsdtNotInitialized,
+    /// There was an attempt to remove an XSDT entry that does not exist.
+    XsdtEntryNotFound,
     /// There was an attempt to update the checksum at an invalid byte offset.
     InvalidChecksumOffset,
     /// There was an attempt to construct a table that does not match the standard ACPI layout.
     InvalidTableFormat,
+    /// The FACS address exceeds the 32-bit limit.
+    /// This is a Windows-specific requirement.
+    FacsAddressExceeds32BitLimit,
+    /// Checksum calculation failed.
+    ChecksumFailed,
 }
 
 impl From<AcpiError> for efi::Status {
@@ -87,7 +96,7 @@ impl From<AcpiError> for efi::Status {
             AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
             AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
             AcpiError::NullRsdpFromHob => efi::Status::NOT_FOUND,
-            AcpiError::XsdtNotInitializedFromHob => efi::Status::NOT_FOUND,
+            AcpiError::NullXsdt => efi::Status::NOT_FOUND,
             AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
             AcpiError::NullTablePtr => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidTableType => efi::Status::INVALID_PARAMETER,
@@ -95,9 +104,13 @@ impl From<AcpiError> for efi::Status {
             AcpiError::MemoryManagerAlreadyInitialized => efi::Status::ALREADY_STARTED,
             AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
             AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
-            AcpiError::XsdtAlreadyInstalled => efi::Status::NOT_STARTED,
+            AcpiError::XsdtAlreadyInstalled => efi::Status::ALREADY_STARTED,
+            AcpiError::XsdtNotInitialized => efi::Status::NOT_STARTED,
             AcpiError::InvalidChecksumOffset => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
+            AcpiError::FacsAddressExceeds32BitLimit => efi::Status::UNSUPPORTED,
+            AcpiError::XsdtEntryNotFound => efi::Status::NOT_FOUND,
+            AcpiError::ChecksumFailed => efi::Status::COMPROMISED_DATA,
         }
     }
 }

@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use core::{
-    cell::UnsafeCell,
+    cell::{OnceCell, UnsafeCell},
     fmt::{self, Debug, Display},
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, Ordering},
@@ -23,7 +23,7 @@ use crate::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 ///
 /// The mutex owns the BootServices instance. Callers pass an owned instance or clone if needed.
 pub struct TplMutex<T: ?Sized, B: BootServices = StandardBootServices> {
-    boot_services: B,
+    boot_services: OnceCell<B>,
     tpl_lock_level: Tpl,
     lock: AtomicBool,
     data: UnsafeCell<T>,
@@ -89,14 +89,21 @@ impl<T: ?Sized, B: BootServices> TplMutex<T, B> {
     pub fn try_lock(&self) -> Result<TplMutexGuard<'_, T, B>, ()> {
         self.lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .map(|_| TplMutexGuard { release_tpl: self.boot_services.raise_tpl(self.tpl_lock_level), tpl_mutex: self })
+            .map(|_| TplMutexGuard {
+                release_tpl: self
+                    .boot_services
+                    .get()
+                    .expect("BootServices not initialized!")
+                    .raise_tpl(self.tpl_lock_level),
+                tpl_mutex: self,
+            })
             .map_err(|_| ())
     }
 }
 
 impl<T: ?Sized, B: BootServices> Drop for TplMutexGuard<'_, T, B> {
     fn drop(&mut self) {
-        self.tpl_mutex.boot_services.restore_tpl(self.release_tpl);
+        self.tpl_mutex.boot_services.get().expect("BootServices not initialized!").restore_tpl(self.release_tpl);
         self.tpl_mutex.lock.store(false, Ordering::Release);
     }
 }

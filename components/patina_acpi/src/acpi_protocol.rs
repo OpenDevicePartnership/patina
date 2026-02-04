@@ -5,7 +5,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use crate::{
@@ -18,7 +18,7 @@ use patina::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 
 use crate::{
-    acpi::ACPI_TABLE_INFO,
+    acpi::STANDARD_ACPI_PROVIDER,
     service::{AcpiNotifyFn, AcpiProvider, TableKey},
 };
 
@@ -81,57 +81,47 @@ impl AcpiTableProtocol {
 
         // The size of the allocated table buffer must be large enough to store the whole table.
         // SAFETY: `acpi_table_buffer` is checked non-null and large enough to read an AcpiTableHeader.
-        let tbl_length = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).length } as usize;
+        let table_header = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).clone() };
+        let tbl_length = table_header.length as usize;
         if tbl_length != acpi_table_buffer_size {
             return efi::Status::INVALID_PARAMETER;
         }
 
         // The size of the allocated table buffer must be large enough to store the table, for known table types.
-        // SAFETY: `acpi_table_buffer` is checked non-null and large enough to read an AcpiTableHeader.
-        let signature = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).signature };
+        let signature = table_header.signature;
         let min_size = signature::acpi_table_min_size(signature);
         if tbl_length < min_size {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
-        if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
+        if let Some(global_mm) = STANDARD_ACPI_PROVIDER.memory_manager.get() {
             // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
             let acpi_table =
                 unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, None, global_mm) };
 
             if let Ok(table) = acpi_table {
-                let install_result = match table.signature() {
-                    signature::FACS => ACPI_TABLE_INFO.install_facs(table),
-                    signature::FADT => ACPI_TABLE_INFO.install_fadt(table),
-                    signature::DSDT => ACPI_TABLE_INFO.install_dsdt(table),
-                    _ => ACPI_TABLE_INFO.install_standard_table(table),
-                };
+                let signature = table.signature();
+                let install_result = STANDARD_ACPI_PROVIDER.install_acpi_table(table);
 
                 match install_result {
                     Ok(key) => {
                         // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
                         unsafe { *table_key = key.0 };
+                        log::trace!(
+                            "ACPI protocol: Successfully installed table with signature: 0x{:08X}, key: {}",
+                            signature,
+                            key.0
+                        );
                     }
                     Err(e) => {
-                        log::info!("Protocol install failed: {:?} for table with signature {}", e, table.signature());
+                        log::error!(
+                            "ACPI protocol: Install failed with error {:?} for table with signature: 0x{:08X}",
+                            e,
+                            signature,
+                        );
                         return e.into();
                     }
                 }
-
-                let publish_result = ACPI_TABLE_INFO.publish_tables();
-                if let Err(e) = publish_result {
-                    log::info!("Failed to publish ACPI tables: {:?}", e);
-                    return e.into();
-                }
-
-                // SAFETY: `table_key` has been checked non-null above.
-                let notify_result = ACPI_TABLE_INFO.notify_acpi_list(TableKey(unsafe { *table_key }));
-                if let Err(e) = notify_result {
-                    log::info!("Failed to notify ACPI list: {:?}", e);
-                    return e.into();
-                }
-
                 efi::Status::SUCCESS
             } else {
                 efi::Status::OUT_OF_RESOURCES
@@ -153,9 +143,15 @@ impl AcpiTableProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the table key does not correspond to an installed table.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
-        match ACPI_TABLE_INFO.uninstall_acpi_table(TableKey(table_key)) {
-            Ok(_) => efi::Status::SUCCESS,
-            Err(e) => e.into(),
+        match STANDARD_ACPI_PROVIDER.uninstall_acpi_table(TableKey(table_key)) {
+            Ok(_) => {
+                log::trace!("ACPI protocol: Successfully uninstalled table with key: {}", table_key);
+                efi::Status::SUCCESS
+            }
+            Err(e) => {
+                log::error!("ACPI protocol: Failed to uninstall table with key: {} - error: {:?}", table_key, e);
+                e.into()
+            }
         }
     }
 }
@@ -207,23 +203,27 @@ impl AcpiGetProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        match ACPI_TABLE_INFO.get_table_at_idx(index) {
-            Ok(table_info) => {
+        match STANDARD_ACPI_PROVIDER.get_table_at_idx(index) {
+            Ok((key_at_idx, table_at_idx)) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
-                let (key_at_idx, table_at_idx) = table_info;
                 // SAFETY: We check that `version` is non-null above.
                 unsafe { *version = ACPI_VERSIONS_GTE_2 };
                 // SAFETY: We check that `table_key` is non-null above.
                 unsafe { *table_key = key_at_idx.0 };
 
-                let sdt_ptr = table_at_idx.as_mut_ptr();
                 // SAFETY: We check that `table` is non-null above.
-                unsafe { *table = sdt_ptr };
+                unsafe { *table = table_at_idx.as_mut_ptr() };
+                log::trace!(
+                    "ACPI protocol: Successfully retrieved table at index {} with key: {} and signature: 0x{:08X}",
+                    index,
+                    key_at_idx.0,
+                    table_at_idx.signature()
+                );
                 efi::Status::SUCCESS
             }
             Err(e) => {
-                log::info!("get_acpi_table from ACPI protocol failed with error {:?}", e);
+                log::error!("ACPI protocol: Failed to get table at index {} with error: {:?}", index, e);
                 e.into()
             }
         }
@@ -250,7 +250,7 @@ impl AcpiGetProtocol {
             }
         };
 
-        match ACPI_TABLE_INFO.register_notify(register, rust_fn) {
+        match STANDARD_ACPI_PROVIDER.register_notify(register, rust_fn) {
             Ok(_) => efi::Status::SUCCESS,
             Err(err) => err.into(),
         }

@@ -8,9 +8,13 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 
-use alloc::vec::Vec;
+use crate::{
+    error::AcpiError,
+    signature::{self, ACPI_CHECKSUM_OFFSET},
+};
+use alloc::{boxed::Box, vec::Vec};
 use patina::{
     base::SIZE_4GB,
     component::service::{
@@ -21,13 +25,9 @@ use patina::{
     uefi_size_to_pages,
 };
 
-use crate::{
-    error::AcpiError,
-    signature::{self},
-};
-
 use core::{
     any::TypeId,
+    fmt::Debug,
     mem,
     mem::ManuallyDrop,
     ptr::{self, NonNull},
@@ -36,16 +36,63 @@ use core::{
 
 /// Represents the FADT for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
-#[repr(C)]
-#[derive(Default, Clone, Copy, Debug)]
+#[repr(C, packed)]
+#[derive(Default)]
 pub(crate) struct AcpiFadt {
     // Standard ACPI header.
     pub(crate) header: AcpiTableHeader,
+    // Inner FADT data.
     pub(crate) inner: FadtData,
 }
 
+impl Clone for AcpiFadt {
+    fn clone(&self) -> Self {
+        Self { header: self.header().clone(), inner: self.inner().clone() }
+    }
+}
+
+impl Debug for AcpiFadt {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AcpiFadt").field("header", &self.header()).field("inner", &self.inner()).finish()
+    }
+}
+
+/// Reads unaligned fields on the FADT.
+/// Fields on the FADT may be unaligned, since by specification the FADT is packed.
+impl AcpiFadt {
+    pub fn header(&self) -> AcpiTableHeader {
+        // SAFETY: `self.header` is always a valid, initialized ACPI header.
+        unsafe { ptr::read_unaligned(ptr::addr_of!(self.header)) }
+    }
+
+    pub fn inner(&self) -> FadtData {
+        // SAFETY: `self.inner` is always a valid, initialized FADT data structure.
+        unsafe { ptr::read_unaligned(ptr::addr_of!(self.inner)) }
+    }
+
+    pub fn signature(&self) -> u32 {
+        self.header().signature
+    }
+
+    pub(crate) fn x_firmware_ctrl(&self) -> u64 {
+        self.inner.x_firmware_ctrl
+    }
+
+    pub(crate) fn x_dsdt(&self) -> u64 {
+        self.inner.x_dsdt
+    }
+
+    pub(crate) fn set_x_firmware_ctrl(&mut self, address: u64) {
+        self.inner.x_firmware_ctrl = address;
+    }
+
+    pub(crate) fn set_x_dsdt(&mut self, address: u64) {
+        self.inner.x_dsdt = address;
+    }
+}
+
 #[repr(C, packed)]
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Debug)]
 pub(crate) struct FadtData {
     pub(crate) _firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
@@ -107,7 +154,7 @@ pub(crate) struct FadtData {
 /// Represents an ACPI address space for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_GENERIC_ADDRESS_STRUCTURE.
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default, Copy)]
 pub struct GenericAddressStructure {
     address_space_id: u8,
     register_bit_width: u8,
@@ -116,33 +163,13 @@ pub struct GenericAddressStructure {
     address: u64,
 }
 
-/// Reads unaligned fields on the FADT.
-/// Fields on the FADT may be unaligned, since by specification the FADT is packed.
-impl AcpiFadt {
-    pub(crate) fn x_firmware_ctrl(&self) -> u64 {
-        self.inner.x_firmware_ctrl
-    }
-
-    pub(crate) fn x_dsdt(&self) -> u64 {
-        self.inner.x_dsdt
-    }
-
-    pub(crate) fn set_x_firmware_ctrl(&mut self, address: u64) {
-        self.inner.x_firmware_ctrl = address;
-    }
-
-    pub(crate) fn set_x_dsdt(&mut self, address: u64) {
-        self.inner.x_dsdt = address;
-    }
-}
-
 /// Represents the FACS for ACPI 2.0+.
 /// Note that the FACS does not have a standard ACPI header.
 /// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
 /// The FACS is always allocated in NVS, and is required to be 64B-aligned.
 /// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
-#[repr(C, align(64))]
-#[derive(Default, Clone, Copy)]
+#[repr(C, packed)]
+#[derive(Default, Clone)]
 pub struct AcpiFacs {
     pub(crate) signature: u32,
     pub(crate) length: u32,
@@ -161,8 +188,8 @@ pub struct AcpiFacs {
 /// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
 /// The DSDT has a standard header followed by variable-length AML bytecode.
 /// The `length` field of the header tells us the number of trailing bytes representing bytecode.
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
+#[repr(C, packed)]
+#[derive(Default)]
 pub struct AcpiDsdt {
     pub(crate) header: AcpiTableHeader,
 }
@@ -192,8 +219,8 @@ pub struct AcpiRsdp {
 /// Represents the XSDT for ACPI 2.0+.
 /// The XSDT has a standard header followed by 64-bit addresses of installed tables.
 /// The `length` field of the header tells us the number of trailing bytes representing table entries.
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
+#[repr(C, packed)]
+#[derive(Default)]
 pub struct AcpiXsdt {
     pub(crate) header: AcpiTableHeader,
 }
@@ -202,7 +229,7 @@ pub struct AcpiXsdt {
 pub(crate) struct AcpiXsdtMetadata {
     pub(crate) n_entries: usize,
     pub(crate) max_capacity: usize,
-    pub(crate) slice: &'static mut [u8],
+    pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
 }
 
 impl AcpiXsdtMetadata {
@@ -251,8 +278,8 @@ impl AcpiXsdtMetadata {
 
 /// Represents a standard ACPI header.
 /// Equivalent to EFI_ACPI_DESCRIPTION_HEADER.
-#[repr(C)]
-#[derive(Default, Clone, Debug, Copy)]
+#[repr(C, packed)]
+#[derive(Default, Clone, Debug)]
 pub struct AcpiTableHeader {
     pub signature: u32,
     pub length: u32,
@@ -298,6 +325,26 @@ impl AcpiTableHeader {
 
         buf
     }
+
+    pub fn signature(&self) -> u32 {
+        self.signature
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn oem_revision(&self) -> u32 {
+        self.oem_revision
+    }
+
+    pub fn creator_id(&self) -> u32 {
+        self.creator_id
+    }
+
+    pub fn creator_revision(&self) -> u32 {
+        self.creator_revision
+    }
 }
 
 /// The inner table structure.
@@ -305,7 +352,7 @@ pub(crate) union Table<T = AcpiTableHeader> {
     /// The signature of the ACPI table.
     signature: u32,
     /// The header of the ACPI table.
-    header: AcpiTableHeader,
+    header: ManuallyDrop<AcpiTableHeader>,
     /// The full ACPI table, represented as its original type.
     pub(crate) inner: ManuallyDrop<T>,
 }
@@ -315,7 +362,7 @@ impl<T> Table<T> {
     ///
     /// ## Safety
     ///
-    /// - Caller must ensure the provided table, `T`, a C compatible layout (typically using `#[repr(C)]`).
+    /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
     pub unsafe fn new(table: T) -> Result<Self, AcpiError> {
         let returned_table = Table { inner: ManuallyDrop::new(table) };
@@ -329,7 +376,7 @@ impl<T> Table<T> {
 
         // Make sure length is valid for type T.
         // SAFETY: If function preconditions are met, the header is valid and has a valid length.
-        if (unsafe { returned_table.header.length } as usize) < mem::size_of::<T>() {
+        if (returned_table.header().length as usize) < mem::size_of::<T>() {
             return Err(AcpiError::InvalidTableFormat);
         }
 
@@ -342,20 +389,25 @@ impl<T> Table<T> {
         unsafe { self.signature }
     }
 
+    pub fn header(&self) -> &AcpiTableHeader {
+        // SAFETY: [Self::new] ensures that the header is a valid AcpiTableHeader.
+        unsafe { &self.header }
+    }
+
     /// Returns an immutable reference to the entire table.
     pub fn as_ref(&self) -> &T {
-        // SAFETY: [Self::new] insures the inner object is a valid instance of `T`.
+        // SAFETY: [Self::new] ensures the inner object is a valid instance of `T`.
         unsafe { &self.inner }
     }
 
     /// Returns an immutable reference to the entire table.
     pub fn as_mut(&mut self) -> &mut T {
-        // SAFETY: [Self::new] insures the inner object is a valid instance of `T`.
+        // SAFETY: [Self::new] ensures the inner object is a valid instance of `T`.
         unsafe { &mut self.inner }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AcpiTable {
     pub(crate) table: NonNull<Table>,
     pub(crate) type_id: core::any::TypeId,
@@ -383,12 +435,16 @@ impl AcpiTable {
     /// ## Safety
     ///
     /// - Caller must ensure the pointer refers to a valid ACPI table.
-    /// - Caller must ensure `table_length` is correctly specifies the length of the table, including the header and any trailing data bytes.
-    pub unsafe fn new_from_ptr(
+    /// - Caller must ensure `table_length` correctly specify the length of the table, including the header and any trailing data bytes.
+    pub(crate) unsafe fn new_from_ptr(
         header_ptr: *const AcpiTableHeader,
         type_id: Option<TypeId>,
         mm: &Service<dyn MemoryManager>,
     ) -> Result<Self, AcpiError> {
+        if header_ptr.is_null() {
+            return Err(AcpiError::NullTablePtr);
+        }
+
         // SAFETY: If function preconditions are met, the pointer is valid and points to a valid ACPI table header.
         let (table_signature, table_length) = unsafe { ((*header_ptr).signature, (*header_ptr).length as usize) };
 
@@ -402,7 +458,7 @@ impl AcpiTable {
         // As such, the FACS must be allocated in the lower 32-bit address space.
         // This workaround can be removed when Windows no longer relies on this field.
         let allocation_strategy = if table_signature == signature::FACS {
-            PageAllocationStrategy::MaxAddress(SIZE_4GB)
+            PageAllocationStrategy::MaxAddress(SIZE_4GB - 1)
         } else {
             PageAllocationStrategy::Any
         };
@@ -446,18 +502,14 @@ impl AcpiTable {
         unsafe { &self.table.as_ref().header }
     }
 
-    pub fn header_mut(&mut self) -> &mut AcpiTableHeader {
-        // SAFETY: The table is guaranteed to be a valid ACPI table.
-        unsafe { &mut self.table.as_mut().header }
-    }
-
-    /// Returns a raw byte slice over the entire table.
+    /// Returns the bytes of the entire table, allocated on the heap.
+    /// These bytes do not refer to the original table memory, and should not be accessed as such.
     ///
     /// ## SAFETY
     /// `self.length` must accurately reflect the allocated size of the table.
-    pub unsafe fn as_bytes(&self) -> &[u8] {
+    pub unsafe fn as_bytes(&self) -> Vec<u8> {
         // SAFETY: If the caller preconditions are met, the length is accurate.
-        unsafe { slice::from_raw_parts(self.table.as_ptr() as *const u8, self.header().length as usize) }
+        unsafe { slice::from_raw_parts(self.table.as_ptr() as *const u8, self.header().length as usize).to_vec() }
     }
 
     /// Returns a mutable byte slice over the entire table.
@@ -465,25 +517,25 @@ impl AcpiTable {
     ///
     /// ## SAFETY
     /// `self.length` must accurately reflect the allocated size of the table.
-    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+    pub(crate) unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
         // SAFETY: If the caller preconditions are met, the length is accurate.
         unsafe { slice::from_raw_parts_mut(self.table.as_ptr() as *mut u8, self.header().length as usize) }
     }
 
     /// Updates the checksum for an ACPI table.
     /// According to the ACPI spec 2.0+, all bytes of a table must sum to zero modulo 256.
-    pub fn update_checksum(&mut self, offset: usize) -> Result<(), AcpiError> {
+    pub(crate) fn update_checksum(&mut self) -> Result<(), AcpiError> {
         // SAFETY: The construction of `AcpiTable` maintains that `self.length` is the size in memory.
         let bytes = unsafe { self.as_bytes_mut() };
         let len = bytes.len();
 
         // Set the checksum field (byte at the specified `offset`) to zero before recalculation.
-        if len > offset {
-            bytes[offset] = 0;
+        if len > ACPI_CHECKSUM_OFFSET {
+            bytes[ACPI_CHECKSUM_OFFSET] = 0;
 
-            // Recalculate checksum and set so that total sum is 0.
+            // Recalculate checksum.
             let sum: u8 = bytes.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));
-            bytes[offset] = (0u8).wrapping_sub(sum);
+            bytes[ACPI_CHECKSUM_OFFSET] = (0u8).wrapping_sub(sum);
             Ok(())
         } else {
             Err(AcpiError::InvalidChecksumOffset)
@@ -505,18 +557,18 @@ impl AcpiTable {
     /// ## Safety
     ///
     /// - Caller must ensure that the provided table format is the same as `T`.
-    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+    pub(crate) unsafe fn as_mut<T>(&mut self) -> &mut T {
         // SAFETY: Caller must ensure that the provided table format is the same as `T`.
         unsafe { self.table.cast::<Table<T>>().as_mut().as_mut() }
     }
 
-    /// Returns a pointer the the underlying AcpiTable.
-    pub fn as_ptr(&self) -> *const AcpiTableHeader {
+    /// Returns a pointer to the underlying AcpiTable.
+    pub(crate) fn as_ptr(&self) -> *const AcpiTableHeader {
         self.table.as_ptr() as *const AcpiTableHeader
     }
 
-    /// Returns a mutable pointer the the underlying AcpiTable.
-    pub fn as_mut_ptr(&self) -> *mut AcpiTableHeader {
+    /// Returns a mutable pointer to the underlying AcpiTable.
+    pub(crate) fn as_mut_ptr(&self) -> *mut AcpiTableHeader {
         self.table.as_ptr() as *mut AcpiTableHeader
     }
 }
@@ -525,8 +577,6 @@ impl AcpiTable {
 mod tests {
     use alloc::boxed::Box;
     use patina::component::service::memory::StdMemoryManager;
-
-    use crate::signature::ACPI_CHECKSUM_OFFSET;
 
     use super::*;
     use core::{mem, ptr::NonNull};
@@ -570,12 +620,11 @@ mod tests {
         let mut acpi_table = AcpiTable { table: nn, type_id: TypeId::of::<TestTable>() };
 
         // Update the checksum (use standard checksum offset since it has a standard header).
-        let offset = ACPI_CHECKSUM_OFFSET;
-        assert!(acpi_table.update_checksum(offset).is_ok());
+        assert!(acpi_table.update_checksum().is_ok());
 
         // Pull out the bytes and verify the checksum.
         // SAFETY: The table length is correctly specified in the test header.
-        let bytes: &[u8] = unsafe { acpi_table.as_bytes() };
+        let bytes = unsafe { acpi_table.as_bytes() };
         // Total sum must be zero mod 256.
         let total: u8 = bytes.iter().copied().fold(0u8, |acc, b| acc.wrapping_add(b));
         assert_eq!(total, 0, "entire table did not sum to zero");
@@ -613,13 +662,13 @@ mod tests {
         // Check signature and header fields.
         assert_eq!(acpi_table.signature(), TEST_SIGNATURE);
         let header = acpi_table.header();
-        assert_eq!(header.length, mem::size_of::<TestTable>() as u32);
+        assert_eq!(header.length(), mem::size_of::<TestTable>() as u32);
         assert_eq!(header.revision, 2);
         assert_eq!(header.oem_id, [1, 2, 3, 4, 5, 6]);
         assert_eq!(header.oem_table_id, *b"test_tes");
-        assert_eq!(header.oem_revision, 0xDEADBEEF);
-        assert_eq!(header.creator_id, 0xCAFEBABE);
-        assert_eq!(header.creator_revision, 0xFEEDFACE);
+        assert_eq!(header.oem_revision(), 0xDEADBEEF);
+        assert_eq!(header.creator_id(), 0xCAFEBABE);
+        assert_eq!(header.creator_revision(), 0xFEEDFACE);
         // SAFETY: The table type `TestTable` is constructed by the test.
         assert_eq!(unsafe { acpi_table.as_ref::<TestTable>().body }, [42, 43, 44]);
 

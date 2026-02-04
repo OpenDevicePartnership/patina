@@ -1,10 +1,10 @@
 //! ACPI Components
 //!
-//! This library provides two components, `AcpiProviderManager` and `AcpiSystemTableProtocolManager`.
-//! `AcpiProviderManager` initializes necessary context to install, uninstall, and retrieve ACPI tables.
+//! This library provides three components, `AcpiProviderManager`, `AcpiSystemProtocolManager`, and `GenericAcpiManager`.
+//! `AcpiProviderManager` and `GenericAcpiManager` initialize necessary context to install, uninstall, and retrieve ACPI tables.
 //! `AcpiSystemTableProtocolManager` publishes the ACPI Table and ACPI SDT protocols.
-//!
-//! This library also provides a service interface, `AcpiProvider`, which can be consumed by other components to perform ACPI operations.
+//! To simply use and consume the Rust service, only `AcpiProviderManager` and `GenericAcpiManager` are necessary.
+//! To use the EDKII protocols, `AcpiSystemProtocolManager` should also be included.
 //!
 //! ## Examples and Usage
 //!
@@ -12,24 +12,20 @@
 //! In the platform start routine, provide these configuration values and initialize a new `AcpiProviderManager` instance.
 //!
 //! ```rust,ignore
-//! use patina_acpi::component::AcpiProviderManager;
+//! static CORE: Core<MyPlatform> = Core::new(CompositeSectionExtractor::new());
 //!
-//!  #[derive(Default, Clone, Copy)]
-//!  struct SectionExtractExample;
-//!  impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-//!      fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-//!  }
-//!
-//!  let physical_hob_list = core::ptr::null();
-//!
-//!  patina_dxe_core::Core::default()
-//!         .with_section_extractor(SectionExtractExample::default())
-//!         .init_memory(physical_hob_list)
-//!         .with_component(AcpiProviderManager::new([0; 6], [0; 8], 0x12345678, 0x87654321, 0xDEADBEEF))
-//!         .start().unwrap();
+//! impl ComponentInfo for Intel {
+//! fn components(mut add: Add<Component>) {
+//!         add.component(AdvancedLoggerComponent::<Uart16550>::new(&LOGGER));
+//!         // Other platform components...
+//!         add.component(patina_acpi::component::AcpiProviderManager::new(oem_id, ... /* Other platform init. */));
+//!         add.component(patina_acpi::component::AcpiSystemProtocolManager::default());
+//!         add.component(patina_acpi::component::GenericAcpiManager::default());
+//!     }
+//! }
 //! ```
 //!
-//! A similar pattern can be followed to create the `AcpiSystemTableProtocolManager`.
+//! A similar pattern can be followed to create the `AcpiSystemProtocolManager`.
 //!
 //! For examples of how to use the service interface, see `service.rs`.
 //!
@@ -37,11 +33,12 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![feature(coverage_attribute)]
+#![feature(allocator_api)]
 
 extern crate alloc;
 
