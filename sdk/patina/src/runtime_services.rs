@@ -457,12 +457,14 @@ impl RuntimeServices for StandardRuntimeServices {
             maximum_variable_size: 0,
         };
 
-        let status = query_variable_info(
-            attributes,
-            ptr::addr_of_mut!(var_info.maximum_variable_storage_size),
-            ptr::addr_of_mut!(var_info.remaining_variable_storage_size),
-            ptr::addr_of_mut!(var_info.maximum_variable_size),
-        );
+        let status = unsafe {
+            query_variable_info(
+                attributes,
+                ptr::addr_of_mut!(var_info.maximum_variable_storage_size),
+                ptr::addr_of_mut!(var_info.remaining_variable_storage_size),
+                ptr::addr_of_mut!(var_info.maximum_variable_size),
+            )
+        };
 
         if status.is_error() { Err(status) } else { Ok(var_info) }
     }

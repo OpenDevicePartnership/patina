@@ -29,7 +29,7 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
-mu_rust_helpers = { version = "3.0.2" }
+mu_rust_helpers = { path="C:/Users/sherryfan/mu_rust_helpers" }
 num-traits = { version = "0.2", default-features = false }
 patina = { version = "20.0.0", path = "sdk/patina" }
 patina_debugger = { version = "20.0.0", path = "core/patina_debugger" }
@@ -49,7 +49,7 @@ patina_smbios = { version = "20.0.0", path = "components/patina_smbios" }
 patina_stacktrace = { version = "20.0.0", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
-r-efi = { version = "5.0.0", default-features = false }
+r-efi = { version = "6.0.0", default-features = false }
 scroll = { version = "0.13", default-features = false, features = ["derive"]}
 spin = { version = "^0.9" }
 syn = { version = "2" }

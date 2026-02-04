@@ -1013,7 +1013,7 @@ impl BootServices for StandardBootServices {
             unsafe {
                 mem::transmute::<
                     Option<extern "efiapi" fn(*mut c_void, *mut T)>,
-                    Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
+                    Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>,
                 >(notify_function)
             },
             notify_context as *mut c_void,
@@ -1042,8 +1042,8 @@ impl BootServices for StandardBootServices {
             // Wrapping in Option as the UEFI interface expects an optional callback.
             unsafe {
                 mem::transmute::<
-                    extern "efiapi" fn(*mut c_void, *mut T),
-                    Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
+                    unsafe extern "efiapi" fn(*mut c_void, *mut T),
+                    Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>,
                 >(notify_function)
             },
             notify_context as *mut c_void,
@@ -1057,7 +1057,7 @@ impl BootServices for StandardBootServices {
     fn close_event(&self, event: efi::Event) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let close_event = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), close_event) };
-        match close_event(event) {
+        match unsafe { close_event(event) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1066,7 +1066,7 @@ impl BootServices for StandardBootServices {
     fn signal_event(&self, event: efi::Event) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let signal_event = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), signal_event) };
-        match signal_event(event) {
+        match unsafe { signal_event(event) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1076,7 +1076,7 @@ impl BootServices for StandardBootServices {
         let mut index = MaybeUninit::zeroed();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let wait_for_event = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), wait_for_event) };
-        let status = wait_for_event(events.len(), events.as_mut_ptr(), index.as_mut_ptr());
+        let status = unsafe { wait_for_event(events.len(), events.as_mut_ptr(), index.as_mut_ptr()) };
         // SAFETY: If the call succeeded, index has been initialized with the event index.
         if status.is_error() { Err(status) } else { Ok(unsafe { index.assume_init() }) }
     }
@@ -1084,7 +1084,7 @@ impl BootServices for StandardBootServices {
     fn check_event(&self, event: efi::Event) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let check_event = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), check_event) };
-        match check_event(event) {
+        match unsafe { check_event(event) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1093,7 +1093,7 @@ impl BootServices for StandardBootServices {
     fn set_timer(&self, event: efi::Event, timer_type: EventTimerType, trigger_time: u64) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let set_timer = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), set_timer) };
-        match set_timer(event, timer_type.into(), trigger_time) {
+        match unsafe { set_timer(event, timer_type.into(), trigger_time) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1102,13 +1102,13 @@ impl BootServices for StandardBootServices {
     fn raise_tpl(&self, new_tpl: Tpl) -> Tpl {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let raise_tpl = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), raise_tpl) };
-        raise_tpl(new_tpl.into()).into()
+        unsafe { raise_tpl(new_tpl.into()).into() }
     }
 
     fn restore_tpl(&self, old_tpl: Tpl) {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let restore_tpl = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), restore_tpl) };
-        restore_tpl(old_tpl.into())
+        unsafe { restore_tpl(old_tpl.into()) }
     }
 
     fn allocate_pages(
@@ -1124,12 +1124,14 @@ impl BootServices for StandardBootServices {
         };
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let allocate_pages = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), allocate_pages) };
-        match allocate_pages(
-            alloc_type.into(),
-            memory_type.into(),
-            nb_pages,
-            ptr::addr_of_mut!(memory_address) as *mut u64,
-        ) {
+        match unsafe {
+            allocate_pages(
+                alloc_type.into(),
+                memory_type.into(),
+                nb_pages,
+                ptr::addr_of_mut!(memory_address) as *mut u64,
+            )
+        } {
             s if s.is_error() => Err(s),
             _ => Ok(memory_address),
         }
@@ -1138,7 +1140,7 @@ impl BootServices for StandardBootServices {
     fn free_pages(&self, address: usize, nb_pages: usize) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let free_pages = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), free_pages) };
-        match free_pages(address as u64, nb_pages) {
+        match unsafe { free_pages(address as u64, nb_pages) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1153,26 +1155,30 @@ impl BootServices for StandardBootServices {
         let mut descriptor_size = 0;
         let mut descriptor_version = 0;
 
-        match get_memory_map(
-            ptr::addr_of_mut!(memory_map_size),
-            ptr::null_mut(),
-            ptr::addr_of_mut!(map_key),
-            ptr::addr_of_mut!(descriptor_size),
-            ptr::addr_of_mut!(descriptor_version),
-        ) {
+        match unsafe {
+            get_memory_map(
+                ptr::addr_of_mut!(memory_map_size),
+                ptr::null_mut(),
+                ptr::addr_of_mut!(map_key),
+                ptr::addr_of_mut!(descriptor_size),
+                ptr::addr_of_mut!(descriptor_version),
+            )
+        } {
             s if s == efi::Status::BUFFER_TOO_SMALL => memory_map_size += 0x400, // add more space in case allocation makes the memory map bigger.
             _ => (),
         };
 
         let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, memory_map_size).map_err(|s| (s, 0))?;
 
-        match get_memory_map(
-            ptr::addr_of_mut!(memory_map_size),
-            buffer as *mut _,
-            ptr::addr_of_mut!(map_key),
-            ptr::addr_of_mut!(descriptor_size),
-            ptr::addr_of_mut!(descriptor_version),
-        ) {
+        match unsafe {
+            get_memory_map(
+                ptr::addr_of_mut!(memory_map_size),
+                buffer as *mut _,
+                ptr::addr_of_mut!(map_key),
+                ptr::addr_of_mut!(descriptor_size),
+                ptr::addr_of_mut!(descriptor_version),
+            )
+        } {
             s if s == efi::Status::BUFFER_TOO_SMALL => return Err((s, memory_map_size)),
             s if s.is_error() => return Err((s, 0)),
             _ => (),
@@ -1190,7 +1196,7 @@ impl BootServices for StandardBootServices {
         let mut buffer = ptr::null_mut();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let allocate_pool = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), allocate_pool) };
-        match allocate_pool(memory_type.into(), size, ptr::addr_of_mut!(buffer)) {
+        match unsafe { allocate_pool(memory_type.into(), size, ptr::addr_of_mut!(buffer)) } {
             s if s.is_error() => Err(s),
             _ => Ok(buffer as *mut u8),
         }
@@ -1199,7 +1205,7 @@ impl BootServices for StandardBootServices {
     fn free_pool(&self, buffer: *mut u8) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let free_pool = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), free_pool) };
-        match free_pool(buffer as *mut c_void) {
+        match unsafe { free_pool(buffer as *mut c_void) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1266,7 +1272,9 @@ impl BootServices for StandardBootServices {
         let mut registration = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let register_protocol_notify = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), register_protocol_notify) };
-        match register_protocol_notify(protocol as *const _ as *mut _, event, registration.as_mut_ptr() as *mut _) {
+        match unsafe {
+            register_protocol_notify(protocol as *const _ as *mut _, event, registration.as_mut_ptr() as *mut _)
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: If the call succeeded, registration has been initialized.
             _ => Ok(unsafe { registration.assume_init() }),
@@ -1291,7 +1299,9 @@ impl BootServices for StandardBootServices {
 
         // Expect locate_handle to return BUFFER_TOO_SMALL along with the proper buffer_size
         let mut buffer_size = 0;
-        match locate_handle(search_type.into(), protocol, search_key, ptr::addr_of_mut!(buffer_size), ptr::null_mut()) {
+        match unsafe {
+            locate_handle(search_type.into(), protocol, search_key, ptr::addr_of_mut!(buffer_size), ptr::null_mut())
+        } {
             s if s == efi::Status::BUFFER_TOO_SMALL => (),
             s if s.is_error() => return Err(s),
             _ => (),
@@ -1299,13 +1309,15 @@ impl BootServices for StandardBootServices {
 
         let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, buffer_size)?;
 
-        match locate_handle(
-            search_type.into(),
-            protocol,
-            search_key,
-            ptr::addr_of_mut!(buffer_size),
-            buffer as *mut efi::Handle,
-        ) {
+        match unsafe {
+            locate_handle(
+                search_type.into(),
+                protocol,
+                search_key,
+                ptr::addr_of_mut!(buffer_size),
+                buffer as *mut efi::Handle,
+            )
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: buffer was allocated with allocate_pool to hold buffer_size bytes.
             // The number of handles is buffer_size divided by the size of each handle.
@@ -1376,7 +1388,7 @@ impl BootServices for StandardBootServices {
     ) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let close_protocol = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), close_protocol) };
-        match close_protocol(handle, protocol as *const _ as *mut _, agent_handle, controller_handle) {
+        match unsafe { close_protocol(handle, protocol as *const _ as *mut _, agent_handle, controller_handle) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1394,12 +1406,14 @@ impl BootServices for StandardBootServices {
         let mut entry_count = 0;
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let open_protocol_information = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), open_protocol_information) };
-        match open_protocol_information(
-            handle,
-            protocol as *const _ as *mut _,
-            ptr::addr_of_mut!(entry_buffer),
-            ptr::addr_of_mut!(entry_count),
-        ) {
+        match unsafe {
+            open_protocol_information(
+                handle,
+                protocol as *const _ as *mut _,
+                ptr::addr_of_mut!(entry_buffer),
+                ptr::addr_of_mut!(entry_count),
+            )
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: The firmware allocates entry_buffer and sets entry_count.
             // from_raw_parts_mut creates a slice with the proper length as specified by the firmware.
@@ -1436,11 +1450,13 @@ impl BootServices for StandardBootServices {
     ) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let disconnect_controller = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), disconnect_controller) };
-        match disconnect_controller(
-            controller_handle,
-            driver_image_handle.unwrap_or(ptr::null_mut()),
-            child_handle.unwrap_or(ptr::null_mut()),
-        ) {
+        match unsafe {
+            disconnect_controller(
+                controller_handle,
+                driver_image_handle.unwrap_or(ptr::null_mut()),
+                child_handle.unwrap_or(ptr::null_mut()),
+            )
+        } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1454,8 +1470,9 @@ impl BootServices for StandardBootServices {
         let mut protocol_buffer_count = 0;
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let protocols_per_handle = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), protocols_per_handle) };
-        match protocols_per_handle(handle, ptr::addr_of_mut!(protocol_buffer), ptr::addr_of_mut!(protocol_buffer_count))
-        {
+        match unsafe {
+            protocols_per_handle(handle, ptr::addr_of_mut!(protocol_buffer), ptr::addr_of_mut!(protocol_buffer_count))
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: The firmware allocates protocol_buffer and sets protocol_buffer_count.
             // from_raw_parts_mut creates a slice with the proper length as specified.
@@ -1484,13 +1501,15 @@ impl BootServices for StandardBootServices {
         };
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let locate_handle_buffer = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), locate_handle_buffer) };
-        match locate_handle_buffer(
-            search_type.into(),
-            protocol,
-            search_key,
-            ptr::addr_of_mut!(buffer_count),
-            ptr::addr_of_mut!(buffer),
-        ) {
+        match unsafe {
+            locate_handle_buffer(
+                search_type.into(),
+                protocol,
+                search_key,
+                ptr::addr_of_mut!(buffer_count),
+                ptr::addr_of_mut!(buffer),
+            )
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: The firmware allocates buffer and sets buffer_count.
             // from_raw_parts_mut creates a slice with the proper length as specified.
@@ -1527,14 +1546,16 @@ impl BootServices for StandardBootServices {
         let mut image_handle = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let load_image = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), load_image) };
-        match load_image(
-            boot_policy.into(),
-            parent_image_handle,
-            device_path,
-            source_buffer_ptr,
-            source_buffer_size,
-            image_handle.as_mut_ptr(),
-        ) {
+        match unsafe {
+            load_image(
+                boot_policy.into(),
+                parent_image_handle,
+                device_path,
+                source_buffer_ptr,
+                source_buffer_size,
+                image_handle.as_mut_ptr(),
+            )
+        } {
             s if s.is_error() => Err(s),
             // SAFETY: If the call succeeded, image_handle has been initialized.
             _ => Ok(unsafe { image_handle.assume_init() }),
@@ -1549,7 +1570,7 @@ impl BootServices for StandardBootServices {
         let mut exit_data = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let start_image = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), start_image) };
-        match start_image(image_handle, exit_data_size.as_mut_ptr(), exit_data.as_mut_ptr()) {
+        match unsafe { start_image(image_handle, exit_data_size.as_mut_ptr(), exit_data.as_mut_ptr()) } {
             s if s.is_error() => {
                 // SAFETY: If exit_data pointer is not null, it points to valid memory.
                 // exit_data_size contains the size of the allocated data. from_raw_parts_mut creates a proper slice.
@@ -1569,7 +1590,7 @@ impl BootServices for StandardBootServices {
     fn unload_image(&self, image_handle: efi::Handle) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let unload_image = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), unload_image) };
-        match unload_image(image_handle) {
+        match unsafe { unload_image(image_handle) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1585,7 +1606,7 @@ impl BootServices for StandardBootServices {
         let exit_data_size = exit_data.as_ref().map_or(0, |data| data.len());
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let exit = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), exit) };
-        match exit(image_handle, exit_status, exit_data_size, exit_data_ptr) {
+        match unsafe { exit(image_handle, exit_status, exit_data_size, exit_data_ptr) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1594,7 +1615,7 @@ impl BootServices for StandardBootServices {
     fn exit_boot_services(&self, image_handle: efi::Handle, map_key: usize) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let exit_boot_services = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), exit_boot_services) };
-        match exit_boot_services(image_handle, map_key) {
+        match unsafe { exit_boot_services(image_handle, map_key) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1603,7 +1624,7 @@ impl BootServices for StandardBootServices {
     fn set_watchdog_timer(&self, timeout: usize) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let set_watchdog_timer = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), set_watchdog_timer) };
-        match set_watchdog_timer(timeout, 0, 0, ptr::null_mut()) {
+        match unsafe { set_watchdog_timer(timeout, 0, 0, ptr::null_mut()) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1612,7 +1633,7 @@ impl BootServices for StandardBootServices {
     fn stall(&self, microseconds: usize) -> Result<(), efi::Status> {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let stall = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), stall) };
-        match stall(microseconds) {
+        match unsafe { stall(microseconds) } {
             s if s.is_error() => Err(s),
             _ => Ok(()),
         }
@@ -1627,14 +1648,14 @@ impl BootServices for StandardBootServices {
     fn set_mem(&self, buffer: &mut [u8], value: u8) {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let set_mem = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), set_mem) };
-        set_mem(buffer.as_mut_ptr() as *mut c_void, buffer.len(), value);
+        unsafe { set_mem(buffer.as_mut_ptr() as *mut c_void, buffer.len(), value) };
     }
 
     fn get_next_monotonic_count(&self) -> Result<u64, efi::Status> {
         let mut count = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let get_next_monotonic_count = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), get_next_monotonic_count) };
-        match get_next_monotonic_count(count.as_mut_ptr()) {
+        match unsafe { get_next_monotonic_count(count.as_mut_ptr()) } {
             s if s.is_error() => Err(s),
             // SAFETY: If the UEFI call succeeded, count has been initialized.
             _ => Ok(unsafe { count.assume_init() }),
@@ -1786,13 +1807,15 @@ mod tests {
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
             // Safety: Test code - transmute from Option<EventNotify> function pointer to raw pointer for comparison.
             assert_eq!(notify_callback as *const fn(), unsafe {
-                mem::transmute::<Option<extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(notify_function)
+                mem::transmute::<Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(
+                    notify_function,
+                )
             });
             assert_ne!(ptr::null_mut(), notify_context);
             assert_ne!(ptr::null_mut(), event);
 
             if let Some(notify_function) = notify_function {
-                notify_function(ptr::null_mut(), notify_context);
+                unsafe { notify_function(ptr::null_mut(), notify_context) };
             }
             efi::Status::SUCCESS
         }
@@ -1861,14 +1884,16 @@ mod tests {
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
             // Safety: Test code - transmute from Option<EventNotify> function pointer to raw pointer for comparison.
             assert_eq!(notify_callback as *const fn(), unsafe {
-                mem::transmute::<Option<extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(notify_function)
+                mem::transmute::<Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(
+                    notify_function,
+                )
             });
             assert_ne!(ptr::null(), notify_context);
             assert_eq!(ptr::addr_of!(GUID), event_group);
             assert_ne!(ptr::null_mut(), event);
 
             if let Some(notify_function) = notify_function {
-                notify_function(ptr::null_mut(), notify_context as *mut _);
+                unsafe { notify_function(ptr::null_mut(), notify_context as *mut _) };
             }
             efi::Status::SUCCESS
         }
