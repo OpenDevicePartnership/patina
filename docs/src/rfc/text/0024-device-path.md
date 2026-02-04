@@ -11,6 +11,7 @@ This consolidated interface also allows improved node construction patterns.
 
 - 2026-01-27: Initial RFC created.
 - 2026-02-03: Minor wording changes based on reviews.
+- 2026-02-04: Moving to FCP.
 
 ## Motivation
 
