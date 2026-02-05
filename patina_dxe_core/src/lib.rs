@@ -514,42 +514,45 @@ impl<P: PlatformInfo> Core<P> {
         // Instantiate system table.
         systemtables::init_system_table();
 
-        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-        let st = st_guard.as_mut().expect("System Table not initialized!");
+        // Extract boot/runtime services pointers while holding SYSTEM_TABLE lock (TPL_NOTIFY).
+        // We must release this lock before accessing component_dispatcher (TPL_APPLICATION)
+        // to avoid TPL violation - you cannot lower TPL while holding a higher TPL lock.
+        let (boot_services_ptr, runtime_services_ptr) = {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            let st = st.as_mut().expect("System Table not initialized!");
 
-        allocator::install_memory_services(st);
-        gcd::init_paging(self.hob_list());
-        events::init_events_support(st);
-        protocols::init_protocol_support(st);
-        misc_boot_services::init_misc_boot_services_support(st);
-        config_tables::init_config_tables_support(st);
-        runtime::init_runtime_support();
-        self.pi_dispatcher.init(self.hob_list(), st);
-        self.install_dxe_services_table(st);
-        driver_services::init_driver_services(st);
+            allocator::install_memory_services(st);
+            gcd::init_paging(self.hob_list());
+            events::init_events_support(st);
+            protocols::init_protocol_support(st);
+            misc_boot_services::init_misc_boot_services_support(st);
+            config_tables::init_config_tables_support(st);
+            runtime::init_runtime_support();
+            self.pi_dispatcher.init(self.hob_list(), st);
+            self.install_dxe_services_table(st);
+            driver_services::init_driver_services(st);
 
-        memory_attributes_protocol::install_memory_attributes_protocol();
+            memory_attributes_protocol::install_memory_attributes_protocol();
 
-        // re-checksum the system tables after above initialization.
-        st.checksum_all();
+            // re-checksum the system tables after above initialization.
+            st.checksum_all();
 
-        // Install HobList configuration table
-        config_tables::core_install_configuration_table(patina::guids::HOB_LIST.into_inner(), physical_hob_list, st)
-            .expect("Unable to create configuration table due to invalid table entry.");
+            // Install HobList configuration table
+            config_tables::core_install_configuration_table(patina::guids::HOB_LIST.into_inner(), physical_hob_list, st)
+                .expect("Unable to create configuration table due to invalid table entry.");
 
-        // Install Memory Type Info configuration table.
-        allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
+            // Install Memory Type Info configuration table.
+            allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
 
-        memory_attributes_table::init_memory_attributes_table_support();
+            memory_attributes_table::init_memory_attributes_table_support();
 
-        // The component dispatcher has a TPL_APPLICATION TPLMutex, so we need to drop the TPL_NOTIFY st_guard before
-        // attempting to unlock the component dispatcher to prevent TPL inversion
-        let boot_services = StandardBootServices::new(st.boot_services().as_mut_ptr());
-        let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
-        drop(st_guard);
+            // Extract pointers before releasing the lock
+            (st.boot_services().as_mut_ptr(), st.runtime_services().as_mut_ptr())
+        }; // SYSTEM_TABLE lock released here
 
-        self.component_dispatcher.lock().set_boot_services(boot_services);
-        self.component_dispatcher.lock().set_runtime_services(runtime_services);
+        // Now safe to access component_dispatcher at TPL_APPLICATION
+        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(boot_services_ptr));
+        self.component_dispatcher.lock().set_runtime_services(StandardRuntimeServices::new(runtime_services_ptr));
         self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
         Ok(())
