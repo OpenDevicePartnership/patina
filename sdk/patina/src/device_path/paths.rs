@@ -9,9 +9,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-pub mod device_path_node;
-pub mod nodes;
-
 use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
 use core::{
     borrow::Borrow,
@@ -27,8 +24,10 @@ use core::{
 
 use scroll::Pread;
 
-use device_path_node::{DevicePathNode, Header, UnknownDevicePathNode};
-use nodes::{DevicePathType, EndEntire, EndInstance};
+use crate::device_path::{
+    node_defs::{self, DevicePathType, EndEntire, EndInstance},
+    parse_node::{DevicePathNode, UnknownDevicePathNode},
+};
 
 /// DevicePathBuf is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
 #[derive(Debug, Clone)]
@@ -172,12 +171,13 @@ impl DevicePath {
 
         // SAFETY: The caller contract requires that the buffer pointer is valid and points to at least
         // Header::size_of_header() bytes.
-        let mut buffer = unsafe { core::slice::from_raw_parts(buffer, Header::size_of_header()) };
+        let mut buffer =
+            unsafe { core::slice::from_raw_parts(buffer, crate::device_path::parse_node::Header::size_of_header()) };
         let mut offset = 0;
         loop {
-            let header =
-                buffer.pread_with::<Header>(offset, scroll::LE).map_err(|_| "Error while trying to read header.")?;
-
+            let header = buffer
+                .pread_with::<crate::device_path::parse_node::Header>(offset, scroll::LE)
+                .map_err(|_| "Error while trying to read header.")?;
             if EndEntire::is_type(header.r#type, header.sub_type) {
                 break;
             }
@@ -222,7 +222,7 @@ impl DevicePath {
         let nb_skip = count - n;
         let mut idx = 0;
         for _ in 0..nb_skip {
-            let header = self.buffer.pread_with::<Header>(idx, scroll::LE).unwrap();
+            let header = self.buffer.pread_with::<crate::device_path::parse_node::Header>(idx, scroll::LE).unwrap();
             idx += header.length;
         }
         let end_buffer = &self.buffer[idx..];
@@ -342,7 +342,7 @@ impl<'a> Iterator for Iter<'a> {
 
 impl Display for DevicePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut nodes = self.iter().map(nodes::cast_to_dyn_device_path_node).peekable();
+        let mut nodes = self.iter().map(node_defs::cast_to_dyn_device_path_node).peekable();
 
         while let Some(node) = nodes.next() {
             f.write_fmt(format_args!("{}", &node))?;
@@ -362,11 +362,12 @@ impl Display for DevicePath {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use super::*;
     use core::assert_eq;
 
-    use super::{
-        nodes::{Acpi, AcpiSubType, EndSubType, Pci},
-        *,
+    use crate::device_path::{
+        node_defs::{Acpi, AcpiSubType, EndSubType, Pci},
+        paths::DevicePathBuf,
     };
 
     #[test]

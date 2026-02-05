@@ -1,4 +1,11 @@
 //! Spec-defined device path node types defined in this module.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 
 use core::{
     fmt::{Display, Write},
@@ -13,6 +20,11 @@ use alloc::{
 use scroll::{
     Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
+};
+
+use crate::{
+    device_path::parse_node::{self, DevicePathNode, UnknownDevicePathNode},
+    device_path_node,
 };
 
 /// Device path type values as defined in UEFI specification.
@@ -467,12 +479,12 @@ impl Sata {
     }
 }
 
-impl super::device_path_node::DevicePathNode for Sata {
-    fn header(&self) -> super::device_path_node::Header {
-        super::device_path_node::Header {
+impl DevicePathNode for Sata {
+    fn header(&self) -> parse_node::Header {
+        parse_node::Header {
             r#type: DevicePathType::Messaging as u8,
             sub_type: MessagingSubType::Sata as u8,
-            length: super::device_path_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
         }
     }
 
@@ -556,12 +568,12 @@ impl NvmExpress {
     }
 }
 
-impl super::device_path_node::DevicePathNode for NvmExpress {
-    fn header(&self) -> super::device_path_node::Header {
-        super::device_path_node::Header {
+impl parse_node::DevicePathNode for NvmExpress {
+    fn header(&self) -> crate::device_path::parse_node::Header {
+        parse_node::Header {
             r#type: DevicePathType::Messaging as u8,
             sub_type: MessagingSubType::NvmExpress as u8,
-            length: super::device_path_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
         }
     }
 
@@ -666,12 +678,12 @@ impl HardDrive {
     }
 }
 
-impl super::device_path_node::DevicePathNode for HardDrive {
-    fn header(&self) -> super::device_path_node::Header {
-        super::device_path_node::Header {
+impl parse_node::DevicePathNode for HardDrive {
+    fn header(&self) -> parse_node::Header {
+        parse_node::Header {
             r#type: DevicePathType::Media as u8,
             sub_type: MediaSubType::HardDrive as u8,
-            length: super::device_path_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
         }
     }
 
@@ -782,12 +794,12 @@ impl FilePath {
     }
 }
 
-impl super::device_path_node::DevicePathNode for FilePath {
-    fn header(&self) -> super::device_path_node::Header {
-        super::device_path_node::Header {
+impl parse_node::DevicePathNode for FilePath {
+    fn header(&self) -> parse_node::Header {
+        parse_node::Header {
             r#type: DevicePathType::Media as u8,
             sub_type: MediaSubType::FilePath as u8,
-            length: super::device_path_node::Header::size_of_header() + self.utf16_size(),
+            length: parse_node::Header::size_of_header() + self.utf16_size(),
         }
     }
 

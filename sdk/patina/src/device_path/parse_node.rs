@@ -1,4 +1,11 @@
-//! This module defines device path nodes and methods for creating and parsing them.
+//! Defines device path nodes and methods for creating and parsing them.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 
 use alloc::boxed::Box;
 use core::{
@@ -12,8 +19,6 @@ use scroll::{
     self, Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
-
-use super::nodes;
 
 /// Common header of device path nodes.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -93,7 +98,7 @@ pub struct UnknownDevicePathNode<'a> {
 impl<'a> UnknownDevicePathNode<'a> {
     /// Cast the Unknown device path to a dyn DevicePathNode of the right type.
     pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
-        nodes::cast_to_dyn_device_path_node(self)
+        crate::device_path::node_defs::cast_to_dyn_device_path_node(self)
     }
 }
 
@@ -199,13 +204,13 @@ macro_rules! device_path_node {
     };
     // Internal Matching to implement the device path node trait.
     (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
-        impl $crate::uefi_protocol::device_path::device_path_node::DevicePathNode for $struct_name
+        impl $crate::device_path::parse_node::DevicePathNode for $struct_name
         {
-            fn header(&self) -> $crate::uefi_protocol::device_path::device_path_node::Header {
-                $crate::uefi_protocol::device_path::device_path_node::Header {
+            fn header(&self) -> $crate::device_path::parse_node::Header {
+                $crate::device_path::parse_node::Header {
                     r#type: $device_path_type as u8,
                     sub_type: $device_path_sub_type as u8,
-                    length: $crate::uefi_protocol::device_path::device_path_node::Header::size_of_header() + core::mem::size_of::<$struct_name>()
+                    length: $crate::device_path::parse_node::Header::size_of_header() + core::mem::size_of::<$struct_name>()
 
                 }
             }

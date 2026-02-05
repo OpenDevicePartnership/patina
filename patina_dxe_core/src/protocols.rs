@@ -10,7 +10,10 @@ use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
 use mu_rust_helpers::guid::guid_fmt;
-use patina::error::EfiError;
+use patina::{
+    device_path::walker::{is_device_path_end, remaining_device_path},
+    error::EfiError,
+};
 use r_efi::efi;
 use tpl_mutex::TplMutex;
 

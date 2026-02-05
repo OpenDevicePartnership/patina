@@ -18,6 +18,7 @@ use core::{
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
+    device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
     efi_types::EfiMemoryType,
     error::EfiError,
     guids,
