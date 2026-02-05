@@ -68,6 +68,8 @@ where
     no_transport_init: bool,
     /// Debugger enabled state.
     enabled: AtomicBool,
+    /// Debugger Initialized state
+    initialized: AtomicBool,
     /// The number of seconds to wait for an initial breakpoint. If zero, wait indefinitely.
     initial_break_timeout: u32,
     /// Internal mutable debugger state.
@@ -105,6 +107,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
             no_transport_init: false,
             exception_types: SystemArch::DEFAULT_EXCEPTION_TYPES,
             enabled: AtomicBool::new(false),
+            initialized: AtomicBool::new(false),
             initial_break_timeout: 0,
             internal: Mutex::new(DebuggerInternal {
                 gdb_buffer: None,
@@ -309,6 +312,11 @@ impl<T: SerialIO> PatinaDebugger<T> {
 }
 
 impl<T: SerialIO> Debugger for PatinaDebugger<T> {
+    #[cfg(test)]
+    fn test_initialize(&'static self, initialized: bool) {
+        self.initialized.store(initialized, Ordering::Relaxed);
+    }
+
     fn initialize(
         &'static self,
         interrupt_manager: &mut dyn InterruptManager,
@@ -365,6 +373,8 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
             }
         }
 
+        self.initialized.store(true, Ordering::Relaxed);
+
         log::error!("************************************");
         log::error!("***  Initial debug breakpoint!   ***");
         log::error!("************************************");
@@ -374,6 +384,10 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
 
     fn enabled(&'static self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    fn initialized(&'static self) -> bool {
+        self.initialized.load(Ordering::Relaxed)
     }
 
     fn notify_module_load(&'static self, module_name: &str, address: usize, length: usize) {

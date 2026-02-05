@@ -165,17 +165,19 @@ GDB also works, but symbols may not resolve since Patina uses PE images with PDB
 
 ### Step 6: Set up the panic handler
 
-To break into the debugger on a panic, add a manual breakpoint in the panic handler. Only do this
-when the debugger is enabled:
+To break into the debugger on a panic, add a manual breakpoint in the panic handler.
+The `breakpoint()` function will only issue a breakpoint if the debugger is enabled
+and initialized.
 
 ```rust
-if patina_debugger::enabled() {
-    patina_debugger::breakpoint();
-}
+  patina_debugger::breakpoint();
 ```
 
 As an aside, `patina_debugger::breakpoint()` can be useful to placing in other locations
 of interest while debugging to ensure you catch a specific function or scenario.
+`patina_debugger::breakpoint_unchecked()` can be called in the rare case where you
+want to issue a breakpoint instruction even if the debugger is not enabled or
+initialized.
 
 ### Security Considerations
 
