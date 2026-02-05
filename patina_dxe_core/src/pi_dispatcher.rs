@@ -22,6 +22,7 @@ use alloc::{
 use core::{cmp::Ordering, ffi::c_void};
 use mu_rust_helpers::guid::guid_fmt;
 use patina::{
+    device_path::walker::concat_device_path_to_boxed_slice,
     error::EfiError,
     pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
 };
@@ -30,7 +31,6 @@ use patina_ffs::{
     volume::VolumeRef,
 };
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
-use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use r_efi::efi;
 use spin::RwLock;
 
@@ -789,7 +789,6 @@ mod tests {
     use log::{Level, LevelFilter, Metadata, Record};
     use patina::pi;
     use patina_ffs_extractors::NullSectionExtractor;
-    use patina_internal_device_path::DevicePathWalker;
     use uuid::uuid;
 
     use super::*;

@@ -12,6 +12,7 @@ use alloc::{
 };
 use core::ptr::NonNull;
 use patina::{
+    device_path::walker::concat_device_path_to_boxed_slice,
     error::EfiError,
     performance::{
         logging::{
@@ -21,7 +22,6 @@ use patina::{
         measurement::create_performance_measurement,
     },
 };
-use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
 
 use r_efi::efi;
 

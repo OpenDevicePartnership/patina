@@ -32,7 +32,6 @@ use patina::{
     },
     uefi_size_to_pages,
 };
-use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use r_efi::efi;
 
 use crate::{
@@ -1509,7 +1508,6 @@ mod tests {
             hob::{HobList, MemoryAllocationModule, header::MemoryAllocation},
         },
     };
-    use patina_internal_device_path::device_path_node_count;
     use r_efi::{
         efi,
         protocols::device_path::{End, Hardware, Media, TYPE_END, TYPE_HARDWARE, TYPE_MEDIA},

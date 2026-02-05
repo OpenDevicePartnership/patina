@@ -487,14 +487,6 @@ fn get_module_guid_from_handle(
     Ok(guid)
 }
 
-/// This device path is used by systems implementing the UEFI PI Specification 1.0 to describe a firmware file.
-#[repr(C)]
-pub struct MediaFwVolFilepathDevicePath {
-    header: efi::protocols::device_path::Protocol,
-    /// Firmware file name
-    fv_file_name: efi::Guid,
-}
-
 #[cfg(test)]
 #[coverage(off)]
 mod tests {

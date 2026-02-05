@@ -15,10 +15,6 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
 };
 
-use super::device_path_node::{DevicePathNode, UnknownDevicePathNode};
-
-use crate::device_path_node;
-
 /// Device path type values as defined in UEFI specification.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(u8)]

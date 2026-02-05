@@ -11,7 +11,6 @@ use core::{ffi::c_void, mem::size_of};
 use alloc::{slice, vec, vec::Vec};
 use mu_rust_helpers::guid::guid_fmt;
 use patina::error::EfiError;
-use patina_internal_device_path::{is_device_path_end, remaining_device_path};
 use r_efi::efi;
 use tpl_mutex::TplMutex;
 
