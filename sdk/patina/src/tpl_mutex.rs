@@ -38,11 +38,34 @@ pub struct TplMutexGuard<'a, T: ?Sized, B: BootServices> {
 
 impl<T, B: BootServices> TplMutex<T, B> {
     /// Create a new TplMutex in an unlocked state.
-    ///
     /// Takes ownership of the boot_services instance. Callers can pass an owned
     /// instance directly or clone if they need to retain a copy.
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is already initialized (should not be possible here).
     pub fn new(boot_services: B, tpl_lock_level: Tpl, data: T) -> Self {
-        Self { boot_services, tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data) }
+        let bs_cell = OnceCell::new();
+        bs_cell.set(boot_services).map_err(|_| "Boot services already initialized!").unwrap();
+        Self { boot_services: bs_cell, tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data) }
+    }
+
+    /// Create a new TplMutex in an unlocked, uninitialized state.
+    /// The resulting TplMutex will not be usable until `boot_services` is initialized.
+    pub const fn new_uninit(tpl_lock_level: Tpl, data: T) -> Self {
+        Self {
+            boot_services: OnceCell::new(),
+            tpl_lock_level,
+            lock: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    /// Initialize the boot services for this TplMutex. This must be called before the mutex can be used.
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is already initialized.
+    pub fn init(&self, boot_services: B) {
+        self.boot_services.set(boot_services).map_err(|_| "Boot services already initialized!").unwrap();
     }
 }
 
@@ -59,6 +82,9 @@ impl<T: ?Sized, B: BootServices> TplMutex<T, B> {
     ///
     /// # Errors
     /// If the mutex is already lock, then this call will return [Err].
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is not initialized.
     #[allow(clippy::result_unit_err)]
     pub fn try_lock(&self) -> Result<TplMutexGuard<'_, T, B>, ()> {
         self.lock
