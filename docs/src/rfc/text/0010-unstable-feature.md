@@ -28,7 +28,7 @@ Example of issue template for unstable feature stabilization:
 #
 ##
 # Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: BSD-2-Clause-Patent
+# SPDX-License-Identifier: Apache-2.0
 ##
 name: 📓 Tracking unstable feature issue.
 description: "Track an unstable feature."
