@@ -29,7 +29,7 @@ use r_efi::efi;
 ///
 /// ```
 /// #![feature(pointer_byte_offsets)]
-/// use patina_internal_device_path::device_path_node_count;
+/// use patina::device_path::walker::device_path_node_count;
 /// use r_efi::efi;
 /// let device_path_bytes = [
 ///   efi::protocols::device_path::TYPE_HARDWARE,
@@ -127,7 +127,7 @@ pub fn device_path_as_slice(
 ///
 /// ```
 /// #![feature(pointer_byte_offsets)]
-/// use patina_internal_device_path::{device_path_node_count, remaining_device_path};
+/// use patina::device_path::walker::{device_path_node_count, remaining_device_path};
 /// use core::mem::size_of;
 /// use r_efi::efi;
 /// let device_path_a_bytes = [
