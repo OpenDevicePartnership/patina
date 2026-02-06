@@ -926,7 +926,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let mut address = desc.memory_base_address;
-                match GCD.get_memory_descriptor_for_address(address) {
+                match GCD.get_existent_memory_descriptor_for_address(address) {
                     // we found the region in the GCD, so we can allocate it
                     Ok(gcd_desc) => {
                         if gcd_desc.base_address == desc.memory_base_address
@@ -1027,7 +1027,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
                 //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
                 //to reserve it in the GCD.
-                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address)
+                if let Ok(existing_desc) = GCD.get_existent_memory_descriptor_for_address(*base_address)
                     && (existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
                         || existing_desc.image_handle != INVALID_HANDLE)
                 {
@@ -1074,7 +1074,7 @@ fn process_hob_allocations(hob_list: &HobList) {
             "Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}"
         );
 
-        match GCD.get_memory_descriptor_for_address(stack_address) {
+        match GCD.get_existent_memory_descriptor_for_address(stack_address) {
             Ok(gcd_desc) => {
                 // Set Stack region to execute protect. We use the allocated memory protection policy here because
                 // that matches our standard policy
@@ -1123,7 +1123,7 @@ fn process_hob_allocations(hob_list: &HobList) {
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
     // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
     // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
-    match GCD.get_memory_descriptor_for_address(0) {
+    match GCD.get_existent_memory_descriptor_for_address(0) {
         Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
             let mut address: efi::PhysicalAddress = 0;
             if core_allocate_pages(
@@ -1506,25 +1506,26 @@ mod tests {
             assert!(stack_hob.memory_length != 0);
 
             // Check Guard Page.
-            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            let mut stack_desc = GCD.get_existent_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
             assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
             assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
 
             // Check rest of the stack.
-            stack_desc =
-                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            stack_desc = GCD
+                .get_existent_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64)
+                .unwrap();
             assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
             assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
 
             // confirm the MMIO memory allocation occurred in the GCD
-            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10000000).unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10000000);
             assert_eq!(mmio_desc.length, 0x2000);
             assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
 
             // confirm the rest of the MMIO region is not allocated
-            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10002000).unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10002000);
             assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);

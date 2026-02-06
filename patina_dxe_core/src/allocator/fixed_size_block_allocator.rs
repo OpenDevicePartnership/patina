@@ -599,9 +599,11 @@ impl SpinLockedFixedSizeBlockAllocator {
         }
 
         let descriptor =
-            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
+            self.gcd.get_existent_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| {
+                match err {
+                    EfiError::NotFound => err,
+                    _ => EfiError::InvalidParameter,
+                }
             })?;
 
         if descriptor.image_handle != self.handle {
