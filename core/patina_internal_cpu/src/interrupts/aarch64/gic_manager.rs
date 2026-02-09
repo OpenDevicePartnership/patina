@@ -155,7 +155,15 @@ impl AArch64InterruptInitializer {
 
         // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         let mut gic_v3 = unsafe { GicV3::new(gicd, gicr, r_count, true) };
-        gic_v3.setup(cpu_r_idx);
+
+        // Directly initialize only the current cpu's redistributor and the distributor, as these are the only
+        // components required for the interrupt model under UEFI. On some systems, interacting with the redistributor
+        // instances corresponding to other cores may cause unexpected behavior.
+        gic_v3.init_cpu(cpu_r_idx);
+        gic_v3.redistributor(cpu_r_idx).map_err(|_| EfiError::DeviceError)?.configure_default_settings();
+        gic_v3.distributor().configure_default_settings();
+
+        GicCpuInterface::enable_group1(true);
 
         // Set binary point reg to 0x7 (no preemption)
         // SAFETY: this is a legal value for BPR1 register.

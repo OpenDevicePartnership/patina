@@ -12,7 +12,7 @@ repository = "https://github.com/OpenDevicePartnership/patina"
 
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
-arm-gic = { version = "0.7.1" }
+arm-gic = { version = "0.7.2" }
 safe-mmio = { version = "0.2.5" }
 bitfield-struct = { version = "0.10" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
