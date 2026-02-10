@@ -178,10 +178,13 @@ impl ComponentDispatcher {
         self.storage.set_runtime_services(rs);
     }
 
-    /// Sets the core Image Handle in storage.
+    /// Sets the image handle in storage.
+    ///
+    /// This handle is used as the parent image handle for `LoadImage()` calls
+    /// when loading boot applications.
     #[coverage(off)]
     #[inline(always)]
-    pub(crate) fn set_image_handle(&mut self, handle: efi::Handle) {
+    pub(crate) fn set_image_handle(&mut self, handle: r_efi::efi::Handle) {
         self.storage.set_image_handle(handle);
     }
 

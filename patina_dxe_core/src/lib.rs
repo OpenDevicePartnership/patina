@@ -554,6 +554,7 @@ impl<P: PlatformInfo> Core<P> {
         // Now safe to access component_dispatcher at TPL_APPLICATION
         self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(boot_services_ptr));
         self.component_dispatcher.lock().set_runtime_services(StandardRuntimeServices::new(runtime_services_ptr));
+        self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
         Ok(())
     }
