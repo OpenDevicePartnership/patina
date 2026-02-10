@@ -120,9 +120,12 @@ unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {
     /// Creates a new locked ComponentDispatcher.
+    ///
+    /// Uses TPL_APPLICATION so that component entry points can use boot services
+    /// that are restricted at higher TPL levels.
     #[inline(always)]
     pub(crate) const fn new_locked() -> TplMutex<Self> {
-        TplMutex::new(efi::TPL_NOTIFY, Self::new(), "ComponentDispatcher")
+        TplMutex::new(efi::TPL_APPLICATION, Self::new(), "ComponentDispatcher")
     }
 
     /// Creates a new ComponentDispatcher.
