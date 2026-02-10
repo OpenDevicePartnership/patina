@@ -717,6 +717,11 @@ unsafe impl Param for StandardRuntimeServices {
 /// boot applications. Per the UEFI specification, the parent image handle must be a valid
 /// image handle (one that has the LoadedImage protocol installed).
 ///
+/// **Note:** This handle is the DXE Core's image handle, shared across all components. It
+/// should not be used as a `DriverBindingHandle` in `EFI_DRIVER_BINDING_PROTOCOL`, as
+/// multiple components sharing the same agent handle will conflict with protocol open/close
+/// tracking in the UEFI driver model.
+///
 /// ## Example
 ///
 /// ```rust,ignore
@@ -1050,6 +1055,35 @@ mod tests {
         // SAFETY: Test code - StandardRuntimeServices parameter has been validated.
         // does not panic
         let _ = unsafe { <StandardRuntimeServices as Param>::get_param(&(), cell_storage) };
+    }
+
+    #[test]
+    fn test_handle_fails_to_validate_when_not_set() {
+        let mut storage = Storage::default(); // image_handle is None
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        <Handle as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        assert_eq!(
+            Err(Cow::from("patina::component::params::Handle not available.")),
+            <Handle as Param>::try_validate(&(), (&storage).into())
+        );
+    }
+
+    #[test]
+    fn test_handle_can_be_retrieved() {
+        let mut storage = Storage::default();
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        let mock_handle = 0x1234usize as r_efi::efi::Handle;
+        storage.set_image_handle(mock_handle);
+
+        <Handle as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        assert!(<Handle as Param>::try_validate(&(), (&storage).into()).is_ok());
+
+        let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Handle parameter has been validated.
+        let handle = unsafe { <Handle as Param>::get_param(&(), cell_storage) };
+        assert_eq!(*handle, mock_handle);
     }
 
     #[test]
