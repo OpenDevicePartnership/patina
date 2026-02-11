@@ -1,6 +1,5 @@
 [workspace]
-resolver = "2"
-
+resolver = "3"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
