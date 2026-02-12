@@ -7,7 +7,3 @@
 [net]
 git-fetch-with-cli = true
 
-# This tells cargo to consider the MSV of rust for our crate vs our dependencies.
-[resolver]
-incompatible-rust-versions = "fallback"
-
