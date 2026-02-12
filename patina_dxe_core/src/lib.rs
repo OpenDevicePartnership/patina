@@ -501,8 +501,8 @@ impl<P: PlatformInfo> Core<P> {
         // Instantiate system table.
         systemtables::init_system_table();
 
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
         allocator::install_memory_services(st);
         gcd::init_paging(self.hob_list());
@@ -532,10 +532,14 @@ impl<P: PlatformInfo> Core<P> {
 
         memory_attributes_table::init_memory_attributes_table_support();
 
-        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(st.boot_services().as_mut_ptr()));
-        self.component_dispatcher
-            .lock()
-            .set_runtime_services(StandardRuntimeServices::new(st.runtime_services().as_mut_ptr()));
+        // The component dispatcher has a TPL_APPLICATION TPLMutex, so we need to drop the TPL_NOTIFY st_guard before
+        // attempting to unlock the component dispatcher to prevent TPL inversion
+        let boot_services = StandardBootServices::new(st.boot_services().as_mut_ptr());
+        let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
+        drop(st_guard);
+
+        self.component_dispatcher.lock().set_boot_services(boot_services);
+        self.component_dispatcher.lock().set_runtime_services(runtime_services);
 
         Ok(())
     }
