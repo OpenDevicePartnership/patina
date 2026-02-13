@@ -214,6 +214,8 @@ pub struct Storage {
     boot_services: StandardBootServices,
     // Standard Runtime Services.
     runtime_services: StandardRuntimeServices,
+    // Image handle for the DXE Core (used as parent for LoadImage calls).
+    image_handle: Option<r_efi::efi::Handle>,
 }
 
 impl Default for Storage {
@@ -236,6 +238,7 @@ impl Storage {
             hob_indices: BTreeMap::new(),
             boot_services: StandardBootServices::new_uninit(),
             runtime_services: StandardRuntimeServices::new_uninit(),
+            image_handle: None,
         }
     }
 
@@ -275,6 +278,19 @@ impl Storage {
     /// Returns the UEFI Runtime Services Table reference.
     pub fn runtime_services(&self) -> &StandardRuntimeServices {
         &self.runtime_services
+    }
+
+    /// Sets the image handle for the DXE Core.
+    ///
+    /// This handle is used as the parent image handle for `LoadImage()` calls
+    /// when loading boot applications.
+    pub fn set_image_handle(&mut self, handle: r_efi::efi::Handle) {
+        self.image_handle = Some(handle);
+    }
+
+    /// Returns the image handle for the DXE Core, if set.
+    pub fn image_handle(&self) -> Option<r_efi::efi::Handle> {
+        self.image_handle
     }
 
     /// Registers a config type with the storage and returns its global id.

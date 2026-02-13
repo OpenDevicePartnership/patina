@@ -1486,7 +1486,7 @@ impl<'a> Iterator for HobIter<'a> {
                 CPU => Hob::Cpu((self.hob_ptr as *const Cpu).as_ref().expect(NOT_NULL)),
                 UEFI_CAPSULE => Hob::Capsule((self.hob_ptr as *const Capsule).as_ref().expect(NOT_NULL)),
                 RESOURCE_DESCRIPTOR2 => {
-                    Hob::ResourceDescriptorV2((self.hob_ptr as *const &ResourceDescriptorV2).as_ref().expect(NOT_NULL))
+                    Hob::ResourceDescriptorV2((self.hob_ptr as *const ResourceDescriptorV2).as_ref().expect(NOT_NULL))
                 }
                 END_OF_HOB_LIST => return None,
                 hob_type => Hob::Misc(hob_type),

@@ -20,7 +20,7 @@ use patina::{
     serial::SerialIO,
 };
 use r_efi::efi;
-use spin::Once;
+use spin::RwLock;
 
 // Exists for the debugger to find the log buffer.
 #[used]
@@ -35,7 +35,7 @@ where
     target_filters: &'a [(&'a str, log::LevelFilter)],
     max_level: log::LevelFilter,
     format: Format,
-    memory_log: Once<AdvancedLog<'static>>,
+    memory_log: RwLock<Option<AdvancedLog<'static>>>,
     pub(crate) timer: Service<dyn ArchTimerFunctionality>,
 }
 
@@ -58,7 +58,14 @@ where
         max_level: log::LevelFilter,
         hardware_port: S,
     ) -> Self {
-        Self { hardware_port, target_filters, max_level, format, memory_log: Once::new(), timer: Service::new_uninit() }
+        Self {
+            hardware_port,
+            target_filters,
+            max_level,
+            format,
+            memory_log: RwLock::new(None),
+            timer: Service::new_uninit(),
+        }
     }
 
     /// Initializes the performance timer service for timestamping log entries.
@@ -107,8 +114,10 @@ where
 
     /// Writes a log entry to the hardware port and memory log if available.
     pub(crate) fn log_write(&self, error_level: u32, data: &[u8]) {
+        self.refresh_log_info_address();
         let mut hw_write = true;
-        if let Some(memory_log) = self.memory_log.get() {
+        let log_guard = self.memory_log.read();
+        if let Some(memory_log) = log_guard.as_ref() {
             hw_write = memory_log.hardware_write_enabled(error_level);
             let timestamp = self.timer.map_or(0, |timer| timer.cpu_count());
             let _ = memory_log.add_log_entry(LogEntry {
@@ -126,16 +135,34 @@ where
 
     /// Sets the address of the advanced logger memory log.
     pub(crate) fn set_log_info_address(&self, address: efi::PhysicalAddress) {
-        assert!(!self.memory_log.is_completed());
-        // SAFETY: The caller must ensure the address is valid for an AdvancedLog.
+        {
+            // If already initialized with the same address, there is nothing to do
+            let log_guard = self.memory_log.read();
+            if log_guard.as_ref().is_some_and(|log| log.get_address() == address) {
+                return;
+            }
+        }
+
+        // SAFETY: The caller must ensure the address is valid for an AdvancedLog type.
         if let Some(log) = unsafe { AdvancedLog::adopt_memory_log(address) } {
-            let memory_log = self.memory_log.call_once(|| log);
-            log::info!("Advanced logger buffer initialized. Address = {:#x}", memory_log.get_address());
+            let current_frequency = log.get_frequency();
+
+            {
+                let mut memory_log_guard = self.memory_log.write();
+                *memory_log_guard = Some(log);
+            }
+            // Drop the lock before logging
+
+            log::info!("Advanced logger buffer initialized. Address = {:#x}", address);
 
             // The frequency may not be initialized, if not do so now.
-            if memory_log.get_frequency() == 0 {
+            if current_frequency == 0 {
                 let frequency = self.timer.map_or(0, |timer| timer.perf_frequency());
-                memory_log.set_frequency(frequency);
+                // Re-acquire lock to set frequency
+                let log_guard = self.memory_log.read();
+                if let Some(memory_log) = log_guard.as_ref() {
+                    memory_log.set_frequency(frequency);
+                }
             }
 
             // SAFETY: This is only set for discoverability while debugging.
@@ -148,7 +175,24 @@ where
     }
 
     pub(crate) fn get_log_address(&self) -> Option<efi::PhysicalAddress> {
-        self.memory_log.get().map(|log| log.get_address())
+        let log_guard = self.memory_log.read();
+        log_guard.as_ref().map(|log| log.get_address())
+    }
+
+    fn refresh_log_info_address(&self) {
+        let (current_address, new_address) = {
+            let log_guard = self.memory_log.read();
+            let Some(log) = log_guard.as_ref() else {
+                return;
+            };
+            (log.get_address(), log.get_new_logger_info_address())
+        };
+
+        if let Some(new_address) = new_address
+            && new_address != current_address
+        {
+            self.set_log_info_address(new_address);
+        }
     }
 }
 

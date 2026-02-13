@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use core::{
-    cell::UnsafeCell,
+    cell::{OnceCell, UnsafeCell},
     fmt::{self, Debug, Display},
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, Ordering},
@@ -23,7 +23,7 @@ use crate::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 ///
 /// The mutex owns the BootServices instance. Callers pass an owned instance or clone if needed.
 pub struct TplMutex<T: ?Sized, B: BootServices = StandardBootServices> {
-    boot_services: B,
+    boot_services: OnceCell<B>,
     tpl_lock_level: Tpl,
     lock: AtomicBool,
     data: UnsafeCell<T>,
@@ -38,11 +38,34 @@ pub struct TplMutexGuard<'a, T: ?Sized, B: BootServices> {
 
 impl<T, B: BootServices> TplMutex<T, B> {
     /// Create a new TplMutex in an unlocked state.
-    ///
     /// Takes ownership of the boot_services instance. Callers can pass an owned
     /// instance directly or clone if they need to retain a copy.
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is already initialized (should not be possible here).
     pub fn new(boot_services: B, tpl_lock_level: Tpl, data: T) -> Self {
-        Self { boot_services, tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data) }
+        let bs_cell = OnceCell::new();
+        bs_cell.set(boot_services).map_err(|_| "Boot services already initialized!").unwrap();
+        Self { boot_services: bs_cell, tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data) }
+    }
+
+    /// Create a new TplMutex in an unlocked, uninitialized state.
+    /// The resulting TplMutex will not be usable until `boot_services` is initialized.
+    pub const fn new_uninit(tpl_lock_level: Tpl, data: T) -> Self {
+        Self {
+            boot_services: OnceCell::new(),
+            tpl_lock_level,
+            lock: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    /// Initialize the boot services for this TplMutex. This must be called before the mutex can be used.
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is already initialized.
+    pub fn init(&self, boot_services: B) {
+        self.boot_services.set(boot_services).map_err(|_| "Boot services already initialized!").unwrap();
     }
 }
 
@@ -59,18 +82,28 @@ impl<T: ?Sized, B: BootServices> TplMutex<T, B> {
     ///
     /// # Errors
     /// If the mutex is already lock, then this call will return [Err].
+    ///
+    /// # Panics
+    /// This call will panic if the mutex is not initialized.
     #[allow(clippy::result_unit_err)]
     pub fn try_lock(&self) -> Result<TplMutexGuard<'_, T, B>, ()> {
         self.lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .map(|_| TplMutexGuard { release_tpl: self.boot_services.raise_tpl(self.tpl_lock_level), tpl_mutex: self })
+            .map(|_| TplMutexGuard {
+                release_tpl: self
+                    .boot_services
+                    .get()
+                    .expect("BootServices not initialized!")
+                    .raise_tpl(self.tpl_lock_level),
+                tpl_mutex: self,
+            })
             .map_err(|_| ())
     }
 }
 
 impl<T: ?Sized, B: BootServices> Drop for TplMutexGuard<'_, T, B> {
     fn drop(&mut self) {
-        self.tpl_mutex.boot_services.restore_tpl(self.release_tpl);
+        self.tpl_mutex.boot_services.get().expect("BootServices not initialized!").restore_tpl(self.release_tpl);
         self.tpl_mutex.lock.store(false, Ordering::Release);
     }
 }

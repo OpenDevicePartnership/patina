@@ -365,6 +365,7 @@ impl GCD {
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
         len: usize,
+        attributes: u64,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
@@ -376,6 +377,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Initializing memory blocks at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
+        log::trace!(target: "allocations", "[{}]   Attributes: {:#x}", function!(), attributes);
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}", function!(), capabilities);
 
         let unallocated_memory_space = MemoryBlock::Unallocated(dxe_services::MemorySpaceDescriptor {
@@ -391,17 +393,17 @@ impl GCD {
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
 
-        //initialize attributes on the first block to WB + XP
+        // Initialize attributes on the first block to WB + XP
         match self.set_memory_space_attributes(
             base_address,
             len,
-            (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits(),
+            GCD.memory_protection_policy.apply_allocated_memory_protection_policy(attributes),
         ) {
             Ok(_) | Err(EfiError::NotReady) => Ok(()),
             Err(err) => Err(err),
         }?;
 
-        //allocate a chunk of the block to hold the actual first GCD slice
+        // Allocate a chunk of the block to hold the actual first GCD slice
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
@@ -411,12 +413,12 @@ impl GCD {
             None,
         )?;
 
-        // remove the XP and add RP on the remaining free block.
+        // Apply free memory policy on the remaining free block.
         if len > MEMORY_BLOCK_SLICE_SIZE {
             match self.set_memory_space_attributes(
                 base_address + MEMORY_BLOCK_SLICE_SIZE,
                 len - MEMORY_BLOCK_SLICE_SIZE,
-                (MemoryAttributes::Writeback | MemoryAttributes::ReadProtect).bits(),
+                MemoryProtectionPolicy::apply_free_memory_policy(attributes),
             ) {
                 Ok(_) | Err(EfiError::NotReady) => Ok(()),
                 Err(err) => Err(err),
@@ -1176,6 +1178,14 @@ impl GCD {
                     && prev.attribute == current.attribute
                     && prev.physical_start + (prev.number_of_pages * UEFI_PAGE_SIZE as u64) == current.physical_start
                 {
+                    // Free memory shouldn't even need to be merged because it should already be consistent and coalesced.
+                    // If this fails to be true it can cause odd behavior if applications try to allocate blocks of free
+                    // memory by address, which is a common pattern for OS loaders.
+                    debug_assert!(
+                        prev.r#type != efi::CONVENTIONAL_MEMORY,
+                        "Free memory is fragmented in memory descriptors!"
+                    );
+
                     // Merge by extending the previous descriptor
                     prev.number_of_pages += current.number_of_pages;
                     continue;
@@ -2024,10 +2034,11 @@ impl SpinLockedGcd {
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
         len: usize,
+        attributes: u64,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         // SAFETY: Caller must uphold the safety contract of init_memory_blocks
-        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, capabilities) }
+        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, attributes, capabilities) }
     }
 
     #[coverage(off)]
@@ -2317,7 +2328,7 @@ impl SpinLockedGcd {
         };
 
         let dxe_core_desc =
-            match self.get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
+            match self.get_existent_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
                 Ok(desc) => desc,
                 Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
             };
@@ -2403,10 +2414,75 @@ impl SpinLockedGcd {
             }
         }
 
+        // Find the stack hob and set attributes.
+        if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+            patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+                if desc.name == guids::HOB_MEMORY_ALLOC_STACK =>
+            {
+                Some(desc)
+            }
+            _ => None,
+        }) {
+            log::trace!(
+                "Found stack hob {:#X?} of length {:#X?}",
+                stack_hob.memory_base_address,
+                stack_hob.memory_length
+            );
+            let stack_address = stack_hob.memory_base_address;
+            let stack_length = stack_hob.memory_length;
+
+            assert!(
+                stack_address != 0 && stack_length != 0,
+                "Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}"
+            );
+
+            if let Ok(gcd_desc) = self.get_existent_memory_descriptor_for_address(stack_address) {
+                // Set Stack region to execute protect. We use the allocated memory protection policy here because
+                // that matches our standard policy
+                let attributes =
+                    self.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                match self.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            stack_length,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
+                }
+                // Set Guard page to read protect. We keep the NX and cache attributes from above
+                match self.set_memory_space_attributes(
+                    stack_address as usize,
+                    UEFI_PAGE_SIZE,
+                    MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
+                ) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            UEFI_PAGE_SIZE,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
+                }
+            } else {
+                panic!(
+                    "Stack memory region {:#X?} of length {:#X?} not found in GCD",
+                    stack_hob.memory_base_address, stack_hob.memory_length
+                );
+            }
+        } else {
+            panic!("No stack hob found");
+        }
+
         // make sure we didn't map page 0 if it was reserved or MMIO, we are using this for null pointer detection
         // only do this if page 0 actually exists
-        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0)
-            && descriptor.memory_type != GcdMemoryType::NonExistent
+        if let Ok(descriptor) = self.get_existent_memory_descriptor_for_address(0)
             && let Err(err) = self.set_memory_space_attributes(
                 0,
                 UEFI_PAGE_SIZE,
@@ -2502,11 +2578,11 @@ impl SpinLockedGcd {
             // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
             // same holds true for other required attributes.
             if let Ok(base_address) = result.as_ref() {
-                let mut attributes = match self.get_memory_descriptor_for_address(*base_address as efi::PhysicalAddress)
-                {
-                    Ok(descriptor) => descriptor.attributes,
-                    Err(_) => DEFAULT_CACHE_ATTR,
-                };
+                let mut attributes =
+                    match self.get_existent_memory_descriptor_for_address(*base_address as efi::PhysicalAddress) {
+                        Ok(descriptor) => descriptor.attributes,
+                        Err(_) => DEFAULT_CACHE_ATTR,
+                    };
                 // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
@@ -2784,6 +2860,18 @@ impl SpinLockedGcd {
         self.memory.lock().get_memory_descriptor_for_address(address)
     }
 
+    // Returns the descriptor for the given address if that memory range is not NonExistent
+    pub fn get_existent_memory_descriptor_for_address(
+        &self,
+        address: efi::PhysicalAddress,
+    ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
+        match self.memory.lock().get_memory_descriptor_for_address(address) {
+            Ok(desc) if desc.memory_type != GcdMemoryType::NonExistent => Ok(desc),
+            Ok(_) => Err(EfiError::NotFound),
+            Err(e) => Err(e),
+        }
+    }
+
     /// returns the current count of blocks in the list.
     pub fn memory_descriptor_count(&self) -> usize {
         self.memory.lock().memory_descriptor_count()
@@ -2974,6 +3062,68 @@ mod tests {
     use r_efi::efi;
     use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
+    const DXE_CORE_PE_HEADER_DATA: [u8; 1057] = [
+        0x4D, 0x5A, 0x78, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD,
+        0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, 0x54, 0x68, 0x69, 0x73, 0x20, 0x70, 0x72, 0x6F, 0x67, 0x72, 0x61, 0x6D,
+        0x20, 0x63, 0x61, 0x6E, 0x6E, 0x6F, 0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6E, 0x20, 0x69, 0x6E, 0x20,
+        0x44, 0x4F, 0x53, 0x20, 0x6D, 0x6F, 0x64, 0x65, 0x2E, 0x24, 0x00, 0x00, 0x50, 0x45, 0x00, 0x00, 0x64, 0x86,
+        0x08, 0x00, 0x81, 0x4E, 0x12, 0x69, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x00, 0x22, 0x00,
+        0x0B, 0x02, 0x0E, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0x60, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0xA4,
+        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x60, 0x8D, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+        0x00, 0x02, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x70, 0x1D, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x60, 0x81,
+        0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+        0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x2E, 0x74, 0x65, 0x78, 0x74, 0x00, 0x00, 0x00, 0x40, 0x3F, 0x11, 0x00, 0x00,
+        0x00, 0x10, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x60, 0x2E, 0x72, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x2C,
+        0x7B, 0x0A, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x7C, 0x0A, 0x00, 0x00, 0x44, 0x11, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x64, 0x61, 0x74, 0x61,
+        0x00, 0x00, 0x00, 0xE8, 0x8E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x0C, 0x00, 0x00, 0x00, 0xC0, 0x1B,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0xC0, 0x2E,
+        0x70, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0xF8, 0x94, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x96, 0x00,
+        0x00, 0x00, 0xCC, 0x1B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+        0x00, 0x00, 0x40, 0x2E, 0x65, 0x68, 0x5F, 0x66, 0x72, 0x61, 0x6D, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50,
+        0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x62, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x6C, 0x69, 0x6E, 0x6B, 0x6D, 0x32, 0x5F, 0x08, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x64, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x6C, 0x69, 0x6E, 0x6B, 0x6D, 0x65,
+        0x5F, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x66, 0x1C, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x72, 0x65,
+        0x6C, 0x6F, 0x63, 0x00, 0x00, 0xE0, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00,
+        0x68, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00,
+        0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             test_support::init_test_logger();
@@ -3012,7 +3162,8 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE - 1,
-                    0,
+                    efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
             },
             "First add memory space with system memory should contain enough space to contain the block list."
@@ -4350,6 +4501,7 @@ mod tests {
                 address,
                 MEMORY_BLOCK_SLICE_SIZE,
                 efi::MEMORY_WB,
+                efi::MEMORY_WB,
             )
             .unwrap();
         }
@@ -4433,6 +4585,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4464,6 +4617,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4501,6 +4655,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4529,6 +4684,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4572,6 +4728,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4721,6 +4878,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
             }
@@ -4760,6 +4918,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4810,6 +4969,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -4903,6 +5063,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE * 99,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -4910,6 +5071,13 @@ mod tests {
                     dxe_services::GcdMemoryType::MemoryMappedIo,
                     0x1000,
                     0x1000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    0x2000,
+                    0x40000,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -4940,79 +5108,34 @@ mod tests {
                 module_name: guids::DXE_CORE,
                 entry_point: dxe_core_base as u64 + 0x1000,
             });
+
+            // Add a stack HOB
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0x2000,
+                    memory_length: 0x40000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+
             let mut hob_list = HobList::new();
             hob_list.push(hob);
+            hob_list.push(stack_hob);
 
-            // SAFETY: We just allocated this memory, write mock PE header data directly to memory
-            let pe_header_data = [
-                0x4D, 0x5A, 0x78, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x0E, 0x1F, 0xBA, 0x0E,
-                0x00, 0xB4, 0x09, 0xCD, 0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, 0x54, 0x68, 0x69, 0x73, 0x20, 0x70, 0x72,
-                0x6F, 0x67, 0x72, 0x61, 0x6D, 0x20, 0x63, 0x61, 0x6E, 0x6E, 0x6F, 0x74, 0x20, 0x62, 0x65, 0x20, 0x72,
-                0x75, 0x6E, 0x20, 0x69, 0x6E, 0x20, 0x44, 0x4F, 0x53, 0x20, 0x6D, 0x6F, 0x64, 0x65, 0x2E, 0x24, 0x00,
-                0x00, 0x50, 0x45, 0x00, 0x00, 0x64, 0x86, 0x08, 0x00, 0x81, 0x4E, 0x12, 0x69, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0xF0, 0x00, 0x22, 0x00, 0x0B, 0x02, 0x0E, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00,
-                0x60, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x91, 0xA4, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x60,
-                0x8D, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x06, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x1D, 0x00,
-                0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x60, 0x81, 0x00, 0x00, 0x10, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
-                0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2E, 0x74, 0x65, 0x78, 0x74, 0x00, 0x00, 0x00,
-                0x40, 0x3F, 0x11, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x60, 0x2E, 0x72,
-                0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x2C, 0x7B, 0x0A, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x7C, 0x0A,
-                0x00, 0x00, 0x44, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x40, 0x00, 0x00, 0x40, 0x2E, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0xE8, 0x8E, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x30, 0x00, 0x0C, 0x00, 0x00, 0x00, 0xC0, 0x1B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0xC0, 0x2E, 0x70, 0x64, 0x61, 0x74, 0x61, 0x00,
-                0x00, 0xF8, 0x94, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00, 0xCC, 0x1B, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E,
-                0x65, 0x68, 0x5F, 0x66, 0x72, 0x61, 0x6D, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x02,
-                0x00, 0x00, 0x00, 0x62, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x6C, 0x69, 0x6E, 0x6B, 0x6D, 0x32, 0x5F, 0x08, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x60, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x64, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x2E, 0x6C, 0x69, 0x6E, 0x6B, 0x6D,
-                0x65, 0x5F, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x66, 0x1C,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40,
-                0x2E, 0x72, 0x65, 0x6C, 0x6F, 0x63, 0x00, 0x00, 0xE0, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00,
-                0x3C, 0x00, 0x00, 0x00, 0x68, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x40, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00,
-            ];
-
-            // SAFETY: We just allocated this memory and pe_header_data is a valid byte array
+            // SAFETY: We just allocated this memory and DXE_CORE_PE_HEADER_DATA is a valid byte array
             unsafe {
-                core::ptr::copy_nonoverlapping(pe_header_data.as_ptr(), dxe_core_base as *mut u8, pe_header_data.len());
+                core::ptr::copy_nonoverlapping(
+                    DXE_CORE_PE_HEADER_DATA.as_ptr(),
+                    dxe_core_base as *mut u8,
+                    DXE_CORE_PE_HEADER_DATA.len(),
+                );
             }
 
             // Create a local mock page table that we can access after init_paging_with
@@ -5059,6 +5182,32 @@ mod tests {
                 current_mappings.iter().any(|(addr, len, _attr)| *addr <= 0x1000 && (*addr + len) >= 0x2000);
 
             assert!(has_mmio_mapping, "MMIO region should be mapped after init_paging");
+
+            // Locate stack hob.
+            let stack_hob = hob_list
+                .iter()
+                .find_map(|x| match x {
+                    patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
+                        header: _,
+                        alloc_descriptor: desc,
+                    }) if desc.name == guids::HOB_MEMORY_ALLOC_STACK => Some(desc),
+                    _ => None,
+                })
+                .unwrap();
+
+            assert!(stack_hob.memory_base_address != 0);
+            assert!(stack_hob.memory_length != 0);
+
+            // Check Guard Page.
+            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+
+            // Check rest of the stack.
+            stack_desc =
+                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
         });
     }
 
@@ -5076,6 +5225,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -5126,6 +5276,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -5388,6 +5539,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
 
@@ -5433,6 +5585,7 @@ mod tests {
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
+                    efi::MEMORY_WB,
                 )
                 .unwrap();
 
@@ -5472,6 +5625,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
@@ -6099,6 +6253,297 @@ mod tests {
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Should count: 1 SystemMemory (from create_gcd) + 1 Reserved
             assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+        });
+    }
+
+    #[test]
+    fn test_get_existent_memory_descriptor_for_address() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
+            let address = mem.as_ptr() as usize;
+            unsafe {
+                GCD.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
+            }
+
+            // Add multiple memory regions with different types
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, efi::MEMORY_WB)
+                    .unwrap();
+                GCD.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x5000, 0x1000, efi::MEMORY_UC)
+                    .unwrap();
+                GCD.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x8000, 0x1000, 0).unwrap();
+            }
+
+            // Test: Address at the start of a SystemMemory block
+            let result = GCD.get_existent_memory_descriptor_for_address(0x1000);
+            assert!(result.is_ok());
+            let desc = result.unwrap();
+            assert_eq!(desc.base_address, 0x1000);
+            assert_eq!(desc.length, 0x2000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+
+            // Test: Address in the middle of a SystemMemory block
+            let result = GCD.get_existent_memory_descriptor_for_address(0x2000);
+            assert!(result.is_ok());
+            let desc = result.unwrap();
+            assert_eq!(desc.base_address, 0x1000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+
+            // Test: Address at the start of MMIO block
+            let result = GCD.get_existent_memory_descriptor_for_address(0x5000);
+            assert!(result.is_ok());
+            let desc = result.unwrap();
+            assert_eq!(desc.base_address, 0x5000);
+            assert_eq!(desc.length, 0x1000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+
+            // Test: Address at the start of Reserved block
+            let result = GCD.get_existent_memory_descriptor_for_address(0x8000);
+            assert!(result.is_ok());
+            let desc = result.unwrap();
+            assert_eq!(desc.base_address, 0x8000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::Reserved);
+
+            // Test: Address in a NonExistent region (between added blocks)
+            let result = GCD.get_existent_memory_descriptor_for_address(0x4000);
+            assert_eq!(result, Err(EfiError::NotFound));
+
+            // Test: Address before any added memory space (in NonExistent region)
+            let result = GCD.get_existent_memory_descriptor_for_address(0x500);
+            assert_eq!(result, Err(EfiError::NotFound));
+
+            // Test: Address way outside any added memory space
+            let result = GCD.get_existent_memory_descriptor_for_address(0xFFFF0000);
+            assert_eq!(result, Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn init_paging_with_should_have_stack_hob() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            // Set up memory space
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            unsafe {
+                GCD.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE * 99,
+                    efi::MEMORY_WB,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            // Create DXE Core HOB but NO stack HOB
+            let dxe_core_base = address + 0x1000;
+            let dxe_core_len = 0x1000000;
+            let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
+                header: patina::pi::hob::header::Hob {
+                    r#type: patina::pi::hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<patina::pi::hob::MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::DXE_CORE,
+                    memory_base_address: dxe_core_base as u64,
+                    memory_length: dxe_core_len as u64,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: [0; 4],
+                },
+                module_name: guids::DXE_CORE,
+                entry_point: dxe_core_base as u64 + 0x1000,
+            });
+            let mut hob_list = HobList::new();
+            hob_list.push(dxe_core_hob);
+
+            // SAFETY: We just allocated this memory and DXE_CORE_PE_HEADER_DATA is a valid byte array
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    DXE_CORE_PE_HEADER_DATA.as_ptr(),
+                    dxe_core_base as *mut u8,
+                    DXE_CORE_PE_HEADER_DATA.len(),
+                );
+            }
+
+            // Create mock page table
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+
+            // Should panic because no stack HOB is present
+            GCD.init_paging_with(&hob_list, page_table);
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn init_paging_with_should_have_non_zero_stack_base_address_length() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            // Set up memory space
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            unsafe {
+                GCD.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE * 99,
+                    efi::MEMORY_WB,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            // Create DXE Core HOB
+            let dxe_core_base = address + 0x1000;
+            let dxe_core_len = 0x1000000;
+            let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
+                header: patina::pi::hob::header::Hob {
+                    r#type: patina::pi::hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<patina::pi::hob::MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::DXE_CORE,
+                    memory_base_address: dxe_core_base as u64,
+                    memory_length: dxe_core_len as u64,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: [0; 4],
+                },
+                module_name: guids::DXE_CORE,
+                entry_point: dxe_core_base as u64 + 0x1000,
+            });
+            let mut hob_list = HobList::new();
+            hob_list.push(dxe_core_hob);
+
+            // Add a stack HOB with zero base address and length
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0,
+                    memory_length: 0,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            // SAFETY: We just allocated this memory and DXE_CORE_PE_HEADER_DATA is a valid byte array
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    DXE_CORE_PE_HEADER_DATA.as_ptr(),
+                    dxe_core_base as *mut u8,
+                    DXE_CORE_PE_HEADER_DATA.len(),
+                );
+            }
+
+            // Create mock page table
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+
+            // Should panic because stack base address and length are zero
+            GCD.init_paging_with(&hob_list, page_table);
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn init_paging_with_should_exist_in_gcd() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            // Set up memory space
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            unsafe {
+                GCD.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE * 99,
+                    efi::MEMORY_WB,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            // Create DXE Core HOB
+            let dxe_core_base = address + 0x1000;
+            let dxe_core_len = 0x1000000;
+            let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
+                header: patina::pi::hob::header::Hob {
+                    r#type: patina::pi::hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<patina::pi::hob::MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::DXE_CORE,
+                    memory_base_address: dxe_core_base as u64,
+                    memory_length: dxe_core_len as u64,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: [0; 4],
+                },
+                module_name: guids::DXE_CORE,
+                entry_point: dxe_core_base as u64 + 0x1000,
+            });
+            let mut hob_list = HobList::new();
+            hob_list.push(dxe_core_hob);
+
+            // Add a stack HOB with zero base address and length
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0x1000,
+                    memory_length: 0x40000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            let _ = GCD.remove_memory_space(0x1000, 0x40000);
+
+            // SAFETY: We just allocated this memory and DXE_CORE_PE_HEADER_DATA is a valid byte array
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    DXE_CORE_PE_HEADER_DATA.as_ptr(),
+                    dxe_core_base as *mut u8,
+                    DXE_CORE_PE_HEADER_DATA.len(),
+                );
+            }
+
+            // Create mock page table
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+
+            // Should panic because stack base address and length are zero
+            GCD.init_paging_with(&hob_list, page_table);
         });
     }
 }

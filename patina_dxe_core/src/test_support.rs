@@ -288,6 +288,7 @@ pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
             GcdMemoryType::SystemMemory,
             addr as usize,
             TEST_GCD_MEM_SIZE,
+            efi::MEMORY_WB,
             efi::MEMORY_UC
                 | efi::MEMORY_WC
                 | efi::MEMORY_WT
