@@ -193,7 +193,7 @@ extern "efiapi" fn get_memory_space_map(
     //that extra descriptors come into being after creation but before usage.
     let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
         Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-    let result = GCD.get_memory_descriptors(&mut descriptors);
+    let result = GCD.get_memory_descriptors(&mut descriptors, crate::gcd::DescriptorFilter::All);
 
     if let Err(err) = result {
         return efi::Status::from(err);
@@ -1443,7 +1443,8 @@ mod tests {
 
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
+                .expect("get_memory_descriptors failed");
             assert!(!expected.is_empty());
 
             let mut out_count: usize = 0;
@@ -1475,7 +1476,8 @@ mod tests {
             // Fetch expected
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
+                .expect("get_memory_descriptors failed");
             assert!(expected.len() >= 3);
 
             // Call API

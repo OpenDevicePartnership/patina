@@ -10,6 +10,8 @@ mod io_block;
 mod memory_block;
 mod spin_locked_gcd;
 
+pub use spin_locked_gcd::DescriptorFilter;
+
 use goblin::pe::section_table;
 
 use core::{cell::Cell, ffi::c_void, ops::Range};
@@ -767,7 +769,7 @@ mod tests {
         assert!(free_memory_start >= mem_base && free_memory_start < mem_base + MEM_SIZE);
         assert!(free_memory_size <= 0x100000);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-        GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
+        GCD.get_memory_descriptors(&mut descriptors, DescriptorFilter::All).expect("get_memory_descriptors failed.");
         assert!(
             descriptors
                 .iter()
@@ -778,7 +780,7 @@ mod tests {
     fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {
         add_hob_resource_descriptors_to_gcd(hob_list);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-        GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
+        GCD.get_memory_descriptors(&mut descriptors, DescriptorFilter::All).expect("get_memory_descriptors failed.");
         descriptors
             .iter()
             .find(|x| x.base_address == mem_base + 0xE0000 && x.memory_type == GcdMemoryType::SystemMemory)

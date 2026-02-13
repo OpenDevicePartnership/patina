@@ -94,6 +94,19 @@ pub enum AllocateType {
     Address(usize),
 }
 
+/// Filter for selecting which memory descriptors to retrieve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorFilter {
+    /// Return all memory descriptors (both allocated and unallocated).
+    All,
+    /// Return only allocated memory descriptors.
+    Allocated,
+    /// Return only free (unallocated) system memory descriptors.
+    Free,
+    /// Return only MMIO and Reserved memory descriptors.
+    MmioAndReserved,
+}
+
 #[derive(Clone, Copy)]
 struct GcdAttributeConversionEntry {
     attribute: u32,
@@ -979,67 +992,50 @@ impl GCD {
     /// Since GCD is used to service heap expansion requests and thus should avoid allocations,
     /// Caller is required to initialize a vector of sufficient capacity to hold the descriptors
     /// and provide a mutable reference to it.
+    ///
+    /// # Arguments
+    /// * `buffer` - A mutable reference to a vector to hold the descriptors.
+    /// * `filter` - The filter to apply when selecting descriptors.
+    ///
+    /// # Returns
+    /// * `Ok(())` if successful.
+    /// * `Err(EfiError::NotReady)` if the GCD is not initialized.
+    /// * `Err(EfiError::InvalidParameter)` if the buffer capacity is insufficient or not empty.
     pub fn get_memory_descriptors(
-        &mut self,
+        &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
+        filter: DescriptorFilter,
     ) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
-        log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
+        log::trace!(target: "allocations", "[{}] Enter with filter {:?}\n", function!(), filter);
 
         let blocks = &self.memory_blocks;
 
         let mut current = blocks.first_idx();
         while let Some(idx) = current {
             let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-            match mb {
-                MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => buffer.push(*descriptor),
-            }
-            current = blocks.next_idx(idx);
-        }
-        Ok(())
-    }
-
-    fn get_allocated_memory_descriptors(
-        &self,
-        buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-    ) -> Result<(), EfiError> {
-        ensure!(self.maximum_address != 0, EfiError::NotReady);
-        ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
-        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
-
-        let blocks = &self.memory_blocks;
-
-        let mut current = blocks.first_idx();
-        while let Some(idx) = current {
-            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-            if let MemoryBlock::Allocated(descriptor) = mb {
-                buffer.push(*descriptor);
-            }
-            current = blocks.next_idx(idx);
-        }
-        Ok(())
-    }
-
-    fn get_mmio_and_reserved_descriptors(
-        &self,
-        buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-    ) -> Result<(), EfiError> {
-        ensure!(self.maximum_address != 0, EfiError::NotReady);
-        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
-
-        let blocks = &self.memory_blocks;
-
-        let mut current = blocks.first_idx();
-        while let Some(idx) = current {
-            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-            if let MemoryBlock::Unallocated(descriptor) = mb
-                && (descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
-                    || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved)
-            {
-                buffer.push(*descriptor);
+            match (filter, mb) {
+                (DescriptorFilter::All, MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor)) => {
+                    buffer.push(*descriptor);
+                }
+                (DescriptorFilter::Allocated, MemoryBlock::Allocated(descriptor)) => {
+                    buffer.push(*descriptor);
+                }
+                (DescriptorFilter::Free, MemoryBlock::Unallocated(descriptor))
+                    if descriptor.memory_type == dxe_services::GcdMemoryType::SystemMemory =>
+                {
+                    buffer.push(*descriptor);
+                }
+                (DescriptorFilter::MmioAndReserved, MemoryBlock::Unallocated(descriptor))
+                    if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                        || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved =>
+                {
+                    buffer.push(*descriptor);
+                }
+                _ => {}
             }
             current = blocks.next_idx(idx);
         }
@@ -2263,11 +2259,11 @@ impl SpinLockedGcd {
 
         *self.page_table.lock() = Some(page_table);
 
-        // this is before we get allocated descriptors, so we don't need to preallocate memory here
-        let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
+        let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> =
+            Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
-            .get_mmio_and_reserved_descriptors(mmio_res_descs.as_mut())
+            .get_memory_descriptors(mmio_res_descs.as_mut(), DescriptorFilter::MmioAndReserved)
             .expect("Failed to get MMIO descriptors!");
 
         // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
@@ -2279,7 +2275,7 @@ impl SpinLockedGcd {
             Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
-            .get_allocated_memory_descriptors(&mut descriptors)
+            .get_memory_descriptors(&mut descriptors, DescriptorFilter::Allocated)
             .expect("Failed to get allocated memory descriptors!");
 
         // now map the memory regions, keeping any cache attributes set in the GCD descriptors
@@ -2845,11 +2841,16 @@ impl SpinLockedGcd {
     }
 
     /// returns a copy of the current set of memory blocks descriptors in the GCD.
+    ///
+    /// # Arguments
+    /// * `buffer` - A mutable reference to a vector to hold the descriptors.
+    /// * `filter` - The filter to apply when selecting descriptors.
     pub fn get_memory_descriptors(
         &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
+        filter: DescriptorFilter,
     ) -> Result<(), EfiError> {
-        self.memory.lock().get_memory_descriptors(buffer)
+        self.memory.lock().get_memory_descriptors(buffer, filter)
     }
 
     // returns the descriptor for the given physical address.
@@ -4985,7 +4986,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_allocated_memory_descriptors() {
+    fn test_get_memory_descriptors_allocated_filter() {
         let (mut gcd, _address) = create_gcd();
 
         unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 2 * SIZE_4GB, 0) }.unwrap();
@@ -5010,7 +5011,7 @@ mod tests {
         .unwrap();
 
         let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
-        gcd.get_allocated_memory_descriptors(&mut buffer).unwrap();
+        gcd.get_memory_descriptors(&mut buffer, DescriptorFilter::Allocated).unwrap();
         assert_eq!(buffer.len(), 3); // one extra allocated space for memory_block region
         assert!(
             buffer
@@ -5025,7 +5026,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_mmio_and_reserved_descriptors() {
+    fn test_get_memory_descriptors_mmio_and_reserved_filter() {
         let (mut gcd, _address) = create_gcd();
         // Add MMIO and Reserved blocks
         unsafe {
@@ -5039,7 +5040,7 @@ mod tests {
         }
 
         let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
-        gcd.get_mmio_and_reserved_descriptors(&mut buffer).unwrap();
+        gcd.get_memory_descriptors(&mut buffer, DescriptorFilter::MmioAndReserved).unwrap();
         assert!(buffer.len() == 2);
         assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
             && desc.base_address == 0x2000
