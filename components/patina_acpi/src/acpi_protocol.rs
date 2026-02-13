@@ -94,38 +94,39 @@ impl AcpiTableProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        if let Some(global_mm) = STANDARD_ACPI_PROVIDER.memory_manager.get() {
-            // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
-            let acpi_table =
-                unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, None, global_mm) };
+        // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
+        let acpi_table = unsafe {
+            AcpiTable::new_from_ptr(
+                acpi_table_buffer as *const AcpiTableHeader,
+                None,
+                &STANDARD_ACPI_PROVIDER.memory_manager,
+            )
+        };
 
-            if let Ok(table) = acpi_table {
-                let signature = table.signature();
-                let install_result = STANDARD_ACPI_PROVIDER.install_acpi_table(table);
+        if let Ok(table) = acpi_table {
+            let signature = table.signature();
+            let install_result = STANDARD_ACPI_PROVIDER.install_acpi_table(table);
 
-                match install_result {
-                    Ok(key) => {
-                        // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
-                        unsafe { *table_key = key.0 };
-                        log::trace!(
-                            "ACPI protocol: Successfully installed table with signature: 0x{:08X}, key: {}",
-                            signature,
-                            key.0
-                        );
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "ACPI protocol: Install failed with error {:?} for table with signature: 0x{:08X}",
-                            e,
-                            signature,
-                        );
-                        return e.into();
-                    }
+            match install_result {
+                Ok(key) => {
+                    // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
+                    unsafe { *table_key = key.0 };
+                    log::trace!(
+                        "ACPI protocol: Successfully installed table with signature: 0x{:08X}, key: {}",
+                        signature,
+                        key.0
+                    );
                 }
-                efi::Status::SUCCESS
-            } else {
-                efi::Status::OUT_OF_RESOURCES
+                Err(e) => {
+                    log::error!(
+                        "ACPI protocol: Install failed with error {:?} for table with signature: 0x{:08X}",
+                        e,
+                        signature,
+                    );
+                    return e.into();
+                }
             }
+            efi::Status::SUCCESS
         } else {
             efi::Status::NOT_STARTED
         }

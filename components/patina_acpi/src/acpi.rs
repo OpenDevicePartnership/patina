@@ -56,7 +56,7 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     /// Provides boot services.
     pub(crate) boot_services: OnceCell<B>,
     /// Provides memory services.
-    pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
+    pub(crate) memory_manager: Service<dyn MemoryManager>,
     /// Stores data about the XSDT and its entries.
     xsdt_metadata: TplMutex<Option<AcpiXsdtMetadata>, B>,
     /// Stores data about the RSDP.
@@ -90,7 +90,7 @@ where
             next_table_key: AtomicUsize::new(Self::FIRST_FREE_KEY),
             notify_list: TplMutex::new_uninit(Tpl::NOTIFY, vec![]),
             boot_services: OnceCell::new(),
-            memory_manager: OnceCell::new(),
+            memory_manager: Service::new_uninit(),
             xsdt_metadata: TplMutex::new_uninit(Tpl::NOTIFY, None),
             rsdp: TplMutex::new_uninit(Tpl::NOTIFY, None),
         }
@@ -99,7 +99,7 @@ where
     /// Fills in `StandardAcpiProvider` fields at runtime.
     /// This function must be called before any attempts to use `StandardAcpiProvider`, or any usages will fail.
     /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a failure.
-    pub fn initialize(&self, bs: B, memory_manager: Service<dyn MemoryManager>) -> Result<(), AcpiError>
+    pub fn initialize(&self, bs: B, memory_manager: &Service<dyn MemoryManager>) -> Result<(), AcpiError>
     where
         B: BootServices + Clone,
     {
@@ -118,9 +118,7 @@ where
             return Err(AcpiError::BootServicesAlreadyInitialized);
         }
 
-        if self.memory_manager.set(memory_manager).is_err() {
-            return Err(AcpiError::MemoryManagerAlreadyInitialized);
-        }
+        self.memory_manager.replace(memory_manager);
         Ok(())
     }
 
@@ -284,7 +282,7 @@ where
                 AcpiTable::new_from_ptr(
                     fadt.x_firmware_ctrl() as *const AcpiTableHeader,
                     Some(TypeId::of::<AcpiFacs>()),
-                    self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?,
+                    &self.memory_manager,
                 )?
             };
             // SAFETY: The tables in the HOB should be valid ACPI tables.
@@ -303,7 +301,7 @@ where
                 AcpiTable::new_from_ptr(
                     fadt.x_dsdt() as *const AcpiTableHeader,
                     Some(TypeId::of::<AcpiDsdt>()),
-                    self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?,
+                    &self.memory_manager,
                 )?
             };
             self.install_dsdt(dsdt_table)?;
@@ -350,13 +348,8 @@ where
             // The type of the table is unknown at this point, since we're installing from a raw pointer.
             // Because we are installing from raw pointers, information about the type of the table cannot be extracted.
             // SAFETY: The tables in the hob should be valid ACPI tables.
-            let table = unsafe {
-                AcpiTable::new_from_ptr(
-                    entry_addr as *const AcpiTableHeader,
-                    None,
-                    self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?,
-                )?
-            };
+            let table =
+                unsafe { AcpiTable::new_from_ptr(entry_addr as *const AcpiTableHeader, None, &self.memory_manager)? };
 
             self.install_standard_table(table)?;
 
@@ -538,8 +531,6 @@ where
             // The XSDT is always allocated in reclaim memory.
             let allocator = self
                 .memory_manager
-                .get()
-                .ok_or(AcpiError::ProviderNotInitialized)?
                 .get_allocator(EfiMemoryType::ACPIReclaimMemory)
                 .map_err(|_e| AcpiError::AllocationFailed)?;
             // Allocate new buffer with increased capacity.
@@ -617,8 +608,6 @@ where
                 // SAFETY: The FACS was allocated in ACPI Reclaim memory using page allocation. It has a well-defined size.
                 unsafe {
                     self.memory_manager
-                        .get()
-                        .ok_or(AcpiError::ProviderNotInitialized)?
                         .free_pages(physical_addr as usize, uefi_size_to_pages!(mem::size_of::<AcpiFacs>()))
                         .map_err(|_| AcpiError::FreeFailed)
                 }?;
@@ -833,12 +822,11 @@ mod tests {
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // SAFETY: The constructed table is a valid ACPI table.
-        let mock_table =
-            unsafe { AcpiTable::new(MockAcpiTable::new(), provider.memory_manager.get().unwrap()).unwrap() };
+        let mock_table = unsafe { AcpiTable::new(MockAcpiTable::new(), &provider.memory_manager).unwrap() };
         let mock_table_addr = mock_table.as_ptr() as usize;
         let table_key = provider.install_standard_table(mock_table).unwrap();
 
@@ -862,7 +850,7 @@ mod tests {
         let notify_fn: AcpiNotifyFn = dummy_notify;
 
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(MockMemoryManager::new()))).unwrap();
 
         provider.register_notify(true, notify_fn).expect("should register notify");
         {
@@ -886,17 +874,17 @@ mod tests {
     #[test]
     fn test_iter() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         let header1 = AcpiTableHeader { signature: 0x1, length: 100, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let table1 = unsafe { AcpiTable::new(header1, provider.memory_manager.get().unwrap()) };
+        let table1 = unsafe { AcpiTable::new(header1, &provider.memory_manager).unwrap() };
         let header2 = AcpiTableHeader { signature: 0x2, length: 100, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let table2 = unsafe { AcpiTable::new(header2, provider.memory_manager.get().unwrap()) };
-        provider.install_standard_table(table1.unwrap()).expect("Install should succeed.");
-        provider.install_standard_table(table2.unwrap()).expect("Install should succeed.");
+        let table2 = unsafe { AcpiTable::new(header2, &provider.memory_manager).unwrap() };
+        provider.install_standard_table(table1).expect("Install should succeed.");
+        provider.install_standard_table(table2).expect("Install should succeed.");
 
         // Both tables should be in the list and in order
         let result = provider.collect_tables();
@@ -910,7 +898,7 @@ mod tests {
     #[test]
     fn test_install_fadt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Initialize a mock XSDT.
@@ -920,7 +908,7 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_table = unsafe { AcpiTable::new(fadt_info, provider.memory_manager.get().unwrap()).unwrap() };
+        let fadt_table = unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() };
         let key = provider.install_fadt(fadt_table.clone()).unwrap();
 
         // The key should return the FADT.
@@ -937,7 +925,7 @@ mod tests {
     #[test]
     fn test_install_facs() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy data for FACS and FADT.
@@ -947,15 +935,11 @@ mod tests {
 
         // Install the FADT first.
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_key = provider
-            .install_fadt(unsafe { AcpiTable::new(fadt_info, provider.memory_manager.get().unwrap()).unwrap() })
-            .unwrap();
+        let fadt_key =
+            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
         // Install the FACS.
         // SAFETY: The constructed table is a valid FACS.
-        let res = unsafe {
-            provider.install_facs(AcpiTable::new(facs_info, provider.memory_manager.get().unwrap()).unwrap())
-        };
-
+        let res = unsafe { provider.install_facs(AcpiTable::new(facs_info, &provider.memory_manager).unwrap()) };
         // Make sure FACS was installed in the provider.
         assert!(res.is_ok());
         assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::FACS);
@@ -971,7 +955,7 @@ mod tests {
     #[test]
     fn test_add_dsdt_to_list() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy data for DSDT and FADT.
@@ -986,13 +970,11 @@ mod tests {
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // Install the FADT first.
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_key = provider
-            .install_fadt(unsafe { AcpiTable::new(fadt_info, provider.memory_manager.get().unwrap()).unwrap() })
-            .unwrap();
+        let fadt_key =
+            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
         // Install the DSDT.
         // SAFETY: The constructed table is a valid ACPI table.
-        let res = provider
-            .install_dsdt(unsafe { AcpiTable::new(dsdt_info, provider.memory_manager.get().unwrap()).unwrap() });
+        let res = provider.install_dsdt(unsafe { AcpiTable::new(dsdt_info, &provider.memory_manager).unwrap() });
 
         // Make sure DSDT was installed in the provider.
         assert!(res.is_ok());
@@ -1010,8 +992,6 @@ mod tests {
     fn create_dummy_rsdp(provider: &StandardAcpiProvider<MockBootServices>) {
         let rsdp_allocation = provider
             .memory_manager
-            .get()
-            .unwrap()
             .allocate_pages(1, patina::component::service::memory::AllocationOptions::new())
             .unwrap();
 
@@ -1039,7 +1019,7 @@ mod tests {
         };
 
         // The XSDT is always allocated in reclaim memory. (Doesn't matter for tests because it uses a mock memory manager.)
-        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
+        let allocator = provider.memory_manager.get_allocator(EfiMemoryType::ACPIReclaimMemory).unwrap();
         // Allocate buffer for XSDT.
         let mut xsdt_allocated_bytes = Vec::with_capacity_in(num_bytes, allocator);
         // Copy over existing data (just header).
@@ -1061,7 +1041,7 @@ mod tests {
     #[test]
     fn test_add_and_remove_xsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         create_dummy_rsdp(&provider);
         create_dummy_xsdt(MAX_INITIAL_ENTRIES, &provider);
@@ -1095,7 +1075,7 @@ mod tests {
     #[test]
     fn test_reallocate_xsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         let initial_capacity = 2;
         create_dummy_rsdp(&provider);
@@ -1133,7 +1113,7 @@ mod tests {
     #[test]
     fn test_delete_table_facs() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Create a dummy XSDT.
@@ -1143,13 +1123,12 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: `fadt_info` is a valid ACPI table.
-        let fadt_key = provider
-            .install_fadt(unsafe { AcpiTable::new(fadt_info, provider.memory_manager.get().unwrap()).unwrap() })
-            .unwrap();
+        let fadt_key =
+            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
 
         let facs_info = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
         // SAFETY: `facs_info` is a valid ACPI table.
-        let facs_table = unsafe { AcpiTable::new(facs_info, provider.memory_manager.get().unwrap()).unwrap() };
+        let facs_table = unsafe { AcpiTable::new(facs_info, &provider.memory_manager).unwrap() };
         // SAFETY: `facs_table` is constructed to be a valid FACS.
         let facs_key = unsafe { provider.install_facs(facs_table).unwrap() };
 
@@ -1169,7 +1148,7 @@ mod tests {
     #[test]
     fn test_delete_table_dsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         create_dummy_xsdt(MAX_INITIAL_ENTRIES, &provider);
@@ -1178,9 +1157,8 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: `fadt_info` is a valid ACPI table.
-        let fadt_key = provider
-            .install_fadt(unsafe { AcpiTable::new(fadt_info, provider.memory_manager.get().unwrap()).unwrap() })
-            .unwrap();
+        let fadt_key =
+            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
 
         let dsdt_info = AcpiDsdt {
             header: AcpiTableHeader {
@@ -1190,7 +1168,7 @@ mod tests {
             },
         };
         // SAFETY: `dsdt_info` is a valid ACPI table.
-        let dsdt_table = unsafe { AcpiTable::new(dsdt_info, provider.memory_manager.get().unwrap()).unwrap() };
+        let dsdt_table = unsafe { AcpiTable::new(dsdt_info, &provider.memory_manager).unwrap() };
         let dsdt_key = provider.install_dsdt(dsdt_table).unwrap();
 
         // Delete DSDT table.
@@ -1314,7 +1292,7 @@ mod tests {
             .with(always(), always())
             .times(..)
             .returning(|_, _| Ok(()));
-        provider.initialize(mbs, Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(mbs, &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         // Create a dummy normal ACPI table (not FADT, FACS, DSDT)
         let normal_header =
@@ -1360,27 +1338,25 @@ mod tests {
         let mock_memory_manager: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
 
         // First initialization should succeed
-        assert!(provider.initialize(mock_boot_services, mock_memory_manager.clone()).is_ok());
+        assert!(provider.initialize(mock_boot_services, &mock_memory_manager).is_ok());
 
         // Second initialization with boot services should fail
-        let err = provider.initialize(MockBootServices::new(), mock_memory_manager.clone()).unwrap_err();
+        let err = provider.initialize(MockBootServices::new(), &mock_memory_manager).unwrap_err();
         assert_eq!(err, AcpiError::BootServicesAlreadyInitialized);
 
         // Try initializing again with a new provider, but memory manager already set
         let provider2 = StandardAcpiProvider::new_uninit();
         // Set boot services first
         assert!(provider2.boot_services.set(MockBootServices::new()).is_ok());
-        // Set memory manager first
-        assert!(provider2.memory_manager.set(mock_memory_manager.clone()).is_ok());
         // Now initialize should fail for both fields
-        let err = provider2.initialize(MockBootServices::new(), mock_memory_manager.clone()).unwrap_err();
+        let err = provider2.initialize(MockBootServices::new(), &mock_memory_manager).unwrap_err();
         assert!(matches!(err, AcpiError::BootServicesAlreadyInitialized | AcpiError::MemoryManagerAlreadyInitialized));
     }
 
     #[test]
     fn test_install_fadt_tables_from_hob() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy FACS and DSDT tables
@@ -1424,7 +1400,7 @@ mod tests {
     #[test]
     fn test_remove_table_from_xsdt_removes_correct_entry() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         create_dummy_rsdp(&provider);
         create_dummy_xsdt(3, &provider);
@@ -1476,7 +1452,7 @@ mod tests {
         mbs.expect_install_configuration_table::<*mut core::ffi::c_void>()
             .with(always(), always())
             .returning(|_, _| Ok(()));
-        provider.initialize(mbs, Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(mbs, &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Register notify function.
@@ -1485,7 +1461,7 @@ mod tests {
         // Install a standard table and check if notify was called.
         let header = AcpiTableHeader { signature: 0x0101, length: 100, ..Default::default() };
         // SAFETY: `header` has a valid header format.
-        let table = unsafe { AcpiTable::new(header, provider.memory_manager.get().unwrap()).unwrap() };
+        let table = unsafe { AcpiTable::new(header, &provider.memory_manager).unwrap() };
         let _ = provider.install_acpi_table(table).unwrap();
 
         // notify_acpi_list should have been called by install_standard_table.
@@ -1495,7 +1471,7 @@ mod tests {
     #[test]
     fn test_notify_acpi_list_error_on_invalid_key() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         // Try to notify with an invalid key
         let result = provider.notify_acpi_list(TableKey(99999));
@@ -1505,18 +1481,18 @@ mod tests {
     #[test]
     fn test_get_table_at_idx_basic() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider.initialize(MockBootServices::new(), &Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
         // Install two standard tables
         let header1 = AcpiTableHeader { signature: 0x10, length: 101, ..Default::default() };
         // SAFETY: `table1` has the correct format by construction.
-        let table1 = unsafe { AcpiTable::new(header1, provider.memory_manager.get().unwrap()).unwrap() };
+        let table1 = unsafe { AcpiTable::new(header1, &provider.memory_manager).unwrap() };
         let key1 = provider.install_standard_table(table1).unwrap();
 
         let header2 = AcpiTableHeader { signature: 0x11, length: 102, ..Default::default() };
         // SAFETY: `table2` has the correct format by construction.
-        let table2 = unsafe { AcpiTable::new(header2, provider.memory_manager.get().unwrap()).unwrap() };
+        let table2 = unsafe { AcpiTable::new(header2, &provider.memory_manager).unwrap() };
         let key2 = provider.install_standard_table(table2).unwrap();
 
         // Index 0 should return the first table
