@@ -6,18 +6,12 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use core::{
-    ffi::c_void,
-    mem::{self, size_of},
-    num::NonZeroUsize,
-    ptr::NonNull,
-    slice,
-};
+use core::{ffi::c_void, mem::size_of, num::NonZeroUsize, ptr::NonNull, slice};
 
 use alloc::{boxed::Box, collections::BTreeMap};
 use patina::{
     device_path::{
-        fv_types::{FvMemMapDevicePath, FvPiWgDevicePath, MemMapDevicePath},
+        fv_types::{FvMemMapDevicePath, FvPiWgDevicePath},
         walker::concat_device_path_to_boxed_slice,
     },
     pi::{
@@ -421,31 +415,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             }
             None => {
                 // Construct FvMemMapDevicePath
-                let device_path = FvMemMapDevicePath {
-                    mem_map_device_path: MemMapDevicePath {
-                        header: efi::protocols::device_path::Protocol {
-                            r#type: efi::protocols::device_path::TYPE_HARDWARE,
-                            sub_type: efi::protocols::device_path::Hardware::SUBTYPE_MMAP,
-                            length: [
-                                (mem::size_of::<MemMapDevicePath>() & 0xff) as u8,
-                                ((mem::size_of::<MemMapDevicePath>() >> 8) & 0xff) as u8,
-                            ],
-                        },
-                        memory_type: MEMORY_MAPPED_IO,
-                        starting_address: base_address,
-                        ending_address: base_address.saturating_add(fv.size()),
-                    },
-                    end_dev_path: efi::protocols::device_path::End {
-                        header: efi::protocols::device_path::Protocol {
-                            r#type: efi::protocols::device_path::TYPE_END,
-                            sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
-                            length: [
-                                (mem::size_of::<efi::protocols::device_path::End>() & 0xff) as u8,
-                                ((mem::size_of::<efi::protocols::device_path::End>() >> 8) & 0xff) as u8,
-                            ],
-                        },
-                    },
-                };
+                let device_path =
+                    FvMemMapDevicePath::new(MEMORY_MAPPED_IO, base_address, base_address.saturating_add(fv.size()));
+
                 Box::into_raw(Box::new(device_path)) as *mut c_void
             }
         };
