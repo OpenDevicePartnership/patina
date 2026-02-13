@@ -49,8 +49,8 @@
 //!
 //! ## Public API
 //!
-//! The primary public API is the `dump()/dump_with()` function in the
-//! `StackTrace` module.
+//! The primary public API is the `dump()/dump_with()/dump_with_fp_chain()`
+//! function in the `StackTrace` module.
 //!
 //! ```ignore
 //!    /// Dumps the stack trace for the given PC, SP, and FP values.
@@ -96,6 +96,57 @@
 //!    /// 7 0000005E2AEFFD50      0000000000000000       ntdll+75AEC
 //!    /// ```
 //!    pub unsafe fn dump() -> StResult<()>;
+//!
+//!    /// Dumps the stack trace by walking the FP/LR registers, without relying on unwind
+//!    /// information. This is an AArch64-only fallback mechanism.
+//!    ///
+//!    /// For GCC built PE images, .pdata/.xdata sections are not generated, causing stack
+//!    /// trace dumping to fail. In this case, we attempt to dump the stack trace using an
+//!    /// FP/LR register walk with the following limitations:
+//!    ///
+//!    ///  1. Patina binaries produced with LLVM almost always do not save FP/LR register
+//!    ///     pairs as part of the function prologue for non-leaf functions, even though
+//!    ///     the ABI mandates it.
+//!    ///     https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst#646the-frame-pointer
+//!    ///
+//!    ///  2. Forcing this with the `-C force-frame-pointers=yes` compiler flag can produce
+//!    ///     strange results. In some cases, instead of saving fp/lr using `stp x29, x30,
+//!    ///     [sp, #16]!`, it saves lr/fp using `stp x30, x29, [sp, #16]!`, completely
+//!    ///     breaking the stack walk.
+//!    ///
+//!    ///  3. Due to the above reasons, the stack walk cannot be reliably terminated.
+//!    ///
+//!    /// The only reason this is being introduced is to identify the driver/app causing
+//!    /// the exception. For example, a Shell app built with GCC that triggers an
+//!    /// assertion can still produce a reasonable stack trace.
+//!    ///
+//!    ///  ```text
+//!    /// Dumping stack trace with PC: 000001007AB72ED0, SP: 0000010078885D50, FP: 0000010078885D50
+//!    ///     # Child-SP              Return Address         Call Site
+//!    ///     0 0000010078885D50      000001007AB12770       Shell+66ED0
+//!    ///     1 0000010078885E90      0000010007B98DCC       Shell+6770
+//!    ///     2 0000010078885FF0      0000010007B98E54       qemu_sbsa_dxe_core+18DCC
+//!    ///     3 0000010007FFF4C0      0000010007B98F48       qemu_sbsa_dxe_core+18E54
+//!    ///     4 0000010007FFF800      000001007AF54D08       qemu_sbsa_dxe_core+18F48
+//!    ///     5 0000010007FFFA90      0000010007BAC388       BdsDxe+8D08
+//!    ///     6 0000010007FFFF80      0000000010008878       qemu_sbsa_dxe_core+2C388 --.
+//!    ///                                                                               |
+//!    ///     0:000> u qemu_sbsa_dxe_core!patina_dxe_core::call_bds                     |
+//!    ///     00000000`1002c1b0 f81f0ff3 str x19,[sp,#-0x10]!                           |
+//!    ///     00000000`1002c1b4 f90007fe str lr,[sp,#8]     <---------------------------'
+//!    ///     00000000`1002c1b8 d10183ff sub sp,sp,#0x60
+//!    ///
+//!    ///     The FP is not saved, so the return address in frame #6 is garbage.
+//!    /// ```
+//!    /// Symbol to source file resolution(Resolving #2 frame):
+//!    /// Since some modules in the stack trace are built with GCC and do not generate PDB
+//!    /// files, their symbols must be resolved manually as shown below.
+//!    /// ```text
+//!    /// $ addr2line -e Shell.debug -f -C 0x6770
+//!    /// UefiMain
+//!    /// ~/repos/patina-qemu/MU_BASECORE/ShellPkg/Application/Shell/Shell.c:372
+//!    /// ```
+//!    pub unsafe fn dump_with_fp_chain(_stack_frame: StackFrame) -> StResult<()>
 //! ```
 //!
 //! ## API usage

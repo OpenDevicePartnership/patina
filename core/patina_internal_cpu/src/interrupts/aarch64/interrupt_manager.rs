@@ -14,7 +14,6 @@ use patina::{
     error::EfiError,
 };
 use patina_paging::{PageTable, PagingType};
-use patina_stacktrace::{StackFrame, StackTrace};
 
 use crate::interrupts::{
     EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
@@ -196,12 +195,7 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     log::debug!("Full Context: {aarch64_context:#X?}");
 
     log::error!("Dumping Exception Stack Trace:");
-    let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
-    // SAFETY: Called during exception handling with CPU context registers. The exception context
-    // is considered valid to dump at this time.
-    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
-        log::error!("StackTrace: {err}");
-    }
+    aarch64_context.dump_stack_trace();
 
     panic!("EXCEPTION: Synchronous Exception");
 }

@@ -9,7 +9,7 @@
 
 use crate::log_registers;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
-use patina_stacktrace::{StackFrame, StackTrace};
+use patina_stacktrace::{StackFrame, StackTrace, error::Error};
 
 #[cfg(target_arch = "aarch64")]
 pub mod gic_manager;
@@ -31,10 +31,27 @@ impl super::EfiSystemContextFactory for ExceptionContextAArch64 {
 impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
         let stack_frame = StackFrame { pc: self.elr, sp: self.sp, fp: self.fp };
-        // SAFETY: Called during exception handling with CPU context registers. The exception context
-        // is considered valid to dump at this time.
-        if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
-            log::error!("StackTrace: {err}");
+        // SAFETY: Called during exception handling with CPU context registers.
+        // The exception context is considered valid to dump at this time.
+        match unsafe { StackTrace::dump_with(stack_frame) } {
+            Ok(_) => (),
+            Err(Error::ExceptionDirectoryNotFound { module }) => {
+                let no_name = "<no module>";
+                let image_name = module.unwrap_or(no_name);
+                log::error!(
+                    "StackTrace: `{image_name}` does not contain an exception directory. Trying fp/lr based stack trace instead."
+                );
+                // SAFETY: Called during exception handling with PC, SP, and FP
+                // captured from the exception context. The frame pointer chain is
+                // walked as a best effort fallback mainly to cater binaries
+                // compiled with the GCC toolchain.
+                if let Err(err) = unsafe { StackTrace::dump_with_fp_chain(stack_frame) } {
+                    log::error!("StackTrace: {err}");
+                }
+            }
+            Err(err) => {
+                log::error!("StackTrace: {err}");
+            }
         }
     }
 
