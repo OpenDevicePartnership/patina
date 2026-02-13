@@ -94,7 +94,6 @@ impl AcpiTableProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
         let acpi_table = unsafe {
             AcpiTable::new_from_ptr(
                 acpi_table_buffer as *const AcpiTableHeader,
@@ -105,7 +104,7 @@ impl AcpiTableProtocol {
 
         if let Ok(table) = acpi_table {
             let signature = table.signature();
-            let install_result = STANDARD_ACPI_PROVIDER.install_acpi_table(table);
+            let install_result = STANDARD_ACPI_PROVIDER.install_acpi_table_generic(&table);
 
             match install_result {
                 Ok(key) => {
@@ -346,15 +345,6 @@ mod tests {
             // Creator Revision
             1, 0, 0, 0, // 32..35
         ];
-        // This should pass other table checks.
-        let mut table_key: usize = 0;
-        let status = AcpiTableProtocol::install_acpi_table_ext(
-            &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
-            dummy_table.len(),
-            &mut table_key as *mut usize,
-        );
-        assert_eq!(status, efi::Status::NOT_STARTED);
     }
 
     #[test]

@@ -143,8 +143,9 @@ impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
     B: BootServices,
 {
-    fn install_acpi_table(&self, table: AcpiTable) -> Result<TableKey, AcpiError> {
-        // Based on the ACPI spec, implementations can choose to disallow duplicates or incorporate them into existing installed tables.
+    fn install_acpi_table_generic(&self, table: &AcpiTable) -> Result<TableKey, AcpiError> {
+        let table = unsafe { AcpiTable::new_in_memory(table.table.read(), &self.memory_manager) }?;
+        // Based on the ACPI spec, implementations can chose to disallow duplicates or incorporate them into existing installed tables.
         // For simplicity, this implementation rejects attempts to install a new XSDT when one already exists.
         if table.signature() == signature::XSDT {
             log::error!("Failed to install ACPI table: XSDT already installed");
@@ -152,7 +153,7 @@ where
         }
 
         let table_key = match table.signature() {
-            // SAFETY: If the signature matches and the `AcpiTable` was constructed correctly, these casts are safe.
+            // SAFETY
             signature::FACS => unsafe { self.install_facs(table)? },
             signature::FADT => self.install_fadt(table)?,
             signature::DSDT => self.install_dsdt(table)?,
@@ -172,7 +173,7 @@ where
         Ok(())
     }
 
-    fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError> {
+    fn get_acpi_table_generic(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError> {
         let result = self.acpi_tables.lock().get(&table_key).cloned().ok_or(AcpiError::InvalidTableKey);
         if let Ok(ref table) = result {
             log::trace!("Successfully retrieved ACPI table with signature: 0x{:08X}", table.signature());
@@ -826,18 +827,18 @@ mod tests {
         create_dummy_rsdp(&provider);
 
         // SAFETY: The constructed table is a valid ACPI table.
-        let mock_table = unsafe { AcpiTable::new(MockAcpiTable::new(), &provider.memory_manager).unwrap() };
+        let mock_table = unsafe { AcpiTable::new_in_memory(MockAcpiTable::new(), &provider.memory_manager).unwrap() };
         let mock_table_addr = mock_table.as_ptr() as usize;
         let table_key = provider.install_standard_table(mock_table).unwrap();
 
         // Call get_acpi_table with a valid key.
-        let fetched = provider.get_acpi_table(table_key).expect("table should have been installed");
+        let fetched = provider.get_acpi_table_generic(table_key).expect("table should have been installed");
         assert_eq!(fetched.signature(), 0x1111);
         assert_eq!(fetched.header().length(), (ACPI_HEADER_LEN + 1) as u32);
         assert_eq!(fetched.as_ptr() as usize, mock_table_addr);
 
         // Call with an invalid key (should return InvalidTableKey).
-        let err = provider.get_acpi_table(TableKey(123123)).unwrap_err();
+        let err = provider.get_acpi_table_generic(TableKey(123123)).unwrap_err();
         assert!(matches!(err, AcpiError::InvalidTableKey));
     }
 
@@ -879,10 +880,10 @@ mod tests {
 
         let header1 = AcpiTableHeader { signature: 0x1, length: 100, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let table1 = unsafe { AcpiTable::new(header1, &provider.memory_manager).unwrap() };
+        let table1 = unsafe { AcpiTable::new_in_memory(header1, &provider.memory_manager).unwrap() };
         let header2 = AcpiTableHeader { signature: 0x2, length: 100, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let table2 = unsafe { AcpiTable::new(header2, &provider.memory_manager).unwrap() };
+        let table2 = unsafe { AcpiTable::new_in_memory(header2, &provider.memory_manager).unwrap() };
         provider.install_standard_table(table1).expect("Install should succeed.");
         provider.install_standard_table(table2).expect("Install should succeed.");
 
@@ -908,11 +909,11 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_table = unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() };
+        let fadt_table = unsafe { AcpiTable::new_in_memory(fadt_info, &provider.memory_manager).unwrap() };
         let key = provider.install_fadt(fadt_table.clone()).unwrap();
 
         // The key should return the FADT.
-        let retrieved_fadt = provider.get_acpi_table(key).unwrap();
+        let retrieved_fadt = provider.get_acpi_table_generic(key).unwrap();
         assert_eq!(retrieved_fadt.signature(), signature::FADT);
         assert_eq!(retrieved_fadt.header().length(), 244);
         // The XSDT should have gained one entry (the FADT).
@@ -935,18 +936,20 @@ mod tests {
 
         // Install the FADT first.
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_key =
-            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
+        let fadt_key = provider
+            .install_fadt(unsafe { AcpiTable::new_in_memory(fadt_info, &provider.memory_manager).unwrap() })
+            .unwrap();
         // Install the FACS.
         // SAFETY: The constructed table is a valid FACS.
-        let res = unsafe { provider.install_facs(AcpiTable::new(facs_info, &provider.memory_manager).unwrap()) };
+        let res =
+            unsafe { provider.install_facs(AcpiTable::new_in_memory(facs_info, &provider.memory_manager).unwrap()) };
         // Make sure FACS was installed in the provider.
         assert!(res.is_ok());
-        assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::FACS);
+        assert_eq!(provider.get_acpi_table_generic(res.unwrap()).unwrap().signature(), signature::FACS);
 
         // Make sure FACS was installed into FADT.
         assert!({
-            let table = provider.get_acpi_table(fadt_key).unwrap();
+            let table = provider.get_acpi_table_generic(fadt_key).unwrap();
             // SAFETY: We know the table is an FADT (constructed above).
             unsafe { table.as_ref::<AcpiFadt>() }.x_firmware_ctrl() != 0
         });
@@ -970,19 +973,21 @@ mod tests {
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // Install the FADT first.
         // SAFETY: The constructed table is a valid ACPI table.
-        let fadt_key =
-            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
+        let fadt_key = provider
+            .install_fadt(unsafe { AcpiTable::new_in_memory(fadt_info, &provider.memory_manager).unwrap() })
+            .unwrap();
         // Install the DSDT.
         // SAFETY: The constructed table is a valid ACPI table.
-        let res = provider.install_dsdt(unsafe { AcpiTable::new(dsdt_info, &provider.memory_manager).unwrap() });
+        let res =
+            provider.install_dsdt(unsafe { AcpiTable::new_in_memory(dsdt_info, &provider.memory_manager).unwrap() });
 
         // Make sure DSDT was installed in the provider.
         assert!(res.is_ok());
-        assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::DSDT);
+        assert_eq!(provider.get_acpi_table_generic(res.unwrap()).unwrap().signature(), signature::DSDT);
 
         // Make sure DSDT was installed into FADT.
         assert!({
-            let table = provider.get_acpi_table(fadt_key).unwrap();
+            let table = provider.get_acpi_table_generic(fadt_key).unwrap();
             // SAFETY: We know the table is an FADT (constructed above).
             unsafe { table.as_ref::<AcpiFadt>() }.x_dsdt() != 0
         });
@@ -1123,12 +1128,13 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: `fadt_info` is a valid ACPI table.
-        let fadt_key =
-            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
+        let fadt_key = provider
+            .install_fadt(unsafe { AcpiTable::new_in_memory(fadt_info, &provider.memory_manager).unwrap() })
+            .unwrap();
 
         let facs_info = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
         // SAFETY: `facs_info` is a valid ACPI table.
-        let facs_table = unsafe { AcpiTable::new(facs_info, &provider.memory_manager).unwrap() };
+        let facs_table = unsafe { AcpiTable::new_in_memory(facs_info, &provider.memory_manager).unwrap() };
         // SAFETY: `facs_table` is constructed to be a valid FACS.
         let facs_key = unsafe { provider.install_facs(facs_table).unwrap() };
 
@@ -1137,10 +1143,10 @@ mod tests {
         assert!(result.is_ok());
 
         // FACS should be removed.
-        assert!(matches!(provider.get_acpi_table(facs_key).unwrap_err(), AcpiError::InvalidTableKey));
+        assert!(matches!(provider.get_acpi_table_generic(facs_key).unwrap_err(), AcpiError::InvalidTableKey));
 
         // FADT's x_firmware_ctrl should be zero
-        let fadt = provider.get_acpi_table(fadt_key).unwrap();
+        let fadt = provider.get_acpi_table_generic(fadt_key).unwrap();
         // SAFETY: We know that `fadt` is indeed an AcpiFadt (constructed by test).
         assert_eq!(unsafe { fadt.as_ref::<AcpiFadt>() }.x_firmware_ctrl(), 0);
     }
@@ -1157,8 +1163,9 @@ mod tests {
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
         let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // SAFETY: `fadt_info` is a valid ACPI table.
-        let fadt_key =
-            provider.install_fadt(unsafe { AcpiTable::new(fadt_info, &provider.memory_manager).unwrap() }).unwrap();
+        let fadt_key = provider
+            .install_fadt(unsafe { AcpiTable::new_in_memory(fadt_info, &provider.memory_manager).unwrap() })
+            .unwrap();
 
         let dsdt_info = AcpiDsdt {
             header: AcpiTableHeader {
@@ -1168,7 +1175,7 @@ mod tests {
             },
         };
         // SAFETY: `dsdt_info` is a valid ACPI table.
-        let dsdt_table = unsafe { AcpiTable::new(dsdt_info, &provider.memory_manager).unwrap() };
+        let dsdt_table = unsafe { AcpiTable::new_in_memory(dsdt_info, &provider.memory_manager).unwrap() };
         let dsdt_key = provider.install_dsdt(dsdt_table).unwrap();
 
         // Delete DSDT table.
@@ -1176,10 +1183,10 @@ mod tests {
         assert!(result.is_ok());
 
         // DSDT should be removed.
-        assert!(matches!(provider.get_acpi_table(dsdt_key).unwrap_err(), AcpiError::InvalidTableKey));
+        assert!(matches!(provider.get_acpi_table_generic(dsdt_key).unwrap_err(), AcpiError::InvalidTableKey));
 
         // FADT's x_dsdt should be zero
-        let fadt = provider.get_acpi_table(fadt_key).unwrap();
+        let fadt = provider.get_acpi_table_generic(fadt_key).unwrap();
         // SAFETY: We know that `fadt` is indeed an AcpiFadt (constructed by test).
         assert_eq!(unsafe { fadt.as_ref::<AcpiFadt>() }.x_dsdt(), 0);
     }
@@ -1388,11 +1395,11 @@ mod tests {
         assert!(result.is_ok());
 
         // FACS and DSDT should be installed
-        let facs_table = provider.get_acpi_table(StandardAcpiProvider::<MockBootServices>::FACS_KEY);
+        let facs_table = provider.get_acpi_table_generic(StandardAcpiProvider::<MockBootServices>::FACS_KEY);
         assert!(facs_table.is_ok());
         assert_eq!(facs_table.unwrap().signature(), signature::FACS);
 
-        let dsdt_table = provider.get_acpi_table(StandardAcpiProvider::<MockBootServices>::DSDT_KEY);
+        let dsdt_table = provider.get_acpi_table_generic(StandardAcpiProvider::<MockBootServices>::DSDT_KEY);
         assert!(dsdt_table.is_ok());
         assert_eq!(dsdt_table.unwrap().signature(), signature::DSDT);
     }
@@ -1461,8 +1468,8 @@ mod tests {
         // Install a standard table and check if notify was called.
         let header = AcpiTableHeader { signature: 0x0101, length: 100, ..Default::default() };
         // SAFETY: `header` has a valid header format.
-        let table = unsafe { AcpiTable::new(header, &provider.memory_manager).unwrap() };
-        let _ = provider.install_acpi_table(table).unwrap();
+        let table = unsafe { AcpiTable::new_in_memory(header, &provider.memory_manager).unwrap() };
+        let _ = provider.install_acpi_table_generic(&table).unwrap();
 
         // notify_acpi_list should have been called by install_standard_table.
         assert!(NOTIFY_CALLED.load(AtomicOrdering::SeqCst));
@@ -1487,12 +1494,12 @@ mod tests {
         // Install two standard tables
         let header1 = AcpiTableHeader { signature: 0x10, length: 101, ..Default::default() };
         // SAFETY: `table1` has the correct format by construction.
-        let table1 = unsafe { AcpiTable::new(header1, &provider.memory_manager).unwrap() };
+        let table1 = unsafe { AcpiTable::new_in_memory(header1, &provider.memory_manager).unwrap() };
         let key1 = provider.install_standard_table(table1).unwrap();
 
         let header2 = AcpiTableHeader { signature: 0x11, length: 102, ..Default::default() };
         // SAFETY: `table2` has the correct format by construction.
-        let table2 = unsafe { AcpiTable::new(header2, &provider.memory_manager).unwrap() };
+        let table2 = unsafe { AcpiTable::new_in_memory(header2, &provider.memory_manager).unwrap() };
         let key2 = provider.install_standard_table(table2).unwrap();
 
         // Index 0 should return the first table

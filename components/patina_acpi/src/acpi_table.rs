@@ -419,7 +419,7 @@ impl AcpiTable {
     ///
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
-    pub unsafe fn new<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
+    pub unsafe fn new_in_memory<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
         // SAFETY: If the caller preconditions are met, the signature, header, and table fields of the union are valid.
         let table = unsafe { Table::new(table) }?;
 
@@ -427,6 +427,21 @@ impl AcpiTable {
         unsafe {
             AcpiTable::new_from_ptr(table.as_ref() as *const T as *const AcpiTableHeader, Some(TypeId::of::<T>()), mm)
         }
+    }
+
+    pub(crate) unsafe fn new_heap<T: 'static>(table: T) -> Result<Self, AcpiError> {
+        let table = unsafe { Table::new(table) }?;
+        // Box table on the heap. This is not correct for ACPI but it will be reallocated.
+        let boxed = Box::new(table);
+        let ptr = Box::into_raw(boxed);
+        let nn = NonNull::new(ptr).ok_or(AcpiError::AllocationFailed)?;
+        Ok(AcpiTable { table: nn.cast::<Table>(), type_id: TypeId::of::<T>() })
+    }
+
+    pub(crate) unsafe fn free_heap<T>(ptr: NonNull<Table>) -> Result<(), AcpiError> {
+        // Reconstruct the Box<Table<T>> to free the heap allocation.
+        let _ = unsafe { Box::from_raw(ptr.cast::<Table<T>>().as_ptr()) };
+        Ok(())
     }
 
     /// Creates a new AcpiTable from a raw pointer.
@@ -507,6 +522,7 @@ impl AcpiTable {
     ///
     /// ## SAFETY
     /// `self.length` must accurately reflect the allocated size of the table.
+    #[allow(unused)]
     pub unsafe fn as_bytes(&self) -> Vec<u8> {
         // SAFETY: If the caller preconditions are met, the length is accurate.
         unsafe { slice::from_raw_parts(self.table.as_ptr() as *const u8, self.header().length as usize).to_vec() }

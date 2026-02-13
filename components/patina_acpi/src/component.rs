@@ -10,7 +10,6 @@ use crate::{
     acpi_table::{AcpiTableHeader, AcpiXsdtMetadata},
     alloc::boxed::Box,
     hob::AcpiMemoryHob,
-    service::{AcpiProvider, AcpiTableManager},
 };
 use alloc::vec::Vec;
 
@@ -176,14 +175,6 @@ impl AcpiComponent {
         }
 
         storage.add_service(&STANDARD_ACPI_PROVIDER);
-
-        // Set up the generic wrapper service for ACPI table management.
-        // This allows installation of generic ACPI tables; i.e. install_acpi_table<T>.
-        let acpi_provider = storage.get_service::<dyn AcpiProvider>().ok_or(EfiError::NotStarted)?;
-        let acpi_service = AcpiTableManager { provider_service: acpi_provider, memory_manager };
-        // Register the ACPI table manager service.
-        // Consumers of ACPI table management should use this service rather than the provider directly.
-        storage.add_service(acpi_service);
 
         log::trace!("ACPI Provider initialized.");
 
