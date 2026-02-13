@@ -101,9 +101,9 @@ impl MediaFwVolDevicePath {
 #[repr(u8)]
 pub enum MediaFwDevicePathSubtype {
     /// Firmware volume device path node.
-    FirmwareVolume = efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_VOLUME as u8,
+    FirmwareVolume = efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_VOLUME,
     /// Firmware file path device path node.
-    FirmwareFile = efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE as u8,
+    FirmwareFile = efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
 }
 
 /// Describes a firmware volume or file path within a firmware volume, with a device path header and an end node.
