@@ -144,3 +144,20 @@ install a table of nonstandard format is **undefined behavior**.
 
 While consumers of the service can install any ACPI table as long as it follows the safety conventions above, a few
 common ACPI table types are implemented in `acpi_table.rs` and ACPI-related constants in `signature.rs`.
+
+## Integration Status
+
+### ACPI Integration
+
+- [X] ACPI feature branch merged into `patina` main.
+- [X] ACPI platform testing.
+- [ ] ACPI component enabled in `patina-dxe-core-qemu` and `patina-qemu`.
+- [ ] ACPI component enabled in Intel physical platforms.
+
+### AML Integration
+
+- [ ] AML design feedback. ([RFC](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text/0020-aml-parser.md))
+- [ ] AML platform testing.
+- [ ] AML implementation and feature branch merged into `patina`.
+- [ ] Full Rust AML implementation enabled in `patina-dxe-core-qemu` and `patina-qemu`.
+- [ ] Full Rust AMl implementation enabled in Intel physical platforms.
