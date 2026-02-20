@@ -244,9 +244,12 @@ impl Display for Recorder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
         let data = unsafe { self.results.get().as_mut().expect("Pointer is not null.") };
-
+        let mut total_passes = 0;
+        let mut total_fails = 0;
         writeln!(f, "Patina on-system unit-test results:")?;
         for (name, (passes, fails, msg)) in data.iter() {
+            total_passes += *passes;
+            total_fails += *fails;
             if *fails == 0 && *passes == 0 {
                 writeln!(f, "  {name} ... not triggered")?;
                 continue;
@@ -257,6 +260,7 @@ impl Display for Recorder {
                 writeln!(f, "  {name} ... fail ({fails} fails, {passes} passes): {msg}")?;
             }
         }
+        writeln!(f, "Patina on-system unit-test result totals: {total_passes} passes, {total_fails} fails")?;
 
         Ok(())
     }

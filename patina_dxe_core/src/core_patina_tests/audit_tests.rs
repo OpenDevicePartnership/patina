@@ -12,6 +12,8 @@
 use crate::GCD;
 use alloc::vec::Vec;
 use patina::{test::patina_test, u_assert};
+// used in the macro, but not directly referenced; causes a warning if patina tests not enabled.
+#[allow(unused)]
 use r_efi::efi;
 
 // Verify that all adjacent free memory descriptors in the GCD are merged together
