@@ -458,6 +458,106 @@ pub struct Type3SystemEnclosure {
     pub string_pool: Vec<String>,
 }
 
+/// Type 4: Processor Information
+#[derive(patina_macro::SmbiosRecord)]
+#[smbios(record_type = 4)]
+pub struct Type4ProcessorInformation {
+    /// SMBIOS table header
+    pub header: SmbiosTableHeader,
+    /// Socket designation string index
+    pub socket_designation: u8,
+    /// Processor type
+    pub processor_type: u8,
+    /// Processor family
+    pub processor_family: u8,
+    /// Processor manufacturer string index
+    pub processor_manufacturer: u8,
+    /// Processor ID (PROCESSOR_ID_DATA: 2x u32 = 8 bytes)
+    pub processor_id: [u8; 8],
+    /// Processor version string index
+    pub processor_version: u8,
+    /// Voltage
+    pub voltage: u8,
+    /// External clock frequency in MHz
+    pub external_clock: u16,
+    /// Max speed in MHz
+    pub max_speed: u16,
+    /// Current speed in MHz
+    pub current_speed: u16,
+    /// Status
+    pub status: u8,
+    /// Processor upgrade
+    pub processor_upgrade: u8,
+    /// L1 cache handle
+    pub l1_cache_handle: u16,
+    /// L2 cache handle
+    pub l2_cache_handle: u16,
+    /// L3 cache handle
+    pub l3_cache_handle: u16,
+    /// Serial number string index
+    pub serial_number: u8,
+    /// Asset tag string index
+    pub asset_tag: u8,
+    /// Part number string index
+    pub part_number: u8,
+    /// Core count
+    pub core_count: u8,
+    /// Core enabled
+    pub core_enabled: u8,
+    /// Thread count
+    pub thread_count: u8,
+    /// Processor characteristics
+    pub processor_characteristics: u16,
+    /// Processor family 2
+    pub processor_family2: u16,
+    /// Core count 2 (SMBIOS 3.0+)
+    pub core_count2: u16,
+    /// Core enabled 2 (SMBIOS 3.0+)
+    pub core_enabled2: u16,
+    /// Thread count 2 (SMBIOS 3.0+)
+    pub thread_count2: u16,
+
+    /// String pool
+    #[string_pool]
+    pub string_pool: Vec<String>,
+}
+
+/// Type 7: Cache Information
+#[derive(patina_macro::SmbiosRecord)]
+#[smbios(record_type = 7)]
+pub struct Type7CacheInformation {
+    /// SMBIOS table header
+    pub header: SmbiosTableHeader,
+    /// Socket designation string index
+    pub socket_designation: u8,
+    /// Cache configuration
+    pub cache_configuration: u16,
+    /// Maximum cache size (in KB)
+    pub maximum_cache_size: u16,
+    /// Installed size (in KB)
+    pub installed_size: u16,
+    /// Supported SRAM type (bitfield)
+    pub supported_sram_type: u16,
+    /// Current SRAM type (bitfield)
+    pub current_sram_type: u16,
+    /// Cache speed in nanoseconds
+    pub cache_speed: u8,
+    /// Error correction type
+    pub error_correction_type: u8,
+    /// System cache type
+    pub system_cache_type: u8,
+    /// Associativity
+    pub associativity: u8,
+    /// Maximum cache size 2 (SMBIOS 3.1+)
+    pub maximum_cache_size2: u32,
+    /// Installed cache size 2 (SMBIOS 3.1+)
+    pub installed_cache_size2: u32,
+
+    /// String pool
+    #[string_pool]
+    pub string_pool: Vec<String>,
+}
+
 /// SMBIOS Type 127: End-of-Table
 ///
 /// The End-of-Table marker indicates the end of the SMBIOS structure table.
@@ -764,6 +864,156 @@ mod tests {
 
         assert_eq!(Type2BaseboardInformation::RECORD_TYPE, 2);
         assert!(type2.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type4_new() {
+        let type4 = Type4ProcessorInformation {
+            header: SmbiosTableHeader { record_type: 4, length: 0, handle: 0x0400 },
+            socket_designation: 1,
+            processor_type: 0x03,   // Central Processor
+            processor_family: 0xFE, // Use Family2
+            processor_manufacturer: 2,
+            processor_id: [0u8; 8],
+            processor_version: 3,
+            voltage: 0x80,
+            external_clock: 100,
+            max_speed: 3000,
+            current_speed: 2400,
+            status: 0x41,
+            processor_upgrade: 0x02,
+            l1_cache_handle: 0xFFFF,
+            l2_cache_handle: 0xFFFF,
+            l3_cache_handle: 0xFFFF,
+            serial_number: 4,
+            asset_tag: 5,
+            part_number: 6,
+            core_count: 4,
+            core_enabled: 4,
+            thread_count: 8,
+            processor_characteristics: 0x04,
+            processor_family2: 0x0101,
+            core_count2: 4,
+            core_enabled2: 4,
+            thread_count2: 8,
+            string_pool: vec![
+                String::from("CPU0"),
+                String::from("Test Manufacturer"),
+                String::from("ARMv8"),
+                String::from("SN-CPU-001"),
+                String::from("ASSET-CPU-001"),
+                String::from("PN-CPU-001"),
+            ],
+        };
+
+        assert_eq!(type4.header.record_type, 4);
+        assert_eq!(Type4ProcessorInformation::RECORD_TYPE, 4);
+        assert_eq!(type4.string_pool.len(), 6);
+        assert!(type4.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type4_to_bytes() {
+        let type4 = Type4ProcessorInformation {
+            header: SmbiosTableHeader { record_type: 4, length: 0, handle: 0x0400 },
+            socket_designation: 1,
+            processor_type: 0x03,
+            processor_family: 0xFE,
+            processor_manufacturer: 2,
+            processor_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            processor_version: 3,
+            voltage: 0x80,
+            external_clock: 100,
+            max_speed: 3000,
+            current_speed: 2400,
+            status: 0x41,
+            processor_upgrade: 0x02,
+            l1_cache_handle: 0x0001,
+            l2_cache_handle: 0x0002,
+            l3_cache_handle: 0xFFFF,
+            serial_number: 0,
+            asset_tag: 0,
+            part_number: 0,
+            core_count: 4,
+            core_enabled: 4,
+            thread_count: 8,
+            processor_characteristics: 0x04,
+            processor_family2: 0x0101,
+            core_count2: 4,
+            core_enabled2: 4,
+            thread_count2: 8,
+            string_pool: vec![String::from("CPU0"), String::from("Manufacturer"), String::from("Version")],
+        };
+
+        let bytes = type4.to_bytes();
+        // Verify header
+        assert_eq!(bytes[0], 4); // Type
+        // Verify some fields after header (4 bytes)
+        assert_eq!(bytes[4], 1); // socket_designation
+        assert_eq!(bytes[5], 0x03); // processor_type
+        assert_eq!(bytes[6], 0xFE); // processor_family
+        assert_eq!(bytes[7], 2); // processor_manufacturer
+        // processor_id at offset 8..16
+        assert_eq!(bytes[8], 0x01);
+        assert_eq!(bytes[15], 0x08);
+        // Verify strings are present
+        assert!(bytes.len() > bytes[1] as usize);
+    }
+
+    #[test]
+    fn test_type7_new() {
+        let type7 = Type7CacheInformation {
+            header: SmbiosTableHeader { record_type: 7, length: 0, handle: 0x0700 },
+            socket_designation: 1,
+            cache_configuration: 0x0180, // L1, enabled, write-back
+            maximum_cache_size: 64,
+            installed_size: 64,
+            supported_sram_type: 0x0002,
+            current_sram_type: 0x0002,
+            cache_speed: 0,
+            error_correction_type: 0x02,
+            system_cache_type: 0x04, // Data
+            associativity: 0x05,     // 4-way
+            maximum_cache_size2: 64,
+            installed_cache_size2: 64,
+            string_pool: vec![String::from("L1 Data Cache")],
+        };
+
+        assert_eq!(type7.header.record_type, 7);
+        assert_eq!(Type7CacheInformation::RECORD_TYPE, 7);
+        assert_eq!(type7.string_pool.len(), 1);
+        assert!(type7.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type7_to_bytes() {
+        let type7 = Type7CacheInformation {
+            header: SmbiosTableHeader { record_type: 7, length: 0, handle: 0x0700 },
+            socket_designation: 1,
+            cache_configuration: 0x0180,
+            maximum_cache_size: 64,
+            installed_size: 64,
+            supported_sram_type: 0x0002,
+            current_sram_type: 0x0002,
+            cache_speed: 0,
+            error_correction_type: 0x02,
+            system_cache_type: 0x04,
+            associativity: 0x05,
+            maximum_cache_size2: 64,
+            installed_cache_size2: 64,
+            string_pool: vec![String::from("L1 Data Cache")],
+        };
+
+        let bytes = type7.to_bytes();
+        // Verify header
+        assert_eq!(bytes[0], 7); // Type
+        // Verify some fields after header (4 bytes)
+        assert_eq!(bytes[4], 1); // socket_designation
+        // cache_configuration at offset 5-6 (little-endian)
+        assert_eq!(bytes[5], 0x80);
+        assert_eq!(bytes[6], 0x01);
+        // Verify strings are present
+        assert!(bytes.len() > bytes[1] as usize);
     }
 
     #[test]
