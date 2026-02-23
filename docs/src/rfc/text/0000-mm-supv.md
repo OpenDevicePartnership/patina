@@ -152,13 +152,23 @@ Rust MM supervisor.
 
 #### HOBs Required for bootstrapping
 
-The following HOBs will be required for bootstrapping the Rust MM supervisor:
+- The following HOBs will be required for bootstrapping the MM Foundattion setup (needed in `CreateMmPlatformHob`):
+
+| HOB Info | Description |
+| - | - |
+| EFI_HOB_TYPE_FV | To describe the firmware volumes containing MM images |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the MMRAM regions and other necessary memory allocations. Under `gEfiMmPeiMmramMemoryReserveGuid` or `gEfiSmmSmramMemoryGuid`. |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the MM communication buffer for supervisor mode and user mode. Under the name of [`gMmCommonRegionHobGuid`](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Include/Guid/MmCommonRegion.h) for user mode. |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the MM stack buffer for all processors and both supervisor and user modes. Under the name of [`gMmSupvUnblockRegionHobGuid`](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Include/Guid/MmSupvUnblockRegion.h). |
+| EFI_HOB_TYPE_RESOURCE_DESCRIPTOR | To describe the MMIO memory resources for MM usage. This could include UART, APIC, and PCIe regions. |
+
+- The following HOBs will be required for bootstrapping the Rust MM supervisor:
 
 | HOB Info | Description |
 | - | - |
 | EFI_HOB_TYPE_FV | To describe the firmware volumes containing MM images |
 | EFI_HOB_MEMORY_ALLOCATION_MODULE | To describe the discovered MM standalone images, their memory allocations and entry points. MemoryAllocationHeader will be under the name of `gMmSupervisorHobMemoryAllocModuleGuid` |
-| EFI_HOB_TYPE_GUID_EXTENSION | To describe the MMRAM regions and other necessary memory allocations. Under `gEfiMmPeiMmramMemoryReserveGuid` or `gEfiSmmSmramMemoryGuid`. |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the _updated_ MMRAM regions and other necessary memory allocations. Under `gEfiMmPeiMmramMemoryReserveGuid` or `gEfiSmmSmramMemoryGuid`. |
 | EFI_HOB_TYPE_GUID_EXTENSION | To describe the Depex for each discovered MM standalone image. Under the name of `gMmSupervisorDepexHobGuid` |
 
 #### Related definitions
