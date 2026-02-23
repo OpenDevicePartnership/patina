@@ -638,9 +638,9 @@ techniques from SEA against the rules for MM core verification.
 
 ## Guide-Level Explanation
 
-The Rust-based MM supervisor will provide a safer and more efficient implementation of the MM operations, leveraging Rust's
-safety guarantees and modern features. It will be integrated with the Patina framework to ensure a consistent and efficient
-implementation.
+The Rust-based MM supervisor will provide a safer implementation of the MM operations but more efficient attestation mechanism,
+leveraging Rust's safety guarantees and modern features. It will be integrated with the Patina framework to ensure a
+consistent implementation.
 
   The supervisor will handle MMIs, manage memory and page tables, and enforce security policies, while the Rust user core
   will provide a safe interface for MM clients to interact with the MM supervisor.
