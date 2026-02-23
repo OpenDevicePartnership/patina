@@ -125,7 +125,6 @@ The MM foundation setup, also called `mm_init` (pronunced as "minute"), involves
 
 - Initialize memory services specific to MM
 - Initialize copied HOBs from non-MM environment
-- Discover EFI_FV_FILETYPE_MM_STANDALONE files from FV hobs
 - Load the discovered images and setup the corresponding memory attributes
 - Setup up stack buffer for all processors and both supervisor and user modes
 - Reserve necessary MMRAM regions for save states
@@ -145,7 +144,8 @@ RX for code) and prepare the corresponding HOBs of `MemoryAllocationModule` type
 - Lock down page tables to read-only after setup
 - Invoke the first MMI to transfer control to the MM supervisor in Rust.
 
-Note that the MM relocation should be already handled by the SmmRelocationLib from PEIM before entering MM.
+Note that the MM relocation should be already handled by the [`SmmRelocationLib`](https://github.com/tianocore/edk2/blob/master/UefiCpuPkg/Library/SmmRelocationLib/SmmRelocationLib.inf)
+from PEIM before entering MM.
 
 The global state (data) will be stored in MMRAM, in a dedicated supervisor region that is ready to to handed off to the
 Rust MM supervisor.
@@ -245,11 +245,11 @@ The main differences will be:
 1. The MMI entry point will need to fix up an extra input pointer to the ring3 mapped hob list
 1. The MMI entry point will enforce SMAP in CR4 for MM user mode execution
 
-### MM Foundation Handoff Data to Rust MM Supervisor
+### `mm_init` Handoff Data to Rust MM Supervisor
 
-Given that the MM foundation setup is separated from the Rust MM supervisor, it will be necessary to separate the MM foundation
-produced data from the Rust MM supervisor. This data will be categorized into initialization-only data, shared data and
-external data.
+Given that the mm_init is separated from the Rust MM supervisor, it will be necessary to separate the mm_init produced
+data from the Rust MM supervisor. This data will be categorized into initialization-only data, shared data and external
+data.
 
 The initialization-only data will be used during the mm_init phase and will be discarded after
 the mm_init phase. These data fields will be fully contained as part of the initialization-only data section, and
@@ -269,6 +269,16 @@ then jump into the Rust MM supervisor main function that is being patched in the
 
 With the transitioning to Rust MM supervisor, the supervisor mode agent will inherit the prepared state section from the
 previous section.
+
+#### One-time Initialization
+
+During the very first MMI, on all of the cores, the Rust MM supervisor will perform the one-time initialization, which includes:
+
+- Inspecting the shared data HOBs and deploying available MMRAM regions into the supervisor region.
+- Initialize the interrupt manager using patina framework, as well as patching the IDT fixup in the MMI entry point code.
+- Initialize the patina-paging instance using the currently installed page table, and inspect the incoming hob list
+against the page table to make sure the MM foundation setup has properly mapped all the necessary regions with the correct
+attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table itself, save state regions).
 
 #### MMI Targeting
 
@@ -407,10 +417,11 @@ log the violation event. See more on telemetry reporting in the next sections.
 The Rust MM supervisor will manage the page tables for both supervisor and MM user modes.
 
 As the MM core does not have a GCD, it will need to manage the page tables directly. In the mm_init phase, the
-Rust MM supervisor loader will allocate a dedicated page pool for page table usage and security policy reporting.
+Rust MM supervisor loader will implement a page pool allocator for `patina-paging` usage.
 
-The loader will then set up the initial page tables, including mapping all necessary MMRAM regions, un-mapping non-MMRAM
-regions, and unblock the regions requested from non-MM environments.
+The supervisor will inherit the incoming page table and initialize the patina-paging instance. This instance will be used
+for all the page table management needs during runtime, specifically for  inspecting the incoming hob list and mapping the
+pages allocated for user mode.
 
 At the end of the MM foundation setup, the loader will page table to read-only to prevent tampering from MM code, marking
 the supervisor code sections as supervisor executable and supervisor data sections as supervisor non-executable.
