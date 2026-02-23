@@ -30,8 +30,9 @@ A project MU component implements a standalone MM supervisor in C. This componen
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
 code. However, it lacks the safety and modern features that Rust can offer.
 
-The goal of this RFC is to re-implement the MM supervisor functionality in Rust using the Patina framework,
-which will provide a safer and more efficient implementation.
+The goal of this RFC is to re-implement the critical MM supervisor functionalities (resource protection and page table management)
+in Rust using the Patina framework. This will allow the supervisor entity in Trusted Execution Environment (TEE) to provide
+the same level of protection while yielding less attack surfaces.
 
 ### Cross-Architecture Support
 
@@ -41,7 +42,10 @@ approaches might be taken for AArch64 (secure partitions vs. supervisor-based is
 
 However, the Rust implementation of some common resultant functionalities within the scope of Standalone MM (such as TPM
 services, UEFI variable services, etc.) will be supported across both x86_64 and AArch64 architectures, in the format of
-both a Patina component and a Hafnium-EC-Service compatible crate.
+both a Patina component and a Hafnium EC service compatible crate.
+
+See documentation of [Hafnium EC service](https://github.com/OpenDevicePartnership/haf-ec-service/blob/main/README.md) for
+more information on this approach.
 
 ## Goals
 
@@ -50,19 +54,26 @@ existing functionalities to Rust, improving overall system stability and securit
 2. __Supervisor Mode Code Minimization__: This is to minimize the amount of code in the supervisor mode, which is critical
 for reducing the attack surface and improving performance.
 3. __Patina Framework Reuse__: This is to leverage the existing Patina framework to provide a consistent and efficient implementation.
-4. __Simplification of SMM Enhanced Attestation (SEA) Deployment__: This is to reduce the complexity of SEA verification
+4. __Simplification of SMM Enhanced Attestation (SEA) Deployment__: This is to reduce the complexity of [SEA verification](https://microsoft.github.io/mu/dyn/mu_feature_mm_supv/SeaPkg/Docs/PlatformIntegration/PlatformIntegrationSteps/)
 and security rules given the simpler Rust MM supervisor in place.
 
 ## Requirements
 
-1. __Reuse IPL from EDK2__: This is to reduce the maintenance burden and leverage existing components.
-2. __Separation of Initialization and Runtime__: This is to clearly separate the initialization phase from the runtime phase
+1. __Reuse IPL from EDK2__: The purpose of reusing the [StandaloneMmIplPei](https://github.com/tianocore/edk2/tree/master/StandaloneMmPkg/Drivers/StandaloneMmIplPei)
+is to reduce the maintenance burden and leverage existing components.
+1. __Separation of Initialization and Runtime__: This is to clearly separate the initialization phase from the runtime phase
 for better modularity and security, largely reducing code residues that are no longer needed after MM launch.
-3. __Page Management, Privilege Management and Policy Verification in supervisor mode__: These are treated as the key assets
+1. __Page Management, Privilege Management and Policy Verification in supervisor mode__: These are treated as the key assets
 for the supervisor mode, ensuring that they are managed securely and efficiently.
-4. __Pool Management, Protocol DB, Module Dispatching in user mode__: This is to ensure that the pool and protocol database
+1. __Pool Management, Protocol DB, Module Dispatching in user mode__: This is to ensure that the pool and protocol database
 are managed in user mode for better isolation and easier management of protocol crosstalk and dependencies, allowing more
 flexible interactions.
+1. __Standalone MM driver continue to work__: The existing Standalone MM drivers will continue to work as the currently
+supervised module. It could involve some platform level integration changes due to the model shift (i.e. not use the syscall
+to query hob start and not explcitly invoking call gate to return to supervisor mode) which will be covered by the documentation
+when the software component is finalized.
+1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
+This will ensure a smaller attack surface from non-MM enviroment and pave way to earlier lock down for future improvements.
 
 ## Prior Art (Existing PI C Implementation)
 
@@ -89,8 +100,7 @@ user drivers in demoted execution mode, or dispatching supervisor MMI handlers i
 - Do nothing: Continue using the existing C implementation.
   This is the current state of affairs, where the MM supervisor is implemented in C. The benefits of this approach are
   simplicity and familiarity, but it lacks the safety and modern features that Rust can offer. In addition, as we are committed
-  to using Rust for more Trusted Execution Environment (TEE) components, sticking to C implementation will limit future
-  introduced Rust based components.
+  to using Rust for more TEE components, sticking to C implementation will limit future introduced Rust based components.
 - Move to Intel's TEE Implentation (DGR): This will require us to move back to SMM solution, which foregoes the benefits
   of the Standalone MM based solution. This is potentially a significant step back in terms of security and isolation.
 
@@ -105,8 +115,10 @@ This section will discuss the technical details of the Rust-based MM supervisor 
 The intention is to leverage the existing EDK2 components to open the MMRAMs, locate the "standalone MM core", execute it
 in MMRAM, produce the necessary PPIs, and runtime protocols. The MM supervisor specific services, such as MM interfaces
 that route to supervisor specific MM handlers, will be provided in a light weighted C component. Specifically, given the
-supervisor interfaces are no longer needed during runtime, these MM supervisor DXE agents will be marked as boot services
-drivers (in contrast to runtime drivers).
+supervisor interfaces are no longer needed during runtime, the channel for communicating to MM supervisor during OS runtime
+will be shut down at ExitBootServices, and the DXE agent hosting Supervisor communication channel (currently known as
+[DxeSupport](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Drivers/MmPeiLaunchers/MmDxeSupport.inf))
+will be marked as boot services drivers (in contrast to runtime drivers).
 
 ### MMI Entry Point
 
@@ -128,11 +140,13 @@ The MM foundation setup involves the following key tasks:
 
 - Initialize memory services specific to MM
 - Initialize copied HOBs from non-MM environment
-- Discover Standalone MM drivers from FV hobs
+- Discover EFI_FV_FILETYPE_MM_STANDALONE files from FV hobs
+- Load the discovered images and setup the corresponding memory attributes
 - Setup up stack buffer for all processors and both supervisor and user modes
 - Reserve necessary MMRAM regions for save states
 - Discover and load MM supervisor in Rust into MMRAM
-- Discover and load MM Ring3 broker in Rust into MMRAM
+- Discover all files of MM_STANDALONE type and load them into MMRAM, apply necessary memory attributes (RW for data and
+RX for code) and prepare the corresponding HOBs of `MemoryAllocationModule` type for the Rust MM modules.
 - Install MMI entry point from the previous section and fix up necessary jump pointers
 - Initialize IDT and GDT content for MM execution
 - Setup page tables for MM protections
@@ -150,6 +164,64 @@ Note that the MM relocation should be already handled by the SmmRelocationLib fr
 
 The global state (data) will be stored in MMRAM, in a dedicated supervisor region that is ready to to handed off to the
 Rust MM supervisor.
+
+#### HOBs Required for bootstrapping
+
+The following HOBs will be required for bootstrapping the Rust MM supervisor:
+
+| HOB Info | Description |
+| - | - |
+| EFI_HOB_TYPE_FV | To describe the firmware volumes containing MM images |
+| EFI_HOB_MEMORY_ALLOCATION_MODULE | To describe the discovered MM standalone images, their memory allocations and entry points. MemoryAllocationHeader will be under the name of `gMmSupervisorHobMemoryAllocModuleGuid` |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the MMRAM regions and other necessary memory allocations. Under `gEfiMmPeiMmramMemoryReserveGuid` or `gEfiSmmSmramMemoryGuid`. |
+| EFI_HOB_TYPE_GUID_EXTENSION | To describe the Depex for each discovered MM standalone image. Under the name of `gMmSupervisorDepexHobGuid` |
+
+#### Related definitions
+
+- Memory allcoation module hob GUID definition, `gMmSupervisorHobMemoryAllocModuleGuid`:
+
+  ```rust
+  // GUID for gMmSupervisorHobMemoryAllocModuleGuid
+  // { 0x3efafe72, 0x3dbf, 0x4341, { 0xad, 0x04, 0x1c, 0xb6, 0xe8, 0xb6, 0x8e, 0x5e }}
+  /// GUID used in MemoryAllocationModule HOBs to identify MM Supervisor module allocations.
+  pub const MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID: efi::Guid = efi::Guid::from_fields(
+      0x3efafe72,
+      0x3dbf,
+      0x4341,
+      0xad,
+      0x04,
+      &[0x1c, 0xb6, 0xe8, 0xb6, 0x8e, 0x5e],
+  );
+  ```
+
+- Loaded image depex GUIDed hobs, `gMmSupervisorDepexHobGuid`:
+
+```rust
+  // GUID for gMmSupervisorDepexHobGuid
+  // { 0xb17f0049, 0xaffd, 0x4530, { 0xac, 0xd6, 0xe2, 0x45, 0xe1, 0x9d, 0xea, 0xf1 } }
+  /// GUID used in Depex HOBs to identify MM Supervisor module allocations.
+  pub const MM_SUPERVISOR_HOB_DEPEX_GUID: efi::Guid = efi::Guid::from_fields(
+      0xb17f0049,
+      0xaffd,
+      0x4530,
+      0xac,
+      0xd6,
+      &[0xe2, 0x45, 0xe1, 0x9d, 0xea, 0xf1],
+  );
+
+  // HOB structure for MM Supervisor module depex
+  //
+  // typedef struct {
+  //   EFI_GUID                  Name;
+  //   UINT64                    Length;
+  //   UINT8                     Data[];
+  // } MM_SUPV_DEPEX_HOB_DATA;
+  struct {
+    name: efi::Guid, // The name of the module, which should match the name in MemoryAllocationModule HOB.
+    length: u64, // The length of the depex data.
+    data: [u8], // The depex data, which is an array of EFI_DEPENDENCY_ENTRY structures.
+  };
+```
 
 ### MM Foundation Handoff Data to Rust MM Supervisor
 
@@ -243,28 +315,30 @@ typedef enum {
   SMM_SC_WBINVD     = 0x0005,
   SMM_SC_HLT        = 0x0006,
   SMM_SC_SVST_READ  = 0x0007,
-  SMM_SC_PROC_READ  = 0x0008,
-  SMM_SC_PROC_WRITE = 0x0009,
+  // SMM_SC_PROC_READ  = 0x0008,
+  // SMM_SC_PROC_WRITE = 0x0009,
   SMM_SC_LEGACY_MAX = 0xFFFF,
   // Below is for new supervisor interfaces only,
   // legacy supervisor should not write below this line
-  SMM_REG_HDL_JMP     = 0x10000,
-  SMM_INST_CONF_T     = 0x10001,
-  SMM_ALOC_POOL       = 0x10002,
-  SMM_FREE_POOL       = 0x10003,
+  // New supervisor interfaces no longer needs these as they were native supported in user mode rust module
+  // SMM_REG_HDL_JMP     = 0x10000,
+  // SMM_INST_CONF_T     = 0x10001,
+  // SMM_ALOC_POOL       = 0x10002,
+  // SMM_FREE_POOL       = 0x10003,
   SMM_ALOC_PAGE       = 0x10004,
   SMM_FREE_PAGE       = 0x10005,
   SMM_START_AP_PROC   = 0x10006,
-  SMM_REG_HNDL        = 0x10007,
-  SMM_UNREG_HNDL      = 0x10018,
-  SMM_SET_CPL3_TBL    = 0x10019,
-  SMM_INST_PROT       = 0x1001A,
-  SMM_QRY_HOB         = 0x1001B,
-  SMM_ERR_RPT_JMP     = 0x1001C,
-  SMM_MM_HDL_REG_1    = 0x1001D,
-  SMM_MM_HDL_REG_2    = 0x1001E,
-  SMM_MM_HDL_UNREG_1  = 0x1001F,
-  SMM_MM_HDL_UNREG_2  = 0x10020,
+  // New supervisor interfaces no longer needs these as they were native supported in user mode rust module
+  // SMM_REG_HNDL        = 0x10007,
+  // SMM_UNREG_HNDL      = 0x10018,
+  // SMM_SET_CPL3_TBL    = 0x10019,
+  // SMM_INST_PROT       = 0x1001A,
+  // SMM_QRY_HOB         = 0x1001B,
+  // SMM_ERR_RPT_JMP     = 0x1001C,
+  // SMM_MM_HDL_REG_1    = 0x1001D,
+  // SMM_MM_HDL_REG_2    = 0x1001E,
+  // SMM_MM_HDL_UNREG_1  = 0x1001F,
+  // SMM_MM_HDL_UNREG_2  = 0x10020,
   SMM_SC_SVST_READ_2  = 0x10021,
   SMM_MM_UNBLOCKED    = 0x10022,
   SMM_MM_IS_COMM_BUFF = 0x10023,
@@ -442,6 +516,8 @@ The Rust MM supervisor should consist of the following main components:
 | Page Table Manager | The page table manager for requesting page operations through supervisor syscall interface | BSP | To be implemented |
 | Pool Allocator | The pool allocator for user mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
 | Shim MP Services | The MP services that requests supervisor to perform operations on behalf of MM user mode | BSP | To be implemented |
+
+### MM User Mode Driver Model
 
 ### Telemetry Reporting and Fail Fast Mechanism
 
