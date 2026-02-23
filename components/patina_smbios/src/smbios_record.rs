@@ -558,6 +558,179 @@ pub struct Type7CacheInformation {
     pub string_pool: Vec<String>,
 }
 
+/// Type 16: Physical Memory Array
+///
+/// Describes the attributes of a physical memory array, including the number
+/// of memory devices it contains, the maximum capacity, and the error correction type.
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use `to_bytes()` to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
+#[derive(patina_macro::SmbiosRecord)]
+#[smbios(record_type = 16)]
+pub struct Type16PhysicalMemoryArray {
+    /// SMBIOS table header
+    pub header: SmbiosTableHeader,
+    /// Location of the memory array
+    pub location: u8,
+    /// Function for which the array is used (renamed from `use` to avoid Rust keyword)
+    pub use_field: u8,
+    /// Primary hardware error correction or detection method
+    pub memory_error_correction: u8,
+    /// Maximum capacity in KB (0x80000000 = use extended_maximum_capacity)
+    pub maximum_capacity: u32,
+    /// Handle of the error information structure (0xFFFE = not provided)
+    pub memory_error_information_handle: u16,
+    /// Number of slots or sockets for memory devices
+    pub number_of_memory_devices: u16,
+    /// Maximum capacity in bytes (SMBIOS 2.7+, valid when maximum_capacity = 0x80000000)
+    pub extended_maximum_capacity: u64,
+
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
+    #[string_pool]
+    pub string_pool: Vec<String>,
+}
+
+/// Type 17: Memory Device
+///
+/// Describes a single memory device that is part of a Physical Memory Array (Type 16).
+/// Includes detailed information such as size, speed, form factor, and technology.
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use `to_bytes()` to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
+#[derive(patina_macro::SmbiosRecord)]
+#[smbios(record_type = 17)]
+pub struct Type17MemoryDevice {
+    /// SMBIOS table header
+    pub header: SmbiosTableHeader,
+    /// Handle of the Physical Memory Array this device belongs to
+    pub physical_memory_array_handle: u16,
+    /// Handle of the memory error information structure (0xFFFE = not provided)
+    pub memory_error_information_handle: u16,
+    /// Total width in bits (0xFFFF = unknown)
+    pub total_width: u16,
+    /// Data width in bits (0xFFFF = unknown)
+    pub data_width: u16,
+    /// Size of the memory device (0x7FFF = use extended_size, 0xFFFF = unknown)
+    pub size: u16,
+    /// Form factor of the memory device
+    pub form_factor: u8,
+    /// Device set number (0 = not part of a set, 0xFF = unknown)
+    pub device_set: u8,
+    /// Device locator string index
+    pub device_locator: u8,
+    /// Bank locator string index
+    pub bank_locator: u8,
+    /// Memory type
+    pub memory_type: u8,
+    /// Type detail bitmask
+    pub type_detail: u16,
+    /// Speed in MT/s (0 = unknown)
+    pub speed: u16,
+    /// Manufacturer string index
+    pub manufacturer: u8,
+    /// Serial number string index
+    pub serial_number: u8,
+    /// Asset tag string index
+    pub asset_tag: u8,
+    /// Part number string index
+    pub part_number: u8,
+    /// Attributes (bits 3:0 = rank, bits 7:4 = reserved)
+    pub attributes: u8,
+    /// Extended size in MB (valid when size = 0x7FFF)
+    pub extended_size: u32,
+    /// Configured memory clock speed in MT/s (0 = unknown)
+    pub configured_memory_clock_speed: u16,
+    /// Minimum operating voltage in mV (0 = unknown)
+    pub minimum_voltage: u16,
+    /// Maximum operating voltage in mV (0 = unknown)
+    pub maximum_voltage: u16,
+    /// Configured voltage in mV (0 = unknown)
+    pub configured_voltage: u16,
+    /// Memory technology
+    pub memory_technology: u8,
+    /// Memory operating mode capability bitmask
+    pub memory_operating_mode_capability: u16,
+    /// Firmware version string index
+    pub firmware_version: u8,
+    /// Module manufacturer ID (JEDEC)
+    pub module_manufacturer_id: u16,
+    /// Module product ID (JEDEC)
+    pub module_product_id: u16,
+    /// Memory subsystem controller manufacturer ID (JEDEC)
+    pub memory_subsystem_controller_manufacturer_id: u16,
+    /// Memory subsystem controller product ID (JEDEC)
+    pub memory_subsystem_controller_product_id: u16,
+    /// Non-volatile size in bytes (0 = none)
+    pub non_volatile_size: u64,
+    /// Volatile size in bytes (0 = none)
+    pub volatile_size: u64,
+    /// Cache size in bytes (0 = none)
+    pub cache_size: u64,
+    /// Logical size in bytes (0 = none)
+    pub logical_size: u64,
+    /// Extended speed in MT/s (SMBIOS 3.3+)
+    pub extended_speed: u32,
+    /// Extended configured memory speed in MT/s (SMBIOS 3.3+)
+    pub extended_configured_memory_speed: u32,
+    /// PMIC 0 manufacturer ID (SMBIOS 3.7+)
+    pub pmic0_manufacturer_id: u16,
+    /// PMIC 0 revision number (SMBIOS 3.7+)
+    pub pmic0_revision_number: u16,
+    /// RCD manufacturer ID (SMBIOS 3.7+)
+    pub rcd_manufacturer_id: u16,
+    /// RCD revision number (SMBIOS 3.7+)
+    pub rcd_revision_number: u16,
+
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
+    #[string_pool]
+    pub string_pool: Vec<String>,
+}
+
+/// Type 19: Memory Array Mapped Address
+///
+/// Provides the address mapping for a Physical Memory Array (Type 16).
+/// One structure is present for each contiguous address range described.
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use `to_bytes()` to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
+#[derive(patina_macro::SmbiosRecord)]
+#[smbios(record_type = 19)]
+pub struct Type19MemoryArrayMappedAddress {
+    /// SMBIOS table header
+    pub header: SmbiosTableHeader,
+    /// Starting address in KB (0xFFFFFFFF = use extended_starting_address)
+    pub starting_address: u32,
+    /// Ending address in KB (0xFFFFFFFF = use extended_ending_address)
+    pub ending_address: u32,
+    /// Handle of the Physical Memory Array this mapping belongs to
+    pub memory_array_handle: u16,
+    /// Number of memory devices that form a single row of the address
+    pub partition_width: u8,
+    /// Starting address in bytes (SMBIOS 2.7+, valid when starting_address = 0xFFFFFFFF)
+    pub extended_starting_address: u64,
+    /// Ending address in bytes (SMBIOS 2.7+, valid when ending_address = 0xFFFFFFFF)
+    pub extended_ending_address: u64,
+
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
+    #[string_pool]
+    pub string_pool: Vec<String>,
+}
+
 /// SMBIOS Type 127: End-of-Table
 ///
 /// The End-of-Table marker indicates the end of the SMBIOS structure table.
@@ -771,7 +944,7 @@ mod tests {
     #[test]
     fn test_type3_new() {
         let type3 = Type3SystemEnclosure {
-            header: SmbiosTableHeader { record_type: 3, length: 21, handle: 0x0300 },
+            header: SmbiosTableHeader { record_type: 3, length: 0, handle: 0x0300 },
             manufacturer: 1,
             enclosure_type: 0x01, // Other
             version: 2,
@@ -804,7 +977,7 @@ mod tests {
     #[test]
     fn test_type3_to_bytes() {
         let type3 = Type3SystemEnclosure {
-            header: SmbiosTableHeader { record_type: 3, length: 21, handle: 0x0300 },
+            header: SmbiosTableHeader { record_type: 3, length: 0, handle: 0x0300 },
             manufacturer: 1,
             enclosure_type: 0x01,
             version: 2,
@@ -830,7 +1003,7 @@ mod tests {
         let bytes = type3.to_bytes();
         // Verify header
         assert_eq!(bytes[0], 3); // Type
-        assert_eq!(bytes[1], 21); // Length
+        assert_eq!(bytes[1], 21); // Length (macro-calculated: 4 header + 17 fields)
         // Verify some fields
         assert_eq!(bytes[4], 1); // manufacturer
         assert_eq!(bytes[5], 0x01); // enclosure_type
@@ -1014,6 +1187,224 @@ mod tests {
         assert_eq!(bytes[6], 0x01);
         // Verify strings are present
         assert!(bytes.len() > bytes[1] as usize);
+    }
+
+    #[test]
+    fn test_type16_new() {
+        let type16 = Type16PhysicalMemoryArray {
+            header: SmbiosTableHeader { record_type: 16, length: 0, handle: 0x1000 },
+            location: 0x03,                          // System board
+            use_field: 0x03,                         // System memory
+            memory_error_correction: 0x06,           // Multi-bit ECC
+            maximum_capacity: 0x00800000,            // 8 GB in KB
+            memory_error_information_handle: 0xFFFE, // Not provided
+            number_of_memory_devices: 2,
+            extended_maximum_capacity: 0,
+            string_pool: vec![],
+        };
+
+        assert_eq!(type16.header.record_type, 16);
+        assert_eq!(Type16PhysicalMemoryArray::RECORD_TYPE, 16);
+        assert_eq!(type16.number_of_memory_devices, 2);
+        assert_eq!(type16.string_pool.len(), 0);
+        assert!(type16.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type16_to_bytes() {
+        let type16 = Type16PhysicalMemoryArray {
+            header: SmbiosTableHeader { record_type: 16, length: 0, handle: 0x1000 },
+            location: 0x03,
+            use_field: 0x03,
+            memory_error_correction: 0x06,
+            maximum_capacity: 0x00800000,
+            memory_error_information_handle: 0xFFFE,
+            number_of_memory_devices: 2,
+            extended_maximum_capacity: 0,
+            string_pool: vec![],
+        };
+
+        let bytes = type16.to_bytes();
+        // Verify header
+        assert_eq!(bytes[0], 16); // Type
+        assert_eq!(bytes[1], 23); // Length (macro-calculated: 4 header + 19 fields)
+        // Verify fields
+        assert_eq!(bytes[4], 0x03); // location
+        assert_eq!(bytes[5], 0x03); // use_field
+        assert_eq!(bytes[6], 0x06); // memory_error_correction
+        // No strings, ends with double null
+        assert!(bytes.ends_with(&[0, 0]));
+    }
+
+    #[test]
+    fn test_type17_new() {
+        let type17 = Type17MemoryDevice {
+            header: SmbiosTableHeader { record_type: 17, length: 0, handle: 0x1100 },
+            physical_memory_array_handle: 0x1000,
+            memory_error_information_handle: 0xFFFE,
+            total_width: 64,
+            data_width: 64,
+            size: 0x1000,      // 4096 MB
+            form_factor: 0x09, // DIMM
+            device_set: 0,
+            device_locator: 1,
+            bank_locator: 2,
+            memory_type: 0x1A,   // DDR4
+            type_detail: 0x0080, // Synchronous
+            speed: 3200,
+            manufacturer: 3,
+            serial_number: 4,
+            asset_tag: 5,
+            part_number: 6,
+            attributes: 0x02, // Dual rank
+            extended_size: 0,
+            configured_memory_clock_speed: 3200,
+            minimum_voltage: 1200,
+            maximum_voltage: 1200,
+            configured_voltage: 1200,
+            memory_technology: 0x02,                  // DRAM
+            memory_operating_mode_capability: 0x0004, // Volatile
+            firmware_version: 7,
+            module_manufacturer_id: 0x012C,
+            module_product_id: 0,
+            memory_subsystem_controller_manufacturer_id: 0,
+            memory_subsystem_controller_product_id: 0,
+            non_volatile_size: 0,
+            volatile_size: 0x100000000, // 4 GB
+            cache_size: 0,
+            logical_size: 0,
+            extended_speed: 0,
+            extended_configured_memory_speed: 0,
+            pmic0_manufacturer_id: 0,
+            pmic0_revision_number: 0,
+            rcd_manufacturer_id: 0,
+            rcd_revision_number: 0,
+            string_pool: vec![
+                String::from("DIMM 0"),
+                String::from("BANK 0"),
+                String::from("Samsung"),
+                String::from("12345678"),
+                String::from("Asset-DIMM0"),
+                String::from("M471A5244CB0-CTD"),
+                String::from("v1.0"),
+            ],
+        };
+
+        assert_eq!(type17.header.record_type, 17);
+        assert_eq!(Type17MemoryDevice::RECORD_TYPE, 17);
+        assert_eq!(type17.speed, 3200);
+        assert_eq!(type17.string_pool.len(), 7);
+        assert!(type17.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type17_to_bytes() {
+        let type17 = Type17MemoryDevice {
+            header: SmbiosTableHeader { record_type: 17, length: 0, handle: 0x1100 },
+            physical_memory_array_handle: 0x1000,
+            memory_error_information_handle: 0xFFFE,
+            total_width: 64,
+            data_width: 64,
+            size: 0x1000,
+            form_factor: 0x09,
+            device_set: 0,
+            device_locator: 1,
+            bank_locator: 2,
+            memory_type: 0x1A,
+            type_detail: 0x0080,
+            speed: 3200,
+            manufacturer: 3,
+            serial_number: 4,
+            asset_tag: 5,
+            part_number: 6,
+            attributes: 0x02,
+            extended_size: 0,
+            configured_memory_clock_speed: 3200,
+            minimum_voltage: 1200,
+            maximum_voltage: 1200,
+            configured_voltage: 1200,
+            memory_technology: 0x02,
+            memory_operating_mode_capability: 0x0004,
+            firmware_version: 7,
+            module_manufacturer_id: 0x012C,
+            module_product_id: 0,
+            memory_subsystem_controller_manufacturer_id: 0,
+            memory_subsystem_controller_product_id: 0,
+            non_volatile_size: 0,
+            volatile_size: 0x100000000,
+            cache_size: 0,
+            logical_size: 0,
+            extended_speed: 0,
+            extended_configured_memory_speed: 0,
+            pmic0_manufacturer_id: 0,
+            pmic0_revision_number: 0,
+            rcd_manufacturer_id: 0,
+            rcd_revision_number: 0,
+            string_pool: vec![
+                String::from("DIMM 0"),
+                String::from("BANK 0"),
+                String::from("Samsung"),
+                String::from("SN123"),
+                String::from("Asset"),
+                String::from("Part123"),
+                String::from("v1.0"),
+            ],
+        };
+
+        let bytes = type17.to_bytes();
+        // Verify header
+        assert_eq!(bytes[0], 17); // Type
+        assert_eq!(bytes[1], 100); // Length (macro-calculated: 4 header + 96 fields)
+        // Verify form_factor at offset 0x0E (after header + 5 u16 fields)
+        assert_eq!(bytes[0x0E], 0x09); // form_factor
+        // Verify strings are present
+        assert!(bytes.len() > 100);
+    }
+
+    #[test]
+    fn test_type19_new() {
+        let type19 = Type19MemoryArrayMappedAddress {
+            header: SmbiosTableHeader { record_type: 19, length: 0, handle: 0x1300 },
+            starting_address: 0,
+            ending_address: 0x003FFFFF, // 4 GB - 1 in KB
+            memory_array_handle: 0x1000,
+            partition_width: 2,
+            extended_starting_address: 0,
+            extended_ending_address: 0,
+            string_pool: vec![],
+        };
+
+        assert_eq!(type19.header.record_type, 19);
+        assert_eq!(Type19MemoryArrayMappedAddress::RECORD_TYPE, 19);
+        assert_eq!(type19.partition_width, 2);
+        assert_eq!(type19.string_pool.len(), 0);
+        assert!(type19.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type19_to_bytes() {
+        let type19 = Type19MemoryArrayMappedAddress {
+            header: SmbiosTableHeader { record_type: 19, length: 0, handle: 0x1300 },
+            starting_address: 0xFFFFFFFF,
+            ending_address: 0xFFFFFFFF,
+            memory_array_handle: 0x1000,
+            partition_width: 2,
+            extended_starting_address: 0,
+            extended_ending_address: 0x00000001_00000000, // 4 GB
+            string_pool: vec![],
+        };
+
+        let bytes = type19.to_bytes();
+        // Verify header
+        assert_eq!(bytes[0], 19); // Type
+        assert_eq!(bytes[1], 31); // Length (macro-calculated: 4 header + 27 fields)
+        // Verify starting_address = 0xFFFFFFFF (little-endian at offset 4)
+        assert_eq!(bytes[4], 0xFF);
+        assert_eq!(bytes[5], 0xFF);
+        assert_eq!(bytes[6], 0xFF);
+        assert_eq!(bytes[7], 0xFF);
+        // No strings, ends with double null
+        assert!(bytes.ends_with(&[0, 0]));
     }
 
     #[test]
