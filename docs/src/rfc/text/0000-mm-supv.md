@@ -6,11 +6,12 @@ This RFC proposes a Rust-based supervisor to manage management mode (MM) operati
 
 - 2025-10-27: Initial RFC created.
 - 2025-01-09: Updated data handoff to HOB based model, advanced lock down event, added nutrient content tables.
+- 2025-02-23: Updated data handoff requirements after initial implementation. Added key differences from previous C implementations.
 
 ## Motivation
 
-Privilege separation in MM is critical for secure and reliable firmware execution, as MM code handles sensitive tasks such as
-system management interrupts (SMIs) and other privileged operations. By implementing the MM supervisor in Rust,
+Privilege separation in MM is critical for secure and reliable firmware execution, as MM code handles sensitive tasks such
+as system management interrupts (SMIs) and other privileged operations. By implementing the MM supervisor in Rust,
 we aim to leverage Rust's safety guarantees, memory management, and concurrency features to enhance the robustness
 of MM operations.
 
@@ -26,7 +27,8 @@ See reference: [PI specification v1.9](https://uefi.org/specs/PI/1.9/V4_Overview
 
 ### MM Supervisor
 
-A [project MU module](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This module provides supervised MM functionality.
+A [project MU module](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This
+module provides supervised MM functionality.
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
 code. However, it lacks the safety and modern features that Rust can offer.
 
@@ -120,23 +122,9 @@ will be shut down at ExitBootServices, and the DXE agent hosting Supervisor comm
 [DxeSupport](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Drivers/MmPeiLaunchers/MmDxeSupport.inf))
 will be marked as boot services drivers (in contrast to runtime drivers).
 
-### MMI Entry Point
-
-This entry point is the assembly routine responsible for handling incoming MMIs. It will transition the CPU from 16-bit real mode
-all the way to 64-bit long mode, setting up the necessary environment for MM execution.
-
-This section is expected to be mostly similar to an implementation for Project MU's SMM Enhanced Attestation (SEA), which
-separated the critical jump pointers to data sections, allowing for easier inspection and updates.
-
-The main differences will be:
-
-1. The MMI entry point will need to handle MMI targeting evaluation (supervisor vs Ring3 broker)
-2. The MMI entry point will need to fix up an extra jump pointer to the Ring3 broker entry point
-3. The MMI entry point will enforce SMAP in CR4 for MM user mode execution
-
 ### MM Foundation Setup
 
-The MM foundation setup involves the following key tasks:
+The MM foundation setup, also called `mm_init` (pronunced as "minute"), involves the following key tasks:
 
 - Initialize memory services specific to MM
 - Initialize copied HOBs from non-MM environment
@@ -223,17 +211,44 @@ The following HOBs will be required for bootstrapping the Rust MM supervisor:
   };
 ```
 
+### MMI Entry Point
+
+This entry point is the assembly routine responsible for handling incoming MMIs. It will transition the CPU from 16-bit
+real mode all the way to 64-bit long mode, setting up the necessary environment for MM execution.
+
+This section is expected to be mostly similar to an implementation for Project MU's SMM Enhanced Attestation (SEA), which
+separated the critical jump pointers to data sections, allowing for easier inspection and updates.
+
+Accordingly, SEA responder structure attached to MMI entry code will be updated to v5, with the
+following fixup entry definitions:
+
+```c
+#define FIXUP64_SMM_DBG_ENTRY     0
+#define FIXUP64_SMM_DBG_EXIT      1
+#define FIXUP64_SMI_RDZ_ENTRY     2
+#define FIXUP64_XD_SUPPORTED      3
+#define FIXUP64_CET_SUPPORTED     4
+#define FIXUP64_SMI_HANDLER_IDTR  5
+#define FIXUP64_HOB_START         6
+```
+
+The main differences will be:
+
+1. The MMI entry point will not populate debugger entries like before
+1. The MMI entry point will need to fix up an extra input pointer to the ring3 mapped hob list
+1. The MMI entry point will enforce SMAP in CR4 for MM user mode execution
+
 ### MM Foundation Handoff Data to Rust MM Supervisor
 
 Given that the MM foundation setup is separated from the Rust MM supervisor, it will be necessary to separate the MM foundation
 produced data from the Rust MM supervisor. This data will be categorized into initialization-only data, shared data and
 external data.
 
-The initialization-only data will be used during the foundation setup phase and will be discarded after
-the foundation setup phase. These data fields will be fully contained as part of the initialization-only data section, and
-will be purged after the foundation setup phase.
+The initialization-only data will be used during the mm_init phase and will be discarded after
+the mm_init phase. These data fields will be fully contained as part of the initialization-only data section, and
+will be purged after the mm_init phase.
 
-The shared data fields will be passed from the foundation setup phase to the Rust MM supervisor region in MMRAM. i.e. memory
+The shared data fields will be passed from the mm_init phase to the Rust MM supervisor region in MMRAM. i.e. memory
 allocations from setup time, etc. The supervisor will invoke a one-time routine to inspect and/or deploy the shared data
 HOBs upon the first MMI.
 
@@ -251,9 +266,9 @@ previous section.
 #### MMI Targeting
 
 The Rust MM supervisor in the case of incoming MMIs will perform a check on the incoming RCX value to determine if the MMI
-is targeted for the supervisor or for the Ring3 broker. If it is targeted for the supervisor, it will dispatch to the appropriate
-supervisor handler. If it is targeted for the Ring3 broker, it will be transparent and quickly demote to MM user mode after
-performing necessary checks.
+is targeted for the supervisor or for the Rust user core. If it is targeted for the supervisor, it will dispatch to the
+appropriate supervisor handler. If it is targeted for the Rust user core, it will be transparent and quickly demote to MM
+user mode after performing necessary checks.
 
 Note that this is different from the existing C implementation, where the MMI targeting check is performed in a shared buffer
 between supervisor and normal world (aka. `MM_BUFFER_STATUS`).
@@ -266,22 +281,22 @@ MMRAM region, specific to the targeting mode, to ensure data integrity and prote
 If it is targeted for supervisor, the Rust MM supervisor will locate the appropriate supervisor handler and try to dispatch
 it. If the handler is not found, it will return an error status back to the caller.
 
-If it is targeted for Ring3 broker, the Rust MM supervisor will save all the syscall related MSRs, FXSAVE area, and other
-necessary context into the dedicated region and then demote to MM user mode to execute the Ring3 broker.
+If it is targeted for the Rust user core, the Rust MM supervisor will save all the syscall related MSRs, FXSAVE area, and
+other necessary context into the dedicated region and then demote to MM user mode to execute the Rust user core.
 
-The Ring 3 broker section will detail more about how the Ring3 broker is executed and how the context is restored back to
-supervisor mode.
+The Ring 3 broker section will detail more about how the Rust user core is executed and how the context is restored back
+to supervisor mode.
 
 #### Ring Transitioning
 
-The Rust MM supervisor will handle the transitioning between supervisor mode and MM user mode for Ring3 broker execution.
+The Rust MM supervisor will handle the transitioning between supervisor mode and MM user mode for the Rust user core execution.
 
 The demotion to MM user mode will be done via callgates by setting up the necessary callgates and task state segments (TSS)
-during the foundation setup phase. Before transitioning to MM user mode, the Rust MM supervisor will prepare the syscall
+during the mm_init phase. Before transitioning to MM user mode, the Rust MM supervisor will prepare the syscall
 context in the dedicated region, including parameters, MSRs, FX registers, supervisor stack pointer, and return segment
 selector.
 
-During user mode execution, the Ring3 broker will request elevated operations and trigger a syscall interrupt to transition
+During user mode execution, the Rust user core will request elevated operations and trigger a syscall interrupt to transition
 back to supervisor mode. The Rust MM supervisor will handle the syscall interrupt through a syscall dispatcher, restoring
 the saved context and stack before resuming supervisor mode execution.
 
@@ -361,7 +376,7 @@ For page allocation and free syscall, the Rust MM supervisor will manage a dedic
 The policy structure will continue to use the same format as the existing C implementation for compatibility with existing
 operating systems and toolings.
 
-The Rust MM supervisor will inherit the prepared security policies from the foundation setup phase. It will enforce the
+The Rust MM supervisor will inherit the prepared security policies from the mm_init phase. It will enforce the
 policies during syscall dispatching, ensuring that only allowed operations are executed based on the platform defined policies.
 
 The platform supplied policy should include 4 main categories:
@@ -375,7 +390,7 @@ The platform could choose to enforce strict policies that only allow a limited s
 by configuring the policies to allow by default.
 
 Depending on the policy entry content, the syscall dispatcher will either allow or deny the requested operation. For allowed
-operations, syscall will replay the requested operations and return the result back to the Ring3 broker.
+operations, syscall will replay the requested operations and return the result back to the Rust user core.
 
 For denied operations, the syscall dispatcher will return an error status and invoke the telemetry reporting mechanism to
 log the violation event. See more on telemetry reporting in the next sections.
@@ -384,7 +399,7 @@ log the violation event. See more on telemetry reporting in the next sections.
 
 The Rust MM supervisor will manage the page tables for both supervisor and MM user modes.
 
-As the MM core does not have a GCD, it will need to manage the page tables directly. In the foundation setup phase, the
+As the MM core does not have a GCD, it will need to manage the page tables directly. In the mm_init phase, the
 Rust MM supervisor loader will allocate a dedicated page pool for page table usage and security policy reporting.
 
 The loader will then set up the initial page tables, including mapping all necessary MMRAM regions, un-mapping non-MMRAM
@@ -421,7 +436,7 @@ environment supplied buffer for attestation purposes.
 
 Change from previous C implementation: The lock event will be moved from the end of DXE phase to the end of MM foundation
 setup phase to minimize the attack surface. This bears with the prerequisite that all necessary non-MM regions are unblocked
-during the foundation setup phase AND the support of PEI memory bin feature.
+during the mm_init phase AND the support of PEI memory bin feature.
 
 #### Supervisor Pool Allocator
 
@@ -430,7 +445,7 @@ The supervisor pool allocator will stem from dedicated supervisor pages and does
 #### Multiprocessor (MP) Support
 
 The MP support will be similar to the existing C implementation, where the Rust MM supervisor loader will initialize all
-processors during the foundation setup phase.
+processors during the mm_init phase.
 
 Upon invocation of each MMI, Rust MM supervisor will rendezvous all processors to ensure proper synchronization before
 handling the MMI.
@@ -450,6 +465,19 @@ the requested operation. During the operation, should the user mode operations r
 will trigger syscall interrupts to transition back to supervisor mode to handle the requests, if this is allowed by the
 security policies.
 
+#### Supervisor Patina Components
+
+Sticking to the same sensation of componentization as the existing Patina implementation for DXE enivonrment, the Rust MM
+supervisor will also support extensible components through the Patina component model. The components will be linked in
+the supervisor mode during build time and no dynamic loading will be supported for supervisor mode components to minimize
+the attack surface and simplify the implementation.
+
+#### Supervisor Handlers
+
+To simplify the implementation, the Rust MM supervisor will host a static set of critical handlers in the supervisor mode
+through `linkme`. The handlers will be iterated through if an MMI is found targeting the supervisor, and the first matched
+handler will be dispatched after validation.
+
 #### Rust MM Supervisor `Nutrient` Content
 
 With the above design in place, the first attempt will keep the Rust MM supervisor in parallel with the patina_dxe_core.
@@ -466,9 +494,26 @@ The Rust MM supervisor should consist of the following main components:
 | Page Table Manager | The page table manager for managing page tables for both supervisor and user modes | BSP | patina-paging |
 | Pool Allocator | The pool allocator for supervisor mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
 
-### MM Ring3 Broker in Rust
+#### Change from previous C implementation
 
-This component will run in the MM user mode, providing a safe interface for MM clients to interact with the MM supervisor.
+- No BSP election mode will be supported: This is to ensure the deterministic execution of the MMI handlers, as well as
+simplifying the implementation by avoiding the need to handle the complexities of BSP election and the potential for
+executing MMI handlers on non-performant processors.
+- MTRR reconfiguration is disabled: Given the original purpose of MTRR reconfiguration is to cover the usage on IA32 and
+our current focus on x64 only, the MTRR reconfiguration will be disabled to simplify the implementation.
+- 1GB page support is a must: During mm_init phase, the initialization routine will inspect the CPU capabilities and set
+up the page tables with 1GB page support if available. The system will panic if the 1GB page support is not supported.
+This is to ensure the best performance for MM execution given the potential large memory size covered by MM, as well as
+simplifying the patina-paging implementation.
+- No CET support: Current C implementation has the superficial support for Control-flow Enforcement Technology (CET) by
+inheriting the code from PiSmmCpuDxeSmm, but it is not fully validated and has never been enabled. Given the complexity
+of CET implementation and needed patches in the MMI entry point, the CET support will be dropped in the first iteration
+of the Rust MM supervisor implementation.
+
+### MM Rust User Core in Rust
+
+This component will run in the MM user mode, (mm_user_core, pronounced as "muserker") providing a safe interface for MM
+clients to interact with the MM supervisor.
 The elevated operations will be requested through syscall, which will be handled by the Rust MM supervisor after security
 policy guided adjudication.
 
@@ -476,6 +521,7 @@ This component will be responsible for:
 
 - Initializing the MM user mode environment
 - Setting up telemetry reporting and fail fast component
+- Hosting the single jump pointer from supervisor mode to user mode through callgate
 - Providing shim version of MP services
 - Hosting pool allocator for MM user mode allocations
 - Hosting page allocator for MM user mode through syscall
@@ -484,31 +530,36 @@ This component will be responsible for:
 - Registering and dispatching fundamental events during boot phase for MM user mode
 - Dispatching other MM user mode drivers
 
-#### X64 Ring3 Broker Bootstrapping
+#### X64 Rust User Core Bootstrapping
 
-This section will detail the x86_64 specific bootstrapping steps for the Ring3 broker.
+This section will detail the x86_64 specific bootstrapping steps for the Rust user core.
 
-The Ring3 broker will have one and only one entry point, which will be patched into the MMI entry point during the foundation
+The Rust user core will have one and only one entry point, which will be patched into the MMI entry point during the foundation
 setup phase.
 
 The entry point will support 3 types of invocations:
 
-- Initialization: The first invocation will be from the Rust MM supervisor during the foundation setup phase to initialize
-  the Ring3 broker environment.
+- Initialization: The first invocation will be from the Rust MM supervisor during the mm_init phase to initialize
+  the Rust user core environment. Specifically, this involves:
+  - Setting up memory service;
+  - Initialize MMI handler database for MM user mode;
+  - Initialize protocol database for MM user mode;
+  - Iterate through the HOB list and discover the loaded MM standalone drivers, as well as their dependencies, and dispatch
+  accordingly;
 - Normal MMI handling: Subsequent invocations will be from the Rust MM supervisor during normal MMI handling to demote
-  to MM user mode for Ring3 broker execution.
+  to MM user mode for Rust user core execution.
 - Exception Handling: Invocations from the supervisor to log exceptions.
 
-When the supervisor demotes to MM user mode for Ring3 broker execution, RCX will contain the opcode for needed operation.
+When the supervisor demotes to MM user mode for Rust user core execution, RCX will contain the opcode for needed operation.
 
-#### MM Ring3 Broker `Nutrient` Content
+#### MM Rust User Core `Nutrient` Content
 
-With the above design in place, the first attempt will keep the ring3 broker in parallel with the patina_dxe_core.
+With the above design in place, the first attempt will keep the rust user core in parallel with the patina_dxe_core.
 The Rust MM supervisor should consist of the following main components:
 
 | Component | Description | Executor | Status |
 | - | - | - | - |
-| Initialization Routine | The one-time initialization routine for the ring3 broker | BSP | Similar to the entrypoint of patina_dxe_core, but needs some moderate adaptations |
+| Initialization Routine | The one-time initialization routine for the rust user core | BSP | Similar to the entrypoint of patina_dxe_core, but needs some moderate adaptations |
 | Protocol Database | The protocol database for MM user mode | BSP | patina_dxe_core protocol DB, needs file relocation and non-TPL based lock |
 | MMI Handler Database | The MMI handler database for MM user mode | BSP | To be implemented |
 | MM services table | The MM services table (gMmst) for MM user mode | BSP | To be implemented |
@@ -517,21 +568,21 @@ The Rust MM supervisor should consist of the following main components:
 | Pool Allocator | The pool allocator for user mode allocations | BSP | patina_dxe_core allocator, needs file relocation |
 | Shim MP Services | The MP services that requests supervisor to perform operations on behalf of MM user mode | BSP | To be implemented |
 
-### MM User Mode Driver Model
+### MM User Mode Component Model
 
 ### Telemetry Reporting and Fail Fast Mechanism
 
-The telemetry reporting and fail fast mechanism will be hosted in the Rust ring3 broker in the form of a component so that
-the coverage will be comprehensive since the boot phase.
+The telemetry reporting and fail fast mechanism will be hosted in the Rust user core in the form of a patina component so
+that the coverage will be comprehensive since the boot phase.
 
 When this operation is invoked from supervisor mode, the Rust MM supervisor will pass the some information from the exception
-site to the Ring3 broker for logging, including:
+site to the Rust user core for logging, including:
 
 - Instruction pointer (RIP)
 - Exception type
 
-The exception logging will be done in the Ring3 broker, which will format the information log entry into a predefined WHEA
-section, formatted as below:
+The exception logging will be done in the Rust user core, which will format the information log entry into a predefined
+WHEA section, formatted as below:
 
 ```Rust
 struct MmExceptionLogEntry {
@@ -552,10 +603,10 @@ pub const WHEA_TELEMETRY_SECTION_TYPE_GUID: efi::Guid =
     efi::Guid::from_fields(0x85183a8b, 0x9c41, 0x429c, 0x93, 0x9c, &[0x5c, 0x3c, 0x08, 0x7c, 0xa2, 0x80]);
 ```
 
-If the UEFI variable service is available, the Ring3 broker will attempt to write the log entry into a HwErrRec UEFI
+If the UEFI variable service is available, the Rust user core will attempt to write the log entry into a HwErrRec UEFI
 variable for persistence across reboots. Otherwise, it will store the log entry into CMOS for retrieval across reboots.
 
-Fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Ring3 broker
+Fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Rust user core
 will inject a fatal error into the HEST table before returning back to supervisor mode.
 
 Once back in supervisor mode, the Rust MM supervisor will inject an NMI into the current core before returning, which will
@@ -591,7 +642,7 @@ The Rust-based MM supervisor will provide a safer and more efficient implementat
 safety guarantees and modern features. It will be integrated with the Patina framework to ensure a consistent and efficient
 implementation.
 
-  The supervisor will handle MMIs, manage memory and page tables, and enforce security policies, while the Ring3 broker
+  The supervisor will handle MMIs, manage memory and page tables, and enforce security policies, while the Rust user core
   will provide a safe interface for MM clients to interact with the MM supervisor.
 
   The Rust MM supervisor will be designed to minimize the amount of code in supervisor mode, reduce the attack surface,
@@ -608,13 +659,13 @@ as well as closing and locking MMRAMs after initialization.
 2. __MM Foundation Setup__: The MM foundation setup will be performed by the MM initialization module, which will prepare
 the environment for the Rust MM supervisor. This includes initializing memory services, setting up MM entry code, stack
 buffers, setting up page tables, initializing secure policies, setting up IDT and GDT, as well as privilege management routines.
-3. __MM Foundation Handoff__: The data prepared during the foundation setup phase will be updated to the Rust MM supervisor.
+3. __MM Foundation Handoff__: The data prepared during the mm_init phase will be updated to the Rust MM supervisor.
 The handoff data will is generated by the foundation setup module and will only include shared data and external data, but
 not initialization-only data.
 4. __MM Supervisor in Rust__: Once the foundation setup is complete, the first MMI will transfer control to the Rust MM
 supervisor. The Rust MM supervisor will then handle incoming MMIs, manage memory and page tables, and enforce security policies.
-5. __MM Ring3 Broker in Rust__: The MM Ring3 broker will run in the MM user mode, serving as the core component in the user
-mode while interacting with the Rust MM supervisor. The Ring3 broker will handle user mode operations and dispatch them
+5. __MM User Core in Rust__: The MM Rust user core will run in the MM user mode, serving as the core component in the user
+mode while interacting with the Rust MM supervisor. The Rust user core will handle user mode operations and dispatch them
 to the appropriate handlers in the Rust MM supervisor.
 
 ### User-Level Explanation
@@ -622,7 +673,7 @@ to the appropriate handlers in the Rust MM supervisor.
 A regular MM standalone MM driver will be execute in the MM user mode, and will interact with the MM supervisor through
 syscall. The Rust MM supervisor will handle these syscall, manage memory and page tables, and enforce security policies.
 
-The MM Ring3 broker will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
+The MM Rust user core will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
 required by MM clients, such as memory allocation, protocol database access, and MMI handler registration.
 
 The user modules will continue to use the library primitives from MmSupervisorPkg for interacting with the MM supervisor,
