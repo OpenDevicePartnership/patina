@@ -63,11 +63,11 @@
 //!     // Poll the debugger for any pending interrupts.
 //!     patina_debugger::poll_debugger();
 //!
-//!     // Break into the debugger if the debugger is enabled.
+//!     // Break into the debugger if the debugger is enabled and initialized.
 //!     patina_debugger::breakpoint();
 //!
 //!     // Cause a debug break unconditionally. This will crash the system
-//!     // if the debugger is not enabled. This should be used with extreme caution.
+//!     // if the debugger is not enabled or initialized. This should be used with extreme caution.
 //!     patina_debugger::breakpoint_unchecked();
 //! }
 //!
@@ -150,6 +150,9 @@ pub type MonitorCommandFn = dyn Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn
 /// platform specific debugger implementation. For safety, these routines should
 /// only be invoked on the global instance of the debugger.
 trait Debugger: Sync {
+    #[cfg(test)]
+    fn test_initialize(&'static self, initialized: bool);
+
     /// Initializes the debugger. Intended for core use only.
     fn initialize(
         &'static self,
@@ -159,6 +162,9 @@ trait Debugger: Sync {
 
     /// Checks if the debugger is enabled.
     fn enabled(&'static self) -> bool;
+
+    /// Checks if the debugger is initialized.
+    fn initialized(&'static self) -> bool;
 
     /// Notifies the debugger of a module load.
     fn notify_module_load(&'static self, module_name: &str, _address: usize, _length: usize);
@@ -223,17 +229,20 @@ pub fn initialize(interrupt_manager: &mut dyn InterruptManager, timer: Option<&'
     }
 }
 
-/// Invokes a debug break instruction if the debugger is enabled. This will cause
-/// the debugger to break in, if enabled. If the debugger is not enabled, this
-/// routine will have no effect.
+/// Invokes a debug break instruction if the debugger is enabled and initialized. This will cause
+/// the debugger to break in. If the debugger is not enabled and initialized, this routine will have no effect.
 pub fn breakpoint() {
     if enabled() {
-        breakpoint_unchecked();
+        if initialized() {
+            breakpoint_unchecked();
+        } else {
+            log::error!("Debugger breakpoint invoked before debugger initialized, not breaking in!");
+        }
     }
 }
 
 /// Invokes a debug break instruction unconditionally. If this routine is invoked when
-/// the debugger is not enabled, it will cause an unhandled exception.
+/// the debugger is not enabled and initialized, it will cause an unhandled exception.
 ///
 /// ## Important
 ///
@@ -267,6 +276,14 @@ pub fn poll_debugger() {
 pub fn enabled() -> bool {
     match DEBUGGER.get() {
         Some(debugger) => debugger.enabled(),
+        None => false,
+    }
+}
+
+/// Checks if the debugger is initialized.
+pub fn initialized() -> bool {
+    match DEBUGGER.get() {
+        Some(debugger) => debugger.initialized(),
         None => false,
     }
 }
@@ -372,6 +389,7 @@ mod tests {
     fn reset() {
         // Reset the global debugger for testing.
         DUMMY_DEBUGGER.enable(false);
+        DUMMY_DEBUGGER.test_initialize(false);
         if !DEBUGGER.is_completed() {
             set_debugger(&DUMMY_DEBUGGER);
         }
@@ -386,14 +404,23 @@ mod tests {
     }
 
     #[test]
+    #[serial(global_debugger)]
+    fn test_debug_break_not_initialized() {
+        reset();
+        DUMMY_DEBUGGER.enable(true);
+        // Ensure that invoking a debug break when the debugger is not initialized does not cause issues.
+        breakpoint();
+    }
+
+    #[test]
     #[should_panic(expected = "breakpoint_unchecked")]
     #[serial(global_debugger)]
-    fn test_debug_break_enabled() {
+    fn test_debug_break_enabled_and_initialized() {
         reset();
         // Enable the debugger.
         DUMMY_DEBUGGER.enable(true);
-
-        // Ensure that invoking a debug break when the debugger is enabled causes a panic.
+        DUMMY_DEBUGGER.test_initialize(true);
+        // Ensure that invoking a debug break when the debugger is enabled and initialized causes a panic.
         breakpoint();
     }
 }

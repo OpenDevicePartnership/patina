@@ -1,10 +1,9 @@
 [workspace]
-resolver = "2"
-
+resolver = "3"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "19.0.2"
+version = "20.0.2"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.89"
@@ -12,9 +11,9 @@ repository = "https://github.com/OpenDevicePartnership/patina"
 
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
-arm-gic = { version = "0.7.1" }
+arm-gic = { version = "0.7.2" }
 safe-mmio = { version = "0.2.5" }
-bitfield-struct = { version = "0.10" }
+bitfield-struct = { version = "0.12" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
 clap = { version = '4.5.36' }
@@ -29,30 +28,31 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
+memoffset = {version = "0.9.1" }
 mu_rust_helpers = { version = "3.0.2" }
 num-traits = { version = "0.2", default-features = false }
-patina = { version = "19.0.2", path = "sdk/patina" }
-patina_debugger = { version = "19.0.2", path = "core/patina_debugger" }
-patina_ffs = { version = "19.0.2", path = "sdk/patina_ffs" }
-patina_ffs_extractors = { version = "19.0.2", path = "sdk/patina_ffs_extractors" }
-patina_internal_collections = { version = "19.0.2", path = "core/patina_internal_collections", default-features = false }
-patina_internal_cpu = { version = "19.0.2", path = "core/patina_internal_cpu" }
-patina_internal_depex = { version = "19.0.2", path = "core/patina_internal_depex" }
-patina_internal_device_path = { version = "19.0.2", path = "core/patina_internal_device_path" }
+patina = { version = "20.0.2", path = "sdk/patina" }
+patina_debugger = { version = "20.0.2", path = "core/patina_debugger" }
+patina_ffs = { version = "20.0.2", path = "sdk/patina_ffs" }
+patina_ffs_extractors = { version = "20.0.2", path = "sdk/patina_ffs_extractors" }
+patina_internal_collections = { version = "20.0.2", path = "core/patina_internal_collections", default-features = false }
+patina_internal_cpu = { version = "20.0.2", path = "core/patina_internal_cpu" }
+patina_internal_depex = { version = "20.0.2", path = "core/patina_internal_depex" }
 patina_lzma_rs = { version = "0.3.1", default-features = false }
-patina_macro = { version = "19.0.2", path = "sdk/patina_macro" }
-patina_mm = { version = "19.0.2", path = "components/patina_mm" }
+patina_macro = { version = "20.0.2", path = "sdk/patina_macro" }
+patina_mm = { version = "20.0.2", path = "components/patina_mm" }
 patina_mtrr = { version = "^1.1.4" }
-patina_paging = { version = "10" }
-patina_performance = { version = "19.0.2", path = "components/patina_performance" }
-patina_smbios = { version = "19.0.2", path = "components/patina_smbios" }
-patina_stacktrace = { version = "19.0.2", path = "core/patina_stacktrace" }
+patina_paging = { version = "11" }
+patina_performance = { version = "20.0.2", path = "components/patina_performance" }
+patina_smbios = { version = "20.0.2", path = "components/patina_smbios" }
+patina_stacktrace = { version = "20.0.2", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
 scroll = { version = "0.13", default-features = false, features = ["derive"]}
 spin = { version = "^0.9" }
 syn = { version = "2" }
+time = { version = "0.3.47" }
 uart_16550 = { version = "^0.3.2" }
 uefi_corosensei = { version = "0.1.3", default-features = false }
 uuid = { version = "1.8", default-features = false }
@@ -65,7 +65,7 @@ criterion = { version = "^0.5" }
 env_logger = "0.11"
 mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
-ruint = { version = "1" }
+ruint = { version = "1.17.1" }
 serial_test = { version = "3.0" }
 winapi = { version = "0.3" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }

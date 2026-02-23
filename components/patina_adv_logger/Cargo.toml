@@ -1,6 +1,5 @@
 [package]
 name = "patina_adv_logger"
-resolver = "2"
 version.workspace = true
 repository.workspace = true
 license.workspace = true
@@ -32,5 +31,8 @@ clap = { workspace = true, features = ['derive'], optional = true }
 patina_dxe_core = { path = "../../patina_dxe_core" }
 
 [features]
-default = []
-std = ['clap']
+alloc = []
+reader = []
+component = ['alloc', 'reader']
+std = ['clap', 'alloc', 'reader']
+default = ['component']

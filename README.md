@@ -11,6 +11,10 @@ This repository hosts the Patina project - a Rust implementation of UEFI firmwar
 The goal of this project is to serve as a replacement for core UEFI firmware components so they are written in Pure
 Rust as opposed to Rust wrappers around core implementation still written in C.
 
+We host a [Patina Community Call](https://github.com/OpenDevicePartnership/patina/discussions/1270). Details are
+maintained in the discussion thread. We welcome participation from anyone interested in learning more about Patina and
+contributing to its development.
+
 ---
 
 <center>

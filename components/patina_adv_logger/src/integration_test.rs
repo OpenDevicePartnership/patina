@@ -17,8 +17,9 @@ use patina::{
 };
 use r_efi::efi;
 
-use crate::{memory_log, protocol::AdvancedLoggerProtocol};
+use crate::{memory_log, protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
 
+#[coverage(off)]
 #[patina_test]
 fn adv_logger_test(bs: StandardBootServices) -> patina::test::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
@@ -55,15 +56,20 @@ fn adv_logger_test(bs: StandardBootServices) -> patina::test::Result {
     // Check that the strings were added to the log.
     // SAFETY: We know this memory is safe and well structure as we just created it
     //         using the counterpart functions.
-    let log = unsafe { memory_log::AdvancedLog::adopt_memory_log(protocol.log_info) };
+    let log = unsafe { AdvancedLogReader::from_address(protocol.log_info) };
     u_assert!(log.is_some(), "adv_logger_test: Failed to adopt the memory log.");
     let log_info = log.unwrap();
     let mut direct_found = false;
     let mut protocol_found = false;
+
+    // Check if direct info logs have been explicitly disabled, if so just ignore the direct message checks.
+    if log::STATIC_MAX_LEVEL < log::LevelFilter::Info {
+        direct_found = true;
+    }
+
     for entry in log_info.iter() {
-        let log_str = core::str::from_utf8(entry.get_message());
-        u_assert!(log_str.is_ok(), "adv_logger_test: Failed to convert log entry to string.");
-        let log_str = log_str.unwrap();
+        // skip any messages that aren't valid UTF-8, we only care about the messages we just logged
+        let Ok(log_str) = core::str::from_utf8(entry.get_message()) else { continue };
 
         if log_str.contains(DIRECT_STR) {
             direct_found = true;

@@ -88,12 +88,12 @@ fn add_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 }
 
 fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+    let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
 
-    let init = |count: usize| -> Scheduler {
+    let mut init = |count: usize| -> Scheduler {
         let mut core = Scheduler::new();
         // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
-        core.storage.set_boot_services(StandardBootServices::new(unsafe { &*mock_bs.as_ptr() }));
+        core.storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
         for _ in 0..count {
             core = core.with_component(TestComponent);
         }
@@ -110,12 +110,12 @@ fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 }
 
 fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+    let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
 
     let init = || -> Scheduler {
         let mut core = Scheduler::new();
         // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
-        core.storage.set_boot_services(StandardBootServices::new(unsafe { &*mock_bs.as_ptr() }));
+        core.storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
         core
     };
 

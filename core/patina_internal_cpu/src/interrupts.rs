@@ -30,6 +30,9 @@ mod stub;
 #[cfg(any(target_arch = "x86_64", test))]
 mod x64;
 
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::gic_manager;
+
 // For std builds, publish the stub version of the interrupt functions.
 cfg_if::cfg_if! {
     if #[cfg(not(target_os = "uefi"))] {
@@ -58,7 +61,6 @@ cfg_if::cfg_if! {
         pub use x64::get_interrupt_state;
     } else if #[cfg(target_arch = "aarch64")] {
         pub type Interrupts = aarch64::InterruptsAarch64;
-        pub use aarch64::gic_manager;
         pub use aarch64::enable_interrupts;
         pub use aarch64::disable_interrupts;
         pub use aarch64::get_interrupt_state;

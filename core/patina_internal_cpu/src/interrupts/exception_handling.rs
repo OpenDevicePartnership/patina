@@ -15,11 +15,17 @@ use crate::interrupts::EfiExceptionStackTrace;
 
 use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerType};
 
+// Architecture-specific exception type counts.
+// x86_64: 256 IDT entries
+// AArch64: 4 types (Synchronous, IRQ, FIQ, SError)
+const NUM_EXCEPTION_TYPES_X86_64: usize = 256;
+const NUM_EXCEPTION_TYPES_AARCH64: usize = 4;
+
 // Different architecture have a different number of exception types.
 const NUM_EXCEPTION_TYPES: ExceptionType = if cfg!(test) || cfg!(target_arch = "x86_64") {
-    256
+    NUM_EXCEPTION_TYPES_X86_64
 } else if cfg!(target_arch = "aarch64") {
-    3
+    NUM_EXCEPTION_TYPES_AARCH64
 } else {
     panic!("Unimplemented architecture!");
 };
@@ -211,5 +217,13 @@ mod tests {
         unregister_exception_handler(NUM_EXCEPTION_TYPES).expect_err("Allowed N+1 exception type un-registration!");
 
         register_exception_handler(0, HandlerType::None).expect_err("Allowed none exception handler registration!");
+    }
+
+    #[test]
+    fn test_num_exception_types() {
+        // Verify expected exception type counts per architecture.
+        // If changing these values, verify they match the assembly definitions.
+        assert_eq!(NUM_EXCEPTION_TYPES_X86_64, 256);
+        assert_eq!(NUM_EXCEPTION_TYPES_AARCH64, 4);
     }
 }

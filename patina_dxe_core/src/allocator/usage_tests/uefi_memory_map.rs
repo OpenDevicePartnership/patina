@@ -140,7 +140,6 @@
 //!
 
 #[cfg(test)]
-#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
     use crate::{
         allocator::{get_memory_map, init_memory_support, reset_allocators},
@@ -648,7 +647,7 @@ mod tests {
             .with_memory_allocation(MemoryAllocationConfig {
                 memory_type: efi::RUNTIME_SERVICES_DATA,
                 memory_base_address: SIZE_4MB as u64,
-                memory_length: SIZE_4KB as u64,
+                memory_length: crate::allocator::RUNTIME_PAGE_ALLOCATION_GRANULARITY as u64,
                 name: ZERO,
             })
     }

@@ -18,6 +18,7 @@ use core::{
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
+    device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
     efi_types::EfiMemoryType,
     error::EfiError,
     guids,
@@ -32,7 +33,6 @@ use patina::{
     },
     uefi_size_to_pages,
 };
-use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use r_efi::efi;
 
 use crate::{
@@ -62,6 +62,14 @@ use uefi_corosensei::{
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
+
+/// PE/COFF Specification Machine Types
+#[cfg(target_arch = "x86_64")]
+const EXPECTED_IMAGE_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_X64;
+#[cfg(target_arch = "aarch64")]
+const EXPECTED_IMAGE_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_AARCH64;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!("Unsupported target_arch for PE/COFF image loading");
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
@@ -809,7 +817,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                 Err(ImageStatus::LoadError(err)) => return err.into(),
             };
 
-        // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
+        // SAFETY: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
         unsafe { image_handle.write_unaligned(handle) };
         status
     }
@@ -926,7 +934,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                 && !exit_data_size.is_null()
                 && !exit_data.is_null()
             {
-                // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
+                // SAFETY: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
                 unsafe {
                     exit_data_size.write_unaligned(image_exit_data.0);
                     exit_data.write_unaligned(image_exit_data.1);
@@ -1181,6 +1189,15 @@ fn core_load_pe_image(
 
     let pe_file_name = pe_info.filename_or("Unknown");
 
+    if pe_info.machine != EXPECTED_IMAGE_MACHINE {
+        log::error!(
+            "core_load_pe_image failed: {pe_file_name} unsupported machine type {:#x?} (expected {:#x?})",
+            pe_info.machine,
+            EXPECTED_IMAGE_MACHINE
+        );
+        return Err(EfiError::Unsupported);
+    }
+
     // based on the image type, determine the correct allocator and code/data types.
     let (code_type, data_type) = match pe_info.image_type {
         EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION => (efi::LOADER_CODE, efi::LOADER_DATA),
@@ -1224,9 +1241,10 @@ fn core_load_pe_image(
 
     private_info.load_resource_section(image)?;
 
-    // If we are not NX compatible and a runtime driver, we need to attempt to activate compatibility mode.
+    // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
+    // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
-    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER && !private_info.pe_info.nx_compat {
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat {
         private_info.activate_compatibility_mode()?;
     } else {
         // finally, update the GCD attributes for this image so that code sections have RO set and data sections
@@ -1491,12 +1509,40 @@ mod tests {
             hob::{HobList, MemoryAllocationModule, header::MemoryAllocation},
         },
     };
-    use patina_internal_device_path::device_path_node_count;
     use r_efi::{
         efi,
         protocols::device_path::{End, Hardware, Media, TYPE_END, TYPE_HARDWARE, TYPE_MEDIA},
     };
     use std::{fs::File, io::Read, ptr::NonNull, slice::from_raw_parts};
+
+    #[cfg(target_arch = "aarch64")]
+    mod test_paths {
+        pub const RUST_IMAGE: &str = crate::test_collateral!("aarch64/HelloWorldRustDxe.efi");
+        pub const RUST_IMAGE_HII_RESOURCE: &str = crate::test_collateral!("aarch64/tftpDynamicCommand.efi");
+        pub const RUST_IMAGE_EFI_APP: &str = crate::test_collateral!("aarch64/ConfApp.efi");
+        pub const RUST_IMAGE_RUNTIME_DRIVER: &str = crate::test_collateral!("aarch64/VariableSmmRuntimeDxe.efi");
+        pub const RUST_IMAGE_SECTION_ALIGNMENT_200: &str =
+            crate::test_collateral!("aarch64/MetronomeDxe_section_alignment_200.efi");
+        pub const RUST_IMAGE_INVALID_SIZE_OF_IMAGE: &str =
+            crate::test_collateral!("aarch64/MetronomeDxe_invalid_size_of_image.efi");
+        pub const RUST_IMAGE_INVALID_DIR_NAME_OFFSET_HII: &str =
+            crate::test_collateral!("aarch64/invalid_directory_name_offset_hii.pe32");
+        pub const RUST_IMAGE_INVALID_RELOC_DIR_SIZE: &str =
+            crate::test_collateral!("aarch64/MetronomeDxe_invalid_relocation_directory_size.efi");
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    mod test_paths {
+        pub const RUST_IMAGE: &str = crate::test_collateral!("RustImageTestDxe.efi");
+        pub const RUST_IMAGE_HII_RESOURCE: &str = crate::test_collateral!("test_image_msvc_hii.pe32");
+        pub const RUST_IMAGE_EFI_APP: &str = crate::test_collateral!("subsystem_efi_application.efi");
+        pub const RUST_IMAGE_RUNTIME_DRIVER: &str = crate::test_collateral!("subsystem_efi_runtime_driver.efi");
+        pub const RUST_IMAGE_SECTION_ALIGNMENT_200: &str = crate::test_collateral!("section_alignment_200.efi");
+        pub const RUST_IMAGE_INVALID_SIZE_OF_IMAGE: &str = crate::test_collateral!("invalid_size_of_image.efi");
+        pub const RUST_IMAGE_INVALID_DIR_NAME_OFFSET_HII: &str =
+            crate::test_collateral!("invalid_directory_name_offset_hii.pe32");
+        pub const RUST_IMAGE_INVALID_RELOC_DIR_SIZE: &str =
+            crate::test_collateral!("invalid_relocation_directory_size.efi");
+    }
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
@@ -1504,6 +1550,14 @@ mod tests {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                crate::GCD.reset();
+                crate::PROTOCOL_DB.reset();
+            });
+
             f();
         })
         .unwrap();
@@ -1536,8 +1590,7 @@ mod tests {
     #[test]
     fn load_image_should_load_the_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1564,8 +1617,7 @@ mod tests {
     #[test]
     fn load_image_should_pass_for_subsystem_efi_application() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("subsystem_efi_application.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_EFI_APP).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1586,8 +1638,7 @@ mod tests {
     #[test]
     fn load_image_should_pass_for_subsystem_efi_runtime_driver() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("subsystem_efi_runtime_driver.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_RUNTIME_DRIVER).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1627,10 +1678,39 @@ mod tests {
     }
 
     #[test]
+    fn load_image_should_fail_for_arch_mismatch() {
+        with_locked_state(|| {
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            #[cfg(target_arch = "x86_64")]
+            const MISMATCH_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_AARCH64;
+            #[cfg(target_arch = "aarch64")]
+            const MISMATCH_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_X64;
+
+            set_coff_machine(&mut image, MISMATCH_MACHINE);
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let result = PI_DISPATCHER.load_image(
+                false,
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                Some(image.as_slice()),
+            );
+
+            assert!(matches!(result, Err(ImageStatus::LoadError(EfiError::Unsupported))));
+        });
+    }
+
+    #[test]
     fn load_image_should_fail_for_section_alignment_not_multiple_of_uefi_page_size() {
         with_locked_state(|| {
             let mut test_file =
-                File::open(test_collateral!("section_alignment_200.efi")).expect("failed to open test file.");
+                File::open(test_paths::RUST_IMAGE_SECTION_ALIGNMENT_200).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1651,7 +1731,7 @@ mod tests {
     fn load_image_should_fail_for_incorrect_size_of_image() {
         with_locked_state(|| {
             let mut test_file =
-                File::open(test_collateral!("invalid_size_of_image.efi")).expect("failed to open test file.");
+                File::open(test_paths::RUST_IMAGE_INVALID_SIZE_OF_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1672,8 +1752,8 @@ mod tests {
     #[test]
     fn load_image_should_fail_for_hii_section_has_invalid_directory_name_offset() {
         with_locked_state(|| {
-            let mut test_file = File::open(test_collateral!("invalid_directory_name_offset_hii.pe32"))
-                .expect("failed to open test file.");
+            let mut test_file =
+                File::open(test_paths::RUST_IMAGE_INVALID_DIR_NAME_OFFSET_HII).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1694,8 +1774,8 @@ mod tests {
     #[test]
     fn load_image_should_fail_for_invalid_relocation_directory_size() {
         with_locked_state(|| {
-            let mut test_file = File::open(test_collateral!("invalid_relocation_directory_size.efi"))
-                .expect("failed to open test file.");
+            let mut test_file =
+                File::open(test_paths::RUST_IMAGE_INVALID_RELOC_DIR_SIZE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1712,8 +1792,7 @@ mod tests {
     #[test]
     fn load_image_should_authenticate_the_image_with_security_arch() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1767,8 +1846,7 @@ mod tests {
     #[test]
     fn load_image_should_authenticate_the_image_with_security2_arch() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1848,8 +1926,7 @@ mod tests {
     #[test]
     fn load_image_with_auth_err_security_violation_should_continue_to_load_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1902,8 +1979,7 @@ mod tests {
     #[test]
     fn load_image_with_auth_err_access_denied_should_exit_early_and_not_load_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1949,8 +2025,7 @@ mod tests {
     #[test]
     fn load_image_with_auth_err_unexpected_should_exit_early_and_not_load_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -1997,8 +2072,7 @@ mod tests {
     #[test]
     fn start_image_should_start_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2043,8 +2117,7 @@ mod tests {
     #[test]
     fn start_image_error_status_should_unload_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2098,8 +2171,7 @@ mod tests {
     #[test]
     fn unload_non_started_image_should_unload_the_image() {
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2167,7 +2239,7 @@ mod tests {
         buffer_size: *mut usize,
         buffer: *mut c_void,
     ) -> efi::Status {
-        let mut test_file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
         // SAFETY: Test mock - creating a mutable slice from the provided buffer pointer.
         unsafe {
             let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
@@ -2187,7 +2259,7 @@ mod tests {
         size: *mut usize,
         buffer: *mut c_void,
     ) -> efi::Status {
-        let test_file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        let test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
         let file_info = efi::protocols::file::Info {
             size: core::mem::size_of::<efi::protocols::file::Info>() as u64,
             file_size: test_file.metadata().unwrap().len(),
@@ -2357,8 +2429,7 @@ mod tests {
 
             let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2379,8 +2450,7 @@ mod tests {
                 buffer_size: *mut usize,
                 buffer: *mut c_void,
             ) -> efi::Status {
-                let mut test_file =
-                    File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+                let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
                 let status;
                 // SAFETY: Test mock - reading file into caller's buffer if large enough.
                 unsafe {
@@ -2422,8 +2492,7 @@ mod tests {
 
             let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2446,8 +2515,7 @@ mod tests {
         //
         // Also validates section alignment by directly calling core_load_pe_image().
         with_locked_state(|| {
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2617,8 +2685,7 @@ mod tests {
             }
 
             // Load a valid test image as a template
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2683,8 +2750,7 @@ mod tests {
             }
 
             // Load a valid test image as a template
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2757,8 +2823,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2798,8 +2863,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2835,8 +2899,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2869,8 +2932,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2899,8 +2961,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2936,8 +2997,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -2976,8 +3036,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -3024,6 +3083,12 @@ mod tests {
             ]),
             _ => None,
         }
+    }
+
+    fn set_coff_machine(image: &mut [u8], machine: u16) {
+        let pe_offset = u32::from_le_bytes(image[0x3C..0x40].try_into().unwrap()) as usize;
+        let machine_offset = pe_offset + 4;
+        image[machine_offset..machine_offset + 2].copy_from_slice(&machine.to_le_bytes());
     }
 
     /// Converts a string file path into a FILEPATH device path node.
@@ -3094,8 +3159,7 @@ mod tests {
             }
 
             // Load the valid image.
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -3157,8 +3221,7 @@ mod tests {
                 .unwrap();
 
             // Load the valid image.
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -3198,7 +3261,7 @@ mod tests {
     }
 
     fn create_dxe_core_hob() -> HobList<'static> {
-        let mut test_file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
         let mut image: Vec<u8> = Vec::new();
         test_file.read_to_end(&mut image).expect("failed to read test file");
 
@@ -3245,6 +3308,8 @@ mod tests {
             )
         });
 
+        let hobs = hobs.leak();
+
         let mut hob_list = HobList::new();
         hob_list.discover_hobs(hobs.as_ptr() as *mut c_void);
 
@@ -3262,8 +3327,7 @@ mod tests {
                 init_system_table();
             }
 
-            let mut test_file =
-                File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+            let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 

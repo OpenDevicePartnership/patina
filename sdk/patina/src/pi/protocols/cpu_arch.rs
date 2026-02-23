@@ -28,7 +28,7 @@ pub enum CpuFlushType {
     /// Write-back cache only.
     EfiCpuFlushTypeWriteBack,
     /// Invalidate cache only.
-    EFiCpuFlushTypeInvalidate,
+    EfiCpuFlushTypeInvalidate,
 }
 
 /// Flushes a range of the processor's data cache. If the processor does not contain a data cache or the data cache is

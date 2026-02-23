@@ -599,9 +599,11 @@ impl SpinLockedFixedSizeBlockAllocator {
         }
 
         let descriptor =
-            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
+            self.gcd.get_existent_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| {
+                match err {
+                    EfiError::NotFound => err,
+                    _ => EfiError::InvalidParameter,
+                }
             })?;
 
         if descriptor.image_handle != self.handle {
@@ -877,7 +879,8 @@ mod tests {
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
-            gcd.init_memory_blocks(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB).unwrap();
+            gcd.init_memory_blocks(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB, efi::MEMORY_WB)
+                .unwrap();
         }
         base
     }

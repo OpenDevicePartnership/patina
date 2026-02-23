@@ -150,9 +150,9 @@ pub struct Protocol {
     pub set_info: SetInfo,
 }
 
-// Safety: The only non-send type in this structure is `Handle` which itself is actually `Send` as it is an opaque
+// SAFETY: The only non-send type in this structure is `Handle` which itself is actually `Send` as it is an opaque
 // pointer used purely as a token for identification purposes.
 unsafe impl Send for Protocol {}
-// Safety: The only non-sync type in this structure is `Handle` which itself is actually `Send` as it is an opaque
+// SAFETY: The only non-sync type in this structure is `Handle` which itself is actually `Send` as it is an opaque
 // pointer used purely as a token for identification purposes.
 unsafe impl Sync for Protocol {}

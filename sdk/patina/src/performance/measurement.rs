@@ -487,20 +487,12 @@ fn get_module_guid_from_handle(
     Ok(guid)
 }
 
-/// This device path is used by systems implementing the UEFI PI Specification 1.0 to describe a firmware file.
-#[repr(C)]
-pub struct MediaFwVolFilepathDevicePath {
-    header: efi::protocols::device_path::Protocol,
-    /// Firmware file name
-    fv_file_name: efi::Guid,
-}
-
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
     use super::*;
 
-    use crate as patina;
+    use crate::{self as patina, device_path::fv_types::MediaFwVolDevicePath};
 
     use alloc::rc::Rc;
     use core::{
@@ -598,14 +590,14 @@ mod tests {
         let mut boot_services = MockBootServices::new();
 
         let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
-        let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolFilepathDevicePath>::zeroed();
+        let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolDevicePath>::zeroed();
         // SAFETY: Test code - initializing test structures for device path protocol mocking.
         unsafe {
             media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
             media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
             media_fw_vol_file_path_device_path.assume_init_mut().header.length =
-                (mem::size_of::<MediaFwVolFilepathDevicePath>() as u16).to_le_bytes();
-            media_fw_vol_file_path_device_path.assume_init_mut().fv_file_name = efi::Guid::from_bytes(&[3; 16]);
+                (mem::size_of::<MediaFwVolDevicePath>() as u16).to_le_bytes();
+            media_fw_vol_file_path_device_path.assume_init_mut().name = efi::Guid::from_bytes(&[3; 16]);
 
             loaded_image_protocol.assume_init_mut().file_path =
                 media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;

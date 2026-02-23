@@ -75,7 +75,7 @@ extern "efiapi" fn get_memory_attributes(
     }
 
     if let Some(attrs) = found_attrs {
-        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
         unsafe { attributes.write_unaligned(attrs) };
         efi::Status::SUCCESS
     } else {
@@ -384,6 +384,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -426,6 +427,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -469,6 +471,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -513,6 +516,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -567,6 +571,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -612,6 +617,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -659,6 +665,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();
@@ -704,6 +711,7 @@ mod tests {
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     0x110000,
+                    efi::MEMORY_WB,
                     efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
                 )
                 .unwrap();

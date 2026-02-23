@@ -348,7 +348,7 @@ impl <P: Platform> Core<P> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Safety: caller must ensure that file_name is a valid pointer. It is null-checked above.
+        // SAFETY: caller must ensure that file_name is a valid pointer. It is null-checked above.
         let file_name = unsafe { file_name.read_unaligned() };
 
         match Self::instance().uefi_state.dispatcher_context.trust(firmware_volume_handle, &file_name) {

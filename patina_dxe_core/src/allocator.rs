@@ -28,7 +28,7 @@ use mu_rust_helpers::function;
 
 use crate::{
     GCD, config_tables,
-    gcd::{self, AllocateType as AllocationStrategy, MemoryProtectionPolicy},
+    gcd::{self, AllocateType as AllocationStrategy},
     memory_attributes_table::MemoryAttributesTable,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
@@ -46,8 +46,7 @@ pub use uefi_allocator::UefiAllocator;
 use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guids::{self, HOB_MEMORY_ALLOC_STACK},
-    uefi_size_to_pages,
+    guids, uefi_size_to_pages,
 };
 
 // Type alias for a UefiAllocator with a SpinLockedFixedSizeBlockAllocator
@@ -568,6 +567,8 @@ impl AllocatorMap {
 
     // resets the ALLOCATOR map to empty and resets the static allocators.
     #[cfg(test)]
+    // SAFETY: Caller must ensure that no allocations are active and that no other
+    // contexts can concurrently access the allocator during this call.
     unsafe fn reset(&mut self) {
         self.map.clear();
         let _ = for_each_static_allocator!(alloc => {
@@ -590,7 +591,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
 
     match core_allocate_pool(pool_type, size) {
         Err(err) => err.into(),
-        // Safety: caller must ensure that buffer is a valid pointer. It is null-checked above.
+        // SAFETY: caller must ensure that buffer is a valid pointer. It is null-checked above.
         Ok(allocation) => unsafe {
             buffer.write_unaligned(allocation);
             efi::Status::SUCCESS
@@ -608,7 +609,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
     match ALLOCATORS.lock().get_or_create_allocator(pool_type, handle) {
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
-
+            // SAFETY: buffer is declared above, we pass the address which guarantees it is a valid pointer.
             unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)).map(|_| buffer) }
         }
         Err(err) => Err(err),
@@ -627,6 +628,8 @@ pub fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
         return Err(EfiError::InvalidParameter);
     }
     let allocators = ALLOCATORS.lock();
+    // SAFETY: caller must ensure that buffer is a valid pointer and that it was
+    // originally allocated via allocate_pool(). It is null-checked above.
     unsafe {
         if for_each_static_allocator!(alloc => alloc.free_pool(buffer).is_ok())
             || allocators.iter_dynamic().any(|allocator| allocator.free_pool(buffer).is_ok())
@@ -674,12 +677,12 @@ pub fn core_allocate_pages(
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
-                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                    // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::TopDown(Some(address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
-                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                    // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::Address(address as usize), pages, alignment)
                 }
@@ -687,7 +690,7 @@ pub fn core_allocate_pages(
             };
 
             if let Ok(ptr) = result {
-                // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
+                // SAFETY: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                 unsafe { memory.write_unaligned(ptr.expose_provenance().get() as u64) }
                 Ok(())
             } else {
@@ -746,6 +749,8 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 
     let mut memory_type = efi::CONVENTIONAL_MEMORY;
 
+    // SAFETY: caller must ensure that memory is a valid address and that they have
+    // exclusive ownership of this memory. It is validated above.
     let res = unsafe {
         if try_each_static_allocator!(memory_type, alloc => {
             alloc.free_pages(memory as usize, pages)
@@ -779,12 +784,12 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 }
 
 extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void, length: usize) {
-    // Safety: caller must ensure that the source and destination are valid for length bytes.
+    // SAFETY: caller must ensure that the source and destination are valid for length bytes.
     unsafe { core::ptr::copy(source as *mut u8, destination as *mut u8, length) }
 }
 
 extern "efiapi" fn set_mem(buffer: *mut c_void, size: usize, value: u8) {
-    // Safety: caller must ensure that the buffer is valid for size bytes.
+    // SAFETY: caller must ensure that the buffer is valid for size bytes.
     unsafe {
         let dst_buffer = from_raw_parts_mut(buffer as *mut u8, size);
         dst_buffer.fill(value);
@@ -803,20 +808,21 @@ extern "efiapi" fn get_memory_map(
     }
 
     if !descriptor_size.is_null() {
-        // Safety: caller must ensure that descriptor_size is a valid pointer if it is not null.
+        // SAFETY: caller must ensure that descriptor_size is a valid pointer if it is not null.
         unsafe { descriptor_size.write_unaligned(mem::size_of::<efi::MemoryDescriptor>()) };
     }
 
     if !descriptor_version.is_null() {
-        // Safety: caller must ensure that descriptor_version is a valid pointer if it is not null.
+        // SAFETY: caller must ensure that descriptor_version is a valid pointer if it is not null.
         unsafe { descriptor_version.write_unaligned(efi::MEMORY_DESCRIPTOR_VERSION) };
     }
 
-    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
     assert_ne!(required_map_size, 0);
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(required_map_size) };
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
@@ -828,7 +834,7 @@ extern "efiapi" fn get_memory_map(
 
     let descriptor_count = map_size / mem::size_of::<efi::MemoryDescriptor>();
 
-    // Safety: caller must ensure that memory_map is a valid pointer for at least descriptor_count elements.
+    // SAFETY: caller must ensure that memory_map is a valid pointer for at least descriptor_count elements.
     // It is null-checked above and the size has been validated.
     let buffer = unsafe { slice::from_raw_parts_mut(memory_map, descriptor_count) };
 
@@ -839,10 +845,10 @@ extern "efiapi" fn get_memory_map(
     let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
 
     // Write back the actual map size after merging
-    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
+    // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(actual_map_size) };
 
-    // Safety: caller must ensure that map_key is a valid pointer if it is not null.
+    // SAFETY: caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
         if !map_key.is_null() {
             let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, actual_map_size);
@@ -919,7 +925,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let mut address = desc.memory_base_address;
-                match GCD.get_memory_descriptor_for_address(address) {
+                match GCD.get_existent_memory_descriptor_for_address(address) {
                     // we found the region in the GCD, so we can allocate it
                     Ok(gcd_desc) => {
                         if gcd_desc.base_address == desc.memory_base_address
@@ -1020,7 +1026,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
                 //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
                 //to reserve it in the GCD.
-                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address)
+                if let Ok(existing_desc) = GCD.get_existent_memory_descriptor_for_address(*base_address)
                     && (existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
                         || existing_desc.image_handle != INVALID_HANDLE)
                 {
@@ -1049,74 +1055,12 @@ fn process_hob_allocations(hob_list: &HobList) {
         };
     }
 
-    // Find the stack hob and set attributes.
-    if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
-        patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
-            if desc.name == HOB_MEMORY_ALLOC_STACK =>
-        {
-            Some(desc)
-        }
-        _ => None,
-    }) {
-        log::trace!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
-        let stack_address = stack_hob.memory_base_address;
-        let stack_length = stack_hob.memory_length;
-
-        assert!(
-            stack_address != 0 && stack_length != 0,
-            "Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}"
-        );
-
-        match GCD.get_memory_descriptor_for_address(stack_address) {
-            Ok(gcd_desc) => {
-                // Set Stack region to execute protect. We use the allocated memory protection policy here because
-                // that matches our standard policy
-                let attributes =
-                    GCD.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
-                match GCD.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
-                    Ok(_) | Err(EfiError::NotReady) => (),
-                    Err(e) => {
-                        log::error!(
-                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
-                            stack_address,
-                            stack_length,
-                            e
-                        );
-                        debug_assert!(false);
-                    }
-                }
-                // Set Guard page to read protect. We keep the NX and cache attributes from above
-                match GCD.set_memory_space_attributes(
-                    stack_address as usize,
-                    UEFI_PAGE_SIZE,
-                    MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
-                ) {
-                    Ok(_) | Err(EfiError::NotReady) => (),
-                    Err(e) => {
-                        log::error!(
-                            "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
-                            stack_address,
-                            UEFI_PAGE_SIZE,
-                            e
-                        );
-                        debug_assert!(false);
-                    }
-                }
-            }
-            Err(_) => {
-                log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
-            }
-        }
-    } else {
-        panic!("No stack hob found");
-    }
-
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
     // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
     // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
     // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
-    match GCD.get_memory_descriptor_for_address(0) {
+    match GCD.get_existent_memory_descriptor_for_address(0) {
         Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
             let mut address: efi::PhysicalAddress = 0;
             if core_allocate_pages(
@@ -1174,7 +1118,7 @@ pub fn init_memory_support(hob_list: &HobList) {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
-                // Safety: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
+                // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
                 // requirement for EfiMemoryTypeInformation), and length is calculated above to fit within the
                 // Guid HOB data. Assert if alignment is not as expected.
                 assert_eq!(memory_type_slice_ptr.align_offset(mem::align_of::<EFiMemoryTypeInformation>()), 0);
@@ -1218,7 +1162,8 @@ pub fn init_memory_support(hob_list: &HobList) {
     }
 }
 
-pub fn install_memory_services(bs: &mut efi::BootServices) {
+pub fn install_memory_services(st: &mut EfiSystemTable) {
+    let mut bs = st.boot_services().get();
     bs.allocate_pages = allocate_pages;
     bs.free_pages = free_pages;
     bs.allocate_pool = allocate_pool;
@@ -1226,17 +1171,22 @@ pub fn install_memory_services(bs: &mut efi::BootServices) {
     bs.copy_mem = copy_mem;
     bs.set_mem = set_mem;
     bs.get_memory_map = get_memory_map;
+    st.boot_services().set(bs);
 }
 
 // Resets the ALLOCATOR map to empty and resets the static allocators for test purposes.
+// SAFETY: caller must ensure that they have exclusive access such that no other context
+// can modify any global state while it's being reset. A global lock is required.
 #[cfg(test)]
 pub(crate) unsafe fn reset_allocators() {
+    // SAFETY: call resets global allocator state. Should only be called when no
+    // allocations are active. A lock is used to ensure exclusive access preventing
+    // use while reset occurs.
     unsafe { ALLOCATORS.lock().reset() };
 }
 
 #[cfg(test)]
 #[coverage(off)]
-#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
 
     use crate::{
@@ -1248,15 +1198,59 @@ mod tests {
     use patina::pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
+    enum GcdInit {
+        /// Initializes a simple test GCD (via init_test_gcd()) with the given size.
+        WithSize(usize),
+        /// Initializes a GCD with the given HOB list size (via build_test_hob_list()).
+        WithHobList(usize),
+    }
+
+    /// Initializes global state with either a test GCD or a HOB list, then runs the given
+    /// closure `f` with the physical HOB list pointer (or null if a test GCD was used).
+    ///
+    /// Cleans up global state after `f` returns.
+    fn with_locked_state<F: Fn(*const c_void) + std::panic::RefUnwindSafe>(gcd_init: GcdInit, f: F) {
         test_support::with_global_lock(|| {
-            unsafe {
-                test_support::init_test_logger();
-                test_support::init_test_gcd(Some(gcd_size));
-                test_support::init_test_protocol_db();
-                test_support::reset_allocators();
-            }
-            f();
+            let physical_hob_list = match gcd_init {
+                GcdInit::WithSize(gcd_size) => {
+                    // SAFETY: multiple functions modify global state. Functions are
+                    // called within a global lock to ensure exclusive access during
+                    // initialization.
+                    unsafe {
+                        test_support::init_test_logger();
+                        test_support::init_test_gcd(Some(gcd_size));
+                        test_support::init_test_protocol_db();
+                        test_support::reset_allocators();
+                    }
+                    core::ptr::null()
+                }
+                GcdInit::WithHobList(hob_size) => {
+                    let physical_hob_list = build_test_hob_list(hob_size as u64);
+                    // SAFETY: multiple functions modify global state. Functions are
+                    // called within a global lock to ensure exclusive access during
+                    // initialization.
+                    unsafe {
+                        test_support::init_test_logger();
+                        gcd::init_gcd(physical_hob_list);
+                        test_support::init_test_protocol_db();
+                        test_support::reset_allocators();
+                    }
+                    physical_hob_list
+                }
+            };
+
+            let _guard = test_support::StateGuard::new(|| {
+                // SAFETY: Cleanup code runs with global lock held, resetting
+                // global state that was initialized above.
+                unsafe {
+                    GCD.reset();
+                    PROTOCOL_DB.reset();
+                    reset_allocators();
+                    ALLOCATORS.lock().reset();
+                }
+            });
+
+            f(physical_hob_list);
         })
         .unwrap();
     }
@@ -1264,28 +1258,22 @@ mod tests {
     #[test]
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
-        let boot_services = core::mem::MaybeUninit::zeroed();
-        let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-        install_memory_services(&mut boot_services);
-        assert!(boot_services.allocate_pages == allocate_pages);
-        assert!(boot_services.free_pages == free_pages);
-        assert!(boot_services.allocate_pool == allocate_pool);
-        assert!(boot_services.free_pool == free_pool);
-        assert!(boot_services.copy_mem == copy_mem);
-        assert!(boot_services.get_memory_map == get_memory_map);
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
+            let mut st = EfiSystemTable::allocate_new_table();
+            install_memory_services(&mut st);
+            let bs = st.boot_services().get();
+            assert!(bs.allocate_pages == allocate_pages);
+            assert!(bs.free_pages == free_pages);
+            assert!(bs.allocate_pool == allocate_pool);
+            assert!(bs.free_pool == free_pool);
+            assert!(bs.copy_mem == copy_mem);
+            assert!(bs.get_memory_map == get_memory_map);
+        })
     }
 
     #[test]
     fn init_memory_support_should_process_memory_bucket_hobs() {
-        test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x1000000);
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        with_locked_state(GcdInit::WithHobList(0x1000000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
@@ -1303,7 +1291,7 @@ mod tests {
             ));
 
             // Required memory allocation hob for stack
-            let mut stack_base_address = 0xEB000;
+            let mut stack_base_address = 0x18B000;
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
                 header: patina::pi::hob::header::Hob {
@@ -1312,7 +1300,7 @@ mod tests {
                     reserved: 0x00000000,
                 },
                 alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: HOB_MEMORY_ALLOC_STACK,
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -1333,27 +1321,18 @@ mod tests {
             let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().reserved_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
         })
-        .unwrap();
     }
 
     #[test]
     fn process_hob_allocations_should_handle_stack_attribute_set_failure() {
         // A stack HOB is created but the corresponding memory region is not added
         // to the GCD. This should cause set_memory_space_attributes to fail with NotFound.
-        test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x1000000);
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                reset_allocators();
-            }
-
+        with_locked_state(GcdInit::WithHobList(0x1000000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
-            // Create a stack HOB at an address NOT in the GCD (such as 0xEB000)
-            let stack_base_address = 0xEB000;
+            // Create a stack HOB at an address NOT in the GCD (such as 0x18B000)
+            let stack_base_address = 0x18B000;
             let stack_pages = 0x20;
 
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
@@ -1363,7 +1342,7 @@ mod tests {
                     reserved: 0x00000000,
                 },
                 alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: HOB_MEMORY_ALLOC_STACK,
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: stack_base_address,
                     memory_length: stack_pages * UEFI_PAGE_SIZE as u64,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -1376,27 +1355,18 @@ mod tests {
             // is not in the GCD, but should continue processing without panicking
             process_hob_allocations(&hob_list);
         })
-        .unwrap();
     }
 
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
+        // 4 MiB of test memory is required because allocator expansion during initialization
+        // may need to handle large allocations for memory buckets and HOBs.
+        with_locked_state(GcdInit::WithHobList(0x400000), |physical_hob_list| {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
             // Required memory allocation hob for stack
-            let mut stack_base_address = 0xEB000;
+            let mut stack_base_address = 0x18B000;
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
 
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
@@ -1406,7 +1376,7 @@ mod tests {
                     reserved: 0x00000000,
                 },
                 alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: HOB_MEMORY_ALLOC_STACK,
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -1436,114 +1406,41 @@ mod tests {
             {
                 let allocator = allocators.get_allocator(*memory_type).unwrap();
 
-                if *memory_type == efi::BOOT_SERVICES_DATA {
-                    assert_eq!(allocator.stats().claimed_pages, 3);
-                } else {
-                    assert_eq!(allocator.stats().claimed_pages, 1);
-                }
+                let granularity = match *memory_type {
+                    efi::RESERVED_MEMORY_TYPE
+                    | efi::RUNTIME_SERVICES_CODE
+                    | efi::RUNTIME_SERVICES_DATA
+                    | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
+                    _ => DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                };
+
+                let expected_pages = match *memory_type {
+                    efi::BOOT_SERVICES_DATA => 3, // Stack + build_test_hob_list allocation
+                    _ => granularity / patina::base::SIZE_4KB,
+                };
+
+                let claimed = allocator.stats().claimed_pages;
+                assert_eq!(
+                    claimed, expected_pages,
+                    "For memory type {:?}: expected {}, got {}",
+                    memory_type, expected_pages, claimed
+                );
             }
 
-            // Locate stack hob.
-            let stack_hob = hob_list
-                .iter()
-                .find_map(|x| match x {
-                    patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
-                        header: _,
-                        alloc_descriptor: desc,
-                    }) if desc.name == HOB_MEMORY_ALLOC_STACK => Some(desc),
-                    _ => None,
-                })
-                .unwrap();
-
-            assert!(stack_hob.memory_base_address != 0);
-            assert!(stack_hob.memory_length != 0);
-
-            // Check Guard Page.
-            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
-            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
-            assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
-
-            // Check rest of the stack.
-            stack_desc =
-                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
-            assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
-            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
-
             // confirm the MMIO memory allocation occurred in the GCD
-            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10000000).unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10000000);
             assert_eq!(mmio_desc.length, 0x2000);
             assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
 
             // confirm the rest of the MMIO region is not allocated
-            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10002000).unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10002000);
             assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
             assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         })
-        .unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn should_have_stack_hob() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
-            let mut hob_list = HobList::default();
-            hob_list.discover_hobs(physical_hob_list);
-
-            init_memory_support(&hob_list);
-        })
-        .unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn should_have_non_zero_stack_base_address_length() {
-        test_support::with_global_lock(|| {
-            // 4 MiB of test memory is required because allocator expansion during initialization
-            // may need to handle large allocations for memory buckets and HOBs.
-            let physical_hob_list = build_test_hob_list(0x400000);
-            unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
-            }
-
-            let mut hob_list = HobList::default();
-            hob_list.discover_hobs(physical_hob_list);
-
-            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
-                    r#type: hob::MEMORY_ALLOCATION,
-                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
-                    reserved: 0x00000000,
-                },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: HOB_MEMORY_ALLOC_STACK,
-                    memory_base_address: 0,
-                    memory_length: 0,
-                    memory_type: efi::BOOT_SERVICES_DATA,
-                    reserved: Default::default(),
-                },
-            });
-            hob_list.push(stack_hob);
-
-            init_memory_support(&hob_list);
-        })
-        .unwrap();
     }
 
     #[test]
@@ -1553,7 +1450,7 @@ mod tests {
 
     #[test]
     fn well_known_allocators_should_be_retrievable() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             let allocators = ALLOCATORS.lock();
 
             for (mem_type, handle) in [
@@ -1572,7 +1469,7 @@ mod tests {
 
     #[test]
     fn new_allocators_should_be_created_on_demand() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             for (mem_type, handle) in [
                 (efi::RESERVED_MEMORY_TYPE, protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
                 (efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
@@ -1639,7 +1536,7 @@ mod tests {
     // metadata.
     #[test]
     fn linked_list_hole_list_struct_should_be_accounted_for() {
-        with_locked_state(0x4000000, || {
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
             let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 0x2B2FA0).unwrap();
             assert!(!ptr.is_null());
         });
@@ -1647,7 +1544,7 @@ mod tests {
 
     #[test]
     fn allocate_pool_should_allocate_pool() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let mut buffer_ptr = core::ptr::null_mut();
 
             // test that disallowed types cannot be allocated
@@ -1685,7 +1582,7 @@ mod tests {
 
     #[test]
     fn free_pool_should_free_pool() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let mut buffer_ptr = core::ptr::null_mut();
             assert_eq!(
                 allocate_pool(efi::BOOT_SERVICES_DATA, 0x1000, core::ptr::addr_of_mut!(buffer_ptr)),
@@ -1703,11 +1600,11 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_high_traffic() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_BOOT_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
@@ -1720,11 +1617,11 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_low_traffic() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_BOOT_SERVICES_CODE_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
@@ -1740,11 +1637,11 @@ mod tests {
 
     #[test]
     fn allocator_free_pool_low_traffic_runtime() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             let allocator = &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR;
             let mut buffer_ptr = core::ptr::null_mut();
 
-            // Safety: allocator is valid for the duration of the test and these asserts are grouped
+            // SAFETY: allocator is valid for the duration of the test and these asserts are grouped
             // in one block to simplify test structure.
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
@@ -1760,7 +1657,7 @@ mod tests {
 
     #[test]
     fn allocate_pages_should_allocate_pages() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             //test test null memory pointer fails with invalid param.
             assert_eq!(
                 allocate_pages(
@@ -1905,7 +1802,7 @@ mod tests {
 
     #[test]
     fn free_pages_error_scenarios_should_be_handled_properly() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             assert_eq!(free_pages(0x12345000, !0xFFF), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(!0xFFF, 0x10), efi::Status::INVALID_PARAMETER);
             assert_eq!(free_pages(0x12345678, 1), efi::Status::INVALID_PARAMETER);
@@ -1930,7 +1827,7 @@ mod tests {
 
     #[test]
     fn get_memory_map_should_return_a_memory_map() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             //reserve some pages in the runtime services data allocator.
             ALLOCATORS.lock().get_allocator(efi::RUNTIME_SERVICES_DATA).unwrap().reserve_memory_pages(0x100).unwrap();
 
@@ -2043,7 +1940,7 @@ mod tests {
 
     #[test]
     fn terminate_map_should_validate_the_map_key() {
-        with_locked_state(0x1000000, || {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
             // allocate some "custom" type pages to create something interesting to find in the map.
             let mut buffer_ptr: *mut u8 = core::ptr::null_mut();
             assert_eq!(

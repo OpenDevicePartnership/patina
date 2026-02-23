@@ -32,7 +32,7 @@ where
     ///
     /// This is useful for creating a tree at compile time and replacing the memory later. Use
     /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
-    /// [resize](Self::resize) to replace the memory later.
+    /// [expand](Self::expand) to replace the memory later.
     pub const fn new() -> Self {
         Bst { storage: Storage::new(), root: Cell::new(core::ptr::null_mut()) }
     }
@@ -612,11 +612,18 @@ impl<'a, D> Bst<'a, D>
 where
     D: Copy + SliceKey + 'a,
 {
-    /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
-    pub fn resize(&mut self, slice: &'a mut [u8]) {
+    /// Expands the tree's storage capacity to a new, larger buffer.
+    ///
+    /// This function cannot shrink the storage capacity - it only allows expansion.
+    /// All nodes are copied to the new buffer to preserve the tree structure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new slice is smaller than the current capacity.
+    pub fn expand(&mut self, slice: &'a mut [u8]) {
         let root = { if self.root.get().is_null() { None } else { Some(self.storage.idx(self.root.get())) } };
 
-        self.storage.resize(slice);
+        self.storage.expand(slice);
 
         if let Some(idx) = root {
             self.root.set(self.storage.get_mut(idx).expect("Pointer Exists."));
@@ -828,11 +835,11 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_resize() {
+    fn test_simple_expand() {
         let mut bst = Bst::<usize>::new();
 
         let mut mem = [0; 20 * node_size::<usize>()];
-        bst.resize(&mut mem);
+        bst.expand(&mut mem);
 
         for i in 0..10 {
             assert!(bst.add(i).is_ok());
@@ -844,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resize_with_existing_data() {
+    fn test_expand_with_existing_data() {
         let mut mem = [0; 10 * node_size::<usize>()];
         let mut bst = Bst::<usize>::with_capacity(&mut mem);
 
@@ -856,7 +863,7 @@ mod tests {
         }
 
         let mut new_mem = [0; 20 * node_size::<usize>()];
-        bst.resize(&mut new_mem);
+        bst.expand(&mut new_mem);
 
         assert_eq!(bst.len(), 10);
         assert_eq!(bst.capacity(), 20);

@@ -118,15 +118,10 @@ use core::{
 
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
-use mu_rust_helpers::{function, guid::CALLER_ID};
 use patina::{
     boot_services::StandardBootServices,
     component::IntoComponent,
     error::{self, Result},
-    performance::{
-        logging::{perf_function_begin, perf_function_end},
-        measurement::create_performance_measurement,
-    },
     pi::{
         hob::{HobList, get_pi_hob_list_size},
         protocols::{bds, status_code},
@@ -483,7 +478,6 @@ impl<P: PlatformInfo> Core<P> {
     /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&'static self) -> Result<()> {
-        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
             // Patina component dispatch
             let dispatched = self.component_dispatcher.lock().dispatch();
@@ -499,7 +493,6 @@ impl<P: PlatformInfo> Core<P> {
                 break;
             }
         }
-        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
         Ok(())
     }
@@ -508,19 +501,19 @@ impl<P: PlatformInfo> Core<P> {
         // Instantiate system table.
         systemtables::init_system_table();
 
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
-        allocator::install_memory_services(st.boot_services_mut());
+        allocator::install_memory_services(st);
         gcd::init_paging(self.hob_list());
-        events::init_events_support(st.boot_services_mut());
-        protocols::init_protocol_support(st.boot_services_mut());
-        misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
-        config_tables::init_config_tables_support(st.boot_services_mut());
-        runtime::init_runtime_support(st.runtime_services_mut());
+        events::init_events_support(st);
+        protocols::init_protocol_support(st);
+        misc_boot_services::init_misc_boot_services_support(st);
+        config_tables::init_config_tables_support(st);
+        runtime::init_runtime_support();
         self.pi_dispatcher.init(self.hob_list(), st);
         self.install_dxe_services_table(st);
-        driver_services::init_driver_services(st.boot_services_mut());
+        driver_services::init_driver_services(st);
 
         memory_attributes_protocol::install_memory_attributes_protocol();
 
@@ -539,8 +532,14 @@ impl<P: PlatformInfo> Core<P> {
 
         memory_attributes_table::init_memory_attributes_table_support();
 
-        self.component_dispatcher.lock().set_boot_services(StandardBootServices::new(st.boot_services()));
-        self.component_dispatcher.lock().set_runtime_services(StandardRuntimeServices::new(st.runtime_services()));
+        // The component dispatcher has a TPL_APPLICATION TPLMutex, so we need to drop the TPL_NOTIFY st_guard before
+        // attempting to unlock the component dispatcher to prevent TPL inversion
+        let boot_services = StandardBootServices::new(st.boot_services().as_mut_ptr());
+        let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
+        drop(st_guard);
+
+        self.component_dispatcher.lock().set_boot_services(boot_services);
+        self.component_dispatcher.lock().set_runtime_services(runtime_services);
 
         Ok(())
     }

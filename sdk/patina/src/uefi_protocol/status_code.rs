@@ -31,7 +31,7 @@ pub struct StatusCodeRuntimeProtocol {
     protocol: status_code::Protocol,
 }
 
-// Safety: StatusCodeRuntimeProtocol implements the UEFI Status Code Runtime protocol interface.
+// SAFETY: StatusCodeRuntimeProtocol implements the UEFI Status Code Runtime protocol interface.
 // The PROTOCOL_GUID matches the PI specification. The repr(transparent) ensures that the
 // structure layout matches the underlying r_efi protocol definition.
 unsafe impl ProtocolInterface for StatusCodeRuntimeProtocol {

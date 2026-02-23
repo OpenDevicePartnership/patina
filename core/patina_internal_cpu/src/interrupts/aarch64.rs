@@ -11,7 +11,7 @@ use crate::log_registers;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 use patina_stacktrace::{StackFrame, StackTrace};
 
-#[cfg(not(test))]
+#[cfg(target_arch = "aarch64")]
 pub mod gic_manager;
 mod interrupt_manager;
 #[cfg(not(test))]

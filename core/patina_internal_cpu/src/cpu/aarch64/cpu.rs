@@ -37,7 +37,7 @@ impl EfiCpuAarch64 {
         loop {
             match _op {
                 CpuFlushType::EfiCpuFlushTypeWriteBack => self.clean_data_entry_by_mva(aligned_addr),
-                CpuFlushType::EFiCpuFlushTypeInvalidate => self.invalidate_data_cache_entry_by_mva(aligned_addr),
+                CpuFlushType::EfiCpuFlushTypeInvalidate => self.invalidate_data_cache_entry_by_mva(aligned_addr),
                 CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => {
                     self.clean_and_invalidate_data_entry_by_mva(aligned_addr)
                 }
@@ -52,6 +52,7 @@ impl EfiCpuAarch64 {
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
             // we have a data barrier after all cache lines have had the operation performed on them as an optimization
+            // SAFETY: a data barrier has no impact on safety invariants.
             unsafe {
                 asm!("dsb sy", options(nostack));
             }
@@ -61,6 +62,7 @@ impl EfiCpuAarch64 {
     fn clean_data_entry_by_mva(&self, _mva: efi::PhysicalAddress) {
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
+            // SAFETY: Cleaning the data cache has no impact on safety invariants.
             unsafe {
                 asm!("dc cvac, {}", in(reg) _mva, options(nostack, preserves_flags));
             }
@@ -70,6 +72,9 @@ impl EfiCpuAarch64 {
     fn invalidate_data_cache_entry_by_mva(&self, _mva: efi::PhysicalAddress) {
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
+            // SAFETY: Invalidating the data cache does not impact safety checks. It
+            // does have the potential to corrupt memory if used incorrectly, but the caller is
+            // expected to ensure that they are using this function correctly.
             unsafe {
                 asm!("dc ivac, {}", in(reg) _mva, options(nostack, preserves_flags));
             }
@@ -79,6 +84,7 @@ impl EfiCpuAarch64 {
     fn clean_and_invalidate_data_entry_by_mva(&self, _mva: efi::PhysicalAddress) {
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
+            // SAFETY: Cleaning and invalidating the data cache does not impact safety invariants.
             unsafe {
                 asm!("dc civac, {}", in(reg) _mva, options(nostack, preserves_flags));
             }
@@ -88,6 +94,7 @@ impl EfiCpuAarch64 {
     fn data_cache_line_len(&self) -> u64 {
         cfg_if::cfg_if! {
             if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+                // SAFETY: Reading ctr_el0 has no impact on safety invariants.
                 let ctr_el0 = unsafe {
                     let ctr_el0: u64;
                     asm!("mrs {}, ctr_el0", out(reg) ctr_el0);
@@ -118,11 +125,11 @@ impl EfiCpuAarch64 {
 impl Cpu for EfiCpuAarch64 {
     fn flush_data_cache(
         &self,
-        _start: efi::PhysicalAddress,
-        _length: u64,
+        start: efi::PhysicalAddress,
+        length: u64,
         flush_type: CpuFlushType,
     ) -> Result<(), EfiError> {
-        self.cache_range_operation(_start, _length, flush_type);
+        self.cache_range_operation(start, length, flush_type);
         Ok(())
     }
 
@@ -157,7 +164,7 @@ mod tests {
 
         let start: efi::PhysicalAddress = 0;
         let length: u64 = 0;
-        let flush_type: CpuFlushType = CpuFlushType::EFiCpuFlushTypeInvalidate;
+        let flush_type: CpuFlushType = CpuFlushType::EfiCpuFlushTypeInvalidate;
         assert_eq!(cpu_init.flush_data_cache(start, length, flush_type), Ok(()));
 
         let start: efi::PhysicalAddress = 0;

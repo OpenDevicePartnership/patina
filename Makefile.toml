@@ -123,7 +123,7 @@ args = ["check", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARG
 description = "Checks rust test code for build errors with results."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["test", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"

@@ -277,6 +277,7 @@ fn fixup_hob_list(
         }
 
         let hob_size = hob_header.length as usize;
+        // SAFETY: The hob list should be valid. The physical_hob_list address is validated above.
         next_hob = unsafe { next_hob.byte_add(hob_size) };
     }
     if !fixed_up_core {

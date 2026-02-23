@@ -90,7 +90,7 @@ use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
 use crate as patina;
 use crate::{
     boot_services::{
-        BootServices,
+        BootServices, StandardBootServices,
         event::{EventTimerType, EventType},
         tpl::Tpl,
     },
@@ -244,9 +244,12 @@ impl Display for Recorder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
         let data = unsafe { self.results.get().as_mut().expect("Pointer is not null.") };
-
+        let mut total_passes = 0;
+        let mut total_fails = 0;
         writeln!(f, "Patina on-system unit-test results:")?;
         for (name, (passes, fails, msg)) in data.iter() {
+            total_passes += *passes;
+            total_fails += *fails;
             if *fails == 0 && *passes == 0 {
                 writeln!(f, "  {name} ... not triggered")?;
                 continue;
@@ -257,6 +260,7 @@ impl Display for Recorder {
                 writeln!(f, "  {name} ... fail ({fails} fails, {passes} passes): {msg}")?;
             }
         }
+        writeln!(f, "Patina on-system unit-test result totals: {total_passes} passes, {total_fails} fails")?;
 
         Ok(())
     }
@@ -436,6 +440,17 @@ impl TestRunner {
                             NonNull::from_ref(Box::leak(Box::new(test.clone()))),
                         )?;
 
+                        // We need to disable the timer at ReadyToBoot so it does not continue firing while a
+                        // bootloader is running.
+                        let _ = storage.boot_services().create_event_ex(
+                            EventType::NOTIFY_SIGNAL,
+                            Tpl::CALLBACK,
+                            Some(Self::disable_timer),
+                            NonNull::from_ref(Box::leak(Box::new((event, storage.boot_services().clone())))).as_ptr()
+                                as *mut core::ffi::c_void,
+                            &EVENT_GROUP_READY_TO_BOOT,
+                        )?;
+
                         storage.boot_services().set_timer(event, EventTimerType::Periodic, *interval)?;
                     }
                 }
@@ -443,6 +458,15 @@ impl TestRunner {
         }
 
         Ok(())
+    }
+
+    #[coverage(off)]
+    /// An EFIAPI compatible event callback to disable a timer event at ReadyToBoot
+    extern "efiapi" fn disable_timer(rtb_event: r_efi::efi::Event, context: *mut core::ffi::c_void) {
+        // SAFETY: We set up the context pointer in `run_tests` to point to a valid tuple of (Event, &mut Storage).
+        let (timer_event, boot_services) = unsafe { &mut *(context as *mut (r_efi::efi::Event, StandardBootServices)) };
+        let _ = boot_services.set_timer(*timer_event, EventTimerType::Cancel, 0);
+        let _ = boot_services.close_event(rtb_event);
     }
 
     /// An EFIAPI compatible event callback to run the patina-test

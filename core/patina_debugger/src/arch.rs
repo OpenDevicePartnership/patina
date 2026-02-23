@@ -45,7 +45,7 @@ pub trait DebuggerArch {
 
     type PageTable: PageTable;
 
-    /// Executes a breakpoint instruction.
+    /// Executes a breakpoint instruction if the debugger is enabled and initialized.
     fn breakpoint();
 
     /// Processes the entry into the debugger, doing any fixup needed to the

@@ -677,7 +677,7 @@ unsafe impl Param for StandardBootServices {
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
-        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        // SAFETY: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.boot_services().is_init()
     }
 
@@ -702,8 +702,90 @@ unsafe impl Param for StandardRuntimeServices {
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
-        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        // SAFETY: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.runtime_services().is_init()
+    }
+
+    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(())
+    }
+}
+
+/// A UEFI handle that can be used in various UEFI boot service calls.
+///
+/// This is commonly used as the parent image handle for `LoadImage()` calls when loading
+/// boot applications. Per the UEFI specification, the parent image handle must be a valid
+/// image handle (one that has the LoadedImage protocol installed).
+///
+/// **Note:** This handle is the DXE Core's image handle, shared across all components. It
+/// should not be used as a `DriverBindingHandle` in `EFI_DRIVER_BINDING_PROTOCOL`, as
+/// multiple components sharing the same agent handle will conflict with protocol open/close
+/// tracking in the UEFI driver model.
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// use patina::component::{component, params::Handle};
+/// use patina::boot_services::BootServices;
+/// use patina::error::Result;
+///
+/// struct BootLoader;
+///
+/// #[component]
+/// impl BootLoader {
+///     fn entry_point(self, bs: StandardBootServices, image_handle: Handle) -> Result<()> {
+///         // Use image_handle as the parent when loading a boot application
+///         let loaded_image = bs.load_image(
+///             false,
+///             *image_handle,
+///             device_path,
+///             None,
+///             0,
+///         )?;
+///         Ok(())
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Handle {
+    handle: r_efi::efi::Handle,
+}
+
+impl Handle {
+    /// Creates a mock Handle for testing purposes.
+    #[cfg(any(test, feature = "mockall"))]
+    pub fn mock(handle: r_efi::efi::Handle) -> Self {
+        Self { handle }
+    }
+}
+
+impl core::ops::Deref for Handle {
+    type Target = r_efi::efi::Handle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handle
+    }
+}
+
+// SAFETY: Handle parameter provides access to the DXE Core's image handle.
+// Access is validated by checking if the handle has been set in storage.
+unsafe impl Param for Handle {
+    type State = ();
+    type Item<'storage, 'state> = Self;
+
+    unsafe fn get_param<'state>(
+        _state: &'state Self::State,
+        storage: UnsafeStorageCell<'_>,
+    ) -> Self::Item<'static, 'state> {
+        // SAFETY: Image handle is immutably borrowed from storage.
+        // validate() ensures the handle is set before get_param is called.
+        let handle = unsafe { storage.storage() }.image_handle().expect("image_handle validated as Some in validate()");
+        Handle { handle }
+    }
+
+    fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
+        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
+        unsafe { storage.storage() }.image_handle().is_some()
     }
 
     fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
@@ -816,10 +898,11 @@ mod tests {
     }
 
     #[test]
-    fn test_config_can_be_accessed_while_unlocked() {
+    fn test_config_can_be_accessed_when_locked() {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
+        // Config::init_state adds config which is locked by default
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(Config::<i32>::try_validate(&id, (&storage).into()).is_ok());
@@ -849,7 +932,9 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
+        // Config::init_state adds config which is locked by default, so ConfigMut cannot access it
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
+
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
                 .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32> not available.")
@@ -931,16 +1016,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
-        // instead, so that the pointer to the boot services table is not null.
-        #[allow(invalid_value)]
-        let efi_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
-
-        // SAFETY: Test code - Creating StandardBootServices from a zeroed BootServices struct for testing.
-        // This is acceptable in test code as we're only checking parameter validation logic.
-        let bs = unsafe { StandardBootServices::new(&*efi_bs.as_ptr()) };
-
-        storage.set_boot_services(bs);
+        let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+        storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardBootServices as Param>::try_validate(&(), (&storage).into()).is_ok());
@@ -968,16 +1045,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
-        // instead, so that the pointer to the boot services table is not null.
-        #[allow(invalid_value)]
-        let efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
-
-        // SAFETY: Test code - Creating StandardRuntimeServices from a zeroed RuntimeServices struct for testing.
-        // This is acceptable in test code as we're only checking parameter validation logic.
-        let rt = unsafe { StandardRuntimeServices::new(&*efi_rt.as_ptr()) };
-
-        storage.set_runtime_services(rt);
+        let mut mock_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
+        storage.set_runtime_services(StandardRuntimeServices::new(mock_rt.as_mut_ptr()));
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardRuntimeServices as Param>::try_validate(&(), (&storage).into()).is_ok());
@@ -986,6 +1055,35 @@ mod tests {
         // SAFETY: Test code - StandardRuntimeServices parameter has been validated.
         // does not panic
         let _ = unsafe { <StandardRuntimeServices as Param>::get_param(&(), cell_storage) };
+    }
+
+    #[test]
+    fn test_handle_fails_to_validate_when_not_set() {
+        let mut storage = Storage::default(); // image_handle is None
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        <Handle as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        assert_eq!(
+            Err(Cow::from("patina::component::params::Handle not available.")),
+            <Handle as Param>::try_validate(&(), (&storage).into())
+        );
+    }
+
+    #[test]
+    fn test_handle_can_be_retrieved() {
+        let mut storage = Storage::default();
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        let mock_handle = 0x1234usize as r_efi::efi::Handle;
+        storage.set_image_handle(mock_handle);
+
+        <Handle as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        assert!(<Handle as Param>::try_validate(&(), (&storage).into()).is_ok());
+
+        let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Handle parameter has been validated.
+        let handle = unsafe { <Handle as Param>::get_param(&(), cell_storage) };
+        assert_eq!(*handle, mock_handle);
     }
 
     #[test]

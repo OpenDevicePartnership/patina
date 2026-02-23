@@ -4,3 +4,6 @@ c905de97044bd6af95c1377864555da65b81a6ce
 
 # Repo: Apply CRLF -> LF conversion to all non-rust files
 a11e3519d22bd61323553f2ca448e1c4c173cc82
+
+# Standardize SAFETY formatting
+db4636d3b39f31cd509442ba9d190c37ba8526c3

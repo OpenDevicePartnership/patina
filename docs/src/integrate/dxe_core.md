@@ -494,9 +494,9 @@ fn panic(info: &PanicInfo) -> ! {
         log::error!("StackTrace: {}", err);
     }
 
-    if patina_debugger::enabled() {
-        patina_debugger::breakpoint();
-    }
+    // The breakpoint() fn only issues a breakpoint instruction if
+    // the debugger is enabled and initialized.
+    patina_debugger::breakpoint();
 
     loop {}
 }

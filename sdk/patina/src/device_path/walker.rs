@@ -1,6 +1,6 @@
 //! UEFI Device Path Utilities
 //!
-//! This library provides various utilities for interacting with UEFI device paths.
+//! This library provides various utilities for interacting with and parsing UEFI device paths.
 //!
 //! ## License
 //!
@@ -8,9 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-#![no_std]
-#![feature(coverage_attribute)]
-
 extern crate alloc;
 
 use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
@@ -32,7 +29,7 @@ use r_efi::efi;
 ///
 /// ```
 /// #![feature(pointer_byte_offsets)]
-/// use patina_internal_device_path::device_path_node_count;
+/// use patina::device_path::walker::device_path_node_count;
 /// use r_efi::efi;
 /// let device_path_bytes = [
 ///   efi::protocols::device_path::TYPE_HARDWARE,
@@ -130,7 +127,7 @@ pub fn device_path_as_slice(
 ///
 /// ```
 /// #![feature(pointer_byte_offsets)]
-/// use patina_internal_device_path::{device_path_node_count, remaining_device_path};
+/// use patina::device_path::walker::{device_path_node_count, remaining_device_path};
 /// use core::mem::size_of;
 /// use r_efi::efi;
 /// let device_path_a_bytes = [
@@ -293,21 +290,21 @@ pub fn concat_device_path_to_boxed_slice(
 
 /// Device Path Node
 #[derive(Debug)]
-pub struct DevicePathNode {
+pub struct GenericDevicePathNode {
     header: efi::protocols::device_path::Protocol,
     data: Vec<u8>,
 }
 
-impl PartialEq for DevicePathNode {
+impl PartialEq for GenericDevicePathNode {
     fn eq(&self, other: &Self) -> bool {
         self.header.r#type == other.header.r#type
             && self.header.sub_type == other.header.sub_type
             && self.data == other.data
     }
 }
-impl Eq for DevicePathNode {}
+impl Eq for GenericDevicePathNode {}
 
-impl DevicePathNode {
+impl GenericDevicePathNode {
     /// Create a DevicePathNode from raw pointer.
     ///
     /// # Safety
@@ -387,12 +384,12 @@ impl DevicePathWalker {
 }
 
 impl Iterator for DevicePathWalker {
-    type Item = DevicePathNode;
+    type Item = GenericDevicePathNode;
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_node {
             Some(node) => {
                 // SAFETY: Caller must assure that node is a valid, well formatted device path
-                let current = unsafe { DevicePathNode::new(node)? };
+                let current = unsafe { GenericDevicePathNode::new(node)? };
                 // SAFETY: node is a valid device path pointer from a well-formed device path
                 if unsafe { is_device_path_end(node) } {
                     self.next_node = None;
@@ -634,7 +631,7 @@ mod tests {
         let node = device_path_walker.next().unwrap();
         assert_eq!(node.header.r#type, TYPE_END);
         assert_eq!(node.header.sub_type, End::SUBTYPE_ENTIRE);
-        assert_eq!(node.data, vec![]);
+        assert_eq!(node.data, Vec::<u8>::new());
 
         assert_eq!(device_path_walker.next(), None);
     }
@@ -670,7 +667,7 @@ mod tests {
         // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
 
-        let nodes: Vec<DevicePathNode> = device_path_walker.collect();
+        let nodes: Vec<GenericDevicePathNode> = device_path_walker.collect();
 
         assert_eq!(nodes[0], nodes[0]);
         assert_eq!(nodes[0], nodes[1]);

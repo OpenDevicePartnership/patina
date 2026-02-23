@@ -7,14 +7,14 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::memory_log::{AdvancedLog, LogEntry};
+use crate::{memory_log::LogEntry, reader::AdvancedLogReader};
 use alloc::format;
 use core::str;
 use patina::error::EfiError;
 
 /// Parser for the Advanced Logger buffer.
 pub struct Parser<'a> {
-    log: AdvancedLog<'a>,
+    log: AdvancedLogReader<'a>,
     entry_meta: bool,
 }
 
@@ -22,7 +22,7 @@ impl<'a> Parser<'a> {
     /// Creates a new `Parser` instance with the provided data slice from an advanced
     /// logger buffer.
     pub fn open(data: &'a [u8]) -> Result<Self, &'static str> {
-        let log = AdvancedLog::open_log(data).map_err(|err| match err {
+        let log = AdvancedLogReader::open_log(data).map_err(|err| match err {
             EfiError::InvalidParameter => "Invalid log data provided.",
             EfiError::BufferTooSmall => "Incomplete log buffer.",
             EfiError::Unsupported => "Log data format not supported.",

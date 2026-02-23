@@ -300,8 +300,14 @@ mod tests {
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
-            gcd.init_memory_blocks(dxe_services::GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB)
-                .unwrap();
+            gcd.init_memory_blocks(
+                dxe_services::GcdMemoryType::SystemMemory,
+                base as usize,
+                size,
+                efi::MEMORY_WB,
+                efi::MEMORY_WB,
+            )
+            .unwrap();
         }
         base
     }
@@ -440,7 +446,7 @@ mod tests {
 
                 let mut buffer: *mut c_void = core::ptr::null_mut();
 
-                // Safety: The allocator has been setup and the buffer pointer is valid for the allocation.
+                // SAFETY: The allocator has been setup and the buffer pointer is valid for the allocation.
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
 
                 // Corrupt the signature to test validation
@@ -452,7 +458,7 @@ mod tests {
                     .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
                 let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
-                // Safety: The allocation_info pointer is valid. It was derived from a buffer pointer above.
+                // SAFETY: The allocation_info pointer is valid. It was derived from a buffer pointer above.
                 unsafe {
                     (*allocation_info).signature = 0x01010101; // Corrupt the signature
                 }

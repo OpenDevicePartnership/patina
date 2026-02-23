@@ -513,9 +513,17 @@ impl ProtocolDb {
     }
 
     fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
+        // Modeling EDK2 behavior, enumerate handles *already* installed, not only future installs
+        let mut fresh_handles = BTreeSet::new();
+        for (key, handle_data) in self.handles.iter() {
+            if handle_data.contains_key(&OrdGuid(protocol)) {
+                fresh_handles.insert(*key as efi::Handle);
+            }
+        }
+
         let registration = self.next_registration as *mut c_void;
         self.next_registration += 1;
-        let protocol_notify = ProtocolNotify { event, registration, fresh_handles: BTreeSet::new() };
+        let protocol_notify = ProtocolNotify { event, registration, fresh_handles };
 
         if let Some(existing_key) = self.notifications.get_mut(&OrdGuid(protocol)) {
             existing_key.push(protocol_notify);
@@ -2014,6 +2022,33 @@ mod tests {
             assert_eq!(notify_list[1].fresh_handles.len(), 1);
             assert!(notify_list[1].fresh_handles.contains(&result.0));
             assert_eq!(notify_list[1].registration, reg2);
+        });
+    }
+
+    #[test]
+    fn register_protocol_notify_should_seed_existing_handles() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
+
+            let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
+            let interface1: *mut c_void = 0x1234 as *mut c_void;
+
+            // Create existing protocol
+            let existing_handle =
+                SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
+
+            // Register for notification
+            let event = 0x8765 as *mut c_void;
+            let reg = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event).unwrap();
+
+            // First call after register should return handle to existing protocol
+            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg);
+            assert_eq!(next, Some(existing_handle));
+
+            // Second call should return no more protocols
+            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg);
+            assert_eq!(next, None);
         });
     }
 
