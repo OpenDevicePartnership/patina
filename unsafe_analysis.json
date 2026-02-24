@@ -5,15 +5,15 @@
       "unsafe": 11
     },
     "exprs": {
-      "safe": 25973,
+      "safe": 25956,
       "unsafe": 3842
     },
     "item_impls": {
       "safe": 601,
-      "unsafe": 98
+      "unsafe": 99
     },
     "item_traits": {
-      "safe": 45,
+      "safe": 46,
       "unsafe": 7
     },
     "methods": {
@@ -27,15 +27,15 @@
       "unsafe": 11
     },
     "exprs": {
-      "safe": 25973,
+      "safe": 25956,
       "unsafe": 3842
     },
     "item_impls": {
       "safe": 601,
-      "unsafe": 98
+      "unsafe": 99
     },
     "item_traits": {
-      "safe": 45,
+      "safe": 46,
       "unsafe": 7
     },
     "methods": {
