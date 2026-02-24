@@ -1,7 +1,7 @@
 # Patina DXE Core Requirements Platform Checklist
 
 | ✅ | Requirement | Summary | Details |
-|---:|---|---|---|
+| ---: | --- | --- | --- |
 | [ ] | **1.1 Standalone MM is Used** | Traditional SMM and combined SMM/DXE modules aren’t supported, use **Standalone MM** instead. SMM-specific file types/DEPEX aren’t dispatched/evaluated. | [No Traditional SMM](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#11-no-traditional-smm) |
 | [ ] | **1.2 A Priori Driver Dispatch Is Not Used** | Remove *A Priori* sections. Patina dispatches in **FFS listed order**. Use **DEPEX** (optionally with empty/stub protocols) to control dependencies. | [A Priori Driver Dispatch Is Not Allowed](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#12-a-priori-driver-dispatch-is-not-allowed) |
 | [ ] | **1.3 All DXE Dispatchable Modules Have Page Aligned Sections** | All DXE images (including C-based drivers) must have **≥ 4 KB** section alignment. **ARM64 DXE_RUNTIME_DRIVER** images must use **64 KB**. Set linker flags accordingly (e.g., `/ALIGN:0x1000` or `-z common-page-size=0x1000`). | [Driver Section Alignment](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#13-driver-section-alignment-must-be-a-multiple-of-4-kb) |
@@ -14,3 +14,4 @@
 | [ ] | **3.2 All DXE Code Used in the Platform Supports Native Address Width** | Patina allocates **top‑down**, so addresses may be **>4 GB**. All code must store pointers in **native-width** types (not 32‑bit ints). | [Native Address Width](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#32-all-code-must-support-native-address-width) |
 | [ ] | **3.3 ConnectController() Is Called Explicitly** | Patina **does not** auto‑call `ConnectController()` during `StartImage()`. Drivers/platforms must call it for any handles they create/modify. | [ConnectController() Must Be Called](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#33-connectcontroller-must-explicitly-be-called-for-handles-createdmodified-during-image-start) |
 | [ ] | **3.4 Uncached Memory is Not Executable** | Patina **does not** allow execution from uncached memory regions. Ensure all executable code resides in cached memory. | [Uncached Memory Not Executable](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html#34-efi_memory_uc-memory-must-be-non-executable) |
+| [ ] | **3.5 Patina's Config.toml Used** | Patina enforces toolchain configuration via copying its `.cargo/config.toml` to the platform | [config.toml Must Be Copied](./patina_dxe_core_requirements.md#35-configtoml-usage) |
