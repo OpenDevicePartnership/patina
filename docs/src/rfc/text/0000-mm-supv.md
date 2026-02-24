@@ -242,7 +242,7 @@ following fixup entry definitions:
 The main differences will be:
 
 1. The MMI entry point will not populate debugger entries like before
-1. The MMI entry point will need to fix up an extra input pointer to the ring3 mapped hob list
+1. The MMI entry point will need to fix up an extra input pointer to the user-level mapped hob list
 1. The MMI entry point will enforce SMAP in CR4 for MM user mode execution
 
 ### `mm_init` Handoff Data to Rust MM Supervisor
@@ -305,7 +305,7 @@ it. If the handler is not found, it will return an error status back to the call
 If it is targeted for the Rust user core, the Rust MM supervisor will save all the syscall related MSRs, FXSAVE area, and
 other necessary context into the dedicated region and then demote to MM user mode to execute the Rust user core.
 
-The Ring 3 broker section will detail more about how the Rust user core is executed and how the context is restored back
+The Rust user core section will detail more about how the Rust user core is executed and how the context is restored back
 to supervisor mode.
 
 #### Ring Transitioning
@@ -322,8 +322,8 @@ back to supervisor mode. The Rust MM supervisor will handle the syscall interrup
 the saved context and stack before resuming supervisor mode execution.
 
 The requested operation will be verified against the security policies before being executed. After the operation is completed,
-the Rust MM supervisor will prepare the return value and transition back with sysret to MM user mode to continue Ring3
-broker execution.
+the Rust MM supervisor will prepare the return value and transition back with sysret to MM user mode to continue the
+user level execution.
 
 Note that this will executed on all processors, and the Rust MM supervisor will ensure proper context switching and isolation
 between different processors.
@@ -722,5 +722,3 @@ surface and given a fewer number of functions and thus global variables to inspe
 Platforms will be expected to unblock the necessary regions during the mm_init phase by passing in the needed unblock information.
 As the memory bin feature in PEI phase is expected to be supported, the platform can choose to allocate runtime-type memory
 without having to reallocate it.
-
-- 
