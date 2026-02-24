@@ -267,6 +267,14 @@ crashes due to speculative execution trying instruction fetches from memory that
 never be touched. For x86 platforms, these regions are still protected to prevent devices having access to executable
 memory.
 
+#### 3.5 Config.toml Usage
+
+Patina relies on its `.cargo/config.toml` being copied to the platform bin wrapper repo. A `build.rs` file is used
+to enforce that the correct config is used. EDK II relies on a centralized `tools_def.template` being used by custom
+build tools to create consistent toolchain configuration. In order to use standard Rust tools, Patina has opted for
+this simpler approach. See the [integration section](./dxe_core.md#copy-configtoml-from-patina) for instructions on
+setting up a platform.
+
 ### 4. Architectural Requirements
 
 This section details Patina requirements that are specific to a particular CPU architectural requirements.
