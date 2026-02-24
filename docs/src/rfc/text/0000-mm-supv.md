@@ -139,7 +139,7 @@ RX for code) and prepare the corresponding HOBs of `MemoryAllocationModule` type
 - Unblock access to necessary non-MM regions based on reported HOBs
 - Register MM supervisor handlers for needed events
 - Prepare necessary MM communication buffers based on reported hobs
-- Initialize security policies
+- Initialize [security policies](https://github.com/microsoft/mu_feature_mm_supv/blob/446619b64731743cf3ff372816e1ae54b8242e9c/MmSupervisorPkg/Docs/PlatformIntegration/PlatformIntegrationSteps.md#mm-policy-file)
 - Initialize callgates and syscall dispatchers
 - Lock down page tables to read-only after setup
 - Invoke the first MMI to transfer control to the MM supervisor in Rust.
@@ -395,7 +395,7 @@ For page allocation and free syscall, the Rust MM supervisor will manage a dedic
 #### Security Policies Logic
 
 The policy structure will continue to use the same format as the existing C implementation for compatibility with existing
-operating systems and toolings.
+operating systems and toolings. The policies schema can be found in the documentation for [MM policy file](https://github.com/microsoft/mu_feature_mm_supv/blob/446619b64731743cf3ff372816e1ae54b8242e9c/MmSupervisorPkg/Docs/PlatformIntegration/PlatformIntegrationSteps.md#mm-policy-xml-file-schema).
 
 The Rust MM supervisor will inherit the prepared security policies from the mm_init phase. It will enforce the
 policies during syscall dispatching, ensuring that only allowed operations are executed based on the platform defined policies.
@@ -641,10 +641,14 @@ is especially important for analyzing why syscall dispatcher run into denied ope
 
 ### DXE Agents
 
-Once systems enters DXE phase, the system will continue to use MM communication DXE driver from EDK2.
+Once the system enters the DXE phase, control is handed off to the Patina MM Communication component to support Rust-based
+environment functions.
 
-However, the MM DXE Support driver will provide the MM supervisor specific services, such as MM interfaces that route to
-supervisor specific MM handlers.
+All other requests originating from C-based DXE drivers and runtime drivers are handled by the EDK2 MM Communication DXE
+driver. This driver is runtime-compatible and continues to provide runtime services, such as variable services.
+
+In addition, the MM DXE Support driver provides MM supervisor–specific services, including MM interfaces that route requests
+to supervisor-specific MM handlers.
 
 ### SMM Enhanced Attestation (SEA) Integration
 
@@ -711,3 +715,12 @@ apply the de-relocation techniques from SEA against the rules for MM core verifi
 
 In this new model, only the Rust MM supervisor will be inspected for its global state, which will have a smaller attack
 surface and given a fewer number of functions and thus global variables to inspect.
+
+### Future Work
+
+- Unblock interface teardown: the unblock interface will be deprecated in favor of a more secure and robust memory management.
+Platforms will be expected to unblock the necessary regions during the mm_init phase by passing in the needed unblock information.
+As the memory bin feature in PEI phase is expected to be supported, the platform can choose to allocate runtime-type memory
+without having to reallocate it.
+
+- 
