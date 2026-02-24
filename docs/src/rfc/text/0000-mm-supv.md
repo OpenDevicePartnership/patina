@@ -260,7 +260,8 @@ allocations from setup time, etc. The supervisor will invoke a one-time routine 
 HOBs upon the first MMI.
 
 The external data fields are the data that is _produced_ by the initializer and will be _consumed_ by the Rust MM supervisor
-during runtime. i.e. stack buffer, .
+during runtime. i.e. ring 3 stack buffer and stepping size, SMBASE for all cores, MMI entry point size, and the static
+secure policy prepared by the platform.
 
 ### MM Supervisor in Rust
 
@@ -282,13 +283,16 @@ attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table i
 
 #### MMI Targeting
 
-The Rust MM supervisor in the case of incoming MMIs will perform a check on the incoming RCX value to determine if the MMI
-is targeted for the supervisor or for the Rust user core. If it is targeted for the supervisor, it will dispatch to the
-appropriate supervisor handler. If it is targeted for the Rust user core, it will be transparent and quickly demote to MM
-user mode after performing necessary checks.
+The Rust MM supervisor in the case of incoming MMIs will mostly stick to the behavior of current C implementation.
 
-Note that this is different from the existing C implementation, where the MMI targeting check is performed in a shared buffer
-between supervisor and normal world (aka. `MM_BUFFER_STATUS`).
+Specifically, the Rust MM supervisor will first copy all the content of the incoming shared data region (`MM_BUFFER_STATUS`)
+into a local buffer and determine the targeting mode of the MMI by checking the MMI targeting field in the shared data
+section `MM_BUFFER_STATUS`. The targeting mode will determine whether the MMI is targeting supervisor mode or MM user
+mode and whether it is synchronous or not. If the MMI is targeting supervisor mode, the MMI must be synchrounous. The Rust
+MM supervisor will dispatch the MMI to the corresponding supervisor handler by iterating through static list of handlers.
+
+If the MMI is targeting MM user mode, and if the MMI is synchronous, the Rust MM supervisor will copy the communication
+buffer into a local buffer and then demote to MM user mode to execute the Rust user core.
 
 #### MMI Management
 
