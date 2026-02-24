@@ -158,6 +158,10 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+/// Useful for offline inspection (like debugging) to determine core version.
+#[used]
+static DXE_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// A trait to be implemented by the platform to provide configuration values and types related to memory management
 /// to be used directly by the Patina DXE Core.
 ///
@@ -394,7 +398,7 @@ impl<P: PlatformInfo> Core<P> {
     ///
     /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
     fn init_memory(&self, physical_hob_list: *const c_void) -> *mut c_void {
-        log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
+        log::info!("DXE Core Crate v{DXE_CORE_VERSION}");
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
 

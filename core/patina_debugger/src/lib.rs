@@ -115,6 +115,7 @@ mod memory;
 mod system;
 mod transport;
 
+#[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
 pub use debugger::PatinaDebugger;
@@ -141,9 +142,10 @@ static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 /// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will
 /// be the first and second elements of the iterator respectively.
 ///
-/// the second argument is a writer that should be used to write the output of the
+/// The second argument is a writer that should be used to write the output of the
 /// command. This can be done by directly invoking the [core::fmt::Write] trait methods
-/// or using the `write!` macro.
+/// or using the `write!` macro. `format!` should be avoided as it will allocate memory
+/// which shouldn't be done in debugger when possible.
 pub type MonitorCommandFn = dyn Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync;
 
 /// Trait for debugger interaction. This is required to allow for a global to the
@@ -172,6 +174,7 @@ trait Debugger: Sync {
     /// Polls the debugger for any pending interrupts.
     fn poll_debugger(&'static self);
 
+    #[cfg(feature = "alloc")]
     fn add_monitor_command(
         &'static self,
         command: &'static str,
@@ -187,7 +190,7 @@ enum DebugError {
     Reentry,
     /// The debugger configuration is locked. This indicates a failure during debugger configuration.
     ConfigLocked,
-    /// The debugger was invoked without being fuly initialized.
+    /// The debugger was invoked without being fully initialized.
     NotInitialized,
     /// Failure from the GDB stub initialization.
     GdbStubInit,
@@ -325,14 +328,12 @@ where
 /// ```
 ///
 #[cfg(not(feature = "alloc"))]
-pub fn add_monitor_command<F>(cmd: &'static str, description: &'static str, function: F)
+pub fn add_monitor_command<F>(cmd: &'static str, _description: &'static str, _function: F)
 where
     F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
 {
-    if let Some(debugger) = DEBUGGER.get() {
-        log::warn!(
-            "Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {command}"
-        );
+    if let Some(_) = DEBUGGER.get() {
+        log::warn!("Dynamic monitor commands require the 'alloc' feature. Will not add command: {cmd}");
     }
 }
 

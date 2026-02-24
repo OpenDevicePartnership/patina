@@ -8,211 +8,56 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+#[cfg(any(feature = "alloc", test))]
+mod alloc;
+#[cfg(any(not(feature = "alloc"), test))]
+mod no_alloc;
 
-use crate::MonitorCommandFn;
-
-pub(crate) struct SystemState {
-    /// Tracks modules state.
-    pub modules: Modules,
-    /// Tracks external monitor commands.
-    pub monitor_commands: Vec<MonitorCallback>,
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        pub(crate) use self::alloc::SystemState;
+    } else {
+        pub(crate) use no_alloc::SystemState;
+    }
 }
 
-impl SystemState {
-    /// Create a new system state.
-    pub const fn new() -> Self {
-        SystemState { modules: Modules::new(), monitor_commands: Vec::new() }
-    }
+/// Trait defining the common interface for system state management.
+///
+/// This trait ensures consistent API between the alloc and no-alloc
+/// implementations of `SystemState`.
+pub(crate) trait SystemStateTrait {
+    /// Writes the list of external monitor commands to the provided writer.
+    fn dump_monitor_commands(&self, out: &mut dyn core::fmt::Write);
 
-    pub fn add_monitor_command(
-        &mut self,
-        command: &'static str,
-        description: &'static str,
-        callback: Box<MonitorCommandFn>,
-    ) {
-        let monitor = MonitorCallback { command, description, callback };
-        self.monitor_commands.push(monitor);
-    }
-
-    /// Add a monitor command to the system state. Returns `true` if the command
+    /// Attempts to handle an external monitor command. Returns `true` if the command
     /// was recognized, and `false` if it was not found.
-    pub fn handle_monitor_command(
+    fn handle_monitor_command(
         &self,
         command: &str,
         args: &mut core::str::SplitWhitespace<'_>,
         out: &mut dyn core::fmt::Write,
-    ) -> bool {
-        for monitor_cmd in &self.monitor_commands {
-            if monitor_cmd.command == command {
-                (monitor_cmd.callback)(args, out);
-                return true;
-            }
-        }
-        false
-    }
-}
+    ) -> bool;
 
-/// Information about a loaded module.
-pub(crate) struct ModuleInfo {
-    pub name: String,
-    pub base: usize,
-    pub size: usize,
-}
+    /// Adds a module to the tracked list.
+    fn add_module(&mut self, name: &str, base: usize, size: usize);
 
-/// Manages loaded modules and module breakpoints.
-pub(crate) struct Modules {
-    modules: Vec<ModuleInfo>,
-    module_breakpoints: Vec<String>,
-    break_all: bool,
-}
+    /// Checks if a module breakpoint matches the given name.
+    fn check_module_breakpoints(&self, name: &str) -> bool;
 
-impl Modules {
-    pub const fn new() -> Self {
-        Modules { modules: Vec::new(), module_breakpoints: Vec::new(), break_all: false }
-    }
+    /// Adds a module breakpoint by name.
+    fn add_module_breakpoint(&mut self, name: &str);
 
-    pub fn add_module(&mut self, name: &str, base: usize, size: usize) {
-        self.modules.push(ModuleInfo { name: String::from(name), base, size });
-    }
+    /// Enables breaking on all module loads.
+    fn set_module_breakpoint_all(&mut self);
 
-    pub fn check_module_breakpoints(&self, name: &str) -> bool {
-        if self.break_all {
-            return true;
-        }
+    /// Clears all module breakpoints and disables break-all.
+    fn clear_module_breakpoints(&mut self);
 
-        for module in &self.module_breakpoints {
-            let trimmed = name.trim_end_matches(".efi");
-            if module.eq_ignore_ascii_case(trimmed) {
-                return true;
-            }
-        }
+    /// Writes the list of loaded modules to the provided writer.
+    /// Starts at `start` and writes at most `count` entries.
+    /// Returns the number of modules written.
+    fn dump_modules(&self, out: &mut dyn core::fmt::Write, start: usize, count: usize) -> usize;
 
-        false
-    }
-
-    #[cfg(feature = "alloc")]
-    pub fn add_module_breakpoint(&mut self, name: &str) {
-        let trimmed = name.trim().trim_end_matches(".efi");
-        if !trimmed.is_empty() {
-            self.module_breakpoints.push(String::from(trimmed));
-        }
-    }
-
-    pub fn break_on_all(&mut self) {
-        self.break_all = true;
-    }
-
-    pub fn clear_module_breakpoints(&mut self) {
-        self.module_breakpoints.clear();
-        self.break_all = false;
-    }
-
-    pub fn get_modules(&self) -> &Vec<ModuleInfo> {
-        &self.modules
-    }
-
-    #[cfg(feature = "alloc")]
-    pub fn get_module_breakpoints(&self) -> &Vec<String> {
-        &self.module_breakpoints
-    }
-}
-
-/// Stores the command and its associated callback function for monitor commands.
-pub(crate) struct MonitorCallback {
-    /// The monitor command string that triggers the callback.
-    pub command: &'static str,
-    /// The description of the monitor command.
-    pub description: &'static str,
-    /// The callback function that will be invoked when the command is executed.
-    /// See [MonitorCommandFn] for more details on the function signature.
-    pub callback: Box<MonitorCommandFn>,
-}
-
-#[cfg(feature = "alloc")]
-#[cfg(test)]
-#[coverage(off)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_add_module() {
-        let mut modules = Modules::new();
-        modules.add_module("test_module", 0x1000, 0x2000);
-        assert_eq!(modules.get_modules().len(), 1);
-        assert_eq!(modules.get_modules()[0].name, "test_module");
-        assert_eq!(modules.get_modules()[0].base, 0x1000);
-        assert_eq!(modules.get_modules()[0].size, 0x2000);
-    }
-
-    #[test]
-    fn test_check_module_breakpoints() {
-        let mut modules = Modules::new();
-        modules.add_module_breakpoint("test_module");
-        assert!(modules.check_module_breakpoints("test_module"));
-        assert!(!modules.check_module_breakpoints("other_module"));
-    }
-
-    #[test]
-    fn test_break_on_all() {
-        let mut modules = Modules::new();
-        modules.break_on_all();
-        assert!(modules.check_module_breakpoints("any_module"));
-    }
-
-    #[test]
-    fn test_clear_module_breakpoints() {
-        let mut modules = Modules::new();
-        modules.add_module_breakpoint("test_module");
-        modules.break_on_all();
-        modules.clear_module_breakpoints();
-        assert!(!modules.check_module_breakpoints("test_module"));
-        assert!(!modules.check_module_breakpoints("any_module"));
-    }
-
-    #[test]
-    fn test_add_module_breakpoint() {
-        let mut modules = Modules::new();
-        modules.add_module_breakpoint("test_module");
-        assert_eq!(modules.get_module_breakpoints().len(), 1);
-        assert_eq!(modules.get_module_breakpoints()[0], "test_module");
-    }
-
-    #[test]
-    fn test_handle_monitor_command() {
-        let mut system_state = SystemState::new();
-        let command = "test_command";
-        let description = "This is a test command";
-        let callback: Box<MonitorCommandFn> = Box::new(|args, out| {
-            let _ = writeln!(out, "Executed with args: {:?}", args.collect::<Vec<_>>());
-        });
-        system_state.add_monitor_command(command, description, callback);
-
-        let mut out = String::new();
-        let args = &mut "arg1 arg2".split_whitespace();
-        assert!(system_state.handle_monitor_command(command, args, &mut out));
-        assert_eq!(out, "Executed with args: [\"arg1\", \"arg2\"]\n");
-
-        assert!(!system_state.handle_monitor_command("invalid", args, &mut out));
-    }
-
-    #[test]
-    fn test_add_monitor_command_with_captured_data() {
-        let mut system_state = SystemState::new();
-        let command = "test_command";
-        let description = "This is a test command";
-
-        let x = 5;
-        let callback: Box<MonitorCommandFn> = Box::new(move |_args, out| {
-            let _ = writeln!(out, "Captured state: {}", x);
-        });
-        system_state.add_monitor_command(command, description, callback);
-
-        let mut out = String::new();
-        let args = &mut "arg1 arg2".split_whitespace();
-        assert!(system_state.handle_monitor_command(command, args, &mut out));
-        assert_eq!(out, "Captured state: 5\n");
-
-        assert!(!system_state.handle_monitor_command("invalid", args, &mut out));
-    }
+    /// Writes the list of module breakpoints to the provided writer.
+    fn dump_module_breakpoints(&self, out: &mut dyn core::fmt::Write);
 }
