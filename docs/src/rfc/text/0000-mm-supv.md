@@ -74,6 +74,20 @@ when the software component is finalized.
 1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
 This will ensure a smaller attack surface from non-MM enviroment and pave way to earlier lock down for future improvements.
 
+## Requirements
+
+This section outlines the key prerequisites for the Rust-based MM supervisor execution environment:
+
+1. __Standalone MM__: The MM supervisor will be based on the Standalone MM model, which provides better isolation and
+security for MM operations. All MM drivers should be compatible with the Standalone MM model.
+1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`. This
+requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
+1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
+a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
+environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
+1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
+buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication.
+
 ## Prior Art (Existing PI C Implementation)
 
 Current C implementation of the MM supervisor is based on the Project MU framework, which is a C-based Standalone MM implementation.
@@ -223,8 +237,9 @@ Rust MM supervisor.
 This entry point is the assembly routine responsible for handling incoming MMIs. It will transition the CPU from 16-bit
 real mode all the way to 64-bit long mode, setting up the necessary environment for MM execution.
 
-This section is expected to be mostly similar to an implementation for Project MU's SMM Enhanced Attestation (SEA), which
-separated the critical jump pointers to data sections, allowing for easier inspection and updates.
+This section is expected to be mostly similar to the implementation of [AMD's SMM Supervisor for their DRTM solution](https://www.microsoft.com/en-us/security/blog/2020/11/12/system-management-mode-deep-dive-how-smm-isolation-hardens-the-platform/)
+and for Project MU's SMM Enhanced Attestation (SEA), which separated the critical jump pointers to data sections, allowing
+for easier inspection and updates.
 
 Accordingly, SEA responder structure attached to MMI entry code will be updated to v5, with the
 following fixup entry definitions:
@@ -415,6 +430,10 @@ operations, syscall will replay the requested operations and return the result b
 
 For denied operations, the syscall dispatcher will return an error status and invoke the telemetry reporting mechanism to
 log the violation event. See more on telemetry reporting in the next sections.
+
+The Rust MM supervisor will implement a feature to allow for allowed list. However, given that deny by default is a more
+secure option, the default configuration of such feature will be _disabled_. Platforms should only set this feature during
+bringup phase.
 
 #### Page Table Management
 
@@ -661,6 +680,9 @@ purposes.
 
 In addition, for the remaining global data that is needed by the Rust MM supervisor, we can keep applying the de-relocation
 techniques from SEA against the rules for MM core verification.
+
+For the new model, the Rust MM supervisor will be built in a platform-agnostic manner, enabling easier binary distribution
+of the paired SEA module, which must be signed to satisfy OS authentication requirements.
 
 ## Guide-Level Explanation
 
