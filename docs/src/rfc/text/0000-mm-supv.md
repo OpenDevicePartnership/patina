@@ -69,10 +69,10 @@ are managed in user mode for better isolation and easier management of protocol 
 flexible interactions.
 1. __Standalone MM driver continue to work__: The existing Standalone MM drivers will continue to work as the currently
 supervised module. It could involve some platform level integration changes due to the model shift (i.e. not use the syscall
-to query hob start and not explcitly invoking call gate to return to supervisor mode) which will be covered by the documentation
+to query hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation
 when the software component is finalized.
 1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
-This will ensure a smaller attack surface from non-MM enviroment and pave way to earlier lock down for future improvements.
+This will ensure a smaller attack surface from non-MM environment and pave way to earlier lock down for future improvements.
 
 ## Requirements
 
@@ -135,7 +135,7 @@ will be marked as boot services drivers (in contrast to runtime drivers).
 
 ### MM Foundation Setup
 
-The MM foundation setup, also called `mm_init` (pronunced as "minute"), involves the following key tasks:
+The MM foundation setup, also called `mm_init` (pronounced as "minute"), involves the following key tasks:
 
 - Initialize memory services specific to MM
 - Initialize copied HOBs from non-MM environment
@@ -270,10 +270,10 @@ These data fields must be fully self-contained within the mm_init module’s dat
 the mm_init phase.
 
 __Shared data__ consists of information that is produced by mm_init and consumed by the Rust MM supervisor during runtime.
-Examples include the Ring‑3 stack buffer and stepping size, SMBASE values for all cores, the MMI entry point size, and platform-prepared
-static security policies. A complete list of shared data HOBs passed from mm_init to the Rust MM supervisor is provided
-in the Required HOBs section. The supervisor will invoke a one-time initialization routine on the first MMI to inspect
-and/or deploy these shared data HOBs.
+Examples include the Ring‑3 stack buffer and stepping size, SMM-BASE values for all cores, the MMI entry point size, and
+platform-prepared static security policies. A complete list of shared data HOBs passed from mm_init to the Rust MM supervisor
+is provided in the Required HOBs section. The supervisor will invoke a one-time initialization routine on the first MMI
+to inspect and/or deploy these shared data HOBs.
 
 __External data__ is produced by components outside of the mm_init phase. These HOBs may be consumed and/or updated by mm_init
 to initialize page tables and memory attributes, and are subsequently passed to the Rust user core for reference. The Rust
@@ -308,7 +308,7 @@ The Rust MM supervisor in the case of incoming MMIs will mostly stick to the beh
 Specifically, the Rust MM supervisor will first copy all the content of the incoming shared data region (`MM_BUFFER_STATUS`)
 into a local buffer and determine the targeting mode of the MMI by checking the MMI targeting field in the shared data
 section `MM_BUFFER_STATUS`. The targeting mode will determine whether the MMI is targeting supervisor mode or MM user
-mode and whether it is synchronous or not. If the MMI is targeting supervisor mode, the MMI must be synchrounous. The Rust
+mode and whether it is synchronous or not. If the MMI is targeting supervisor mode, the MMI must be synchronous. The Rust
 MM supervisor will dispatch the MMI to the corresponding supervisor handler by iterating through static list of handlers.
 
 If the MMI is targeting MM user mode, and if the MMI is synchronous, the Rust MM supervisor will copy the communication
@@ -438,7 +438,7 @@ log the violation event. See more on telemetry reporting in the next sections.
 
 The Rust MM supervisor will implement a feature to allow for allowed list. However, given that deny by default is a more
 secure option, the default configuration of such feature will be _disabled_. Platforms should only set this feature during
-bringup phase.
+bring-up phase.
 
 #### Page Table Management
 
@@ -513,7 +513,7 @@ security policies.
 
 #### Supervisor Patina Components
 
-Sticking to the same sensation of componentization as the existing Patina implementation for DXE enivonrment, the Rust MM
+Sticking to the same sensation of componentization as the existing Patina implementation for DXE environment, the Rust MM
 supervisor will also support extensible components through the Patina component model. The components will be linked in
 the supervisor mode during build time and no dynamic loading will be supported for supervisor mode components to minimize
 the attack surface and simplify the implementation.
@@ -558,7 +558,7 @@ of the Rust MM supervisor implementation.
 
 ### MM Rust User Core in Rust
 
-This component will run in the MM user mode, (mm_user_core, pronounced as "muserker") providing a safe interface for MM
+This component will run in the MM user mode, (mm_user_core, pronounced as "muser-ker") providing a safe interface for MM
 clients to interact with the MM supervisor.
 The elevated operations will be requested through syscall, which will be handled by the Rust MM supervisor after security
 policy guided adjudication.
