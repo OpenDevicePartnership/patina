@@ -262,21 +262,26 @@ The main differences will be:
 
 ### `mm_init` Handoff Data to Rust MM Supervisor
 
-Given that the mm_init is separated from the Rust MM supervisor, it will be necessary to separate the mm_init produced
-data from the Rust MM supervisor. This data will be categorized into initialization-only data, shared data and external
-data.
+Because mm_init is decoupled from the Rust MM supervisor, the data produced during mm_init must also be separated from the
+supervisor itself. This data is classified into three categories: initialization-only data, shared data, and external data.
 
-The initialization-only data will be used during the mm_init phase and will be discarded after
-the mm_init phase. These data fields will be fully contained as part of the initialization-only data section, and
-will be purged after the mm_init phase.
+__Initialization-only data__ is used exclusively during the mm_init phase and is discarded once initialization completes.
+These data fields must be fully self-contained within the mm_init module’s data section and must not be referenced after
+the mm_init phase.
 
-The shared data fields will be passed from the mm_init phase to the Rust MM supervisor region in MMRAM. i.e. memory
-allocations from setup time, etc. The supervisor will invoke a one-time routine to inspect and/or deploy the shared data
-HOBs upon the first MMI.
+__Shared data__ consists of information that is produced by mm_init and consumed by the Rust MM supervisor during runtime.
+Examples include the Ring‑3 stack buffer and stepping size, SMBASE values for all cores, the MMI entry point size, and platform-prepared
+static security policies. A complete list of shared data HOBs passed from mm_init to the Rust MM supervisor is provided
+in the Required HOBs section. The supervisor will invoke a one-time initialization routine on the first MMI to inspect
+and/or deploy these shared data HOBs.
 
-The external data fields are the data that is _produced_ by the initializer and will be _consumed_ by the Rust MM supervisor
-during runtime. i.e. ring 3 stack buffer and stepping size, SMBASE for all cores, MMI entry point size, and the static
-secure policy prepared by the platform.
+__External data__ is produced by components outside of the mm_init phase. These HOBs may be consumed and/or updated by mm_init
+to initialize page tables and memory attributes, and are subsequently passed to the Rust user core for reference. The Rust
+MM supervisor does not reference or validate these HOBs unless they are explicitly updated by mm_init for supervisor-specific
+operations, such as defining MMRAM regions.
+
+During one-time initialization, the Rust MM supervisor may update the contents of shared data HOBs before passing them to
+the Rust user core. This ensures that the data consumed by the Rust user core reflects validated and up-to-date values.
 
 ### MM Supervisor in Rust
 
