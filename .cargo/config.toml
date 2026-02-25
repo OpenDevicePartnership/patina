@@ -4,6 +4,71 @@
 # - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
 # - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
 
-[net]
-git-fetch-with-cli = true
+[env]
+PATINA_CONFIG_VERSION = "1"
 
+[profile.dev]
+# optimize for size
+opt-level = "s"
+# generate all debug info
+debug = true
+# retain all debug info
+strip = "none"
+# assert on debug_assert
+debug-assertions = true
+# all addition/subtraction can cause panics with overflow/underflow
+overflow-checks = true
+# do fat LTO
+lto = true
+# do incremental builds for better compile times
+incremental = true
+
+[profile.release]
+# optimize for size
+opt-level = "s"
+# no debug info generated
+debug = false
+# do fat LTO
+lto = true
+# do not assert on debug_assert
+debug-assertions = false
+# no panic on overflow/underflow
+overflow-checks = false
+# do incremental builds for better compile times
+incremental = true
+
+[profile.test]
+# no optimizations
+opt-level = 0
+# generate all debug info
+debug = true
+# retain all debug info
+strip = "none"
+# test with debug assertions off so we are testing the release case
+debug-assertions = false
+# keep the overflow checks to catch these in tests
+overflow-checks = true
+# disable LTO
+lto = false
+# do incremental builds for better compile times
+incremental = true
+
+[target.x86_64-unknown-uefi]
+rustflags = [
+    # The Patina binary is a boot service driver
+    "-C", "link-arg=/subsystem:efi_boot_service_driver",
+    # Forcing frame pointers allows for better stack walking
+    "-C", "force-frame-pointers",
+    # Preserve stack unwind info
+    "-C", "force-unwind-tables",
+]
+
+[target.aarch64-unknown-uefi]
+rustflags = [
+    # The Patina binary is a boot service driver
+    "-C", "link-arg=/subsystem:efi_boot_service_driver",
+    # Forcing frame pointers allows for better stack walking
+    "-C", "force-frame-pointers",
+    # Preserve stack unwind info
+    "-C", "force-unwind-tables",
+]
