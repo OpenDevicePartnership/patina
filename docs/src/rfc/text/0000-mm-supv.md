@@ -76,16 +76,25 @@ This will ensure a smaller attack surface from non-MM environment and pave way t
 
 ## Requirements
 
-This section outlines the key prerequisites for the Rust-based MM supervisor execution environment:
+This section outlines the key hardware and software prerequisites for the Rust-based MM supervisor execution environment:
 
-1. __Standalone MM__: The MM supervisor will be based on the Standalone MM model, which provides better isolation and
+- Hardware Requirements:
+
+  1. __X64__: Only x64 architecture will be supported for the MM supervisor based implementation. IA32 will not be supported
+given the focus on modern platforms.
+  1. __1GB page table__: The platform must support 1GB page tables, as the MM supervisor will require this feature for optimal
+performance and simplified implementation. The system will panic if 1GB page support is not available.
+
+- Software Requirements:
+
+  1. __Standalone MM__: The MM supervisor will be based on the Standalone MM model, which provides better isolation and
 security for MM operations. All MM drivers should be compatible with the Standalone MM model.
-1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`. This
+  1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`. This
 requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
-1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
+  1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
 environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
-1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
+  1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
 buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication.
 
 ## Prior Art (Existing PI C Implementation)
