@@ -90,8 +90,7 @@ impl EfiDecompressProtocol {
         _scratch_size: u32,
     ) -> efi::Status {
         if source_buffer.is_null() || destination_buffer.is_null() {
-            debug_assert!(false, "EfiDecompressProtocol::decompress called with null pointer");
-            log::error!("EfiDecompressProtocol::decompress called with null pointer");
+            log_debug_assert!("EfiDecompressProtocol::decompress called with null pointer");
             return efi::Status::INVALID_PARAMETER;
         }
 

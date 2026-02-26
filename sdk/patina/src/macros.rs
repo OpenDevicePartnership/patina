@@ -70,6 +70,29 @@ macro_rules! uefi_pages_to_size {
     };
 }
 
+/// Logs an error message and fires a [`debug_assert!`]`(false)` with the same message.
+///
+/// In debug builds, this will panic after logging. In release builds, only the [`log::error!`] is emitted.
+///
+/// # Parameters
+///
+/// - `$($arg)*`: Format string and arguments, passed directly to [`log::error!`] and [`debug_assert!`].
+///
+/// # Example
+///
+/// ```rust ignore
+/// use patina::log_debug_assert;
+///
+/// log_debug_assert!("unexpected state: value was {}", value);
+/// ```
+#[macro_export]
+macro_rules! log_debug_assert {
+    ($($arg:tt)*) => {{
+        log::error!($($arg)*);
+        debug_assert!(false, $($arg)*);
+    }};
+}
+
 /// Macro definitions for working with PCI devices.
 pub mod pci {
     /// Constructs a PCI library address from the given bus, device, function, and register values.

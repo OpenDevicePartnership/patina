@@ -448,8 +448,7 @@ impl<P: PlatformInfo> Core<P> {
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
         if self.set_hob_list(hob_list).is_err() {
-            log::error!("HOB list was already set!");
-            debug_assert!(false, "HOB list was already set!");
+            panic!("HOB list was already set!");
         }
 
         // Add custom monitor commands to the debugger before initializing so that

@@ -22,7 +22,7 @@ use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
-use patina::error::EfiError;
+use patina::{error::EfiError, log_debug_assert};
 use r_efi::efi;
 
 use crate::{runtime, tpl_mutex};
@@ -496,8 +496,7 @@ impl EventDb {
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
             } else {
-                debug_assert!(false, "Event {event:?} not found.");
-                log::error!("Event {event:?} not found.");
+                log_debug_assert!("Event {event:?} not found.");
                 continue;
             };
             if current_event.event_type.is_timer()
@@ -675,8 +674,7 @@ impl SpinLockedEventDb {
                 pending_signals.push(PendingSignals::Event(event));
                 Ok(())
             } else {
-                log::error!("Could not acquire pending signals lock to queue signal.");
-                debug_assert!(false, "Could not acquire pending signals lock to queue signal.");
+                log_debug_assert!("Could not acquire pending signals lock to queue signal.");
                 Ok(())
             }
         }

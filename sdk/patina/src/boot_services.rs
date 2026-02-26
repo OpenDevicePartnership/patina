@@ -791,8 +791,7 @@ pub trait BootServices {
             self.locate_protocol_unchecked(protocol_guid, registration.map_or(ptr::null_mut(), |r| r.as_ptr()))?
         };
         if !interface_ptr.is_null() {
-            debug_assert!(false, "Marker protocol has no data; interface should be null {:?}", protocol_guid);
-            log::error!("Marker protocol has no data; interface should be null {:?}", protocol_guid);
+            log_debug_assert!("Marker protocol has no data; interface should be null {:?}", protocol_guid);
             Err(efi::Status::INVALID_PARAMETER)
         } else {
             Ok(())

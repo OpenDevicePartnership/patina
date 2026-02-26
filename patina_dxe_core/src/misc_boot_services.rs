@@ -8,7 +8,7 @@
 //!
 use core::{ffi::c_void, slice::from_raw_parts, sync::atomic::Ordering};
 use patina::{
-    guids,
+    guids, log_debug_assert,
     pi::{protocols, status_code},
 };
 use patina_internal_cpu::interrupts;
@@ -37,7 +37,7 @@ impl<T> ArchProtocolPtr<T> {
     // SAFETY: ptr must be a valid pointer to T and init must only be called once.
     unsafe fn init(&self, ptr: *mut c_void) {
         if self.0.is_completed() {
-            log::error!("Attempted to initialize ArchProtocolPtr more than once.");
+            log_debug_assert!("Attempted to initialize ArchProtocolPtr more than once.");
             return;
         }
         let _ = self.0.call_once(|| ptr as *mut T);

@@ -13,6 +13,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use patina::log_debug_assert;
 use scroll::{LE, Pread, Pwrite};
 
 pub mod error;
@@ -299,8 +300,7 @@ pub fn relocate_image(
 
     let mut relocation_block = parse_relocation_blocks(relocation_data)?;
     if !prev_reloc_blocks.is_empty() && relocation_block.len() != prev_reloc_blocks.len() {
-        debug_assert!(false, "Previous relocation blocks length does not match current relocation blocks length.");
-        log::error!("Previous relocation blocks length does not match current relocation blocks length.");
+        log_debug_assert!("Previous relocation blocks length does not match current relocation blocks length.");
         return Err(error::Error::RelocationBlockLengthMismatch);
     }
     for (block_idx, reloc_block) in relocation_block.iter_mut().enumerate() {

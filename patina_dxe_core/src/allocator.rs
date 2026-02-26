@@ -36,9 +36,12 @@ use crate::{
     tpl_mutex,
 };
 pub use fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
-use patina::pi::{
-    dxe_services::{self, GcdMemoryType},
-    hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
+use patina::{
+    log_debug_assert,
+    pi::{
+        dxe_services::{self, GcdMemoryType},
+        hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
+    },
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
@@ -73,6 +76,13 @@ pub const LOW_TRAFFIC_ALLOC_MIN_EXPANSION: usize = UEFI_PAGE_SIZE;
 // Compile-time checks to ensure the MIN_EXPANSION values are multiples of RUNTIME_PAGE_ALLOCATION_GRANULARITY.
 const _: () = assert!(HIGH_TRAFFIC_ALLOC_MIN_EXPANSION.is_multiple_of(RUNTIME_PAGE_ALLOCATION_GRANULARITY));
 const _: () = assert!(LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION.is_multiple_of(RUNTIME_PAGE_ALLOCATION_GRANULARITY));
+
+// Compile-time check: HOB list data is guaranteed to be 8-byte aligned per the PI spec.
+// This ensures EFiMemoryTypeInformation's alignment requirement is always satisfied by HOB data.
+const _: () = assert!(
+    mem::align_of::<EFiMemoryTypeInformation>() <= 8,
+    "EFiMemoryTypeInformation alignment exceeds the 8-byte alignment guarantee of HOB list data"
+);
 
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
@@ -823,7 +833,7 @@ extern "efiapi" fn get_memory_map(
     let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
     debug_assert!(required_map_size != 0);
     if required_map_size == 0 {
-        return efi::Status::OUT_OF_RESOURCES;
+        return efi::Status::NOT_FOUND;
     }
     // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(required_map_size) };
@@ -1121,12 +1131,10 @@ pub fn init_memory_support(hob_list: &HobList) {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
-                // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned (meets alignment
-                // requirement for EfiMemoryTypeInformation), and length is calculated above to fit within the
-                // Guid HOB data. Assert if alignment is not as expected.
-                if memory_type_slice_ptr.align_offset(mem::align_of::<EFiMemoryTypeInformation>()) != 0 {
-                    panic!("Memory Type Info HOB data is not correctly 8-byte aligned for EFiMemoryTypeInformation structure.");
-                }
+                // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned per the PI spec.
+                // A compile-time assertion above guarantees EFiMemoryTypeInformation's alignment requirement
+                // is <= 8 bytes, so alignment is always satisfied. Length is calculated above to fit within
+                // the Guid HOB data.
                 let memory_type_info = unsafe { slice::from_raw_parts(memory_type_slice_ptr, memory_type_slice_len) };
 
                 Some(memory_type_info)

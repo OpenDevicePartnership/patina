@@ -21,7 +21,7 @@ use patina::{
     device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
     efi_types::EfiMemoryType,
     error::EfiError,
-    guids,
+    guids, log_debug_assert,
     performance::{
         logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
         measurement::create_performance_measurement,
@@ -234,12 +234,11 @@ impl PrivateImageData {
 
         if resource_section_offset + resource_section_size > loaded_image.len() {
             let pe_file_name = self.pe_info.filename_or("Unknown");
-            log::error!(
+            log_debug_assert!(
                 "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
                 resource_section_offset,
                 resource_section_size
             );
-            debug_assert!(false);
             return Err(EfiError::LoadError);
         }
 
@@ -465,12 +464,11 @@ impl PrivateImageData {
                 if let Ok(virtual_size) = align_up(section.virtual_size, self.pe_info.section_alignment) {
                     virtual_size as u64
                 } else {
-                    log::error!(
+                    log_debug_assert!(
                         "Failed to align up section size {:#X} with alignment {:#X}",
                         section.virtual_size,
                         self.pe_info.section_alignment
                     );
-                    debug_assert!(false);
                     return Err(EfiError::LoadError);
                 };
 
@@ -1144,12 +1142,11 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                         // success, keep going
                     }
                     Err(status) => {
-                        log::error!(
+                        log_debug_assert!(
                             "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
                             buffer.as_ptr() as efi::PhysicalAddress,
                             status
                         );
-                        debug_assert!(false);
                     }
                 };
             }
