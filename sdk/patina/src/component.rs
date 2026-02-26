@@ -203,10 +203,11 @@ pub trait IntoComponent<Input> {
 pub mod prelude {
     pub use crate::{
         component::{
-            IntoComponent,
+            IntoComponent, component,
             hob::{FromHob, Hob},
-            params::{Commands, Config, ConfigMut, Handle},
+            params::{Commands, Config, ConfigMut, Handle, With},
             service::{IntoService, Service},
+            storage::Storage,
         },
         error::{EfiError, Result},
     };

@@ -793,6 +793,60 @@ unsafe impl Param for Handle {
     }
 }
 
+/// A parameter that specifies `P` must exist for the component to execute. The parameter itself is not retrieved.
+///
+/// This is useful for components who need to verify the presence of a parameter, but cannot actually retrieve it due
+/// to borrowing rules. The most common example of this is a component that needs access to [Storage], which conflicts
+/// with almost any other parameter.
+///
+/// Some common examples related to above is ensuring a config value is finished being mutable (with [ConfigMut]) before
+/// allowing a component to run that uses [Storage] and manually retrieves the config value, or ensuring a service is
+/// registered before allowing a component to run that uses [Storage] to retrieve that service.
+///
+/// ## Example
+/// ```rust
+/// use patina::component::prelude::*;
+///
+/// pub struct ExampleComponent;
+///
+/// #[component]
+/// impl ExampleComponent {
+///   // An entry point that will not run until Config<i32> is available. This ensures any Config mutations occur
+///   // before this component runs.  
+///   fn entry_point(&mut self, storage: &mut Storage, _: With<Config<i32>>) -> patina::error::Result<()> {
+///     let config = storage.get_config::<i32>().expect("With<Config<i32>> validated its presence.");
+///     // Do something with storage and config
+///     Ok(())
+///   }
+/// }
+///
+/// ```
+pub struct With<'w, P: Param> {
+    _marker: PhantomData<(&'w (), P)>,
+}
+
+// SAFETY: With<P> parameter validates the presence of P without retrieving it. Therefore, init_state does not need to
+// perform registration or validation.
+unsafe impl<P: Param> Param for With<'_, P> {
+    type State = P::State;
+    type Item<'storage, 'state> = Self;
+
+    unsafe fn get_param<'storage, 'state>(
+        _state: &'state Self::State,
+        _storage: UnsafeStorageCell<'storage>,
+    ) -> Self::Item<'storage, 'state> {
+        Self { _marker: PhantomData }
+    }
+
+    fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
+        P::validate(state, storage)
+    }
+
+    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        P::init_state(storage, meta)
+    }
+}
+
 macro_rules! impl_component_param_tuple {
     ($($param: ident), *) => {
         #[allow(non_snake_case)]
@@ -850,7 +904,7 @@ mod tests {
     use core::sync::atomic::AtomicBool;
 
     use crate::{
-        component::{IntoComponent, component, storage::Storage},
+        component::{IntoComponent, component, service::Service, storage::Storage},
         error::Result,
     };
 
@@ -1344,5 +1398,74 @@ mod tests {
             <Commands as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
             "Commands conflicts with a previous Commands access."
         );
+    }
+
+    #[test]
+    fn test_component_using_with_param_does_not_run_if_param_is_unavailable() {
+        trait TestService {
+            #[allow(dead_code)]
+            fn test(self);
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn TestService)]
+        struct TestServiceImpl;
+        impl TestService for TestServiceImpl {
+            #[allow(dead_code)]
+            fn test(self) {
+                // do nothing
+            }
+        }
+
+        struct TestComponent;
+
+        #[component]
+        impl TestComponent {
+            fn entry_point(self, _: With<Service<dyn TestService>>) -> Result<()> {
+                // This should never run because Service<dyn TestService> is not available in storage.
+                panic!("entry_point ran despite With<Service<dyn TestService>> being unavailable");
+            }
+        }
+
+        let mut storage = Storage::new();
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert_eq!(component.run(&mut storage), Ok(false));
+    }
+
+    #[test]
+    fn test_component_using_with_param_runs_if_param_is_available() {
+        trait TestService {
+            #[allow(dead_code)]
+            fn test(self);
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn TestService)]
+        struct TestServiceImpl;
+        impl TestService for TestServiceImpl {
+            #[allow(dead_code)]
+            fn test(self) {
+                // do nothing
+            }
+        }
+
+        struct TestComponent;
+
+        #[component]
+        impl TestComponent {
+            fn entry_point(self, _: With<Service<dyn TestService>>) -> Result<()> {
+                // This should run because Service<dyn TestService> is available in storage.
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(TestServiceImpl);
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert_eq!(component.run(&mut storage), Ok(true));
     }
 }
