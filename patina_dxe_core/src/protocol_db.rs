@@ -270,7 +270,8 @@ impl ProtocolDb {
 
         // Attempt to add the protocol to the set of protocols on this handle.
         // This should never fail since we already checked for existence above.
-        handle_instance.insert(OrdGuid(protocol), protocol_instance).expect("Protocol already exists on handle.");
+        let exists = handle_instance.insert(OrdGuid(protocol), protocol_instance);
+        debug_assert!(exists.is_none(), "Protocol already exists on handle, but was not caught by earlier check");
 
         //determine if there are any events to be notified.
         if let Some(events) = self.notifications.get_mut(&OrdGuid(protocol)) {

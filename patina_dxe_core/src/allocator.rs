@@ -36,12 +36,9 @@ use crate::{
     tpl_mutex,
 };
 pub use fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
-use patina::{
-    log_debug_assert,
-    pi::{
-        dxe_services::{self, GcdMemoryType},
-        hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
-    },
+use patina::pi::{
+    dxe_services::{self, GcdMemoryType},
+    hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;

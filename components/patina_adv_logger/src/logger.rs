@@ -19,7 +19,6 @@ use patina::{
     component::service::{Service, perf_timer::ArchTimerFunctionality},
     error::EfiError,
     log::Format,
-    log_debug_assert,
     pi::hob::{Hob, PhaseHandoffInformationTable},
     serial::SerialIO,
 };
