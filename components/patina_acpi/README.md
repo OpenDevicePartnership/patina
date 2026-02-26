@@ -156,7 +156,7 @@ common ACPI table types are implemented in `acpi_table.rs` and ACPI-related cons
 
 Once ACPI integration is complete, platforms are able to integrate a fully Rust-based **ACPI table** implementation.
 However, AML parsing and manipulation are still implemented in C through the custom `AcpiSdtDxe` driver. Although this
-is considered an intermediate step towards platform integration of Patina ACPI infrastructure, it is fully functional and tested,
+is considered an intermediate step towards platform integration of Rust ACPI infrastructure, it is fully functional and tested,
 and ready for platforms to adopt.
 
 ### AML Integration
