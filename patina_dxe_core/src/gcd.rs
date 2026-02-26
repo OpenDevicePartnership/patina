@@ -415,7 +415,7 @@ impl MemoryProtectionPolicy {
         {
             // if we failed to map this image RWX, we should still attempt to execute it, it may succeed
 
-            use patina::log_debug_assert;
+
             log_debug_assert!("Failed to set GCD attributes for image {}", filename);
         }
         Ok(())
