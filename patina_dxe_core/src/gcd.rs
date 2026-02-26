@@ -312,7 +312,6 @@ impl MemoryProtectionPolicy {
                     UEFI_PAGE_SIZE,
                     descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
                 ) {
-
                     log_debug_assert!("Failed to map page 0 for compat mode. Status: {e:#x?}");
                 }
             }
@@ -374,7 +373,6 @@ impl MemoryProtectionPolicy {
                         (addr, len) = match align_range(addr, len, UEFI_PAGE_SIZE as u64) {
                             Ok((aligned_addr, aligned_len)) => (aligned_addr, aligned_len),
                             Err(_) => {
-
                                 log_debug_assert!(
                                     "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
                                 );
@@ -414,7 +412,6 @@ impl MemoryProtectionPolicy {
             .is_err()
         {
             // if we failed to map this image RWX, we should still attempt to execute it, it may succeed
-
 
             log_debug_assert!("Failed to set GCD attributes for image {}", filename);
         }
