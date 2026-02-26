@@ -156,12 +156,12 @@ common ACPI table types are implemented in `acpi_table.rs` and ACPI-related cons
 
 Once ACPI integration is complete, platforms are able to integrate a fully Rust-based **ACPI table** implementation.
 However, AML parsing and manipulation are still implemented in C through the custom `AcpiSdtDxe` driver. Although this
-is considered an intermediate step towards platform integration of Rust ACPI infrastructure, it is fully functional and tested,
+is considered an intermediate step towards platform integration of Patina ACPI infrastructure, it is fully functional and tested,
 and ready for platforms to adopt.
 
 ### AML Integration
 
-The timeline for full ACPI + AML Rust integration is about 3-6 months from completion of ACPI integration.
+The timeline for full ACPI + AML Patina integration is about 3-6 months from completion of ACPI integration.
 
 - [ ] AML design feedback. ([RFC](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text/0020-aml-parser.md))
 - [ ] AML implementation.
