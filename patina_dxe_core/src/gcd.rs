@@ -312,7 +312,6 @@ impl MemoryProtectionPolicy {
                     UEFI_PAGE_SIZE,
                     descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
                 ) {
-                    use patina::log_debug_assert;
 
                     log_debug_assert!("Failed to map page 0 for compat mode. Status: {e:#x?}");
                 }
@@ -375,7 +374,6 @@ impl MemoryProtectionPolicy {
                         (addr, len) = match align_range(addr, len, UEFI_PAGE_SIZE as u64) {
                             Ok((aligned_addr, aligned_len)) => (aligned_addr, aligned_len),
                             Err(_) => {
-                                use patina::log_debug_assert;
 
                                 log_debug_assert!(
                                     "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
