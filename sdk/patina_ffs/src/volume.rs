@@ -601,7 +601,7 @@ impl Volume {
                 //need to insert a pad file to ensure content is aligned to the required alignment specified in the
                 //file attributes.
 
-                //Per spec, max required_content_alignment is pad files is 16M (2^24). That means that pad file size
+                //Per spec, max required_content_alignment of pad files is 16M (2^24). That means that pad file size
                 //will always be less than 16M so we can always use Header (instead of Header2) for pad header.
                 if required_content_alignment >= 0x1000000 {
                     log_debug_assert!("Invalid required_content_alignment for pad file {}", required_content_alignment);
