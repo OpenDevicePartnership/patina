@@ -28,26 +28,17 @@ on:
       - major
       - feature/**/*
 
-# Do not allow more than one instance of this workflow to run at the same
-# time for the same PR ref (branch). Prefer head_ref but fall back to ref
-# for push events.
-# - head_ref example: "branch_name"
-# - ref example: "refs/pull/7/merge"
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   ci_workflow:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@patina_e2e_plat_validation
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.8
     with:
       build-tasks: build,build-x64,build-aarch64
       run-cargo-vet: false
     secrets: inherit
   mdbook_docs_test:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@patina_e2e_plat_validation
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.8
     with:
       mdbook-path: "docs"
       build-cmd: cargo make build-lib
