@@ -57,6 +57,7 @@ use corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
+
 use efi::Guid;
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
@@ -146,6 +147,22 @@ unsafe impl Stack for ImageStack {
         StackPointer::new(self.body().as_ptr() as usize)
             .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
+
+    // These routines are only used when building on the host (e.g. for test or
+    // clippy). Corosensei has additional trait requirements for the stack when
+    // building for windows that need to be implemented to support that case.
+    // These are not used in UEFI.
+    #[cfg(windows)]
+    fn teb_fields(&self) -> corosensei::stack::StackTebFields {
+        corosensei::stack::StackTebFields {
+            StackBase: self.base().get(),
+            StackLimit: self.limit().get(),
+            DeallocationStack: self.stack.as_ptr() as usize,
+            GuaranteedStackBytes: 0,
+        }
+    }
+    #[cfg(windows)]
+    fn update_teb_fields(&mut self, _stack_limit: usize, _guaranteed_stack_bytes: usize) {}
 }
 
 // This struct tracks private data associated with a particular image handle.
