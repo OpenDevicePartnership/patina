@@ -53,11 +53,11 @@ use crate::{
     tpl_mutex,
 };
 
-use efi::Guid;
-use uefi_corosensei::{
+use corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
+use efi::Guid;
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
@@ -73,7 +73,7 @@ compile_error!("Unsupported target_arch for PE/COFF image loading");
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
-// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from uefi_corosensei) is never larger than
+// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from corosensei) is never larger than
 // UEFI_PAGE_SIZE. This can cause issues with the stack allocation not being aligned properly. This was chosen rather
 // than updating the `AllocationOptions` alignment configuration being set to `STACK_ALIGNMENT` because we cannot
 // guarantee that the alignment will be a multiple of UEFI_PAGE_SIZE in all cases. We would rather hit a compile time
