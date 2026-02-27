@@ -7,13 +7,12 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    boot_services::{StandardBootServices, tpl::Tpl},
+    boot_services::StandardBootServices,
     component::service::{Service, perf_timer::ArchTimerFunctionality},
     performance::table::FBPT,
-    tpl_mutex::TplMutex,
 };
 use core::{
-    cell::OnceCell,
+    cell::{OnceCell, RefCell},
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
@@ -25,7 +24,7 @@ struct StaticState {
     /// Boot Services instance
     boot_services: OnceCell<StandardBootServices>,
     /// The FBPT protected by a TPL mutex.
-    fbpt: OnceCell<TplMutex<FBPT>>,
+    fbpt: RefCell<FBPT>,
     /// Flag to indicate if the static state is in the process of being initialized.
     initializing: AtomicBool,
     /// Timer service for performance measurements.
@@ -37,7 +36,7 @@ impl StaticState {
     const fn uninit() -> Self {
         Self {
             boot_services: OnceCell::new(),
-            fbpt: OnceCell::new(),
+            fbpt: RefCell::new(FBPT::new()),
             initializing: AtomicBool::new(false),
             timer: Service::new_uninit(),
         }
@@ -52,13 +51,7 @@ impl StaticState {
     fn init(&self, bs: StandardBootServices, timer: Service<dyn ArchTimerFunctionality>) -> Result<(), &'static str> {
         if self.initializing.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             self.boot_services.set(bs).map_err(|_| "Already initialized")?;
-            self.fbpt
-                .set(TplMutex::new(
-                    self.boot_services.get().expect("Boot Services Just Set").clone(),
-                    Tpl::NOTIFY,
-                    FBPT::new(),
-                ))
-                .map_err(|_| "Failed to set FBPT")?;
+            self.fbpt.replace(FBPT::new());
             self.timer.replace(&timer);
             self.initializing.store(false, Ordering::Release);
             return Ok(());
@@ -72,12 +65,11 @@ impl StaticState {
     /// Returns `None` if the state is not yet initialized.
     /// Returns `None` if the state is currently being initialized.
     /// Returns `Some` with references to the `StandardBootServices` and `TplMutex<FBPT>` if initialized.
-    fn inner(&self) -> Option<(&StandardBootServices, &TplMutex<FBPT>, &Service<dyn ArchTimerFunctionality>)> {
+    fn inner(&self) -> Option<(&StandardBootServices, &RefCell<FBPT>, &Service<dyn ArchTimerFunctionality>)> {
         if !self.initializing.load(Ordering::Acquire)
             && let Some(bs) = self.boot_services.get()
-            && let Some(fbpt) = self.fbpt.get()
         {
-            return Some((bs, fbpt, &self.timer));
+            return Some((bs, &self.fbpt, &self.timer));
         }
         None
     }
@@ -132,7 +124,7 @@ pub fn set_static_state(
 /// Get performance component static state.
 #[coverage(off)]
 pub fn get_static_state()
--> Option<(&'static StandardBootServices, &'static TplMutex<FBPT>, &'static Service<dyn ArchTimerFunctionality>)> {
+-> Option<(&'static StandardBootServices, &'static RefCell<FBPT>, &'static Service<dyn ArchTimerFunctionality>)> {
     STATIC_STATE.inner()
 }
 

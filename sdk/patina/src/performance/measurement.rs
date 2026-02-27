@@ -10,6 +10,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use core::{
+    cell::RefCell,
     clone::Clone,
     convert::AsRef,
     ffi::c_void,
@@ -38,7 +39,6 @@ use crate::{
         table::FirmwareBasicBootPerfTable,
     },
     runtime_services::RuntimeServices,
-    tpl_mutex::TplMutex,
     uefi_protocol::{performance_measurement::PerfAttribute, status_code::StatusCodeRuntimeProtocol},
 };
 
@@ -57,7 +57,7 @@ pub mod event_callback {
     /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
     pub extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
         event: efi::Event,
-        ctx: Box<(BB, RR, &TplMutex<F, B>)>,
+        ctx: Box<(BB, RR, &RefCell<F>)>,
     ) where
         BB: AsRef<B> + Clone,
         B: BootServices + 'static,
@@ -68,7 +68,7 @@ pub mod event_callback {
         let (boot_services, runtime_services, fbpt) = *ctx;
         let _ = boot_services.as_ref().close_event(event);
 
-        let Ok(fbpt_address) = fbpt.lock().report_table(
+        let Ok(fbpt_address) = fbpt.borrow_mut().report_table(
             performance::table::find_previous_table_address(runtime_services.as_ref()),
             boot_services.as_ref(),
         ) else {
@@ -229,7 +229,7 @@ fn _create_performance_measurement<B, F>(
     perf_id: u16,
     attribute: PerfAttribute,
     boot_services: &B,
-    fbpt: &TplMutex<F, B>,
+    fbpt: &RefCell<F>,
     timer: &Service<dyn ArchTimerFunctionality>,
 ) -> Result<(), Error>
 where
@@ -261,7 +261,7 @@ where
             return Err(EfiError::InvalidParameter.into());
         };
         let module_name = string.unwrap_or("unknown name");
-        fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, module_name))?;
+        fbpt.borrow_mut().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, module_name))?;
         return Ok(());
     };
 
@@ -273,7 +273,7 @@ where
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
         id @ KnownPerfId::ModuleLoadImageStart | id @ KnownPerfId::ModuleLoadImageEnd => {
             if id == KnownPerfId::ModuleLoadImageStart {
@@ -285,7 +285,7 @@ where
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, get_load_image_count() as u64);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
         KnownPerfId::ModuleDbStart
         | KnownPerfId::ModuleDbEnd
@@ -298,7 +298,7 @@ where
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
         KnownPerfId::ModuleDbStopEnd => {
             let module_handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
@@ -308,7 +308,7 @@ where
             };
             let module_name = "";
             let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, module_name);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
         KnownPerfId::PerfEventSignalStart
         | KnownPerfId::PerfEventSignalEnd
@@ -319,7 +319,7 @@ where
             };
             let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, *module_guid, *guid, function_string);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
 
         KnownPerfId::PerfFunctionStart
@@ -332,7 +332,7 @@ where
             let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
             let string = string.unwrap_or("unknown name");
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, *module_guid, string);
-            fbpt.lock().add_record(record)?;
+            fbpt.borrow_mut().add_record(record)?;
         }
     }
     Ok(())
@@ -504,7 +504,7 @@ mod tests {
     use mockall::predicate;
 
     use crate::{
-        boot_services::{MockBootServices, c_ptr::CMutPtr, tpl::Tpl},
+        boot_services::{MockBootServices, c_ptr::CMutPtr},
         component::service::IntoService,
         performance::{
             globals::set_perf_measurement_mask,
@@ -572,7 +572,7 @@ mod tests {
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_report_table::<MockBootServices>().once().returning(|_, _| Ok(1));
 
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
+        let fbpt = RefCell::new(fbpt);
         // SAFETY: Test code - creating a static reference to the fbpt for callback testing.
         let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
 
@@ -613,7 +613,7 @@ mod tests {
 
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().times(EXPECTED_NUMBER_OF_RECORD).returning(|_| Ok(()));
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
+        let fbpt = RefCell::new(fbpt);
 
         // These functions call create_performance_measurement with the right arguments.
         let module_handle = 1_usize as efi::Handle;
@@ -623,7 +623,7 @@ mod tests {
         let event_guid = efi::Guid::from_bytes(&[3; 16]);
 
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        static mut FBPT: Option<&RefCell<MockFirmwareBasicBootPerfTable>> = None;
 
         // SAFETY: Test code - initializing static variables with test references.
         unsafe {
@@ -699,9 +699,9 @@ mod tests {
     #[test]
     fn test_generic_create_performance_measurement() {
         let boot_services = MockBootServices::new();
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, MockFirmwareBasicBootPerfTable::new());
+        let fbpt = RefCell::new(MockFirmwareBasicBootPerfTable::new());
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        static mut FBPT: Option<&RefCell<MockFirmwareBasicBootPerfTable>> = None;
         // SAFETY: Test code - initializing static variables with test references.
         unsafe {
             BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));

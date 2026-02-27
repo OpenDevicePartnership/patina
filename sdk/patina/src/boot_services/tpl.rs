@@ -47,6 +47,10 @@ impl Tpl {
     /// If code requires more processing, it needs to signal an event to wait to obtain control again at whatever level it requires.
     /// This level is typically used to process low level IO to or from a device.
     pub const NOTIFY: Tpl = Tpl(efi::TPL_NOTIFY);
+
+    /// The highest task priority level.
+    /// At this level, all interrupts and event notifications are masked.
+    pub const HIGH_LEVEL: Tpl = Tpl(efi::TPL_HIGH_LEVEL);
 }
 
 impl From<Tpl> for usize {
