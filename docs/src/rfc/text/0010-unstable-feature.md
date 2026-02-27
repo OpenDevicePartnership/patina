@@ -35,7 +35,7 @@ description: "Track an unstable feature."
 title: "[Unstable] Tracking Issue for `<feature gate name>`"
 
 body:
-  - type: markdown 
+  - type: markdown
     id: feature-gate
     attributes:
       value: "Feature gate: `#![feature(<feature gate name>)]`"
@@ -50,7 +50,7 @@ body:
       label: Type of unstable feature
       description: Select what kind of unstable feature this is.
       options:
-      - label: New feature, this gives time to get additional feedback to apply changes. 
+      - label: New feature, this gives time to get additional feedback to apply changes.
       Having a transition period allows to make API changes without incrementing the major version.
       - label: Working feature that still has some unresolved questions that has a potential to change the API design.
       - label: Proof of concept features.

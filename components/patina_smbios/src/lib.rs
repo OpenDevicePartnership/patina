@@ -153,7 +153,7 @@
 //! ) -> Result<()> {
 //!     // Publish SMBIOS table to UEFI Configuration Table
 //!     let (table_addr, entry_point_addr) = smbios.publish_table()?;
-//!     
+//!
 //!     log::info!("SMBIOS table at: 0x{:X}", table_addr);
 //!     log::info!("Entry point at: 0x{:X}", entry_point_addr);
 //!     Ok(())

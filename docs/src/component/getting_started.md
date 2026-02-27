@@ -64,7 +64,7 @@ operate (albeit with potentially reduced capabilities) if no services are provid
 If the core requires platform-specific functionality mandatory for **core** operation, it will be enforced via
 mechanisms other than the [Core::with_service] as missing services can only be determined at runtime. Typically this
 will involve using an API exposed from the core that will cause a build break if a platform fails to provide the
-required functionality. 
+required functionality.
 ```
 
 Services can be registered and made available to components in a few different ways. The first way is that the core

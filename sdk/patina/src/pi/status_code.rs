@@ -1381,5 +1381,3 @@ pub const EFI_SW_EC_ARM_RESERVED:               EfiStatusCodeValue = debug_suppo
 pub const EFI_SW_EC_ARM_IRQ:                    EfiStatusCodeValue = debug_support::EXCEPT_ARM_IRQ as u32;
 /// ARM FIQ exception.
 pub const EFI_SW_EC_ARM_FIQ:                    EfiStatusCodeValue = debug_support::EXCEPT_ARM_FIQ as u32;
-
-

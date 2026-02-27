@@ -120,9 +120,9 @@ entire boot. Instead, we must provide a way to test runners to report their stat
 event, a event callback will use this service to report all results to the user.
 
 ```cmd
-┌─────────────────────────────────┐                    
-│ TestRunner Component Execution  │                    
-└─────────────────────────────────┤                    
+┌─────────────────────────────────┐  
+│ TestRunner Component Execution  │  
+└─────────────────────────────────┤  
 │┌───────────────────┐    ┌────────────────────────────┐
 ││ Produce TestReport│ ┌──► Component                  │
 ││ Service           │ │  └────────────────────────────┘

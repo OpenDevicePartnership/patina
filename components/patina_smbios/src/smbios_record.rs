@@ -31,12 +31,12 @@
 //! // Create the record
 //! let bios_info = Type0PlatformFirmwareInformation {
 //!     header: SmbiosTableHeader::new(0, 0, SMBIOS_HANDLE_PI_RESERVED),
-//!     
+//!
 //!     // String indices (reference the string pool below)
 //!     vendor: 1,
 //!     firmware_version: 2,
 //!     firmware_release_date: 3,
-//!     
+//!
 //!     // Binary fields
 //!     bios_starting_address_segment: 0xE000,
 //!     firmware_rom_size: 0x0F,
@@ -48,7 +48,7 @@
 //!     embedded_controller_major_release: 0xFF,
 //!     embedded_controller_minor_release: 0xFF,
 //!     extended_bios_rom_size: 0x0000,
-//!     
+//!
 //!     // String pool (1-indexed)
 //!     string_pool: vec![
 //!         String::from("Patina BIOS"),    // Index 1

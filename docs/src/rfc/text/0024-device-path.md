@@ -128,7 +128,7 @@ impl MediaFwVolDevicePath {
 
 MediaFwVolDevicePath::new(efi::Guid(...));
 
-/* CURRENT IMPLEMENTATION 
+/* CURRENT IMPLEMENTATION
 MediaFwVolDevicePath {
     header: efi::protocols::device_path::Protocol {
         r#type: efi::protocols::device_path::TYPE_MEDIA,

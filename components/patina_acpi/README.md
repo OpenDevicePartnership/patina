@@ -87,7 +87,7 @@ struct MyComponent {
 impl MyComponent {
     // Note that the Service is NOT `dyn`!
     fn entry_point(acpi_table_service: Service<AcpiTableManager>) {
-        // ... 
+        // ...
     }
 }
 ```

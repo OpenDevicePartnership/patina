@@ -76,7 +76,7 @@ Consider replacing it with `match` and returning a `Result`:
 # use patina::{
 #     log::Format,
 #     serial::uart::UartNull,
-# }; 
+# };
 # static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
 #     Format::Standard,
 #     &[],
@@ -136,7 +136,7 @@ extern "efiapi" fn get_memory_map(
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     // ...
-    
+
     # let required_map_size = 50usize;
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
