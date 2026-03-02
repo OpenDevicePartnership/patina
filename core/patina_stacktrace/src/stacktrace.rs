@@ -251,6 +251,7 @@ impl StackTrace {
                 let mut i = 0;
                 let mut fp = _stack_frame.fp;
                 let mut pc = _stack_frame.pc; // start with PC/elr
+                const MAX_FRAME_COUNT: usize = 20;
                 loop {
                     let no_name = "<no module>";
 
@@ -267,9 +268,14 @@ impl StackTrace {
                     // SAFETY: The assumption here is that the stack frame
                     // layout is as follows: [fp] [lr] are saved on the stack in
                     // that order, typically via stp x29, x30, [sp, #-16]!
-                    let prev_pc = unsafe { read_pointer64(fp + 8).unwrap() }; // deref lr
-                    let prev_fp = unsafe { read_pointer64(fp).unwrap() };
+                    let prev_pc = unsafe { read_pointer64(fp + 8)? }; // deref lr
+                    let prev_fp = unsafe { read_pointer64(fp)? };
                     log::warn!("     {i:>2} {:016X}      {:016X}       {image_name}+{pc_rva:X}", fp, prev_pc);
+
+                    if fp == prev_fp {
+                        log::error!("FP didn't change. Possible stack corruption detected. Stopping stack trace.");
+                        break;
+                    }
 
                     pc = prev_pc;
                     fp = prev_fp;
@@ -280,6 +286,11 @@ impl StackTrace {
                     }
 
                     i += 1;
+
+                    if i > MAX_FRAME_COUNT {
+                        log::error!("Frame count exceeded {}. Possible stack corruption detected. Stopping stack trace.", MAX_FRAME_COUNT);
+                        break;
+                    }
                 }
             } else {
                 log::error!("FP/LR register walk stack trace dumping is only supported on AArch64.");
