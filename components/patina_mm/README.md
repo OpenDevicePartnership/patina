@@ -133,7 +133,7 @@ impl ExampleComponent {
     };
 
     let recipient = patina::Guid::from_string("8c633b23-1260-4ea6-830f7ddc97382111");
-  
+
     let _ = unsafe {
       mm_comm
         .communicate(

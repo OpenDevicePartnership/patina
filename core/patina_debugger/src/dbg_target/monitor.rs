@@ -13,7 +13,10 @@
 use core::{fmt::Write, str::SplitWhitespace};
 use gdbstub::target::ext::{self, monitor_cmd::ConsoleOutput};
 
-use crate::arch::{DebuggerArch, SystemArch};
+use crate::{
+    arch::{DebuggerArch, SystemArch},
+    system::SystemStateTrait,
+};
 
 use super::PatinaTarget;
 
@@ -59,9 +62,7 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
                 let _ = buf.write_str(MONITOR_HELP);
                 let _ = buf.write_str("External commands:\n");
                 if let Some(state) = self.system_state.try_lock() {
-                    for cmd in state.monitor_commands.iter() {
-                        let _ = writeln!(buf, "    {} - {}", cmd.command, cmd.description);
-                    }
+                    state.dump_monitor_commands(&mut buf);
                 };
             }
             Some("mod") => {
@@ -119,38 +120,24 @@ impl PatinaTarget {
 
         match tokens.next() {
             Some("breakall") => {
-                state.modules.break_on_all();
+                state.set_module_breakpoint_all();
                 let _ = out.write_str("Will break for all module loads.");
             }
-            #[cfg(feature = "alloc")]
             Some("break") => {
                 for module in tokens.by_ref() {
-                    state.modules.add_module_breakpoint(module);
+                    state.add_module_breakpoint(module);
                 }
                 let _ = out.write_str("Module breakpoints:\n");
-                for module in state.modules.get_module_breakpoints().iter() {
-                    let _ = writeln!(out, "\t{module}");
-                }
-            }
-            #[cfg(not(feature = "alloc"))]
-            Some("break") => {
-                let _ = out.write_str("Specific Module breakpoints only supported with 'alloc' feature.");
+                state.dump_module_breakpoints(out);
             }
             Some("clear") => {
-                state.modules.clear_module_breakpoints();
+                state.clear_module_breakpoints();
                 let _ = out.write_str("Cleared module breaks!");
             }
             Some("list") => {
                 let count: usize = tokens.next().and_then(|token| token.parse().ok()).unwrap_or(usize::MAX);
                 let start: usize = tokens.next().and_then(|token| token.parse().ok()).unwrap_or(0);
-                let mut printed = 0;
-                for module in state.modules.get_modules().iter().skip(start) {
-                    let _ = writeln!(out, "\t{}: {:#x} : {:#x}", module.name, module.base, module.size);
-                    printed += 1;
-                    if printed >= count {
-                        break;
-                    }
-                }
+                let printed = state.dump_modules(out, start, count);
 
                 if printed == 0 {
                     let _ = out.write_str("No modules.");

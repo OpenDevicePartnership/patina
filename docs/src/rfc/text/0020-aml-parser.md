@@ -184,7 +184,7 @@ bitflags! {
     }
 }
 
-/// Represents the possible opcodes. 
+/// Represents the possible opcodes.
 pub enum AmlOpcode {
     BaseOp(BaseOpcode),
     ExtOp(ExtOpcode),
@@ -204,7 +204,7 @@ pub enum ExtOpcode {
 
 pub enum AmlOperand {
     Opcode(AmlOpcode),
-    Name(AmlNameString), // Represents a NameString (AML path). Not to be confused with a string literal 
+    Name(AmlNameString), // Represents a NameString (AML path). Not to be confused with a string literal
     ...
 }
 ```
@@ -229,7 +229,7 @@ The `AmlParser` service generally derives from the ACPI SDT protocol, and allows
 
 ```rust
 pub(crate) trait AmlParser {  
-  // Opens a table's AML stream for parsing. The table should be a DSDT or SSDT. 
+  // Opens a table's AML stream for parsing. The table should be a DSDT or SSDT.
   // The resulting handle is an opaque object on which further AML operations can be performed.
   // It points to the first (root) node in the AML stream.
   unsafe fn open_table(&self, table_key: TableKey) -> Result<AmlHandle, AmlError>;
@@ -292,7 +292,7 @@ The iteration of AML namespaces is complex. While other service implementations 
 `iter`, the `StandardAmlParser` will use two functions under the hood:
 
 ```rust
-// Returns the first child of an AML node. 
+// Returns the first child of an AML node.
 fn get_child(&self, handle: AmlHandle) -> Result<Option<AmlHandle>, AmlError>;
 
 // Returns the next sibling of an AML node.
@@ -380,10 +380,10 @@ and patch `VAL0` from `0x00` (invalid value) to `0x99` (some valid value):
 
 <!-- cspell:disable -->
 ```plain-text
-0000: 44 53 44 54 54 00 00 00 02 7D 4F 45 4D 49 44 20  DSDTT....}OEMID 
+0000: 44 53 44 54 54 00 00 00 02 7D 4F 45 4D 49 44 20  DSDTT....}OEMID
 0010: 45 58 41 4D 50 20 20 20 20 31 00 00 00 41 4D 4C  EXAMP    1...AML
 0020: 10 1B 5C 5F 53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
-0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1.
 0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
 0050: 00 00 00 00                                      ....
 ```
@@ -393,7 +393,7 @@ Thus the trailing AML bytecode is:
 
 ```plain-text
                   53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
-0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1.
 0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
 0050: 00 00 00 00  
 ```
@@ -443,7 +443,7 @@ In memory, the new bytecode should look like:
 
 ```plain-text
                   53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
-0030: 30 0A *99* 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0030: 30 0A *99* 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1.
 0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
 0050: 00 00 00 00  
 ```

@@ -14,6 +14,7 @@ use crate::tpl_mutex::TplMutex;
 use patina::{
     boot_services::StandardBootServices,
     component::{IntoComponent, Storage, service::IntoService},
+    log_debug_assert,
     pi::hob::HobList,
     runtime_services::StandardRuntimeServices,
 };
@@ -221,8 +222,7 @@ impl ComponentDispatcher {
                 }
                 Ok(false) => false,
                 Err(err) => {
-                    log::error!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
-                    debug_assert!(false);
+                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
                     true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
                 }
             }

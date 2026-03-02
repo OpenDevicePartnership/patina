@@ -9,7 +9,7 @@
 use crate::pecoff::UefiPeInfo;
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError};
+use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError, log_debug_assert};
 
 use mu_rust_helpers::function;
 use patina::{
@@ -597,8 +597,7 @@ impl GCD {
         _image_handle: efi::Handle,
         _device_handle: Option<efi::Handle>,
     ) -> Result<usize, EfiError> {
-        log::error!("GCD not allowed to allocate after EBS has started!");
-        debug_assert!(false);
+        log_debug_assert!("GCD not allowed to allocate after EBS has started!");
         Err(EfiError::AccessDenied)
     }
 

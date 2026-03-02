@@ -28,6 +28,15 @@ on:
       - major
       - feature/**/*
 
+# Do not allow more than one instance of this workflow to run at the same
+# time for the same PR ref (branch). Prefer head_ref but fall back to ref
+# for push events.
+# - head_ref example: "branch_name"
+# - ref example: "refs/pull/7/merge"
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci_workflow:
     name: Run

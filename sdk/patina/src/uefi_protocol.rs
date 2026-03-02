@@ -8,6 +8,7 @@
 //!
 
 pub mod decompress;
+#[cfg(any(test, feature = "alloc"))]
 pub mod performance_measurement;
 pub mod status_code;
 

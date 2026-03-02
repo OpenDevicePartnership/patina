@@ -66,17 +66,17 @@ trybuild = { version = "1.0", features = ["diff"] }
 
 [features]
 core = ['alloc']
-std = []
+std = ['alloc']
 doc = ['alloc']
 alloc = []
 mockall = ["dep:mockall", "std"]
 global_allocator = []
-default = []
+default = ['alloc']
 # Opting in to the `enable_patina_tests` feature requires registering at least one test
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
 enable_patina_tests = ["patina_macro/enable_patina_tests"]
-serde = ["dep:serde", "dep:serde_json"]
+serde = ["alloc", "dep:serde", "dep:serde_json"]
 serde-with-yaml = ["serde", "dep:serde_yaml"]
 
 unstable = ["unstable-device-path"]

@@ -197,10 +197,7 @@ impl DebuggerArch for X64Arch {
                     let addr = match u64::from_str_radix(val.trim_start_matches("0x"), 16) {
                         Ok(a) => a,
                         Err(_) => {
-                            let _ = out.write_str(
-                                alloc::format!("Invalid address format: '{val}'. Expected hex address (e.g. 0x1000).")
-                                    .as_str(),
-                            );
+                            let _ = write!(out, "Invalid address format: '{val}'. Expected hex address (e.g. 0x1000).");
                             return;
                         }
                     };

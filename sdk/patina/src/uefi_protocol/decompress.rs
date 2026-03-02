@@ -89,8 +89,10 @@ impl EfiDecompressProtocol {
         _scratch_buffer: *mut c_void,
         _scratch_size: u32,
     ) -> efi::Status {
-        assert!(!source_buffer.is_null());
-        assert!(!destination_buffer.is_null());
+        if source_buffer.is_null() || destination_buffer.is_null() {
+            log_debug_assert!("EfiDecompressProtocol::decompress called with null pointer");
+            return efi::Status::INVALID_PARAMETER;
+        }
 
         // SAFETY: source_buffer and destination_buffer pointers are validated as non-null.
         // Sizes are provided by caller and trusted to match the buffer allocations.

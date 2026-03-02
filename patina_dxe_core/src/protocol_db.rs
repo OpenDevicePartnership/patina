@@ -268,9 +268,10 @@ impl ProtocolDb {
         let protocol_instance =
             ProtocolInstance { interface, opened_by_driver: false, opened_by_exclusive: false, usage: Vec::new() };
 
-        //attempt to add the protocol to the set of protocols on this handle.
+        // Attempt to add the protocol to the set of protocols on this handle.
+        // This should never fail since we already checked for existence above.
         let exists = handle_instance.insert(OrdGuid(protocol), protocol_instance);
-        assert!(exists.is_none()); //should be guaranteed by the `contains_key` check above.
+        debug_assert!(exists.is_none(), "Protocol already exists on handle, but was not caught by earlier check");
 
         //determine if there are any events to be notified.
         if let Some(events) = self.notifications.get_mut(&OrdGuid(protocol)) {
@@ -657,7 +658,14 @@ impl SpinLockedProtocolDb {
             let (handle, _) = self
                 .install_protocol_interface(None, well_known_handle_guid, core::ptr::null_mut())
                 .expect("failed to install well-known handle");
-            assert_eq!(handle, *target_handle);
+            if handle != *target_handle {
+                panic!(
+                    "Well-known handle installed at unexpected handle value. \
+                     `init_protocol_db` must be called before any other protocol database operations. \
+                     Expected handle {:#x?}, got {:#x?}",
+                    target_handle, handle
+                );
+            }
         }
         self.lock().enable_handle_hashing();
     }

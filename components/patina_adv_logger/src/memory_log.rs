@@ -410,7 +410,8 @@ impl AdvLoggerMessageEntry {
     pub fn aligned_len(&self) -> usize {
         // The length is already bounded to less than the buffer size and so cannot
         // overflow the usize with a simple 8 bit alignment.
-        align_up(self.len(), 8).unwrap()
+        align_up(self.len(), 8)
+            .expect("Aligning log entry to 8 bytes should not overflow since the length is bounded by the buffer size.")
     }
 }
 

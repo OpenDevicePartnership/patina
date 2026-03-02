@@ -21,7 +21,7 @@ use patina::{
     device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
     efi_types::EfiMemoryType,
     error::EfiError,
-    guids,
+    guids, log_debug_assert,
     performance::{
         logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
         measurement::create_performance_measurement,
@@ -53,11 +53,12 @@ use crate::{
     tpl_mutex,
 };
 
-use efi::Guid;
-use uefi_corosensei::{
+use corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
+
+use efi::Guid;
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
@@ -73,7 +74,7 @@ compile_error!("Unsupported target_arch for PE/COFF image loading");
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
-// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from uefi_corosensei) is never larger than
+// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from corosensei) is never larger than
 // UEFI_PAGE_SIZE. This can cause issues with the stack allocation not being aligned properly. This was chosen rather
 // than updating the `AllocationOptions` alignment configuration being set to `STACK_ALIGNMENT` because we cannot
 // guarantee that the alignment will be a multiple of UEFI_PAGE_SIZE in all cases. We would rather hit a compile time
@@ -146,6 +147,22 @@ unsafe impl Stack for ImageStack {
         StackPointer::new(self.body().as_ptr() as usize)
             .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
+
+    // These routines are only used when building on the host (e.g. for test or
+    // clippy). Corosensei has additional trait requirements for the stack when
+    // building for windows that need to be implemented to support that case.
+    // These are not used in UEFI.
+    #[cfg(windows)]
+    fn teb_fields(&self) -> corosensei::stack::StackTebFields {
+        corosensei::stack::StackTebFields {
+            StackBase: self.base().get(),
+            StackLimit: self.limit().get(),
+            DeallocationStack: self.stack.as_ptr() as usize,
+            GuaranteedStackBytes: 0,
+        }
+    }
+    #[cfg(windows)]
+    fn update_teb_fields(&mut self, _stack_limit: usize, _guaranteed_stack_bytes: usize) {}
 }
 
 // This struct tracks private data associated with a particular image handle.
@@ -234,12 +251,11 @@ impl PrivateImageData {
 
         if resource_section_offset + resource_section_size > loaded_image.len() {
             let pe_file_name = self.pe_info.filename_or("Unknown");
-            log::error!(
+            log_debug_assert!(
                 "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
                 resource_section_offset,
                 resource_section_size
             );
-            debug_assert!(false);
             return Err(EfiError::LoadError);
         }
 
@@ -465,12 +481,11 @@ impl PrivateImageData {
                 if let Ok(virtual_size) = align_up(section.virtual_size, self.pe_info.section_alignment) {
                     virtual_size as u64
                 } else {
-                    log::error!(
+                    log_debug_assert!(
                         "Failed to align up section size {:#X} with alignment {:#X}",
                         section.virtual_size,
                         self.pe_info.section_alignment
                     );
-                    debug_assert!(false);
                     return Err(EfiError::LoadError);
                 };
 
@@ -594,7 +609,12 @@ impl ImageData {
         )
         .unwrap_or_else(|err| panic!("Failed to install dxe core image handle: {err:?}"));
 
-        assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
+        if handle != protocol_db::DXE_CORE_HANDLE {
+            panic!(
+                "DXE Core image was installed with DXE_CORE_HANDLE but got {:?} after `install_protocol_interface`",
+                handle
+            );
+        }
 
         let protocol_ptr = NonNull::from(private_image_data.image_info.as_ref());
 
@@ -1139,12 +1159,11 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                         // success, keep going
                     }
                     Err(status) => {
-                        log::error!(
+                        log_debug_assert!(
                             "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
                             buffer.as_ptr() as efi::PhysicalAddress,
                             status
                         );
-                        debug_assert!(false);
                     }
                 };
             }

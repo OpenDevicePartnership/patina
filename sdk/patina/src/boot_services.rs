@@ -790,8 +790,12 @@ pub trait BootServices {
         let interface_ptr = unsafe {
             self.locate_protocol_unchecked(protocol_guid, registration.map_or(ptr::null_mut(), |r| r.as_ptr()))?
         };
-        assert_eq!(ptr::null_mut(), interface_ptr);
-        Ok(())
+        if !interface_ptr.is_null() {
+            log_debug_assert!("Marker protocol has no data; interface should be null {:?}", protocol_guid);
+            Err(efi::Status::INVALID_PARAMETER)
+        } else {
+            Ok(())
+        }
     }
 
     /// Use [`BootServices::locate_protocol`] when possible.

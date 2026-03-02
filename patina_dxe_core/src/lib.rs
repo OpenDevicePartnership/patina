@@ -158,6 +158,10 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+/// Useful for offline inspection (like debugging) to determine core version.
+#[used]
+static DXE_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// A trait to be implemented by the platform to provide configuration values and types related to memory management
 /// to be used directly by the Patina DXE Core.
 ///
@@ -361,8 +365,13 @@ impl<P: PlatformInfo> Core<P> {
 
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
-        assert!(self.set_instance(), "DXE Core instance was already set!");
-        assert!(!physical_hob_list.is_null(), "The DXE Core requires a non-null HOB list pointer.");
+        if !self.set_instance() {
+            panic!("DXE Core instance was already set!");
+        }
+
+        if physical_hob_list.is_null() {
+            panic!("DXE Core entry point called with null HOB list pointer!");
+        }
 
         let relocated_hob_list = self.init_memory(physical_hob_list);
 
@@ -394,7 +403,7 @@ impl<P: PlatformInfo> Core<P> {
     ///
     /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
     fn init_memory(&self, physical_hob_list: *const c_void) -> *mut c_void {
-        log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
+        log::info!("DXE Core Crate v{DXE_CORE_VERSION}");
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
 
@@ -438,7 +447,9 @@ impl<P: PlatformInfo> Core<P> {
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
-        assert!(self.set_hob_list(hob_list).is_ok());
+        if self.set_hob_list(hob_list).is_err() {
+            panic!("HOB list was already set!");
+        }
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.

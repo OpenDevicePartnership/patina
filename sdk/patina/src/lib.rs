@@ -19,6 +19,7 @@
 #![allow(static_mut_refs)]
 #![feature(coverage_attribute)]
 
+#[cfg(any(test, feature = "alloc"))]
 extern crate alloc;
 
 pub use base::guid::{BinaryGuid, Guid, GuidError, OwnedGuid};
@@ -35,18 +36,26 @@ pub mod macros;
 
 pub mod arch;
 pub mod base;
+#[cfg(any(test, feature = "alloc"))]
 pub mod boot_services;
+#[cfg(any(test, feature = "alloc"))]
 pub mod component;
+#[cfg(any(test, feature = "alloc"))]
 pub mod device_path;
+#[cfg(any(test, feature = "alloc"))]
 pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
 pub mod guids;
 pub mod log;
+#[cfg(any(test, feature = "alloc"))]
 pub mod performance;
 pub mod pi;
+#[cfg(any(test, feature = "alloc"))]
 pub mod runtime_services;
 pub mod serial;
+#[cfg(any(test, feature = "alloc"))]
 pub mod test;
+#[cfg(any(test, feature = "alloc"))]
 pub mod tpl_mutex;
 pub mod uefi_protocol;

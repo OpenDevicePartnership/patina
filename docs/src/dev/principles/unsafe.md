@@ -129,7 +129,7 @@ The concept of software safety could come into play, say in the below unsafe exa
 ///
 /// # Safety
 /// The caller must ensure `ptr` points to a valid memory region
-unsafe fn invalidate_caches_and_set_ptr_to_4(ptr: *mut u8) { 
+unsafe fn invalidate_caches_and_set_ptr_to_4(ptr: *mut u8) {
   // SAFETY: This is an architecturally defined way to invalidate caches
   unsafe { asm!("invld"); }
 
@@ -144,9 +144,9 @@ validate assumptions (or validating the assumptions ourselves):
 
 ```rust,no_run
 # use std::arch::asm;
-fn invalidate_caches_and_set_ptr_to_4(mut ptr: Box<u8>) { 
+fn invalidate_caches_and_set_ptr_to_4(mut ptr: Box<u8>) {
   // SAFETY: This is an architecturally defined way to invalidate caches
-  unsafe { asm!("invld"); } 
+  unsafe { asm!("invld"); }
 
   // Better set this ptr to 4!
   *ptr = 4;

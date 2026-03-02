@@ -13,7 +13,10 @@
     }
 
     const theme = lastThemeWasLight ? 'default' : 'dark';
-    mermaid.initialize({ startOnLoad: true, theme });
+    var script = document.createElement('script');
+    script.src = "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js";
+    script.onload = () => mermaid.initialize({startOnLoad: true, theme});
+    document.head.appendChild(script);
 
     // Simplest way to make mermaid re-render the diagrams in the new theme is via refreshing the page
 
@@ -32,4 +35,10 @@
             }
         });
     }
+
+    // Inject admonish CSS
+    var link = document.createElement('link');
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/mdbook-admonish/assets/mdbook-admonish.css";
+    document.head.appendChild(link);
 })();

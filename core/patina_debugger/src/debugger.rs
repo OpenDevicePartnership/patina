@@ -11,7 +11,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -27,7 +30,7 @@ use crate::{
     DebugError, Debugger, DebuggerLoggingPolicy, ExceptionInfo,
     arch::{DebuggerArch, SystemArch},
     dbg_target::PatinaTarget,
-    system::SystemState,
+    system::{SystemState, SystemStateTrait},
     transport::{LoggingSuspender, SerialConnection},
 };
 
@@ -38,8 +41,18 @@ const GDB_BUFF_LEN: usize = 0x2000;
 const GDB_STOP_PACKET: &[u8] = b"$T05thread:01;#07";
 const GDB_NACK_PACKET: &[u8] = b"-";
 
-#[cfg(not(feature = "alloc"))]
-static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
+cfg_if::cfg_if! {
+    if #[cfg(not(feature = "alloc"))] {
+        /// Static buffer for GDB communication when the `alloc` feature is not enabled.
+        static GDB_BUFFER: StaticGdbBuffer = StaticGdbBuffer(core::cell::UnsafeCell::new([0; GDB_BUFF_LEN]));
+
+        /// Wrapper for the static struct for mutability.
+        struct StaticGdbBuffer(core::cell::UnsafeCell<[u8; GDB_BUFF_LEN]>);
+
+        /// Safety: The buffer is just memory, the use of which is controlled by the debugger internal state lock.
+        unsafe impl Sync for StaticGdbBuffer {}
+    }
+}
 
 // SAFETY: The exception info is not actually stored globally, but this is needed to satisfy
 // the compiler as it will be a contained within the target struct which the GdbStub
@@ -80,6 +93,9 @@ where
     connection_timed_out: AtomicBool,
 }
 
+/// Safety: Send is safe by default for all but the gdb_buffer, but this is just a raw buffer and is safe to send between threads.
+unsafe impl<T: SerialIO> Send for DebuggerInternal<'static, T> {}
+
 /// Internal Debugger State
 ///
 /// contains the internal configuration and state for the debugger. This will
@@ -90,7 +106,7 @@ where
     T: SerialIO,
 {
     gdb: Option<GdbStubStateMachine<'a, PatinaTarget, SerialConnection<'a, T>>>,
-    gdb_buffer: Option<&'a [u8; GDB_BUFF_LEN]>,
+    gdb_buffer: Option<NonNull<[u8; GDB_BUFF_LEN]>>,
     timer: Option<&'a dyn ArchTimerFunctionality>,
     initial_breakpoint: bool,
 }
@@ -194,8 +210,6 @@ impl<T: SerialIO> PatinaDebugger<T> {
         let mut gdb = match debug.gdb {
             Some(_) => debug.gdb.take().unwrap(),
             None => {
-                let const_buffer = debug.gdb_buffer.ok_or(DebugError::NotInitialized)?;
-
                 // Flush any stale data from the transport.
                 while self.transport.try_read().is_some() {}
 
@@ -203,13 +217,12 @@ impl<T: SerialIO> PatinaDebugger<T> {
                 // within the internal state lock. Because there is no GDB stub at
                 // this point, there is no other references to the buffer. This
                 // ensures a single locked mutable reference to the buffer.
-                let mut_buffer =
-                    unsafe { core::slice::from_raw_parts_mut(const_buffer.as_ptr() as *mut u8, const_buffer.len()) };
+                let gdb_buffer = unsafe { debug.gdb_buffer.ok_or(DebugError::NotInitialized)?.as_mut() };
 
                 let conn = SerialConnection::new(&self.transport);
 
                 let builder = GdbStubBuilder::new(conn)
-                    .with_packet_buffer(mut_buffer)
+                    .with_packet_buffer(gdb_buffer)
                     .build()
                     .map_err(|_| DebugError::GdbStubInit)?;
 
@@ -343,11 +356,11 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "alloc")] {
                     if internal.gdb_buffer.is_none() {
-                        internal.gdb_buffer = Some(Box::leak(Box::new([0u8; GDB_BUFF_LEN])));
+                        internal.gdb_buffer = Some(NonNull::new(Box::leak(Box::new([0u8; GDB_BUFF_LEN]))).unwrap());
                     }
                 }
                 else {
-                    internal.gdb_buffer = unsafe { Some(&*(GDB_BUFFER.as_ptr() as *mut [u8; GDB_BUFF_LEN])) };
+                    internal.gdb_buffer = Some(NonNull::new(GDB_BUFFER.0.get()).unwrap());
                 }
             }
 
@@ -397,8 +410,8 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
 
         let breakpoint = {
             let mut state = self.system_state.lock();
-            state.modules.add_module(module_name, address, length);
-            state.modules.check_module_breakpoints(module_name)
+            state.add_module(module_name, address, length);
+            state.check_module_breakpoints(module_name)
         };
 
         if breakpoint {
@@ -422,6 +435,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         }
     }
 
+    #[cfg(feature = "alloc")]
     fn add_monitor_command(
         &'static self,
         command: &'static str,
