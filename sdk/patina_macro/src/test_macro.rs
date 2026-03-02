@@ -56,7 +56,7 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_SHOULD_FAIL, quote! {false});
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
-    map.insert(KEY_TRIGGER, quote! { &[patina::test::__private_api::TestTrigger::Immediate] });
+    map.insert(KEY_TRIGGER, quote! { &[patina::test::__private_api::TestTrigger::Manual] });
 
     let mut triggers = Vec::new();
 
@@ -237,7 +237,7 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina::test::__private_api::TestCase = patina::test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                    triggers: &[patina::test::__private_api::TestTrigger::Immediate],
+                    triggers: &[patina::test::__private_api::TestTrigger::Manual],
                     skip: false,
                     should_fail: false,
                     fail_msg: None,
@@ -270,7 +270,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Immediate],
+                triggers: &[patina::test::__private_api::TestTrigger::Manual],
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
         assert_eq!(
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
-            "& [patina :: test :: __private_api :: TestTrigger :: Immediate]"
+            "& [patina :: test :: __private_api :: TestTrigger :: Manual]"
         );
     }
 
@@ -529,7 +529,7 @@ mod tests {
         config.insert(KEY_SHOULD_FAIL, quote! {true});
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
-        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Immediate });
+        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Manual });
 
         let expanded = generate_expanded_test_case(&item, &config);
 
@@ -540,7 +540,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: patina::test::__private_api::TestTrigger::Immediate,
+                triggers: patina::test::__private_api::TestTrigger::Manual,
                 skip: false,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),

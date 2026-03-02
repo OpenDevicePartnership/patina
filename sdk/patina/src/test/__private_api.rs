@@ -44,10 +44,10 @@ pub fn test_cases() -> &'static [TestCase] {
 }
 
 /// An enum to describe how / when a unit test should be executed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestTrigger {
-    /// The test case should be executed immediately.
-    Immediate,
+    /// The test case should be executed manually.
+    Manual,
     /// The test case should be executed when the specified event triggers.
     Event(&'static Guid),
     /// The test case should be executed after the specified units of 100ns have elapsed.
@@ -155,7 +155,7 @@ mod tests {
     fn test_should_run() {
         let test_case = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -174,7 +174,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -183,7 +183,7 @@ mod tests {
 
         let test_case_fail = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
             fail_msg: None,
@@ -205,7 +205,7 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -213,7 +213,7 @@ mod tests {
         };
         let test_case_fail = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
             fail_msg: None,
@@ -236,7 +236,7 @@ mod tests {
         // Test that a test that fails with the expected message, should pass
         let test_case = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
             fail_msg: Some("Failed to install protocol interface"),
@@ -249,7 +249,7 @@ mod tests {
         // Test that a test that fails with an unexpected message, should fail
         let test_case = TestCase {
             name: "test",
-            triggers: &[TestTrigger::Immediate],
+            triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
             fail_msg: Some("Other failure"),
