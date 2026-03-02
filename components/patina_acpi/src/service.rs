@@ -62,8 +62,6 @@ impl AcpiProviderExt for Service<dyn AcpiProvider> {
         // SAFETY: If the safety contract of this function is upheld, the created AcpiTable is valid.
         let acpi_table = unsafe { AcpiTable::new_heap(table) }?;
         let key = self.install_acpi_table_generic(&acpi_table)?;
-        // new free fn
-        (unsafe { AcpiTable::free_heap::<T>(acpi_table.table) })?;
         Ok(key)
     }
 

@@ -323,28 +323,6 @@ mod tests {
             &mut table_key as *mut usize,
         );
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
-
-        // Test memory manager not initialized.
-        let dummy_table: [u8; 36] = [
-            // Signature "TEST"
-            b'T', b'E', b'S', b'T', // 0..3
-            // Length = 36 (0x24) little-endian
-            36, 0, 0, 0, // 4..7
-            // Revision
-            1, // 8
-            // Checksum (calculated so sum = 0)
-            0xE5, // 9
-            // OEM ID
-            b'O', b'E', b'M', b'I', b'D', b' ', // 10..15
-            // OEM Table ID "
-            b'O', b'T', b'A', b'B', b'L', b'E', b' ', b' ', // 16..23
-            // OEM Revision
-            1, 0, 0, 0, // 24..27
-            // Creator ID "CRID"
-            b'C', b'R', b'I', b'D', // 28..31
-            // Creator Revision
-            1, 0, 0, 0, // 32..35
-        ];
     }
 
     #[test]

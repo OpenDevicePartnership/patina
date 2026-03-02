@@ -411,6 +411,14 @@ impl<T> Table<T> {
 pub struct AcpiTable {
     pub(crate) table: NonNull<Table>,
     pub(crate) type_id: core::any::TypeId,
+    drop_fn: Option<fn(&Self)>,
+}
+
+impl Drop for AcpiTable {
+    fn drop(&mut self) {
+        // Use the drop fn if available.
+        self.drop_fn.map(|drop_fn| drop_fn(self));
+    }
 }
 
 impl AcpiTable {
@@ -435,13 +443,13 @@ impl AcpiTable {
         let boxed = Box::new(table);
         let ptr = Box::into_raw(boxed);
         let nn = NonNull::new(ptr).ok_or(AcpiError::AllocationFailed)?;
-        Ok(AcpiTable { table: nn.cast::<Table>(), type_id: TypeId::of::<T>() })
-    }
 
-    pub(crate) unsafe fn free_heap<T>(ptr: NonNull<Table>) -> Result<(), AcpiError> {
-        // Reconstruct the Box<Table<T>> to free the heap allocation.
-        let _ = unsafe { Box::from_raw(ptr.cast::<Table<T>>().as_ptr()) };
-        Ok(())
+        // Set up the heap allocation to be automatically dropped.
+        let drop_fn = |acpi_table: &AcpiTable| {
+            let _ = unsafe { Box::from_raw(acpi_table.table.cast::<Table<T>>().as_ptr()) };
+        };
+
+        Ok(AcpiTable { table: nn.cast::<Table>(), type_id: TypeId::of::<T>(), drop_fn: Some(drop_fn) })
     }
 
     /// Creates a new AcpiTable from a raw pointer.
@@ -504,7 +512,8 @@ impl AcpiTable {
         // If the type is unknown (for example, coming over C FFI interface), use AcpiTableHeader as a fallback.
         let type_id = type_id.unwrap_or(TypeId::of::<AcpiTableHeader>());
 
-        Ok(Self { table, type_id })
+        // In-memory ACPI table will be dropped by `free_page` manually when the table is uninstalled.
+        Ok(Self { table, type_id, drop_fn: None })
     }
 
     pub fn signature(&self) -> u32 {
@@ -633,7 +642,7 @@ mod tests {
         let nn = unsafe { NonNull::new_unchecked(raw_ptr as *mut Table) };
 
         // Wrap in AcpiTable.
-        let mut acpi_table = AcpiTable { table: nn, type_id: TypeId::of::<TestTable>() };
+        let mut acpi_table = AcpiTable { table: nn, type_id: TypeId::of::<TestTable>(), drop_fn: None };
 
         // Update the checksum (use standard checksum offset since it has a standard header).
         assert!(acpi_table.update_checksum().is_ok());
