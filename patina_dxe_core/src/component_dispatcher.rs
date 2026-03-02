@@ -178,6 +178,9 @@ impl ComponentDispatcher {
         self.storage.set_runtime_services(rs);
     }
 
+    /// Sets the core Image Handle in storage.
+    #[coverage(off)]
+    #[inline(always)]
     pub(crate) fn set_image_handle(&mut self, handle: efi::Handle) {
         self.storage.set_image_handle(handle);
     }
