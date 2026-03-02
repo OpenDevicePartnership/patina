@@ -551,6 +551,7 @@ impl<P: PlatformInfo> Core<P> {
 
         self.component_dispatcher.lock().set_boot_services(boot_services);
         self.component_dispatcher.lock().set_runtime_services(runtime_services);
+        self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
         Ok(())
     }
