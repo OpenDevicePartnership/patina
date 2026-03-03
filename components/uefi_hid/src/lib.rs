@@ -9,6 +9,7 @@
 //! Copyright (c) Microsoft Corporation. All rights reserved.
 //!
 #![cfg_attr(not(test), no_std)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 

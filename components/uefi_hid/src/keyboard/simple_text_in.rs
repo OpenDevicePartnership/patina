@@ -439,4 +439,136 @@ mod test {
         // Should log an error but not panic.
         SimpleTextInFfi::<MockBootServices>::simple_text_in_wait_for_key(event, ptr::null_mut());
     }
+
+    #[test]
+    fn reset_succeeds_with_valid_handler() {
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let status =
+            SimpleTextInFfi::<MockBootServices>::simple_text_in_reset(&mut ctx.simple_text_in as *mut _, false.into());
+        assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn read_key_stroke_returns_success_when_key_available() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+
+        {
+            let mut kq = handler.state.lock();
+            kq.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+            kq.keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        }
+
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut key = protocols::simple_text_input::InputKey::default();
+        let status = SimpleTextInFfi::<MockBootServices>::simple_text_in_read_key_stroke(
+            &mut ctx.simple_text_in as *mut _,
+            &mut key,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert!(key.scan_code != 0 || key.unicode_char != 0);
+    }
+
+    #[test]
+    fn read_key_stroke_returns_device_error_when_handler_null() {
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInFfi {
+            simple_text_in: protocols::simple_text_input::Protocol {
+                reset: SimpleTextInFfi::<MockBootServices>::simple_text_in_reset,
+                read_key_stroke: SimpleTextInFfi::<MockBootServices>::simple_text_in_read_key_stroke,
+                wait_for_key: ptr::null_mut(),
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let mut key = protocols::simple_text_input::InputKey::default();
+        let status = SimpleTextInFfi::<MockBootServices>::simple_text_in_read_key_stroke(
+            &mut ctx.simple_text_in as *mut _,
+            &mut key,
+        );
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn read_key_stroke_skips_partial_keys() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+
+        {
+            let mut kq = handler.state.lock();
+            kq.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+            // Enable partial key support so modifier keys are enqueued.
+            kq.set_key_toggle_state(
+                protocols::simple_text_input_ex::TOGGLE_STATE_VALID
+                    | protocols::simple_text_input_ex::KEY_STATE_EXPOSED,
+            );
+            // Press left ctrl — produces a partial key (scan=0, unicode=0).
+            kq.keystroke(Usage::from(0x000700E0u32), super::super::key_queue::KeyAction::KeyDown);
+            // Press Enter — produces a real key (unicode=0x0D).
+            kq.keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        }
+
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut key = protocols::simple_text_input::InputKey::default();
+        let status = SimpleTextInFfi::<MockBootServices>::simple_text_in_read_key_stroke(
+            &mut ctx.simple_text_in as *mut _,
+            &mut key,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert!(key.scan_code != 0 || key.unicode_char != 0);
+    }
+
+    #[test]
+    fn wait_for_key_signals_event_when_key_available() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        boot_services.expect_signal_event().times(1).returning(|_| Ok(()));
+
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+
+        {
+            let mut kq = handler.state.lock();
+            kq.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+            kq.keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        }
+
+        let mut ctx = test_context(boot_services, &mut handler);
+        let event = 0x1234 as efi::Event;
+        SimpleTextInFfi::<MockBootServices>::simple_text_in_wait_for_key(event, &mut ctx as *mut _);
+    }
+
+    #[test]
+    fn wait_for_key_skips_partial_and_signals_for_real_key() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        boot_services.expect_signal_event().times(1).returning(|_| Ok(()));
+
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+
+        {
+            let mut kq = handler.state.lock();
+            kq.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+            // Enable partial key support so modifier keys are enqueued.
+            kq.set_key_toggle_state(
+                protocols::simple_text_input_ex::TOGGLE_STATE_VALID
+                    | protocols::simple_text_input_ex::KEY_STATE_EXPOSED,
+            );
+            // Press left ctrl — produces a partial key (scan=0, unicode=0).
+            kq.keystroke(Usage::from(0x000700E0u32), super::super::key_queue::KeyAction::KeyDown);
+            // Press Enter — produces a real key (unicode=0x0D).
+            kq.keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        }
+
+        let mut ctx = test_context(boot_services, &mut handler);
+        let event = 0x1234 as efi::Event;
+        SimpleTextInFfi::<MockBootServices>::simple_text_in_wait_for_key(event, &mut ctx as *mut _);
+    }
 }

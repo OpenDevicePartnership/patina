@@ -80,6 +80,8 @@ impl<T: BootServices + Clone + 'static> HidDriver<T> {
 // essentially an opaque type that happens to be a pointer. The unsafe deref warning will be resolved once latest
 // r_efi with unsafe API is integrated.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+// This is a wrapper trait to abstract driver binding for FFI; core logic is all tested elsewhere.
+#[coverage(off)]
 impl<T: BootServices + Clone + 'static> DriverBinding for HidDriver<T> {
     /// Tests if the given controller supports the HidIo protocol.
     fn driver_binding_supported<U: BootServices + 'static>(

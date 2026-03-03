@@ -595,4 +595,230 @@ mod test {
         // Should log an error but not panic.
         SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_wait_for_key(event, ptr::null_mut());
     }
+
+    #[test]
+    fn reset_succeeds_with_valid_handler() {
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset(
+            &mut ctx.simple_text_in_ex as *mut _,
+            false.into(),
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn read_key_stroke_returns_success_when_key_available() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        handler.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+        // Push an Enter keystroke (usage 0x00070028).
+        handler.state.lock().keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut key_data = protocols::simple_text_input_ex::KeyData::default();
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut key_data,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert!(key_data.key.unicode_char != 0 || key_data.key.scan_code != 0);
+    }
+
+    #[test]
+    fn read_key_stroke_returns_device_error_when_handler_null() {
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInExFfi::<MockBootServices> {
+            simple_text_in_ex: protocols::simple_text_input_ex::Protocol {
+                reset: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset,
+                read_key_stroke_ex: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke,
+                wait_for_key_ex: ptr::null_mut(),
+                set_state: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state,
+                register_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify,
+                unregister_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify,
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let mut key_data = protocols::simple_text_input_ex::KeyData::default();
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut key_data,
+        );
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn set_state_succeeds_with_valid_handler() {
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut toggle_state: protocols::simple_text_input_ex::KeyToggleState =
+            protocols::simple_text_input_ex::TOGGLE_STATE_VALID;
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut toggle_state,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn set_state_returns_device_error_when_handler_null() {
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInExFfi::<MockBootServices> {
+            simple_text_in_ex: protocols::simple_text_input_ex::Protocol {
+                reset: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset,
+                read_key_stroke_ex: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke,
+                wait_for_key_ex: ptr::null_mut(),
+                set_state: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state,
+                register_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify,
+                unregister_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify,
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let mut toggle_state: protocols::simple_text_input_ex::KeyToggleState =
+            protocols::simple_text_input_ex::TOGGLE_STATE_VALID;
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut toggle_state,
+        );
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn register_key_notify_succeeds() {
+        extern "efiapi" fn noop(_key: *mut protocols::simple_text_input_ex::KeyData) -> efi::Status {
+            efi::Status::SUCCESS
+        }
+
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut key_data = protocols::simple_text_input_ex::KeyData::default();
+        let mut handle: *mut c_void = ptr::null_mut();
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut key_data,
+            noop,
+            &mut handle,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert!(!handle.is_null());
+    }
+
+    #[test]
+    fn register_key_notify_returns_device_error_when_handler_null() {
+        extern "efiapi" fn noop(_key: *mut protocols::simple_text_input_ex::KeyData) -> efi::Status {
+            efi::Status::SUCCESS
+        }
+
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInExFfi::<MockBootServices> {
+            simple_text_in_ex: protocols::simple_text_input_ex::Protocol {
+                reset: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset,
+                read_key_stroke_ex: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke,
+                wait_for_key_ex: ptr::null_mut(),
+                set_state: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state,
+                register_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify,
+                unregister_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify,
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let mut key_data = protocols::simple_text_input_ex::KeyData::default();
+        let mut handle: *mut c_void = ptr::null_mut();
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut key_data,
+            noop,
+            &mut handle,
+        );
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn unregister_key_notify_returns_device_error_when_handler_null() {
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInExFfi::<MockBootServices> {
+            simple_text_in_ex: protocols::simple_text_input_ex::Protocol {
+                reset: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset,
+                read_key_stroke_ex: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke,
+                wait_for_key_ex: ptr::null_mut(),
+                set_state: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state,
+                register_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify,
+                unregister_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify,
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify(
+            &mut ctx.simple_text_in_ex as *mut _,
+            core::ptr::dangling_mut::<c_void>(),
+        );
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn unregister_key_notify_succeeds_after_register() {
+        extern "efiapi" fn noop(_key: *mut protocols::simple_text_input_ex::KeyData) -> efi::Status {
+            efi::Status::SUCCESS
+        }
+
+        let boot_services = mock_boot_services();
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let mut key_data = protocols::simple_text_input_ex::KeyData::default();
+        let mut handle: *mut c_void = ptr::null_mut();
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify(
+            &mut ctx.simple_text_in_ex as *mut _,
+            &mut key_data,
+            noop,
+            &mut handle,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+
+        let status = SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify(
+            &mut ctx.simple_text_in_ex as *mut _,
+            handle,
+        );
+        assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn wait_for_key_signals_event_when_key_available() {
+        use hidparser::report_data_types::Usage;
+
+        let boot_services = mock_boot_services();
+        boot_services.expect_signal_event().times(1).returning(|_| Ok(()));
+
+        let mut handler = KeyboardHidHandler::new_for_test(boot_services);
+        handler.set_layout(Some(crate::keyboard::layout::get_default_keyboard_layout()));
+        handler.state.lock().keystroke(Usage::from(0x00070028u32), super::super::key_queue::KeyAction::KeyDown);
+        let mut ctx = test_context(boot_services, &mut handler);
+        let event = 0x1234 as efi::Event;
+        SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_wait_for_key(event, &mut ctx);
+    }
+
+    #[test]
+    fn process_key_notifies_handles_null_handler() {
+        let boot_services = mock_boot_services();
+        let mut ctx = SimpleTextInExFfi::<MockBootServices> {
+            simple_text_in_ex: protocols::simple_text_input_ex::Protocol {
+                reset: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_reset,
+                read_key_stroke_ex: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_read_key_stroke,
+                wait_for_key_ex: ptr::null_mut(),
+                set_state: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_set_state,
+                register_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_register_key_notify,
+                unregister_key_notify: SimpleTextInExFfi::<MockBootServices>::simple_text_in_ex_unregister_key_notify,
+            },
+            boot_services,
+            keyboard_handler: ptr::null_mut(),
+        };
+        let event = 0x1234 as efi::Event;
+        // Should return without panic when keyboard_handler is null.
+        SimpleTextInExFfi::<MockBootServices>::process_key_notifies(event, &mut ctx);
+    }
 }

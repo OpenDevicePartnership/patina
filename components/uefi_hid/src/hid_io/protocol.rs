@@ -81,6 +81,7 @@ unsafe impl patina::uefi_protocol::ProtocolInterface for HidIoProtocol {
 #[cfg(test)]
 impl HidIoProtocol {
     /// Returns a stub protocol with no-op function pointers for testing.
+    #[coverage(off)]
     pub fn stub() -> &'static mut Self {
         extern "efiapi" fn get_report_descriptor(
             _this: *const HidIoProtocol,
