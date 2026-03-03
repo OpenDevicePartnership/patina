@@ -149,7 +149,7 @@ impl ctx::TryFromCtx<'_> for HiiKeyboardPkgList {
         //Note: This is not a general purpose HII package list reader: it only supports a package list with a single
         //keyboard layout package in it.
         let offset = &mut 0;
-        //EFI_HII_PACAKGE_LIST_HEADER::PackageListGuid
+        //EFI_HII_PACKAGE_LIST_HEADER::PackageListGuid
         let guid = gread_guid(src, offset)?;
         //EFI_HII_PACKAGE_LIST_HEADER::PackageLength
         let _package_length: u32 = src.gread(offset)?;
@@ -157,7 +157,7 @@ impl ctx::TryFromCtx<'_> for HiiKeyboardPkgList {
         //Read HiiKeyboard Pkg
         let hii_keyboard_pkg: HiiKeyboardPkg = src.gread(offset)?;
 
-        //Read EFI_HHI_PACAKGE_END package
+        //Read EFI_HHI_PACKAGE_END package
         let _pkg_end_length_type: u32 = src.gread(offset)?;
 
         Ok((HiiKeyboardPkgList { package_list_guid: guid, package: hii_keyboard_pkg }, *offset))

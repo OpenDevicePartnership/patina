@@ -83,8 +83,8 @@ words:
   - genfw
   - getrsp
   - getsp
-  - gigantor
   - gicr
+  - gigantor
   - gnullvm
   - gohman
   - granularities
@@ -107,10 +107,12 @@ words:
   - jhpratt
   - joshlf
   - keccak
+  - lctrl
   - libyaml
   - linkme
   - longjmp
   - lrpair
+  - lshift
   - lzmatest
   - mdbook
   - mdscr
@@ -127,6 +129,8 @@ words:
   - ntdll
   - ntohl
   - ntohs
+  - numlock
+  - numpad
   - nvdimm
   - nvram
   - oleaut
@@ -185,6 +189,7 @@ words:
   - unmaps
   - unrecovered
   - unregisters
+  - unshifted
   - unreg
   - unspec
   - unsynchronized
