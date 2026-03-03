@@ -102,7 +102,7 @@
 //!
 extern crate alloc;
 
-use core::{cell::UnsafeCell, fmt::Display, ptr::NonNull};
+use core::{fmt::Display, ops::DerefMut, ptr::NonNull};
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use patina_macro::{IntoService, component};
@@ -170,29 +170,20 @@ macro_rules! u_assert_ne {
 }
 
 /// A private service to record test results.
-///
-/// ## Invariance
-///
-/// - This struct should only ever be accessed via the component system, which ensures that there are no mutable aliases
-///   to this struct.
-/// - This component instantiates and manages both the `UnsafeCell` and the `BTreeMap` it points to. This ensures that
-///   the pointer is always valid for the lifetime of this struct.
 #[derive(IntoService, Default)]
 #[service(Recorder)]
 struct Recorder {
-    records: UnsafeCell<BTreeMap<&'static str, TestRecord>>,
+    records: spin::Mutex<BTreeMap<&'static str, TestRecord>>,
 }
 
 impl Recorder {
-    /// Returns a mutable reference to the inner BTreeMap of test records.
-    fn inner_mut<F, R>(&self, f: F) -> R
+    /// Allows updates to the test records via a closure to ensure interior mutability safety.
+    fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut BTreeMap<&'static str, TestRecord>) -> R,
     {
-        // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
-        let records = unsafe { self.records.get().as_mut().expect("Pointer is not null.") };
-
-        f(records)
+        let mut records = self.records.lock();
+        f(records.deref_mut())
     }
 
     /// Registers UEFI event callbacks to log the test results at specific points in the boot process.
@@ -218,15 +209,15 @@ impl Recorder {
     }
 
     /// Returns true if a test with the given name is already registered, false otherwise.
-    fn exists(&self, test_name: &str) -> bool {
-        self.inner_mut(|data| data.contains_key(test_name))
+    fn test_registered(&self, test_name: &str) -> bool {
+        self.with_mut(|data| data.contains_key(test_name))
     }
 
     // Updates an existing record or inserts a new record if it does not exist.
     fn update_record(&self, record: TestRecord) {
         let name = record.test_case.name;
 
-        self.inner_mut(|data| {
+        self.with_mut(|data| {
             if let Some(existing_record) = data.get_mut(name) {
                 existing_record.merge(&record);
             } else {
@@ -237,7 +228,7 @@ impl Recorder {
 
     /// Runs all tests that are triggered by the [TestTrigger::Manual] trigger if they have not been run before.
     fn run_manual_tests(&self, storage: &mut Storage) {
-        self.inner_mut(|data| {
+        self.with_mut(|data| {
             data.values_mut()
                 .filter(|record| {
                     record.test_case.triggers.contains(&TestTrigger::Manual) && record.pass == 0 && record.fail == 0
@@ -263,7 +254,7 @@ impl Recorder {
 
 impl Display for Recorder {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.inner_mut(|records| {
+        self.with_mut(|records| {
             let mut total_passes = 0;
             let mut total_fails = 0;
             writeln!(f, "Patina on-system unit-test results:")?;
@@ -398,7 +389,7 @@ impl TestRecord {
         let storage = unsafe { storage.as_mut() };
 
         if let Some(recorder) = storage.get_service::<Recorder>() {
-            let _ = recorder.inner_mut(|records| records.get_mut(test).map(|record| record.run(storage)));
+            let _ = recorder.with_mut(|records| records.get_mut(test).map(|record| record.run(storage)));
         }
     }
 
@@ -453,6 +444,7 @@ impl TestRunner {
     #[coverage(off)]
     fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
         let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
+        log::error!("Registering {} tests with TestRunner", test_list.len());
         self.register_tests(test_list, storage)
     }
 
@@ -478,8 +470,9 @@ impl TestRunner {
             .map(|test_case| TestRecord::new(self.debug_mode, test_case, self.fail_callback));
 
         for record in records {
+            log::error!("Scheduling test {} with TestRunner", record.test_case.name);
             // Only schedule a run if we have not already scheduled for this test.
-            if !recorder.exists(record.test_case.name) {
+            if !recorder.test_registered(record.test_case.name) {
                 record.schedule_run(storage)?;
             }
 
@@ -815,7 +808,7 @@ mod tests {
         recorder.update_record(record1);
         recorder.update_record(record2);
 
-        let record = recorder.inner_mut(|data| data.get(&TEST_CASE1.name).cloned().expect("Record should exist."));
+        let record = recorder.with_mut(|data| data.get(&TEST_CASE1.name).cloned().expect("Record should exist."));
 
         assert!(record.debug_mode);
         assert_eq!(record.pass, 1);
