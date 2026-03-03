@@ -22,8 +22,10 @@ use hidparser::{
     report_data_types::{ReportId, Usage},
 };
 
-use patina::boot_services::{BootServices, c_ptr::PtrMetadata, tpl::Tpl};
-use patina::tpl_mutex::TplMutex;
+use patina::{
+    boot_services::{BootServices, c_ptr::PtrMetadata, tpl::Tpl},
+    tpl_mutex::TplMutex,
+};
 
 use crate::hid_io::{HidIo, HidReportReceiver};
 

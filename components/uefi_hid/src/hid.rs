@@ -21,9 +21,11 @@ use patina::{
     BinaryGuid, boot_services::BootServices, driver_binding::DriverBinding, uefi_protocol::ProtocolInterface,
 };
 
-use crate::hid_io::{HidReportReceiver, ReceiverFactory, UefiHidIo};
-use crate::keyboard::KeyboardHidHandler;
-use crate::pointer::PointerHidHandler;
+use crate::{
+    hid_io::{HidReportReceiver, ReceiverFactory, UefiHidIo},
+    keyboard::KeyboardHidHandler,
+    pointer::PointerHidHandler,
+};
 
 /// Per-controller context installed as a private protocol to track the HID instance.
 struct HidInstance<T: BootServices + Clone + 'static> {

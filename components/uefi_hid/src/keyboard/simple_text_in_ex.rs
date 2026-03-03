@@ -327,8 +327,10 @@ mod test {
     use alloc::boxed::Box;
     use r_efi::{efi, protocols};
 
-    use patina::boot_services::MockBootServices;
-    use patina::boot_services::c_ptr::{CPtr, PtrMetadata};
+    use patina::boot_services::{
+        MockBootServices,
+        c_ptr::{CPtr, PtrMetadata},
+    };
 
     use super::*;
 
