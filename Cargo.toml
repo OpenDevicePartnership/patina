@@ -23,6 +23,7 @@ fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "^0.5", default-features = false }
 gdbstub = { version = "0.7.3", default-features = false }
 goblin = { version = "~0.10.2", default-features = false }
+hidparser = { version = "1" }
 indoc = { version = "2.0" }
 lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
@@ -31,6 +32,7 @@ log = { version = "0.4", default-features = false }
 memoffset = {version = "0.9.1" }
 mu_rust_helpers = { version = "3.0.2" }
 num-traits = { version = "0.2", default-features = false }
+num_enum = { version = "0.7", default-features = false }
 patina = { version = "21.0.2", path = "sdk/patina" }
 patina_debugger = { version = "21.0.2", path = "core/patina_debugger" }
 patina_ffs = { version = "21.0.2", path = "sdk/patina_ffs" }
