@@ -4,10 +4,10 @@
 //!
 //! ## Architecture
 //!
-//! Incoming reports are buffered through a [`ReportQueue`] rather
-//! than being processed inline from the HidIo producer's callback. This ensures
-//! all report processing occurs at a consistent TPL_CALLBACK regardless of the
-//! producer's calling TPL:
+//! Incoming reports are buffered through a `ReportQueue` rather than being
+//! processed inline from the HidIo producer's callback. This ensures all report
+//! processing occurs at a consistent TPL_CALLBACK regardless of the producer's
+//! calling TPL:
 //!
 //! 1. **Report callback** (any TPL): locks [`TplMutex`] at TPL_NOTIFY, pushes
 //!    raw bytes onto a [`VecDeque`], signals a TPL_CALLBACK event.

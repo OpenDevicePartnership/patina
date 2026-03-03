@@ -25,8 +25,11 @@ pub const HID_IO_PROTOCOL_GUID: efi::Guid =
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(C)]
 pub enum HidReportType {
+    /// Input report (device to host).
     InputReport = 1,
+    /// Output report (host to device).
     OutputReport = 2,
+    /// Feature report (bidirectional).
     Feature = 3,
 }
 
@@ -37,11 +40,13 @@ pub type HidIoReportCallback =
 /// The HID_IO protocol FFI interface.
 #[repr(C)]
 pub struct HidIoProtocol {
+    /// Retrieves the HID report descriptor from the device.
     pub get_report_descriptor: extern "efiapi" fn(
         this: *const HidIoProtocol,
         report_descriptor_size: *mut usize,
         report_descriptor_buffer: *mut c_void,
     ) -> efi::Status,
+    /// Retrieves a HID report of the specified type from the device.
     pub get_report: extern "efiapi" fn(
         this: *const HidIoProtocol,
         report_id: u8,
@@ -49,6 +54,7 @@ pub struct HidIoProtocol {
         report_buffer_size: usize,
         report_buffer: *mut c_void,
     ) -> efi::Status,
+    /// Sends a HID report of the specified type to the device.
     pub set_report: extern "efiapi" fn(
         this: *const HidIoProtocol,
         report_id: u8,
@@ -56,11 +62,13 @@ pub struct HidIoProtocol {
         report_buffer_size: usize,
         report_buffer: *mut c_void,
     ) -> efi::Status,
+    /// Registers a callback for asynchronous input report notifications.
     pub register_report_callback: extern "efiapi" fn(
         this: *const HidIoProtocol,
         callback: HidIoReportCallback,
         context: *mut c_void,
     ) -> efi::Status,
+    /// Unregisters a previously registered input report callback.
     pub unregister_report_callback:
         extern "efiapi" fn(this: *const HidIoProtocol, callback: HidIoReportCallback) -> efi::Status,
 }

@@ -94,12 +94,15 @@ pub struct HiiNsKeyDescriptor {
 /// Refer to UEFI spec version 2.10 section 33.2.4.3
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HiiKey {
+    /// A standard key descriptor.
     Key(HiiKeyDescriptor),
+    /// A non-spacing key descriptor.
     NsKey(HiiNsKeyDescriptor),
 }
 
 /// Enumeration of physical keys.
 /// Refer to UEFI spec version 2.10 section 34.8.10 and section 33.2.4.1.
+#[allow(missing_docs)]
 #[rustfmt::skip]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 //Note: UEFI specifies this as an C enum. That means the size is a bit ambiguous; but most compilers

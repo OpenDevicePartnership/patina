@@ -515,30 +515,56 @@ fn usage_to_efi_key(usage: Usage) -> Option<EfiKey> {
 }
 
 //These should be defined in r_efi::protocols::simple_text_input
+
+/// UEFI scan code: no key pressed.
 pub const SCAN_NULL: u16 = 0x0000;
+/// UEFI scan code: Up arrow.
 pub const SCAN_UP: u16 = 0x0001;
+/// UEFI scan code: Down arrow.
 pub const SCAN_DOWN: u16 = 0x0002;
+/// UEFI scan code: Right arrow.
 pub const SCAN_RIGHT: u16 = 0x0003;
+/// UEFI scan code: Left arrow.
 pub const SCAN_LEFT: u16 = 0x0004;
+/// UEFI scan code: Home.
 pub const SCAN_HOME: u16 = 0x0005;
+/// UEFI scan code: End.
 pub const SCAN_END: u16 = 0x0006;
+/// UEFI scan code: Insert.
 pub const SCAN_INSERT: u16 = 0x0007;
+/// UEFI scan code: Delete.
 pub const SCAN_DELETE: u16 = 0x0008;
+/// UEFI scan code: Page Up.
 pub const SCAN_PAGE_UP: u16 = 0x0009;
+/// UEFI scan code: Page Down.
 pub const SCAN_PAGE_DOWN: u16 = 0x000A;
+/// UEFI scan code: F1.
 pub const SCAN_F1: u16 = 0x000B;
+/// UEFI scan code: F2.
 pub const SCAN_F2: u16 = 0x000C;
+/// UEFI scan code: F3.
 pub const SCAN_F3: u16 = 0x000D;
+/// UEFI scan code: F4.
 pub const SCAN_F4: u16 = 0x000E;
+/// UEFI scan code: F5.
 pub const SCAN_F5: u16 = 0x000F;
+/// UEFI scan code: F6.
 pub const SCAN_F6: u16 = 0x0010;
+/// UEFI scan code: F7.
 pub const SCAN_F7: u16 = 0x0011;
+/// UEFI scan code: F8.
 pub const SCAN_F8: u16 = 0x0012;
+/// UEFI scan code: F9.
 pub const SCAN_F9: u16 = 0x0013;
+/// UEFI scan code: F10.
 pub const SCAN_F10: u16 = 0x0014;
+/// UEFI scan code: F11.
 pub const SCAN_F11: u16 = 0x0015;
+/// UEFI scan code: F12.
 pub const SCAN_F12: u16 = 0x0016;
+/// UEFI scan code: Escape.
 pub const SCAN_ESC: u16 = 0x0017;
+/// UEFI scan code: Pause.
 pub const SCAN_PAUSE: u16 = 0x0048;
 
 // helper routine that converts the given modifier to the corresponding SCAN code
