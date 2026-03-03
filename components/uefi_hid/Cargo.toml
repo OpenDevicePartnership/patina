@@ -1,0 +1,27 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+[package]
+name = "uefi_hid"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "UEFI HID (Human Interface Device) support as a Patina component."
+
+[lints]
+workspace = true
+
+[features]
+default = ["ctrl-alt-del"]
+ctrl-alt-del = []
+
+[dependencies]
+hidparser = { workspace = true }
+log = { workspace = true }
+num_enum = { workspace = true }
+patina = { workspace = true }
+r-efi = { workspace = true }
+scroll = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }
