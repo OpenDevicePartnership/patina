@@ -65,7 +65,7 @@ in the platform's `ComponentInfo` implementation.
 
    ```toml
    [dependencies]
-   uefi_hid = { path = "../components/uefi_hid" }
+   uefi_hid = { version = "20" }
    ```
 
 2. Register the component in the `components` function:
