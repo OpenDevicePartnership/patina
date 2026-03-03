@@ -79,6 +79,7 @@ impl HidIoProtocol {
             report_descriptor_size: *mut usize,
             _report_descriptor_buffer: *mut c_void,
         ) -> efi::Status {
+            // SAFETY: report_descriptor_size is a valid pointer provided by the caller in the test stub.
             unsafe { *report_descriptor_size = 0 };
             efi::Status::BUFFER_TOO_SMALL
         }

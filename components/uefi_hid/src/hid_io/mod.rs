@@ -357,13 +357,15 @@ mod test {
         }
     }
 
-    /// Returns a mutable reference to the mock protocol for setting up test stubs.
+    /// Returns a mutable pointer to the mock protocol for setting up test stubs.
     ///
     /// # Safety
     ///
     /// Only safe in tests where the protocol was leaked from `mock_hid_io_protocol()`.
-    unsafe fn mock_protocol(device: &UefiHidIo<MockBootServices>) -> &mut HidIoProtocol {
-        unsafe { &mut *(device.hid_io as *mut HidIoProtocol) }
+    /// The caller must ensure no aliasing references exist.
+    unsafe fn mock_protocol(hid_io: *const HidIoProtocol) -> &'static mut HidIoProtocol {
+        // SAFETY: hid_io was leaked from mock_hid_io_protocol and is valid for the test lifetime.
+        unsafe { &mut *(hid_io as *mut HidIoProtocol) }
     }
 
     #[test]
@@ -409,12 +411,15 @@ mod test {
             assert_eq!(report_id, 5);
             assert_eq!(report_type, HidReportType::OutputReport);
             assert_eq!(report_buffer_size, 4);
+            // SAFETY: report_buffer is valid for report_buffer_size bytes, as guaranteed by the HID I/O protocol contract.
             let report = unsafe { core::slice::from_raw_parts(report_buffer as *const u8, report_buffer_size) };
             assert_eq!(report, [0x00, 0x01, 0x02, 0x03]);
             efi::Status::SUCCESS
         }
-        unsafe { mock_protocol(&device) }.set_report = mock_set_report;
+        // SAFETY: device.hid_io was leaked from mock_hid_io_protocol; no aliasing references exist.
+        unsafe { mock_protocol(device.hid_io) }.set_report = mock_set_report;
 
+        // SAFETY: device.hid_io is a valid pointer leaked from mock_hid_io_protocol.
         assert_eq!(unsafe { &*device.hid_io }.set_output_report(Some(5), &[0x00, 0x01, 0x02, 0x03]), Ok(()));
     }
 

@@ -275,9 +275,9 @@ mod test {
     /// Builds a test AbsolutePointerFfi context wired to the given handler. The caller must ensure
     /// `handler` outlives the returned context. The returned context has a null `wait_for_input`
     /// event (not needed for callback unit tests) and a heap-allocated mode.
-    fn test_context<'a>(
+    fn test_context(
         boot_services: &'static MockBootServices,
-        handler: &'a mut PointerHidHandler<MockBootServices>,
+        handler: &mut PointerHidHandler<MockBootServices>,
     ) -> AbsolutePointerFfi<MockBootServices> {
         AbsolutePointerFfi {
             absolute_pointer: protocols::absolute_pointer::Protocol {
@@ -587,6 +587,7 @@ mod test {
 
         // Clean up the leaked box.
         let key = result.unwrap();
+        // SAFETY: Reclaiming the Box leaked by the mock install_protocol_interface.
         drop(unsafe { Box::from_raw(key.ptr_value as *mut AbsPtr) });
     }
 
@@ -624,7 +625,7 @@ mod test {
     fn uninstall_succeeds() {
         let boot_services = mock_boot_services();
         boot_services.expect_uninstall_protocol_interface::<AbsPtr, Box<AbsPtr>>().times(1).returning(|_, key| {
-            // Reconstruct the Box from the key, mirroring the real implementation.
+            // SAFETY: Reclaiming the Box from the key, mirroring the real uninstall_protocol_interface.
             Ok(unsafe { Box::from_raw(key.ptr_value as *mut AbsPtr) })
         });
         boot_services.expect_close_event().times(1).returning(|_| Ok(()));
@@ -652,10 +653,11 @@ mod test {
         assert_eq!(result, Err(efi::Status::ACCESS_DENIED));
 
         // Verify pointer_handler was nulled as a safety measure.
+        // SAFETY: raw_ptr points to the still-live leaked context (uninstall failed).
         let ctx = unsafe { raw_ptr.as_ref() }.unwrap();
         assert!(ctx.pointer_handler.is_null());
 
-        // Clean up the leaked box (uninstall failed, so it's still alive).
+        // SAFETY: Reclaiming the leaked context Box for cleanup.
         drop(unsafe { Box::from_raw(raw_ptr) });
     }
 
@@ -665,6 +667,7 @@ mod test {
         boot_services
             .expect_uninstall_protocol_interface::<AbsPtr, Box<AbsPtr>>()
             .times(1)
+            // SAFETY: Reclaiming the Box from the key, mirroring the real uninstall_protocol_interface.
             .returning(|_, key| Ok(unsafe { Box::from_raw(key.ptr_value as *mut AbsPtr) }));
         boot_services.expect_close_event().times(1).returning(|_| Err(efi::Status::INVALID_PARAMETER));
 

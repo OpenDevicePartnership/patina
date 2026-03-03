@@ -242,6 +242,7 @@ mod test {
         let mut mock = MockBootServices::new();
         mock.expect_raise_tpl().returning(|_| patina::boot_services::tpl::Tpl::APPLICATION);
         mock.expect_restore_tpl().returning(|_| ());
+        // SAFETY: Leaked to obtain 'static lifetime for test use; never freed.
         unsafe { Box::into_raw(Box::new(mock)).as_mut().unwrap() }
     }
 
@@ -299,6 +300,7 @@ mod test {
         assert!(result.is_ok());
 
         let key = result.unwrap();
+        // SAFETY: Reclaiming the Box leaked by the mock install_protocol_interface.
         drop(unsafe { Box::from_raw(key.ptr_value as *mut StiPtr) });
     }
 
@@ -337,6 +339,7 @@ mod test {
         boot_services
             .expect_uninstall_protocol_interface::<StiPtr, Box<StiPtr>>()
             .times(1)
+            // SAFETY: Reclaiming the Box from the key, mirroring the real uninstall_protocol_interface.
             .returning(|_, key| Ok(unsafe { Box::from_raw(key.ptr_value as *mut StiPtr) }));
         boot_services.expect_close_event().times(1).returning(|_| Ok(()));
 
@@ -361,9 +364,11 @@ mod test {
         let result = SimpleTextInFfi::uninstall(boot_services, 0x2 as efi::Handle, key);
         assert_eq!(result, Err(efi::Status::ACCESS_DENIED));
 
+        // SAFETY: raw_ptr points to the still-live leaked context (uninstall failed).
         let ctx = unsafe { raw_ptr.as_ref() }.unwrap();
         assert!(ctx.keyboard_handler.is_null());
 
+        // SAFETY: Reclaiming the leaked context Box for cleanup.
         drop(unsafe { Box::from_raw(raw_ptr) });
     }
 
@@ -373,6 +378,7 @@ mod test {
         boot_services
             .expect_uninstall_protocol_interface::<StiPtr, Box<StiPtr>>()
             .times(1)
+            // SAFETY: Reclaiming the Box from the key, mirroring the real uninstall_protocol_interface.
             .returning(|_, key| Ok(unsafe { Box::from_raw(key.ptr_value as *mut StiPtr) }));
         boot_services.expect_close_event().times(1).returning(|_| Err(efi::Status::INVALID_PARAMETER));
 
