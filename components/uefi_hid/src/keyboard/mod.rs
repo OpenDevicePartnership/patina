@@ -469,6 +469,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
                 Ok(())
             }
             Err(status) => {
+                // SAFETY: context_ptr was created via Box::into_raw above and is being reclaimed on the error path.
                 drop(unsafe { Box::from_raw(context_ptr) });
                 Err(status)
             }
@@ -481,11 +482,13 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
             let layout_change_event = self.layout_change_event;
             if let Err(status) = self.boot_services.close_event(layout_change_event) {
                 log::error!("Failed to close layout_change_event event, status: {:x?}", status);
+                // SAFETY: layout_context is valid while self exists; nulling the handler prevents stale callbacks.
                 unsafe {
                     (*self.layout_context).keyboard_handler = ptr::null_mut();
                 }
                 return Err(status);
             }
+            // SAFETY: layout_context was created via Box::into_raw during install_layout_change_event.
             drop(unsafe { Box::from_raw(self.layout_context) });
             self.layout_context = ptr::null_mut();
             self.layout_change_event = ptr::null_mut();
@@ -508,6 +511,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
             }
         };
 
+        // SAFETY: Dereferencing the protocol pointer returned from locate_protocol; null handled by the else branch.
         let Some(hii_database_protocol) = (unsafe { hii_database_protocol_ptr.as_mut() }) else {
             log::error!("keyboard::install_default_layout: locate_protocol returned null pointer.");
             return Err(efi::Status::NOT_FOUND);
@@ -676,6 +680,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
     // Handles keyboard layout change events from the HII database.
     extern "efiapi" fn on_layout_update(_event: efi::Event, context: *mut LayoutChangeContext<T>) {
         log::trace!("on_layout_update: keyboard layout change event received");
+        // SAFETY: context was set during event registration via Box::into_raw and remains valid for the event lifetime.
         let context = unsafe { context.as_mut() }.expect("bad context pointer");
 
         if context.keyboard_handler.is_null() {
@@ -683,6 +688,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
             return;
         }
 
+        // SAFETY: keyboard_handler is null-checked above.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() }.expect("bad keyboard handler");
 
         // SAFETY: We locate the HII database protocol per UEFI spec.
@@ -696,6 +702,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
             return;
         };
 
+        // SAFETY: Dereferencing the protocol pointer returned from locate_protocol; null handled by the else branch.
         let Some(hii_database_protocol) = (unsafe { hii_database_protocol_ptr.as_mut() }) else {
             log::error!("on_layout_update: locate_protocol returned null pointer.");
             return;
@@ -808,6 +815,7 @@ extern "efiapi" fn reset_notification_function(key_data: *mut protocols::simple_
 
     log::warn!("Ctrl-Alt-Del pressed, resetting system.");
     let rt_ptr = crate::RUNTIME_SERVICES.load(core::sync::atomic::Ordering::SeqCst);
+    // SAFETY: rt_ptr is loaded from a global atomic; null is handled by the if-let.
     if let Some(runtime_services) = unsafe { rt_ptr.as_ref() } {
         (runtime_services.reset_system)(efi::RESET_COLD, efi::Status::SUCCESS, 0, core::ptr::null_mut());
     }

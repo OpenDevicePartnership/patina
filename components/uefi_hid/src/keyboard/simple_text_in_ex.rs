@@ -120,6 +120,7 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
                 log::error!("Failed to uninstall simple_text_in_ex interface, status: {:x?}", status);
                 // Protocol is still installed. Null keyboard_handler so callbacks don't access a
                 // dropped KeyboardHidHandler.
+                // SAFETY: raw_ptr was saved before consuming key; protocol is still installed so memory is valid.
                 unsafe {
                     if let Some(ctx) = raw_ptr.as_mut() {
                         ctx.keyboard_handler = ptr::null_mut();
@@ -131,10 +132,13 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
 
         if let Err(status) = boot_services.close_event(ctx.simple_text_in_ex.wait_for_key_ex) {
             log::error!("Failed to close simple_text_in_ex.wait_for_key_ex event, status: {:x?}", status);
+            // Leak ctx so the still-live event callback doesn't use freed memory.
+            core::mem::forget(ctx);
             return Err(status);
         }
 
         // Close key_notify_event stored on keyboard_handler.
+        // SAFETY: dereferencing keyboard_handler pointer; valid while ctx exists because uninstall succeeded.
         if let Some(keyboard_handler) = unsafe { ctx.keyboard_handler.as_mut() } {
             let key_notify_event = keyboard_handler.key_notify_event;
             keyboard_handler.key_notify_event = ptr::null_mut();
@@ -142,6 +146,8 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
                 && let Err(status) = boot_services.close_event(key_notify_event)
             {
                 log::error!("Failed to close key_notify_event, status: {:x?}", status);
+                // Leak ctx so the still-live event callback doesn't use freed memory.
+                core::mem::forget(ctx);
                 return Err(status);
             }
         }
@@ -154,8 +160,10 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
         this: *mut protocols::simple_text_input_ex::Protocol,
         extended_verification: efi::Boolean,
     ) -> efi::Status {
+        // SAFETY: casting `this` (first field of #[repr(C)] struct) to recover full context; null handled below.
         let context = unsafe { (this as *mut Self).as_mut() };
         let Some(context) = context else { return efi::Status::INVALID_PARAMETER };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_ex_reset invoked after keyboard dropped.");
@@ -174,9 +182,11 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
         if this.is_null() || key_data.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
+        // SAFETY: casting `this` (first field of #[repr(C)] struct) to recover full context; null handled below.
         let Some(context) = (unsafe { (this as *mut Self).as_mut() }) else {
             return efi::Status::INVALID_PARAMETER;
         };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_ex_read_key_stroke invoked after keyboard dropped.");
@@ -190,10 +200,12 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
                 key.key.unicode_char,
                 key.key.scan_code,
             );
+            // SAFETY: writing through output pointer; null-checked at top of function.
             unsafe { key_data.write_unaligned(key) }
             efi::Status::SUCCESS
         } else {
             let key = protocols::simple_text_input_ex::KeyData { key_state: kq.init_key_state(), ..Default::default() };
+            // SAFETY: writing through output pointer; null-checked at top of function.
             unsafe { key_data.write_unaligned(key) };
             efi::Status::NOT_READY
         }
@@ -207,14 +219,17 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
         if this.is_null() || key_toggle_state.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
+        // SAFETY: casting `this` (first field of #[repr(C)] struct) to recover full context; null handled below.
         let Some(context) = (unsafe { (this as *mut Self).as_mut() }) else {
             return efi::Status::INVALID_PARAMETER;
         };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_ex_set_state invoked after keyboard dropped.");
             return efi::Status::DEVICE_ERROR;
         };
+        // SAFETY: reading through pointer; null-checked at top of function.
         keyboard_handler.set_key_toggle_state(unsafe { key_toggle_state.read() });
         log::trace!("simple_text_in_ex_set_state: toggle state set");
         efi::Status::SUCCESS
@@ -235,18 +250,22 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // SAFETY: casting `this` (first field of #[repr(C)] struct) to recover full context; null handled below.
         let Some(context) = (unsafe { (this as *mut Self).as_mut() }) else {
             return efi::Status::INVALID_PARAMETER;
         };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_ex_register_key_notify invoked after keyboard dropped.");
             return efi::Status::DEVICE_ERROR;
         };
 
+        // SAFETY: reading through pointer; null-checked at top of function.
         let key_data = unsafe { key_data_ptr.read() };
         let handle = keyboard_handler.insert_key_notify_callback(key_data, key_notification_function);
         log::trace!("simple_text_in_ex_register_key_notify: handle=0x{:X}", handle);
+        // SAFETY: writing through output pointer; null-checked at top of function.
         unsafe { notify_handle.write(handle as *mut c_void) };
         efi::Status::SUCCESS
     }
@@ -259,9 +278,11 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
         if this.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
+        // SAFETY: casting `this` (first field of #[repr(C)] struct) to recover full context; null handled below.
         let Some(context) = (unsafe { (this as *mut Self).as_mut() }) else {
             return efi::Status::INVALID_PARAMETER;
         };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_ex_unregister_key_notify invoked after keyboard dropped.");
@@ -278,10 +299,12 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
 
     // Handles the wait_for_key_ex event — part of the simple_text_in_ex protocol interface.
     extern "efiapi" fn simple_text_in_ex_wait_for_key(event: efi::Event, context: *mut Self) {
+        // SAFETY: dereferencing context pointer from UEFI event; null handled by else branch.
         let Some(context) = (unsafe { context.as_mut() }) else {
             log::error!("simple_text_in_ex_wait_for_key invoked with invalid context");
             return;
         };
+        // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else { return };
         let mut kq = keyboard_handler.state.lock();
@@ -298,10 +321,12 @@ impl<T: BootServices + Clone + 'static> SimpleTextInExFfi<T> {
 
     // Dispatches registered key notification callbacks — part of the simple_text_in_ex protocol interface.
     extern "efiapi" fn process_key_notifies(_event: efi::Event, context: *mut Self) {
+        // SAFETY: dereferencing context pointer from UEFI event; null handled by else branch.
         let Some(context) = (unsafe { context.as_mut() }) else {
             return;
         };
         loop {
+            // SAFETY: dereferencing keyboard_handler raw pointer; validity ensured by protocol lifecycle.
             let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
             let Some(keyboard_handler) = keyboard_handler else {
                 log::error!("process_key_notifies event called without a valid keyboard_handler");

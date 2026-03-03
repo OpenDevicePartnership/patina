@@ -55,6 +55,7 @@ unsafe impl<T: BootServices + Clone + 'static> ProtocolInterface for AbsolutePoi
 impl<T: BootServices + Clone + 'static> Drop for AbsolutePointerFfi<T> {
     fn drop(&mut self) {
         if !self.absolute_pointer.mode.is_null() {
+            // SAFETY: mode was created via Box::into_raw during install and is non-null (checked above).
             drop(unsafe { Box::from_raw(self.absolute_pointer.mode) });
         }
     }
@@ -155,6 +156,7 @@ impl<T: BootServices + Clone + 'static> AbsolutePointerFfi<T> {
                 log::error!("Failed to uninstall absolute_pointer interface, status: {:x?}", status);
                 // Protocol is still installed. Null pointer_handler so callbacks don't access a
                 // dropped PointerHidHandler.
+                // SAFETY: raw_ptr was saved before uninstall consumed the key; protocol is still installed so memory is valid.
                 unsafe {
                     if let Some(ctx) = raw_ptr.as_mut() {
                         ctx.pointer_handler = ptr::null_mut();
@@ -166,6 +168,8 @@ impl<T: BootServices + Clone + 'static> AbsolutePointerFfi<T> {
 
         if let Err(status) = boot_services.close_event(pointer_ctx.absolute_pointer.wait_for_input) {
             log::error!("Failed to close absolute_pointer.wait_for_input event, status: {:x?}", status);
+            // Leak pointer_ctx so the still-live event callback doesn't use freed memory.
+            core::mem::forget(pointer_ctx);
             return Err(status);
         }
 
@@ -179,7 +183,9 @@ impl<T: BootServices + Clone + 'static> AbsolutePointerFfi<T> {
             log::error!("absolute_pointer_wait_for_input invoked with invalid context");
             return;
         }
+        // SAFETY: context pointer is non-null (checked above) and valid for the lifetime of the UEFI event callback.
         let context = unsafe { context.as_ref() }.expect("context pointer should not be null");
+        // SAFETY: pointer_handler validity is ensured by the protocol lifecycle.
         if let Some(pointer_handler) = unsafe { context.pointer_handler.as_ref() } {
             if pointer_handler.state.lock().state_changed {
                 let _ = context.boot_services.signal_event(event);
@@ -197,8 +203,10 @@ impl<T: BootServices + Clone + 'static> AbsolutePointerFfi<T> {
         if this.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
+        // SAFETY: this is the first field of #[repr(C)] AbsolutePointerFfi, non-null (checked above).
         let context =
             unsafe { (this as *const AbsolutePointerFfi<T>).as_ref() }.expect("context pointer should not be null");
+        // SAFETY: pointer_handler validity is ensured by the protocol lifecycle.
         if let Some(pointer_handler) = unsafe { context.pointer_handler.as_ref() } {
             pointer_handler.state.lock().reset();
             efi::Status::SUCCESS
@@ -217,11 +225,14 @@ impl<T: BootServices + Clone + 'static> AbsolutePointerFfi<T> {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // SAFETY: this is the first field of #[repr(C)] AbsolutePointerFfi, non-null (checked above).
         let context =
             unsafe { (this as *const AbsolutePointerFfi<T>).as_ref() }.expect("context pointer should not be null");
+        // SAFETY: pointer_handler validity is ensured by the protocol lifecycle.
         if let Some(pointer_handler) = unsafe { context.pointer_handler.as_ref() } {
             let mut pointer_state = pointer_handler.state.lock();
             if pointer_state.state_changed {
+                // SAFETY: state is non-null (checked above), using write_unaligned to avoid any alignment issues.
                 unsafe {
                     state.write_unaligned(pointer_state.current_state);
                 }

@@ -99,6 +99,8 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
                 log::error!("Failed to uninstall simple_text_in interface, status: {:x?}", status);
                 // Protocol is still installed. Null keyboard_handler so callbacks don't access a
                 // dropped KeyboardHidHandler.
+                // SAFETY: raw_ptr was saved from the protocol key before uninstall was attempted;
+                // since uninstall failed the protocol is still installed and the memory is valid.
                 unsafe {
                     if let Some(ctx) = raw_ptr.as_mut() {
                         ctx.keyboard_handler = ptr::null_mut();
@@ -110,6 +112,8 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
 
         if let Err(status) = boot_services.close_event(ctx.simple_text_in.wait_for_key) {
             log::error!("Failed to close simple_text_in.wait_for_key event, status: {:x?}", status);
+            // Leak ctx so the still-live event callback doesn't use freed memory.
+            core::mem::forget(ctx);
             return Err(status);
         }
 
@@ -122,8 +126,12 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
         this: *mut protocols::simple_text_input::Protocol,
         extended_verification: efi::Boolean,
     ) -> efi::Status {
+        // SAFETY: `this` points to the first field of Self (#[repr(C)]), so the cast recovers
+        // the full SimpleTextInFfi context. Null is handled by the check below.
         let context = unsafe { (this as *mut Self).as_mut() };
         let Some(context) = context else { return efi::Status::INVALID_PARAMETER };
+        // SAFETY: keyboard_handler pointer validity is ensured by the protocol lifecycle;
+        // null is handled by the check below.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_reset invoked after keyboard dropped.");
@@ -142,9 +150,13 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
         if this.is_null() || key.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
+        // SAFETY: `this` points to the first field of Self (#[repr(C)]), so the cast recovers
+        // the full SimpleTextInFfi context. Null is checked by the preceding guard.
         let Some(context) = (unsafe { (this as *mut Self).as_mut() }) else {
             return efi::Status::INVALID_PARAMETER;
         };
+        // SAFETY: keyboard_handler pointer validity is ensured by the protocol lifecycle;
+        // null is handled by the check below.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else {
             log::error!("simple_text_in_read_key_stroke invoked after keyboard dropped.");
@@ -172,6 +184,8 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
                         key_data.key.unicode_char = (key_data.key.unicode_char - UPPERCASE_A) + 1;
                     }
                 }
+                // SAFETY: key output pointer was null-checked at the top of this function;
+                // write_unaligned is used to avoid any alignment requirements.
                 unsafe { key.write_unaligned(key_data.key) }
                 log::trace!(
                     "simple_text_in_read_key_stroke: unicode=0x{:04X} scan=0x{:04X}",
@@ -187,10 +201,14 @@ impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {
 
     // Handles the wait_for_key event — part of the simple_text_in protocol interface.
     extern "efiapi" fn simple_text_in_wait_for_key(event: efi::Event, context: *mut Self) {
+        // SAFETY: context pointer was provided by the UEFI event system from Box::into_raw;
+        // null is handled by the else branch below.
         let Some(context) = (unsafe { context.as_mut() }) else {
             log::error!("simple_text_in_wait_for_key invoked with invalid context");
             return;
         };
+        // SAFETY: keyboard_handler pointer validity is ensured by the protocol lifecycle;
+        // null is handled by the check below.
         let keyboard_handler = unsafe { context.keyboard_handler.as_mut() };
         let Some(keyboard_handler) = keyboard_handler else { return };
         let mut kq = keyboard_handler.state.lock();
