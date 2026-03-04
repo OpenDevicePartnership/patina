@@ -192,7 +192,7 @@ impl Recorder {
         storage.boot_services().create_event_ex(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            Some(Self::log_test_results),
+            Some(Self::run_tests_and_report),
             NonNull::from_ref(storage),
             &EVENT_GROUP_READY_TO_BOOT,
         )?;
@@ -201,7 +201,7 @@ impl Recorder {
         storage.boot_services().create_event(
             EventType::SIGNAL_EXIT_BOOT_SERVICES,
             Tpl::CALLBACK,
-            Some(Self::log_test_results),
+            Some(Self::run_tests_and_report),
             NonNull::from_ref(storage),
         )?;
 
@@ -238,7 +238,7 @@ impl Recorder {
     }
 
     /// An EFIAPI compatible event callback to run the manually triggered tests and log the current results of patina-test
-    extern "efiapi" fn log_test_results(event: r_efi::efi::Event, mut storage: NonNull<Storage>) {
+    extern "efiapi" fn run_tests_and_report(event: r_efi::efi::Event, mut storage: NonNull<Storage>) {
         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
         let storage = unsafe { storage.as_mut() };
 
@@ -444,7 +444,6 @@ impl TestRunner {
     #[coverage(off)]
     fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
         let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
-        log::error!("Registering {} tests with TestRunner", test_list.len());
         self.register_tests(test_list, storage)
     }
 
@@ -470,7 +469,6 @@ impl TestRunner {
             .map(|test_case| TestRecord::new(self.debug_mode, test_case, self.fail_callback));
 
         for record in records {
-            log::error!("Scheduling test {} with TestRunner", record.test_case.name);
             // Only schedule a run if we have not already scheduled for this test.
             if !recorder.test_registered(record.test_case.name) {
                 record.schedule_run(storage)?;
@@ -832,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn test_efiapi_log_test_results() {
+    fn test_efiapi_run_tests_and_report() {
         let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
         // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
         // create_event_ex, and set_timer which we will fill in with no-op functions.
@@ -852,7 +850,7 @@ mod tests {
         recorder.update_record(TestRecord::new(false, &TEST_CASE1, None));
         storage.add_service(recorder);
 
-        Recorder::log_test_results(core::ptr::null_mut(), NonNull::from_ref(&storage));
+        Recorder::run_tests_and_report(core::ptr::null_mut(), NonNull::from_ref(&storage));
 
         // Check that the test run
         let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
