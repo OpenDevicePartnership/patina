@@ -715,91 +715,91 @@ impl Section {
 
         //determine section_size and start of section content based on whether extended size field is present.
         let header_end = mem::size_of::<section::Header>();
-        let (section_size, content_offset) = {
-            if section_header.size.iter().all(|&x| x == 0xff) {
+        let (mut section_size, content_offset) = {
+            if section_header.size.iter().all(|&byte| byte == 0xff) {
                 //extended header - confirm there is space for extended size
-                if buffer.len() < header_end + mem::size_of::<u32>() {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
                 let size =
-                    u32::from_le_bytes(buffer[header_end..header_end + mem::size_of::<u32>()].try_into().unwrap());
+                    buffer.get(header_end..header_end + mem::size_of::<u32>()).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+
+                let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]);
                 (size as usize, header_end + mem::size_of::<u32>())
             } else {
                 //standard header
-                let mut size_vec = section_header.size.to_vec();
-                size_vec.push(0);
-                let size = u32::from_le_bytes(size_vec.try_into().unwrap());
+                let size = section_header.size;
+
+                let size = u32::from_le_bytes([size[0], size[1], size[2], 0]);
                 (size as usize, header_end)
             }
         };
 
         let (meta_data, data) = match section_header.section_type {
             FfsSectionRawType::encapsulated::COMPRESSION => {
-                let compression_header_size = mem::size_of::<section::header::Compression>();
-                //verify that buffer has enough storage for a compression header.
-                if buffer.len() < content_offset + compression_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let compression_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a Compression header and slice bounds is checked
                 let compression_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Compression) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + compression_header_size..section_size]);
-                (SectionMetaData::Compression(*compression_header), data)
+                    unsafe { *(compression_header.as_ptr() as *const section::header::Compression) };
+
+                let compression_header_size = mem::size_of::<section::header::Compression>();
+                let data = buffer
+                    .get(content_offset + compression_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::Compression(compression_header), Box::from(data))
             }
             FfsSectionRawType::encapsulated::GUID_DEFINED => {
-                let guid_defined_header_size = mem::size_of::<section::header::GuidDefined>();
-                //verify that buffer has enough storage for a guid_defined header.
-                if buffer.len() < content_offset + guid_defined_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let guid_defined_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
-                let guid_defined =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::GuidDefined) };
+                let guid_defined_header =
+                    unsafe { *(guid_defined_header.as_ptr() as *const section::header::GuidDefined) };
 
-                //verify that buffer has enough storage for guid-specific fields.
-                let data_offset = guid_defined.data_offset as usize;
-                if buffer.len() < data_offset {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let guid_defined_header_size = mem::size_of::<section::header::GuidDefined>();
+                let data_offset = guid_defined_header.data_offset as usize;
+                let guid_specific_header_fields = buffer
+                    .get(content_offset + guid_defined_header_size..data_offset)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let data = buffer.get(data_offset..section_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
-                let guid_specific_header_fields: Box<[u8]> =
-                    Box::from(&buffer[content_offset + guid_defined_header_size..data_offset]);
-                let data: Box<[u8]> = Box::from(&buffer[data_offset..section_size]);
-
-                (SectionMetaData::GuidDefined(*guid_defined, guid_specific_header_fields), data)
+                (
+                    SectionMetaData::GuidDefined(guid_defined_header, Box::from(guid_specific_header_fields)),
+                    Box::from(data),
+                )
             }
             FfsSectionRawType::VERSION => {
-                let version_header_size = mem::size_of::<section::header::Version>();
-                //verify that buffer has enough storage for a version header.
-                if buffer.len() < content_offset + version_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let version_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size wass validated to contain a Version header and slice bounds is checked
-                let version_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Version) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + version_header_size..section_size]);
-                (SectionMetaData::Version(*version_header), data)
+                let version_header = unsafe { *(version_header.as_ptr() as *const section::header::Version) };
+
+                let version_header_size = mem::size_of::<section::header::Version>();
+                let data = buffer
+                    .get(content_offset + version_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::Version(version_header), Box::from(data))
             }
             FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
-                let freeform_header_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
-                //verify that buffer has enough storage for a freeform header.
-                if buffer.len() < content_offset + freeform_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let freeform_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
                 let freeform_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + freeform_header_size..section_size]);
-                (SectionMetaData::FreeformSubtypeGuid(*freeform_header), data)
+                    unsafe { *(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid) };
+
+                let freeform_header_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
+                let data = buffer
+                    .get(content_offset + freeform_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::FreeformSubtypeGuid(freeform_header), Box::from(data))
             }
             FfsSectionRawType::OEM_MIN..=FfsSectionRawType::FFS_MAX => {
-                //these section types do not have a defined header. So set metadata to none, and set data to the entire section buffer.
-                let data: Box<[u8]> = Box::from(buffer);
-                (SectionMetaData::None, data)
+                // These section types do not have a defined header. So set metadata to none, and set data to the entire section buffer.
+                (SectionMetaData::None, Box::from(buffer))
+            }
+            FfsSectionRawType::ALL => {
+                // When section type is ALL, the spec requires that the entire
+                // section be treated as raw data with no header, so set
+                // metadata to none, and set data to the entire section buffer.
+                section_size = buffer.len();
+                (SectionMetaData::None, Box::from(buffer))
             }
             _ => {
-                let data: Box<[u8]> = Box::from(&buffer[content_offset..section_size]);
-                (SectionMetaData::None, data)
+                let data = buffer.get(content_offset..section_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::None, Box::from(data))
             }
         };
 

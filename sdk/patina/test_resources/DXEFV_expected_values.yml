@@ -35,3 +35,26 @@ files_to_test:
       0:
         section_type: "Compression"
         size: 0x11C96
+
+  "C190FE35-44AA-41A1-8AEA-4947BC60E09D":
+    base_address: 0x1B4080
+    file_type: 0x7
+    attributes: 0x0
+    data_size: 0x365E
+    size: 0x3676
+    number_of_sections: 4
+    sections:
+      0:
+        section_type: "DxeDepex"
+        size: 0x36
+      1:
+        section_type: "Pe32"
+        size: 0x3600
+      2:
+        section_type: "UserInterface"
+        size: 0xC
+        text: "Timer"
+      3:
+        # No section type means section_type == All. Expected to return the
+        # whole section data as is.
+        size: 0xE

@@ -928,7 +928,7 @@ mod tests {
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
-            const DRIVERS_IN_DXEFV: usize = 130;
+            const DRIVERS_IN_DXEFV: usize = 131;
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
         });
 
@@ -1143,7 +1143,7 @@ mod tests {
                 std::ptr::null_mut::<c_void>(),
             );
 
-            const DRIVERS_IN_DXEFV: usize = 130;
+            const DRIVERS_IN_DXEFV: usize = 131;
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
         });
 
