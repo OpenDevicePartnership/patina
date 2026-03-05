@@ -46,7 +46,8 @@
 //!
 //! // Registered with the Core.
 //! let test_config = patina::test::TestRunner::default()
-//!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
+//!   .with_filter(Filter::include("aarch64")) // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
+//!   .with_filter(Filter::exclude("skip_me")) // Exclude tests with "skip_me" in their name & path
 //!   .debug_mode(true); // Allow any log messages from the test to be printed
 //!
 //! #[cfg_attr(target_arch = "aarch64", patina_test)]
@@ -401,23 +402,60 @@ impl TestRecord {
     }
 }
 
+/// A filter to include or exclude test cases whose name contains the pattern.
+///
+/// # Example
+///
+/// ```rust
+/// use patina::test::{TestRunner, Filter};
+///
+/// let runner = TestRunner::default()
+///     .with_filter(Filter::include("x64"))
+///     .with_filter(Filter::exclude("aarch64"));
+/// ```
+#[derive(Debug, Clone)]
+pub enum Filter {
+    /// Only run tests whose name contains the pattern.
+    Include(&'static str),
+    /// Do not run tests whose name contains the pattern.
+    Exclude(&'static str),
+}
+
+impl Filter {
+    /// Creates an include filter. Tests whose name contains `pattern` will be included.
+    pub fn include(pattern: &'static str) -> Self {
+        Self::Include(pattern)
+    }
+
+    /// Creates an exclude filter. Tests whose name contains `pattern` will be excluded.
+    pub fn exclude(pattern: &'static str) -> Self {
+        Self::Exclude(pattern)
+    }
+}
+
 /// A component that runs all test cases marked with the `#[patina_test]` attribute when loaded by the DXE core.
 #[derive(Default, Clone)]
 pub struct TestRunner {
-    filters: Vec<&'static str>,
+    filters: Vec<Filter>,
     debug_mode: bool,
     fail_callback: Option<fn(&'static str, &'static str)>,
 }
 
 #[component]
 impl TestRunner {
-    /// Adds a filter that will reduce the tests ran to only those that contain the filter value in their test name.
+    /// Adds a filter to control which tests are executed.
     ///
-    /// The `name` is not just the test name, but also the module path. For example, if a test is defined in
-    /// `my_crate::tests`, the name would be `my_crate::tests::test_case`.
+    /// The filter pattern is matched against the full test name, which includes the module path.
+    /// For example, if a test is defined in `my_crate::tests`, the name would be
+    /// `my_crate::tests::test_case`.
+    ///
+    /// - [`Filter::Include`]: Only run tests whose name contains the pattern. When multiple include
+    ///   filters are specified, a test runs if it matches **any** of them.
+    /// - [`Filter::Exclude`]: Prevents tests whose name contains the pattern from running. Exclude
+    ///   filters take priority over include filters.
     ///
     /// This filter is case-sensitive. It can be called multiple times to add multiple filters.
-    pub fn with_filter(mut self, filter: &'static str) -> Self {
+    pub fn with_filter(mut self, filter: Filter) -> Self {
         self.filters.push(filter);
         self
     }
@@ -518,8 +556,12 @@ mod tests {
 
     #[test]
     fn verify_config_sets_properly() {
-        let config = super::TestRunner::default().with_filter("aarch64").with_filter("test").debug_mode(true);
-        assert_eq!(config.filters.len(), 2);
+        let config = super::TestRunner::default()
+            .with_filter(super::Filter::include("aarch64"))
+            .with_filter(super::Filter::include("test"))
+            .with_filter(super::Filter::exclude("skip_me"))
+            .debug_mode(true);
+        assert_eq!(config.filters.len(), 3);
         assert!(config.debug_mode);
     }
 
@@ -720,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_filter_should_work() {
-        let test_runner = TestRunner::default().with_filter("triggered_test");
+        let test_runner = TestRunner::default().with_filter(Filter::include("triggered_test"));
 
         let mut storage = Storage::new();
         let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
