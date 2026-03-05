@@ -637,7 +637,7 @@ impl<'a> File<'a> {
         &'b self,
         extractor: &'b dyn SectionExtractor,
     ) -> impl Iterator<Item = Result<Section, efi::Status>> + 'b {
-        FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor)
+        FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor, self.file_type)
     }
 }
 
@@ -735,24 +735,29 @@ impl Section {
 
         let (meta_data, data) = match section_header.section_type {
             FfsSectionRawType::encapsulated::COMPRESSION => {
-                let compression_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let compression_header_size = mem::size_of::<section::header::Compression>();
+
+                let compression_header = buffer
+                    .get(content_offset..content_offset + compression_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 let (compression_header, _) = section::header::Compression::read_from_prefix(compression_header)
                     .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
-                let compression_header_size = mem::size_of::<section::header::Compression>();
                 let data = buffer
                     .get(content_offset + compression_header_size..section_size)
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 (SectionMetaData::Compression(compression_header), Box::from(data))
             }
             FfsSectionRawType::encapsulated::GUID_DEFINED => {
-                let guid_defined_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let guid_defined_header_size = mem::size_of::<section::header::GuidDefined>();
+                let guid_defined_header = buffer
+                    .get(content_offset..content_offset + guid_defined_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let guid_defined_header =
                     unsafe { *(guid_defined_header.as_ptr() as *const section::header::GuidDefined) };
 
-                let guid_defined_header_size = mem::size_of::<section::header::GuidDefined>();
                 let data_offset = guid_defined_header.data_offset as usize;
                 let guid_specific_header_fields = buffer
                     .get(content_offset + guid_defined_header_size..data_offset)
@@ -765,24 +770,28 @@ impl Section {
                 )
             }
             FfsSectionRawType::VERSION => {
-                let version_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let version_header_size = mem::size_of::<section::header::Version>();
+                let version_header = buffer
+                    .get(content_offset..content_offset + version_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 let (version_header, _) = section::header::Version::read_from_prefix(version_header)
                     .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
-                let version_header_size = mem::size_of::<section::header::Version>();
                 let data = buffer
                     .get(content_offset + version_header_size..section_size)
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 (SectionMetaData::Version(version_header), Box::from(data))
             }
             FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
-                let freeform_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let freeform_header_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
+                let freeform_header = buffer
+                    .get(content_offset..content_offset + freeform_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let freeform_header =
                     unsafe { *(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid) };
 
-                let freeform_header_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
                 let data = buffer
                     .get(content_offset + freeform_header_size..section_size)
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
@@ -925,17 +934,19 @@ struct FileSectionIterator<'a> {
     next_offset: usize,
     error: bool,
     pending_extracted_sections: VecDeque<Result<Section, efi::Status>>,
+    file_type: u8,
 }
 
 impl<'a> FileSectionIterator<'a> {
     /// Create a new firmware file section iterator instance
-    pub fn new(buffer: &'a [u8], extractor: &'a dyn SectionExtractor) -> Self {
+    pub fn new(buffer: &'a [u8], extractor: &'a dyn SectionExtractor, file_type: u8) -> Self {
         FileSectionIterator {
             buffer,
             extractor,
             next_offset: 0,
             error: false,
             pending_extracted_sections: VecDeque::new(),
+            file_type,
         }
     }
 }
@@ -959,6 +970,11 @@ impl Iterator for FileSectionIterator<'_> {
             return None;
         }
 
+        // Raw files do not contain sections.
+        if self.file_type == FfsFileRawType::RAW {
+            return None;
+        }
+
         if self.buffer[self.next_offset..].len() < mem::size_of::<ffs::section::Header>() {
             return None;
         }
@@ -968,7 +984,7 @@ impl Iterator for FileSectionIterator<'_> {
                 // attempt to extract the encapsulated section.
                 match self.extractor.extract(section) {
                     Ok(extracted_buffer) => {
-                        for section in FileSectionIterator::new(&extracted_buffer, self.extractor) {
+                        for section in FileSectionIterator::new(&extracted_buffer, self.extractor, self.file_type) {
                             self.pending_extracted_sections.push_back(section);
                         }
                     }
@@ -1021,7 +1037,7 @@ mod unit_tests {
         attributes: u8,
         size: u64,
         number_of_sections: usize,
-        sections: HashMap<usize, FfsSectionTargetValues>,
+        sections: Option<HashMap<usize, FfsSectionTargetValues>>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1066,7 +1082,9 @@ mod unit_tests {
                 );
 
                 for (idx, section) in sections.iter().enumerate() {
-                    if let Some(target) = target.sections.remove(&idx) {
+                    if let Some(section_targets) = target.sections.as_mut()
+                        && let Some(target) = section_targets.remove(&idx)
+                    {
                         assert_eq!(
                             target.section_type,
                             section.section_type(),
@@ -1085,7 +1103,9 @@ mod unit_tests {
                     }
                 }
 
-                assert!(target.sections.is_empty(), "Some section use case has not been run.");
+                if let Some(section_targets) = target.sections.as_ref() {
+                    assert!(section_targets.is_empty(), "Some section use case has not been run.");
+                }
             }
         }
         assert_eq!(

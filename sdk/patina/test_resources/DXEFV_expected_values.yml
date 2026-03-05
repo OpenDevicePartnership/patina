@@ -69,3 +69,11 @@ files_to_test:
     sections:
       0:
         size: 0x154
+
+  "F1E7A352-46AE-4912-92AF-36AB51781D8E":
+    base_address: 0xAD0F78
+    file_type: 0x1  # FfsFileType::Raw
+    attributes: 0x0
+    data_size: 0x7FA
+    size: 0x812
+    number_of_sections: 0
