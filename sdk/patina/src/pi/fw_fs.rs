@@ -41,6 +41,7 @@ pub use fv::{
     file::{Attribute as FvFileAttribute, EfiFvFileAttributes, raw::attribute as FvFileRawAttribute},
 };
 pub use fvb::attributes::{EfiFvbAttributes2, Fvb2 as Fvb2Attributes, raw::fvb2 as Fvb2RawAttributes};
+use zerocopy::FromBytes;
 
 use crate::base::align_up;
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
@@ -710,8 +711,8 @@ impl Section {
             Err(efi::Status::INVALID_PARAMETER)?;
         }
 
-        // SAFETY: Buffer size was validated to contain full section::Header
-        let section_header = unsafe { &*(buffer.as_ptr() as *const section::Header) };
+        let (section_header, _) =
+            section::Header::read_from_prefix(buffer).map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
         //determine section_size and start of section content based on whether extended size field is present.
         let header_end = mem::size_of::<section::Header>();
@@ -735,9 +736,8 @@ impl Section {
         let (meta_data, data) = match section_header.section_type {
             FfsSectionRawType::encapsulated::COMPRESSION => {
                 let compression_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
-                // SAFETY: Size was validated to contain a Compression header and slice bounds is checked
-                let compression_header =
-                    unsafe { *(compression_header.as_ptr() as *const section::header::Compression) };
+                let (compression_header, _) = section::header::Compression::read_from_prefix(compression_header)
+                    .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
                 let compression_header_size = mem::size_of::<section::header::Compression>();
                 let data = buffer
@@ -748,6 +748,7 @@ impl Section {
             FfsSectionRawType::encapsulated::GUID_DEFINED => {
                 let guid_defined_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
+                // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let guid_defined_header =
                     unsafe { *(guid_defined_header.as_ptr() as *const section::header::GuidDefined) };
 
@@ -765,8 +766,8 @@ impl Section {
             }
             FfsSectionRawType::VERSION => {
                 let version_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
-                // SAFETY: Size wass validated to contain a Version header and slice bounds is checked
-                let version_header = unsafe { *(version_header.as_ptr() as *const section::header::Version) };
+                let (version_header, _) = section::header::Version::read_from_prefix(version_header)
+                    .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
                 let version_header_size = mem::size_of::<section::header::Version>();
                 let data = buffer
@@ -777,6 +778,7 @@ impl Section {
             FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
                 let freeform_header = buffer.get(content_offset..).ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
+                // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let freeform_header =
                     unsafe { *(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid) };
 
@@ -1337,7 +1339,8 @@ mod unit_tests {
         let section = Section::new(&empty_version).unwrap();
         match section.meta_data() {
             SectionMetaData::Version(version) => {
-                assert_eq!(version.build_number, 0);
+                let build_number = version.build_number;
+                assert_eq!(build_number, 0);
                 assert_eq!(section.section_data(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),

@@ -58,3 +58,14 @@ files_to_test:
         # No section type means section_type == All. Expected to return the
         # whole section data as is.
         size: 0xE
+
+  "81FF0793-3E18-489B-9A08-A1EB71B23D20":
+    base_address: 0xAD1790
+    file_type: 0x2
+    attributes: 0x0
+    data_size: 0x154
+    size: 0x16C
+    number_of_sections: 1
+    sections:
+      0:
+        size: 0x154
