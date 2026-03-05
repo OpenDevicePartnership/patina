@@ -66,11 +66,26 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    pub fn should_run(&self, filters: &[&str]) -> bool {
-        if filters.is_empty() {
-            return !self.skip;
+    pub fn should_run(&self, filters: &[super::Filter]) -> bool {
+        if self.skip {
+            return false;
         }
-        filters.iter().any(|pattern| self.name.contains(pattern)) && !self.skip
+
+        let mut has_includes = false;
+        let mut included = false;
+
+        for filter in filters {
+            match filter {
+                super::Filter::Exclude(p) if self.name.contains(p) => return false,
+                super::Filter::Exclude(_) => {}
+                super::Filter::Include(p) => {
+                    has_includes = true;
+                    included |= self.name.contains(p);
+                }
+            }
+        }
+
+        included || !has_includes
     }
 
     pub fn run(&self, storage: &mut Storage, debug_mode: bool) -> super::Result {
@@ -151,6 +166,8 @@ mod tests {
     use super::*;
     use crate::component::Storage;
 
+    use super::super::Filter;
+
     #[test]
     fn test_should_run() {
         let test_case = TestCase {
@@ -162,10 +179,45 @@ mod tests {
             func: |_| Ok(true),
         };
 
-        std::assert!(test_case.should_run(&["test"]));
-        std::assert!(test_case.should_run(&["t"]));
+        std::assert!(test_case.should_run(&[Filter::include("test")]));
+        std::assert!(test_case.should_run(&[Filter::include("t")]));
         std::assert!(test_case.should_run(&[]));
-        std::assert!(!test_case.should_run(&["not"]));
+        std::assert!(!test_case.should_run(&[Filter::include("not")]));
+    }
+
+    #[test]
+    fn test_should_run_with_no_filters() {
+        let test_case = TestCase {
+            name: "test",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+
+        std::assert!(test_case.should_run(&[]));
+    }
+
+    #[test]
+    fn test_should_run_with_exclude_filters() {
+        let test_case = TestCase {
+            name: "my_crate::tests::test_case",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+
+        // Exclude filter matches - should not run
+        std::assert!(!test_case.should_run(&[Filter::exclude("test_case")]));
+        // Exclude filter does not match - should run
+        std::assert!(test_case.should_run(&[Filter::exclude("other")]));
+        // Include filter matches but exclude filter also matches - should not run
+        std::assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
+        // Include filter matches and exclude filter does not match - should run
+        std::assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
     }
 
     #[test]
