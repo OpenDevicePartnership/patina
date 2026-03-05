@@ -1,7 +1,7 @@
 //! Boot configuration types.
 //!
-//! This module provides configuration types for boot orchestration, including
-//! [`BootOptions`] which specifies platform-provided boot paths.
+//! [`BootConfig`] provides the platform boot configuration used by
+//! [`BootOrchestrator`](crate::BootOrchestrator) implementations.
 //!
 //! ## License
 //!
@@ -12,27 +12,25 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
-use patina::uefi_protocol::device_path::DevicePathBuf;
+use patina::device_path::paths::DevicePathBuf;
 
 /// Boot options provided by the platform.
 ///
 /// Platforms configure boot behavior by providing this configuration to the
-/// [`BootOrchestrator`](crate::component::BootOrchestrator) component.
+/// [`SimpleBootManager`](crate::SimpleBootManager).
 ///
 /// ## Example
 ///
 /// ```rust,ignore
-/// use patina_boot::config::BootOptions;
+/// use patina_boot::config::BootConfig;
 ///
-/// let options = BootOptions::new()
-///     .with_device(nvme_device_path)
+/// let config = BootConfig::new(nvme_device_path)
 ///     .with_device(usb_device_path)
 ///     .with_hotkey(0x16) // F12 (UEFI scan code)
 ///     .with_hotkey_device(usb_device_path) // Boot from USB when F12 pressed
 ///     .with_failure_handler(|| show_error_screen());
 /// ```
-#[derive(Default)]
-pub struct BootOptions {
+pub struct BootConfig {
     /// Boot device paths in priority order.
     devices: Vec<DevicePathBuf>,
     /// Optional hotkey for boot override (e.g., F12 for boot menu).
@@ -43,10 +41,13 @@ pub struct BootOptions {
     failure_handler: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
-impl BootOptions {
-    /// Create new empty boot options.
-    pub fn new() -> Self {
-        Self::default()
+impl BootConfig {
+    /// Create a new boot configuration with an initial boot device.
+    ///
+    /// At least one boot device is required. Additional devices can be added
+    /// with [`with_device`](Self::with_device).
+    pub fn new(device: DevicePathBuf) -> Self {
+        Self { devices: alloc::vec![device], hotkey: None, hotkey_devices: Vec::new(), failure_handler: None }
     }
 
     /// Add a boot device path.
@@ -122,80 +123,57 @@ mod tests {
     use super::*;
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use patina::uefi_protocol::device_path::nodes::EndEntire;
+    use patina::device_path::node_defs::EndEntire;
 
     fn create_test_device_path() -> DevicePathBuf {
         DevicePathBuf::from_device_path_node_iter(core::iter::once(EndEntire))
     }
 
     #[test]
-    fn test_default_boot_options() {
-        let options = BootOptions::default();
-        assert!(options.hotkey().is_none());
-        assert_eq!(options.devices().count(), 0);
+    fn test_new_requires_device() {
+        let config = BootConfig::new(create_test_device_path());
+        assert_eq!(config.devices().count(), 1);
+        assert!(config.hotkey().is_none());
+        assert_eq!(config.hotkey_devices().count(), 0);
     }
 
     #[test]
-    fn test_new_boot_options() {
-        let options = BootOptions::new();
-        assert_eq!(options.devices().count(), 0);
-    }
-
-    #[test]
-    fn test_with_single_device() {
-        let device = create_test_device_path();
-        let options = BootOptions::new().with_device(device);
-        assert_eq!(options.devices().count(), 1);
-    }
-
-    #[test]
-    fn test_with_multiple_devices() {
-        let device1 = create_test_device_path();
-        let device2 = create_test_device_path();
-        let device3 = create_test_device_path();
-        let options = BootOptions::new().with_device(device1).with_device(device2).with_device(device3);
-        assert_eq!(options.devices().count(), 3);
+    fn test_with_additional_devices() {
+        let config = BootConfig::new(create_test_device_path())
+            .with_device(create_test_device_path())
+            .with_device(create_test_device_path());
+        assert_eq!(config.devices().count(), 3);
     }
 
     #[test]
     fn test_with_hotkey() {
-        let options = BootOptions::new().with_hotkey(0x16); // F12
-        assert_eq!(options.hotkey(), Some(0x16));
+        let config = BootConfig::new(create_test_device_path()).with_hotkey(0x16); // F12
+        assert_eq!(config.hotkey(), Some(0x16));
     }
 
     #[test]
     fn test_with_hotkey_device() {
-        let device = create_test_device_path();
-        let options = BootOptions::new().with_hotkey_device(device);
-        assert_eq!(options.hotkey_devices().count(), 1);
+        let config = BootConfig::new(create_test_device_path()).with_hotkey_device(create_test_device_path());
+        assert_eq!(config.hotkey_devices().count(), 1);
     }
 
     #[test]
     fn test_with_multiple_hotkey_devices() {
-        let device1 = create_test_device_path();
-        let device2 = create_test_device_path();
-        let options = BootOptions::new().with_hotkey_device(device1).with_hotkey_device(device2);
-        assert_eq!(options.hotkey_devices().count(), 2);
+        let config = BootConfig::new(create_test_device_path())
+            .with_hotkey_device(create_test_device_path())
+            .with_hotkey_device(create_test_device_path());
+        assert_eq!(config.hotkey_devices().count(), 2);
     }
 
     #[test]
     fn test_hotkey_with_hotkey_devices() {
-        let primary = create_test_device_path();
-        let alternate = create_test_device_path();
-        let options = BootOptions::new()
-            .with_device(primary)
+        let config = BootConfig::new(create_test_device_path())
             .with_hotkey(0x16) // F12
-            .with_hotkey_device(alternate);
+            .with_hotkey_device(create_test_device_path());
 
-        assert_eq!(options.devices().count(), 1);
-        assert_eq!(options.hotkey(), Some(0x16));
-        assert_eq!(options.hotkey_devices().count(), 1);
-    }
-
-    #[test]
-    fn test_default_has_no_hotkey_devices() {
-        let options = BootOptions::default();
-        assert_eq!(options.hotkey_devices().count(), 0);
+        assert_eq!(config.devices().count(), 1);
+        assert_eq!(config.hotkey(), Some(0x16));
+        assert_eq!(config.hotkey_devices().count(), 1);
     }
 
     #[test]
@@ -203,30 +181,26 @@ mod tests {
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
 
-        let device = create_test_device_path();
-        let options = BootOptions::new().with_device(device).with_failure_handler(move || {
+        let config = BootConfig::new(create_test_device_path()).with_failure_handler(move || {
             called_clone.store(true, Ordering::SeqCst);
         });
 
         assert!(!called.load(Ordering::SeqCst));
-        options.handle_failure();
+        config.handle_failure();
         assert!(called.load(Ordering::SeqCst));
     }
 
     #[test]
     fn test_failure_handler_not_configured() {
-        let options = BootOptions::default();
+        let config = BootConfig::new(create_test_device_path());
         // Should not panic when no handler is configured
-        options.handle_failure();
+        config.handle_failure();
     }
 
     #[test]
     fn test_devices_iterator_order() {
-        let device1 = create_test_device_path();
-        let device2 = create_test_device_path();
-        let options = BootOptions::new().with_device(device1).with_device(device2);
-
-        let devices: Vec<_> = options.devices().collect();
+        let config = BootConfig::new(create_test_device_path()).with_device(create_test_device_path());
+        let devices: Vec<_> = config.devices().collect();
         assert_eq!(devices.len(), 2);
     }
 }
