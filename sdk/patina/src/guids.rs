@@ -151,6 +151,19 @@ pub const SMM_COMMUNICATION_PROTOCOL: efi::Guid =
 /// ```
 pub const ZERO: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
 
+/// EFI Global Variable GUID
+///
+/// The namespace GUID for UEFI-defined global variables such as `ConIn`, `ConOut`,
+/// `ErrOut`, `Boot####`, `BootOrder`, etc. See UEFI Specification Table 3-1.
+///
+/// (`8BE4DF61-93CA-11D2-AA0D-00E098032B8C`)
+/// ```
+/// # use patina::{Guid, guids::EFI_GLOBAL_VARIABLE};
+/// # assert_eq!("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", format!("{:?}", Guid::from_ref(&EFI_GLOBAL_VARIABLE)));
+/// ```
+pub const EFI_GLOBAL_VARIABLE: efi::Guid =
+    efi::Guid::from_fields(0x8BE4DF61, 0x93CA, 0x11D2, 0xAA, 0x0D, &[0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C]);
+
 /// EFI_HOB_MEMORY_ALLOC_STACK_GUID
 ///
 ///  Describes the memory stack that is produced by the HOB producer phase and upon which all post
