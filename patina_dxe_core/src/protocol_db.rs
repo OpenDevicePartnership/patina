@@ -341,7 +341,7 @@ impl ProtocolDb {
         }
 
         //sort by order of creation.
-        handles.sort_by(|a, b| a.1.cmp(&b.1));
+        handles.sort_by_key(|a| a.1);
 
         Ok(handles.iter().map(|(handle, _)| *handle).collect())
     }
