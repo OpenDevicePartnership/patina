@@ -10,18 +10,16 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina::{
-    boot_services::{BootServices, StandardBootServices},
-    test::patina_test,
-    u_assert, u_assert_eq,
-};
+use patina::boot_services::{BootServices, StandardBootServices};
+use patina_test::{patina_test, u_assert, u_assert_eq};
+
 use r_efi::efi;
 
 use crate::{memory_log, protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
 
 #[coverage(off)]
 #[patina_test]
-fn adv_logger_test(bs: StandardBootServices) -> patina::test::Result {
+fn adv_logger_test(bs: StandardBootServices) -> patina_test::error::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
     const PROTOCOL_STR: &str = "adv_logger_test: Logged through the protocol!!!\n";
 

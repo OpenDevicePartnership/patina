@@ -22,7 +22,6 @@ mockall = { workspace = true }
 patina = { workspace = true, features = ["mockall"] }
 
 [features]
-enable_patina_tests = []
 mockall = ["dep:mockall", "std"]
 std = []
 

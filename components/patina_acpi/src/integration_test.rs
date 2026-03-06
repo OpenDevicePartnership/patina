@@ -13,8 +13,8 @@ use core::{ffi::c_void, mem};
 use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::service::Service,
-    test::patina_test,
 };
+use patina_test::patina_test;
 use r_efi::efi;
 
 use crate::{
@@ -29,7 +29,7 @@ use crate::{
 
 #[coverage(off)]
 #[patina_test]
-fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
+fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Result {
     // Install a dummy FADT.
     // The FADT is treated as a normal ACPI table and should be added to the list of installed tables.
     let dummy_header =
@@ -65,7 +65,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
 
 #[coverage(off)]
 #[patina_test]
-fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
+fn acpi_protocol_test(bs: StandardBootServices) -> patina_test::error::Result {
     // Hack that is necessary since all tests share a global `STANDARD_ACPI_PROVIDER`.
     STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
 

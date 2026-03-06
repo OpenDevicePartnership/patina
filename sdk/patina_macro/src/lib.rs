@@ -107,10 +107,8 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ## Example
 ///
 /// ```ignore
-/// use patina::test::*;
+/// use patina_test::{patina_test, u_assert_eq, u_assert, error::Result};
 /// use patina::boot_services::StandardBootServices;
-/// use patina::test::patina_test;
-/// use patina::{u_assert, u_assert_eq};
 ///
 /// #[patina_test]
 /// fn test_case() -> Result {
