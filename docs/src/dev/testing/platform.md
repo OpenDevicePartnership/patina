@@ -1,13 +1,13 @@
 # Platform Testing
 
-Platform testing is supported through the `patina::test` module, which provides a testing framework similar to
+Platform testing is supported through the `patina_test` crate, which provides a testing framework similar to
 the typical Rust testing framework. The key difference is that instead of tests being collected and executed on the
-host system, they are collected and executed via a component (`patina::test::TestRunner`) provided by the same
-crate. The platform must register this component with the Patina DXE Core, which will then dispatch the component
+host system, they are collected and executed via a component (`patina_test::component::TestRunner`) provided by the
+same crate. The platform must register this component with the Patina DXE Core, which will then dispatch the component
 to run all registered tests.
 
-> **Note:** The most up-to-date documentation on the `patina::test` module can be found on
-> [crates.io](https://crates.io/crates/patina). For convenience, some high-level concepts are summarized below.
+> **Note:** The most up-to-date documentation on the `patina_test` crate can be found on
+> [crates.io](https://crates.io/crates/patina_test). For convenience, some high-level concepts are summarized below.
 
 ## Writing On-Platform Tests
 
@@ -16,8 +16,8 @@ following interface, where `...` can be any number of parameters that implement 
 `patina::component::*`:
 
 ```rust
-# extern crate patina;
-use patina::test::{Result, patina_test};
+# extern crate patina_test;
+use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 fn my_test(/* args */) -> Result { todo!() }
@@ -28,15 +28,16 @@ platform. Any function tagged with `#[patina_test]` will be collected and execut
 can filter out tests, but you should also be conscious of when tests should run. Using `cfg_attr` paired with the
 `skip` attribute is a great way to have tests ignored for reasons like host architecture or feature flags.
 
-> **Note:** `patina::test::Result` is simply `core::result::Result<(), &'static str>`, and you can use that
+> **Note:** `patina_test::error::Result` is simply `core::result::Result<(), &'static str>`, and you can use that
 > instead.
 
 This example shows how to use the `skip` attribute paired with `cfg_attr` to skip a test.
 
 ```rust
+# extern crate patina_test;
 # extern crate patina;
 use patina::boot_services::StandardBootServices;
-use patina::test::{Result, patina_test};
+use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
@@ -47,8 +48,8 @@ Next is the `should_fail` attribute, which allows you to specify that a test sho
 expected failure message.
 
 ```rust
-# extern crate patina;
-use patina::test::{Result, patina_test};
+# extern crate patina_test;
+use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 #[should_fail]
@@ -75,7 +76,8 @@ this, e.g.:
 
 ```rust
 # extern crate patina;
-use patina::test::{Result, patina_test};
+# extern crate patina_test;
+use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 #[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
@@ -90,8 +92,8 @@ These tests are executed every specified time interval (in units of 100ns, i.e. 
 also used to indicate this, e.g.:
 
 ```rust
-# extern crate patina;
-use patina::test::{Result, patina_test};
+# extern crate patina_test;
+use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 #[on(timer = 1_000_000)] // run every 100 ms
@@ -106,9 +108,9 @@ Running all these tests on a platform is as easy as instantiating the test runne
 the Patina DXE Core:
 
 ```rust,no_run
-# extern crate patina;
+# extern crate patina_test;
 # extern crate patina_dxe_core;
-use patina::test::TestRunner;
+use patina_test::component::TestRunner;
 use patina_dxe_core::*;
 
 struct ExamplePlatform;
@@ -131,9 +133,9 @@ customization is `fail_fast` which will immediately exit the test harness as soo
 default). These two customizations can only be called once. Subsequent calls will overwrite the previous value.
 
 ```rust,no_run
-# extern crate patina;
+# extern crate patina_test;
 # extern crate patina_dxe_core;
-use patina::test::TestRunner;
+use patina_test::component::TestRunner;
 use patina_dxe_core::*;
 
 struct ExamplePlatform;

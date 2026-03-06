@@ -1,0 +1,22 @@
+[package]
+name = "patina_test"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "Component and framework for on-system unit testing."
+
+[lints]
+workspace = true
+
+[dependencies]
+linkme = { workspace = true }
+log = { workspace = true }
+patina = { workspace = true }
+patina_macro = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+
+[features]
+test-runner = ["patina_macro/enable_patina_tests"]
