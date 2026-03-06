@@ -15,7 +15,7 @@ Add the crate to your manifest and enable the features needed by your firmware o
 
 ```toml
 [dependencies]
-patina = { version = "13.1.0", default-features = false, features = ["enable_patina_tests"] }
+patina = { version = "13.1.0", default-features = false }
 ```
 
 The crate is `no_std` unless `std` is selected. Tests or host utilities can enable `std` or `mockall` as needed.
@@ -30,7 +30,6 @@ The crate is `no_std` unless `std` is selected. Tests or host utilities can enab
 | `doc` | Pull in items needed to build documentation. |
 | `mockall` | Provide mock implementations for Boot Services and other traits (implies `std`). |
 | `global_allocator` | Install the global allocator support used by Patina firmware images. |
-| `enable_patina_tests` | Enable the `#[patina_test]` attribute and link-time test registration (requires at least one test). |
 | `serde` | Enable serialization support for configuration and PI data structures. |
 | `unstable` | Opt into experimental APIs gated behind `unstable-*` flags, including device path helpers. |
 | `unstable-device-path` | Activate the current device-path parsing and construction prototypes. |

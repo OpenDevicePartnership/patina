@@ -56,8 +56,6 @@ pub mod pi;
 pub mod runtime_services;
 pub mod serial;
 #[cfg(any(test, feature = "alloc"))]
-pub mod test;
-#[cfg(any(test, feature = "alloc"))]
 pub mod tpl_mutex;
 #[cfg(any(test, feature = "alloc"))]
 pub mod uefi_protocol;
