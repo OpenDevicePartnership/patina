@@ -1,8 +1,8 @@
 //! Helper functions for boot orchestration.
 //!
 //! This module provides helper functions for platforms implementing custom boot flows.
-//! The [`BootOrchestrator`](crate::component::BootOrchestrator) component uses these
-//! internally, and platforms can use them directly for custom orchestration.
+//! The [`SimpleBootManager`](crate::SimpleBootManager) uses these internally, and
+//! platforms can use them directly for custom orchestration.
 //!
 //! ## License
 //!
@@ -17,10 +17,13 @@ use core::ptr;
 
 use patina::{
     boot_services::{BootServices, event::EventType, protocol_handler::HandleSearchType, tpl::Tpl},
+    device_path::{
+        node_defs::DevicePathType,
+        paths::{DevicePath, DevicePathBuf},
+    },
     error::{EfiError, Result},
     guids::EVENT_GROUP_END_OF_DXE,
     runtime_services::RuntimeServices,
-    uefi_protocol::device_path::{DevicePath, DevicePathBuf, nodes::DevicePathType},
 };
 use r_efi::{efi, protocols::simple_text_input, system::EVENT_GROUP_READY_TO_BOOT};
 
@@ -409,7 +412,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use patina::{
         boot_services::MockBootServices,
-        uefi_protocol::device_path::nodes::{Acpi, EndEntire, HardDrive},
+        device_path::node_defs::{Acpi, EndEntire, HardDrive},
     };
 
     fn create_test_device_path() -> DevicePathBuf {
@@ -632,7 +635,7 @@ mod tests {
 
     // Tests for partial device path expansion
 
-    use patina::uefi_protocol::device_path::nodes::Pci;
+    use patina::device_path::node_defs::Pci;
 
     /// Helper to build a partial device path starting with HD node.
     fn build_partial_hd_path(guid: [u8; 16]) -> DevicePathBuf {
@@ -684,7 +687,7 @@ mod tests {
     #[test]
     fn test_expand_partial_path_success() {
         use alloc::boxed::Box;
-        use patina::uefi_protocol::device_path::nodes::FilePath;
+        use patina::device_path::node_defs::FilePath;
 
         let guid = [0xAA; 16];
 
