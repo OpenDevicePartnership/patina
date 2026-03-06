@@ -177,6 +177,12 @@ impl ComponentDispatcher {
         self.storage.set_runtime_services(rs);
     }
 
+    /// Sets the image handle in storage (used as parent for LoadImage calls).
+    #[coverage(off)]
+    pub(crate) fn set_image_handle(&mut self, handle: efi::Handle) {
+        self.storage.set_image_handle(handle);
+    }
+
     /// Parses the HOB list producing a `Hob\<T\>` struct for each guided HOB found with a registered parser.
     pub(crate) fn insert_hobs(&mut self, hob_list: &HobList<'_>) {
         for hob in hob_list.iter() {
