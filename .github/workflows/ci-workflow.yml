@@ -40,14 +40,14 @@ concurrency:
 jobs:
   ci_workflow:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.8
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.9
     with:
       build-tasks: build,build-x64,build-aarch64
       run-cargo-vet: false
     secrets: inherit
   mdbook_docs_test:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.8
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.9
     with:
       mdbook-path: "docs"
       build-cmd: cargo make build-lib
