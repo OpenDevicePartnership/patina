@@ -133,6 +133,20 @@ Reference: [sbsa_dxe_core.rs](https://github.com/OpenDevicePartnership/patina-dx
 > While the QEMU Patina DXE Core implementations provide a good starting point, you need to modify the copied file to
 > suit your platform's specific requirements.
 
+### Copy config.toml from Patina
+
+Copy `patina/.cargo/config.toml` to `bin/.cargo/config.toml`. This ensures that the platform is using the same
+toolchain configuration as Patina has been verified with and recommends. A platform may customize the copied
+`config.toml` as it wishes, but for best performance and stability, use the recommended settings. See the
+[Patina DXE Core Requirements](./patina_dxe_core_requirements.md#35-configtoml-usage) for more details.
+
+The `patina_dxe_core` crate build will fail if the config version has changed. A platform should use this as an
+indication when updating Patina to repeat this step to get the latest config.
+
+> **Note:** Patina will validate that the `PATINA_CONFIG_VERSION` environment variable is set to the same value as its
+> `.cargo/config.toml`, so even if a platform updates toolchain configuration, it must keep the same
+> `PATINA_CONFIG_VERSION`.
+
 ## 3. Dependencies
 
 Inside your crate's Cargo.toml file, add the following, where `$(VERSION)` is replaced with the version of the

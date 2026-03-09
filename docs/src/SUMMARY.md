@@ -38,6 +38,7 @@
   - [Windbg Debugging](dev/debugging/windbg_debugging.md)
   - [Windbg Debugging Example](dev/debugging/windbg_example.md)
   - [Core Reload](dev/debugging/core_reload.md)
+- [Toolchain Configuration](dev/toolchain_configuration.md)
 
 # Patina DXE Core Platform Integration
 
