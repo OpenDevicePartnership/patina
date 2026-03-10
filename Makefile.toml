@@ -85,7 +85,7 @@ Example:
 """
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
+args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
 dependencies = ["individual-package-targets"]
 
 [tasks.run-bin]
