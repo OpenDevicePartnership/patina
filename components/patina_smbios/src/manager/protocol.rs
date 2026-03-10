@@ -18,10 +18,7 @@ use core::ffi::c_char;
 use patina::{tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
-use crate::{
-    error::SmbiosError,
-    service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType},
-};
+use crate::service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType};
 
 use super::core::SmbiosManager;
 
@@ -199,21 +196,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::EmptyStringInPool) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::RecordTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-            Err(SmbiosError::MalformedRecordHeader) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::InvalidStringPoolTermination) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::StringPoolTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-            Err(SmbiosError::HandleExhausted) => efi::Status::OUT_OF_RESOURCES,
-            Err(SmbiosError::HandleOutOfRange) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::HandleInUse) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::AllocationFailed) => efi::Status::OUT_OF_RESOURCES,
-            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-            Err(e) => {
-                log::error!("[SMBIOS Add] Error: {:?}", e);
-                efi::Status::DEVICE_ERROR
-            }
+            Err(e) => patina::error::EfiError::from(e).into(),
         }
     }
 
@@ -263,11 +246,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
-            Err(SmbiosError::StringIndexOutOfRange) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-            Err(_) => efi::Status::DEVICE_ERROR,
+            Err(e) => patina::error::EfiError::from(e).into(),
         }
     }
 
@@ -297,8 +276,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
-            Err(_) => efi::Status::DEVICE_ERROR,
+            Err(e) => patina::error::EfiError::from(e).into(),
         }
     }
 
@@ -384,7 +362,7 @@ impl SmbiosProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::SmbiosManager;
+    use crate::{error::SmbiosError, manager::SmbiosManager};
     extern crate std;
     use std::vec::Vec;
 

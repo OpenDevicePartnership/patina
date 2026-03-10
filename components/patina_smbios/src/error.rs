@@ -77,14 +77,15 @@ impl From<SmbiosError> for patina::error::EfiError {
             // Resource allocation errors map to OUT_OF_RESOURCES
             SmbiosError::AllocationFailed | SmbiosError::HandleExhausted => patina::error::EfiError::OutOfResources,
 
+            // Size errors map to BUFFER_TOO_SMALL
+            SmbiosError::RecordTooSmall | SmbiosError::StringPoolTooSmall => patina::error::EfiError::BufferTooSmall,
+
             // Invalid parameters map to INVALID_PARAMETER
             SmbiosError::StringTooLong
             | SmbiosError::StringContainsNull
             | SmbiosError::EmptyStringInPool
-            | SmbiosError::RecordTooSmall
             | SmbiosError::MalformedRecordHeader
             | SmbiosError::InvalidStringPoolTermination
-            | SmbiosError::StringPoolTooSmall
             | SmbiosError::StringIndexOutOfRange
             | SmbiosError::Type127Managed
             | SmbiosError::HandleInUse
@@ -188,6 +189,13 @@ mod tests {
 
         let efi_err: patina::error::EfiError = SmbiosError::HandleOutOfRange.into();
         assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+
+        // Test size errors map to BUFFER_TOO_SMALL
+        let efi_err: patina::error::EfiError = SmbiosError::RecordTooSmall.into();
+        assert_eq!(efi_err, patina::error::EfiError::BufferTooSmall);
+
+        let efi_err: patina::error::EfiError = SmbiosError::StringPoolTooSmall.into();
+        assert_eq!(efi_err, patina::error::EfiError::BufferTooSmall);
 
         // Test not found errors map to NOT_FOUND
         let efi_err: patina::error::EfiError = SmbiosError::RecordNotFound.into();
