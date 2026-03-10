@@ -637,7 +637,12 @@ impl<'a> File<'a> {
         &'b self,
         extractor: &'b dyn SectionExtractor,
     ) -> impl Iterator<Item = Result<Section, efi::Status>> + 'b {
-        FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor, self.file_type)
+        if self.file_type == FfsFileRawType::RAW {
+            // RAW files have no sections
+            FileSectionIterator::new(&[], extractor)
+        } else {
+            FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor)
+        }
     }
 }
 
@@ -716,7 +721,7 @@ impl Section {
 
         //determine section_size and start of section content based on whether extended size field is present.
         let header_end = mem::size_of::<section::Header>();
-        let (mut section_size, content_offset) = {
+        let (section_size, content_offset) = {
             if section_header.size.iter().all(|&byte| byte == 0xff) {
                 //extended header - confirm there is space for extended size
                 let size =
@@ -755,8 +760,9 @@ impl Section {
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
-                let guid_defined_header =
-                    unsafe { *(guid_defined_header.as_ptr() as *const section::header::GuidDefined) };
+                let guid_defined_header = unsafe {
+                    core::ptr::read_unaligned(guid_defined_header.as_ptr() as *const section::header::GuidDefined)
+                };
 
                 let data_offset = guid_defined_header.data_offset as usize;
                 let guid_specific_header_fields = buffer
@@ -789,8 +795,9 @@ impl Section {
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
-                let freeform_header =
-                    unsafe { *(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid) };
+                let freeform_header = unsafe {
+                    core::ptr::read_unaligned(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid)
+                };
 
                 let data = buffer
                     .get(content_offset + freeform_header_size..section_size)
@@ -802,11 +809,8 @@ impl Section {
                 (SectionMetaData::None, Box::from(buffer))
             }
             FfsSectionRawType::ALL => {
-                // When section type is ALL, the spec requires that the entire
-                // section be treated as raw data with no header, so set
-                // metadata to none, and set data to the entire section buffer.
-                section_size = buffer.len();
-                (SectionMetaData::None, Box::from(buffer))
+                // ALL is not a valid section type for an actual section, so return an error.
+                return Err(efi::Status::VOLUME_CORRUPTED);
             }
             _ => {
                 let data = buffer.get(content_offset..section_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
@@ -934,19 +938,17 @@ struct FileSectionIterator<'a> {
     next_offset: usize,
     error: bool,
     pending_extracted_sections: VecDeque<Result<Section, efi::Status>>,
-    file_type: u8,
 }
 
 impl<'a> FileSectionIterator<'a> {
     /// Create a new firmware file section iterator instance
-    pub fn new(buffer: &'a [u8], extractor: &'a dyn SectionExtractor, file_type: u8) -> Self {
+    pub fn new(buffer: &'a [u8], extractor: &'a dyn SectionExtractor) -> Self {
         FileSectionIterator {
             buffer,
             extractor,
             next_offset: 0,
             error: false,
             pending_extracted_sections: VecDeque::new(),
-            file_type,
         }
     }
 }
@@ -970,11 +972,6 @@ impl Iterator for FileSectionIterator<'_> {
             return None;
         }
 
-        // Raw files do not contain sections.
-        if self.file_type == FfsFileRawType::RAW {
-            return None;
-        }
-
         if self.buffer[self.next_offset..].len() < mem::size_of::<ffs::section::Header>() {
             return None;
         }
@@ -984,7 +981,7 @@ impl Iterator for FileSectionIterator<'_> {
                 // attempt to extract the encapsulated section.
                 match self.extractor.extract(section) {
                     Ok(extracted_buffer) => {
-                        for section in FileSectionIterator::new(&extracted_buffer, self.extractor, self.file_type) {
+                        for section in FileSectionIterator::new(&extracted_buffer, self.extractor) {
                             self.pending_extracted_sections.push_back(section);
                         }
                     }
