@@ -196,7 +196,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(e) => patina::error::EfiError::from(e).into(),
+            Err(e) => e.into(),
         }
     }
 
@@ -246,7 +246,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(e) => patina::error::EfiError::from(e).into(),
+            Err(e) => e.into(),
         }
     }
 
@@ -276,7 +276,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(e) => patina::error::EfiError::from(e).into(),
+            Err(e) => e.into(),
         }
     }
 
