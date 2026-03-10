@@ -15,7 +15,7 @@
 //!
 use crate::{
     __private_api::{TestCase, TestTrigger},
-    alloc::{boxed::Box, collections::BTreeMap, fmt::Display, vec::Vec},
+    alloc::{boxed::Box, collections::BTreeMap, fmt::Display, string::String, vec::Vec},
 };
 
 use core::{ops::DerefMut, ptr::NonNull};
@@ -139,6 +139,17 @@ impl TestRecord {
         Ok(())
     }
 
+    /// Serializes the test record to a JSON string for logging or reporting purposes.
+    fn json(&self) -> String {
+        alloc::format!(
+            r#"{{"name":"{}","pass":{},"fail":{},"err_msg":{}}}"#,
+            self.test_case.name,
+            self.pass,
+            self.fail,
+            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{}""#, msg))
+        )
+    }
+
     /// EFIAPI event callback to locate a specific test and run it.
     extern "efiapi" fn run_test(_: r_efi::efi::Event, &(test, mut storage): &'static (&'static str, NonNull<Storage>)) {
         // SAFETY: Storage is a valid pointer as the pointer is generated from a static reference.
@@ -228,6 +239,22 @@ impl Recorder {
         });
     }
 
+    /// Serializes all test records to a JSON string for logging or reporting purposes.
+    fn json(&self) -> String {
+        self.with_mut(|records| {
+            let mut json_records = String::from("[");
+            for record in records.values() {
+                json_records.push_str(&record.json());
+                json_records.push(',');
+            }
+            if !records.is_empty() {
+                json_records.pop();
+            }
+            json_records.push(']');
+            json_records
+        })
+    }
+
     /// An EFIAPI compatible event callback to run the manually triggered tests and log the current results of patina-test
     extern "efiapi" fn run_tests_and_report(event: r_efi::efi::Event, mut storage: NonNull<Storage>) {
         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
@@ -237,6 +264,7 @@ impl Recorder {
             recorder.run_manual_tests(storage);
 
             log::info!("{}", *recorder);
+            log::info!(r#"{{"patina_on_system_unit_test_results":{}}}"#, recorder.json());
         }
 
         let _ = storage.boot_services().close_event(event);
@@ -395,5 +423,45 @@ mod tests {
         let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
         let output = format!("{}", *recorder);
         assert!(output.contains("test ... ok (1 passes)"));
+    }
+
+    #[test]
+    fn test_record_json_string() {
+        let test_case = &TEST_CASE1;
+        let mut record = TestRecord::new(false, test_case, None);
+        record.pass = 2;
+        record.fail = 1;
+        record.err_msg = Some("Failure message");
+
+        let json = record.json();
+        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure message"}"#);
+
+        record.err_msg = None;
+        let json = record.json();
+        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":null}"#);
+    }
+
+    #[test]
+    fn test_recorder_json_string() {
+        let recorder = Recorder::default();
+
+        let mut tr1 = TestRecord::new(false, &TEST_CASE2, None);
+        tr1.pass = 2;
+        tr1.fail = 1;
+        tr1.err_msg = Some("Failure 1");
+        recorder.update_record(tr1);
+
+        let mut tr2 = TestRecord::new(false, &TEST_CASE3, None);
+        tr2.pass = 0;
+        tr2.fail = 2;
+        tr2.err_msg = Some("Failure 2");
+        recorder.update_record(tr2);
+
+        // Cannot guarantee order of records, so we will just check that the JSON string contains both records in the correct format.
+        let json = recorder.json();
+        assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure 1"}"#));
+        assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"err_msg":"Failure 2"}"#));
+        assert!(json.starts_with('[') && json.ends_with(']'));
+        assert!(json.contains(","));
     }
 }
