@@ -149,6 +149,12 @@ fn interpret_page_fault_exception_data(exception_data: u64) {
         log::error!("R/W: Write");
     }
 
+    if (exception_data & bit!(2)) != 0 {
+        log::error!("User-mode access violation");
+    } else {
+        log::error!("Supervisor-mode access violation");
+    }
+
     if (exception_data & bit!(3)) != 0 {
         log::error!("Reserved bit violation");
     }
