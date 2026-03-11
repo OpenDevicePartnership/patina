@@ -85,7 +85,7 @@ pub struct SmbiosManager {
     /// Pre-allocated buffer for entry point structure
     ep_buffer_addr: RefCell<Option<PhysicalAddress>>,
     /// Checksum of published table (for detecting direct modifications)
-    published_table_checksum: RefCell<Option<u32>>,
+    published_table_checksum: RefCell<Option<u64>>,
     /// Size of the published table (needed for checksum verification)
     published_table_size: RefCell<usize>,
 }
@@ -470,12 +470,15 @@ impl SmbiosManager {
         self.table_64_address.replace(Some(table_address));
     }
 
-    /// Calculate a simple checksum for table data
+    /// Calculate a hash for table data using Xorshift64*
     ///
-    /// Uses a simple sum of all bytes (wrapping). This is sufficient for
-    /// detecting accidental modifications, not cryptographic integrity.
-    fn calculate_table_checksum(data: &[u8]) -> u32 {
-        data.iter().fold(0u32, |acc, &byte| acc.wrapping_add(byte as u32))
+    /// Uses Xorshift64starHasher to detect modifications including byte swaps
+    /// that a simple checksum would miss. Not for cryptographic integrity.
+    fn calculate_table_checksum(data: &[u8]) -> u64 {
+        use core::hash::Hasher;
+        let mut hasher = patina::hash::Xorshift64starHasher::default();
+        hasher.write(data);
+        hasher.finish()
     }
 
     /// Verify that the published table has not been modified directly

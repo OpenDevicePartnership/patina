@@ -14,7 +14,6 @@ features = ["doc"]
 [dependencies]
 bitfield-struct = { workspace = true }
 cfg-if = { workspace = true }
-compile-time = { workspace = true }
 crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 lazy_static = { workspace = true, features = ["spin_no_std"] }
