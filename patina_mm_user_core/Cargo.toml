@@ -1,0 +1,31 @@
+[package]
+name = "patina_mm_user_core"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "A pure Rust implementation of the MM User Core for standalone MM mode environments."
+
+# Metadata to tell docs.rs how to build the documentation when uploading
+[package.metadata.docs.rs]
+features = ["doc"]
+
+[dependencies]
+goblin = { workspace = true, features = ["pe32", "pe64"] }
+log = { workspace = true }
+patina = { workspace = true, features = ["core"] }
+patina_internal_core = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+uuid = { workspace = true }
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+serial_test = { workspace = true }
+
+[features]
+default = []
+std = []
+doc = []
