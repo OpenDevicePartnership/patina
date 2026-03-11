@@ -65,6 +65,21 @@ pub const EBS_FAILED: efi::Guid =
 pub const EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE: efi::Guid =
     efi::Guid::from_fields(0x3b387bfd, 0x7abc, 0x4cf2, 0xa0, 0xca, &[0xb6, 0xa1, 0x6c, 0x1b, 0x1b, 0x25]);
 
+/// Exit Boot Services event group GUID.
+///
+/// The GUID for the event group signaled when `ExitBootServices()` is called.
+/// In MM, this is forwarded as an MMI to allow MM drivers to perform cleanup.
+///
+/// Defined in UEFI/PI as `gEfiEventExitBootServicesGuid`.
+///
+/// (`27ABF055-B1B8-4C26-8048-748F37BAA2DF`)
+/// ```
+/// # use patina::{Guid, guids::EVENT_EXIT_BOOT_SERVICES};
+/// # assert_eq!("27ABF055-B1B8-4C26-8048-748F37BAA2DF", format!("{:?}", Guid::from_ref(&EVENT_EXIT_BOOT_SERVICES)));
+/// ```
+pub const EVENT_EXIT_BOOT_SERVICES: efi::Guid =
+    efi::Guid::from_fields(0x27ABF055, 0xB1B8, 0x4C26, 0x80, 0x48, &[0x74, 0x8F, 0x37, 0xBA, 0xA2, 0xDF]);
+
 /// End of dxe event group GUID.
 ///
 /// (`02CE967A-DD7E-4FFC-9EE7-810CF0470880`)
@@ -74,6 +89,21 @@ pub const EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE: efi::Guid =
 /// ```
 pub const EVENT_GROUP_END_OF_DXE: efi::Guid =
     efi::Guid::from_fields(0x2ce967a, 0xdd7e, 0x4ffc, 0x9e, 0xe7, &[0x81, 0xc, 0xf0, 0x47, 0x8, 0x80]);
+
+/// Ready to Boot event group GUID.
+///
+/// The GUID for the event group signaled when the platform is ready to boot.
+/// In MM, this is forwarded as an MMI to allow MM drivers to perform final setup.
+///
+/// Defined in UEFI/PI as `gEfiEventReadyToBootGuid`.
+///
+/// (`7CE88FB3-4BD7-4679-87A8-A8D8DEE50D2B`)
+/// ```
+/// # use patina::{Guid, guids::EVENT_READY_TO_BOOT};
+/// # assert_eq!("7CE88FB3-4BD7-4679-87A8-A8D8DEE50D2B", format!("{:?}", Guid::from_ref(&EVENT_READY_TO_BOOT)));
+/// ```
+pub const EVENT_READY_TO_BOOT: efi::Guid =
+    efi::Guid::from_fields(0x7CE88FB3, 0x4BD7, 0x4679, 0x87, 0xA8, &[0xA8, 0xD8, 0xDE, 0xE5, 0x0D, 0x2B]);
 
 /// Hardware Interrupt protocol GUID.
 /// This protocol provides a means of registering and unregistering interrupt handlers for AARCH64 systems.
@@ -114,6 +144,86 @@ pub const HARDWARE_INTERRUPT_PROTOCOL_V2: efi::Guid =
 /// ```
 pub const MEMORY_TYPE_INFORMATION: efi::Guid =
     efi::Guid::from_fields(0x4C19049F, 0x4137, 0x4DD3, 0x9C, 0x10, &[0x8B, 0x97, 0xA8, 0x3F, 0xFD, 0xFA]);
+
+/// MM Dispatch Event GUID.
+///
+/// An MMI handler is registered with this GUID to trigger driver dispatch.
+/// When the supervisor sends an MMI with this GUID, the core attempts to
+/// dispatch any previously-discovered-but-not-yet-dispatched drivers.
+///
+/// Defined in StandaloneMmPkg as `gEventMmDispatchGuid`.
+///
+/// (`7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE`)
+/// ```
+/// # use patina::{Guid, guids::MM_DISPATCH_EVENT};
+/// # assert_eq!("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE", format!("{:?}", Guid::from_ref(&MM_DISPATCH_EVENT)));
+/// ```
+pub const MM_DISPATCH_EVENT: efi::Guid =
+    efi::Guid::from_fields(0x7e6efffa, 0x69b4, 0x4c1b, 0xa4, 0xc7, &[0xaf, 0xf9, 0xc9, 0x24, 0x4f, 0xee]);
+
+/// DXE MM Ready To Lock Protocol GUID.
+///
+/// This protocol GUID is used to signal that the DXE phase is ready to lock
+/// down MM. When an MMI with this GUID is received, the MM core begins the
+/// ready-to-lock sequence.
+///
+/// Defined in PI as `gEfiDxeMmReadyToLockProtocolGuid`.
+///
+/// (`60FF8964-E906-41D0-AFED-F241E974E08E`)
+/// ```
+/// # use patina::{Guid, guids::MM_DXE_READY_TO_LOCK_PROTOCOL};
+/// # assert_eq!("60FF8964-E906-41D0-AFED-F241E974E08E", format!("{:?}", Guid::from_ref(&MM_DXE_READY_TO_LOCK_PROTOCOL)));
+/// ```
+pub const MM_DXE_READY_TO_LOCK_PROTOCOL: efi::Guid =
+    efi::Guid::from_fields(0x60ff8964, 0xe906, 0x41d0, 0xaf, 0xed, &[0xf2, 0x41, 0xe9, 0x74, 0xe0, 0x8e]);
+
+/// MM End of DXE Protocol GUID.
+///
+/// This protocol is installed in the MM handle database when an End-of-DXE MMI
+/// is received. MM drivers can register a protocol notification for this GUID
+/// to perform actions that must happen after all DXE drivers have been dispatched
+/// but before 3rd-party OpROMs execute.
+///
+/// Defined in PI as `gEfiMmEndOfDxeProtocolGuid`.
+///
+/// (`24E70042-D5C5-4260-8C39-0AD3AA32E93D`)
+/// ```
+/// # use patina::{Guid, guids::MM_END_OF_DXE_PROTOCOL};
+/// # assert_eq!("24E70042-D5C5-4260-8C39-0AD3AA32E93D", format!("{:?}", Guid::from_ref(&MM_END_OF_DXE_PROTOCOL)));
+/// ```
+pub const MM_END_OF_DXE_PROTOCOL: efi::Guid =
+    efi::Guid::from_fields(0x24e70042, 0xd5c5, 0x4260, 0x8c, 0x39, &[0x0a, 0xd3, 0xaa, 0x32, 0xe9, 0x3d]);
+
+/// MM End of PEI Protocol GUID.
+///
+/// This protocol is installed in the MM handle database when an End-of-PEI MMI
+/// is received. It signals that the PEI phase has completed.
+///
+/// Defined in PI as `gEfiMmEndOfPeiProtocol`.
+///
+/// (`F33E1BF3-980B-4BFB-A29A-B29C86453732`)
+/// ```
+/// # use patina::{Guid, guids::MM_END_OF_PEI_PROTOCOL};
+/// # assert_eq!("F33E1BF3-980B-4BFB-A29A-B29C86453732", format!("{:?}", Guid::from_ref(&MM_END_OF_PEI_PROTOCOL)));
+/// ```
+pub const MM_END_OF_PEI_PROTOCOL: efi::Guid =
+    efi::Guid::from_fields(0xf33e1bf3, 0x980b, 0x4bfb, 0xa2, 0x9a, &[0xb2, 0x9c, 0x86, 0x45, 0x37, 0x32]);
+
+/// MM Ready To Lock Protocol GUID.
+///
+/// This protocol is installed in the MM handle database when the ready-to-lock
+/// handler runs. MM drivers can register a protocol notification for this GUID
+/// to be informed that MMRAM is about to be locked.
+///
+/// Defined in PI as `gEfiMmReadyToLockProtocolGuid`.
+///
+/// (`47B7FA8C-F4BD-4AF6-8200-333086F0D2C8`)
+/// ```
+/// # use patina::{Guid, guids::MM_READY_TO_LOCK_PROTOCOL};
+/// # assert_eq!("47B7FA8C-F4BD-4AF6-8200-333086F0D2C8", format!("{:?}", Guid::from_ref(&MM_READY_TO_LOCK_PROTOCOL)));
+/// ```
+pub const MM_READY_TO_LOCK_PROTOCOL: efi::Guid =
+    efi::Guid::from_fields(0x47b7fa8c, 0xf4bd, 0x4af6, 0x82, 0x00, &[0x33, 0x30, 0x86, 0xf0, 0xd2, 0xc8]);
 
 /// Performance Protocol GUID.
 ///
