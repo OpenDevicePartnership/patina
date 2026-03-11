@@ -25,14 +25,14 @@ fn test_mm_supervisor_version_request_integration() {
 
     // Create MM Supervisor version request using safe operations
     let version_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        request: mm_supv::RequestType::VersionInfo as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = version_request.to_bytes();
+    let request_bytes = version_request.as_bytes().to_vec();
 
     // Send the request using framework
     let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
@@ -75,14 +75,14 @@ fn test_mm_supervisor_capabilities_request() {
 
     // Create capabilities request using safe operations
     let capabilities_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::FETCH_POLICY,
+        request: mm_supv::RequestType::FetchPolicy as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = capabilities_request.to_bytes();
+    let request_bytes = capabilities_request.as_bytes().to_vec();
 
     // Send the request using framework
     let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
@@ -124,14 +124,14 @@ fn test_mm_supervisor_invalid_request() {
 
     // Create invalid request using safe operations
     let invalid_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
         request: 0xFFFF, // Invalid request type
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = invalid_request.to_bytes();
+    let request_bytes = invalid_request.as_bytes().to_vec();
 
     // Send the request using framework
     let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
@@ -154,12 +154,12 @@ fn test_mm_supervisor_invalid_signature() {
     let invalid_request = MmSupervisorRequestHeader {
         signature: u32::from_le_bytes([b'I', b'N', b'V', b'D']), // Invalid signature
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        request: mm_supv::RequestType::VersionInfo as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = invalid_request.to_bytes();
+    let request_bytes = invalid_request.as_bytes().to_vec();
 
     // Test handler directly
     let result = mm_supervisor.handle_request(&request_bytes);
@@ -207,15 +207,15 @@ fn test_mm_supervisor_builder_integration() {
 
     // Test MM Supervisor handler as well
     let version_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        request: mm_supv::RequestType::VersionInfo as u32,
         reserved: 0,
         result: 0,
     };
 
     // Use framework directly instead of mm_comm_service
-    let request_data = version_request.to_bytes(); // Convert to bytes
+    let request_data = version_request.as_bytes().to_vec(); // Convert to bytes
     let supervisor_result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_data);
     assert!(supervisor_result.is_ok(), "MM Supervisor should work");
 
@@ -229,14 +229,14 @@ fn test_safe_message_parsing_with_mm_supervisor() {
     let mut buffer = vec![0u8; TEST_BUFFER_SIZE];
 
     let version_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        request: mm_supv::RequestType::VersionInfo as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_data = version_request.to_bytes();
+    let request_data = version_request.as_bytes().to_vec();
 
     // Test writing MM Supervisor message safely
     let mut parser = MmMessageParser::new(&mut buffer);
@@ -267,14 +267,14 @@ fn test_mm_supervisor_comm_update_request() {
 
     // Create communication buffer update request using COMM_UPDATE constant
     let comm_update_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::COMM_UPDATE,
+        request: mm_supv::RequestType::CommUpdate as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = comm_update_request.to_bytes();
+    let request_bytes = comm_update_request.as_bytes().to_vec();
 
     // Send the request using framework
     let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
@@ -289,7 +289,7 @@ fn test_mm_supervisor_comm_update_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.request, mm_supv::requests::COMM_UPDATE, "Response should be for COMM_UPDATE request");
+    assert_eq!(response_header.request, mm_supv::RequestType::CommUpdate as u32, "Response should be for COMM_UPDATE request");
     assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Comm update request should succeed");
 
     // Parse update result safely
@@ -315,14 +315,14 @@ fn test_mm_supervisor_unblock_mem_request() {
 
     // Create memory unblock request using UNBLOCK_MEM constant
     let unblock_mem_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::UNBLOCK_MEM, // This uses the constant!
+        request: mm_supv::RequestType::UnblockMem as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = unblock_mem_request.to_bytes();
+    let request_bytes = unblock_mem_request.as_bytes().to_vec();
 
     // Send the request using framework
     let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
@@ -337,7 +337,7 @@ fn test_mm_supervisor_unblock_mem_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.request, mm_supv::requests::UNBLOCK_MEM, "Response should be for UNBLOCK_MEM request");
+    assert_eq!(response_header.request, mm_supv::RequestType::UnblockMem as u32, "Response should be for UNBLOCK_MEM request");
     assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Unblock mem request should succeed");
 
     // Parse unblock status safely

@@ -156,14 +156,14 @@ fn test_real_component_mm_supervisor_version_request() {
 
     // Create MM Supervisor version request using the actual structures
     let version_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        request: mm_supv::RequestType::VersionInfo as u32,
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = version_request.to_bytes();
+    let request_bytes = version_request.as_bytes().to_vec();
 
     // Send the request using the real component framework
     let result = framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &request_bytes);
@@ -183,7 +183,7 @@ fn test_real_component_mm_supervisor_version_request() {
     // Verify header fields
     assert_eq!(response_header.signature, mm_supv::REQUEST_SIGNATURE, "Response signature should match");
     assert_eq!(response_header.revision, mm_supv::REVISION, "Response revision should match");
-    assert_eq!(response_header.request, mm_supv::requests::VERSION_INFO, "Response request type should match");
+    assert_eq!(response_header.request, mm_supv::RequestType::VersionInfo as u32, "Response request type should match");
     assert_eq!(response_header.result, 0, "Response should indicate success");
 
     // Parse version info from response
@@ -275,15 +275,15 @@ fn test_real_component_multiple_handlers() {
 
     // Test MM supervisor handler
     let supervisor_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
+        signature: mm_supv::SIGNATURE,
         revision: mm_supv::REVISION,
-        request: mm_supv::requests::FETCH_POLICY,
+        request: mm_supv::RequestType::FetchPolicy as u32,
         reserved: 0,
         result: 0,
     };
 
     let supervisor_result =
-        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &supervisor_request.to_bytes());
+        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &supervisor_request.as_bytes().to_vec());
     assert!(supervisor_result.is_ok(), "Supervisor communication should succeed");
 
     // Both handlers should work independently through the real component infrastructure

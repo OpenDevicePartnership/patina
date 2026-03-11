@@ -6,7 +6,12 @@
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![feature(coverage_attribute)]
 
+#[cfg(any(test, feature = "alloc"))]
 pub mod component;
-pub mod config;
-pub mod protocol;
+#[cfg(any(test, feature = "alloc"))]
 pub mod service;
+#[cfg(any(test, feature = "alloc"))]
+pub mod config;
+
+pub mod comm_buffer_hob;
+pub mod protocol;

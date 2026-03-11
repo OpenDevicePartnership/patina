@@ -34,3 +34,4 @@ x86_64 = { workspace = true, features = [
 doc = []
 mockall = ["dep:mockall", "std"]
 std = []
+alloc = []
