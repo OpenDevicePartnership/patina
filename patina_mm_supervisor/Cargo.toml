@@ -1,0 +1,39 @@
+[package]
+name = "patina_mm_supervisor"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "A pure Rust implementation of the MM Supervisor Core for standalone MM mode environments."
+
+# Metadata to tell docs.rs how to build the documentation when uploading
+[package.metadata.docs.rs]
+features = ["doc"]
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+patina = { version = "22.0.1", path = "../sdk/patina", default-features = false }
+patina_internal_cpu = { workspace = true }
+patina_paging = { workspace = true, features = [
+    "supervisor"
+] }
+patina_stacktrace = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+serial_test = { workspace = true }
+
+[features]
+default = []
+std = []
+doc = []
+save_state_intel = ["patina_internal_cpu/save_state_intel"]
+save_state_amd = ["patina_internal_cpu/save_state_amd"]
