@@ -113,7 +113,6 @@ use core::{
     ffi::c_void,
     num::NonZeroUsize,
     ptr::{self, NonNull},
-    str::FromStr,
 };
 
 use gcd::SpinLockedGcd;
@@ -532,10 +531,7 @@ impl<P: PlatformInfo> Core<P> {
         st.checksum_all();
 
         // Install HobList configuration table
-        let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
-            uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
-        let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
-        config_tables::core_install_configuration_table(hob_list_guid, physical_hob_list, st)
+        config_tables::core_install_configuration_table(patina::guids::HOB_LIST, physical_hob_list, st)
             .expect("Unable to create configuration table due to invalid table entry.");
 
         // Install Memory Type Info configuration table.

@@ -163,3 +163,19 @@ pub const ZERO: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 
 /// ```
 pub const HOB_MEMORY_ALLOC_STACK: efi::Guid =
     efi::Guid::from_fields(0x4ed4bf27, 0x4092, 0x42e9, 0x80, 0x7d, &[0x52, 0x7b, 0x1d, 0x00, 0xc9, 0xbd]);
+
+/// EFI HOB List GUID
+///
+/// The GUID used to identify the HOB list when it is installed as a configuration table entry
+/// in the EFI System Table or the MM System Table. Drivers can locate the HOB list by searching
+/// the configuration table for this GUID.
+///
+/// Defined in the PI Specification as `gEfiHobListGuid`.
+///
+/// (`7739F24C-93D7-11D4-9A3A-0090273FC14D`)
+/// ```
+/// # use patina::{Guid, guids::HOB_LIST};
+/// # assert_eq!("7739F24C-93D7-11D4-9A3A-0090273FC14D", format!("{:?}", Guid::from_ref(&HOB_LIST)));
+/// ```
+pub const HOB_LIST: efi::Guid =
+    efi::Guid::from_fields(0x7739F24C, 0x93D7, 0x11D4, 0x9A, 0x3A, &[0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D]);
