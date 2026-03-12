@@ -30,6 +30,9 @@ use crate::{
 #[coverage(off)]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
+    // Hack that is necessary since all tests share a global `STANDARD_ACPI_PROVIDER`.
+    STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
+
     // Install a dummy FADT.
     // The FADT is treated as a normal ACPI table and should be added to the list of installed tables.
     let dummy_header =
@@ -39,15 +42,16 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     // SAFETY: The constructed table is a valid ACPI table.
     let table_key = unsafe { table_manager.install_acpi_table(dummy_fadt) }.expect("Should install dummy FADT.");
 
-    // Install a FACS table (special case — not iterated over).
+    // Install a FACS table.
     let facs = AcpiFacs { signature: signature::FACS, length: mem::size_of::<AcpiFacs>() as u32, ..Default::default() };
     // SAFETY: The constructed table is a valid ACPI table.
     assert!(unsafe { table_manager.install_acpi_table(facs) }.is_ok(), "Should install FACS table.");
 
-    // Verify only the FADT is in the iterator.
+    // Verify the FADT and FACS are in the iterator.
     let tables = table_manager.iter_tables();
-    assert_eq!(tables.len(), 1);
-    assert_eq!(tables[0].signature(), signature::FADT);
+    assert_eq!(tables.len(), 2);
+    assert!(tables.iter().any(|t| t.signature() == signature::FADT));
+    assert!(tables.iter().any(|t| t.signature() == signature::FACS));
 
     // Get the dummy FADT and verify its contents.
     let fadt = table_manager.get_acpi_table::<AcpiFadt>(table_key).expect("Should get dummy FADT");
