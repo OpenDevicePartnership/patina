@@ -13,6 +13,9 @@
 
 /// Module for FV-related Device Path struct implementations.
 pub mod fv_types;
+/// Module for device path helper functions such as partial device path detection and expansion.
+#[cfg(feature = "unstable-device-path")]
+pub mod helpers;
 /// Module for spec-defined device path node types defined in this module.
 #[cfg(feature = "unstable-device-path")]
 pub mod node_defs;
