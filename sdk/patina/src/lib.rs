@@ -47,6 +47,7 @@ pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
 pub mod guids;
+pub mod hash;
 pub mod log;
 #[cfg(any(test, feature = "alloc"))]
 pub mod performance;

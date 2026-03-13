@@ -1809,14 +1809,14 @@ mod tests {
             // functions it calls. This unsafe section encompasses all of the logic for the remaining
             // test since this is test code.
             unsafe {
-                // Use a known file GUID from the test FV
+                // Use a known file GUID(PrintDxe) from the test FV
                 let mut guid: efi::Guid = efi::Guid::from_fields(
-                    0x1fa1f39e,
-                    0xfeff,
-                    0x4aae,
-                    0xbd,
-                    0x7b,
-                    &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
+                    0x79E4A61C,
+                    0xED73,
+                    0x4312,
+                    0x94,
+                    0xFE,
+                    &[0xE3, 0xE7, 0x56, 0x33, 0x62, 0xA9],
                 );
                 let name_guid: *mut efi::Guid = &mut guid;
 

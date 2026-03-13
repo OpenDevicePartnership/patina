@@ -1208,7 +1208,8 @@ mod test {
         let section = Section::new_from_buffer(&empty_version).unwrap();
         match section.header() {
             SectionHeader::Version(version, _) => {
-                assert_eq!(version.build_number, 0);
+                let build_number = version.build_number;
+                assert_eq!(build_number, 0);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
