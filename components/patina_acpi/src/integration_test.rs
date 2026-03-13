@@ -14,6 +14,7 @@ use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::service::Service,
     test::patina_test,
+    u_assert, u_assert_eq,
 };
 use r_efi::efi;
 
@@ -71,26 +72,26 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     let invalid_table =
         AcpiTableHeader { signature: signature::MADT, length: (signature::MADT_SIZE - 2) as u32, ..Default::default() };
     // SAFETY: The constructed table is not a valid ACPI table, so this should return an error.
-    assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
+    u_assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
 
     // Verify only valid tables are in the iterator.
     let tables = table_manager.iter_tables();
-    assert!(tables.len() == original_length + 2, "Should have two more tables than original.");
-    assert!(tables.iter().any(|t| t.signature() == 0x12341234));
-    assert!(tables.iter().any(|t| t.signature() == 0x43214321));
+    u_assert!(tables.len() == original_length + 2, "Should have two more tables than original.");
+    u_assert!(tables.iter().any(|t| t.signature() == 0x12341234));
+    u_assert!(tables.iter().any(|t| t.signature() == 0x43214321));
 
     // Get the complex table and verify its trailing contents are preserved.
     let retrieved_mocktable2 = table_manager.get_acpi_table::<MockLargeTable>(key2).expect("Should get mock table.");
-    assert_eq!(retrieved_mocktable2.header.signature(), 0x43214321, "Signature should match mock table.");
-    assert_eq!(retrieved_mocktable2.data, [1; 32], "Data should match mock table.");
+    u_assert_eq!(retrieved_mocktable2.header.signature(), 0x43214321, "Signature should match mock table.");
+    u_assert_eq!(retrieved_mocktable2.data, [1; 32], "Data should match mock table.");
 
     // Uninstall the tables for cleanup (and tests uninstall).
     table_manager.uninstall_acpi_table(key1).expect("Delete should succeed");
     table_manager.uninstall_acpi_table(key2).expect("Delete should succeed");
 
     // get() should now fail.
-    assert!(table_manager.get_acpi_table::<MockSmallTable>(key1).is_err(), "Table should no longer be accessible");
-    assert!(table_manager.get_acpi_table::<MockLargeTable>(key2).is_err(), "Table should no longer be accessible");
+    u_assert!(table_manager.get_acpi_table::<MockSmallTable>(key1).is_err(), "Table should no longer be accessible");
+    u_assert!(table_manager.get_acpi_table::<MockLargeTable>(key2).is_err(), "Table should no longer be accessible");
 
     Ok(())
 }
@@ -122,7 +123,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
         &mut table_key_buf as *mut usize,
     );
 
-    assert!(table_key_buf > 0, "Table key should be set after install");
+    u_assert!(table_key_buf > 0, "Table key should be set after install");
 
     // Verify the table can be retrieved.
     let mut table_buf = MockLargeTable::default();
@@ -144,7 +145,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
         } else if get_result != efi::Status::SUCCESS {
             // If fails, either hit an error on a previous table or reached the end of the list without finding the installed table.
             // Both are error cases.
-            panic!("Get table should succeed for installed table");
+            u_assert!(false, "Get table should succeed for installed table");
         }
 
         table_idx += 1;
@@ -152,20 +153,20 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
 
     // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
     let retrieved_table = unsafe { &*table_buf };
-    assert_eq!(retrieved_table.signature(), 0x12341234, "Signature should match installed table.");
-    assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
-    assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
+    u_assert_eq!(retrieved_table.signature(), 0x12341234, "Signature should match installed table.");
+    u_assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
+    u_assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
 
     // We should be able to access the normal FADT fields.
     // SAFETY: We know that the table_buf points to an AcpiFadt (constructed above).
     #[allow(invalid_reference_casting)]
     let large_table = unsafe { &*(table_buf as *const MockLargeTable) };
     // We haven't installed a FACS, so this should be zero, but still accessible.
-    assert_eq!(large_table.data, [2; 32], "Data should match installed table.");
+    u_assert_eq!(large_table.data, [2; 32], "Data should match installed table.");
 
     // Verify the table can be uninstalled.
     let uninstall_result = (table_protocol.uninstall_table)(table_protocol as *const AcpiTableProtocol, get_table_key);
-    assert_eq!(uninstall_result, efi::Status::SUCCESS, "Uninstall should succeed");
+    u_assert_eq!(uninstall_result, efi::Status::SUCCESS, "Uninstall should succeed");
 
     Ok(())
 }
