@@ -91,7 +91,7 @@ use core::{
 use indoc::indoc;
 
 // Expectation is someone will provide alloc
-extern crate alloc;
+#[cfg(any(test, feature = "alloc"))]
 use alloc::{boxed::Box, vec::Vec};
 
 // If the target is x86_64, then EfiPhysicalAddress is u64
@@ -1217,6 +1217,7 @@ impl<'a> HobList<'a> {
     ///     the_hob_list.relocate_hobs();
     /// }
     /// ```
+    #[cfg(any(test, feature = "alloc"))]
     pub fn relocate_hobs(&mut self) {
         for hob in self.0.iter_mut() {
             match hob {
