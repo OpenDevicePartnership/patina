@@ -108,7 +108,7 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
 
     let mut table_key_buf: usize = 0;
 
-    // Install a dummy FADT using the ACPI Table Protocol.
+    // Install a dummy table using the ACPI Table Protocol.
     (table_protocol.install_table)(
         table_protocol as *const AcpiTableProtocol,
         &MockLargeTable {
@@ -157,11 +157,9 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     u_assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
     u_assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
 
-    // We should be able to access the normal FADT fields.
-    // SAFETY: We know that the table_buf points to an AcpiFadt (constructed above).
-    #[allow(invalid_reference_casting)]
+    // We should be able to access the normal table fields.
+    // SAFETY: We know that the table_buf points to an MockLargeTable (constructed above).
     let large_table = unsafe { &*(table_buf as *const MockLargeTable) };
-    // We haven't installed a FACS, so this should be zero, but still accessible.
     u_assert_eq!(large_table.data, [2; 32], "Data should match installed table.");
 
     // Verify the table can be uninstalled.
