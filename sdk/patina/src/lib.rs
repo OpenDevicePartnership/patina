@@ -59,5 +59,5 @@ pub mod serial;
 pub mod test;
 #[cfg(any(test, feature = "alloc"))]
 pub mod tpl_mutex;
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 pub mod uefi_protocol;
