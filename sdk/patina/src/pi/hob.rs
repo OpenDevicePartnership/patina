@@ -77,18 +77,21 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{
-    base::{align_down, align_up},
-    pi::BootMode,
-};
+use crate::pi::BootMode;
 use core::{
     ffi::c_void,
-    fmt,
     marker::PhantomData,
     mem::{self, size_of},
     slice,
 };
+
+#[cfg(any(test, feature = "alloc"))]
 use indoc::indoc;
+
+#[cfg(any(test, feature = "alloc"))]
+use crate::base::{align_down, align_up};
+#[cfg(any(test, feature = "alloc"))]
+use core::fmt;
 
 // Expectation is someone will provide alloc
 #[cfg(any(test, feature = "alloc"))]
