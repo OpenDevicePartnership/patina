@@ -40,10 +40,6 @@ struct MockLargeTable {
 #[coverage(off)]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
-    // Hack that is necessary since boot path and integration tests share a global `STANDARD_ACPI_PROVIDER`.
-    // let old_tables = STANDARD_ACPI_PROVIDER.acpi_tables.lock().clone();
-    // STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
-
     let original_length = table_manager.iter_tables().len();
 
     // Install a dummy ACPI table.
@@ -74,6 +70,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     // Install an invalid ACPI table (too small).
     let invalid_table =
         AcpiTableHeader { signature: signature::MADT, length: (signature::MADT_SIZE - 2) as u32, ..Default::default() };
+    // SAFETY: The constructed table is not a valid ACPI table, so this should return an error.
     assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
 
     // Verify only valid tables are in the iterator.
@@ -95,19 +92,12 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
     assert!(table_manager.get_acpi_table::<MockSmallTable>(key1).is_err(), "Table should no longer be accessible");
     assert!(table_manager.get_acpi_table::<MockLargeTable>(key2).is_err(), "Table should no longer be accessible");
 
-    // Restore the original tables to avoid affecting other tests.
-    // *STANDARD_ACPI_PROVIDER.acpi_tables.lock() = old_tables;
-
     Ok(())
 }
 
 #[coverage(off)]
 #[patina_test]
 fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
-    // Hack that is necessary since boot path and integration tests share a global `STANDARD_ACPI_PROVIDER`.
-    // let old_tables = STANDARD_ACPI_PROVIDER.acpi_tables.lock().clone();
-    // STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
-
     // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
@@ -159,6 +149,8 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
 
         table_idx += 1;
     }
+
+    // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
     let retrieved_table = unsafe { &*table_buf };
     assert_eq!(retrieved_table.signature(), 0x12341234, "Signature should match installed table.");
     assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
@@ -174,9 +166,6 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
     // Verify the table can be uninstalled.
     let uninstall_result = (table_protocol.uninstall_table)(table_protocol as *const AcpiTableProtocol, get_table_key);
     assert_eq!(uninstall_result, efi::Status::SUCCESS, "Uninstall should succeed");
-
-    // Restore the original tables to avoid affecting other tests.
-    // *STANDARD_ACPI_PROVIDER.acpi_tables.lock() = old_tables;
 
     Ok(())
 }

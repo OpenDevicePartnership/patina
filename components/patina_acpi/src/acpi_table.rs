@@ -70,10 +70,6 @@ impl AcpiFadt {
         unsafe { ptr::read_unaligned(ptr::addr_of!(self.inner)) }
     }
 
-    pub fn signature(&self) -> u32 {
-        self.header().signature
-    }
-
     pub(crate) fn x_firmware_ctrl(&self) -> u64 {
         self.inner.x_firmware_ctrl
     }
