@@ -139,13 +139,13 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
             &mut get_table_key,
         );
         // We should be able to find our installed table.
-        // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
         if get_result != efi::Status::SUCCESS {
             // If fails, either hit an error on a previous table or reached the end of the list without finding the installed table.
             // Both are error cases.
             u_assert!(false, "Get table should succeed for installed table");
         }
 
+        // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
         if unsafe { (*table_buf).signature } == 0x12341234 {
             break;
         }
