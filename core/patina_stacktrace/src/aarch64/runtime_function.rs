@@ -1,4 +1,3 @@
-extern crate alloc;
 use super::unwind::UnwindInfo;
 use crate::{
     byte_reader::ByteReader,

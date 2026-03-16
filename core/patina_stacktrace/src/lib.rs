@@ -169,8 +169,6 @@
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(coverage_attribute)]
 
-extern crate alloc;
-
 mod byte_reader;
 pub mod error;
 mod pe;
