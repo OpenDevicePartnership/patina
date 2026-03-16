@@ -6,8 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use crate::{
     component::{metadata::MetaData, params::Param},
     runtime_services::StandardRuntimeServices,

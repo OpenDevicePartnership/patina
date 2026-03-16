@@ -14,9 +14,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-
-extern crate alloc;
-
 use core::{fmt, mem, num::Wrapping, slice};
 
 pub mod ffs;

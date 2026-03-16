@@ -788,8 +788,10 @@ pub struct Capsule {
 ///
 /// This is a parsed Rust representation of the HOB list that provides better type safety and ergonomics but does not
 /// have binary compatibility with the original PI Spec HOB list structure.
+#[cfg(any(test, feature = "alloc"))]
 pub struct HobList<'a>(Vec<Hob<'a>>);
 
+#[cfg(any(test, feature = "alloc"))]
 impl Default for HobList<'_> {
     fn default() -> Self {
         HobList::new()
@@ -922,6 +924,7 @@ pub unsafe fn get_pi_hob_list_size(hob_list: *const c_void) -> usize {
     hob_list_len
 }
 
+#[cfg(any(test, feature = "alloc"))]
 impl<'a> HobList<'a> {
     /// Instantiates a Hoblist.
     pub const fn new() -> Self {
@@ -1240,6 +1243,7 @@ impl<'a> HobList<'a> {
 /// Implements IntoIterator for HobList.
 ///
 /// Defines how it will be converted to an iterator.
+#[cfg(any(test, feature = "alloc"))]
 impl<'a> IntoIterator for HobList<'a> {
     type Item = Hob<'a>;
     type IntoIter = <Vec<Hob<'a>> as IntoIterator>::IntoIter;
@@ -1249,6 +1253,7 @@ impl<'a> IntoIterator for HobList<'a> {
     }
 }
 
+#[cfg(any(test, feature = "alloc"))]
 impl<'a> IntoIterator for &'a HobList<'a> {
     type Item = &'a Hob<'a>;
     type IntoIter = core::slice::Iter<'a, Hob<'a>>;
@@ -1262,6 +1267,7 @@ impl<'a> IntoIterator for &'a HobList<'a> {
 ///
 /// Writes Hoblist debug information to stdio
 ///
+#[cfg(any(test, feature = "alloc"))]
 impl fmt::Debug for HobList<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for hob in self.0.clone().into_iter() {

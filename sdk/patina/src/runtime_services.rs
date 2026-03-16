@@ -10,8 +10,6 @@
 //! ```
 //!
 
-extern crate alloc;
-
 /// Variable-services-specific structs and utilities
 pub mod variable_services;
 

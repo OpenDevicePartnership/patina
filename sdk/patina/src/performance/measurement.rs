@@ -6,8 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use alloc::boxed::Box;
 use core::{
     clone::Clone,

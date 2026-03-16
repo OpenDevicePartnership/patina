@@ -136,8 +136,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 pub mod hob;
 mod metadata;
 pub mod params;

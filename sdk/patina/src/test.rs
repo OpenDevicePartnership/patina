@@ -100,8 +100,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use core::{fmt::Display, ops::DerefMut, ptr::NonNull};
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};

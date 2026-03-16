@@ -57,8 +57,6 @@
 //! Copyright (c) Microsoft Corporation.
 //!
 //! SPDX-License-Identifier: Apache-2.0
-extern crate alloc;
-
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use crate::BinaryGuid;
