@@ -77,8 +77,8 @@ pub const EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE: efi::Guid =
 /// # use patina::{Guid, guids::EVENT_EXIT_BOOT_SERVICES};
 /// # assert_eq!("27ABF055-B1B8-4C26-8048-748F37BAA2DF", format!("{:?}", Guid::from_ref(&EVENT_EXIT_BOOT_SERVICES)));
 /// ```
-pub const EVENT_EXIT_BOOT_SERVICES: efi::Guid =
-    efi::Guid::from_fields(0x27ABF055, 0xB1B8, 0x4C26, 0x80, 0x48, &[0x74, 0x8F, 0x37, 0xBA, 0xA2, 0xDF]);
+pub const EVENT_EXIT_BOOT_SERVICES: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("27ABF055-B1B8-4C26-8048-748F37BAA2DF");
 
 /// End of dxe event group GUID.
 ///
@@ -102,8 +102,8 @@ pub const EVENT_GROUP_END_OF_DXE: efi::Guid =
 /// # use patina::{Guid, guids::EVENT_READY_TO_BOOT};
 /// # assert_eq!("7CE88FB3-4BD7-4679-87A8-A8D8DEE50D2B", format!("{:?}", Guid::from_ref(&EVENT_READY_TO_BOOT)));
 /// ```
-pub const EVENT_READY_TO_BOOT: efi::Guid =
-    efi::Guid::from_fields(0x7CE88FB3, 0x4BD7, 0x4679, 0x87, 0xA8, &[0xA8, 0xD8, 0xDE, 0xE5, 0x0D, 0x2B]);
+pub const EVENT_READY_TO_BOOT: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("7CE88FB3-4BD7-4679-87A8-A8D8DEE50D2B");
 
 /// Hardware Interrupt protocol GUID.
 /// This protocol provides a means of registering and unregistering interrupt handlers for AARCH64 systems.
@@ -158,8 +158,8 @@ pub const MEMORY_TYPE_INFORMATION: efi::Guid =
 /// # use patina::{Guid, guids::MM_DISPATCH_EVENT};
 /// # assert_eq!("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE", format!("{:?}", Guid::from_ref(&MM_DISPATCH_EVENT)));
 /// ```
-pub const MM_DISPATCH_EVENT: efi::Guid =
-    efi::Guid::from_fields(0x7e6efffa, 0x69b4, 0x4c1b, 0xa4, 0xc7, &[0xaf, 0xf9, 0xc9, 0x24, 0x4f, 0xee]);
+pub const MM_DISPATCH_EVENT: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE");
 
 /// DXE MM Ready To Lock Protocol GUID.
 ///
@@ -174,8 +174,8 @@ pub const MM_DISPATCH_EVENT: efi::Guid =
 /// # use patina::{Guid, guids::MM_DXE_READY_TO_LOCK_PROTOCOL};
 /// # assert_eq!("60FF8964-E906-41D0-AFED-F241E974E08E", format!("{:?}", Guid::from_ref(&MM_DXE_READY_TO_LOCK_PROTOCOL)));
 /// ```
-pub const MM_DXE_READY_TO_LOCK_PROTOCOL: efi::Guid =
-    efi::Guid::from_fields(0x60ff8964, 0xe906, 0x41d0, 0xaf, 0xed, &[0xf2, 0x41, 0xe9, 0x74, 0xe0, 0x8e]);
+pub const MM_DXE_READY_TO_LOCK_PROTOCOL: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("60FF8964-E906-41D0-AFED-F241E974E08E");
 
 /// MM End of DXE Protocol GUID.
 ///
@@ -191,8 +191,8 @@ pub const MM_DXE_READY_TO_LOCK_PROTOCOL: efi::Guid =
 /// # use patina::{Guid, guids::MM_END_OF_DXE_PROTOCOL};
 /// # assert_eq!("24E70042-D5C5-4260-8C39-0AD3AA32E93D", format!("{:?}", Guid::from_ref(&MM_END_OF_DXE_PROTOCOL)));
 /// ```
-pub const MM_END_OF_DXE_PROTOCOL: efi::Guid =
-    efi::Guid::from_fields(0x24e70042, 0xd5c5, 0x4260, 0x8c, 0x39, &[0x0a, 0xd3, 0xaa, 0x32, 0xe9, 0x3d]);
+pub const MM_END_OF_DXE_PROTOCOL: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("24E70042-D5C5-4260-8C39-0AD3AA32E93D");
 
 /// MM End of PEI Protocol GUID.
 ///
@@ -206,8 +206,8 @@ pub const MM_END_OF_DXE_PROTOCOL: efi::Guid =
 /// # use patina::{Guid, guids::MM_END_OF_PEI_PROTOCOL};
 /// # assert_eq!("F33E1BF3-980B-4BFB-A29A-B29C86453732", format!("{:?}", Guid::from_ref(&MM_END_OF_PEI_PROTOCOL)));
 /// ```
-pub const MM_END_OF_PEI_PROTOCOL: efi::Guid =
-    efi::Guid::from_fields(0xf33e1bf3, 0x980b, 0x4bfb, 0xa2, 0x9a, &[0xb2, 0x9c, 0x86, 0x45, 0x37, 0x32]);
+pub const MM_END_OF_PEI_PROTOCOL: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("F33E1BF3-980B-4BFB-A29A-B29C86453732");
 
 /// MM Ready To Lock Protocol GUID.
 ///
@@ -222,8 +222,8 @@ pub const MM_END_OF_PEI_PROTOCOL: efi::Guid =
 /// # use patina::{Guid, guids::MM_READY_TO_LOCK_PROTOCOL};
 /// # assert_eq!("47B7FA8C-F4BD-4AF6-8200-333086F0D2C8", format!("{:?}", Guid::from_ref(&MM_READY_TO_LOCK_PROTOCOL)));
 /// ```
-pub const MM_READY_TO_LOCK_PROTOCOL: efi::Guid =
-    efi::Guid::from_fields(0x47b7fa8c, 0xf4bd, 0x4af6, 0x82, 0x00, &[0x33, 0x30, 0x86, 0xf0, 0xd2, 0xc8]);
+pub const MM_READY_TO_LOCK_PROTOCOL: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("47B7FA8C-F4BD-4AF6-8200-333086F0D2C8");
 
 /// Performance Protocol GUID.
 ///
@@ -287,5 +287,5 @@ pub const HOB_MEMORY_ALLOC_STACK: efi::Guid =
 /// # use patina::{Guid, guids::HOB_LIST};
 /// # assert_eq!("7739F24C-93D7-11D4-9A3A-0090273FC14D", format!("{:?}", Guid::from_ref(&HOB_LIST)));
 /// ```
-pub const HOB_LIST: efi::Guid =
-    efi::Guid::from_fields(0x7739F24C, 0x93D7, 0x11D4, 0x9A, 0x3A, &[0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D]);
+pub const HOB_LIST: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("7739F24C-93D7-11D4-9A3A-0090273FC14D");
