@@ -262,7 +262,6 @@ impl<'a> RuntimeFunction<'a> {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use alloc::vec::Vec;
 
     const IMAGE_SIZE: usize = 0x2000;
     const PE_POINTER_OFFSET: usize = 0x3C;
@@ -273,7 +272,7 @@ mod tests {
     const EXCEPTION_TABLE_POINTER_OFFSET: usize = 0xA0;
 
     // Creates a fake PE image containing the supplied .pdata entries and additional sections.
-    fn build_pe_bytes(entries: &[(u32, u32)], extra_sections: &[(u32, &[u8])]) -> Vec<u8> {
+    fn build_pe_bytes(entries: &[(u32, u32)], extra_sections: &[(u32, &[u8])]) -> std::vec::Vec<u8> {
         let mut bytes = vec![0u8; IMAGE_SIZE];
 
         bytes[0..2].copy_from_slice(&0x5A4Du16.to_le_bytes());
