@@ -158,8 +158,7 @@ pub const MEMORY_TYPE_INFORMATION: efi::Guid =
 /// # use patina::{Guid, guids::MM_DISPATCH_EVENT};
 /// # assert_eq!("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE", format!("{:?}", Guid::from_ref(&MM_DISPATCH_EVENT)));
 /// ```
-pub const MM_DISPATCH_EVENT: crate::BinaryGuid =
-    crate::BinaryGuid::from_string("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE");
+pub const MM_DISPATCH_EVENT: crate::BinaryGuid = crate::BinaryGuid::from_string("7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE");
 
 /// DXE MM Ready To Lock Protocol GUID.
 ///
@@ -287,5 +286,4 @@ pub const HOB_MEMORY_ALLOC_STACK: efi::Guid =
 /// # use patina::{Guid, guids::HOB_LIST};
 /// # assert_eq!("7739F24C-93D7-11D4-9A3A-0090273FC14D", format!("{:?}", Guid::from_ref(&HOB_LIST)));
 /// ```
-pub const HOB_LIST: crate::BinaryGuid =
-    crate::BinaryGuid::from_string("7739F24C-93D7-11D4-9A3A-0090273FC14D");
+pub const HOB_LIST: crate::BinaryGuid = crate::BinaryGuid::from_string("7739F24C-93D7-11D4-9A3A-0090273FC14D");
