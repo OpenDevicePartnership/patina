@@ -14,7 +14,7 @@ pub mod status_code;
 
 extern crate alloc;
 
-use r_efi::efi;
+use crate::BinaryGuid;
 
 /// Define a binding between an Interface and the corresponding Guid
 ///
@@ -23,7 +23,7 @@ use r_efi::efi;
 /// Make sure that the Protocol Guid interface had the same layout that the implementer of this struct.
 pub unsafe trait ProtocolInterface {
     /// The GUID of the UEFI protocol being implemented.
-    const PROTOCOL_GUID: efi::Guid;
+    const PROTOCOL_GUID: BinaryGuid;
 }
 
 macro_rules! impl_r_efi_protocol {
@@ -33,7 +33,7 @@ macro_rules! impl_r_efi_protocol {
         // protocol definitions and GUIDs from the UEFI specification. The Protocol struct layout matches
         // the UEFI protocol interface requirements.
         unsafe impl ProtocolInterface for r_efi::efi::protocols::$protocol::Protocol {
-            const PROTOCOL_GUID: r_efi::efi::Guid = r_efi::efi::protocols::$protocol::PROTOCOL_GUID;
+            const PROTOCOL_GUID: BinaryGuid = BinaryGuid(r_efi::efi::protocols::$protocol::PROTOCOL_GUID);
         }
     };
 }

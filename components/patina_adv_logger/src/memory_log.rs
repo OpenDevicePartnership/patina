@@ -25,8 +25,8 @@ use r_efi::efi;
 use zerocopy_derive::*;
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
-pub const ADV_LOGGER_HOB_GUID: efi::Guid =
-    efi::Guid::from_fields(0x4d60cfb5, 0xf481, 0x4a98, 0x9c, 0x81, &[0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e]);
+pub const ADV_LOGGER_HOB_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("4D60CFB5-F481-4A98-9C81-BFF86460C43E");
 
 pub const ADV_LOGGER_INFO_VERSION_V5: u16 = 5;
 pub const ADV_LOGGER_INFO_VERSION_V6: u16 = 6;

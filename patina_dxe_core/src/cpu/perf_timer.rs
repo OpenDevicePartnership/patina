@@ -62,6 +62,7 @@ fn arch_cpu_count() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64;
+        // SAFETY: _rdtsc only reads the TSC on x86_64. No invariants are required for safety.
         unsafe { x86_64::_rdtsc() }
     }
     #[cfg(target_arch = "aarch64")]

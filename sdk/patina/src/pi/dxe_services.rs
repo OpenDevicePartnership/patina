@@ -32,8 +32,8 @@ use r_efi::{
 /// Configuration Table array. The DXE Services Table provides services for
 /// managing the Global Coherency Domain memory and I/O space maps,
 /// and dispatcher functions for managing driver execution dependencies.
-pub const DXE_SERVICES_TABLE_GUID: Guid =
-    Guid::from_fields(0x5ad34ba, 0x6f02, 0x4214, 0x95, 0x2e, &[0x4d, 0xa0, 0x39, 0x8e, 0x2b, 0xb9]);
+pub const DXE_SERVICES_TABLE_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("05AD34BA-6F02-4214-952E-4DA0398E2BB9");
 
 /// Adds memory or memory-mapped I/O resources to the Global Coherency Domain (GCD)
 ///

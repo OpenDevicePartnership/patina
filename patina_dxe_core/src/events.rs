@@ -135,6 +135,7 @@ extern "efiapi" fn wait_for_event(
                 status => {
                     // SAFETY: caller must ensure that out_index is a valid pointer if it is not null.
                     if !out_index.is_null() {
+                        // SAFETY: out_index is non-null and points to writable memory.
                         unsafe {
                             out_index.write_unaligned(index);
                         };
@@ -301,9 +302,10 @@ extern "efiapi" fn timer_tick(time: u64) {
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID) {
+    match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID.into_inner()) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
+            // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
@@ -345,7 +347,7 @@ pub fn init_events_support(st: &mut EfiSystemTable) {
         .expect("Failed to create timer available callback.");
 
     PROTOCOL_DB
-        .register_protocol_notify(timer::PROTOCOL_GUID, event)
+        .register_protocol_notify(timer::PROTOCOL_GUID.into_inner(), event)
         .expect("Failed to register protocol notify on timer arch callback.");
 }
 
@@ -359,6 +361,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             test_support::init_test_logger();
+            // SAFETY: Test-only initialization of global services under the global lock.
             unsafe {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::reset_allocators();
@@ -480,8 +483,7 @@ mod tests {
     fn test_create_event_ex_with_event_group() {
         with_locked_state(|| {
             let mut event: efi::Event = ptr::null_mut();
-            let event_guid: efi::Guid =
-                efi::Guid::from_fields(0x87a2e5d9, 0xc34f, 0x4b21, 0x8e, 0x57, &[0x1a, 0xf9, 0x3c, 0x82, 0xd7, 0x6b]);
+            let event_guid: efi::Guid = patina::BinaryGuid::from_string("87A2E5D9-C34F-4B21-8E57-1AF93C82D76B").into();
             let notify_fn: Option<efi::EventNotify> = Some(test_notify);
             let result = create_event_ex(
                 efi::EVT_NOTIFY_SIGNAL,

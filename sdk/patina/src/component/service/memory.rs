@@ -869,6 +869,11 @@ mod mock {
             }
         }
 
+        /// Frees the block of pages at the given address of the given size.
+        ///
+        /// ## Safety
+        /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
+        /// [Self::allocate_pages]
         unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
             let ptr = address as *mut u8;
             let layout = Layout::from_size_align(page_count * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();

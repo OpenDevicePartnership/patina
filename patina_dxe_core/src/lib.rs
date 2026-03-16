@@ -635,16 +635,17 @@ fn core_display_missing_arch_protocols() {
 
 fn call_bds() -> ! {
     // Enable status code capability in Firmware Performance DXE.
-    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
+    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID.into_inner()) {
         Ok(status_code_ptr) => {
             if let Some(status_code_protocol_ptr) = NonNull::new(status_code_ptr) {
                 // SAFETY: Some(status_code_protocol_ptr) guarantees that the pointer is non-NULL
                 let status_code_protocol = unsafe { status_code_protocol_ptr.cast::<status_code::Protocol>().as_ref() };
+                let dxe_core_guid = patina::guids::DXE_CORE.into_inner();
                 (status_code_protocol.report_status_code)(
                     EFI_PROGRESS_CODE,
                     EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
                     0,
-                    &patina::guids::DXE_CORE,
+                    &dxe_core_guid,
                     ptr::null(),
                 );
             } else {
@@ -654,7 +655,7 @@ fn call_bds() -> ! {
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
     }
 
-    match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+    match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID.into_inner()) {
         Ok(bds_ptr) => {
             if let Some(bds_protocol_ptr) = NonNull::new(bds_ptr) {
                 let bds_protocol_ptr = bds_protocol_ptr.cast::<bds::Protocol>();
@@ -749,7 +750,7 @@ mod tests {
 
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    patina::pi::protocols::bds::PROTOCOL_GUID.into_inner(),
                     protocol as *mut _ as *mut c_void,
                 )
                 .unwrap();
@@ -772,7 +773,7 @@ mod tests {
             with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    patina::pi::protocols::bds::PROTOCOL_GUID.into_inner(),
                     core::ptr::null_mut(),
                 )
                 .unwrap();
@@ -823,7 +824,7 @@ mod tests {
 
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID.into_inner(),
                     protocol as *mut _ as *mut c_void,
                 )
                 .unwrap();
@@ -846,7 +847,7 @@ mod tests {
             with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID.into_inner(),
                     core::ptr::null_mut(),
                 )
                 .unwrap();

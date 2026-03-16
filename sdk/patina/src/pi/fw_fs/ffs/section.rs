@@ -119,7 +119,6 @@ pub struct Header {
 
 /// Section header structures and definitions
 pub mod header {
-    use r_efi::efi;
     use zerocopy_derive::{FromBytes, KnownLayout, Unaligned};
 
     #[repr(C, packed)]
@@ -167,7 +166,7 @@ pub mod header {
     /// GUID-defined section header
     pub struct GuidDefined {
         /// GUID identifying the section format
-        pub section_definition_guid: efi::Guid,
+        pub section_definition_guid: crate::BinaryGuid,
         /// Offset to section data from start of header
         pub data_offset: u16,
         /// Section attributes
@@ -191,6 +190,6 @@ pub mod header {
     /// Freeform GUID subtype section header
     pub struct FreeformSubtypeGuid {
         /// Subtype GUID identifier
-        pub sub_type_guid: efi::Guid,
+        pub sub_type_guid: crate::BinaryGuid,
     }
 }

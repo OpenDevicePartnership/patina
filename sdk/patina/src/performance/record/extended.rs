@@ -9,8 +9,6 @@
 
 use core::fmt::Debug;
 
-use r_efi::efi;
-
 use super::PerformanceRecord;
 use crate::performance::error::Error;
 
@@ -28,7 +26,7 @@ pub struct GuidEventRecord {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
-    pub guid: efi::Guid,
+    pub guid: crate::BinaryGuid,
 }
 
 impl GuidEventRecord {
@@ -38,7 +36,7 @@ impl GuidEventRecord {
     pub const REVISION: u8 = 1;
 
     /// Creates a new `GuidEventRecord`.
-    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid) -> Self {
+    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: crate::BinaryGuid) -> Self {
         Self { progress_id, acpi_id, timestamp, guid }
     }
 }
@@ -75,7 +73,7 @@ pub struct DynamicStringEventRecord<'a> {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
-    pub guid: efi::Guid,
+    pub guid: crate::BinaryGuid,
     /// ASCII string describing the module. Padding supplied at the end if necessary with null characters (0x00).
     /// It may be module name, function name, or token name.
     pub string: &'a str,
@@ -88,7 +86,7 @@ impl<'a> DynamicStringEventRecord<'a> {
     pub const REVISION: u8 = 1;
 
     /// Creates a new `DynamicStringEventRecord`.
-    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, string: &'a str) -> Self {
+    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: crate::BinaryGuid, string: &'a str) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, string }
     }
 }
@@ -127,9 +125,9 @@ pub struct DualGuidStringEventRecord<'a> {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// GUID of the module logging the event.
-    pub guid_1: efi::Guid,
+    pub guid_1: crate::BinaryGuid,
     /// Event or Ppi or Protocol GUID for Callback.
-    pub guid_2: efi::Guid,
+    pub guid_2: crate::BinaryGuid,
     /// ASCII string describing the module.
     /// It is the function name.
     pub string: &'a str,
@@ -146,8 +144,8 @@ impl<'a> DualGuidStringEventRecord<'a> {
         progress_id: u16,
         acpi_id: u32,
         timestamp: u64,
-        guid_1: efi::Guid,
-        guid_2: efi::Guid,
+        guid_1: crate::BinaryGuid,
+        guid_2: crate::BinaryGuid,
         string: &'a str,
     ) -> Self {
         Self { progress_id, acpi_id, timestamp, guid_1, guid_2, string }
@@ -189,7 +187,7 @@ pub struct GuidQwordEventRecord {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// GUID of the module logging the event.
-    pub guid: efi::Guid,
+    pub guid: crate::BinaryGuid,
     /// Qword of misc data, meaning depends on the ProgressId.
     pub qword: u64,
 }
@@ -201,7 +199,7 @@ impl GuidQwordEventRecord {
     pub const REVISION: u8 = 1;
 
     /// Creates a new `GuidQwordEventRecord`.
-    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64) -> Self {
+    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: crate::BinaryGuid, qword: u64) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, qword }
     }
 }
@@ -239,7 +237,7 @@ pub struct GuidQwordStringEventRecord<'a> {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// GUID of the module logging the event
-    pub guid: efi::Guid,
+    pub guid: crate::BinaryGuid,
     /// Qword of misc data, meaning depends on the ProgressId
     pub qword: u64,
     /// ASCII string describing the module.
@@ -253,7 +251,14 @@ impl<'a> GuidQwordStringEventRecord<'a> {
     pub const REVISION: u8 = 1;
 
     /// Creates a new `GuidQwordStringEventRecord`.
-    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64, string: &'a str) -> Self {
+    pub fn new(
+        progress_id: u16,
+        acpi_id: u32,
+        timestamp: u64,
+        guid: crate::BinaryGuid,
+        qword: u64,
+        string: &'a str,
+    ) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, qword, string }
     }
 }

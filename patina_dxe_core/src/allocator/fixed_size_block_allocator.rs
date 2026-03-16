@@ -92,6 +92,7 @@ impl Iterator for AllocatorIterator {
     type Item = *mut AllocatorListNode;
     fn next(&mut self) -> Option<*mut AllocatorListNode> {
         if let Some(current) = self.current {
+            // SAFETY: current is a valid node pointer from the allocator list.
             self.current = unsafe { (*current).next };
             Some(current)
         } else {
@@ -183,6 +184,7 @@ impl FixedSizeBlockAllocator {
         }
 
         let heap_region: NonNull<[u8]> = NonNull::slice_from_raw_parts(
+            // SAFETY: alloc_node_ptr is validated above and points to a region large enough for an AllocatorListNode.
             NonNull::new(unsafe { alloc_node_ptr.add(1) }).unwrap().cast(),
             new_region.len() - size_of::<AllocatorListNode>(),
         );
@@ -190,6 +192,7 @@ impl FixedSizeBlockAllocator {
         //write the allocator node structure into the start of the range, initialize its heap with the remainder of
         //the range, and add the new allocator to the front of the allocator list.
         let node = AllocatorListNode { next: None, allocator: linked_list_allocator::Heap::empty() };
+        // SAFETY: alloc_node_ptr is aligned and points to valid writable memory for an AllocatorListNode.
         unsafe {
             alloc_node_ptr.write(node);
             (*alloc_node_ptr).allocator.init(heap_region.cast::<u8>().as_ptr(), heap_region.len());
@@ -214,6 +217,7 @@ impl FixedSizeBlockAllocator {
     // appropriate size is not available.
     fn fallback_alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         for node in AllocatorIterator::new(self.allocators) {
+            // SAFETY: node is a valid allocator list node pointer from the iterator.
             let allocator = unsafe { &mut (*node).allocator };
             if let Ok(ptr) = allocator.allocate_first_fit(layout) {
                 return Ok(NonNull::slice_from_raw_parts(ptr, layout.size()));
@@ -275,8 +279,10 @@ impl FixedSizeBlockAllocator {
     // layout being freed is too big to be tracked as a fixed-size free block.
     fn fallback_dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
         for node in AllocatorIterator::new(self.allocators) {
+            // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
             let allocator = unsafe { &mut (*node).allocator };
             if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
+                // SAFETY: ptr was allocated by this allocator for the given layout.
                 unsafe { allocator.deallocate(ptr, layout) };
             }
         }
@@ -299,6 +305,7 @@ impl FixedSizeBlockAllocator {
                     panic!("FSB deallocating block too small to store BlockListNode.");
                 }
                 let new_node_ptr = ptr.as_ptr() as *mut BlockListNode;
+                // SAFETY: new_node_ptr points to memory returned by alloc for this layout.
                 unsafe {
                     new_node_ptr.write(new_node);
                     self.list_heads[index] = Some(&mut *new_node_ptr);
@@ -354,6 +361,7 @@ impl FixedSizeBlockAllocator {
     /// manages.
     pub fn contains(&self, ptr: *mut u8) -> bool {
         AllocatorIterator::new(self.allocators).any(|node| {
+            // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
             let allocator = unsafe { &mut (*node).allocator };
             (allocator.bottom() <= ptr) && (ptr < allocator.top())
         })
@@ -389,7 +397,7 @@ impl FixedSizeBlockAllocator {
     /// If the allocator does not own any memory, it will return an empty iterator.
     pub(crate) fn get_memory_ranges(&self) -> impl Iterator<Item = Range<usize>> {
         AllocatorIterator::new(self.allocators).map(|node| {
-            // This is safe because the node is a valid pointer to an AllocatorListNode
+            // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
             let allocator = unsafe { &(*node).allocator };
             allocator.bottom() as usize..allocator.top() as usize
         })
@@ -432,6 +440,7 @@ impl Display for FixedSizeBlockAllocator {
         writeln!(f, "Memory Type: {:x?}", self.memory_type())?;
         writeln!(f, "Allocation Ranges:")?;
         for node in AllocatorIterator::new(self.allocators) {
+            // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
             let allocator = unsafe { &mut (*node).allocator };
             writeln!(
                 f,
@@ -586,6 +595,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     }
 
     /// Frees the block of pages at the given address of the given size.
+    ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
@@ -708,6 +718,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     }
 }
 
+// SAFETY: SpinLockedFixedSizeBlockAllocator serializes access and delegates to the inner allocator.
 unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.allocate(layout) {
@@ -717,11 +728,13 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if let Some(ptr) = NonNull::new(ptr) {
+            // SAFETY: ptr came from alloc with the same layout.
             unsafe { self.deallocate(ptr, layout) }
         }
     }
 }
 
+// SAFETY: SpinLockedFixedSizeBlockAllocator serializes access and delegates to the inner allocator.
 unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
     fn allocate(&self, layout: Layout) -> core::result::Result<NonNull<[u8]>, AllocError> {
         let allocation = self.lock().alloc(layout);
@@ -797,6 +810,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        // SAFETY: ptr came from allocate with the same layout.
         unsafe { self.lock().dealloc(ptr, layout) }
     }
 }
@@ -807,7 +821,9 @@ impl Display for SpinLockedFixedSizeBlockAllocator {
     }
 }
 
+// SAFETY: SpinLockedFixedSizeBlockAllocator protects internal state with a spin lock.
 unsafe impl Sync for SpinLockedFixedSizeBlockAllocator {}
+// SAFETY: SpinLockedFixedSizeBlockAllocator protects internal state with a spin lock.
 unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 
 impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
@@ -820,7 +836,15 @@ impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
         Self::allocate_pages(self, allocation_strategy, pages, alignment)
     }
 
+    /// Frees the block of pages at the given address of the given size.
+    ///
+    /// ## Safety
+    ///
+    /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
+    /// [Self::allocate_pages].
     unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
+        // SAFETY: address/pages must refer to a valid allocation owned by this allocator
+        // per the free_pages safety contract.
         unsafe { Self::free_pages(self, address, pages) }
     }
 
@@ -876,11 +900,14 @@ mod tests {
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
+        // SAFETY: Resetting the test GCD is safe in a test.
         unsafe { gcd.reset() };
 
         gcd.init(48, 16);
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
+        // SAFETY: System allocator is used with a valid layout for test memory backing.
         let base = unsafe { System.alloc(layout) as u64 };
+        // SAFETY: init_memory_blocks is used with a valid backing allocation for tests.
         unsafe {
             gcd.init_memory_blocks(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB, efi::MEMORY_WB)
                 .unwrap();
@@ -971,11 +998,13 @@ mod tests {
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
             });
         });
@@ -1049,6 +1078,7 @@ mod tests {
                 .unwrap();
 
                 assert!(fsb.allocators.is_some());
+                // SAFETY: fsb.allocators points to valid list nodes after expand.
                 unsafe {
                     assert!((*fsb.allocators.unwrap()).next.is_none());
                     assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
@@ -1079,6 +1109,7 @@ mod tests {
                 ))
                 .unwrap();
                 assert!(fsb.allocators.is_some());
+                // SAFETY: fsb.allocators points to valid list nodes after expand.
                 unsafe {
                     assert!((*fsb.allocators.unwrap()).next.is_some());
                     assert!((*(*fsb.allocators.unwrap()).next.unwrap()).next.is_none());
@@ -1131,9 +1162,10 @@ mod tests {
 
             assert_eq!(NUM_ALLOCATIONS, AllocatorIterator::new(fsb.allocators).count());
             let expected_free = ALLOCATION_SIZE - size_of::<AllocatorListNode>();
-            assert!(
-                AllocatorIterator::new(fsb.allocators).all(|node| unsafe { (*node).allocator.free() == expected_free })
-            );
+            assert!(AllocatorIterator::new(fsb.allocators).all(|node| {
+                // SAFETY: node pointers come from AllocatorIterator over fsb.allocators.
+                unsafe { (*node).allocator.free() == expected_free }
+            }));
         });
     }
 
@@ -1211,6 +1243,7 @@ mod tests {
                 );
 
                 let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+                // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
                 assert!(fsb.lock().allocators.is_some());
                 assert!((allocation as u64) > base);
@@ -1284,6 +1317,7 @@ mod tests {
                 // Finally, we can test fallback_dealloc
                 fsb.fallback_dealloc(allocation.cast(), layout);
                 let expected_free = DEFAULT_PAGE_ALLOCATION_GRANULARITY - size_of::<AllocatorListNode>();
+                // SAFETY: fsb.allocators points to a valid allocator after expand.
                 unsafe {
                     assert_eq!((*fsb.allocators.unwrap()).allocator.free(), expected_free);
                 }
@@ -1310,16 +1344,20 @@ mod tests {
                 );
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
                 let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
                     as *mut BlockListNode as *mut u8;
                 assert_eq!(free_block_ptr, allocation);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+                // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
                 let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
                     as *mut BlockListNode as *mut u8;
@@ -1350,6 +1388,7 @@ mod tests {
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 let allocation_ptr = allocation.as_ptr();
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
                 let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
                     as *mut BlockListNode as *mut u8;
@@ -1359,6 +1398,7 @@ mod tests {
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 let allocation_ptr = allocation.as_ptr();
 
+                // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
                 let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
                     as *mut BlockListNode as *mut u8;
@@ -1416,6 +1456,7 @@ mod tests {
                 assert!(allocation.as_ptr() as u64 >= address);
                 assert!((allocation.as_ptr() as u64) < address + 0x1000000);
 
+                // SAFETY: free_pages uses a valid test allocation pointer and page count.
                 unsafe {
                     match fsb.free_pages(0, pages) {
                         Err(EfiError::NotFound) => {}
@@ -1423,6 +1464,7 @@ mod tests {
                     };
                 };
 
+                // SAFETY: allocation and page count come from allocate_pages in this test.
                 unsafe {
                     fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
                 };
@@ -1459,6 +1501,7 @@ mod tests {
 
                 assert_eq!(allocation.as_ptr() as u64, target_address);
 
+                // SAFETY: free_pages uses a valid test allocation pointer and page count.
                 unsafe {
                     fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
                 };
@@ -1493,6 +1536,7 @@ mod tests {
                     .cast::<u8>();
                 assert!((allocation.as_ptr() as u64) < target_address);
 
+                // SAFETY: free_pages uses a valid test allocation pointer and page count.
                 unsafe {
                     fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
                 };
@@ -1527,6 +1571,7 @@ mod tests {
                     .cast::<u8>();
                 assert!((allocation.as_ptr() as usize + uefi_pages_to_size!(pages)) <= target_address as usize);
 
+                // SAFETY: allocation and page count come from allocate_pages in this test.
                 unsafe {
                     fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
                 };
@@ -1576,6 +1621,7 @@ mod tests {
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
 
+            // SAFETY: Invalid parameters are intentionally tested (unit test).
             unsafe {
                 match fsb.free_pages(0x1001, 5) {
                     Err(EfiError::InvalidParameter) => {}
@@ -1653,6 +1699,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 2));
 
             //test alloc/deallocate and stats within the bucket
+            // SAFETY: fsb is initialized and used with a valid layout for testing.
             let ptr = unsafe {
                 fsb.alloc(
                     Layout::from_size_align(TEST_MIN_EXPANSION_SIZE - size_of::<AllocatorListNode>(), 0x8).unwrap(),
@@ -1669,6 +1716,7 @@ mod tests {
             assert_eq!(stats.reserved_used, TEST_MIN_EXPANSION_SIZE + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 2));
 
+            // SAFETY: Allocation was returned by fsb for this layout.
             unsafe {
                 fsb.dealloc(ptr, Layout::from_size_align(0x100, 0x8).unwrap());
             }
@@ -1684,6 +1732,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 2));
 
             //test alloc/deallocate and stats blowing the bucket
+            // SAFETY: fsb is initialized and used with a valid layout in tests.
             let ptr = unsafe { fsb.alloc(Layout::from_size_align(TEST_MIN_EXPANSION_SIZE * 3, 0x8).unwrap()) };
 
             //after this allocate, the basic memory map of the FSB should look like:
@@ -1702,6 +1751,7 @@ mod tests {
             assert_eq!(stats.reserved_used, TEST_MIN_EXPANSION_SIZE + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 5) + 1);
 
+            // SAFETY: Allocation was returned by fsb for this layout.
             unsafe {
                 fsb.dealloc(ptr, Layout::from_size_align(TEST_MIN_EXPANSION_SIZE * 3, 0x8).unwrap());
             }
@@ -1740,6 +1790,7 @@ mod tests {
             assert_eq!(stats.reserved_used, TEST_MIN_EXPANSION_SIZE + uefi_pages_to_size!(5));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 5) + 1);
 
+            // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
                 fsb.free_pages(ptr as *mut u8 as usize, 0x4).unwrap();
             }
@@ -1798,9 +1849,11 @@ mod tests {
             assert_eq!(stats.reserved_used, TEST_MIN_EXPANSION_SIZE + uefi_pages_to_size!(5));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(TEST_MIN_EXPANSION_SIZE * 5) + 1 + 0x104);
 
+            // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
                 fsb.free_pages(ptr1 as *mut u8 as usize, 0x4).unwrap();
             }
+            // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
                 fsb.free_pages(ptr as *mut u8 as usize, 0x104).unwrap();
             }

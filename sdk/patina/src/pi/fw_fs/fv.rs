@@ -48,7 +48,7 @@ pub struct Header {
     /// First 16 bytes are zeros for compatibility
     pub zero_vector: [u8; 16],
     /// File system type GUID
-    pub file_system_guid: r_efi::efi::Guid,
+    pub file_system_guid: crate::BinaryGuid,
     /// Total volume length in bytes
     pub fv_length: u64,
     /// Firmware volume signature
@@ -85,7 +85,7 @@ pub struct BlockMapEntry {
 /// Extended firmware volume header
 pub struct ExtHeader {
     /// Firmware volume name GUID
-    pub fv_name: r_efi::efi::Guid,
+    pub fv_name: crate::BinaryGuid,
     /// Size of this extended header
     pub ext_header_size: u32,
 }

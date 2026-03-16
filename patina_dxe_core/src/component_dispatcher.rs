@@ -189,7 +189,7 @@ impl ComponentDispatcher {
     pub(crate) fn insert_hobs(&mut self, hob_list: &HobList<'_>) {
         for hob in hob_list.iter() {
             if let patina::pi::hob::Hob::GuidHob(guid, data) = hob {
-                let parser_funcs = self.storage.get_hob_parsers(&patina::OwnedGuid::from(guid.name));
+                let parser_funcs = self.storage.get_hob_parsers(&guid.name);
                 if parser_funcs.is_empty() {
                     let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
                     let name = alloc::format!(
@@ -386,7 +386,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob1>() as u16,
                 reserved: 0,
             },
-            name: *GUID1,
+            name: GUID1,
         };
 
         let guid_hob2 = GuidHob {
@@ -395,7 +395,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob2>() as u16,
                 reserved: 0,
             },
-            name: *GUID2,
+            name: GUID2,
         };
 
         let guid_hob3 = GuidHob {
@@ -404,7 +404,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob3>() as u16,
                 reserved: 0,
             },
-            name: *GUID3,
+            name: GUID3,
         };
 
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob1, hob1_bytes));

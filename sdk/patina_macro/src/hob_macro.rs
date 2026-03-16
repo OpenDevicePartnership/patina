@@ -36,20 +36,18 @@ impl HobConfig {
             return Err(syn::Error::new(attr.span(), "Expected #[hob = \"GUID\"]"));
         };
 
-        let id = match uuid::Uuid::parse_str(&nv.value.to_token_stream().to_string().replace("\"", "")) {
+        let guid_str = nv.value.to_token_stream().to_string().replace("\"", "");
+        // Validate the GUID format
+        let id = match uuid::Uuid::parse_str(&guid_str) {
             Err(_) => return Err(syn::Error::new(attr.span(), "Invalid GUID format")),
             Ok(id) => id,
         };
 
-        let fields = id.as_fields();
-        let node: &[u8; 6] =
-            &fields.3[2..].try_into().map_err(|_| syn::Error::new(attr.span(), "Invalid GUID format"))?;
-        let (a, b, c) = (fields.0, fields.1, fields.2);
-        let (d0, d1) = (fields.3[0], fields.3[1]);
-        let [d2, d3, d4, d5, d6, d7] = *node;
+        // Emit the GUID in the canonical uppercase hyphenated format
+        let canonical = id.as_hyphenated().to_string().to_uppercase();
 
         Ok(quote! {
-            patina::OwnedGuid::from_fields(#a, #b, #c, #d0, #d1, [#d2, #d3, #d4, #d5, #d6, #d7])
+            patina::BinaryGuid::from_string(#canonical)
         })
     }
 
@@ -130,7 +128,7 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 
     quote! {
         impl #lhs patina::component::hob::FromHob for #name #rhs #where_clause {
-            const HOB_GUID: patina::OwnedGuid = #hob_guid;
+            const HOB_GUID: patina::BinaryGuid = #hob_guid;
 
             fn parse(bytes: &[u8]) -> Self {
                 let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
@@ -166,17 +164,11 @@ mod tests {
             struct MyStruct(u32);
         };
 
-        const TEST_HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(
-            2347032417u32,
-            37834u16,
-            4562u16,
-            170u8,
-            13u8,
-            [0u8, 224u8, 152u8, 3u8, 43u8, 140u8],
-        );
+        const TEST_HOB_GUID: patina::BinaryGuid =
+            patina::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
         let expected = quote! {
             impl patina::component::hob::FromHob for MyStruct {
-                const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
+                const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
                 fn parse(bytes: &[u8]) -> Self {
                     let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
                         Ok((hob, _)) => hob,
@@ -210,18 +202,12 @@ mod tests {
             struct MyStruct(u32);
         };
 
-        const TEST_HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(
-            0xea296d92u32,
-            0x0b69u16,
-            0x423cu16,
-            0x8cu8,
-            0x28u8,
-            [0x33u8, 0xb4u8, 0xe0u8, 0xa9u8, 0x12u8, 0x68u8],
-        );
+        const TEST_HOB_GUID: patina::BinaryGuid =
+            patina::BinaryGuid::from_string("EA296D92-0B69-423C-8C28-33B4E0A91268");
         let expected = quote! {
             impl patina::component::hob::FromHob for MyStruct {
 
-                const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(3928583570u32, 2921u16, 16956u16, 140u8, 40u8, [51u8, 180u8, 224u8, 169u8, 18u8, 104u8]);
+                const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("EA296D92-0B69-423C-8C28-33B4E0A91268");
                 fn parse(bytes: &[u8]) -> Self {
                     let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
                         Ok((hob, _)) => hob,
@@ -258,7 +244,7 @@ mod tests {
         };
         let expected = quote! {
             impl<T> patina::component::hob::FromHob for MyStruct<T> {
-                const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
+                const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
                 fn parse(bytes: &[u8]) -> Self {
                     let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
                         Ok((hob, _)) => hob,

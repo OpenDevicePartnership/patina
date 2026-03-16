@@ -137,6 +137,7 @@ impl ImageStack {
     }
 }
 
+// SAFETY: ImageStack provides a stable, owned stack buffer with valid base/limit pointers.
 unsafe impl Stack for ImageStack {
     fn base(&self) -> StackPointer {
         //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
@@ -308,6 +309,7 @@ impl PrivateImageData {
             )?;
 
         // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
+        // SAFETY: Entry point is computed from a validated PE image base and entry offset.
         self.entry_point = unsafe {
             transmute::<usize, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> efi::Status>(
                 physical_addr + self.pe_info.entry_point_offset,
@@ -684,7 +686,9 @@ impl ImageData {
 
 // ImageData is accessed through a mutex guard, so it is safe to
 // mark it sync/send.
+// SAFETY: ImageData is only accessed through the image_data mutex.
 unsafe impl Sync for ImageData {}
+// SAFETY: ImageData is only accessed through the image_data mutex.
 unsafe impl Send for ImageData {}
 
 impl<P: super::PlatformInfo> super::PiDispatcher<P> {
@@ -826,6 +830,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
             if source_size == 0 {
                 return efi::Status::LOAD_ERROR;
             }
+            // SAFETY: source_buffer/source_size are provided by the caller and validated for non-null/size.
             Some(unsafe { from_raw_parts(source_buffer as *const u8, source_size) })
         };
 
@@ -919,6 +924,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         // will try to use unwind to clean up the co-routine stack (i.e. "drop" any
         // live objects). This unwind support requires std and will panic if
         // executed.
+        // SAFETY: force_reset prevents unwinding a suspended coroutine with a custom stack.
         unsafe { coroutine.force_reset() };
 
         self.image_data.lock().current_running_image = previous_image;
@@ -1103,6 +1109,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         // safety note: this assumes that the top of the image_start_contexts stack
         // is the currently running image.
         if let Some(yielder) = private_data.image_start_contexts.pop() {
+            // SAFETY: yielder pointer is created and stored by start_image for the current context.
             let yielder = unsafe { &*yielder };
             drop(private_data);
 
@@ -1275,6 +1282,7 @@ fn core_load_pe_image(
 }
 
 fn get_file_guid_from_device_path(path: *mut efi::protocols::device_path::Protocol) -> Result<Guid, EfiError> {
+    // SAFETY: path is validated by the caller and must point to a valid device path structure.
     let mut walker = unsafe { DevicePathWalker::new(path) };
     let file_path_node = walker.next().ok_or(EfiError::InvalidParameter)?;
     if file_path_node.header().r#type != efi::protocols::device_path::TYPE_MEDIA
@@ -1290,18 +1298,20 @@ fn get_file_buffer_from_fw(
 ) -> Result<(Vec<u8>, efi::Handle), EfiError> {
     // Locate the handles to a device on the file_path that supports the firmware volume protocol
     let (remaining_file_path, handle) =
-        core_locate_device_path(pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)?;
+        core_locate_device_path(pi::protocols::firmware_volume::PROTOCOL_GUID.into_inner(), file_path)?;
 
     // For FwVol File system there is only a single file name that is a GUID.
     let fv_name_guid = get_file_guid_from_device_path(remaining_file_path)?;
 
     // Get the firmware volume protocol
-    let fv_ptr = PROTOCOL_DB.get_interface_for_handle(handle, pi::protocols::firmware_volume::PROTOCOL_GUID)?
+    let fv_ptr = PROTOCOL_DB
+        .get_interface_for_handle(handle, pi::protocols::firmware_volume::PROTOCOL_GUID.into_inner())?
         as *mut pi::protocols::firmware_volume::Protocol;
     if fv_ptr.is_null() {
         debug_assert!(!fv_ptr.is_null(), "ERROR: get_interface_for_handle returned NULL ptr for FirmwareVolume!");
         return Err(EfiError::InvalidParameter);
     }
+    // SAFETY: fv_ptr is non-null and points to a valid firmware volume protocol.
     let fw_vol = unsafe { fv_ptr.as_ref().unwrap() };
 
     // Read image from the firmware file
@@ -1322,6 +1332,7 @@ fn get_file_buffer_from_fw(
 
     EfiError::status_to_result(status)?;
 
+    // SAFETY: buffer/buffer_size are returned by read_section and are valid for that length.
     let section_slice = unsafe { slice::from_raw_parts(buffer, buffer_size) };
     Ok((section_slice.to_vec(), handle))
 }
@@ -1334,6 +1345,7 @@ fn get_file_buffer_from_sfs(
 
     let mut file = SimpleFile::open_volume(handle)?;
 
+    // SAFETY: remaining_file_path is returned by core_locate_device_path and is a valid device path.
     for node in unsafe { DevicePathWalker::new(remaining_file_path) } {
         match node.header().r#type {
             efi::protocols::device_path::TYPE_MEDIA
@@ -1379,6 +1391,7 @@ fn get_file_buffer_from_load_protocol(
     let (remaining_file_path, handle) = core_locate_device_path(protocol, file_path)?;
 
     let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
+    // SAFETY: load_file is obtained from the protocol database and is a valid load_file protocol pointer.
     let load_file =
         unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(EfiError::Unsupported)? };
 
@@ -1418,8 +1431,10 @@ fn authenticate_image(
     from_fv: bool,
     authentication_status: u32,
 ) -> Result<(), EfiError> {
+    // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_ref() is used for shared access
+    // which will also check if the pointer is null before allowing access.
     let security2_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(pi::protocols::security2::PROTOCOL_GUID) {
+        match PROTOCOL_DB.locate_protocol(pi::protocols::security2::PROTOCOL_GUID.into_inner()) {
             Ok(protocol) => (protocol as *mut pi::protocols::security2::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
@@ -1427,8 +1442,10 @@ fn authenticate_image(
         }
     };
 
+    // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_ref() is used for shared access
+    // which will also check if the pointer is null before allowing access.
     let security_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(pi::protocols::security::PROTOCOL_GUID) {
+        match PROTOCOL_DB.locate_protocol(pi::protocols::security::PROTOCOL_GUID.into_inner()) {
             Ok(protocol) => (protocol as *mut pi::protocols::security::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
@@ -1839,7 +1856,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security::PROTOCOL_GUID,
+                    pi::protocols::security::PROTOCOL_GUID.into_inner(),
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1890,7 +1907,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security::PROTOCOL_GUID,
+                    pi::protocols::security::PROTOCOL_GUID.into_inner(),
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1919,7 +1936,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security2::PROTOCOL_GUID,
+                    pi::protocols::security2::PROTOCOL_GUID.into_inner(),
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1970,7 +1987,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security2::PROTOCOL_GUID,
+                    pi::protocols::security2::PROTOCOL_GUID.into_inner(),
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -2023,7 +2040,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security2::PROTOCOL_GUID,
+                    pi::protocols::security2::PROTOCOL_GUID.into_inner(),
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -2069,7 +2086,7 @@ mod tests {
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    pi::protocols::security2::PROTOCOL_GUID,
+                    pi::protocols::security2::PROTOCOL_GUID.into_inner(),
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -2630,11 +2647,12 @@ mod tests {
             image_info.image_size = 0x2000;
 
             // Manually construct PrivateImageData with minimal required fields
-            // SAFETY: Allocating memory for fake image buffer to construct test data
             const LEN: usize = 0x2000;
+            // SAFETY: Allocate a page-aligned test buffer and treat it as a raw image backing store.
             let fake_buffer =
                 unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(LEN, 0x1000).unwrap()) };
 
+            // SAFETY: fake_buffer points to LEN bytes we just allocated and is valid for mutable slice creation.
             let slice = unsafe { core::slice::from_raw_parts_mut(fake_buffer, LEN) };
             let bytes = super::Buffer::Borrowed(slice);
 
@@ -2697,6 +2715,7 @@ mod tests {
         let result = test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
+            // SAFETY: Test-only initialization of global tables happens under the global lock.
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
@@ -3171,6 +3190,7 @@ mod tests {
             let child_device_path =
                 device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
 
+            // SAFETY: Test-only initialization of global tables happens under the global lock.
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
@@ -3200,6 +3220,7 @@ mod tests {
 
             // Validate the file path was set correctly
             let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
+            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
             assert_eq!(bytes, child_device_path.as_ref());
 
@@ -3207,6 +3228,7 @@ mod tests {
             let (_, len) =
                 device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
                     .unwrap();
+            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
             assert_eq!(bytes, child_device_path.as_ref());
         })
@@ -3224,6 +3246,7 @@ mod tests {
                 device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
             let child_filename = device_path_from_string(String::from("EFI/BOOT/BOOT_X64.EFI/END"));
 
+            // SAFETY: Test-only initialization of global tables happens under the global lock.
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
@@ -3262,6 +3285,7 @@ mod tests {
 
             // Validate the file path was set correctly
             let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
+            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
 
             // IMPORTANT: This is validating that we cut off the parent device path correctly.
@@ -3271,6 +3295,7 @@ mod tests {
             let (_, len) =
                 device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
                     .unwrap();
+            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
 
             // IMPORTANT: This should always contain the full path.
@@ -3319,12 +3344,14 @@ mod tests {
         };
 
         let mut hobs = Vec::new();
+        // SAFETY: Taking a byte view of a stack-allocated HOB struct for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
             core::slice::from_raw_parts(
                 &ma_hob as *const MemoryAllocationModule as *const u8,
                 core::mem::size_of::<MemoryAllocationModule>(),
             )
         });
+        // SAFETY: Taking a byte view of a stack-allocated HOB header for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
             core::slice::from_raw_parts(
                 &end_hob as *const patina::pi::hob::header::Hob as *const u8,

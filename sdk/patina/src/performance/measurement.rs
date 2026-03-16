@@ -87,7 +87,7 @@ pub mod event_callback {
             EFI_SOFTWARE_DXE_BS_DRIVER,
             0,
             &mu_rust_helpers::guid::CALLER_ID,
-            efi::Guid::clone(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
+            efi::Guid::clone(&*EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
             fbpt_address,
         );
         if status.is_err() {
@@ -318,7 +318,14 @@ where
                 return Err(EfiError::InvalidParameter.into());
             };
             let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
-            let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, *module_guid, *guid, function_string);
+            let record = DualGuidStringEventRecord::new(
+                perf_id,
+                0,
+                timestamp,
+                (*module_guid).into(),
+                (*guid).into(),
+                function_string,
+            );
             fbpt.lock().add_record(record)?;
         }
 
@@ -331,7 +338,7 @@ where
         | KnownPerfId::PerfEvent => {
             let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
             let string = string.unwrap_or("unknown name");
-            let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, *module_guid, string);
+            let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, (*module_guid).into(), string);
             fbpt.lock().add_record(record)?;
         }
     }
@@ -428,8 +435,8 @@ impl PerformanceProperty {
 fn get_module_guid_from_handle(
     boot_services: &impl BootServices,
     handle: efi::Handle,
-) -> Result<efi::Guid, efi::Status> {
-    let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+) -> Result<crate::BinaryGuid, efi::Status> {
+    let mut guid = crate::guids::ZERO;
 
     let loaded_image_protocol = 'find_loaded_image_protocol: {
         if let Ok(loaded_image_protocol) =
@@ -478,7 +485,7 @@ fn get_module_guid_from_handle(
             unsafe {
                 let guid_ptr = (loaded_image.file_path as *const u8)
                     .add(mem::size_of::<efi::protocols::device_path::Protocol>())
-                    as *const efi::Guid;
+                    as *const crate::BinaryGuid;
                 guid = ptr::read(guid_ptr);
             }
         };
@@ -513,6 +520,8 @@ mod tests {
         },
         runtime_services::MockRuntimeServices,
     };
+
+    use crate::guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE;
 
     #[derive(IntoService)]
     #[service(dyn ArchTimerFunctionality)]
@@ -554,7 +563,7 @@ mod tests {
         boot_services
             .expect_install_configuration_table_unchecked()
             .once()
-            .with(predicate::eq(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE), predicate::always())
+            .with(predicate::eq(&*EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE), predicate::always())
             .return_const(Ok(()));
 
         boot_services

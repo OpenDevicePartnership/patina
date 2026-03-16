@@ -265,9 +265,12 @@ pub(crate) fn install_memory_attributes_protocol() {
     MEMORY_ATTRIBUTES_PROTOCOL_INTERFACE.store(interface, Ordering::SeqCst);
 
     match PROTOCOL_DB.install_protocol_interface(None, efi::protocols::memory_attribute::PROTOCOL_GUID, interface) {
-        Ok((handle, _)) => unsafe {
-            MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.store(handle, Ordering::SeqCst);
-        },
+        Ok((handle, _)) => {
+            // SAFETY: handle is returned by protocol DB on a successful installation.
+            unsafe {
+                MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.store(handle, Ordering::SeqCst);
+            }
+        }
         Err(e) => {
             log::error!("Failed to install MEMORY_ATTRIBUTES_PROTOCOL_GUID: {e:?}");
         }
@@ -277,6 +280,7 @@ pub(crate) fn install_memory_attributes_protocol() {
 #[cfg(feature = "compatibility_mode_allowed")]
 /// This function is called in compatibility mode to uninstall the protocol.
 pub(crate) fn uninstall_memory_attributes_protocol() {
+    // SAFETY: Reads global atomics to determine protocol handle/interface before uninstall.
     unsafe {
         match (
             MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.load(Ordering::SeqCst),
@@ -375,6 +379,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -418,6 +423,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -462,6 +468,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -507,6 +514,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -562,6 +570,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -608,6 +617,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -656,6 +666,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -702,6 +713,7 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested region.
             let mem = unsafe { crate::test_support::get_memory(0x120000) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 

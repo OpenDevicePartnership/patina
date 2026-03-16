@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use crate as patina;
     use crate::{
-        Guid, OwnedGuid,
+        BinaryGuid,
         component::{
             component,
             hob::{FromHob, Hob},
@@ -294,8 +294,7 @@ mod tests {
 
     #[test]
     fn test_component_run_return_handling() {
-        const HOB_GUID: OwnedGuid =
-            Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, [0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
+        const HOB_GUID: BinaryGuid = BinaryGuid::from_string("D4FFC718-FB82-4274-9AFC-AA8B1EEF5293");
 
         let mut storage = storage::Storage::new();
 

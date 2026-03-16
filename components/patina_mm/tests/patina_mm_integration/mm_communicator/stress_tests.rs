@@ -25,16 +25,13 @@ use patina_mm::{
 
 /// Additional test GUIDs for stress testing
 mod stress_guids {
-    use r_efi::efi;
+    use patina::BinaryGuid;
 
-    pub const ERROR_INJECTION: efi::Guid =
-        efi::Guid::from_fields(0xdeadbeef, 0x1111, 0x2222, 0x33, 0x44, &[0x55, 0x66, 0x77, 0x88, 0x99, 0xaa]);
+    pub const ERROR_INJECTION: BinaryGuid = BinaryGuid::from_string("BBCCDDEE-1111-2222-3344-5566778899AA");
 
-    pub const BUFFER_SIZE_TEST: efi::Guid =
-        efi::Guid::from_fields(0xcafebabe, 0x3333, 0x4444, 0x55, 0x66, &[0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]);
+    pub const BUFFER_SIZE_TEST: BinaryGuid = BinaryGuid::from_string("DDEEFF00-3333-4444-5566-778899AABBCC");
 
-    pub const COMPUTATION_TEST: efi::Guid =
-        efi::Guid::from_fields(0xfeedf00d, 0x5555, 0x6666, 0x77, 0x88, &[0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    pub const COMPUTATION_TEST: BinaryGuid = BinaryGuid::from_string("FF001122-5555-6666-7788-99AABBCCDDEE");
 }
 
 /// Mock MM Executor for stress testing that uses the test framework
@@ -57,20 +54,20 @@ impl MmExecutor for StressTestMmExecutor {
         let data =
             comm_buffer.get_message().map_err(|_| patina_mm::component::communicator::Status::InvalidDataBuffer)?;
 
-        // Extract the GUID from the header and convert to an owned efi::Guid
+        // Extract the GUID from the header and convert to BinaryGuid
         let guid = comm_buffer
             .get_header_guid()
             .map_err(|_| patina_mm::component::communicator::Status::InvalidDataBuffer)?
-            .ok_or(patina_mm::component::communicator::Status::InvalidDataBuffer)?
-            .to_efi_guid(); // Convert to owned efi::Guid to avoid borrowing issues
+            .ok_or(patina_mm::component::communicator::Status::InvalidDataBuffer)?;
+        let binary_guid: patina::BinaryGuid = guid.to_efi_guid().into();
 
         // Use the test framework to process the message
-        match self.framework.communicate(&guid, &data) {
+        match self.framework.communicate(&binary_guid, &data) {
             Ok(response) => {
                 // Set the response back in the buffer
                 comm_buffer.reset();
                 comm_buffer
-                    .set_message_info(Guid::from_ref(&guid))
+                    .set_message_info(Guid::from_ref(&binary_guid))
                     .map_err(|_| patina_mm::component::communicator::Status::CommBufferInitError)?;
                 comm_buffer
                     .set_message(&response)

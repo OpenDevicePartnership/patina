@@ -83,8 +83,8 @@ const _: () = assert!(
 
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
-const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
-    efi::Guid::from_fields(0x9d1fa6e9, 0x0c86, 0x4f7f, 0xa9, 0x9b, &[0xdd, 0x22, 0x9c, 0x9b, 0x38, 0x93]);
+const PRIVATE_ALLOCATOR_TRACKING_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893");
 
 pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 
@@ -559,7 +559,7 @@ impl AllocatorMap {
                 }
                 let (handle, _) = PROTOCOL_DB.install_protocol_interface(
                     None,
-                    PRIVATE_ALLOCATOR_TRACKING_GUID,
+                    PRIVATE_ALLOCATOR_TRACKING_GUID.into_inner(),
                     core::ptr::null_mut(),
                 )?;
                 Ok(handle)
@@ -884,7 +884,12 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     let table_ptr = NonNull::from(GCD.memory_type_info_table()).cast::<c_void>().as_ptr();
-    config_tables::core_install_configuration_table(guids::MEMORY_TYPE_INFORMATION, table_ptr, system_table).map(|_| ())
+    config_tables::core_install_configuration_table(
+        guids::MEMORY_TYPE_INFORMATION.into_inner(),
+        table_ptr,
+        system_table,
+    )
+    .map(|_| ())
 }
 
 fn process_hob_allocations(hob_list: &HobList) {
@@ -1124,7 +1129,7 @@ pub fn init_memory_support(hob_list: &HobList) {
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
         match x {
-            patina::pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
+            patina::pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID.into_inner() => {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
@@ -1287,11 +1292,12 @@ mod tests {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
+            let guid_hob = GuidHob {
+                header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
+                name: MEMORY_TYPE_INFO_HOB_GUID,
+            };
             hob_list.push(Hob::GuidHob(
-                &GuidHob {
-                    header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
-                    name: MEMORY_TYPE_INFO_HOB_GUID,
-                },
+                &guid_hob,
                 &[
                     // for test, pick dynamic allocators, since state is easier to clean up for those.
                     0x0d, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, //0x0100 pages of PAL_CODE

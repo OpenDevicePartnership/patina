@@ -194,13 +194,13 @@ fn demonstrate_practical_usage() {
         vec![("Performance Protocol", &PERFORMANCE_PROTOCOL), ("SMM Communication", &SMM_COMMUNICATION_PROTOCOL)];
 
     for (name, guid) in protocols {
-        println!("    [INFO] Loading protocol '{}' with GUID: {}", name, Guid::from(guid));
+        println!("    [INFO] Loading protocol '{}' with GUID: {}", name, guid);
     }
 
     // (2) Event group identification
     println!("\n  Event Group Example:");
-    println!("    [EVENT] End of DXE event signaled: {}", Guid::from(&EVENT_GROUP_END_OF_DXE));
-    println!("    [EVENT] Exit Boot Services failed: {}", Guid::from(&EBS_FAILED));
+    println!("    [EVENT] End of DXE event signaled: {}", EVENT_GROUP_END_OF_DXE);
+    println!("    [EVENT] Exit Boot Services failed: {}", EBS_FAILED);
 
     // (3) Configuration file or user input parsing
     println!("\n  Configuration Parsing Example:");
@@ -226,14 +226,12 @@ fn demonstrate_practical_usage() {
     let user_input = "00000000-0000-0000-0000-000000000000";
     match OwnedGuid::try_from_string(user_input) {
         Ok(parsed_guid) => {
-            let zero_guid = Guid::from(&ZERO);
-
             println!("    User input: {}", parsed_guid);
-            println!("    Zero GUID:  {}", zero_guid);
+            println!("    Zero GUID:  {}", ZERO);
 
             // Direct equality comparison!
-            println!("    Direct equality: {}", parsed_guid == zero_guid);
-            println!("    String format match: {}", format!("{}", parsed_guid) == format!("{}", zero_guid));
+            println!("    Direct equality: {}", parsed_guid == ZERO);
+            println!("    String format match: {}", format!("{}", parsed_guid) == format!("{}", ZERO));
         }
         Err(e) => println!("    Error parsing user input: {}", e),
     }
@@ -242,14 +240,13 @@ fn demonstrate_practical_usage() {
     println!("\n  Cross-Format Equality Examples:");
     let compact_result = OwnedGuid::try_from_string("00000000000000000000000000000000");
     let hyphenated_result = OwnedGuid::try_from_string("00000000-0000-0000-0000-000000000000");
-    let ref_zero = Guid::from(&ZERO);
 
     match (compact_result, hyphenated_result) {
         (Ok(compact_zero), Ok(hyphenated_zero)) => {
             println!("    Compact format:    {}", compact_zero);
             println!("    Hyphenated format: {}", hyphenated_zero);
-            println!("    From reference:    {}", ref_zero);
-            println!("    All equal? {}", compact_zero == hyphenated_zero && hyphenated_zero == ref_zero);
+            println!("    From reference:    {}", ZERO);
+            println!("    All equal? {}", compact_zero == hyphenated_zero && hyphenated_zero == ZERO);
         }
         (Err(e1), _) => println!("    Error parsing compact format: {}", e1),
         (_, Err(e2)) => println!("    Error parsing hyphenated format: {}", e2),
@@ -272,11 +269,9 @@ fn demonstrate_practical_usage() {
 
     // (7) Comparing different protocol GUIDs
     println!("\n  Different Protocol Comparison Example:");
-    let guid1 = Guid::from(&PERFORMANCE_PROTOCOL);
-    let guid2 = Guid::from(&SMM_COMMUNICATION_PROTOCOL);
-    println!("    Performance Protocol: {}", guid1);
-    println!("    SMM Communication:    {}", guid2);
-    println!("    Are they equal? {}", guid1 == guid2);
+    println!("    Performance Protocol: {}", PERFORMANCE_PROTOCOL);
+    println!("    SMM Communication:    {}", SMM_COMMUNICATION_PROTOCOL);
+    println!("    Are they equal? {}", PERFORMANCE_PROTOCOL == SMM_COMMUNICATION_PROTOCOL);
 
     println!();
 }

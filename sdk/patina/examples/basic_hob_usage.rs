@@ -15,7 +15,7 @@
 //! HOBs and their respective parsers are automatically gathered when a component is registered, and one step of Core
 //! initialization is to parse the HOB list and use any registered parsers to parse a GUIDed HOB.
 use patina::{
-    Guid, OwnedGuid,
+    BinaryGuid,
     component::{IntoComponent, Storage, component, prelude::*},
 };
 use zerocopy_derive::FromBytes;
@@ -42,7 +42,7 @@ pub struct CustomHob1 {
 pub struct CustomHob2(String);
 
 impl FromHob for CustomHob2 {
-    const HOB_GUID: OwnedGuid = Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, [0x00, 0x00, 0x00, 0x0, 0x0, 0x02]);
+    const HOB_GUID: BinaryGuid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000002");
 
     fn parse(bytes: &[u8]) -> Self {
         let out = String::from_utf8(bytes.to_vec()).expect("Failed to parse string from bytes");
@@ -163,7 +163,7 @@ mod util {
         for hob in hob_list.iter() {
             match hob {
                 patina::pi::hob::Hob::GuidHob(hob, data) => {
-                    for parser in storage.get_hob_parsers(&patina::Guid::from(hob.name)) {
+                    for parser in storage.get_hob_parsers(&hob.name) {
                         parser(data, storage);
                     }
                 }
@@ -189,7 +189,7 @@ mod util {
                 length: std::mem::size_of::<CustomHob1>() as u16,
                 reserved: 0,
             },
-            name: r_efi::efi::Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, &[0x00, 0x00, 0x00, 0x0, 0x0, 0x01]),
+            name: patina::BinaryGuid::from_string("00000000-0000-0000-0000-000000000001"),
         }));
         hob_list.push(patina::pi::hob::Hob::GuidHob(hob, as_slice));
     }
@@ -207,7 +207,7 @@ mod util {
                 length: std::mem::size_of::<CustomHob2>() as u16,
                 reserved: 0,
             },
-            name: CustomHob2::HOB_GUID.to_efi_guid(),
+            name: CustomHob2::HOB_GUID,
         }));
         hob_list.push(patina::pi::hob::Hob::GuidHob(hob, as_slice));
     }

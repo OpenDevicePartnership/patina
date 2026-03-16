@@ -32,12 +32,14 @@ impl SimpleFile<'_> {
 
         EfiError::status_to_result(status)?;
 
+        // SAFETY: file_ptr is filled by the open call above on success.
         let file = unsafe { file_ptr.as_mut().ok_or(EfiError::NotFound)? };
         Ok(Self { file })
     }
 
     /// Opens the root of a Simple File System and returns a SimpleFile object for it.
     pub fn open_volume(handle: efi::Handle) -> Result<Self, EfiError> {
+        // SAFETY: Protocol database returns a valid interface pointer for the handle.
         let sfs = unsafe {
             let sfs_protocol_ptr =
                 PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID)?;
@@ -50,6 +52,7 @@ impl SimpleFile<'_> {
         let status = (sfs.open_volume)(sfs, core::ptr::addr_of_mut!(file_system_ptr));
         EfiError::status_to_result(status)?;
 
+        // SAFETY: file_system_ptr is filled by the open_volume call above on success.
         let root = unsafe { file_system_ptr.as_mut().ok_or(EfiError::NotFound)? };
 
         Ok(Self { file: root })

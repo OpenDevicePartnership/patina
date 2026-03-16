@@ -165,14 +165,14 @@ impl From<&Hob<'_>> for HobSerDe {
             },
             Hob::MemoryAllocation(mem_alloc) => Self::MemoryAllocation {
                 alloc_descriptor: MemAllocDescriptorSerDe {
-                    name: format_guid(mem_alloc.alloc_descriptor.name),
+                    name: format_guid(&mem_alloc.alloc_descriptor.name),
                     memory_base_address: mem_alloc.alloc_descriptor.memory_base_address,
                     memory_length: mem_alloc.alloc_descriptor.memory_length,
                     memory_type: mem_alloc.alloc_descriptor.memory_type,
                 },
             },
             Hob::ResourceDescriptor(resource_desc) => Self::ResourceDescriptor(ResourceDescriptorSerDe {
-                owner: format_guid(resource_desc.owner),
+                owner: format_guid(&resource_desc.owner),
                 resource_type: resource_desc.resource_type,
                 resource_attribute: resource_desc.resource_attribute,
                 physical_start: resource_desc.physical_start,
@@ -180,7 +180,7 @@ impl From<&Hob<'_>> for HobSerDe {
             }),
             Hob::ResourceDescriptorV2(resource_desc2) => Self::ResourceDescriptorV2 {
                 v1: ResourceDescriptorSerDe {
-                    owner: format_guid(resource_desc2.v1.owner),
+                    owner: format_guid(&resource_desc2.v1.owner),
                     resource_type: resource_desc2.v1.resource_type,
                     resource_attribute: resource_desc2.v1.resource_attribute,
                     physical_start: resource_desc2.v1.physical_start,
@@ -188,7 +188,7 @@ impl From<&Hob<'_>> for HobSerDe {
                 },
                 attributes: resource_desc2.attributes,
             },
-            Hob::GuidHob(guid_ext, _) => Self::GuidExtension { name: format_guid(guid_ext.name) },
+            Hob::GuidHob(guid_ext, _) => Self::GuidExtension { name: format_guid(&guid_ext.name) },
             Hob::FirmwareVolume(fv) => Self::FirmwareVolume { base_address: fv.base_address, length: fv.length },
             Hob::Cpu(cpu) => {
                 Self::Cpu { size_of_memory_space: cpu.size_of_memory_space, size_of_io_space: cpu.size_of_io_space }
@@ -363,7 +363,7 @@ mod tests {
             reserved: 0,
         };
         let alloc_descriptor = hob::header::MemoryAllocation {
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
             memory_type: 0,
@@ -378,7 +378,7 @@ mod tests {
         };
         let resource_desc_hob = hob::ResourceDescriptor {
             header,
-            owner: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            owner: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0,
@@ -387,7 +387,7 @@ mod tests {
 
         let mut v1 = hob::ResourceDescriptor {
             header,
-            owner: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            owner: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0,
@@ -405,7 +405,7 @@ mod tests {
                     length: (size_of::<hob::GuidHob>() + data.len()) as u16,
                     reserved: 0,
                 },
-                name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+                name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             },
             data,
         );

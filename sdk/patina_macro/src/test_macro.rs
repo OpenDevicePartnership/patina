@@ -146,7 +146,7 @@ fn parse_on_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
                 Meta::NameValue(nv) if nv.path.is_ident("event") => {
                     let value = &nv.value;
                     return Ok(quote! {
-                        patina::test::__private_api::TestTrigger::Event(&#value)
+                        patina::test::__private_api::TestTrigger::Event(#value)
                     });
                 }
                 // CASE2: $[on(timer = interval_in_100ns_units)]
@@ -328,7 +328,7 @@ mod tests {
         let tokens = parse_on_attr(&attr).unwrap();
 
         let expected = quote! {
-            patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE)
+            patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)
         };
         assert_eq!(tokens.to_string(), expected.to_string());
     }
@@ -461,7 +461,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE)],
+                triggers: &[patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
@@ -498,9 +498,9 @@ mod tests {
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 triggers: &[
-                    patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE),
+                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
                     patina::test::__private_api::TestTrigger::Timer(1000000),
-                    patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_READY_TO_BOOT)
+                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_READY_TO_BOOT)
                 ],
                 skip: true,
                 should_fail: true,

@@ -127,14 +127,13 @@ pub trait MmCommunication {
     /// # Example
     ///
     /// ```rust
-    /// use r_efi::efi;
     /// use patina_mm::component::communicator::MmCommunication;
     /// use patina::component::service::Service;
     /// use patina::Guid;
     ///
     /// fn component(comm_service: Service<dyn MmCommunication>) {
     ///     let data = [0x01, 0x02, 0x03];
-    ///     let recipient = efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
+    ///     let recipient = patina::BinaryGuid::from_string("12345678-1234-5678-1234-567890ABCDEF");
     ///     let result = comm_service.communicate(0, &data, Guid::from_ref(&recipient));
     ///
     ///     match result {
@@ -379,7 +378,6 @@ mod tests {
     use patina::component::{IntoComponent, Storage};
 
     use core::{cell::RefCell, pin::Pin};
-    use r_efi::efi;
 
     extern crate alloc;
     use alloc::vec::Vec;
@@ -442,8 +440,7 @@ mod tests {
     }
 
     static TEST_DATA: [u8; 3] = [0x01, 0x02, 0x03];
-    static TEST_RECIPIENT: efi::Guid =
-        efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
+    static TEST_RECIPIENT: patina::BinaryGuid = patina::BinaryGuid::from_string("12345678-1234-5678-1234-567890ABCDEF");
 
     fn test_recipient() -> Guid<'static> {
         Guid::from_ref(&TEST_RECIPIENT)

@@ -14,8 +14,7 @@
 use r_efi::efi;
 
 /// Status Code Runtime Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xD2B2B828, 0x0826, 0x48A7, 0xB3, 0xDF, &[0x98, 0x3C, 0x00, 0x60, 0x24, 0xF0]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("D2B2B828-0826-48A7-B3DF-983C006024F0");
 
 /// Status Code Type Definition.
 ///

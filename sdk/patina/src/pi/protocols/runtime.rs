@@ -17,8 +17,7 @@ use crate::pi::list_entry;
 use r_efi::efi;
 
 /// Runtime Arch Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xb7dfb4e1, 0x052f, 0x449f, 0x87, 0xbe, &[0x98, 0x18, 0xfc, 0x91, 0xb7, 0x33]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("B7DFB4E1-052F-449F-87BE-9818FC91B733");
 
 /// Allows the runtime functionality of the DXE Foundation to be contained
 /// in a separate driver. It also provides hooks for the DXE Foundation to

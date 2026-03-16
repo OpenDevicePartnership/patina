@@ -32,8 +32,8 @@
 //!     header,
 //!     base_address: 0,
 //!     length: 0x0123456789abcdef,
-//!     fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-//!     file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+//!     fv_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
+//!     file_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
 //!   }
 //! }
 //!
@@ -196,7 +196,7 @@ pub mod header {
         /// indicate additional data structures that follow this header. Well-known
         /// GUIDs include allocations for stack, BSP store, and module images.
         ///
-        pub name: r_efi::base::Guid,
+        pub name: crate::BinaryGuid,
 
         /// The base address of memory allocated by this HOB.
         /// This is the physical address where the memory allocation begins,
@@ -351,7 +351,7 @@ pub struct MemoryAllocationModule {
     /// The GUID specifying the values of the firmware file system name
     /// that contains the HOB consumer phase component.
     ///
-    pub module_name: r_efi::base::Guid, // EFI_GUID
+    pub module_name: crate::BinaryGuid,
 
     /// The address of the memory-mapped firmware volume
     /// that contains the HOB consumer phase firmware file.
@@ -538,7 +538,7 @@ pub struct ResourceDescriptor {
     /// This GUID is used by HOB consumer phase components to correlate device
     /// ownership of a resource.
     ///
-    pub owner: r_efi::base::Guid,
+    pub owner: crate::BinaryGuid,
 
     /// Resource type enumeration as defined by EFI_RESOURCE_TYPE.
     /// Identifies whether this resource is system memory, memory-mapped I/O,
@@ -618,7 +618,7 @@ pub struct GuidHob {
 
     /// A GUID that defines the contents of this HOB.
     ///
-    pub name: r_efi::base::Guid,
+    pub name: crate::BinaryGuid,
     // Guid specific data goes here
     //
 }
@@ -676,11 +676,11 @@ pub struct FirmwareVolume2 {
 
     /// The name of the firmware volume.
     ///
-    pub fv_name: r_efi::base::Guid,
+    pub fv_name: crate::BinaryGuid,
 
     /// The name of the firmware file which contained this firmware volume.
     ///
-    pub file_name: r_efi::base::Guid,
+    pub file_name: crate::BinaryGuid,
 }
 
 /// Details the location of a firmware volume including authentication information,
@@ -723,12 +723,12 @@ pub struct FirmwareVolume3 {
     /// The name GUID of the firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
-    pub fv_name: r_efi::base::Guid,
+    pub fv_name: crate::BinaryGuid,
 
     /// The name GUID of the firmware file which contained this firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
-    pub file_name: r_efi::base::Guid,
+    pub file_name: crate::BinaryGuid,
 }
 
 /// Describes processor information, such as address space and I/O space capabilities.
@@ -1500,8 +1500,8 @@ impl<'a> Iterator for HobIter<'a> {
 // Well-known GUID Extension HOB type definitions
 
 /// Memory Type Information GUID Extension Hob GUID.
-pub const MEMORY_TYPE_INFO_HOB_GUID: r_efi::efi::Guid =
-    r_efi::efi::Guid::from_fields(0x4c19049f, 0x4137, 0x4dd3, 0x9c, 0x10, &[0x8b, 0x97, 0xa8, 0x3f, 0xfd, 0xfa]);
+pub const MEMORY_TYPE_INFO_HOB_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("4C19049F-4137-4DD3-9C10-8B97A83FFDFA");
 
 /// Memory Type Information GUID Extension Hob structure definition.
 #[derive(Debug)]
@@ -1554,8 +1554,8 @@ mod tests {
             header,
             base_address: 0,
             length: 0x0123456789abcdef,
-            fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-            file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            fv_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            file_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
         }
     }
 
@@ -1572,8 +1572,8 @@ mod tests {
             length: 0x0123456789abcdef,
             authentication_status: 0,
             extracted_fv: false.into(),
-            fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-            file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            fv_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            file_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
         }
     }
 
@@ -1589,7 +1589,7 @@ mod tests {
 
         hob::ResourceDescriptor {
             header,
-            owner: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            owner: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0,
@@ -1619,7 +1619,7 @@ mod tests {
         };
 
         let alloc_descriptor = hob::header::MemoryAllocation {
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
             memory_type: 0,
@@ -1637,7 +1637,7 @@ mod tests {
         };
 
         let alloc_descriptor = hob::header::MemoryAllocation {
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
             memory_type: 0,
@@ -1647,7 +1647,7 @@ mod tests {
         hob::MemoryAllocationModule {
             header,
             alloc_descriptor,
-            module_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            module_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             entry_point: 0,
         }
     }
@@ -1674,7 +1674,7 @@ mod tests {
                 length: (size_of::<hob::GuidHob>() + data.len()) as u16,
                 reserved: 0,
             },
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
         };
 
         // Build a contiguous buffer: [GuidHob struct bytes | data bytes]

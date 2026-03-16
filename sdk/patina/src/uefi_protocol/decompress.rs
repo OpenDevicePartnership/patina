@@ -117,6 +117,5 @@ impl Default for EfiDecompressProtocol {
 // The PROTOCOL_GUID matches the UEFI specification for the Decompress protocol.
 // The protocol structure layout matches the UEFI protocol requirements.
 unsafe impl ProtocolInterface for EfiDecompressProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0xd8117cfe, 0x94A6, 0x11D4, 0x9A, 0x3A, &[0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D]);
+    const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("D8117CFE-94A6-11D4-9A3A-0090273FC14D");
 }

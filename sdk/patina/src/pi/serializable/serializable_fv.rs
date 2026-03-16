@@ -22,7 +22,6 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use r_efi::efi;
 use serde::{Deserialize, Serialize};
 
 // This is the serialized version of the FV list.
@@ -74,7 +73,7 @@ pub struct PeHeaderInfo {
 impl From<FirmwareVolume<'_>> for FirmwareVolumeSerDe {
     fn from(fv: FirmwareVolume) -> Self {
         // Get the FV name, length, base address, and attributes
-        let fv_name = format_guid(fv.fv_name().unwrap_or(efi::Guid::from_bytes(&[0; 16])));
+        let fv_name = format_guid(&fv.fv_name().unwrap_or(crate::guids::ZERO));
         let fv_length = fv.size() as usize;
         let fv_attributes = fv.attributes();
         let files = fv
@@ -84,7 +83,7 @@ impl From<FirmwareVolume<'_>> for FirmwareVolumeSerDe {
                 let Ok(file) = file else {
                     return None;
                 };
-                let file_name = format_guid(file.name());
+                let file_name = format_guid(&file.name());
                 let file_length = file.size() as usize;
                 let file_attributes = file.attributes_raw() as u32;
                 let file_type =
@@ -114,7 +113,7 @@ impl From<FirmwareVolume<'_>> for FirmwareVolumeSerDe {
                                 LZMA_F86_SECTION => "LZMA F86 Compressed".to_string(),
                                 LZMA_PARALLEL_SECTION => "LZMA Parallel Compressed".to_string(),
                                 TIANO_DECOMPRESS_SECTION => "Tiano Compressed".to_string(),
-                                _ => format_guid(guid.section_definition_guid),
+                                _ => format_guid(&guid.section_definition_guid),
                             },
                             _ => "uncompressed".to_string(),
                         };

@@ -874,7 +874,9 @@ impl SpinLockedProtocolDb {
     }
 }
 
+// SAFETY: SpinLockedProtocolDb enforces mutual exclusion and interior mutability with locking.
 unsafe impl Send for SpinLockedProtocolDb {}
+// SAFETY: SpinLockedProtocolDb enforces mutual exclusion and interior mutability with locking.
 unsafe impl Sync for SpinLockedProtocolDb {}
 
 #[cfg(test)]

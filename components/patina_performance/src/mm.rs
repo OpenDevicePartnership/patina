@@ -101,8 +101,8 @@ pub const MAX_SMM_BOOT_RECORD_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 /// Default chunk size for fetching SMM boot performance records.
 pub const SMM_FETCH_CHUNK_BYTES: usize = 1024;
 
-pub const EFI_FIRMWARE_PERFORMANCE_GUID: efi::Guid =
-    efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
+pub const EFI_FIRMWARE_PERFORMANCE_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("C095791A-3001-47B2-80C9-EAC7319F2FA4");
 
 /// MM communicate function to return performance record size info.
 #[derive(Debug, Default, Copy, Clone)]

@@ -28,8 +28,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 
 /// Security2 Arch Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x94ab2f58, 0x1438, 0x4ef1, 0x91, 0x52, &[0x18, 0x94, 0x1a, 0x3a, 0x0e, 0x68]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("94AB2F58-1438-4EF1-9152-18941A3A0E68");
 
 /// The DXE Foundation uses this service to measure and/or verify a UEFI image.
 ///

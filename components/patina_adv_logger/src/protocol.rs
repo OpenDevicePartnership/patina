@@ -30,13 +30,12 @@ type AdvancedLoggerWrite = extern "efiapi" fn(*const AdvancedLoggerProtocol, usi
 
 // SAFETY: The AdvancedLoggerProtocol struct layout matches the protocol definition.
 unsafe impl ProtocolInterface for AdvancedLoggerProtocol {
-    const PROTOCOL_GUID: efi::Guid = AdvancedLoggerProtocol::GUID;
+    const PROTOCOL_GUID: patina::BinaryGuid = AdvancedLoggerProtocol::GUID;
 }
 
 impl AdvancedLoggerProtocol {
     /// Protocol GUID for the Advanced Logger protocol.
-    pub const GUID: efi::Guid =
-        efi::Guid::from_fields(0x434f695c, 0xef26, 0x4a12, 0x9e, 0xba, &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c]);
+    pub const GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("434F695C-EF26-4A12-9EBA-DDEF0097497C");
 
     /// Signature used for the Advanced Logger protocol.
     pub const SIGNATURE: u32 = 0x50474F4C; // "LOGP"

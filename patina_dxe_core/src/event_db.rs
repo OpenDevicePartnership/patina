@@ -215,9 +215,11 @@ struct Event {
     period: Option<u64>,
 }
 
-// SAFETY: This structure is used within a lock on a single core and is not mutated
-// after creation. It is safe to share references to it.
+// SAFETY: Access and mutation of Event instances is serialized by the event DB lock,
+// so shared references are not concurrently accessed without synchronization.
 unsafe impl Sync for crate::event_db::Event {}
+// SAFETY: Access and mutation of Event instances is serialized by the event DB lock,
+// so moving between threads does not introduce data races.
 unsafe impl Send for crate::event_db::Event {}
 
 impl fmt::Debug for Event {
@@ -808,7 +810,9 @@ impl SpinLockedEventDb {
     }
 }
 
+// SAFETY: SpinLockedEventDb protects internal state with a lock.
 unsafe impl Send for SpinLockedEventDb {}
+// SAFETY: SpinLockedEventDb protects internal state with a lock.
 unsafe impl Sync for SpinLockedEventDb {}
 
 #[cfg(test)]

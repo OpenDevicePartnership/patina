@@ -18,8 +18,7 @@ use core::{
     fmt, iter, mem, ptr,
     slice::{self, from_raw_parts},
 };
-use patina::{base::align_up, log_debug_assert};
-use r_efi::efi;
+use patina::{BinaryGuid, base::align_up, log_debug_assert};
 
 use patina::pi::fw_fs::{
     ffs::{self, file},
@@ -268,7 +267,7 @@ impl<'a> VolumeRef<'a> {
     }
 
     /// The Firmware Volume name GUID from the extended header, if available.
-    pub fn fv_name(&self) -> Option<efi::Guid> {
+    pub fn fv_name(&self) -> Option<BinaryGuid> {
         self.ext_header().map(|(hdr, _)| hdr.fv_name)
     }
 
@@ -343,7 +342,7 @@ impl<'a> VolumeRef<'a> {
         self.fv_header.revision
     }
 
-    fn file_system_guid(&self) -> efi::Guid {
+    fn file_system_guid(&self) -> BinaryGuid {
         self.fv_header.file_system_guid
     }
 }
@@ -430,7 +429,7 @@ enum Capacity {
 /// Use this to build an FV from a block map and a list of FFS files, set attributes,
 /// optionally attach an extended header, and then [`serialize`](Self::serialize) to bytes.
 pub struct Volume {
-    file_system_guid: efi::Guid,
+    file_system_guid: patina::BinaryGuid,
     attributes: fvb::attributes::EfiFvbAttributes2,
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
     block_map: Vec<BlockMapEntry>,
@@ -469,7 +468,7 @@ impl Volume {
     /// use r_efi::efi;
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
-    /// fv.files_mut().push(File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// fv.files_mut().push(File::new(patina::BinaryGuid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
     /// assert_eq!(fv.files().count(), 1);
     /// ```
     pub fn files_mut(&mut self) -> &mut Vec<File> {
@@ -497,7 +496,7 @@ impl Volume {
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 4, length: 4096 }]);
     ///
     /// for (i, payload) in ["alpha", "beta", "gamma"].into_iter().enumerate() {
-    ///     let guid = efi::Guid::from_bytes(&[i as u8; 16]);
+    ///     let guid = patina::BinaryGuid(efi::Guid::from_bytes(&[i as u8; 16]));
     ///     let mut file = File::new(guid, 0x07); // arbitrary file type for example
     ///
     ///     let data = payload.as_bytes().to_vec();
@@ -558,7 +557,7 @@ impl Volume {
 
             // ext_header data is added as a "Pad" file
             let mut ext_header_pad_file =
-                File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+                File::new(patina::BinaryGuid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
             let ext_header_section = Section::new_from_header_with_data(
                 section::SectionHeader::Pad(
                     ext_hdr_data.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
@@ -619,7 +618,8 @@ impl Volume {
                     0
                 );
 
-                let mut pad_file = File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+                let mut pad_file =
+                    File::new(patina::BinaryGuid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
                 let pad_section = Section::new_from_header_with_data(
                     section::SectionHeader::Pad(
                         pad_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
@@ -701,7 +701,7 @@ impl Volume {
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
     /// // Add an empty PAD file to keep it simple
-    /// fv.files_mut().push(patina_ffs::file::File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// fv.files_mut().push(patina_ffs::file::File::new(patina::BinaryGuid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
     /// fv.compose(&Passthrough).unwrap();
     /// ```
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
@@ -1079,7 +1079,7 @@ mod test {
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
         //SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
-            (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
+            (*fv_header).file_system_guid = patina::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
         };
         assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
 

@@ -17,8 +17,7 @@ use r_efi::efi;
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.1
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x26baccb1, 0x6f42, 0x11d4, 0xbc, 0xe7, &[0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("26BACCB1-6F42-11D4-BCE7-0080C73C8881");
 
 #[repr(C)]
 /// CPU cache flush types.

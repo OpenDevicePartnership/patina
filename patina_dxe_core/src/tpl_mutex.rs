@@ -37,10 +37,14 @@ pub struct TplGuard<'a, T: ?Sized + 'a> {
     mutex: &'a TplMutex<T>,
 }
 
+// SAFETY: TplMutex enforces mutual exclusion with atomic lock and TPL elevation.
 unsafe impl<T: ?Sized + Send> Sync for TplMutex<T> {}
+// SAFETY: TplMutex enforces mutual exclusion with atomic lock and TPL elevation.
 unsafe impl<T: ?Sized + Send> Send for TplMutex<T> {}
 
+// SAFETY: TplGuard grants exclusive access to the protected data while the lock is held.
 unsafe impl<T: ?Sized + Sync> Sync for TplGuard<'_, T> {}
+// SAFETY: TplGuard grants exclusive access to the protected data while the lock is held.
 unsafe impl<T: ?Sized + Send> Send for TplGuard<'_, T> {}
 
 impl<T> TplMutex<T> {

@@ -48,8 +48,7 @@ pub(super) struct SmbiosProtocolInternal {
 // SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
 // must match the SMBIOS protocol interface with function pointers in the correct order.
 unsafe impl ProtocolInterface for SmbiosProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
 }
 
 type SmbiosAdd =
@@ -474,8 +473,7 @@ mod tests {
         use patina::uefi_protocol::ProtocolInterface;
 
         // Verify the GUID matches the EDK2 SMBIOS protocol GUID
-        let expected_guid =
-            efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+        let expected_guid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
 
         assert_eq!(SmbiosProtocol::PROTOCOL_GUID, expected_guid);
     }

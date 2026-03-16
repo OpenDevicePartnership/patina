@@ -20,12 +20,12 @@ use r_efi::efi;
 use crate::{performance::measurement::CallerIdentifier, uefi_protocol::ProtocolInterface};
 
 /// GUID for the EDKII Performance Measurement Protocol.
-pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xc85d06be, 0x5f75, 0x48ce, 0xa8, 0x0f, &[0x12, 0x36, 0xba, 0x3b, 0x87, 0xb1]);
+pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("C85D06BE-5F75-48CE-A80F-1236BA3B87B1");
 
 /// GUID for the EDKII SMM Performance Measurement Protocol.
-pub const EDKII_SMM_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xd56b6d73, 0x1a7b, 0x4015, 0x9b, 0xb4, &[0x7b, 0x07, 0x17, 0x29, 0xed, 0x24]);
+pub const EDKII_SMM_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("D56B6D73-1A7B-4015-9BB4-7B071729ED24");
 
 /// The attribute of the measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -71,5 +71,5 @@ pub struct EdkiiPerformanceMeasurement {
 // The PROTOCOL_GUID matches the EDK II defined value. The protocol structure layout matches the protocol
 // interface requirements.
 unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {
-    const PROTOCOL_GUID: efi::Guid = EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
+    const PROTOCOL_GUID: crate::BinaryGuid = EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
 }

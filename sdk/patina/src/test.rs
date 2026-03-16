@@ -486,8 +486,6 @@ impl TestRunner {
 mod tests {
     use core::mem::MaybeUninit;
 
-    use r_efi::efi::Guid;
-
     use super::*;
     use crate::{
         boot_services::StandardBootServices,
@@ -562,7 +560,7 @@ mod tests {
 
     static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "event_triggered_test",
-        triggers: &[super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16]))],
+        triggers: &[super::__private_api::TestTrigger::Event(crate::BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -580,7 +578,7 @@ mod tests {
 
     static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "invalid_test",
-        triggers: &[super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16]))],
+        triggers: &[super::__private_api::TestTrigger::Event(crate::BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
         fail_msg: None,

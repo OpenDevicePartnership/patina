@@ -14,7 +14,7 @@
 //!
 
 use core::ffi::c_void;
-use r_efi::efi::{Guid, Handle, Lba, Status};
+use r_efi::efi::{Handle, Lba, Status};
 
 use crate::pi::{fw_fs::EfiFvbAttributes2, hob::EfiPhysicalAddress};
 
@@ -23,8 +23,7 @@ use crate::pi::{fw_fs::EfiFvbAttributes2, hob::EfiPhysicalAddress};
 /// This protocol provides control over block-oriented firmware devices.
 /// It abstracts the block-oriented nature of firmware volumes to allow consumers
 /// to read, write, and erase firmware volume blocks uniformly.
-pub const PROTOCOL_GUID: Guid =
-    Guid::from_fields(0x8f644fa9, 0xe850, 0x4db1, 0x9c, 0xe2, &[0xb, 0x44, 0x69, 0x8e, 0x8d, 0xa4]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("8F644FA9-E850-4DB1-9CE2-0B44698E8DA4");
 
 /// Retrieves the current attributes and capabilities of a firmware volume.
 ///

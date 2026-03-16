@@ -214,6 +214,7 @@ impl DebugImageInfoData {
 
         let last = self.len() - 1;
         if index != last {
+            // SAFETY: data pointers are within allocated table bounds and non-overlapping for a single element copy.
             unsafe { ptr::copy_nonoverlapping(data.add(last), data.add(index), 1) };
         }
 
@@ -269,8 +270,8 @@ impl Drop for DebugImageInfoData {
         // Deallocate the data
         if self.capacity > 0 {
             let layout = Layout::array::<EfiDebugImageInfo>(self.capacity).unwrap();
+            // SAFETY: Invariants of this struct ensure that `data` was allocated with this layout.
             unsafe {
-                // SAFETY: Invariants of this struct ensure that `data` was allocated with this exact layout.
                 alloc::alloc::dealloc(self.table_mut().cast::<u8>(), layout);
             }
         }

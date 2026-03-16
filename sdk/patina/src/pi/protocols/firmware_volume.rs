@@ -29,8 +29,7 @@ use r_efi::efi::{Guid, Handle, Status};
 /// This protocol provides file-level access to firmware volumes. It abstracts
 /// the complexity of the firmware volume format to provide simple file-based
 /// read and write operations.
-pub const PROTOCOL_GUID: Guid =
-    Guid::from_fields(0x220e73b6, 0x6bdb, 0x4413, 0x84, 0x5, &[0xb9, 0x74, 0xb1, 0x8, 0x61, 0x9a]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("220E73B6-6BDB-4413-8405-B974B108619A");
 
 /// Enumeration of write policies for firmware volume operations.
 pub type EfiFvWritePolicy = u32;

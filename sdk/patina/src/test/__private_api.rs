@@ -12,7 +12,7 @@
 
 use core::marker::PhantomData;
 
-use r_efi::efi::Guid;
+use crate::BinaryGuid;
 
 use crate::component::{
     MetaData, Storage, UnsafeStorageCell,
@@ -49,7 +49,7 @@ pub enum TestTrigger {
     /// The test case should be executed manually.
     Manual,
     /// The test case should be executed when the specified event triggers.
-    Event(&'static Guid),
+    Event(BinaryGuid),
     /// The test case should be executed after the specified units of 100ns have elapsed.
     Timer(u64),
 }

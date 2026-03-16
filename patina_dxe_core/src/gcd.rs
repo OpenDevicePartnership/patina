@@ -427,6 +427,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     let mut free_memory_attributes: u64 = 0;
     let mut free_memory_capabilities: u64 = 0;
 
+    // SAFETY: physical_hob_list is provided by the platform and must point to a valid HOB list.
     let hob_list = Hob::Handoff(unsafe {
         (physical_hob_list as *const PhaseHandoffInformationTable)
             .as_ref::<'static>()
@@ -632,6 +633,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     .take_while(|r| r.is_some())
                     .flatten()
             {
+                // SAFETY: GCD is initialized and split_range is derived from valid HOB ranges.
                 unsafe {
                     GCD.add_memory_space(
                         gcd_mem_type,
@@ -1019,8 +1021,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested block count.
             let mem = unsafe { crate::test_support::get_memory(spin_locked_gcd::MEMORY_BLOCK_SLICE_SIZE * 10) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/length come from the test buffer and are valid for initializing GCD memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,

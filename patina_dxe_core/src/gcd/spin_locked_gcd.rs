@@ -400,10 +400,13 @@ impl GCD {
             ..Default::default()
         });
 
-        self.memory_blocks
-            .expand(unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) });
+        self.memory_blocks.expand(
+            // SAFETY: base_address/size refer to a reserved backing allocation for memory blocks.
+            unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) },
+        );
 
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
+        // SAFETY: add_memory_space is called during initialization with validated parameters.
         let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
 
         // Initialize attributes on the first block to WB + XP
@@ -1073,7 +1076,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Block Index: {:#x}", function!(), idx);
         log::trace!(target: "allocations", "[{}]   Transition:\n  {:#?}", function!(), transition);
 
-        // split_state_transition does not update the key, so this is safe.
+        // SAFETY: split_state_transition does not update the key for this block.
         let new_idx = unsafe {
             match memory_blocks.get_with_idx_mut(idx).expect("idx valid above").split_state_transition(
                 base_address,
@@ -1107,7 +1110,7 @@ impl GCD {
             Ok(idx) => idx,
             Err(e) => {
                 log::error!("[{}] Memory block split failed! -> Error: {:#?}", function!(), e);
-                // Restore the memory block to its previous state. The base_address (key) is not updated with the split, so this is safe.
+                // SAFETY: restoring the prior block state does not change the base_address key.
                 unsafe {
                     *memory_blocks.get_with_idx_mut(idx).expect("idx valid above") = mb_before_split;
                 }
@@ -1119,7 +1122,7 @@ impl GCD {
         if let Some(next_idx) = memory_blocks.next_idx(idx) {
             let mut next = *memory_blocks.get_with_idx(next_idx).expect("idx valid from insert");
 
-            // base_address (they key) is not updated with the merge, so this is safe.
+            // SAFETY: merge does not update the base_address key for this block.
             unsafe {
                 if memory_blocks.get_with_idx_mut(idx).expect("idx valid from insert").merge(&mut next) {
                     memory_blocks.delete_with_idx(next_idx).expect("Index already verified.");
@@ -1131,7 +1134,7 @@ impl GCD {
         if let Some(prev_idx) = memory_blocks.prev_idx(idx) {
             let mut block = *memory_blocks.get_with_idx(idx).expect("idx valid from insert");
 
-            // base_address (they key) is not updated with the merge, so this is safe.
+            // SAFETY: merge does not update the base_address key for this block.
             unsafe {
                 if memory_blocks.get_with_idx_mut(prev_idx).expect("idx valid from insert").merge(&mut block) {
                     memory_blocks.delete_with_idx(idx).expect("Index already verified.");
@@ -1407,11 +1410,14 @@ impl IoGCD {
     fn init_io_blocks(&mut self) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
 
-        self.io_blocks.expand(unsafe {
-            Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
-                .as_mut()
-                .expect("RBT given null pointer in initialization.")
-        });
+        self.io_blocks.expand(
+            // SAFETY: the boxed slice is leaked to back the tree storage for its lifetime.
+            unsafe {
+                Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
+                    .as_mut()
+                    .expect("RBT given null pointer in initialization.")
+            },
+        );
 
         self.io_blocks
             .add(IoBlock::Unallocated(dxe_services::IoSpaceDescriptor {
@@ -1818,7 +1824,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Block Index: {:#x}", function!(), idx);
         log::trace!(target: "allocations", "[{}]   Transition: {:?}\n", function!(), transition);
 
-        // split_state_transition does not update the key, so this is safe.
+        // SAFETY: split_state_transition does not update the key for this block.
         let new_idx = unsafe {
             match io_blocks.get_with_idx_mut(idx).expect("idx valid above").split_state_transition(
                 base_address,
@@ -1850,7 +1856,7 @@ impl IoGCD {
             Ok(idx) => idx,
             Err(e) => {
                 log::error!("[{}] IO block split failed! -> Error: {:#?}", function!(), e);
-                // Restore the memory block to its previous state. The base_address (key) is not updated with the split, so this is safe.
+                // SAFETY: restoring the prior block state does not change the base_address key.
                 unsafe {
                     *io_blocks.get_with_idx_mut(idx).expect("idx valid above") = ib_before_split;
                 }
@@ -1861,7 +1867,7 @@ impl IoGCD {
         // Lets see if we can merge the block with the next block
         if let Some(next_idx) = io_blocks.next_idx(idx) {
             let mut next = *io_blocks.get_with_idx(next_idx).expect("idx valid from insert");
-            // base_address (they key) is not updated with the merge, so this is safe.
+            // SAFETY: merge does not update the base_address key for this block.
             unsafe {
                 if io_blocks.get_with_idx_mut(idx).expect("idx valid from insert").merge(&mut next) {
                     io_blocks.delete_with_idx(next_idx).expect("Index already verified.");
@@ -1872,7 +1878,7 @@ impl IoGCD {
         // Lets see if we can merge the block with the previous block
         if let Some(prev_idx) = io_blocks.prev_idx(idx) {
             let mut block = *io_blocks.get_with_idx(idx).expect("idx valid from insert");
-            // base_address (they key) is not updated with the merge, so this is safe.
+            // SAFETY: merge does not update the base_address key for this block.
             unsafe {
                 if io_blocks.get_with_idx_mut(prev_idx).expect("idx valid from insert").merge(&mut block) {
                     io_blocks.delete_with_idx(idx).expect("Index already verified.");
@@ -2156,7 +2162,7 @@ impl SpinLockedGcd {
                                 "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from {old_cache_attrs:#x?}, sending cache attributes changed event",
                             );
 
-                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP.into_inner());
                         } else if unmapped && old_cache_attributes.is_none() {
                             // in this case the region was unmapped and we had no caching attributes set up
                             log::trace!(
@@ -2164,7 +2170,7 @@ impl SpinLockedGcd {
                                 "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from an unmapped state, sending cache attributes changed event",
                             );
 
-                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP.into_inner());
                         }
                     }
 
@@ -2218,6 +2224,8 @@ impl SpinLockedGcd {
         io.maximum_address = 0;
         io.io_blocks = Rbt::new();
         self.page_table.lock().take();
+        // Reset memory protection policy to default state
+        self.memory_protection_policy.memory_allocation_default_attributes.set(efi::MEMORY_XP);
     }
 
     /// Adds a page table for testing purposes
@@ -2314,6 +2322,7 @@ impl SpinLockedGcd {
             })
             .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
+        // SAFETY: the DXE core HOB points to the loaded image buffer and size.
         let pe_info = unsafe {
             UefiPeInfo::parse_mapped(core::slice::from_raw_parts(
                 dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
@@ -2510,6 +2519,7 @@ impl SpinLockedGcd {
         len: usize,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
+        // SAFETY: caller upholds the contract for add_memory_space.
         let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
         if result.is_ok()
             && let Some(callback) = self.memory_change_callback
@@ -2988,7 +2998,9 @@ impl core::fmt::Debug for SpinLockedGcd {
     }
 }
 
+// SAFETY: SpinLockedGcd uses internal locks to serialize access to shared state.
 unsafe impl Sync for SpinLockedGcd {}
+// SAFETY: SpinLockedGcd is safe to move between threads because it owns thread-safe synchronization.
 unsafe impl Send for SpinLockedGcd {}
 
 /// Iterator over GCD memory descriptors within a specified range.
@@ -3162,6 +3174,7 @@ mod tests {
             // SAFETY: GCD test operation - address comes from controlled allocation above.
             assert_eq!(
                 Err(EfiError::NotReady),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe {
                     gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, address, MEMORY_BLOCK_SLICE_SIZE, 0)
                 },
@@ -3170,7 +3183,9 @@ mod tests {
             assert_eq!(0, gcd.memory_descriptor_count());
 
             assert_eq!(
+                // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
                 Err(EfiError::OutOfResources),
+                // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
                 unsafe {
                     gcd.init_memory_blocks(
                         dxe_services::GcdMemoryType::SystemMemory,
@@ -3189,24 +3204,32 @@ mod tests {
     #[test]
     fn test_add_memory_space_with_all_memory_type() {
         with_locked_state(|| {
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             let (mut gcd, _) = create_gcd();
-
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(0), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0, 1, 0) });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(3), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1, 1, 0) });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(4), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Persistent, 2, 1, 0) });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(5), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::MoreReliable, 3, 1, 0) });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(6), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Unaccepted, 4, 1, 0) });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(7), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 5, 1, 0) });
 
             let snapshot = copy_memory_block(&gcd);
 
             assert_eq!(
                 Err(EfiError::InvalidParameter),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::NonExistent, 10, 1, 0) },
                 "Can't manually add NonExistent memory space manually."
             );
 
             assert!(is_gcd_memory_slice_valid(&gcd));
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
     }
@@ -3216,12 +3239,14 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             let snapshot = copy_memory_block(&gcd);
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Err(EfiError::InvalidParameter), unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0, 0)
             });
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
     }
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
     #[test]
     fn test_add_memory_space_when_memory_block_full() {
@@ -3231,7 +3256,9 @@ mod tests {
 
             let mut n = 0;
             while gcd.memory_descriptor_count() < MEMORY_BLOCK_SLICE_LEN {
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 assert!(
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + n, 1, n as u64) }
                         .is_ok()
                 );
@@ -3241,64 +3268,79 @@ mod tests {
             assert!(is_gcd_memory_slice_valid(&gcd));
             let memory_blocks_snapshot = copy_memory_block(&gcd);
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             let res = unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + n, 1, n as u64) };
             assert_eq!(
                 Err(EfiError::OutOfResources),
                 res,
                 "Should return out of memory if there is no space in memory blocks."
             );
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
             assert_eq!(memory_blocks_snapshot, copy_memory_block(&gcd),);
         });
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     }
 
     #[test]
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     fn test_add_memory_space_outside_processor_range() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
             let snapshot = copy_memory_block(&gcd);
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Err(EfiError::Unsupported), unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address + 1, 1, 0)
             });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Err(EfiError::Unsupported), unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address, 1, 0)
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             });
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Err(EfiError::Unsupported), unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 1, 2, 0)
             });
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
     }
 
     #[test]
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     fn test_add_memory_space_in_range_already_added() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             // Add block to test the boundary on.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1000, 10, 0) }.unwrap();
 
             let snapshot = copy_memory_block(&gcd);
 
             assert_eq!(
                 Err(EfiError::AccessDenied),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1002, 5, 0) },
                 "Can't add inside a range previously added."
             );
             assert_eq!(
                 Err(EfiError::AccessDenied),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 998, 5, 0) },
                 "Can't add partially inside a range previously added (Start)."
             );
             assert_eq!(
                 Err(EfiError::AccessDenied),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1009, 5, 0) },
                 "Can't add partially inside a range previously added (End)."
             );
 
             assert_eq!(snapshot, copy_memory_block(&gcd));
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
         });
     }
 
@@ -3307,23 +3349,29 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
             // Add unallocated block after allocated one.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address - 100, 100, 0) }.unwrap();
 
             let snapshot = copy_memory_block(&gcd);
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(
                 Err(EfiError::AccessDenied),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, 5, 0) },
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 "Can't add inside a range previously allocated."
             );
             assert_eq!(
                 Err(EfiError::AccessDenied),
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, address - 100, 200, 0) },
                 "Can't add partially inside a range previously allocated."
             );
 
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     }
 
     #[test]
@@ -3331,13 +3379,17 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(Ok(4), unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1000, 10, 0) });
             let block_count = gcd.memory_descriptor_count();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             // Test merging when added after
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1010, 10, 0) } {
                 Ok(idx) => {
                     let mb = gcd.memory_blocks.get_with_idx(idx).unwrap();
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     assert_eq!(1000, mb.as_ref().base_address);
                     assert_eq!(20, mb.as_ref().length);
                     assert_eq!(block_count, gcd.memory_descriptor_count());
@@ -3346,10 +3398,12 @@ mod tests {
             }
 
             // Test merging when added before
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 990, 10, 0) } {
                 Ok(idx) => {
                     let mb = gcd.memory_blocks.get_with_idx(idx).unwrap();
                     assert_eq!(990, mb.as_ref().base_address);
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     assert_eq!(30, mb.as_ref().length);
                     assert_eq!(block_count, gcd.memory_descriptor_count());
                 }
@@ -3357,11 +3411,13 @@ mod tests {
             }
 
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1020, 10, 0) }.is_ok(),
                 "A different memory type should note result in a merge."
             );
             assert_eq!(block_count + 1, gcd.memory_descriptor_count());
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1030, 10, 1) }.is_ok(),
                 "A different capabilities should note result in a merge."
             );
@@ -3370,11 +3426,13 @@ mod tests {
             assert!(is_gcd_memory_slice_valid(&gcd));
         });
     }
+    // SAFETY: get_memory returns a test-owned buffer of the requested size.
 
     #[test]
     fn test_add_memory_space_state() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 100, 10, 123) } {
                 Ok(idx) => {
                     let mb = *gcd.memory_blocks.get_with_idx(idx).unwrap();
@@ -3383,6 +3441,7 @@ mod tests {
                             assert_eq!(100, md.base_address);
                             assert_eq!(10, md.length);
                             assert_eq!(efi::MEMORY_RUNTIME | efi::MEMORY_ACCESS_MASK | 123, md.capabilities);
+                            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                             assert_eq!(0, md.image_handle as usize);
                             assert_eq!(0, md.device_handle as usize);
                         }
@@ -3397,12 +3456,14 @@ mod tests {
     #[test]
     fn test_remove_memory_space_before_memory_blocks_instantiated() {
         with_locked_state(|| {
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
             let address = mem.as_ptr() as usize;
             let mut gcd = GCD::new(48);
 
             assert_eq!(Err(EfiError::NotFound), gcd.remove_memory_space(address, MEMORY_BLOCK_SLICE_SIZE));
         });
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     }
 
     #[test]
@@ -3411,6 +3472,7 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add memory space to remove in a valid area.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert!(unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 10, 0) }.is_ok());
 
             let snapshot = copy_memory_block(&gcd);
@@ -3430,8 +3492,10 @@ mod tests {
     fn test_remove_memory_space_outside_processor_range() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             // Add memory space to remove in a valid area.
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe {
                     gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 10, 10, 0)
                 }
@@ -3460,6 +3524,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             // Add memory space to remove in a valid area.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert!(unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 100, 10, 0) }.is_ok());
 
             let snapshot = copy_memory_block(&gcd);
@@ -3488,11 +3553,13 @@ mod tests {
     fn test_remove_memory_space_in_range_allocated() {
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
             let snapshot = copy_memory_block(&gcd);
 
             // Not found has a priority over the access denied because the check if the range is valid is done earlier.
             assert_eq!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 Err(EfiError::NotFound),
                 gcd.remove_memory_space(address - 5, 10),
                 "Can't remove memory space partially allocated."
@@ -3520,12 +3587,15 @@ mod tests {
             let addr = address + MEMORY_BLOCK_SLICE_SIZE;
 
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr, 10, 0_u64) }.is_ok()
             );
             let mut n = 1;
             while gcd.memory_descriptor_count() < MEMORY_BLOCK_SLICE_LEN {
                 assert!(
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     unsafe {
+                        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                         gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + 10 + n, 1, n as u64)
                     }
                     .is_ok()
@@ -3556,10 +3626,12 @@ mod tests {
             let aligned_address = if aligned_address > aligned_length {
                 aligned_address - aligned_length
             } else {
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 aligned_address + aligned_length
             };
 
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe {
                     gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, aligned_address, aligned_length, 0)
                 }
@@ -3590,6 +3662,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
             assert!(
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, address, 123) }.is_ok()
             );
 
@@ -3682,6 +3755,7 @@ mod tests {
                     AllocateType::Address(gcd.maximum_address - 100),
                     dxe_services::GcdMemoryType::Reserved,
                     0,
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     1000,
                     1 as _,
                     None
@@ -3699,8 +3773,11 @@ mod tests {
                 ),
             );
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             assert_eq!(snapshot, copy_memory_block(&gcd));
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
         });
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     }
 
     #[test]
@@ -3718,6 +3795,7 @@ mod tests {
             .into_iter()
             .enumerate()
             {
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe { gcd.add_memory_space(memory_type, (i + 1) * 10, 10, 0) }.unwrap();
                 let res =
                     gcd.allocate_memory_space(AllocateType::Address((i + 1) * 10), memory_type, 0, 10, 1 as _, None);
@@ -3735,8 +3813,11 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add memory space of len 100 to multiple space.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 100, 0) }.unwrap();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1000, 100, 0) }.unwrap();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 100, 100, 0)
             }
@@ -3747,6 +3828,7 @@ mod tests {
             // Try to allocate chunk bigger than 100.
             for allocate_type in [AllocateType::BottomUp(None), AllocateType::TopDown(None)] {
                 assert_eq!(
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     Err(EfiError::OutOfResources),
                     gcd.allocate_memory_space(
                         allocate_type,
@@ -3787,6 +3869,7 @@ mod tests {
     fn test_allocate_memory_space_alignment() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x1000, 0) }.unwrap();
 
             assert_eq!(
@@ -3856,6 +3939,7 @@ mod tests {
                     dxe_services::GcdMemoryType::SystemMemory,
                     4,
                     0xe0,
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     1 as _,
                     None
                 ),
@@ -3897,6 +3981,7 @@ mod tests {
     fn test_allocate_memory_space_block_merging() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x1000, 0) }.unwrap();
 
             for allocate_type in [AllocateType::BottomUp(None), AllocateType::TopDown(None)] {
@@ -3937,6 +4022,7 @@ mod tests {
                         None
                     )
                     .is_ok(),
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     "{allocate_type:?}: A different image handle should not result in a merge."
                 );
                 assert_eq!(block_count + 2, gcd.memory_descriptor_count());
@@ -3979,6 +4065,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x100, 10, 0) }.unwrap();
 
             let snapshot = copy_memory_block(&gcd);
@@ -4030,6 +4117,7 @@ mod tests {
 
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     }
 
     #[test]
@@ -4067,12 +4155,14 @@ mod tests {
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
     }
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
     #[test]
     fn test_free_memory_space_outside_processor_range() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 100, 100, 0)
             }
@@ -4088,6 +4178,7 @@ mod tests {
             .unwrap();
 
             let snapshot = copy_memory_block(&gcd);
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
             assert_eq!(
                 Err(EfiError::Unsupported),
@@ -4105,11 +4196,13 @@ mod tests {
             assert_eq!(snapshot, copy_memory_block(&gcd));
         });
     }
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
     #[test]
     fn test_free_memory_space_in_range_not_allocated() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x3000, 0x3000, 0) }.unwrap();
             gcd.allocate_memory_space(
                 AllocateType::Address(0x3000),
@@ -4124,6 +4217,7 @@ mod tests {
             assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0x2000, 0x1000, MemoryStateTransition::Free));
             assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0x4000, 0x1000, MemoryStateTransition::Free));
             assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0, 0x1000, MemoryStateTransition::Free));
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
         });
     }
 
@@ -4132,6 +4226,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000000, UEFI_PAGE_SIZE * 2, 0)
             }
@@ -4149,6 +4244,7 @@ mod tests {
             let mut n = 1;
             while gcd.memory_descriptor_count() < MEMORY_BLOCK_SLICE_LEN {
                 let addr = 0x2000000 + (n * UEFI_PAGE_SIZE);
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 unsafe {
                     gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr, UEFI_PAGE_SIZE, n as u64)
                 }
@@ -4169,6 +4265,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x10000, 0) }.unwrap();
             gcd.allocate_memory_space(
                 AllocateType::Address(0x1000),
@@ -4235,6 +4332,7 @@ mod tests {
                 maximum_address: 0,
                 allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                 free_memory_space_fn: GCD::free_memory_space,
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 prioritize_32_bit_memory: false,
             };
             assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
@@ -4259,7 +4357,7 @@ mod tests {
             // Test that a non-page aligned address with the runtime attribute set returns invalid parameter
             assert_eq!(
                 Err(EfiError::InvalidParameter),
-                gcd.set_memory_space_attributes(0xFFFFFFFF, 0x1000, efi::MEMORY_RUNTIME | efi::MEMORY_WB)
+                gcd.set_memory_space_attributes(0xFFFFFFFF, 0x1000, efi::MEMORY_RUNTIME | efi::MEMORY_WB) // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             );
 
             // Test that a non-page aligned size returns invalid parameter
@@ -4281,8 +4379,10 @@ mod tests {
 
     #[test]
     fn test_set_capabilities_and_attributes() {
+        // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, address - 0x1000, 0) }
                 .unwrap();
 
@@ -4308,6 +4408,7 @@ mod tests {
     fn test_set_attributes_panic() {
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, address, 0) }.unwrap();
 
             gcd.allocate_memory_space(
@@ -4329,6 +4430,7 @@ mod tests {
     fn test_block_split_when_memory_blocks_full() {
         with_locked_state(|| {
             let (mut gcd, address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4657,9 +4759,11 @@ mod tests {
     }
 
     fn create_gcd() -> (GCD, usize) {
+        // SAFETY: get_memory returns a test-owned buffer of the requested size.
         let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
         let address = mem.as_ptr() as usize;
         let mut gcd = GCD::new(48);
+        // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
         unsafe {
             gcd.init_memory_blocks(
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -4713,6 +4817,7 @@ mod tests {
 
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
+            // SAFETY: The GCD is intentionally uninitialized to validate error handling paths.
             let add_result = unsafe { GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 100, 0) };
             assert_eq!(add_result, Err(EfiError::NotReady));
 
@@ -4741,9 +4846,11 @@ mod tests {
 
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4774,9 +4881,11 @@ mod tests {
 
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4788,6 +4897,7 @@ mod tests {
                 .unwrap();
             }
 
+            // SAFETY: Adds a small test range to trigger the map-change callback.
             unsafe {
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x1000, efi::MEMORY_WB)
                     .unwrap();
@@ -4811,9 +4921,11 @@ mod tests {
 
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested range.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
             GCD.init(48, 16);
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4843,7 +4955,9 @@ mod tests {
             GCD.init(48, 16);
 
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            // SAFETY: The allocator returns a test buffer aligned to pages for GCD initialization.
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            // SAFETY: base/size come from the test allocation and are valid for initializing memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4879,6 +4993,7 @@ mod tests {
         });
     }
 
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     #[test]
     fn allocate_top_down_should_allocate_decreasing_addresses() {
         with_locked_state(|| {
@@ -4887,7 +5002,9 @@ mod tests {
             GCD.init(48, 16);
 
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            // SAFETY: The allocator returns a test buffer aligned to pages for GCD initialization.
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            // SAFETY: base/size come from the test allocation and are valid for initializing memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -4904,6 +5021,7 @@ mod tests {
                 let allocate_result = GCD.allocate_memory_space(
                     AllocateType::TopDown(None),
                     dxe_services::GcdMemoryType::SystemMemory,
+                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     12,
                     0x1000,
                     1 as _,
@@ -4928,6 +5046,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             // Increase the memory block size so allocation at 0x1000 is possible after skipping page 0
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0x2000, efi::MEMORY_WB).unwrap();
             }
@@ -4939,6 +5058,7 @@ mod tests {
                 0,
                 0x1000,
                 1 as _,
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 None,
             );
             assert_eq!(res.unwrap(), 0x1000, "Should not be able to allocate page 0");
@@ -4955,6 +5075,7 @@ mod tests {
             assert_eq!(res, Err(EfiError::OutOfResources), "Should not be able to allocate page 0");
 
             // add a new block to ensure block skipping logic works
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x2000, 0x2000, efi::MEMORY_WB)
                     .unwrap();
@@ -4991,6 +5112,7 @@ mod tests {
             gcd.prioritize_32_bit_memory = true;
 
             // Test with a contiguous 8gb without a gap.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 2 * SIZE_4GB, 0) }.unwrap();
 
             // make sure it prioritizes 32 bit addresses.
@@ -5038,10 +5160,12 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
             // Initialize and add some memory
+            // SAFETY: get_memory returns a valid, owned buffer for the test and the size is bounded by the constant.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
 
+            // SAFETY: address/size come from the test allocation and are used to initialize the GCD memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5084,7 +5208,9 @@ mod tests {
             GCD.init(48, 16);
 
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            // SAFETY: The allocator is set up to return an aligned and available test buffer for GCD initialization.
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            // SAFETY: base points to the test allocation and GCD_SIZE defines the initialized range.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5109,6 +5235,7 @@ mod tests {
             // allocate another page
             let page2 = allocator
                 .allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, false)
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                 .expect("Should allocate a second page");
             assert!(page2 != page, "Allocated pages should be unique");
             assert!(
@@ -5135,7 +5262,9 @@ mod tests {
             GCD.init(48, 16);
 
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            // SAFETY: The allocator is set up to return an aligned and available test buffer for GCD initialization.
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            // SAFETY: base/size correspond to the test allocation and are safe to register with the GCD.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5149,18 +5278,22 @@ mod tests {
             let mut allocator = PagingAllocator::new(&GCD);
 
             // Exhaust all available pages
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             let mut allocated = Vec::new();
             while let Ok(page) = allocator.allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, false) {
                 allocated.push(page);
+                // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             }
         });
     }
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
 
     #[test]
     fn test_get_memory_descriptors_allocated_filter() {
         with_locked_state(|| {
             let (mut gcd, _address) = create_gcd();
 
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 2 * SIZE_4GB, 0) }.unwrap();
 
             gcd.allocate_memory_space(
@@ -5203,12 +5336,15 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _address) = create_gcd();
             // Add MMIO and Reserved blocks
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x1000, 0).unwrap();
             }
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x3000, 0x10000, 0).unwrap();
             }
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x14000, 0x6000, 0).unwrap();
             }
@@ -5232,8 +5368,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer used to seed GCD memory blocks.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/length are derived from the test buffer so the ranges are valid for GCD initialization.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5394,8 +5532,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Set up memory space like other tests
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested block count.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: The address/length come from the test allocation and are valid to register with the GCD.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5445,8 +5585,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Set up memory space
+            // SAFETY: The GCD is prepared so that get_memory returns a valid, owned buffer for the test.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: The buffer range is owned by this test and can be registered as system memory.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -5705,6 +5847,7 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
 
+            // SAFETY: get_memory returns a test-owned buffer used to seed GCD memory blocks.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 3) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -5751,6 +5894,7 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
 
+            // SAFETY: get_memory returns a test-owned buffer used to seed GCD memory blocks.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 3) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -5792,6 +5936,7 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
 
+            // SAFETY: get_memory returns a test-owned buffer used to seed GCD memory blocks.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 3) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
 
@@ -6314,6 +6459,7 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add runtime MMIO - should be counted
+            // SAFETY: This is a synthetic MMIO range used for test coverage only.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::MemoryMappedIo,
@@ -6339,6 +6485,7 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add runtime MMIO
+            // SAFETY: This is a synthetic MMIO range for test bookkeeping only.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::MemoryMappedIo,
@@ -6352,6 +6499,7 @@ mod tests {
                 .expect("Failed to set runtime MMIO attributes");
 
             // Add Persistent memory
+            // SAFETY: This is a synthetic persistent memory range used only for test coverage.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::Persistent,
@@ -6365,6 +6513,7 @@ mod tests {
                 .expect("Failed to set Persistent memory attributes");
 
             // Add Reserved memory
+            // SAFETY: This is a synthetic reserved range used only for test coverage.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::Reserved,
@@ -6389,6 +6538,7 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add non-runtime MMIO - should not be counted
+            // SAFETY: This is a synthetic MMIO range used only for test bookkeeping.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::MemoryMappedIo,
@@ -6411,11 +6561,14 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add Persistent memory - should be counted
+            // SAFETY: This is a synthetic persistent memory range used only for test coverage.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::Persistent,
+                    // SAFETY: get_memory returns a test-owned buffer of the requested size.
                     0x100000000,
                     UEFI_PAGE_SIZE * 100,
+                    // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
                     efi::MEMORY_WB | efi::MEMORY_NV,
                 )
             }
@@ -6428,11 +6581,13 @@ mod tests {
     }
 
     #[test]
+    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
     fn test_memory_descriptor_count_for_efi_memory_map_unaccepted_memory() {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
 
             // Add Unaccepted memory - should be counted
+            // SAFETY: This is a synthetic unaccepted memory range used only for test coverage.
             unsafe {
                 gcd.add_memory_space(
                     dxe_services::GcdMemoryType::Unaccepted,
@@ -6455,6 +6610,7 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // Add Reserved memory - should be counted
+            // SAFETY: This is a synthetic reserved range used only for test coverage.
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x90000000, UEFI_PAGE_SIZE * 20, 0) }
                 .expect("Failed to add Reserved memory");
 
@@ -6470,8 +6626,10 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
 
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
             let address = mem.as_ptr() as usize;
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -6484,7 +6642,10 @@ mod tests {
             }
 
             // Add multiple memory regions with different types
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             unsafe {
+                // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, efi::MEMORY_WB)
                     .unwrap();
                 GCD.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x5000, 0x1000, efi::MEMORY_UC)
@@ -6544,8 +6705,11 @@ mod tests {
             GCD.init(48, 16);
 
             // Set up memory space
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -6605,8 +6769,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Set up memory space
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -6618,8 +6784,10 @@ mod tests {
                 .unwrap();
             }
 
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             // Create DXE Core HOB
             let dxe_core_base = address + 0x1000;
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             let dxe_core_len = 0x1000000;
             let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
                 header: patina::pi::hob::header::Hob {
@@ -6683,8 +6851,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Set up memory space
+            // SAFETY: get_memory returns a test-owned buffer of the requested size.
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 100) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,

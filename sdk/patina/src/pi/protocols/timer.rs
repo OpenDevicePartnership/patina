@@ -15,8 +15,7 @@
 use r_efi::efi;
 
 /// Timer Arch Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x26BACCB3, 0x6F42, 0x11D4, 0xBC, 0xE7, &[0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("26BACCB3-6F42-11D4-BCE7-0080C73C8881");
 
 /// A function of this type is called when a timer interrupt fires.  This
 /// function executes at TPL_HIGH_LEVEL.  The DXE Core will register a function

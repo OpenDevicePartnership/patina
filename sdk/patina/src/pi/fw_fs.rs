@@ -43,7 +43,7 @@ pub use fv::{
 pub use fvb::attributes::{EfiFvbAttributes2, Fvb2 as Fvb2Attributes, raw::fvb2 as Fvb2RawAttributes};
 use zerocopy::FromBytes;
 
-use crate::base::align_up;
+use crate::{BinaryGuid, base::align_up};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use num_traits::WrappingSub;
 use r_efi::efi;
@@ -53,26 +53,22 @@ use r_efi::efi;
 /// These GUIDs identify the compression algorithm or encapsulation format used in GUID-defined
 /// sections within the Firmware File System. Based on the PI Specification Volume 3.
 pub mod guid {
-    use r_efi::efi;
-
     /// GUID for Brotli compressed sections.
-    pub const BROTLI_SECTION: efi::Guid =
-        efi::Guid::from_fields(0x3D532050, 0x5CDA, 0x4FD0, 0x87, 0x9E, &[0x0F, 0x7F, 0x63, 0x0D, 0x5A, 0xFB]);
+    pub const BROTLI_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("3D532050-5CDA-4FD0-879E-0F7F630D5AFB");
     /// GUID for CRC32 checksum sections.
-    pub const CRC32_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xFC1BCDB0, 0x7D31, 0x49aa, 0x93, 0x6A, &[0xA4, 0x60, 0x0D, 0x9D, 0xD0, 0x83]);
+    pub const CRC32_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("FC1BCDB0-7D31-49AA-936A-A4600D9DD083");
     /// GUID for LZMA compressed sections.
-    pub const LZMA_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
+    pub const LZMA_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("EE4E5898-3914-4259-9D6E-DC7BD79403CF");
     /// GUID for LZMA F86 compressed sections.
-    pub const LZMA_F86_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xD42AE6BD, 0x1352, 0x4BFB, 0x90, 0x9A, &[0xCA, 0x72, 0xA6, 0xEA, 0xE8, 0x89]);
+    pub const LZMA_F86_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("D42AE6BD-1352-4BFB-909A-CA72A6EAE889");
     /// GUID for LZMA parallel compressed sections.
-    pub const LZMA_PARALLEL_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xBD9921EA, 0xED91, 0x404A, 0x8B, 0x2F, &[0xB4, 0xD7, 0x24, 0x74, 0x7C, 0x8C]);
+    pub const LZMA_PARALLEL_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("BD9921EA-ED91-404A-8B2F-B4D724747C8C");
     /// GUID for Tiano decompression sections.
-    pub const TIANO_DECOMPRESS_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xA31280AD, 0x481E, 0x41B6, 0x95, 0xE8, &[0x12, 0x7F, 0x4C, 0x98, 0x47, 0x79]);
+    pub const TIANO_DECOMPRESS_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("A31280AD-481E-41B6-95E8-127F4C984779");
 }
 
 /// Defines an interface that can be implemented to provide extraction logic for encapsulation sections.
@@ -344,7 +340,7 @@ impl<'a> FirmwareVolume<'a> {
     }
 
     /// Returns the GUID name of the FV, if any.
-    pub fn fv_name(&self) -> Option<efi::Guid> {
+    pub fn fv_name(&self) -> Option<BinaryGuid> {
         self.ext_header.as_ref().map(|ext_header| ext_header.header.fv_name)
     }
 
@@ -428,7 +424,7 @@ impl fmt::Debug for FirmwareVolume<'_> {
 #[derive(Clone)]
 pub struct File<'a> {
     data: &'a [u8],
-    name: efi::Guid,
+    name: BinaryGuid,
     file_type: u8,
     attributes: u8,
     header_size: usize,
@@ -588,7 +584,7 @@ impl<'a> File<'a> {
     }
 
     /// Returns the file name GUID.
-    pub fn name(&self) -> efi::Guid {
+    pub fn name(&self) -> BinaryGuid {
         self.name
     }
 
@@ -1230,7 +1226,7 @@ mod unit_tests {
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
-            (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
+            (*fv_header).file_system_guid = crate::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
         };
         assert_eq!(FirmwareVolume::new(&fv_bytes).unwrap_err(), efi::Status::VOLUME_CORRUPTED);
 
