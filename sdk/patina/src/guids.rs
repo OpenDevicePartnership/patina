@@ -259,6 +259,19 @@ pub const SMM_COMMUNICATION_PROTOCOL: crate::BinaryGuid =
 /// ```
 pub const ZERO: crate::BinaryGuid = crate::BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
 
+/// EFI Global Variable GUID
+///
+/// The namespace GUID for UEFI-defined global variables such as `ConIn`, `ConOut`,
+/// `ErrOut`, `Boot####`, `BootOrder`, etc. See UEFI Specification Table 3-1.
+///
+/// (`8BE4DF61-93CA-11D2-AA0D-00E098032B8C`)
+/// ```
+/// # use patina::{Guid, guids::EFI_GLOBAL_VARIABLE};
+/// # assert_eq!("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", format!("{:?}", Guid::from_ref(&EFI_GLOBAL_VARIABLE)));
+/// ```
+pub const EFI_GLOBAL_VARIABLE: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
+
 /// EFI_HOB_MEMORY_ALLOC_STACK_GUID
 ///
 ///  Describes the memory stack that is produced by the HOB producer phase and upon which all post
