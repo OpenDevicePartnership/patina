@@ -397,7 +397,6 @@ impl<'a> HobList<'a> {
     ///     the_hob_list.relocate_hobs();
     /// }
     /// ```
-    #[cfg(any(test, feature = "alloc"))]
     pub fn relocate_hobs(&mut self) {
         for hob in self.0.iter_mut() {
             match hob {
@@ -424,7 +423,6 @@ impl<'a> HobList<'a> {
 /// Implements IntoIterator for HobList.
 ///
 /// Defines how it will be converted to an iterator.
-#[cfg(any(test, feature = "alloc"))]
 impl<'a> IntoIterator for HobList<'a> {
     type Item = Hob<'a>;
     type IntoIter = <Vec<Hob<'a>> as IntoIterator>::IntoIter;
@@ -434,7 +432,6 @@ impl<'a> IntoIterator for HobList<'a> {
     }
 }
 
-#[cfg(any(test, feature = "alloc"))]
 impl<'a> IntoIterator for &'a HobList<'a> {
     type Item = &'a Hob<'a>;
     type IntoIter = core::slice::Iter<'a, Hob<'a>>;
@@ -448,7 +445,6 @@ impl<'a> IntoIterator for &'a HobList<'a> {
 ///
 /// Writes Hoblist debug information to stdio
 ///
-#[cfg(any(test, feature = "alloc"))]
 impl fmt::Debug for HobList<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for hob in self.0.clone().into_iter() {
