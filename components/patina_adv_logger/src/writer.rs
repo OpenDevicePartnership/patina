@@ -183,7 +183,7 @@ impl AdvancedLogWriter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reader"))]
 #[coverage(off)]
 mod tests {
     extern crate std;

@@ -632,8 +632,6 @@ mod tests {
     use super::*;
     use core::{assert_eq, slice, unreachable};
 
-    use r_efi::efi;
-
     use extended::{
         DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
         GuidQwordStringEventRecord,
@@ -648,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_push_record() {
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
         let mut size = 0;
 
@@ -673,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_iter() {
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
         performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
@@ -711,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_reported_table() {
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
         performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();

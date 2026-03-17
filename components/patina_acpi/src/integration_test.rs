@@ -14,51 +14,84 @@ use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::service::Service,
     test::patina_test,
+    u_assert, u_assert_eq,
 };
 use r_efi::efi;
 
 use crate::{
-    acpi::STANDARD_ACPI_PROVIDER,
     acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
-    acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
+    acpi_table::AcpiTableHeader,
     service::AcpiTableManager,
-    signature::{
-        ACPI_VERSIONS_GTE_2, {self},
-    },
+    signature::{self, ACPI_VERSIONS_GTE_2},
 };
+
+#[repr(C)]
+#[derive(Clone)]
+struct MockSmallTable {
+    _header: AcpiTableHeader,
+}
+
+#[repr(C)]
+#[derive(Clone, Default)]
+struct MockLargeTable {
+    header: AcpiTableHeader,
+    data: [u8; 32],
+}
 
 #[coverage(off)]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
-    // Install a dummy FADT.
-    // The FADT is treated as a normal ACPI table and should be added to the list of installed tables.
-    let dummy_header =
-        AcpiTableHeader { signature: signature::FADT, length: mem::size_of::<AcpiFadt>() as u32, ..Default::default() };
-    let dummy_fadt = AcpiFadt { header: dummy_header, ..Default::default() };
+    let original_length = table_manager.iter_tables().len();
+
+    // Install a dummy ACPI table.
+    let mock_table1 = MockSmallTable {
+        _header: AcpiTableHeader {
+            signature: 0x12341234,
+            length: mem::size_of::<MockSmallTable>() as u32,
+            ..Default::default()
+        },
+    };
 
     // SAFETY: The constructed table is a valid ACPI table.
-    let table_key = unsafe { table_manager.install_acpi_table(dummy_fadt) }.expect("Should install dummy FADT.");
+    let key1 = unsafe { table_manager.install_acpi_table(mock_table1) }.expect("Should install table.");
 
-    // Install a FACS table (special case — not iterated over).
-    let facs = AcpiFacs { signature: signature::FACS, length: mem::size_of::<AcpiFacs>() as u32, ..Default::default() };
+    // Install another table.
+    let mock_table2 = MockLargeTable {
+        header: AcpiTableHeader {
+            signature: 0x43214321,
+            length: mem::size_of::<MockLargeTable>() as u32,
+            ..Default::default()
+        },
+        data: [1; 32],
+    };
+
     // SAFETY: The constructed table is a valid ACPI table.
-    assert!(unsafe { table_manager.install_acpi_table(facs) }.is_ok(), "Should install FACS table.");
+    let key2 = unsafe { table_manager.install_acpi_table(mock_table2) }.expect("Should install table.");
 
-    // Verify only the FADT is in the iterator.
+    // Install an invalid ACPI table (too small).
+    let invalid_table =
+        AcpiTableHeader { signature: signature::MADT, length: (signature::MADT_SIZE - 2) as u32, ..Default::default() };
+    // SAFETY: invalid_table has a valid layout, but an invalid length value, so this should return an error.
+    u_assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
+
+    // Verify only valid tables are in the iterator.
     let tables = table_manager.iter_tables();
-    assert_eq!(tables.len(), 1);
-    assert_eq!(tables[0].signature(), signature::FADT);
+    u_assert!(tables.len() == original_length + 2, "Should have two more tables than original.");
+    u_assert!(tables.iter().any(|t| t.signature() == 0x12341234));
+    u_assert!(tables.iter().any(|t| t.signature() == 0x43214321));
 
-    // Get the dummy FADT and verify its contents.
-    let fadt = table_manager.get_acpi_table::<AcpiFadt>(table_key).expect("Should get dummy FADT");
-    assert_eq!(fadt.signature(), signature::FADT, "Signature should match dummy FADT");
-    assert!(fadt.x_firmware_ctrl() > 0, "Should have installed FACS");
+    // Get the complex table and verify its trailing contents are preserved.
+    let retrieved_mocktable2 = table_manager.get_acpi_table::<MockLargeTable>(key2).expect("Should get mock table.");
+    u_assert_eq!(retrieved_mocktable2.header.signature(), 0x43214321, "Signature should match mock table.");
+    u_assert_eq!(retrieved_mocktable2.data, [1; 32], "Data should match mock table.");
 
-    // Uninstall the dummy table.
-    table_manager.uninstall_acpi_table(table_key).expect("Delete should succeed");
+    // Uninstall the tables for cleanup (and tests uninstall).
+    table_manager.uninstall_acpi_table(key1).expect("Delete should succeed");
+    table_manager.uninstall_acpi_table(key2).expect("Delete should succeed");
 
     // get() should now fail.
-    assert!(table_manager.get_acpi_table::<AcpiFadt>(table_key).is_err(), "Table should no longer be accessible");
+    u_assert!(table_manager.get_acpi_table::<MockSmallTable>(key1).is_err(), "Table should no longer be accessible");
+    u_assert!(table_manager.get_acpi_table::<MockLargeTable>(key2).is_err(), "Table should no longer be accessible");
 
     Ok(())
 }
@@ -66,9 +99,6 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
 #[coverage(off)]
 #[patina_test]
 fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
-    // Hack that is necessary since all tests share a global `STANDARD_ACPI_PROVIDER`.
-    STANDARD_ACPI_PROVIDER.acpi_tables.lock().clear();
-
     // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
@@ -78,52 +108,65 @@ fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
 
     let mut table_key_buf: usize = 0;
 
-    // Install a dummy FADT using the ACPI Table Protocol.
+    // Install a dummy table using the ACPI Table Protocol.
     (table_protocol.install_table)(
         table_protocol as *const AcpiTableProtocol,
-        &AcpiFadt {
+        &MockLargeTable {
             header: AcpiTableHeader {
-                signature: signature::FADT,
-                length: mem::size_of::<AcpiFadt>() as u32,
+                signature: 0x12341234,
+                length: mem::size_of::<MockLargeTable>() as u32,
                 ..Default::default()
             },
-            ..Default::default()
+            data: [2; 32],
         } as *const _ as *const c_void,
-        mem::size_of::<AcpiFadt>(),
+        mem::size_of::<MockLargeTable>(),
         &mut table_key_buf as *mut usize,
     );
 
-    assert!(table_key_buf > 0, "Table key should be set after install");
+    u_assert!(table_key_buf > 0, "Table key should be set after install");
 
     // Verify the table can be retrieved.
-    let mut fadt_buf = AcpiFadt::default();
-    let mut table_buf = &mut fadt_buf as *mut AcpiFadt as *mut AcpiTableHeader;
-    let table_idx = 0; // We only installed one table, so index 0 should work.
+    let mut table_buf = MockLargeTable::default();
+    let mut table_buf = &mut table_buf as *mut MockLargeTable as *mut AcpiTableHeader;
+    let mut table_idx = 0;
     let mut get_supported_table_versions: u32 = 0;
     let mut get_table_key = 0;
-    let get_result = (acpi_get_protocol.get_table)(
-        table_idx,
-        &mut table_buf as *mut *mut AcpiTableHeader,
-        &mut get_supported_table_versions,
-        &mut get_table_key,
-    );
-    assert_eq!(get_result, efi::Status::SUCCESS, "Get table should succeed");
-    // SAFETY: `table_buf` is valid and directly constructed from the dummy FADT.
-    let retrieved_table = unsafe { &*table_buf };
-    assert_eq!(retrieved_table.signature(), signature::FADT, "Signature should match installed FADT");
-    assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
-    assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
+    loop {
+        let get_result = (acpi_get_protocol.get_table)(
+            table_idx,
+            &mut table_buf as *mut *mut AcpiTableHeader,
+            &mut get_supported_table_versions,
+            &mut get_table_key,
+        );
+        // We should be able to find our installed table.
+        if get_result != efi::Status::SUCCESS {
+            // If fails, either hit an error on a previous table or reached the end of the list without finding the installed table.
+            // Both are error cases.
+            u_assert!(false, "Get table should succeed for installed table");
+        }
 
-    // We should be able to access the normal FADT fields.
-    // SAFETY: We know that the table_buf points to an AcpiFadt (constructed above).
-    #[allow(invalid_reference_casting)]
-    let retrieved_fadt = unsafe { &*(table_buf as *const AcpiFadt) };
-    // We haven't installed a FACS, so this should be zero, but still accessible.
-    assert_eq!(retrieved_fadt.x_firmware_ctrl(), 0);
+        // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
+        if unsafe { (*table_buf).signature } == 0x12341234 {
+            break;
+        }
+
+        table_idx += 1;
+    }
+
+    // SAFETY: `table_buf` is valid and directly constructed from the dummy table.
+    let retrieved_table = unsafe { &*table_buf };
+    u_assert_eq!(retrieved_table.signature(), 0x12341234, "Signature should match installed table.");
+    u_assert_eq!(get_supported_table_versions, ACPI_VERSIONS_GTE_2, "Should support ACPI version 2.0+");
+    u_assert_eq!(get_table_key, table_key_buf, "Table key should match installed key");
+
+    // We should be able to access the normal table fields.
+    // SAFETY: We know that the table_buf points to an MockLargeTable (constructed above).
+    let large_table = unsafe { &*(table_buf as *const MockLargeTable) };
+    u_assert_eq!(large_table.data, [2; 32], "Data should match installed table.");
 
     // Verify the table can be uninstalled.
     let uninstall_result = (table_protocol.uninstall_table)(table_protocol as *const AcpiTableProtocol, get_table_key);
-    assert_eq!(uninstall_result, efi::Status::SUCCESS, "Uninstall should succeed");
+    u_assert_eq!(uninstall_result, efi::Status::SUCCESS, "Uninstall should succeed");
 
     Ok(())
 }

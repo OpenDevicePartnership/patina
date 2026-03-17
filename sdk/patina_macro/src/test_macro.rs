@@ -56,7 +56,7 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_SHOULD_FAIL, quote! {false});
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
-    map.insert(KEY_TRIGGER, quote! { &[patina::test::__private_api::TestTrigger::Immediate] });
+    map.insert(KEY_TRIGGER, quote! { &[patina::test::__private_api::TestTrigger::Manual] });
 
     let mut triggers = Vec::new();
 
@@ -146,7 +146,7 @@ fn parse_on_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
                 Meta::NameValue(nv) if nv.path.is_ident("event") => {
                     let value = &nv.value;
                     return Ok(quote! {
-                        patina::test::__private_api::TestTrigger::Event(&#value)
+                        patina::test::__private_api::TestTrigger::Event(#value)
                     });
                 }
                 // CASE2: $[on(timer = interval_in_100ns_units)]
@@ -237,7 +237,7 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina::test::__private_api::TestCase = patina::test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                    triggers: &[patina::test::__private_api::TestTrigger::Immediate],
+                    triggers: &[patina::test::__private_api::TestTrigger::Manual],
                     skip: false,
                     should_fail: false,
                     fail_msg: None,
@@ -270,7 +270,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Immediate],
+                triggers: &[patina::test::__private_api::TestTrigger::Manual],
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
@@ -328,7 +328,7 @@ mod tests {
         let tokens = parse_on_attr(&attr).unwrap();
 
         let expected = quote! {
-            patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE)
+            patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)
         };
         assert_eq!(tokens.to_string(), expected.to_string());
     }
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
         assert_eq!(
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
-            "& [patina :: test :: __private_api :: TestTrigger :: Immediate]"
+            "& [patina :: test :: __private_api :: TestTrigger :: Manual]"
         );
     }
 
@@ -461,7 +461,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE)],
+                triggers: &[patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
@@ -498,9 +498,9 @@ mod tests {
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 triggers: &[
-                    patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE),
+                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
                     patina::test::__private_api::TestTrigger::Timer(1000000),
-                    patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_READY_TO_BOOT)
+                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_READY_TO_BOOT)
                 ],
                 skip: true,
                 should_fail: true,
@@ -529,7 +529,7 @@ mod tests {
         config.insert(KEY_SHOULD_FAIL, quote! {true});
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
-        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Immediate });
+        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Manual });
 
         let expanded = generate_expanded_test_case(&item, &config);
 
@@ -540,7 +540,7 @@ mod tests {
             static __my_test_case_TestCase: patina::test::__private_api::TestCase =
             patina::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: patina::test::__private_api::TestTrigger::Immediate,
+                triggers: patina::test::__private_api::TestTrigger::Manual,
                 skip: false,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),

@@ -113,7 +113,6 @@ use core::{
     ffi::c_void,
     num::NonZeroUsize,
     ptr::{self, NonNull},
-    str::FromStr,
 };
 
 use gcd::SpinLockedGcd;
@@ -365,8 +364,13 @@ impl<P: PlatformInfo> Core<P> {
 
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
-        assert!(self.set_instance(), "DXE Core instance was already set!");
-        assert!(!physical_hob_list.is_null(), "The DXE Core requires a non-null HOB list pointer.");
+        if !self.set_instance() {
+            panic!("DXE Core instance was already set!");
+        }
+
+        if physical_hob_list.is_null() {
+            panic!("DXE Core entry point called with null HOB list pointer!");
+        }
 
         let relocated_hob_list = self.init_memory(physical_hob_list);
 
@@ -442,7 +446,9 @@ impl<P: PlatformInfo> Core<P> {
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
-        assert!(self.set_hob_list(hob_list).is_ok());
+        if self.set_hob_list(hob_list).is_err() {
+            panic!("HOB list was already set!");
+        }
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
@@ -525,10 +531,7 @@ impl<P: PlatformInfo> Core<P> {
         st.checksum_all();
 
         // Install HobList configuration table
-        let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
-            uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
-        let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
-        config_tables::core_install_configuration_table(hob_list_guid, physical_hob_list, st)
+        config_tables::core_install_configuration_table(patina::guids::HOB_LIST.into_inner(), physical_hob_list, st)
             .expect("Unable to create configuration table due to invalid table entry.");
 
         // Install Memory Type Info configuration table.
@@ -544,6 +547,7 @@ impl<P: PlatformInfo> Core<P> {
 
         self.component_dispatcher.lock().set_boot_services(boot_services);
         self.component_dispatcher.lock().set_runtime_services(runtime_services);
+        self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
         Ok(())
     }
@@ -631,16 +635,17 @@ fn core_display_missing_arch_protocols() {
 
 fn call_bds() -> ! {
     // Enable status code capability in Firmware Performance DXE.
-    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
+    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID.into_inner()) {
         Ok(status_code_ptr) => {
             if let Some(status_code_protocol_ptr) = NonNull::new(status_code_ptr) {
                 // SAFETY: Some(status_code_protocol_ptr) guarantees that the pointer is non-NULL
                 let status_code_protocol = unsafe { status_code_protocol_ptr.cast::<status_code::Protocol>().as_ref() };
+                let dxe_core_guid = patina::guids::DXE_CORE.into_inner();
                 (status_code_protocol.report_status_code)(
                     EFI_PROGRESS_CODE,
                     EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
                     0,
-                    &patina::guids::DXE_CORE,
+                    &dxe_core_guid,
                     ptr::null(),
                 );
             } else {
@@ -650,7 +655,7 @@ fn call_bds() -> ! {
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
     }
 
-    match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+    match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID.into_inner()) {
         Ok(bds_ptr) => {
             if let Some(bds_protocol_ptr) = NonNull::new(bds_ptr) {
                 let bds_protocol_ptr = bds_protocol_ptr.cast::<bds::Protocol>();
@@ -745,7 +750,7 @@ mod tests {
 
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    patina::pi::protocols::bds::PROTOCOL_GUID.into_inner(),
                     protocol as *mut _ as *mut c_void,
                 )
                 .unwrap();
@@ -768,7 +773,7 @@ mod tests {
             with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    patina::pi::protocols::bds::PROTOCOL_GUID.into_inner(),
                     core::ptr::null_mut(),
                 )
                 .unwrap();
@@ -819,7 +824,7 @@ mod tests {
 
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID.into_inner(),
                     protocol as *mut _ as *mut c_void,
                 )
                 .unwrap();
@@ -842,7 +847,7 @@ mod tests {
             with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
-                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID.into_inner(),
                     core::ptr::null_mut(),
                 )
                 .unwrap();

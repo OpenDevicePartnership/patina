@@ -53,7 +53,6 @@ mod tests {
     use super::*;
     use patina::pi::fw_fs::ffs::section::header::GuidDefined;
     use patina_ffs::section::Section;
-    use r_efi::efi;
 
     #[test]
     fn test_crc32_extractor_valid() {
@@ -93,8 +92,14 @@ mod tests {
 
     #[test]
     fn test_crc32_extractor_unsupported_guid() {
-        let wrong_guid =
-            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let wrong_guid = patina::BinaryGuid::from_fields(
+            0x12345678,
+            0x1234,
+            0x5678,
+            0x12,
+            0x34,
+            &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0],
+        );
         let content = b"Test data";
 
         let guid_header = GuidDefined {

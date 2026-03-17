@@ -87,7 +87,7 @@ struct MyComponent {
 impl MyComponent {
     // Note that the Service is NOT `dyn`!
     fn entry_point(acpi_table_service: Service<AcpiTableManager>) {
-        // ... 
+        // ...
     }
 }
 ```
@@ -144,3 +144,31 @@ install a table of nonstandard format is **undefined behavior**.
 
 While consumers of the service can install any ACPI table as long as it follows the safety conventions above, a few
 common ACPI table types are implemented in `acpi_table.rs` and ACPI-related constants in `signature.rs`.
+
+## Integration Status
+
+### ACPI Integration
+
+- [X] ACPI feature branch merged into `patina` main.
+- [X] ACPI platform testing.
+- [ ] ACPI component enabled in `patina-dxe-core-qemu` and `patina-qemu`.
+- [ ] ACPI component enabled in Intel physical platforms.
+
+Once ACPI integration is complete, platforms are able to integrate a fully Rust-based **ACPI table** implementation.
+However, AML parsing and manipulation are still implemented in C through the custom `AcpiSdtDxe` driver. Although this
+is considered an intermediate step towards platform integration of Patina ACPI infrastructure, it is fully functional
+and tested, and ready for platforms to adopt.
+
+### AML Integration
+
+The timeline for full ACPI + AML Patina integration is about 3-6 months from completion of ACPI integration.
+
+- [ ] AML design feedback. ([RFC](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text/0020-aml-parser.md))
+- [ ] AML implementation.
+- [ ] AML platform testing.
+- [ ] AML feature branch merged into `patina`.
+- [ ] Full Patina AML implementation enabled in `patina-dxe-core-qemu` and `patina-qemu`.
+- [ ] Full Patina AML implementation enabled in Intel physical platforms.
+
+Once full AML integration is complete, the entire ACPI + AML system will be based in Rust. The intermediate C driver
+`AcpiSdtDxe` will no longer be required.

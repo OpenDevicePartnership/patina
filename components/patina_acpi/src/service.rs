@@ -169,6 +169,7 @@ pub(crate) trait AcpiProvider {
 #[coverage(off)]
 mod tests {
     use alloc::boxed::Box;
+    use core::mem;
     use patina::component::service::memory::StdMemoryManager;
 
     use crate::acpi_table::AcpiFadt;
@@ -188,7 +189,10 @@ mod tests {
         // SAFETY: The constructed table is a valid ACPI table.
         let table = unsafe {
             AcpiTable::new(
-                AcpiFadt { header: AcpiTableHeader { length: 245, ..Default::default() }, ..Default::default() },
+                AcpiFadt {
+                    header: AcpiTableHeader { length: mem::size_of::<AcpiFadt>() as u32, ..Default::default() },
+                    ..Default::default()
+                },
                 &Service::mock(Box::new(StdMemoryManager::new())),
             )
             .unwrap()

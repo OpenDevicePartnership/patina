@@ -292,6 +292,8 @@ impl MemoryProtectionPolicy {
         image_num_pages: usize,
         filename: &str,
     ) -> Result<(), EfiError> {
+        use patina::log_debug_assert;
+
         // remove default NX protection
         gcd.memory_protection_policy.memory_allocation_default_attributes.set(0);
 
@@ -310,8 +312,7 @@ impl MemoryProtectionPolicy {
                     UEFI_PAGE_SIZE,
                     descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
                 ) {
-                    log::error!("Failed to map page 0 for compat mode. Status: {e:#x?}");
-                    debug_assert!(false);
+                    log_debug_assert!("Failed to map page 0 for compat mode. Status: {e:#x?}");
                 }
             }
             _ => {}
@@ -337,14 +338,13 @@ impl MemoryProtectionPolicy {
                     ) {
                         Ok(_) => {}
                         Err(e) => {
-                            log::error!(
+                            log_debug_assert!(
                                 "Failed to map legacy bios region at {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
                                 address,
                                 size,
                                 descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
                                 e
                             );
-                            debug_assert!(false);
                         }
                     }
                 }
@@ -373,10 +373,9 @@ impl MemoryProtectionPolicy {
                         (addr, len) = match align_range(addr, len, UEFI_PAGE_SIZE as u64) {
                             Ok((aligned_addr, aligned_len)) => (aligned_addr, aligned_len),
                             Err(_) => {
-                                log::error!(
+                                log_debug_assert!(
                                     "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
                                 );
-                                debug_assert!(false);
 
                                 // If we can't align the address, we can't set the attributes, so try the next range
                                 addr += len;
@@ -385,19 +384,17 @@ impl MemoryProtectionPolicy {
                         };
 
                         if gcd.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
-                            log::error!(
+                            log_debug_assert!(
                                 "Failed to set memory space attributes for range {addr:#x?} - {len:#x?}, compatibility mode may fail",
                             );
-                            debug_assert!(false);
                         }
                     }
                     _ => {
-                        log::error!(
+                        log_debug_assert!(
                             "Failed to get memory space descriptor for range {:#x?} - {:#x?}, compatibility mode may fail",
                             range.start,
                             range.end,
                         );
-                        debug_assert!(false);
                     }
                 }
                 addr += len;
@@ -415,8 +412,8 @@ impl MemoryProtectionPolicy {
             .is_err()
         {
             // if we failed to map this image RWX, we should still attempt to execute it, it may succeed
-            log::error!("Failed to set GCD attributes for image {}", filename);
-            debug_assert!(false);
+
+            log_debug_assert!("Failed to set GCD attributes for image {}", filename);
         }
         Ok(())
     }
@@ -430,6 +427,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     let mut free_memory_attributes: u64 = 0;
     let mut free_memory_capabilities: u64 = 0;
 
+    // SAFETY: physical_hob_list is provided by the platform and must point to a valid HOB list.
     let hob_list = Hob::Handoff(unsafe {
         (physical_hob_list as *const PhaseHandoffInformationTable)
             .as_ref::<'static>()
@@ -484,8 +482,12 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     log::info!("free_memory_capabilities: {free_memory_capabilities:#x?}");
 
     // make sure the PHIT is present and it was reasonable.
-    assert!(free_memory_size > 0, "Not enough free memory for DXE core to start");
-    assert!(memory_start < memory_end, "Not enough memory available for DXE core to start.");
+    if free_memory_size == 0 {
+        panic!("PHIT HOB indicates no free memory available for DXE core to start. Free memory size = 0.");
+    }
+    if memory_end <= memory_start {
+        panic!("PHIT HOB indicates no memory available for DXE core to start. Memory end <= memory start.");
+    }
 
     // initialize the GCD with an initial memory space. Note: this will fail if GCD.init() above didn't happen.
     // SAFETY: We are directly using the free memory space from the PHIT HOB, which must be valid and reserved for use
@@ -631,6 +633,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     .take_while(|r| r.is_some())
                     .flatten()
             {
+                // SAFETY: GCD is initialized and split_range is derived from valid HOB ranges.
                 unsafe {
                     GCD.add_memory_space(
                         gcd_mem_type,
@@ -1018,8 +1021,10 @@ mod tests {
             GCD.init(48, 16);
 
             // Add memory and MMIO regions
+            // SAFETY: get_memory returns a test-owned buffer sized for the requested block count.
             let mem = unsafe { crate::test_support::get_memory(spin_locked_gcd::MEMORY_BLOCK_SLICE_SIZE * 10) };
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+            // SAFETY: address/length come from the test buffer and are valid for initializing GCD memory blocks.
             unsafe {
                 GCD.init_memory_blocks(
                     patina::pi::dxe_services::GcdMemoryType::SystemMemory,

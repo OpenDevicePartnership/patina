@@ -91,10 +91,9 @@
 //!
 //! ## Features
 //!
-//! `windbg_workarounds` - (Default) Enables workarounds for Windbg compatibility.
-//!
 //! `alloc` - Uses allocated buffers rather than static buffers for all memory. This provides additional functionality
-//! but prevents debugging prior to allocations being available.
+//! but prevents debugging prior to allocations being available. This is intended for use by the core crate, and not
+//! for platform use.
 //!
 //! ## License
 //!

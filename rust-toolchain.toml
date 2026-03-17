@@ -5,7 +5,7 @@
 # - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
 
 [toolchain]
-channel = "nightly-2025-12-12" # One day post 1.92.0
+channel = "nightly-2026-02-13" # One day post 1.93.1
 targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
 components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
 

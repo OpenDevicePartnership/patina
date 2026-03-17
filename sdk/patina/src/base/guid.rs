@@ -200,7 +200,7 @@ pub type OwnedGuid = Guid<'static>;
 /// println!("Header GUID: {}", header.guid.as_guid());
 /// ```
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinaryGuid(pub efi::Guid);
 
 impl BinaryGuid {
@@ -212,7 +212,7 @@ impl BinaryGuid {
     }
 
     /// Create a BinaryGuid from a 16-byte array.
-    pub fn from_bytes(bytes: &[u8; 16]) -> Self {
+    pub const fn from_bytes(bytes: &[u8; 16]) -> Self {
         Self(efi::Guid::from_bytes(bytes))
     }
 
@@ -1579,6 +1579,40 @@ mod tests {
         assert_eq!(hasher1.finish(), hasher2.finish());
         // Different GUIDs should have different hashes (with high probability)
         assert_ne!(hasher1.finish(), hasher3.finish());
+    }
+
+    #[test]
+    fn binary_guid_ord_matches_guid_byte_ordering() {
+        // BinaryGuid derives Ord from efi::Guid's field-level comparison, while Guid<'a>
+        // implements Ord via as_bytes() byte comparison. These must produce the same ordering
+        // for all GUID pairs, or BTreeMap keys could silently produce different iteration order
+        // depending on which type is used.
+
+        let guids = [
+            BinaryGuid::from_string("00000000-0000-0000-0000-000000000000"),
+            BinaryGuid::from_string("00000000-0000-0000-0000-000000000001"),
+            BinaryGuid::from_string("00000000-0000-0000-0001-000000000000"),
+            BinaryGuid::from_string("00000000-0000-0001-0000-000000000000"),
+            BinaryGuid::from_string("00000000-0001-0000-0000-000000000000"),
+            BinaryGuid::from_string("00000001-0000-0000-0000-000000000000"),
+            BinaryGuid::from_string("01000000-0000-0000-0000-000000000000"),
+            BinaryGuid::from_string("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
+            BinaryGuid::from_string("550E8400-E29B-41D4-A716-446655440000"),
+            BinaryGuid::from_string("550E8400-E29B-41D4-A716-446655440001"),
+            BinaryGuid::from_string("23C9322F-2AF2-476A-BC4C-26BC88266C71"),
+        ];
+
+        for (i, a) in guids.iter().enumerate() {
+            for (j, b) in guids.iter().enumerate() {
+                let binary_ord = a.cmp(b);
+                let guid_ord = a.to_owned_guid().cmp(&b.to_owned_guid());
+                assert_eq!(
+                    binary_ord, guid_ord,
+                    "Ordering mismatch at guids[{i}] vs guids[{j}]: BinaryGuid is {:?}, Guid is {:?}",
+                    binary_ord, guid_ord
+                );
+            }
+        }
     }
 
     #[test]

@@ -31,8 +31,7 @@ pub struct AcpiTableProtocol {
 
 // SAFETY: `AcpiTableProtocol` matches the C layout and behavior of the EFI_ACPI_TABLE_PROTOCOL.
 unsafe impl ProtocolInterface for AcpiTableProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0xffe06bdd, 0x6107, 0x46a6, 0x7b, 0xb2, &[0x5a, 0x9c, 0x7e, 0xc5, 0x27, 0x5c]);
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("FFE06BDD-6107-46A6-7BB2-5A9C7EC5275C");
 }
 
 // C function interfaces for ACPI Table Protocol and ACPI Get Protocol.
@@ -166,8 +165,7 @@ pub struct AcpiGetProtocol {
 
 // SAFETY: `AcpiGetProtocol` matches the C layout and behavior of the custom-defined EFI_ACPI_GET_PROTOCOL. (Not a UEFI spec protocol.)
 unsafe impl ProtocolInterface for AcpiGetProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0x7f3c1a92, 0x8b4e, 0x4d2f, 0xa6, 0xc9, &[0x3e, 0x12, 0xf4, 0xb8, 0xd7, 0xc1]);
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("7F3C1A92-8B4E-4D2F-A6C9-3E12F4B8D7C1");
 }
 
 impl AcpiGetProtocol {

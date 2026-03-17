@@ -1,6 +1,5 @@
 [package]
 name = "patina_acpi"
-resolver = "2"
 version.workspace = true
 repository.workspace = true
 license.workspace = true

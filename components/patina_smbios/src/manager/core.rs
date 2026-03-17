@@ -15,10 +15,7 @@ extern crate alloc;
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
 use patina::{base::SIZE_64KB, uefi_size_to_pages};
-use r_efi::{
-    efi,
-    efi::{Handle, PhysicalAddress},
-};
+use r_efi::efi::{Handle, PhysicalAddress};
 use zerocopy::{IntoBytes, Ref};
 use zerocopy_derive::*;
 
@@ -38,8 +35,8 @@ use super::record::SmbiosRecord;
 /// This GUID identifies the SMBIOS 3.0+ entry point structure in the UEFI Configuration Table.
 /// Used for SMBIOS 3.0 and later versions which support 64-bit table addresses and remove
 /// the 4GB table size limitation of SMBIOS 2.x.
-pub const SMBIOS_3_X_TABLE_GUID: efi::Guid =
-    efi::Guid::from_fields(0xF2FD1544, 0x9794, 0x4A2C, 0x99, 0x2E, &[0xE5, 0xBB, 0xCF, 0x20, 0xE3, 0x94]);
+pub const SMBIOS_3_X_TABLE_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("F2FD1544-9794-4A2C-992E-E5BBCF20E394");
 
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
@@ -85,7 +82,7 @@ pub struct SmbiosManager {
     /// Pre-allocated buffer for entry point structure
     ep_buffer_addr: RefCell<Option<PhysicalAddress>>,
     /// Checksum of published table (for detecting direct modifications)
-    published_table_checksum: RefCell<Option<u32>>,
+    published_table_checksum: RefCell<Option<u64>>,
     /// Size of the published table (needed for checksum verification)
     published_table_size: RefCell<usize>,
 }
@@ -470,12 +467,15 @@ impl SmbiosManager {
         self.table_64_address.replace(Some(table_address));
     }
 
-    /// Calculate a simple checksum for table data
+    /// Calculate a hash for table data using Xorshift64*
     ///
-    /// Uses a simple sum of all bytes (wrapping). This is sufficient for
-    /// detecting accidental modifications, not cryptographic integrity.
-    fn calculate_table_checksum(data: &[u8]) -> u32 {
-        data.iter().fold(0u32, |acc, &byte| acc.wrapping_add(byte as u32))
+    /// Uses Xorshift64starHasher to detect modifications including byte swaps
+    /// that a simple checksum would miss. Not for cryptographic integrity.
+    fn calculate_table_checksum(data: &[u8]) -> u64 {
+        use core::hash::Hasher;
+        let mut hasher = patina::hash::Xorshift64starHasher::default();
+        hasher.write(data);
+        hasher.finish()
     }
 
     /// Verify that the published table has not been modified directly

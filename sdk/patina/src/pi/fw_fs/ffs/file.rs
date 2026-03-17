@@ -10,8 +10,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use r_efi::efi;
-
 /// Raw FFS file constant definitions
 pub mod raw {
     /// File State Bits
@@ -161,7 +159,7 @@ pub enum State {
 /// Firmware file header structure per PI Specification
 pub struct Header {
     /// Unique file GUID identifier
-    pub name: efi::Guid,
+    pub name: crate::BinaryGuid,
     /// Header checksum value
     pub integrity_check_header: u8,
     /// File checksum value

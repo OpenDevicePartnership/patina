@@ -76,3 +76,37 @@ graph TD
     B --> C[Run Test]
     C --> D[Release Lock]
 ```
+
+## Address Sanitizer (ASan)
+
+When running unit tests, you can enable Address Sanitizer (ASan) to help detect memory errors. This is available on
+Linux and Windows X64 hosts.
+
+To run unit tests with Address Sanitizer enabled, use the following command:
+
+```sh
+cargo make test-asan
+```
+
+### Advanced Usage: Debugging ASan Test Executables Directly
+
+On Windows, the tests executables built with ASan enabled have a dependency on the ASan DLL, which is not in the system
+path by default. The `test-asan` task discovers the ASan DLL path on your system and sets it in the environment when
+running tests, but if you want to run the test executable directly, you will need to set the environment variable
+yourself.
+
+You can find the ASan DLL path by running:
+
+```sh
+cargo make test-asan --print-dll-path
+```
+
+This will include surrounding `cargo make` output. You can script the call to just get the path to facilitate setting
+the environment variable.
+
+For example, in PowerShell:
+
+```powershell
+$asanPath = (cargo make test-asan --print-dll-path) -match '^[A-Z]:\\' | Select-Object -Last 1
+$env:PATH = "$asanPath;$env:PATH"
+```

@@ -119,6 +119,8 @@ where
         match self.allocator.allocate(allocation_info.layout) {
             Ok(ptr) => {
                 let alloc_info_ptr = ptr.cast::<AllocationInfo>().as_ptr();
+                // SAFETY: alloc_info_ptr is within the allocation. `buffer` is a caller-provided out pointer per the
+                // `allocate_pool` safety contract.
                 unsafe {
                     alloc_info_ptr.write(allocation_info);
                     buffer.write((ptr.as_ptr() as *mut u8 as usize + offset) as *mut c_void);
@@ -196,10 +198,12 @@ where
     }
 
     /// Frees the block of pages at the given address of the given size.
+    ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
+        // SAFETY: address/pages must refer to a valid allocation from this allocator.
         unsafe { self.allocator.free_pages(address, pages) }
     }
 
@@ -221,18 +225,22 @@ where
     }
 }
 
+// SAFETY: UefiAllocator delegates to the inner allocator and preserves invariants.
 unsafe impl<A> GlobalAlloc for UefiAllocator<A>
 where
     A: PageAllocator + GlobalAlloc + Allocator + Display + Sync + Send,
 {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        // SAFETY: layout comes from the global allocator contract.
         unsafe { self.allocator.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        // SAFETY: ptr was returned by alloc with the same layout.
         unsafe { self.allocator.dealloc(ptr, layout) }
     }
 }
 
+// SAFETY: UefiAllocator delegates to the inner allocator and preserves invariants.
 unsafe impl<A> Allocator for UefiAllocator<A>
 where
     A: PageAllocator + GlobalAlloc + Allocator + Display + Sync + Send,
@@ -241,6 +249,7 @@ where
         self.allocator.allocate(layout)
     }
     unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: ptr was returned by allocate with the same layout.
         unsafe { self.allocator.deallocate(ptr, layout) }
     }
 }
@@ -294,11 +303,14 @@ mod tests {
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
+        // SAFETY: Resetting the test GCD is safe for testing purposes.
         unsafe { gcd.reset() };
 
         gcd.init(48, 16);
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
+        // SAFETY: System allocator is used with a valid layout for test memory backing.
         let base = unsafe { System.alloc(layout) as u64 };
+        // SAFETY: init_memory_blocks uses the test backing allocation.
         unsafe {
             gcd.init_memory_blocks(
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -361,6 +373,7 @@ mod tests {
                 let ua = UefiAllocator::new(fsb, efi::RUNTIME_SERVICES_DATA);
 
                 let mut buffer: *mut c_void = core::ptr::null_mut();
+                // SAFETY: The allocator is initialized and buffer is a valid out pointer.
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
                 assert!(buffer as u64 > base);
                 assert!((buffer as u64) < base + 0x400000);
@@ -373,6 +386,7 @@ mod tests {
                     .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
                 let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+                // SAFETY: allocation_info is derived from a valid allocation.
                 unsafe {
                     let allocation_info = &*allocation_info;
                     assert_eq!(allocation_info.signature, POOL_SIG);
@@ -401,8 +415,10 @@ mod tests {
                 let ua = UefiAllocator::new(fsb, efi::RUNTIME_SERVICES_DATA);
 
                 let mut buffer: *mut c_void = core::ptr::null_mut();
+                // SAFETY: The allocator is initialized and buffer is a valid out pointer.
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
 
+                // SAFETY: buffer was allocated by ua.allocate_pool above.
                 assert!(unsafe { ua.free_pool(buffer) }.is_ok());
 
                 let (_, offset) = Layout::new::<AllocationInfo>()
@@ -413,12 +429,14 @@ mod tests {
                     .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
                 let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+                // SAFETY: allocation_info is derived from a valid allocation made earlier in this test.
                 unsafe {
                     let allocation_info = &*allocation_info;
                     assert_eq!(allocation_info.signature, 0);
                 }
 
                 let prev_buffer = buffer;
+                // SAFETY: The allocator is initialized and buffer is a valid out pointer.
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
                 assert!(buffer as u64 > base);
                 assert!((buffer as u64) < base + 0x400000);
@@ -464,6 +482,7 @@ mod tests {
                 }
 
                 // Attempting to free should fail with InvalidParameter due to signature mismatch
+                // SAFETY: buffer was allocated by ua.allocate_pool in this test.
                 assert_eq!(unsafe { ua.free_pool(buffer) }, Err(EfiError::InvalidParameter));
             });
         });
@@ -493,6 +512,7 @@ mod tests {
                 assert!(buffer_address >= base);
                 assert!(buffer_address < base + 0x400000);
 
+                // SAFETY: free_pages uses a valid allocation pointer and page count.
                 unsafe {
                     ua.free_pages(buffer_address as usize, 4).unwrap();
                 }
@@ -503,6 +523,7 @@ mod tests {
                 assert_eq!(buffer_address, buffer_address2);
                 assert_eq!(buffer.len(), max(granularity, UEFI_PAGE_SIZE * 4)); //should be 4 pages or granularity pages in size.
 
+                // SAFETY: free_pages uses a valid allocation pointer and page count.
                 unsafe {
                     ua.free_pages(buffer_address2 as usize, 4).unwrap();
                 }
@@ -541,6 +562,7 @@ mod tests {
             let bs_buffer_address = bs_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             let bc_buffer_address = bc_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
 
+            // SAFETY: free_pages uses valid allocation pointers for each allocator.
             unsafe {
                 assert_eq!(bs_allocator.free_pages(bc_buffer_address as usize, 4), Err(EfiError::NotFound));
                 assert_eq!(bc_allocator.free_pages(bs_buffer_address as usize, 4), Err(EfiError::NotFound));
@@ -568,11 +590,13 @@ mod tests {
                 let ua = UefiAllocator::new(fsb, efi::RUNTIME_SERVICES_DATA);
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                // SAFETY: ua.alloc/ua.dealloc are used with a valid layout in tests.
                 unsafe {
                     let a = ua.alloc(layout);
                     ua.dealloc(a, layout)
                 }
 
+                // SAFETY: ua.alloc returned non-null for this test allocation.
                 unsafe {
                     let a = ua.alloc(layout);
                     ua.deallocate(NonNull::new_unchecked(a), layout);
@@ -718,6 +742,7 @@ mod tests {
 
                 //verify that if the reserved allocation that is not in the reserved range is freed, other allocators can
                 //use it.
+                // SAFETY: reserved_page_addr is a valid allocation address for free_pages.
                 unsafe {
                     reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
                 }
@@ -731,6 +756,7 @@ mod tests {
                 );
 
                 //verify that if pages are freed within the reserved range, that other allocators cannot use them.
+                // SAFETY: reserved_range.start is a valid allocation address for free_pages in the test harness.
                 unsafe {
                     reserved_allocator.free_pages(reserved_range.start as usize, 0x10).unwrap();
                 }

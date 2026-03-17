@@ -62,6 +62,7 @@ fn arch_cpu_count() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64;
+        // SAFETY: _rdtsc only reads the TSC on x86_64. No invariants are required for safety.
         unsafe { x86_64::_rdtsc() }
     }
     #[cfg(target_arch = "aarch64")]
@@ -84,7 +85,7 @@ pub(crate) fn arch_perf_frequency() -> u64 {
     {
         use core::arch::{x86_64, x86_64::CpuidResult};
 
-        let CpuidResult { eax, ebx, ecx, .. } = unsafe { x86_64::__cpuid(0x15) };
+        let CpuidResult { eax, ebx, ecx, .. } = x86_64::__cpuid(0x15);
         if eax != 0 && ebx != 0 && ecx != 0 {
             // CPUID 0x15 gives TSC_frequency = (ECX * EAX) / EBX.
             // Most modern x86 platforms support this leaf.
@@ -94,7 +95,7 @@ pub(crate) fn arch_perf_frequency() -> u64 {
         // CPUID 0x16 gives base frequency in MHz in EAX.
         // This is supported on some older x86 platforms.
         // This is a nominal frequency and is less accurate for reflecting actual operating conditions.
-        let CpuidResult { eax, .. } = unsafe { x86_64::__cpuid(0x16) };
+        let CpuidResult { eax, .. } = x86_64::__cpuid(0x16);
         if eax != 0 {
             return (eax * 1_000_000) as u64;
         }

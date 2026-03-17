@@ -15,12 +15,11 @@ use core::ffi::c_void;
 use r_efi::{efi, system};
 
 /// MM Communication Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("C68ED8E2-9DC6-4CBD-9D94-DB65ACC5C332");
 
 /// MM Initialization GUID.
-pub const EFI_MM_INITIALIZATION_GUID: efi::Guid =
-    efi::Guid::from_fields(0x99be0d8f, 0x3548, 0x48aa, 0xb5, 0x77, &[0xfc, 0xfb, 0xa5, 0x6a, 0x67, 0xf7]);
+pub const EFI_MM_INITIALIZATION_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("99BE0D8F-3548-48AA-B577-FCFBA56A67F7");
 
 /// Sends/receives a message for a registered handler.
 ///

@@ -625,8 +625,7 @@ impl PageAllocation {
         //         the memory is safe to free.
         unsafe {
             if self.memory_manager.free_pages(address, self.page_count).is_err() {
-                log::error!("Failed to free page allocation at {address:x}!");
-                debug_assert!(false, "Failed to free page allocation!");
+                log_debug_assert!("Failed to free page allocation at {address:x}!");
             }
         }
     }
@@ -669,11 +668,10 @@ unsafe impl Allocator for PageFree {
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: core::alloc::Layout) {
         if self.blob != ptr {
-            log::error!(
+            log_debug_assert!(
                 "PageFree was not used to free the correct memory! Leaking memory at {:?}!",
                 self.blob.as_ptr()
             );
-            debug_assert!(false, "PageFree was not used to free the correct memory!");
             return;
         }
 
@@ -682,8 +680,7 @@ unsafe impl Allocator for PageFree {
         //         into a smart pointer. The smart pointers themselves will ensure
         //         that the memory is safe to free.
         if unsafe { self.memory_manager.free_pages(address, self.page_count).is_err() } {
-            log::error!("Failed to free page allocation at {address:x}!");
-            debug_assert!(false, "Failed to free page allocation!");
+            log_debug_assert!("Failed to free page allocation at {address:x}!");
         }
     }
 }
@@ -872,6 +869,11 @@ mod mock {
             }
         }
 
+        /// Frees the block of pages at the given address of the given size.
+        ///
+        /// ## Safety
+        /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
+        /// [Self::allocate_pages]
         unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
             let ptr = address as *mut u8;
             let layout = Layout::from_size_align(page_count * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();

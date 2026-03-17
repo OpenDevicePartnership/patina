@@ -28,6 +28,5 @@ serial_test = { workspace = true }
 patina_mtrr = { workspace = true }
 
 [features]
-default = ["alloc", "windbg_workarounds"]
+default = []
 alloc = []
-windbg_workarounds = []

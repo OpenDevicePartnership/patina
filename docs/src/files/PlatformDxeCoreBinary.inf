@@ -15,7 +15,7 @@
   MODULE_TYPE                    = DXE_CORE
   VERSION_STRING                 = 1.0
 
-  DEFINE DXE_CORE_BASE_PATH = 
+  DEFINE DXE_CORE_BASE_PATH =
 #
 # The following information is for reference only and not required by the build tools.
 #

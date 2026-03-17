@@ -568,10 +568,6 @@ criteria = "safe-to-run"
 version = "0.3.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.uefi_corosensei]]
-version = "0.1.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.uint]]
 version = "0.9.5"
 criteria = "safe-to-run"

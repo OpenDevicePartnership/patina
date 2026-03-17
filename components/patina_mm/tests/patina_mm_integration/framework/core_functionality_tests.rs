@@ -9,7 +9,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::Guid;
+use patina::{BinaryGuid, Guid};
 use patina_mm::{
     component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
     config::{CommunicateBuffer, EfiMmCommunicateHeader},
@@ -23,19 +23,19 @@ use alloc::{boxed::Box, vec::Vec};
 
 /// Lightweight MM handler used for testing
 struct TestHandler {
-    guid: r_efi::efi::Guid, //The r_efi GUID is kept for the internal GUID here and concerted as needed
+    guid: BinaryGuid, //The BinaryGuid is kept for the internal GUID here and converted as needed
     response_data: Vec<u8>,
 }
 
 impl TestHandler {
-    fn new(guid: r_efi::efi::Guid, response_data: Vec<u8>) -> Self {
+    fn new(guid: BinaryGuid, response_data: Vec<u8>) -> Self {
         Self { guid, response_data }
     }
 }
 
 /// Simple MM executor used for testing
 struct CoreTestExecutor {
-    handlers: HashMap<r_efi::efi::Guid, TestHandler>,
+    handlers: HashMap<BinaryGuid, TestHandler>,
 }
 
 impl CoreTestExecutor {
@@ -50,17 +50,17 @@ impl CoreTestExecutor {
 
 impl MmExecutor for CoreTestExecutor {
     fn execute_mm(&self, comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
-        let recipient_guid = comm_buffer
+        let recipient: BinaryGuid = comm_buffer
             .get_header_guid()
             .map_err(|_| Status::CommBufferInitError)?
-            .ok_or(Status::CommBufferInitError)?;
+            .ok_or(Status::CommBufferInitError)?
+            .to_efi_guid()
+            .into();
 
-        let handler = self.handlers.get(&recipient_guid.to_efi_guid()).ok_or(Status::CommBufferNotFound)?;
+        let handler = self.handlers.get(&recipient).ok_or(Status::CommBufferNotFound)?;
 
-        // Set response (need to clone the recipient_guid to avoid borrow conflicts)
-        let recipient_copy = Guid::from_bytes(&recipient_guid.as_bytes());
         comm_buffer.reset();
-        comm_buffer.set_message_info(recipient_copy).map_err(|_| Status::CommBufferInitError)?;
+        comm_buffer.set_message_info(recipient.as_guid()).map_err(|_| Status::CommBufferInitError)?;
         comm_buffer.set_message(&handler.response_data).map_err(|_| Status::CommBufferInitError)?;
 
         Ok(())
@@ -71,8 +71,8 @@ impl MmExecutor for CoreTestExecutor {
 mod tests {
     use super::*;
 
-    const TEST_GUID: r_efi::efi::Guid =
-        r_efi::efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
+    const TEST_GUID: BinaryGuid =
+        BinaryGuid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
 
     fn create_test_communicator() -> MmCommunicator {
         let mut executor = CoreTestExecutor::new();
@@ -134,14 +134,8 @@ mod tests {
     #[test]
     fn test_communication_unknown_handler() {
         let communicator = create_test_communicator();
-        let unknown_guid = r_efi::efi::Guid::from_fields(
-            0xDEADBEEF,
-            0xCAFE,
-            0xABCD,
-            0xAA,
-            0xBB,
-            &[0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11],
-        );
+        let unknown_guid =
+            BinaryGuid::from_fields(0xDEADBEEF, 0xCAFE, 0xABCD, 0xAA, 0xBB, &[0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]);
 
         let result = communicator.communicate(0, b"test", Guid::from_ref(&unknown_guid));
 
@@ -194,14 +188,8 @@ mod tests {
     #[test]
     fn test_safe_message_parsing() {
         // Basic test to verify the framework works with message parsing
-        let test_guid = r_efi::efi::Guid::from_fields(
-            0x12345678,
-            0x1234,
-            0x5678,
-            0x12,
-            0x34,
-            &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef],
-        );
+        let test_guid =
+            BinaryGuid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
         let test_data = b"Integration test";
 
         // This test validates that GUIDs and data can be safely handled

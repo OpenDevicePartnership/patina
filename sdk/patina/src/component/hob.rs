@@ -12,7 +12,7 @@
 //! use patina::{
 //!    error::Result,
 //!    component::hob::{Hob, FromHob},
-//!    Guid, OwnedGuid
+//!    BinaryGuid
 //! };
 //!
 //! /// A HOB that is a simple pointer cast from byte array to a struct.
@@ -34,7 +34,7 @@
 //! }
 //!
 //! impl FromHob for MyComplexHobStruct {
-//!     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
+//!     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
 //!
 //!    fn parse(bytes: &[u8]) -> Self {
 //!        Self::default() // Simple for example
@@ -61,7 +61,7 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
-use crate::OwnedGuid;
+use crate::BinaryGuid;
 use core::{any::Any, ops::Deref};
 
 use super::{
@@ -82,7 +82,7 @@ use super::{
 ///
 /// ```rust
 /// use patina::component::hob::FromHob;
-/// use patina::{Guid, OwnedGuid};
+/// use patina::BinaryGuid;
 ///
 /// #[derive(Default, Clone, Copy)]
 /// #[repr(C)]
@@ -92,7 +92,7 @@ use super::{
 /// }
 ///
 /// impl FromHob for MyConfig {
-///     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
+///     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
 ///
 ///     fn parse(bytes: &[u8]) -> Self {
 ///         // SAFETY: Specification defined requirement that the byte array is this underlying C type.
@@ -110,7 +110,7 @@ use super::{
 /// ```
 pub trait FromHob: Sized + 'static {
     /// The guid value associated with the guided HOB to parse.
-    const HOB_GUID: OwnedGuid;
+    const HOB_GUID: BinaryGuid;
 
     /// Registers the parsed hob with the provided [Storage] instance.
     fn register(bytes: &[u8], storage: &mut Storage) {
@@ -136,7 +136,7 @@ pub use patina_macro::FromHob;
 /// # #[derive(Debug)]
 /// # struct MyStruct{ value: u32 };
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: patina::OwnedGuid = patina::Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
+/// #     const HOB_GUID: patina::BinaryGuid = patina::guids::ZERO;
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct { value: 5 }
 /// #     }
@@ -164,12 +164,12 @@ impl<'h, T: FromHob + 'static> Hob<'h, T> {
     ///
     /// ```rust
     /// use patina::component::hob::{FromHob, Hob};
-    /// use patina::{Guid, OwnedGuid};
+    /// use patina::BinaryGuid;
     ///
     /// struct MyStruct;
     ///
     /// impl FromHob for MyStruct {
-    ///     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
+    ///     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
     ///
     ///    fn parse(bytes: &[u8]) -> Self {
     ///        MyStruct
@@ -249,7 +249,7 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
 /// # use patina::component::hob::{FromHob, Hob};
 /// # struct MyStruct(u32);
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: patina::OwnedGuid = patina::Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
+/// #     const HOB_GUID: patina::BinaryGuid = patina::guids::ZERO;
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct(5)
 /// #     }
@@ -294,7 +294,7 @@ impl<'h, T: FromHob + 'static> IntoIterator for &Hob<'h, T> {
 mod tests {
     use crate as patina;
     use crate::{
-        Guid, OwnedGuid,
+        BinaryGuid,
         component::{IntoComponent, component},
         error::{EfiError, Result},
     };
@@ -307,7 +307,7 @@ mod tests {
     }
 
     impl FromHob for MyStruct {
-        const HOB_GUID: OwnedGuid = Guid::ZERO;
+        const HOB_GUID: BinaryGuid = patina::guids::ZERO;
 
         fn parse(_bytes: &[u8]) -> Self {
             MyStruct::default()

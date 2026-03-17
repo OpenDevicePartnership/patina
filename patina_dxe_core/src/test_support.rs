@@ -175,7 +175,9 @@ impl PatinaPageTable for MockPageTable {
     }
 }
 
+// SAFETY: MockPageTable uses interior mutability for test-only state and is not shared across threads in tests.
 unsafe impl Send for MockPageTable {}
+// SAFETY: MockPageTable's interior mutability is confined to test usage where concurrent access is controlled.
 unsafe impl Sync for MockPageTable {}
 
 impl Default for MockPageTable {
@@ -392,7 +394,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xE0000,
@@ -408,7 +410,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0x190000,
@@ -424,7 +426,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_MEMORY_MAPPED_IO,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
                 | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
@@ -442,7 +444,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_FIRMWARE_DEVICE,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
                 | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
@@ -460,7 +462,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_MEMORY_RESERVED,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
                 | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
@@ -478,7 +480,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_IO,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
             physical_start: 0x1000,
@@ -494,7 +496,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: patina::guids::ZERO,
             resource_type: hob::EFI_RESOURCE_IO_RESERVED,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0x0000,
@@ -707,7 +709,7 @@ mod tests {
                     length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                     reserved: 0x00000000,
                 },
-                owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+                owner: patina::guids::ZERO,
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
                 resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
                 physical_start: mem_base + 0xE0000,

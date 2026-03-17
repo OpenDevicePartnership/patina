@@ -9,6 +9,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+use zerocopy_derive::{FromBytes, KnownLayout, Unaligned};
 
 /// Type alias for section type identifiers
 pub type EfiSectionType = u8;
@@ -107,8 +108,8 @@ pub enum Type {
 }
 
 /// EFI_COMMON_SECTION_HEADER per PI spec 1.8A 3.2.4.1
-#[repr(C)]
-#[derive(Debug)]
+#[repr(C, packed)]
+#[derive(Debug, FromBytes, KnownLayout, Unaligned)]
 pub struct Header {
     /// Section size (24-bit)
     pub size: [u8; 3],
@@ -118,10 +119,10 @@ pub struct Header {
 
 /// Section header structures and definitions
 pub mod header {
-    use r_efi::efi;
+    use zerocopy_derive::{FromBytes, KnownLayout, Unaligned};
 
-    #[repr(C)]
-    #[derive(Debug)]
+    #[repr(C, packed)]
+    #[derive(Debug, FromBytes, KnownLayout, Unaligned)]
     /// Standard common section header for sections up to 16MB
     pub struct CommonSectionHeaderStandard {
         /// Section size (24-bit)
@@ -131,8 +132,8 @@ pub mod header {
     }
 
     /// EFI_COMMON_SECTION_HEADER2 per PI spec 1.8A 3.2.4.1
-    #[repr(C)]
-    #[derive(Debug)]
+    #[repr(C, packed)]
+    #[derive(Debug, FromBytes, KnownLayout, Unaligned)]
     /// Extended common section header for sections larger than 16MB
     pub struct CommonSectionHeaderExtended {
         /// Section size (24-bit)
@@ -145,7 +146,7 @@ pub mod header {
 
     /// EFI_COMPRESSION_SECTION per PI spec 1.8A 3.2.5.2
     #[repr(C, packed)]
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, FromBytes, KnownLayout, Unaligned)]
     /// Compression section header
     pub struct Compression {
         /// Uncompressed data length
@@ -159,12 +160,13 @@ pub mod header {
     pub const STANDARD_COMPRESSION: u8 = 0x01;
 
     /// EFI_GUID_DEFINED_SECTION per PI spec 1.8A 3.2.5.7
+    /// Zerocopy traits cannot be derived because r-efi's Guid does not implement them
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     /// GUID-defined section header
     pub struct GuidDefined {
         /// GUID identifying the section format
-        pub section_definition_guid: efi::Guid,
+        pub section_definition_guid: crate::BinaryGuid,
         /// Offset to section data from start of header
         pub data_offset: u16,
         /// Section attributes
@@ -173,8 +175,8 @@ pub mod header {
     }
 
     /// EFI_VERSION_SECTION per PI spec 1.8A 3.2.5.15
-    #[repr(C)]
-    #[derive(Debug, Clone, Copy)]
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, FromBytes, KnownLayout, Unaligned)]
     /// Version section header
     pub struct Version {
         /// Build number
@@ -182,11 +184,12 @@ pub mod header {
     }
 
     /// EFI_FREEFORM_SUBTYPE_GUID_SECTION per PI spec 1.8A 3.2.5.6
+    /// Zerocopy traits cannot be derived because r-efi's Guid does not implement them
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     /// Freeform GUID subtype section header
     pub struct FreeformSubtypeGuid {
         /// Subtype GUID identifier
-        pub sub_type_guid: efi::Guid,
+        pub sub_type_guid: crate::BinaryGuid,
     }
 }

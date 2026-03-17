@@ -16,7 +16,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
-use patina::error::EfiError;
+use patina::{error::EfiError, hash::Xorshift64starHasher};
 use r_efi::efi;
 
 use crate::tpl_mutex;
@@ -268,9 +268,10 @@ impl ProtocolDb {
         let protocol_instance =
             ProtocolInstance { interface, opened_by_driver: false, opened_by_exclusive: false, usage: Vec::new() };
 
-        //attempt to add the protocol to the set of protocols on this handle.
+        // Attempt to add the protocol to the set of protocols on this handle.
+        // This should never fail since we already checked for existence above.
         let exists = handle_instance.insert(OrdGuid(protocol), protocol_instance);
-        assert!(exists.is_none()); //should be guaranteed by the `contains_key` check above.
+        debug_assert!(exists.is_none(), "Protocol already exists on handle, but was not caught by earlier check");
 
         //determine if there are any events to be notified.
         if let Some(events) = self.notifications.get_mut(&OrdGuid(protocol)) {
@@ -340,7 +341,7 @@ impl ProtocolDb {
         }
 
         //sort by order of creation.
-        handles.sort_by(|a, b| a.1.cmp(&b.1));
+        handles.sort_by_key(|a| a.1);
 
         Ok(handles.iter().map(|(handle, _)| *handle).collect())
     }
@@ -657,7 +658,14 @@ impl SpinLockedProtocolDb {
             let (handle, _) = self
                 .install_protocol_interface(None, well_known_handle_guid, core::ptr::null_mut())
                 .expect("failed to install well-known handle");
-            assert_eq!(handle, *target_handle);
+            if handle != *target_handle {
+                panic!(
+                    "Well-known handle installed at unexpected handle value. \
+                     `init_protocol_db` must be called before any other protocol database operations. \
+                     Expected handle {:#x?}, got {:#x?}",
+                    target_handle, handle
+                );
+            }
         }
         self.lock().enable_handle_hashing();
     }
@@ -866,50 +874,10 @@ impl SpinLockedProtocolDb {
     }
 }
 
+// SAFETY: SpinLockedProtocolDb enforces mutual exclusion and interior mutability with locking.
 unsafe impl Send for SpinLockedProtocolDb {}
+// SAFETY: SpinLockedProtocolDb enforces mutual exclusion and interior mutability with locking.
 unsafe impl Sync for SpinLockedProtocolDb {}
-
-/// A hasher that uses the Xorshift64* algorithm to generate a random number to xor with the input bytes.
-///
-/// https://en.wikipedia.org/wiki/Xorshift#xorshift*
-struct Xorshift64starHasher {
-    state: u64,
-}
-
-impl Xorshift64starHasher {
-    /// Initialize the hasher with a seed.
-    fn new(seed: u64) -> Self {
-        Xorshift64starHasher { state: seed }
-    }
-
-    /// Generate a new random state.
-    fn next_state(&mut self) -> u64 {
-        self.state ^= self.state >> 12;
-        self.state ^= self.state << 25;
-        self.state ^= self.state >> 27;
-        self.state = self.state.wrapping_mul(0x2545F4914F6CDD1D);
-        self.state
-    }
-}
-
-impl Default for Xorshift64starHasher {
-    fn default() -> Self {
-        Xorshift64starHasher::new(compile_time::unix!())
-    }
-}
-
-impl Hasher for Xorshift64starHasher {
-    fn finish(&self) -> u64 {
-        self.state
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.state ^= byte as u64;
-            self.state = self.next_state();
-        }
-    }
-}
 
 #[cfg(test)]
 #[coverage(off)]
@@ -2156,30 +2124,5 @@ mod tests {
                 assert!(child_list.contains(&child));
             }
         });
-    }
-
-    #[test]
-    fn xorshift64starhasher_test_different_seeds() {
-        let seed1 = 12345;
-        let seed2 = 54321;
-        let mut hasher1 = Xorshift64starHasher::new(seed1);
-        let mut hasher2 = Xorshift64starHasher::new(seed2);
-
-        let num1 = hasher1.next_state();
-        let num2 = hasher2.next_state();
-
-        assert_ne!(num1, num2, "Random numbers should be different for different seeds");
-    }
-
-    #[test]
-    fn xorshift64starhasher_test_same_seed() {
-        let seed = 12345;
-        let mut hasher1 = Xorshift64starHasher::new(seed);
-        let mut hasher2 = Xorshift64starHasher::new(seed);
-
-        let num1 = hasher1.next_state();
-        let num2 = hasher2.next_state();
-
-        assert_eq!(num1, num2, "Random numbers should be the same for the same seed");
     }
 }

@@ -27,7 +27,7 @@ use alloc::{format, string::String, vec, vec::Vec};
 /// Format a GUID as a string in the standard 8-4-4-4-12 format.
 /// This custom implementation is necessary because `r_efi::Guid` has private fields and cannot derive `Serialize` directly.
 ///
-pub fn format_guid(guid: Guid) -> String {
+pub fn format_guid(guid: &Guid) -> String {
     let (time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, node) = guid.as_fields();
     format!(
         "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
@@ -106,7 +106,7 @@ pub trait Interval: Clone + Ord {
 
         let mut result = vec![sorted[0].clone()];
         for current in sorted.into_iter().skip(1) {
-            let last = result.last_mut().unwrap();
+            let last = result.last_mut().expect("Intervals should not be empty here.");
             if let Some(merged) = last.try_merge(current) {
                 *last = merged;
             } else {

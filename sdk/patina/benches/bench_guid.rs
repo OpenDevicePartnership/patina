@@ -108,7 +108,7 @@ fn bench_r_efi_eq_same(b: &mut Bencher<'_>, _input: &usize) {
 
 fn bench_r_efi_eq_different(b: &mut Bencher<'_>, _input: &usize) {
     let r_efi_guid1 = create_r_efi_guid();
-    let r_efi_guid_different = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+    let r_efi_guid_different: efi::Guid = patina::guids::ZERO.into();
     b.iter(|| r_efi_guid1 == r_efi_guid_different)
 }
 

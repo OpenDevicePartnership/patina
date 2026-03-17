@@ -11,14 +11,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use r_efi::efi;
-
 /// BDS Architectural Protocol GUID
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.2.1
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x665E3FF6, 0x46CC, 0x11d4, 0x9A, 0x38, &[0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("665E3FF6-46CC-11D4-9A38-0090273FC14D");
 
 /// Performs Boot Device Selection (BDS) and transfers control from the DXE Foundation to the selected boot device.
 ///

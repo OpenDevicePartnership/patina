@@ -19,7 +19,7 @@ use core::{
     format_args,
     iter::Iterator,
     mem,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use scroll::Pread;
@@ -115,8 +115,21 @@ impl Deref for DevicePathBuf {
     }
 }
 
+impl DerefMut for DevicePathBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: DevicePath has the same memory layout as `[u8]`.
+        unsafe { &mut *(self.buffer.as_mut_slice() as *mut [u8] as *mut DevicePath) }
+    }
+}
+
 impl AsRef<DevicePath> for DevicePathBuf {
     fn as_ref(&self) -> &DevicePath {
+        self
+    }
+}
+
+impl AsMut<DevicePath> for DevicePathBuf {
+    fn as_mut(&mut self) -> &mut DevicePath {
         self
     }
 }

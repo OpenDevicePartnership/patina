@@ -14,6 +14,7 @@ use crate::tpl_mutex::TplMutex;
 use patina::{
     boot_services::StandardBootServices,
     component::{IntoComponent, Storage, service::IntoService},
+    log_debug_assert,
     pi::hob::HobList,
     runtime_services::StandardRuntimeServices,
 };
@@ -177,11 +178,18 @@ impl ComponentDispatcher {
         self.storage.set_runtime_services(rs);
     }
 
+    /// Sets the core Image Handle in storage.
+    #[coverage(off)]
+    #[inline(always)]
+    pub(crate) fn set_image_handle(&mut self, handle: efi::Handle) {
+        self.storage.set_image_handle(handle);
+    }
+
     /// Parses the HOB list producing a `Hob\<T\>` struct for each guided HOB found with a registered parser.
     pub(crate) fn insert_hobs(&mut self, hob_list: &HobList<'_>) {
         for hob in hob_list.iter() {
             if let patina::pi::hob::Hob::GuidHob(guid, data) = hob {
-                let parser_funcs = self.storage.get_hob_parsers(&patina::OwnedGuid::from(guid.name));
+                let parser_funcs = self.storage.get_hob_parsers(&guid.name);
                 if parser_funcs.is_empty() {
                     let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
                     let name = alloc::format!(
@@ -221,8 +229,7 @@ impl ComponentDispatcher {
                 }
                 Ok(false) => false,
                 Err(err) => {
-                    log::error!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
-                    debug_assert!(false);
+                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
                     true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
                 }
             }
@@ -379,7 +386,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob1>() as u16,
                 reserved: 0,
             },
-            name: *GUID1,
+            name: GUID1,
         };
 
         let guid_hob2 = GuidHob {
@@ -388,7 +395,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob2>() as u16,
                 reserved: 0,
             },
-            name: *GUID2,
+            name: GUID2,
         };
 
         let guid_hob3 = GuidHob {
@@ -397,7 +404,7 @@ mod tests {
                 length: core::mem::size_of::<TestHob3>() as u16,
                 reserved: 0,
             },
-            name: *GUID3,
+            name: GUID3,
         };
 
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob1, hob1_bytes));

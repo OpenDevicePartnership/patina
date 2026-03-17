@@ -13,7 +13,7 @@
 extern crate alloc;
 #[allow(unused_imports)] // Used in test module within this file
 use alloc::vec::Vec;
-use r_efi::efi;
+use patina::BinaryGuid;
 
 /// Error types for MM message parsing operations
 #[derive(Debug, PartialEq)]
@@ -46,7 +46,7 @@ impl core::fmt::Display for MmMessageParseError {
 #[repr(C)]
 struct MmCommunicateHeader {
     /// Recipient handler GUID
-    header_guid: efi::Guid,
+    header_guid: BinaryGuid,
     /// Length of the message data (excluding header)
     message_length: u64,
 }
@@ -55,7 +55,7 @@ impl MmCommunicateHeader {
     const SIZE: usize = core::mem::size_of::<Self>();
 
     /// Create a new header with the specified GUID and message length
-    fn new(guid: &efi::Guid, message_length: u64) -> Self {
+    fn new(guid: &BinaryGuid, message_length: u64) -> Self {
         Self { header_guid: *guid, message_length }
     }
 
@@ -78,8 +78,7 @@ impl MmCommunicateHeader {
         }
 
         // Byte-by-byte copy to avoid alignment issues
-        let mut header =
-            MmCommunicateHeader { header_guid: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]), message_length: 0 };
+        let mut header = MmCommunicateHeader { header_guid: patina::guids::ZERO, message_length: 0 };
 
         // SAFETY: MmCommunicateHeader is repr(C) with well-defined size and layout
         let header_bytes = unsafe { core::slice::from_raw_parts_mut(&mut header as *mut Self as *mut u8, Self::SIZE) };
@@ -111,7 +110,7 @@ impl<'a> MmMessageParser<'a> {
     }
 
     /// Parse an MM message from the buffer, returning the GUID and message data
-    pub fn parse_message(&self) -> Result<(efi::Guid, &[u8]), MmMessageParseError> {
+    pub fn parse_message(&self) -> Result<(BinaryGuid, &[u8]), MmMessageParseError> {
         if self.buffer.len() < MmCommunicateHeader::SIZE {
             return Err(MmMessageParseError::BufferTooSmall);
         }
@@ -130,7 +129,7 @@ impl<'a> MmMessageParser<'a> {
     }
 
     /// Write an MM message to the buffer with the specified GUID and data
-    pub fn write_message(&mut self, guid: &efi::Guid, data: &[u8]) -> Result<(), MmMessageParseError> {
+    pub fn write_message(&mut self, guid: &BinaryGuid, data: &[u8]) -> Result<(), MmMessageParseError> {
         let total_size = MmCommunicateHeader::SIZE + data.len();
         if total_size > self.buffer.len() {
             return Err(MmMessageParseError::BufferTooSmall);
@@ -175,7 +174,7 @@ impl<'a> MmMessageParser<'a> {
 
     /// Get the GUID from the header
     #[allow(dead_code)] // Part of complete message manipulation API
-    pub fn get_header_guid(&self) -> Result<efi::Guid, MmMessageParseError> {
+    pub fn get_header_guid(&self) -> Result<BinaryGuid, MmMessageParseError> {
         if self.buffer.len() < MmCommunicateHeader::SIZE {
             return Err(MmMessageParseError::BufferTooSmall);
         }
@@ -197,8 +196,7 @@ mod tests {
     #[test]
     fn test_message_round_trip() {
         let mut buffer = vec![0u8; 128];
-        let test_guid =
-            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let test_guid = BinaryGuid::from_string("12345678-1234-5678-1234-56789ABCDEF0");
         let test_data = b"Hello, MM World!";
 
         let mut parser = MmMessageParser::new(&mut buffer);
@@ -219,8 +217,7 @@ mod tests {
     #[test]
     fn test_buffer_too_small() {
         let mut small_buffer = vec![0u8; 4]; // Much smaller than header size
-        let test_guid =
-            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let test_guid = BinaryGuid::from_string("12345678-1234-5678-1234-56789ABCDEF0");
         let test_data = b"Data";
 
         let mut parser = MmMessageParser::new(&mut small_buffer);

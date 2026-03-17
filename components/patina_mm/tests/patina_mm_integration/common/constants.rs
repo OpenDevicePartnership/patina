@@ -64,21 +64,18 @@ pub mod mm_supv {
 /// Provides predefined GUIDs used throughout the patina_mm test framework for registering
 /// and identifying different types of test handlers.
 pub mod test_guids {
-    use r_efi::efi;
+    use patina::BinaryGuid;
 
     /// Echo handler GUID for testing
-    pub const ECHO_HANDLER: efi::Guid =
-        efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
+    pub const ECHO_HANDLER: BinaryGuid = BinaryGuid::from_string("12345678-1234-5678-1234-567890ABCDEF");
 
     /// Version handler GUID for testing
     /// Note: Not used now but the GUID is reserved for future usage
     #[allow(dead_code)]
-    pub const VERSION_HANDLER: efi::Guid =
-        efi::Guid::from_fields(0x87654321, 0x4321, 0x8765, 0x43, 0x21, &[0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54]);
+    pub const VERSION_HANDLER: BinaryGuid = BinaryGuid::from_string("87654321-4321-8765-4321-FEDCBA987654");
 
     /// MM Supervisor GUID for supervisor protocol testing
-    pub const MM_SUPERVISOR: efi::Guid =
-        efi::Guid::from_fields(0x8c633b23, 0x1260, 0x4ea6, 0x83, 0x0F, &[0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11]);
+    pub const MM_SUPERVISOR: BinaryGuid = BinaryGuid::from_string("8C633B23-1260-4EA6-830F-7DDC97382111");
 }
 
 // Convenience re-exports for common usage

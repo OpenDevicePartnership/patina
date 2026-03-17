@@ -101,6 +101,8 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `#[should_fail = "message"]`: Indicates that the test is expected to fail with the given message. If the test
 ///   passes or fails with a different message, the test runner will log an error.
 /// - `#[skip]`: Indicates that the test should be skipped.
+/// - `#[on(timer = N)]`: Indicates that the test should be triggered by a timer after N microseconds.
+/// - `#[on(event = GUID)]`: Indicates that the test should be triggered by the specified event.
 ///
 /// ## Example
 ///

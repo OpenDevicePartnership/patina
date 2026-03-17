@@ -67,10 +67,9 @@ In addition, active examples are available in the
 
 ## Feature flags
 
-- `windbg_workarounds` (default): adjusts protocol behaviors for Windbg compatibility, including suppressing repeated
-  reads that stall early-boot sessions.
 - `alloc`: replaces static communication buffers with dynamically allocated storage and enables monitor command
-  registration; this requires a functional allocator but unlocks richer diagnostics.
+  registration; this requires a functional allocator but unlocks richer diagnostics. This is intended for use by the
+  core crate, and not for platform use.
 
 ---
 

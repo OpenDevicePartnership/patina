@@ -165,8 +165,6 @@ mod tests {
     /// `patina::pi::hob`) during HOB list building in `build_custom_hob_list()`, where the
     /// appropriate HOB headers are automatically added.
     mod hob_config {
-        use r_efi::efi;
-
         /// Configuration for a resource descriptor HOB (becomes `patina::pi::hob::ResourceDescriptor`)
         #[derive(Clone, Debug)]
         pub struct ResourceDescriptorConfig {
@@ -174,7 +172,7 @@ mod tests {
             pub resource_attribute: u32,
             pub physical_start: u64,
             pub resource_length: u64,
-            pub owner: efi::Guid,
+            pub owner: patina::BinaryGuid,
         }
 
         /// Configuration for a memory allocation HOB (becomes `patina::pi::hob::MemoryAllocation`)
@@ -183,7 +181,7 @@ mod tests {
             pub memory_type: u32,
             pub memory_base_address: u64,
             pub memory_length: u64,
-            pub name: efi::Guid,
+            pub name: patina::BinaryGuid,
         }
     }
 
@@ -629,14 +627,7 @@ mod tests {
                 memory_type: efi::BOOT_SERVICES_DATA,
                 memory_base_address: SIZE_2MB as u64,
                 memory_length: SIZE_512KB as u64,
-                name: efi::Guid::from_fields(
-                    0x4ED4BF27,
-                    0x4092,
-                    0x42E9,
-                    0x80,
-                    0x7D,
-                    &[0x52, 0x7B, 0x1D, 0x00, 0xC9, 0xBD],
-                ),
+                name: patina::guids::HOB_MEMORY_ALLOC_STACK,
             })
             .with_memory_allocation(MemoryAllocationConfig {
                 memory_type: efi::BOOT_SERVICES_CODE,

@@ -150,7 +150,12 @@ where
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
+        let this = unsafe {
+            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+                return efi::Status::INVALID_PARAMETER;
+            };
+            this
+        };
 
         match this.driver_binding.driver_binding_supported(
             this.boot_services,
@@ -169,7 +174,12 @@ where
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
+        let this = unsafe {
+            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+                return efi::Status::INVALID_PARAMETER;
+            };
+            this
+        };
         match this.driver_binding.driver_binding_start(
             this.boot_services,
             controller_handle,
@@ -187,7 +197,12 @@ where
         child_handle_buffer: *mut efi::Handle,
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
+        let this = unsafe {
+            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+                return efi::Status::INVALID_PARAMETER;
+            };
+            this
+        };
         match this.driver_binding.driver_binding_stop(
             this.boot_services,
             controller_handle,

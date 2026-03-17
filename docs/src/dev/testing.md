@@ -15,6 +15,9 @@ Testing in Rust can be broken up into four core categories:
    documentation can be compiled and executed. See
      - See also: [Rust Documentation Tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html).
 
+In addition, pull requests are automatically validated on QEMU virtual platforms to catch integration regressions before
+merge. See [QEMU PR Validation](testing/qemu_pr_validation.md) for details.
+
 For more, see [Rust Book: Testing](https://doc.rust-lang.org/rust-by-example/testing.html).
 
 ## Choosing a Testing Strategy

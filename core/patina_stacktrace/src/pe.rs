@@ -23,8 +23,10 @@ const DEBUG_RECORD_RVA_OFFSET: usize = 0x14;
 const DEBUG_RECORD_SIZE: usize = 0x10;
 const DEBUG_RECORD_TYPE_OFFSET: usize = 0xC;
 const DEBUG_RECORD_TYPE_CODEVIEW: u32 = 0x2; // 2 => The Visual C++ debug information.
+const CODEVIEW_SIGNATURE_NB10: u32 = 0x3031_424E; // NB10
 const CODEVIEW_PDB70_SIGNATURE: u32 = 0x5344_5352; // RSDS
-const CODEVIEW_PDB_FILE_NAME_OFFSET: usize = 0x18;
+const CODEVIEW_NB10_FILE_NAME_OFFSET: usize = 0x10;
+const CODEVIEW_PDB70_FILE_NAME_OFFSET: usize = 0x18;
 
 /// Provides in-memory PE file parsing utilities.
 #[derive(Clone)]
@@ -170,17 +172,21 @@ impl PE<'_> {
         // SAFETY: `debug_data` is within the caller-provided PE image and points to
         // the beginning of the CodeView structure.
         let codeview_signature = unsafe { *(debug_data as *const u32) };
-        if codeview_signature != CODEVIEW_PDB70_SIGNATURE {
-            return None;
-        }
+
+        // Determine the file name offset based on the CodeView format
+        let file_name_offset = match codeview_signature {
+            CODEVIEW_SIGNATURE_NB10 => CODEVIEW_NB10_FILE_NAME_OFFSET,
+            CODEVIEW_PDB70_SIGNATURE => CODEVIEW_PDB70_FILE_NAME_OFFSET,
+            _ => return None, // Unsupported CodeView format
+        };
 
         // Extract the PDB file path.
         // SAFETY: The caller guarantees that the CodeView record, including the
-        // file-name payload, is fully mapped and readable.
+        // file name payload, is fully mapped and readable.
         let file_name_bytes = unsafe {
             core::slice::from_raw_parts(
-                (debug_data + CODEVIEW_PDB_FILE_NAME_OFFSET as u64) as *const u8,
-                debug_data_size as usize - CODEVIEW_PDB_FILE_NAME_OFFSET,
+                (debug_data + file_name_offset as u64) as *const u8,
+                debug_data_size as usize - file_name_offset,
             )
         };
 
@@ -188,9 +194,11 @@ impl PE<'_> {
         let Ok(file_name) = core::str::from_utf8(file_name_bytes) else {
             return None;
         };
-        if let Some(file_name_with_ext) = file_name.rsplit('\\').next()
-            && let Some((file_name, _ext)) = file_name_with_ext.rsplit_once('.')
-        {
+
+        // Handle both Windows (\) and Linux (/) path separators
+        let file_name_with_ext = file_name.rsplit(['\\', '/']).next().unwrap_or(file_name);
+
+        if let Some((file_name, _ext)) = file_name_with_ext.rsplit_once('.') {
             return Some(file_name);
         }
 
@@ -287,7 +295,7 @@ mod tests {
 
         // Insert a fake PDB path (RSDS... + "C:\\path\\app.exe\0")
         let fake_pdb_path = b"C:\\path\\app.exe\0";
-        let name_off = debug_data_offset + CODEVIEW_PDB_FILE_NAME_OFFSET;
+        let name_off = debug_data_offset + CODEVIEW_PDB70_FILE_NAME_OFFSET;
         bytes[name_off..name_off + fake_pdb_path.len()].copy_from_slice(fake_pdb_path);
 
         bytes
@@ -325,5 +333,24 @@ mod tests {
         // SAFETY: Test creates a fake PE image with corrupted signature for validation.
         let image_name = unsafe { PE::get_image_name(base, 0x400, 0x1C) };
         assert_eq!(image_name, None);
+    }
+
+    #[test]
+    fn test_get_image_name_nb10_signature() {
+        let mut bytes = make_fake_pe_image();
+        let base = bytes.as_ptr() as u64;
+
+        // Overwrite the CodeView signature with NB10.
+        let debug_data_offset = 0x800usize;
+        bytes[debug_data_offset..debug_data_offset + 4].copy_from_slice(&CODEVIEW_SIGNATURE_NB10.to_le_bytes());
+
+        // Write a fake PDB path at the NB10 file name offset (0x10).
+        let fake_pdb_path = b"/home/build/driver.dll\0";
+        let name_off = debug_data_offset + CODEVIEW_NB10_FILE_NAME_OFFSET;
+        bytes[name_off..name_off + fake_pdb_path.len()].copy_from_slice(fake_pdb_path);
+
+        // SAFETY: Test creates a fake PE image with NB10 CodeView signature for validation.
+        let image_name = unsafe { PE::get_image_name(base, 0x400, 0x1C) };
+        assert_eq!(image_name, Some("driver"));
     }
 }

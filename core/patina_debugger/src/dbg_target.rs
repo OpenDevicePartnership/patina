@@ -34,8 +34,8 @@ use crate::{
 };
 
 /// Addresses that windbg will attempt to read in a loop, reads from these addresses
-/// will just return 0 to avoid long retry delays.
-#[cfg(feature = "windbg_workarounds")]
+/// will just return 0 to avoid long retry delays. This has been fixed in windbg, but leaving this
+/// here for a while to support older versions of windbg. Will remove in the future.
 const WINDBG_MOCK_ADDRESSES: [u64; 3] = [0xfffff78000000268, 0, 0x34c00];
 
 /// Patina target for GDB.
@@ -82,21 +82,21 @@ impl Target for PatinaTarget {
         gdbstub::target::ext::base::BaseOps::SingleThread(self)
     }
 
-    #[cfg(feature = "windbg_workarounds")]
     #[inline(always)]
     fn use_no_ack_mode(&self) -> bool {
+        // Windbg doesn't support no-ack mode.
         false
     }
 
-    #[cfg(feature = "windbg_workarounds")]
     #[inline(always)]
     fn use_rle(&self) -> bool {
+        // Windbg doesn't support RLE.
         false
     }
 
-    #[cfg(feature = "windbg_workarounds")]
     #[inline(always)]
     fn use_x_upcase_packet(&self) -> bool {
+        // Windbg doesn't support x-upcase packet.
         false
     }
 
@@ -136,7 +136,6 @@ impl SingleThreadBase for PatinaTarget {
     ) -> TargetResult<usize, Self> {
         // Windbg will try to find some well known windows structures. Return
         // 0s instead of failing to prevent long retry delays.
-        #[cfg(feature = "windbg_workarounds")]
         if WINDBG_MOCK_ADDRESSES.contains(&start_addr) {
             data.fill(0);
             return Ok(data.len());

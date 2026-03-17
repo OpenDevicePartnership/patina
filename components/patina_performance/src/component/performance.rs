@@ -21,7 +21,7 @@ use patina::{
         service::{Service, perf_timer::ArchTimerFunctionality},
     },
     error::EfiError,
-    guids::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
+    guids::PERFORMANCE_PROTOCOL,
     performance::{
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
         measurement::{PerformanceProperty, event_callback},
@@ -40,6 +40,8 @@ use patina_mm::component::communicator::MmCommunication;
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 
 pub use mu_rust_helpers::function;
+
+use patina::guids::EVENT_GROUP_END_OF_DXE;
 
 /// Context parameter for the Ready-to-Boot event callback that fetches MM performance records.
 type MmPerformanceEventContext<BB, B, F> = Box<(BB, &'static TplMutex<F, B>, Service<dyn MmCommunication>)>;
@@ -210,7 +212,7 @@ fn fetch_mm_record_size(comm_service: &Service<dyn MmCommunication>) -> Result<u
         .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordSize request".into()))?;
 
     let size_resp_bytes = comm_service
-        .communicate(1, &size_req_buf, patina::Guid::Owned(mm::EFI_FIRMWARE_PERFORMANCE_GUID))
+        .communicate(1, &size_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
         .map_err(MmPerformanceError::Communication)?;
 
     let (size_resp, _) = mm::GetRecordSize::read_from(&size_resp_bytes).map_err(|_| MmPerformanceError::ParseError)?;
@@ -239,7 +241,7 @@ fn fetch_mm_record_chunk(
         .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordDataByOffset request".into()))?;
 
     let data_resp_bytes = comm_service
-        .communicate(1, &data_req_buf, patina::Guid::Owned(mm::EFI_FIRMWARE_PERFORMANCE_GUID))
+        .communicate(1, &data_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
         .map_err(MmPerformanceError::Communication)?;
 
     let (data_resp, _) =
@@ -524,7 +526,10 @@ mod tests {
             .once()
             .withf_st(|handle, _protocol_interface| {
                 assert_eq!(&None, handle);
-                assert_eq!(EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID, EdkiiPerformanceMeasurement::PROTOCOL_GUID);
+                assert_eq!(
+                    EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID.into_inner(),
+                    EdkiiPerformanceMeasurement::PROTOCOL_GUID
+                );
                 true
             })
             .returning(|_, protocol_interface| Ok((TEST_EFI_HANDLE, protocol_interface.metadata())));

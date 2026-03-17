@@ -32,6 +32,7 @@
   - [Unit Testing](dev/testing/unit.md)
   - [Integration Testing](dev/testing/integration.md)
   - [On-Platform Testing](dev/testing/platform.md)
+  - [QEMU PR Validation](dev/testing/qemu_pr_validation.md)
   - [Mocking](dev/testing/mock.md)
 - [Debugging](dev/debugging.md)
   - [Windbg Debugging](dev/debugging/windbg_debugging.md)

@@ -32,7 +32,6 @@ use crate::{
     runtime_services::RuntimeServices,
 };
 
-use r_efi::efi;
 use scroll::Pwrite;
 
 /// The number of extra space in byte that will be allocated when publishing the performance buffer.
@@ -211,8 +210,8 @@ pub struct FirmwarePerformanceVariable {
 }
 
 impl FirmwarePerformanceVariable {
-    const ADDRESS_VARIABLE_GUID: efi::Guid =
-        efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
+    const ADDRESS_VARIABLE_GUID: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("C095791A-3001-47B2-80C9-EAC7319F2FA4");
 }
 
 impl TryFrom<Vec<u8>> for FirmwarePerformanceVariable {
@@ -380,7 +379,7 @@ mod tests {
             .returning(move |_, _, _| Ok(address));
 
         let mut fbpt = FBPT::new();
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
         fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
@@ -437,7 +436,7 @@ mod tests {
             .returning(move |_, _, _| Ok(address));
 
         let mut fbpt = FBPT::new();
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
         fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
@@ -465,7 +464,7 @@ mod tests {
             .returning(move |_, _, _| Ok(address));
 
         let mut fbpt = FBPT::new();
-        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let guid = crate::guids::ZERO;
         fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
         fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 

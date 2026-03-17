@@ -18,8 +18,7 @@ use core::{
     fmt, iter, mem, ptr,
     slice::{self, from_raw_parts},
 };
-use patina::base::align_up;
-use r_efi::efi;
+use patina::{BinaryGuid, base::align_up, log_debug_assert};
 
 use patina::pi::fw_fs::{
     ffs::{self, file},
@@ -268,7 +267,7 @@ impl<'a> VolumeRef<'a> {
     }
 
     /// The Firmware Volume name GUID from the extended header, if available.
-    pub fn fv_name(&self) -> Option<efi::Guid> {
+    pub fn fv_name(&self) -> Option<BinaryGuid> {
         self.ext_header().map(|(hdr, _)| hdr.fv_name)
     }
 
@@ -343,7 +342,7 @@ impl<'a> VolumeRef<'a> {
         self.fv_header.revision
     }
 
-    fn file_system_guid(&self) -> efi::Guid {
+    fn file_system_guid(&self) -> BinaryGuid {
         self.fv_header.file_system_guid
     }
 }
@@ -430,7 +429,7 @@ enum Capacity {
 /// Use this to build an FV from a block map and a list of FFS files, set attributes,
 /// optionally attach an extended header, and then [`serialize`](Self::serialize) to bytes.
 pub struct Volume {
-    file_system_guid: efi::Guid,
+    file_system_guid: patina::BinaryGuid,
     attributes: fvb::attributes::EfiFvbAttributes2,
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
     block_map: Vec<BlockMapEntry>,
@@ -469,7 +468,7 @@ impl Volume {
     /// use r_efi::efi;
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
-    /// fv.files_mut().push(File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// fv.files_mut().push(File::new(patina::BinaryGuid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
     /// assert_eq!(fv.files().count(), 1);
     /// ```
     pub fn files_mut(&mut self) -> &mut Vec<File> {
@@ -497,7 +496,7 @@ impl Volume {
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 4, length: 4096 }]);
     ///
     /// for (i, payload) in ["alpha", "beta", "gamma"].into_iter().enumerate() {
-    ///     let guid = efi::Guid::from_bytes(&[i as u8; 16]);
+    ///     let guid = patina::BinaryGuid(efi::Guid::from_bytes(&[i as u8; 16]));
     ///     let mut file = File::new(guid, 0x07); // arbitrary file type for example
     ///
     ///     let data = payload.as_bytes().to_vec();
@@ -558,7 +557,7 @@ impl Volume {
 
             // ext_header data is added as a "Pad" file
             let mut ext_header_pad_file =
-                File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+                File::new(patina::BinaryGuid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
             let ext_header_section = Section::new_from_header_with_data(
                 section::SectionHeader::Pad(
                     ext_hdr_data.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
@@ -601,9 +600,12 @@ impl Volume {
                 //need to insert a pad file to ensure content is aligned to the required alignment specified in the
                 //file attributes.
 
-                //Per spec, max required_content_alignment is pad files is 16M (2^24). That means that pad file size
+                //Per spec, max required_content_alignment of pad files is 16M (2^24). That means that pad file size
                 //will always be less than 16M so we can always use Header (instead of Header2) for pad header.
-                assert!(required_content_alignment < 0x1000000);
+                if required_content_alignment >= 0x1000000 {
+                    log_debug_assert!("Invalid required_content_alignment for pad file {}", required_content_alignment);
+                    return Err(FirmwareFileSystemError::Unsupported);
+                }
 
                 let pad_len_base = fv_buffer.len() + mem::size_of::<ffs::file::Header>() + file_ref.content_offset();
                 let rem = pad_len_base % required_content_alignment;
@@ -616,7 +618,8 @@ impl Volume {
                     0
                 );
 
-                let mut pad_file = File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+                let mut pad_file =
+                    File::new(patina::BinaryGuid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
                 let pad_section = Section::new_from_header_with_data(
                     section::SectionHeader::Pad(
                         pad_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
@@ -698,7 +701,7 @@ impl Volume {
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
     /// // Add an empty PAD file to keep it simple
-    /// fv.files_mut().push(patina_ffs::file::File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// fv.files_mut().push(patina_ffs::file::File::new(patina::BinaryGuid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
     /// fv.compose(&Passthrough).unwrap();
     /// ```
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
@@ -843,7 +846,7 @@ mod test {
         if section.section_type() == Some(ffs::section::Type::UserInterface) {
             let display_name_chars: Vec<u16> = section
                 .try_content_as_slice()
-                .unwrap()
+                .ok()?
                 .chunks(2)
                 .map(|x| u16::from_le_bytes(x.try_into().unwrap()))
                 .collect();
@@ -1076,7 +1079,7 @@ mod test {
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
         //SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
-            (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
+            (*fv_header).file_system_guid = patina::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
         };
         assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
 
@@ -1205,7 +1208,8 @@ mod test {
         let section = Section::new_from_buffer(&empty_version).unwrap();
         match section.header() {
             SectionHeader::Version(version, _) => {
-                assert_eq!(version.build_number, 0);
+                let build_number = version.build_number;
+                assert_eq!(build_number, 0);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),

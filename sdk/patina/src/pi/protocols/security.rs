@@ -17,8 +17,7 @@
 use r_efi::efi;
 
 /// Security Arch Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xA46423E3, 0x4617, 0x49f1, 0xB9, 0xFF, &[0xD1, 0xBF, 0xA9, 0x11, 0x58, 0x39]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("A46423E3-4617-49F1-B9FF-D1BFA9115839");
 
 /// The EFI_SECURITY_ARCH_PROTOCOL (SAP) is used to abstract platform-specific
 /// policy from the DXE core response to an attempt to use a file that returns a

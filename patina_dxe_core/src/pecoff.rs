@@ -13,6 +13,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use patina::log_debug_assert;
 use scroll::{LE, Pread, Pwrite};
 
 pub mod error;
@@ -95,7 +96,22 @@ pub struct UefiPeInfo {
 impl UefiPeInfo {
     pub fn parse(bytes: &[u8]) -> error::Result<Self> {
         match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
-            PE32_MAGIC => UefiPeInfo::from_pe(bytes),
+            PE32_MAGIC => UefiPeInfo::from_pe(bytes, &goblin::pe::options::ParseOptions::default()),
+            TE_MAGIC => UefiPeInfo::from_te(bytes),
+            sig => Err(error::Error::BadSignature(sig)),
+        }
+    }
+
+    /// Parses a PE image that has already been loaded into memory (sections at virtual addresses).
+    ///
+    /// This method uses `resolve_rva: false` so that goblin treats RVAs as direct byte offsets into
+    /// the slice. This is useful for images where sections have been mapped to their virtual addresses.
+    pub fn parse_mapped(bytes: &[u8]) -> error::Result<Self> {
+        let mut opts = goblin::pe::options::ParseOptions::default();
+        opts.resolve_rva = false;
+        opts.parse_attribute_certificates = false;
+        match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
+            PE32_MAGIC => UefiPeInfo::from_pe(bytes, &opts),
             TE_MAGIC => UefiPeInfo::from_te(bytes),
             sig => Err(error::Error::BadSignature(sig)),
         }
@@ -141,11 +157,11 @@ impl UefiPeInfo {
     }
 
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
-    fn from_pe(bytes: &[u8]) -> error::Result<Self> {
+    fn from_pe(bytes: &[u8], opts: &goblin::pe::options::ParseOptions) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
 
         // Parse the PE header and verify the optional header exists
-        let parsed_pe = goblin::pe::PE::parse(bytes)?;
+        let parsed_pe = goblin::pe::PE::parse_with_opts(bytes, opts)?;
         let optional_header = parsed_pe.header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
 
         // Set the simple fields
@@ -298,7 +314,10 @@ pub fn relocate_image(
         .ok_or(error::Error::BufferTooShort(dir.size as usize, "image"))?;
 
     let mut relocation_block = parse_relocation_blocks(relocation_data)?;
-    assert!(prev_reloc_blocks.is_empty() || relocation_block.len() == prev_reloc_blocks.len());
+    if !prev_reloc_blocks.is_empty() && relocation_block.len() != prev_reloc_blocks.len() {
+        log_debug_assert!("Previous relocation blocks length does not match current relocation blocks length.");
+        return Err(error::Error::RelocationBlockLengthMismatch);
+    }
     for (block_idx, reloc_block) in relocation_block.iter_mut().enumerate() {
         for (reloc_idx, reloc) in reloc_block.relocations.iter_mut().enumerate() {
             let fixup_type = reloc.type_and_offset >> 12;

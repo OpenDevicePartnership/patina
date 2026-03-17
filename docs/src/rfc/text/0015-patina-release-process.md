@@ -31,6 +31,8 @@ This RFC proposes a process for releasing Patina crates.
   - Add a note in the Branching section that the "major" branch process has not been adopted by the project
     yet at this time.
   - Add guidance in the Branching section for merging a feature branch into the main branch.
+- 2026-02-26:
+  - Update the `major` branch section to indicate that the major branch process is being evaluated.
 
 ## Motivation
 
@@ -201,10 +203,9 @@ The following changes are considered **breaking** and may require a major versio
 
 ### Branching
 
-> Note: The "major branch" process is not being followed in Patina as of 10/20/2025.
+> Note: The "major branch" process is being evaluated in Patina as of 02/26/2026.
 >
-> The project will choose when to adopt this process in the future. At that time, an amendment will be made to this
-> RFC along with an announcement in the GitHub repo.
+> The process is not being strictly enforced but developers are encouraged to follow the process for any breaking changes.
 
 - The `main` branch is the primary development branch.
   - Any release made from a non-`main` branch must have a pre-release identifier in the version.

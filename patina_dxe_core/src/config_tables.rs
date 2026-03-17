@@ -98,6 +98,7 @@ pub fn core_install_configuration_table(
 
     // Updating the table. Reclaim the old table (if present) so it'll get dropped by the runtime allocator.
     if !system_table.configuration_table.is_null() {
+        // SAFETY: configuration_table points to number_of_table_entries elements from the runtime allocator.
         unsafe {
             let _old_boxed_table = Box::from_raw_in(
                 slice_from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),

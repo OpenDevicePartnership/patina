@@ -1,0 +1,38 @@
+# @file patina-qemu-pr-validation-pending.yml
+#
+# A workflow that posts a "pending" QEMU validation comment immediately when
+# a pull request is opened or updated. This provides early feedback that QEMU
+# validation will run after CI completes, rather than leaving the previous
+# result visible until the QEMU validation workflow starts.
+#
+# Note: The pull_request_target trigger is used so that secrets are available
+# even for PRs from forks. This workflow only posts a comment and does not
+# checkout or execute any code from the PR branch.
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+name: Patina QEMU PR Validation Pending
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+      - major
+      - feature/**/*
+
+concurrency:
+  group: qemu-pr-pending-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  notify-pending:
+    name: Run
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/PatinaQemuPrValidationPending.yml@patina_e2e_plat_validation
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+    secrets: inherit

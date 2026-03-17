@@ -41,8 +41,9 @@ pub use fv::{
     file::{Attribute as FvFileAttribute, EfiFvFileAttributes, raw::attribute as FvFileRawAttribute},
 };
 pub use fvb::attributes::{EfiFvbAttributes2, Fvb2 as Fvb2Attributes, raw::fvb2 as Fvb2RawAttributes};
+use zerocopy::FromBytes;
 
-use crate::base::align_up;
+use crate::{BinaryGuid, base::align_up};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use num_traits::WrappingSub;
 use r_efi::efi;
@@ -52,26 +53,22 @@ use r_efi::efi;
 /// These GUIDs identify the compression algorithm or encapsulation format used in GUID-defined
 /// sections within the Firmware File System. Based on the PI Specification Volume 3.
 pub mod guid {
-    use r_efi::efi;
-
     /// GUID for Brotli compressed sections.
-    pub const BROTLI_SECTION: efi::Guid =
-        efi::Guid::from_fields(0x3D532050, 0x5CDA, 0x4FD0, 0x87, 0x9E, &[0x0F, 0x7F, 0x63, 0x0D, 0x5A, 0xFB]);
+    pub const BROTLI_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("3D532050-5CDA-4FD0-879E-0F7F630D5AFB");
     /// GUID for CRC32 checksum sections.
-    pub const CRC32_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xFC1BCDB0, 0x7D31, 0x49aa, 0x93, 0x6A, &[0xA4, 0x60, 0x0D, 0x9D, 0xD0, 0x83]);
+    pub const CRC32_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("FC1BCDB0-7D31-49AA-936A-A4600D9DD083");
     /// GUID for LZMA compressed sections.
-    pub const LZMA_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
+    pub const LZMA_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("EE4E5898-3914-4259-9D6E-DC7BD79403CF");
     /// GUID for LZMA F86 compressed sections.
-    pub const LZMA_F86_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xD42AE6BD, 0x1352, 0x4BFB, 0x90, 0x9A, &[0xCA, 0x72, 0xA6, 0xEA, 0xE8, 0x89]);
+    pub const LZMA_F86_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("D42AE6BD-1352-4BFB-909A-CA72A6EAE889");
     /// GUID for LZMA parallel compressed sections.
-    pub const LZMA_PARALLEL_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xBD9921EA, 0xED91, 0x404A, 0x8B, 0x2F, &[0xB4, 0xD7, 0x24, 0x74, 0x7C, 0x8C]);
+    pub const LZMA_PARALLEL_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("BD9921EA-ED91-404A-8B2F-B4D724747C8C");
     /// GUID for Tiano decompression sections.
-    pub const TIANO_DECOMPRESS_SECTION: efi::Guid =
-        efi::Guid::from_fields(0xA31280AD, 0x481E, 0x41B6, 0x95, 0xE8, &[0x12, 0x7F, 0x4C, 0x98, 0x47, 0x79]);
+    pub const TIANO_DECOMPRESS_SECTION: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("A31280AD-481E-41B6-95E8-127F4C984779");
 }
 
 /// Defines an interface that can be implemented to provide extraction logic for encapsulation sections.
@@ -343,7 +340,7 @@ impl<'a> FirmwareVolume<'a> {
     }
 
     /// Returns the GUID name of the FV, if any.
-    pub fn fv_name(&self) -> Option<efi::Guid> {
+    pub fn fv_name(&self) -> Option<BinaryGuid> {
         self.ext_header.as_ref().map(|ext_header| ext_header.header.fv_name)
     }
 
@@ -427,7 +424,7 @@ impl fmt::Debug for FirmwareVolume<'_> {
 #[derive(Clone)]
 pub struct File<'a> {
     data: &'a [u8],
-    name: efi::Guid,
+    name: BinaryGuid,
     file_type: u8,
     attributes: u8,
     header_size: usize,
@@ -587,7 +584,7 @@ impl<'a> File<'a> {
     }
 
     /// Returns the file name GUID.
-    pub fn name(&self) -> efi::Guid {
+    pub fn name(&self) -> BinaryGuid {
         self.name
     }
 
@@ -636,7 +633,12 @@ impl<'a> File<'a> {
         &'b self,
         extractor: &'b dyn SectionExtractor,
     ) -> impl Iterator<Item = Result<Section, efi::Status>> + 'b {
-        FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor)
+        if self.file_type == FfsFileRawType::RAW {
+            // RAW files have no sections
+            FileSectionIterator::new(&[], extractor)
+        } else {
+            FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor)
+        }
     }
 }
 
@@ -710,25 +712,24 @@ impl Section {
             Err(efi::Status::INVALID_PARAMETER)?;
         }
 
-        // SAFETY: Buffer size was validated to contain full section::Header
-        let section_header = unsafe { &*(buffer.as_ptr() as *const section::Header) };
+        let (section_header, _) =
+            section::Header::read_from_prefix(buffer).map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
 
         //determine section_size and start of section content based on whether extended size field is present.
         let header_end = mem::size_of::<section::Header>();
         let (section_size, content_offset) = {
-            if section_header.size.iter().all(|&x| x == 0xff) {
+            if section_header.size.iter().all(|&byte| byte == 0xff) {
                 //extended header - confirm there is space for extended size
-                if buffer.len() < header_end + mem::size_of::<u32>() {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
                 let size =
-                    u32::from_le_bytes(buffer[header_end..header_end + mem::size_of::<u32>()].try_into().unwrap());
+                    buffer.get(header_end..header_end + mem::size_of::<u32>()).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+
+                let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]);
                 (size as usize, header_end + mem::size_of::<u32>())
             } else {
                 //standard header
-                let mut size_vec = section_header.size.to_vec();
-                size_vec.push(0);
-                let size = u32::from_le_bytes(size_vec.try_into().unwrap());
+                let size = section_header.size;
+
+                let size = u32::from_le_bytes([size[0], size[1], size[2], 0]);
                 (size as usize, header_end)
             }
         };
@@ -736,70 +737,80 @@ impl Section {
         let (meta_data, data) = match section_header.section_type {
             FfsSectionRawType::encapsulated::COMPRESSION => {
                 let compression_header_size = mem::size_of::<section::header::Compression>();
-                //verify that buffer has enough storage for a compression header.
-                if buffer.len() < content_offset + compression_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
-                // SAFETY: Size was validated to contain a Compression header and slice bounds is checked
-                let compression_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Compression) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + compression_header_size..section_size]);
-                (SectionMetaData::Compression(*compression_header), data)
+
+                let compression_header = buffer
+                    .get(content_offset..content_offset + compression_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let (compression_header, _) = section::header::Compression::read_from_prefix(compression_header)
+                    .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
+
+                let data = buffer
+                    .get(content_offset + compression_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::Compression(compression_header), Box::from(data))
             }
             FfsSectionRawType::encapsulated::GUID_DEFINED => {
                 let guid_defined_header_size = mem::size_of::<section::header::GuidDefined>();
-                //verify that buffer has enough storage for a guid_defined header.
-                if buffer.len() < content_offset + guid_defined_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let guid_defined_header = buffer
+                    .get(content_offset..content_offset + guid_defined_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
-                let guid_defined =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::GuidDefined) };
+                // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
+                let guid_defined_header = unsafe {
+                    core::ptr::read_unaligned(guid_defined_header.as_ptr() as *const section::header::GuidDefined)
+                };
 
-                //verify that buffer has enough storage for guid-specific fields.
-                let data_offset = guid_defined.data_offset as usize;
-                if buffer.len() < data_offset {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let data_offset = guid_defined_header.data_offset as usize;
+                let guid_specific_header_fields = buffer
+                    .get(content_offset + guid_defined_header_size..data_offset)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let data = buffer.get(data_offset..section_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
-                let guid_specific_header_fields: Box<[u8]> =
-                    Box::from(&buffer[content_offset + guid_defined_header_size..data_offset]);
-                let data: Box<[u8]> = Box::from(&buffer[data_offset..section_size]);
-
-                (SectionMetaData::GuidDefined(*guid_defined, guid_specific_header_fields), data)
+                (
+                    SectionMetaData::GuidDefined(guid_defined_header, Box::from(guid_specific_header_fields)),
+                    Box::from(data),
+                )
             }
             FfsSectionRawType::VERSION => {
                 let version_header_size = mem::size_of::<section::header::Version>();
-                //verify that buffer has enough storage for a version header.
-                if buffer.len() < content_offset + version_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
-                // SAFETY: Size wass validated to contain a Version header and slice bounds is checked
-                let version_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Version) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + version_header_size..section_size]);
-                (SectionMetaData::Version(*version_header), data)
+                let version_header = buffer
+                    .get(content_offset..content_offset + version_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let (version_header, _) = section::header::Version::read_from_prefix(version_header)
+                    .map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
+
+                let data = buffer
+                    .get(content_offset + version_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::Version(version_header), Box::from(data))
             }
             FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
                 let freeform_header_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
-                //verify that buffer has enough storage for a freeform header.
-                if buffer.len() < content_offset + freeform_header_size {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let freeform_header = buffer
+                    .get(content_offset..content_offset + freeform_header_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
-                let freeform_header =
-                    unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
-                let data: Box<[u8]> = Box::from(&buffer[content_offset + freeform_header_size..section_size]);
-                (SectionMetaData::FreeformSubtypeGuid(*freeform_header), data)
+                // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
+                let freeform_header = unsafe {
+                    core::ptr::read_unaligned(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid)
+                };
+
+                let data = buffer
+                    .get(content_offset + freeform_header_size..section_size)
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::FreeformSubtypeGuid(freeform_header), Box::from(data))
             }
             FfsSectionRawType::OEM_MIN..=FfsSectionRawType::FFS_MAX => {
-                //these section types do not have a defined header. So set metadata to none, and set data to the entire section buffer.
-                let data: Box<[u8]> = Box::from(buffer);
-                (SectionMetaData::None, data)
+                // These section types do not have a defined header. So set metadata to none, and set data to the entire section buffer.
+                (SectionMetaData::None, Box::from(buffer))
+            }
+            FfsSectionRawType::ALL => {
+                // ALL is not a valid section type for an actual section, so return an error.
+                return Err(efi::Status::VOLUME_CORRUPTED);
             }
             _ => {
-                let data: Box<[u8]> = Box::from(&buffer[content_offset..section_size]);
-                (SectionMetaData::None, data)
+                let data = buffer.get(content_offset..section_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                (SectionMetaData::None, Box::from(data))
             }
         };
 
@@ -1019,7 +1030,7 @@ mod unit_tests {
         attributes: u8,
         size: u64,
         number_of_sections: usize,
-        sections: HashMap<usize, FfsSectionTargetValues>,
+        sections: Option<HashMap<usize, FfsSectionTargetValues>>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1064,7 +1075,9 @@ mod unit_tests {
                 );
 
                 for (idx, section) in sections.iter().enumerate() {
-                    if let Some(target) = target.sections.remove(&idx) {
+                    if let Some(section_targets) = target.sections.as_mut()
+                        && let Some(target) = section_targets.remove(&idx)
+                    {
                         assert_eq!(
                             target.section_type,
                             section.section_type(),
@@ -1083,7 +1096,9 @@ mod unit_tests {
                     }
                 }
 
-                assert!(target.sections.is_empty(), "Some section use case has not been run.");
+                if let Some(section_targets) = target.sections.as_ref() {
+                    assert!(section_targets.is_empty(), "Some section use case has not been run.");
+                }
             }
         }
         assert_eq!(
@@ -1211,7 +1226,7 @@ mod unit_tests {
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
-            (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
+            (*fv_header).file_system_guid = crate::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
         };
         assert_eq!(FirmwareVolume::new(&fv_bytes).unwrap_err(), efi::Status::VOLUME_CORRUPTED);
 
@@ -1337,7 +1352,8 @@ mod unit_tests {
         let section = Section::new(&empty_version).unwrap();
         match section.meta_data() {
             SectionMetaData::Version(version) => {
-                assert_eq!(version.build_number, 0);
+                let build_number = version.build_number;
+                assert_eq!(build_number, 0);
                 assert_eq!(section.section_data(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),

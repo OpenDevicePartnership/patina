@@ -138,7 +138,8 @@ pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
     Ok(Box::new(EfiCpuPagingX64 {
-        paging: X64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
+        paging: X64PageTable::new(page_allocator, PagingType::Paging4Level)
+            .map_err(|_| efi::Status::INVALID_PARAMETER)?,
         mtrr: create_mtrr_lib(0),
     }))
 }
@@ -198,6 +199,7 @@ mod tests {
                 attribute: MtrrMemoryCacheType,
             ) -> MtrrResult<()>;
             fn set_memory_attributes(&mut self, ranges: &[MtrrMemoryRange]) -> MtrrResult<()>;
+            #[allow(refining_impl_trait_internal)]
             fn get_memory_ranges(&self) -> MtrrResult<Vec<MtrrMemoryRange>>;
 
             fn debug_print_all_mtrrs(&self);

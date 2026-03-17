@@ -148,8 +148,8 @@ there is no safe way to parse the record without risking buffer overruns and mem
 ```rust
 // DANGEROUS: External header construction with potentially corrupted length
 let bogus_header = SmbiosTableHeader { length: 0x1234, /* other fields */ };
-let record_data = unsafe { 
-    SmbiosManager::build_record_with_strings(&bogus_header, strings) 
+let record_data = unsafe {
+    SmbiosManager::build_record_with_strings(&bogus_header, strings)
 }; // Could read beyond valid memory if length field is corrupted
 ```
 
@@ -248,7 +248,7 @@ fn entry_point(
     // Configure SMBIOS version
     let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
     self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
-    
+
     // Register service for consumption by other components
     commands.add_service(self);
     Ok(())

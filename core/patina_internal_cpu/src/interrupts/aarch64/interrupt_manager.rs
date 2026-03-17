@@ -13,8 +13,7 @@ use patina::{
     component::service::IntoService,
     error::EfiError,
 };
-use patina_paging::{PageTable, PagingType};
-use patina_stacktrace::{StackFrame, StackTrace};
+use patina_paging::PageTable;
 
 use crate::interrupts::{
     EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
@@ -196,36 +195,16 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     log::debug!("Full Context: {aarch64_context:#X?}");
 
     log::error!("Dumping Exception Stack Trace:");
-    let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
-    // SAFETY: Called during exception handling with CPU context registers. The exception context
-    // is considered valid to dump at this time.
-    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
-        log::error!("StackTrace: {err}");
-    }
+    aarch64_context.dump_stack_trace();
 
     panic!("EXCEPTION: Synchronous Exception");
 }
 
 fn dump_pte(far: u64) {
-    // Needed because attributes on expressions are not stable.
-    // https://github.com/rust-lang/rust/issues/15701
-    #[allow(clippy::needless_late_init)]
-    let ttbr0_el2;
-    cfg_if::cfg_if! {
-        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
-            ttbr0_el2 = read_sysreg!(ttbr0_el2);
-        } else {
-            ttbr0_el2 = 0u64;
-        }
-    }
-
-    // SAFETY: TTBR0 must be valid as it is the current page table base.
+    // SAFETY: We are in an exception handler and want to dump the page tables, there is no other active code
+    // modifying the page tables.
     if let Ok(pt) = unsafe {
-        patina_paging::aarch64::AArch64PageTable::from_existing(
-            ttbr0_el2,
-            patina_paging::page_allocator::PageAllocatorStub,
-            PagingType::Paging4Level,
-        )
+        patina_paging::aarch64::AArch64PageTable::open_active(patina_paging::page_allocator::PageAllocatorStub)
     } {
         let _ = pt.dump_page_tables(far & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
         log::error!("");

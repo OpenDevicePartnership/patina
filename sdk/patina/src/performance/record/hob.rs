@@ -40,8 +40,7 @@ pub struct HobPerformanceData {
 }
 
 impl FromHob for HobPerformanceData {
-    const HOB_GUID: crate::OwnedGuid =
-        crate::Guid::from_fields(0x3b387bfd, 0x7abc, 0x4cf2, 0xa0, 0xca, [0xb6, 0xa1, 0x6c, 0x1b, 0x1b, 0x25]);
+    const HOB_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("3B387BFD-7ABC-4CF2-A0CA-B6A16C1B1B25");
 
     fn parse(bytes: &[u8]) -> HobPerformanceData {
         let mut offset = 0;

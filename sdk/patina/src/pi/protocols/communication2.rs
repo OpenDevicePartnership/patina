@@ -16,8 +16,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 
 /// MM Communication Protocol GUID.
-pub const PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x378daedc, 0xf06b, 0x4446, 0x83, 0x14, &[0x40, 0xab, 0x93, 0x3c, 0x87, 0xa3]);
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("378DAEDC-F06B-4446-8314-40AB933C87A3");
 
 /// Sends/receives a message for a registered handler.
 ///

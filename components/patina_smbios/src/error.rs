@@ -71,20 +71,28 @@ pub enum SmbiosError {
     TableDirectlyModified,
 }
 
+impl From<SmbiosError> for r_efi::efi::Status {
+    fn from(error: SmbiosError) -> Self {
+        let efi_error: patina::error::EfiError = error.into();
+        efi_error.into()
+    }
+}
+
 impl From<SmbiosError> for patina::error::EfiError {
     fn from(error: SmbiosError) -> Self {
         match error {
             // Resource allocation errors map to OUT_OF_RESOURCES
             SmbiosError::AllocationFailed | SmbiosError::HandleExhausted => patina::error::EfiError::OutOfResources,
 
+            // Size errors map to BUFFER_TOO_SMALL
+            SmbiosError::RecordTooSmall | SmbiosError::StringPoolTooSmall => patina::error::EfiError::BufferTooSmall,
+
             // Invalid parameters map to INVALID_PARAMETER
             SmbiosError::StringTooLong
             | SmbiosError::StringContainsNull
             | SmbiosError::EmptyStringInPool
-            | SmbiosError::RecordTooSmall
             | SmbiosError::MalformedRecordHeader
             | SmbiosError::InvalidStringPoolTermination
-            | SmbiosError::StringPoolTooSmall
             | SmbiosError::StringIndexOutOfRange
             | SmbiosError::Type127Managed
             | SmbiosError::HandleInUse
@@ -189,6 +197,13 @@ mod tests {
         let efi_err: patina::error::EfiError = SmbiosError::HandleOutOfRange.into();
         assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
 
+        // Test size errors map to BUFFER_TOO_SMALL
+        let efi_err: patina::error::EfiError = SmbiosError::RecordTooSmall.into();
+        assert_eq!(efi_err, patina::error::EfiError::BufferTooSmall);
+
+        let efi_err: patina::error::EfiError = SmbiosError::StringPoolTooSmall.into();
+        assert_eq!(efi_err, patina::error::EfiError::BufferTooSmall);
+
         // Test not found errors map to NOT_FOUND
         let efi_err: patina::error::EfiError = SmbiosError::RecordNotFound.into();
         assert_eq!(efi_err, patina::error::EfiError::NotFound);
@@ -206,5 +221,30 @@ mod tests {
         // Test table integrity errors map to DEVICE_ERROR
         let efi_err: patina::error::EfiError = SmbiosError::TableDirectlyModified.into();
         assert_eq!(efi_err, patina::error::EfiError::DeviceError);
+    }
+
+    #[test]
+    fn test_smbios_error_to_efi_status_conversion() {
+        use r_efi::efi;
+
+        // Verify the SmbiosError -> efi::Status conversion produces the same result
+        // as going through SmbiosError -> EfiError -> efi::Status manually.
+        let status: efi::Status = SmbiosError::AllocationFailed.into();
+        assert_eq!(status, efi::Status::OUT_OF_RESOURCES);
+
+        let status: efi::Status = SmbiosError::StringTooLong.into();
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+        let status: efi::Status = SmbiosError::RecordTooSmall.into();
+        assert_eq!(status, efi::Status::BUFFER_TOO_SMALL);
+
+        let status: efi::Status = SmbiosError::RecordNotFound.into();
+        assert_eq!(status, efi::Status::NOT_FOUND);
+
+        let status: efi::Status = SmbiosError::UnsupportedVersion.into();
+        assert_eq!(status, efi::Status::UNSUPPORTED);
+
+        let status: efi::Status = SmbiosError::TableDirectlyModified.into();
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
     }
 }

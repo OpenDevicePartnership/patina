@@ -46,8 +46,9 @@ fn get_platform_driver_override_bindings(
         .locate_protocol(efi::protocols::platform_driver_override::PROTOCOL_GUID)
     {
         Err(_) => return Vec::new(),
+        // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_mut() is used for mutable
+        // access which will also check if the pointer is null before allowing access.
         Ok(protocol) => unsafe {
-            // SAFETY: locate_protocol guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
             (protocol as *mut efi::protocols::platform_driver_override::Protocol).as_mut().expect("bad protocol ptr")
         },
     };
@@ -154,7 +155,9 @@ fn authenticate_connect(
         PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
     {
         let device_path = device_path as *mut efi::protocols::device_path::Protocol;
-        if let Ok(security2_ptr) = PROTOCOL_DB.locate_protocol(patina::pi::protocols::security2::PROTOCOL_GUID) {
+        if let Ok(security2_ptr) =
+            PROTOCOL_DB.locate_protocol(patina::pi::protocols::security2::PROTOCOL_GUID.into_inner())
+        {
             let file_path = {
                 if !recursive {
                     if let Some(remaining_path) = remaining_device_path {
@@ -289,9 +292,11 @@ fn core_connect_single_controller(
         return Ok(());
     }
 
-    // SAFETY: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
     if let Some(device_path) = remaining_device_path
-        && unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
+        && {
+            // SAFETY: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
+            unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
+        }
     {
         return Ok(());
     }
@@ -908,7 +913,11 @@ mod tests {
 
             // Install the security2 protocol in the protocol database
             let (_, _) = PROTOCOL_DB
-                .install_protocol_interface(None, patina::pi::protocols::security2::PROTOCOL_GUID, security2_ptr)
+                .install_protocol_interface(
+                    None,
+                    patina::pi::protocols::security2::PROTOCOL_GUID.into_inner(),
+                    security2_ptr,
+                )
                 .unwrap();
 
             // Create a proper END device path that should be safe to process

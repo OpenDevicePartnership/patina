@@ -65,6 +65,7 @@ impl MemoryManager for CoreMemoryManager {
 
         match result {
             Ok(_) => {
+                // SAFETY: address/page_count come from a successful core_allocate_pages call.
                 let allocation = unsafe {
                     PageAllocation::new(address as usize, page_count, &CoreMemoryManager)
                         .map_err(|_| MemoryError::InternalError)?
@@ -76,6 +77,11 @@ impl MemoryManager for CoreMemoryManager {
         }
     }
 
+    /// Frees the block of pages at the given address of the given size.
+    ///
+    /// ## Safety
+    /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
+    /// [Self::allocate_pages].
     unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
         let result = core_free_pages(address as efi::PhysicalAddress, page_count);
         match result {
@@ -222,6 +228,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::te
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
     let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    // SAFETY: address was returned by allocate_pages for this manager.
     let result = unsafe { mm.free_pages(address, 1) };
     u_assert!(result.is_ok(), "Failed to free page.");
     let result = mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address)));
@@ -236,6 +243,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::te
     u_assert_eq!(allocation.page_count(), 8);
     let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
+    // SAFETY: address was returned by allocate_pages for this manager.
     let result = unsafe { mm.free_pages(address, 8) };
     u_assert!(result.is_ok(), "Failed to free page.");
 
@@ -284,6 +292,7 @@ fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina::tes
     u_assert_eq!(access, AccessType::ReadWrite, "Allocation did not return Read/Write access.");
 
     // Test changing the attributes to read only.
+    // SAFETY: address was returned by allocate_pages for this manager.
     let result = unsafe { mm.set_page_attributes(address, 1, AccessType::ReadOnly, None) };
     u_assert!(result.is_ok(), "Failed to set page attributes.");
     let result = mm.get_page_attributes(address, 1);
@@ -293,6 +302,7 @@ fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina::tes
     u_assert_eq!(new_caching, caching, "Caching type changes unexpectedly.");
 
     // Free the page
+    // SAFETY: address was returned by allocate_pages for this manager.
     let result = unsafe { mm.free_pages(address, 1) };
     u_assert!(result.is_ok(), "Failed to free page.");
 

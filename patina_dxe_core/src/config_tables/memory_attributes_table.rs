@@ -61,7 +61,9 @@ impl MemoryAttributesTable {
 
 impl Debug for MemoryAttributesTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // SAFETY: self.0 is a valid MAT pointer when Debug is invoked.
         let mat = unsafe { self.0.as_ref().expect("BAD MAT PTR") };
+        // SAFETY: mat.entry points to number_of_entries descriptors in the MAT.
         let entries = unsafe { slice::from_raw_parts(mat.entry.as_ptr(), mat.number_of_entries as usize) };
 
         writeln!(f, "MemoryAttributesTable {{")?;
@@ -111,6 +113,7 @@ pub fn core_install_memory_attributes_table() {
             // behavior with a stack pointer that goes out of scope
             match core_allocate_pool(efi::BOOT_SERVICES_DATA, size_of::<efi::MemoryAttributesTable>()) {
                 Ok(empty_ptr) => {
+                    // SAFETY: empty_ptr is a valid allocation for MemoryAttributesTable.
                     if let Some(empty_mat) = unsafe { (empty_ptr as *mut efi::MemoryAttributesTable).as_mut() } {
                         *empty_mat = efi::MemoryAttributesTable {
                             version: 0,
@@ -203,6 +206,7 @@ pub fn core_install_memory_attributes_table() {
 
             // this ends up being a large unsafe block because we have to dereference the raw pointer core_allocate_pool
             // gave us and convert it to a real type and back in order to install it
+            // SAFETY: mat_ptr is a valid allocation for MemoryAttributesTable and copy size is bounded by buffer_size.
             unsafe {
                 let mat = &mut *mat_ptr;
                 mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
@@ -263,6 +267,7 @@ mod tests {
         test_support::with_global_lock(|| {
             POST_RTB.reset();
 
+            // SAFETY: Test-only initialization under the global lock.
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::reset_allocators();
@@ -348,6 +353,7 @@ mod tests {
 
             // Check if MEMORY_ATTRIBUTES_TABLE is set after installation
             let mat_ptr = get_configuration_table(&efi::MEMORY_ATTRIBUTES_TABLE_GUID).unwrap();
+            // SAFETY: MAT pointer comes from configuration table and is validated before dereference.
             unsafe {
                 let mat = &*(mat_ptr.as_ptr() as *const efi::MemoryAttributesTable);
 

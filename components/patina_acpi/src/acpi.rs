@@ -252,17 +252,18 @@ where
             return Err(AcpiError::NullXsdt);
         }
 
-        // Read the header to validate the XSDT signature is valid.
+        // Read individual header fields rather than cloning the full header, since the
+        // backing region may be shorter than size_of::<AcpiTableHeader>() until length is validated.
         let xsdt_header = rsdp.xsdt_address as *const AcpiTableHeader;
-        // SAFETY: `xsdt_address` has been validated to be non-null.
-        if (unsafe { (*xsdt_header).clone() }).signature != signature::XSDT {
+        // SAFETY: `xsdt_address` is non-null. 4 bytes are read to check the signature.
+        if (unsafe { AcpiTableHeader::read_signature_from_ptr(xsdt_header) }) != signature::XSDT {
             return Err(AcpiError::InvalidSignature);
         }
 
-        // SAFETY: We validate that the XSDT is non-null and contains the right signature.
-        let xsdt = unsafe { &*(xsdt_header) };
+        // SAFETY: `xsdt_address` is non-null and signature is valid. Reading the 4-byte length field.
+        let xsdt_length = unsafe { AcpiTableHeader::read_length_from_ptr(xsdt_header) };
 
-        if xsdt.length < ACPI_HEADER_LEN as u32 {
+        if xsdt_length < ACPI_HEADER_LEN as u32 {
             return Err(AcpiError::XsdtInvalidLengthFromHob);
         }
 
@@ -273,9 +274,9 @@ where
     fn install_dsdt_facs_from_fadt(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null.
         if fadt.x_firmware_ctrl() != 0 {
-            let facs_from_ptr = fadt.x_firmware_ctrl() as *const AcpiFacs;
-            // SAFETY: The FACS address has been checked to be non-null.
-            if (unsafe { (*facs_from_ptr).clone() }).signature != signature::FACS {
+            let facs_from_ptr = fadt.x_firmware_ctrl() as *const AcpiTableHeader;
+            // SAFETY: The FACS address has been checked to be non-null. Reading 4-byte signature.
+            if (unsafe { AcpiTableHeader::read_signature_from_ptr(facs_from_ptr) }) != signature::FACS {
                 return Err(AcpiError::InvalidSignature);
             }
 
@@ -293,8 +294,8 @@ where
 
         if fadt.x_dsdt() != 0 {
             let dsdt_hdr_from_ptr = fadt.x_dsdt() as *const AcpiTableHeader;
-            // SAFETY: The DSDT address has been checked to be non-null.
-            if (unsafe { (*dsdt_hdr_from_ptr).clone() }).signature() != signature::DSDT {
+            // SAFETY: The DSDT address has been checked to be non-null. Reading 4-byte signature.
+            if (unsafe { AcpiTableHeader::read_signature_from_ptr(dsdt_hdr_from_ptr) }) != signature::DSDT {
                 return Err(AcpiError::InvalidSignature);
             }
 
@@ -318,8 +319,8 @@ where
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
         let xsdt_header = xsdt_ptr as *const AcpiTableHeader;
 
-        // SAFETY: `get_xsdt_address_from_rsdp` should perform necessary validations on XSDT.
-        let xsdt_length = (unsafe { (*xsdt_header).clone() }).length();
+        // SAFETY: `get_xsdt_address_from_rsdp` validated that the XSDT has a valid header.
+        let xsdt_length = unsafe { AcpiTableHeader::read_length_from_ptr(xsdt_header) };
 
         // Calculate the number of entries in the XSDT. Entries are u64 addresses.
         let num_entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
@@ -361,8 +362,8 @@ where
             self.install_standard_table(table)?;
 
             // If this table points to other system tables, install them too.
-            // SAFETY: The tables in the hob should be valid ACPI tables.
-            if (unsafe { (*tbl_header).clone() }).signature == signature::FADT {
+            // SAFETY: The tables in the hob should be valid ACPI tables. Reading the 4-byte signature.
+            if (unsafe { AcpiTableHeader::read_signature_from_ptr(tbl_header) }) == signature::FADT {
                 // SAFETY: assuming the XSDT entry is written correctly, this points to a valid ACPI table.
                 // and the signature has been verified to match that of the FADT.
                 let fadt = unsafe { &*(entry_addr as *const AcpiFadt) };
@@ -889,10 +890,10 @@ mod tests {
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
         create_dummy_rsdp(&provider);
 
-        let header1 = AcpiTableHeader { signature: 0x1, length: 100, ..Default::default() };
+        let header1 = AcpiTableHeader { signature: 0x1, length: ACPI_HEADER_LEN as u32, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
         let table1 = unsafe { AcpiTable::new(header1, provider.memory_manager.get().unwrap()) };
-        let header2 = AcpiTableHeader { signature: 0x2, length: 100, ..Default::default() };
+        let header2 = AcpiTableHeader { signature: 0x2, length: ACPI_HEADER_LEN as u32, ..Default::default() };
         // SAFETY: The constructed table is a valid ACPI table.
         let table2 = unsafe { AcpiTable::new(header2, provider.memory_manager.get().unwrap()) };
         provider.install_standard_table(table1.unwrap()).expect("Install should succeed.");
@@ -902,9 +903,9 @@ mod tests {
         let result = provider.collect_tables();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].signature(), 0x1);
-        assert_eq!(result[0].header().length(), 100);
+        assert_eq!(result[0].header().length(), ACPI_HEADER_LEN as u32);
         assert_eq!(result[1].signature(), 0x2);
-        assert_eq!(result[1].header().length(), 100);
+        assert_eq!(result[1].header().length(), ACPI_HEADER_LEN as u32);
     }
 
     #[test]
@@ -1208,10 +1209,12 @@ mod tests {
 
     fn mock_rsdp(rsdp_signature: u64, include_xsdt: bool, xsdt_length: usize, xsdt_signature: u32) -> u64 {
         let xsdt_ptr = if include_xsdt {
-            // Build a buffer for the fake XSDT
-            let mut xsdt_buf = vec![0u8; xsdt_length];
+            // Always allocate at least ACPI_HEADER_LEN bytes so the header can be safely read,
+            // even when testing invalid (shorter) length field values.
+            let buf_size = xsdt_length.max(ACPI_HEADER_LEN);
+            let mut xsdt_buf = vec![0u8; buf_size];
 
-            // Write the length field of the XSDT
+            // Write the caller-specified length into the header (may differ from actual allocation)
             let len_bytes = (xsdt_length as u32).to_le_bytes();
             xsdt_buf[4..8].copy_from_slice(&len_bytes);
 
@@ -1483,7 +1486,7 @@ mod tests {
         provider.register_notify(true, notify_fn).expect("should register notify");
 
         // Install a standard table and check if notify was called.
-        let header = AcpiTableHeader { signature: 0x0101, length: 100, ..Default::default() };
+        let header = AcpiTableHeader { signature: 0x0101, length: ACPI_HEADER_LEN as u32, ..Default::default() };
         // SAFETY: `header` has a valid header format.
         let table = unsafe { AcpiTable::new(header, provider.memory_manager.get().unwrap()).unwrap() };
         let _ = provider.install_acpi_table(table).unwrap();
@@ -1509,12 +1512,12 @@ mod tests {
         create_dummy_rsdp(&provider);
 
         // Install two standard tables
-        let header1 = AcpiTableHeader { signature: 0x10, length: 101, ..Default::default() };
+        let header1 = AcpiTableHeader { signature: 0x10, length: ACPI_HEADER_LEN as u32, ..Default::default() };
         // SAFETY: `table1` has the correct format by construction.
         let table1 = unsafe { AcpiTable::new(header1, provider.memory_manager.get().unwrap()).unwrap() };
         let key1 = provider.install_standard_table(table1).unwrap();
 
-        let header2 = AcpiTableHeader { signature: 0x11, length: 102, ..Default::default() };
+        let header2 = AcpiTableHeader { signature: 0x11, length: ACPI_HEADER_LEN as u32, ..Default::default() };
         // SAFETY: `table2` has the correct format by construction.
         let table2 = unsafe { AcpiTable::new(header2, provider.memory_manager.get().unwrap()).unwrap() };
         let key2 = provider.install_standard_table(table2).unwrap();
@@ -1523,13 +1526,13 @@ mod tests {
         let (got_key1, got_table1) = provider.get_table_at_idx(0).unwrap();
         assert_eq!(got_key1, key1);
         assert_eq!(got_table1.signature(), 0x10);
-        assert_eq!(got_table1.header().length(), 101);
+        assert_eq!(got_table1.header().length(), ACPI_HEADER_LEN as u32);
 
         // Index 1 should return the second table
         let (got_key2, got_table2) = provider.get_table_at_idx(1).unwrap();
         assert_eq!(got_key2, key2);
         assert_eq!(got_table2.signature(), 0x11);
-        assert_eq!(got_table2.header().length(), 102);
+        assert_eq!(got_table2.header().length(), ACPI_HEADER_LEN as u32);
 
         // Index out of bounds should return error
         let err = provider.get_table_at_idx(3).unwrap_err();

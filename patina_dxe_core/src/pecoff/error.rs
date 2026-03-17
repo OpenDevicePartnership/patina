@@ -21,6 +21,9 @@ pub enum Error {
     BadSignature(u16),
     /// The parsed PeCoff image does not contain an Optional Header.
     NoOptionalHeader,
+    /// The parsed relocation blocks do not match a previous call to `relocate_image`.
+    /// Indicates caller error or image corruption.
+    RelocationBlockLengthMismatch,
 }
 
 impl From<scroll::Error> for Error {

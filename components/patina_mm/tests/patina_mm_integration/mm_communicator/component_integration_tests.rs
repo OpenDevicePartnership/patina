@@ -214,10 +214,10 @@ fn test_real_component_invalid_guid_communication() {
         .expect("Real component framework should initialize successfully");
 
     // Use an unknown GUID that has no registered handler
-    let unknown_guid = r_efi::efi::Guid::from_fields(0xFFFFFFFF, 0xFFFF, 0xFFFF, 0xFF, 0xFF, &[0xFF; 6]);
+    let unknown_guid = Guid::try_from_string("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF").unwrap();
     let test_data = b"This should fail";
 
-    let result = framework.communicate(&Guid::from_ref(&unknown_guid), test_data);
+    let result = framework.communicate(&unknown_guid, test_data);
 
     // The real components should properly handle this error case
     assert!(result.is_err(), "Communication with unknown GUID should fail");

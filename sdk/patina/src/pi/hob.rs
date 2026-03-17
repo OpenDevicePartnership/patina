@@ -32,8 +32,8 @@
 //!     header,
 //!     base_address: 0,
 //!     length: 0x0123456789abcdef,
-//!     fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-//!     file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+//!     fv_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
+//!     file_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
 //!   }
 //! }
 //!
@@ -196,7 +196,7 @@ pub mod header {
         /// indicate additional data structures that follow this header. Well-known
         /// GUIDs include allocations for stack, BSP store, and module images.
         ///
-        pub name: r_efi::base::Guid,
+        pub name: crate::BinaryGuid,
 
         /// The base address of memory allocated by this HOB.
         /// This is the physical address where the memory allocation begins,
@@ -351,7 +351,7 @@ pub struct MemoryAllocationModule {
     /// The GUID specifying the values of the firmware file system name
     /// that contains the HOB consumer phase component.
     ///
-    pub module_name: r_efi::base::Guid, // EFI_GUID
+    pub module_name: crate::BinaryGuid,
 
     /// The address of the memory-mapped firmware volume
     /// that contains the HOB consumer phase firmware file.
@@ -538,7 +538,7 @@ pub struct ResourceDescriptor {
     /// This GUID is used by HOB consumer phase components to correlate device
     /// ownership of a resource.
     ///
-    pub owner: r_efi::base::Guid,
+    pub owner: crate::BinaryGuid,
 
     /// Resource type enumeration as defined by EFI_RESOURCE_TYPE.
     /// Identifies whether this resource is system memory, memory-mapped I/O,
@@ -618,7 +618,7 @@ pub struct GuidHob {
 
     /// A GUID that defines the contents of this HOB.
     ///
-    pub name: r_efi::base::Guid,
+    pub name: crate::BinaryGuid,
     // Guid specific data goes here
     //
 }
@@ -676,11 +676,11 @@ pub struct FirmwareVolume2 {
 
     /// The name of the firmware volume.
     ///
-    pub fv_name: r_efi::base::Guid,
+    pub fv_name: crate::BinaryGuid,
 
     /// The name of the firmware file which contained this firmware volume.
     ///
-    pub file_name: r_efi::base::Guid,
+    pub file_name: crate::BinaryGuid,
 }
 
 /// Details the location of a firmware volume including authentication information,
@@ -723,12 +723,12 @@ pub struct FirmwareVolume3 {
     /// The name GUID of the firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
-    pub fv_name: r_efi::base::Guid,
+    pub fv_name: crate::BinaryGuid,
 
     /// The name GUID of the firmware file which contained this firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
-    pub file_name: r_efi::base::Guid,
+    pub file_name: crate::BinaryGuid,
 }
 
 /// Describes processor information, such as address space and I/O space capabilities.
@@ -1500,8 +1500,8 @@ impl<'a> Iterator for HobIter<'a> {
 // Well-known GUID Extension HOB type definitions
 
 /// Memory Type Information GUID Extension Hob GUID.
-pub const MEMORY_TYPE_INFO_HOB_GUID: r_efi::efi::Guid =
-    r_efi::efi::Guid::from_fields(0x4c19049f, 0x4137, 0x4dd3, 0x9c, 0x10, &[0x8b, 0x97, 0xa8, 0x3f, 0xfd, 0xfa]);
+pub const MEMORY_TYPE_INFO_HOB_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("4C19049F-4137-4DD3-9C10-8B97A83FFDFA");
 
 /// Memory Type Information GUID Extension Hob structure definition.
 #[derive(Debug)]
@@ -1554,8 +1554,8 @@ mod tests {
             header,
             base_address: 0,
             length: 0x0123456789abcdef,
-            fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-            file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            fv_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            file_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
         }
     }
 
@@ -1572,8 +1572,8 @@ mod tests {
             length: 0x0123456789abcdef,
             authentication_status: 0,
             extracted_fv: false.into(),
-            fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-            file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            fv_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            file_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
         }
     }
 
@@ -1589,7 +1589,7 @@ mod tests {
 
         hob::ResourceDescriptor {
             header,
-            owner: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            owner: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0,
@@ -1619,7 +1619,7 @@ mod tests {
         };
 
         let alloc_descriptor = hob::header::MemoryAllocation {
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
             memory_type: 0,
@@ -1637,7 +1637,7 @@ mod tests {
         };
 
         let alloc_descriptor = hob::header::MemoryAllocation {
-            name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
             memory_type: 0,
@@ -1647,7 +1647,7 @@ mod tests {
         hob::MemoryAllocationModule {
             header,
             alloc_descriptor,
-            module_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+            module_name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             entry_point: 0,
         }
     }
@@ -1659,19 +1659,44 @@ mod tests {
         hob::Capsule { header, base_address: 0, length: 0x12 }
     }
 
-    fn gen_guid_hob() -> (hob::GuidHob, Box<[u8]>) {
-        let data = Box::new([1_u8, 2, 3, 4, 5, 6, 7, 8]);
-        (
-            hob::GuidHob {
-                header: hob::header::Hob {
-                    r#type: hob::GUID_EXTENSION,
-                    length: (size_of::<hob::GuidHob>() + data.len()) as u16,
-                    reserved: 0,
-                },
-                name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+    /// Generates a test GUID HOB in a contiguous heap buffer.
+    ///
+    /// A GUID HOB is laid out as [GuidHob header | data bytes] contiguously in memory. The header's
+    /// `length` field covers both the struct and the trailing data. This function replicates that layout
+    /// so `HobTrait::as_ptr()` + `size()` correctly spans the entire HOB.
+    ///
+    /// Use `guid_hob_refs()` to extract typed references from the returned buffer.
+    fn gen_guid_hob() -> Vec<u8> {
+        let data: &[u8] = &[1_u8, 2, 3, 4, 5, 6, 7, 8];
+        let hob = hob::GuidHob {
+            header: hob::header::Hob {
+                r#type: hob::GUID_EXTENSION,
+                length: (size_of::<hob::GuidHob>() + data.len()) as u16,
+                reserved: 0,
             },
-            data,
-        )
+            name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+        };
+
+        // Build a contiguous buffer: [GuidHob struct bytes | data bytes]
+        let mut buf = Vec::with_capacity(size_of::<hob::GuidHob>() + data.len());
+        // SAFETY: Test code - serializing the GuidHob struct into raw bytes for contiguous layout.
+        let hob_bytes = unsafe { from_raw_parts(&hob as *const hob::GuidHob as *const u8, size_of::<hob::GuidHob>()) };
+        buf.extend_from_slice(hob_bytes);
+        buf.extend_from_slice(data);
+        buf
+    }
+
+    /// Extracts a `(&GuidHob, &[u8])` reference pair from a contiguous GUID HOB buffer.
+    ///
+    /// # Safety
+    ///
+    /// The buffer must have been produced by `gen_guid_hob()` and must outlive the returned references.
+    fn guid_hob_refs(buf: &[u8]) -> (&hob::GuidHob, &[u8]) {
+        assert!(buf.len() >= size_of::<hob::GuidHob>(), "Buffer too small for GuidHob");
+        // SAFETY: Test code - the buffer was constructed by gen_guid_hob(), so the buffer layout matches.
+        let guid_hob = unsafe { &*(buf.as_ptr() as *const hob::GuidHob) };
+        let data = &buf[size_of::<hob::GuidHob>()..];
+        (guid_hob, data)
     }
 
     fn gen_phase_handoff_information_table() -> hob::PhaseHandoffInformationTable {
@@ -1733,6 +1758,8 @@ mod tests {
 
         for hob in hob_list.iter() {
             // SAFETY: Test code - creating a slice from HOB pointer for serialization.
+            // All HOB variants must have contiguous backing memory where as_ptr() points to
+            // the start and size() covers the remainder.
             let slice = unsafe { from_raw_parts(hob.as_ptr(), hob.size()) };
             c_array.extend_from_slice(slice);
         }
@@ -1796,7 +1823,8 @@ mod tests {
         let firmware_volume3 = gen_firmware_volume3();
         let end_of_hob_list = gen_end_of_hoblist();
         let capsule = gen_capsule();
-        let (guid_hob, guid_hob_data) = gen_guid_hob();
+        let guid_hob_buf = gen_guid_hob();
+        let (guid_hob, guid_hob_data) = guid_hob_refs(&guid_hob_buf);
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
 
@@ -1805,7 +1833,7 @@ mod tests {
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
         hoblist.push(Hob::FirmwareVolume3(&firmware_volume3));
         hoblist.push(Hob::Capsule(&capsule));
-        hoblist.push(Hob::GuidHob(&guid_hob, guid_hob_data.as_ref()));
+        hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Handoff(&end_of_hob_list));
@@ -1859,7 +1887,8 @@ mod tests {
         let firmware_volume2 = gen_firmware_volume2();
         let firmware_volume3 = gen_firmware_volume3();
         let capsule = gen_capsule();
-        let (guid_hob, guid_hob_data) = gen_guid_hob();
+        let guid_hob_buf = gen_guid_hob();
+        let (guid_hob, guid_hob_data) = guid_hob_refs(&guid_hob_buf);
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
         let cpu = gen_cpu();
@@ -1876,7 +1905,7 @@ mod tests {
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
         hoblist.push(Hob::FirmwareVolume3(&firmware_volume3));
         hoblist.push(Hob::Capsule(&capsule));
-        hoblist.push(Hob::GuidHob(&guid_hob, guid_hob_data.as_ref()));
+        hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
@@ -1902,7 +1931,7 @@ mod tests {
                 }
                 Hob::GuidHob(guid_hob, data) => {
                     assert_eq!(guid_hob.name, r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]));
-                    assert_eq!(&data[..], &guid_hob_data[..]);
+                    assert_eq!(&data[..], guid_hob_data);
                 }
                 Hob::FirmwareVolume(firmware_volume) => {
                     assert_eq!(firmware_volume.length, 0x0123456789abcdef);
@@ -2002,7 +2031,8 @@ mod tests {
         let firmware_volume2 = gen_firmware_volume2();
         let firmware_volume3 = gen_firmware_volume3();
         let capsule = gen_capsule();
-        let (guid_hob, guid_hob_data) = gen_guid_hob();
+        let guid_hob_buf = gen_guid_hob();
+        let (guid_hob, guid_hob_data) = guid_hob_refs(&guid_hob_buf);
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
         let cpu = gen_cpu();
@@ -2018,7 +2048,7 @@ mod tests {
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
         hoblist.push(Hob::FirmwareVolume3(&firmware_volume3));
         hoblist.push(Hob::Capsule(&capsule));
-        hoblist.push(Hob::GuidHob(&guid_hob, guid_hob_data.as_ref()));
+        hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
@@ -2045,7 +2075,8 @@ mod tests {
         let firmware_volume2 = gen_firmware_volume2();
         let firmware_volume3 = gen_firmware_volume3();
         let capsule = gen_capsule();
-        let (guid_hob, guid_hob_data) = gen_guid_hob();
+        let guid_hob_buf = gen_guid_hob();
+        let (guid_hob, guid_hob_data) = guid_hob_refs(&guid_hob_buf);
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
         let cpu = gen_cpu();
@@ -2062,7 +2093,7 @@ mod tests {
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
         hoblist.push(Hob::FirmwareVolume3(&firmware_volume3));
         hoblist.push(Hob::Capsule(&capsule));
-        hoblist.push(Hob::GuidHob(&guid_hob, guid_hob_data.as_ref()));
+        hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
@@ -2089,7 +2120,8 @@ mod tests {
         let firmware_volume2 = gen_firmware_volume2();
         let firmware_volume3 = gen_firmware_volume3();
         let capsule = gen_capsule();
-        let (guid_hob, guid_hob_data) = gen_guid_hob();
+        let guid_hob_buf = gen_guid_hob();
+        let (guid_hob, guid_hob_data) = guid_hob_refs(&guid_hob_buf);
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
         let cpu = gen_cpu();
@@ -2106,7 +2138,7 @@ mod tests {
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
         hoblist.push(Hob::FirmwareVolume3(&firmware_volume3));
         hoblist.push(Hob::Capsule(&capsule));
-        hoblist.push(Hob::GuidHob(&guid_hob, guid_hob_data.as_ref()));
+        hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
@@ -2151,11 +2183,11 @@ mod tests {
                     assert_eq!(capsule, *hob);
                 }
                 Hob::GuidHob(hob, hob_data) if i == 6 => {
-                    assert_ne!(ptr::addr_of!(guid_hob), hob);
+                    assert_ne!(ptr::from_ref(guid_hob), ptr::from_ref(hob));
                     assert_ne!(guid_hob_data.as_ptr(), hob_data.as_ptr());
                     assert_eq!(guid_hob.header, hob.header);
                     assert_eq!(guid_hob.name, hob.name);
-                    assert_eq!(&guid_hob_data[..], hob_data);
+                    assert_eq!(guid_hob_data, hob_data);
                 }
                 Hob::MemoryAllocation(hob) if i == 7 => {
                     assert_ne!(ptr::addr_of!(memory_allocation), hob);

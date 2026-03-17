@@ -12,7 +12,6 @@
 use core::mem;
 
 use patina::signature;
-use r_efi::efi;
 
 use crate::acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiTableHeader};
 
@@ -48,8 +47,7 @@ pub const CCEL: u32 = signature!('C', 'C', 'E', 'L');
 pub const SKVL: u32 = signature!('S', 'K', 'V', 'L');
 pub const RHCT: u32 = signature!('R', 'H', 'C', 'T');
 
-pub const ACPI_TABLE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x8868E871, 0xE4F1, 0x11D3, 0xBC, 0x22, &[0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81]);
+pub const ACPI_TABLE_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("8868E871-E4F1-11D3-BC22-0080C73C8881");
 
 pub(crate) const ACPI_HEADER_LEN: usize = mem::size_of::<AcpiTableHeader>();
 pub(crate) const MAX_INITIAL_ENTRIES: usize = 32;

@@ -8,16 +8,13 @@
 //!
 use alloc::vec::Vec;
 use core::result::Result;
+use patina::pi::fw_fs::guid::LZMA_SECTION;
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{Section, SectionExtractor, SectionHeader},
 };
-use r_efi::efi;
 
 use patina_lzma_rs::io::Cursor;
-
-pub const LZMA_SECTION_GUID: efi::Guid =
-    efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
 
 pub const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
@@ -36,7 +33,7 @@ impl LzmaSectionExtractor {
 impl SectionExtractor for LzmaSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-            && guid_header.section_definition_guid == LZMA_SECTION_GUID
+            && guid_header.section_definition_guid == LZMA_SECTION
         {
             let data = section.try_content_as_slice()?;
 
@@ -116,8 +113,14 @@ mod tests {
 
     #[test]
     fn test_lzma_extractor_unsupported_guid() {
-        let wrong_guid =
-            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let wrong_guid = patina::BinaryGuid::from_fields(
+            0x12345678,
+            0x1234,
+            0x5678,
+            0x12,
+            0x34,
+            &[0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0],
+        );
         let dummy_data = b"Dummy data";
 
         let guid_header = GuidDefined {

@@ -14,7 +14,7 @@ use crate::patina_mm_integration::common::{constants::*, handlers::*, message_pa
 
 extern crate alloc;
 use alloc::{boxed::Box, string::String, vec::Vec};
-use r_efi::efi;
+use patina::BinaryGuid;
 use std::{
     collections::HashMap,
     sync::{
@@ -83,7 +83,7 @@ pub struct MmTestFramework {
     /// Handlers can be added during framework construction, and then transferred to the final
     /// framework instance without cloning. It also lets the same handler registry be shared
     /// between different testing contexts, without duplicating data.
-    handlers: Arc<Mutex<HashMap<efi::Guid, Box<dyn MmHandler>>>>,
+    handlers: Arc<Mutex<HashMap<BinaryGuid, Box<dyn MmHandler>>>>,
 
     /// Atomic counter tracking the number of MM communication triggers
     ///
@@ -126,7 +126,7 @@ impl MmTestFramework {
     /// allowing concurrent handler processing for different handler GUIDs.
     pub fn communicate(
         &self,
-        guid: &efi::Guid,
+        guid: &BinaryGuid,
         data: &[u8],
     ) -> Result<Vec<u8>, patina_mm::component::communicator::Status> {
         // Increment trigger count at the start of every communication attempt
@@ -157,7 +157,7 @@ impl MmTestFramework {
     #[allow(dead_code)] // Usage in integration code is not recognized
     pub fn communicate_with_buffer(
         &self,
-        _guid: &efi::Guid,
+        _guid: &BinaryGuid,
         buffer: &mut [u8],
     ) -> Result<Vec<u8>, patina_mm::component::communicator::Status> {
         // Increment trigger count at the start of every communication attempt
@@ -223,7 +223,7 @@ pub struct MmTestFrameworkBuilder {
     /// the single-threaded configuration phase. Handlers are moved in via `Box<dyn MmHandler>`
     /// and then the entire collection is transferred to the framework's `Arc<Mutex<...>>``
     /// wrapper during the `.build()` call.
-    handlers: HashMap<efi::Guid, Box<dyn MmHandler>>,
+    handlers: HashMap<BinaryGuid, Box<dyn MmHandler>>,
 }
 
 impl MmTestFrameworkBuilder {
@@ -232,7 +232,7 @@ impl MmTestFrameworkBuilder {
     }
 
     /// Add a custom handler for the specified GUID
-    pub fn with_handler(mut self, guid: efi::Guid, handler: Box<dyn MmHandler>) -> Self {
+    pub fn with_handler(mut self, guid: BinaryGuid, handler: Box<dyn MmHandler>) -> Self {
         self.handlers.insert(guid, handler);
         self
     }
@@ -249,25 +249,25 @@ impl MmTestFrameworkBuilder {
 
     /// Add a version info handler
     #[allow(dead_code)] // Reserved for future version handler tests
-    pub fn with_version_handler(self, guid: efi::Guid, version: &str) -> Self {
+    pub fn with_version_handler(self, guid: BinaryGuid, version: &str) -> Self {
         self.with_handler(guid, Box::new(VersionInfoHandler::new(version)))
     }
 
     /// Add an error injection handler for testing error conditions
     #[allow(dead_code)] // Used in stress testing scenarios
-    pub fn with_error_injection_handler(self, guid: efi::Guid) -> Self {
+    pub fn with_error_injection_handler(self, guid: BinaryGuid) -> Self {
         self.with_handler(guid, Box::new(ErrorInjectionHandler::new()))
     }
 
     /// Add a buffer size handler for testing various buffer scenarios
     #[allow(dead_code)] // Used in stress testing scenarios
-    pub fn with_buffer_size_handler(self, guid: efi::Guid) -> Self {
+    pub fn with_buffer_size_handler(self, guid: BinaryGuid) -> Self {
         self.with_handler(guid, Box::new(BufferSizeHandler::new()))
     }
 
     /// Add a computation handler for stress testing
     #[allow(dead_code)] // Used in stress testing scenarios
-    pub fn with_computation_handler(self, guid: efi::Guid) -> Self {
+    pub fn with_computation_handler(self, guid: BinaryGuid) -> Self {
         self.with_handler(guid, Box::new(ComputationHandler::new()))
     }
 

@@ -12,6 +12,7 @@ use arm_gic::{
     gicv3::{GicCpuInterface, InterruptGroup},
 };
 use patina::{
+    BinaryGuid,
     boot_services::{BootServices, StandardBootServices},
     component::{component, service::Service},
     guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
@@ -166,7 +167,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
 }
 
 unsafe impl ProtocolInterface for EfiHardwareInterruptProtocol<'_> {
-    const PROTOCOL_GUID: efi::Guid = HARDWARE_INTERRUPT_PROTOCOL;
+    const PROTOCOL_GUID: BinaryGuid = HARDWARE_INTERRUPT_PROTOCOL;
 }
 
 type HardwareInterruptRegisterV2 =
@@ -354,7 +355,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 }
 
 unsafe impl ProtocolInterface for EfiHardwareInterruptV2Protocol<'_> {
-    const PROTOCOL_GUID: efi::Guid = HARDWARE_INTERRUPT_PROTOCOL_V2;
+    const PROTOCOL_GUID: BinaryGuid = HARDWARE_INTERRUPT_PROTOCOL_V2;
 }
 
 impl From<Trigger> for HardwareInterrupt2TriggerType {

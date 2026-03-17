@@ -26,6 +26,8 @@ extern "efiapi" fn add_memory_space(
     length: u64,
     capabilities: u64,
 ) -> efi::Status {
+    // SAFETY: The DXE Services contract requires the caller to provide a valid, non-overlapping
+    // memory region within the processor address space.
     let result = unsafe { GCD.add_memory_space(gcd_memory_type, base_address as usize, length as usize, capabilities) };
 
     match result {
@@ -393,6 +395,7 @@ impl<P: PlatformInfo> Core<P> {
             set_memory_space_capabilities,
         };
         let dxe_services_system_table_ptr = &dxe_services_system_table as *const dxe_services::DxeServicesTable;
+        // SAFETY: dxe_services_system_table is a local value, its byte representation is valid for hashing.
         let crc32 = unsafe {
             crc32fast::hash(from_raw_parts(
                 dxe_services_system_table_ptr as *const u8,
@@ -404,7 +407,7 @@ impl<P: PlatformInfo> Core<P> {
         let dxe_services_system_table = Box::new(dxe_services_system_table);
 
         let _ = config_tables::core_install_configuration_table(
-            dxe_services::DXE_SERVICES_TABLE_GUID,
+            dxe_services::DXE_SERVICES_TABLE_GUID.into_inner(),
             Box::into_raw(dxe_services_system_table) as *mut c_void,
             system_table,
         );
@@ -491,6 +494,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             test_support::init_test_logger();
+            // SAFETY: Test-only initialization under the global lock.
             unsafe {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::init_test_protocol_db();
@@ -1175,6 +1179,7 @@ mod tests {
             let result = get_memory_space_descriptor(base, descriptor.as_mut_ptr());
             assert_eq!(result, efi::Status::SUCCESS, "Should get memory space descriptor");
 
+            // SAFETY: get_memory_space_descriptor initialized descriptor on SUCCESS.
             let descriptor = unsafe { descriptor.assume_init() };
             assert_eq!(descriptor.base_address, base, "Base address should match");
             assert_eq!(descriptor.length, length, "Length should match");
@@ -1215,6 +1220,7 @@ mod tests {
 
             assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for address within range");
 
+            // SAFETY: get_memory_space_descriptor initialized descriptor on SUCCESS.
             let descriptor = unsafe { descriptor.assume_init() };
             assert_eq!(descriptor.base_address, base, "Base address should be the region base");
             assert_eq!(descriptor.length, length, "Length should match the region length");
@@ -1245,6 +1251,7 @@ mod tests {
 
                 assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for type {expected_type:?}");
 
+                // SAFETY: get_memory_space_descriptor initialized descriptor on SUCCESS.
                 let descriptor = unsafe { descriptor.assume_init() };
                 assert_eq!(descriptor.memory_type, *expected_type, "Memory type should match for {expected_type:?}");
                 assert_eq!(descriptor.base_address, *base, "Base address should match for type {expected_type:?}");
@@ -1284,6 +1291,7 @@ mod tests {
                     "Should get descriptor for capabilities 0x{expected_capabilities:x}",
                 );
 
+                // SAFETY: get_memory_space_descriptor initialized descriptor on SUCCESS.
                 let descriptor = unsafe { descriptor.assume_init() };
                 // Check that our requested capabilities are present (GCD may add additional flags)
                 assert!(
@@ -1347,6 +1355,7 @@ mod tests {
             // Read back and verify bits are set
             let mut d = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
             assert_eq!(get_memory_space_descriptor(base, d.as_mut_ptr()), efi::Status::SUCCESS);
+            // SAFETY: get_memory_space_descriptor initialized d on SUCCESS.
             let d = unsafe { d.assume_init() };
             assert_eq!(d.base_address, base);
             assert_eq!(d.length, length);
@@ -1383,12 +1392,14 @@ mod tests {
             // The first page should have RO set
             let mut d0 = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
             assert_eq!(get_memory_space_descriptor(base, d0.as_mut_ptr()), efi::Status::SUCCESS);
+            // SAFETY: get_memory_space_descriptor initialized d0 on SUCCESS.
             let d0 = unsafe { d0.assume_init() };
             assert!(d0.attributes & efi::MEMORY_RO != 0);
 
             // A later page should not necessarily have RO (split expected). We only assert that RO is not set there.
             let mut d1 = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
             assert_eq!(get_memory_space_descriptor(base + 0x3000, d1.as_mut_ptr()), efi::Status::SUCCESS);
+            // SAFETY: get_memory_space_descriptor initialized d1 on SUCCESS.
             let d1 = unsafe { d1.assume_init() };
             assert!(d1.attributes & efi::MEMORY_RO == 0, "RO should not be set on untouched pages");
         });
@@ -1397,6 +1408,7 @@ mod tests {
     #[test]
     fn test_set_memory_space_attributes_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             let s = set_memory_space_attributes(0x2421000, 0x1000, efi::MEMORY_WB);
             assert_eq!(s, efi::Status::NOT_READY);
@@ -1424,6 +1436,7 @@ mod tests {
     #[test]
     fn test_get_memory_space_map_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
 
             let mut out_count: usize = 0;
@@ -1437,6 +1450,7 @@ mod tests {
     #[test]
     fn test_get_memory_space_map_success_and_contents() {
         with_locked_state(|| {
+            // SAFETY: Test allocator reset is safe under the test lock.
             unsafe {
                 crate::test_support::reset_allocators();
             }
@@ -1454,6 +1468,7 @@ mod tests {
             assert_eq!(out_count, expected.len());
             assert!(!out_ptr.is_null());
 
+            // SAFETY: out_ptr/out_count come from get_memory_space_map and are valid for reads.
             let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
             assert_eq!(out_slice, expected.as_slice());
 
@@ -1464,6 +1479,7 @@ mod tests {
     #[test]
     fn test_get_memory_space_map_with_additional_regions() {
         with_locked_state(|| {
+            // SAFETY: Test allocator reset is safe under the test lock.
             unsafe {
                 crate::test_support::reset_allocators();
             }
@@ -1488,6 +1504,7 @@ mod tests {
             assert_eq!(out_count, expected.len());
 
             // Verify first and last few entries match (order should be the same as GCD enumeration)
+            // SAFETY: out_ptr/out_count come from get_memory_space_map and are valid for reads.
             let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
             assert_eq!(out_slice, expected.as_slice());
 
@@ -1513,6 +1530,7 @@ mod tests {
     #[test]
     fn test_get_io_space_map_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
 
             let mut out_count: usize = 0;
@@ -1526,6 +1544,7 @@ mod tests {
     #[test]
     fn test_get_io_space_map_success_and_contents() {
         with_locked_state(|| {
+            // SAFETY: Test allocator reset is safe under the test lock.
             unsafe {
                 crate::test_support::reset_allocators();
             }
@@ -1542,6 +1561,7 @@ mod tests {
             assert_eq!(out_count, expected.len());
             assert!(!out_ptr.is_null());
 
+            // SAFETY: out_ptr/out_count are returned by get_io_space_map and are valid for that length.
             let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
             assert_eq!(out_slice, expected.as_slice());
 
@@ -1552,6 +1572,7 @@ mod tests {
     #[test]
     fn test_get_io_space_map_with_additional_regions() {
         with_locked_state(|| {
+            // SAFETY: Test allocator reset is safe under the test lock.
             unsafe {
                 crate::test_support::reset_allocators();
             }
@@ -1571,6 +1592,7 @@ mod tests {
             assert_eq!(s, efi::Status::SUCCESS);
             assert_eq!(out_count, expected.len());
 
+            // SAFETY: out_ptr/out_count are returned by get_memory_space_map and are valid for that length.
             let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
             assert_eq!(out_slice, expected.as_slice());
 
@@ -1597,6 +1619,7 @@ mod tests {
             // Verify capabilities include the requested bits
             let mut d = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
             assert_eq!(get_memory_space_descriptor(base, d.as_mut_ptr()), efi::Status::SUCCESS);
+            // SAFETY: get_memory_space_descriptor initialized d on SUCCESS.
             let d = unsafe { d.assume_init() };
             assert_eq!(d.base_address, base);
             assert!(d.capabilities & caps == caps, "Expected caps 0x{:x} to be set in 0x{:x}", caps, d.capabilities);
@@ -1615,6 +1638,7 @@ mod tests {
     fn test_set_memory_space_capabilities_not_ready() {
         with_locked_state(|| {
             // Force GCD to an uninitialized state
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             let s = set_memory_space_capabilities(0x200000, 0x1000, efi::MEMORY_WB);
             assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is reset");
@@ -1670,6 +1694,7 @@ mod tests {
             let mut desc = core::mem::MaybeUninit::<dxe_services::IoSpaceDescriptor>::uninit();
             let s = get_io_space_descriptor(base, desc.as_mut_ptr());
             assert_eq!(s, efi::Status::SUCCESS);
+            // SAFETY: get_io_space_descriptor initialized desc on SUCCESS.
             let desc = unsafe { desc.assume_init() };
             assert_eq!(desc.base_address, base);
             assert_eq!(desc.length, len);
@@ -1687,6 +1712,7 @@ mod tests {
 
             let mut desc = core::mem::MaybeUninit::<dxe_services::IoSpaceDescriptor>::uninit();
             assert_eq!(get_io_space_descriptor(base, desc.as_mut_ptr()), efi::Status::SUCCESS);
+            // SAFETY: get_io_space_descriptor initialized desc on SUCCESS.
             let desc = unsafe { desc.assume_init() };
             assert_eq!(desc.base_address, base);
             assert_eq!(desc.length, len);
@@ -1716,6 +1742,7 @@ mod tests {
     fn test_add_io_space_not_ready() {
         with_locked_state(|| {
             // Force GCD to uninitialized state for IO
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             let s = add_io_space(GcdIoType::Io, 0x1000, 0x10);
             assert_eq!(s, efi::Status::NOT_READY);
@@ -1753,6 +1780,7 @@ mod tests {
     #[test]
     fn test_allocate_io_space_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             let mut out: efi::PhysicalAddress = 0;
             let s = allocate_io_space(
@@ -1941,6 +1969,7 @@ mod tests {
     #[test]
     fn test_free_io_space_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             let s = free_io_space(0x1000, 0x10);
             assert_eq!(s, efi::Status::NOT_READY);
@@ -2037,6 +2066,7 @@ mod tests {
     #[test]
     fn test_remove_io_space_not_ready() {
         with_locked_state(|| {
+            // SAFETY: Resetting the global GCD is safe under the test lock.
             unsafe { GCD.reset() };
             assert_eq!(remove_io_space(0x1000, 0x10), efi::Status::NOT_READY);
         });
@@ -2103,6 +2133,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
             // Install the FV to obtain a real handle
+            // SAFETY: FV buffer is owned by the test and passed as a valid pointer to the dispatcher.
             unsafe { CORE.pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
@@ -2128,7 +2159,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
             // Any GUID is fine; there are no pending drivers in this test harness
-            let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
+            let guid: efi::Guid = patina::guids::ZERO.into();
             let s = MockCore::schedule_efiapi(core::ptr::null_mut(), &guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
@@ -2148,6 +2179,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
             // Install the FV to obtain a real handle
+            // SAFETY: FV buffer is owned by the test and passed as a valid pointer to the dispatcher.
             let handle = unsafe { CORE.pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
@@ -2261,6 +2293,7 @@ mod tests {
             assert_eq!(st_raw.number_of_table_entries, 1);
             assert!(!st_raw.configuration_table.is_null());
 
+            // SAFETY: configuration_table points to `number_of_table_entries` elements set by init_system_table.
             let entries =
                 unsafe { core::slice::from_raw_parts(st_raw.configuration_table, st_raw.number_of_table_entries) };
 
@@ -2271,6 +2304,7 @@ mod tests {
             assert!(!entry.vendor_table.is_null(), "DXE Services vendor_table pointer should be non-null");
 
             // Validate the contents of the installed DXE Services table
+            // SAFETY: vendor_table points to a DXE Services table installed by CORE.install_dxe_services_table.
             let dxe_tbl = unsafe { &*(entry.vendor_table as *const dxe_services::DxeServicesTable) };
 
             // Header signature/revision should match what install_dxe_services_table sets
@@ -2278,8 +2312,10 @@ mod tests {
             assert_eq!(dxe_tbl.header.revision, efi::BOOT_SERVICES_REVISION);
 
             // Recompute CRC32 by zeroing the field in a local copy
+            // SAFETY: dxe_tbl is a valid reference with signature and revision checked above.
             let mut copy = unsafe { core::ptr::read(dxe_tbl) };
             copy.header.crc32 = 0;
+            // SAFETY: copy is a local value. Creating a slice from its pointer and size is valid.
             let crc = crc32fast::hash(unsafe {
                 core::slice::from_raw_parts(
                     (&copy as *const dxe_services::DxeServicesTable) as *const u8,

@@ -286,7 +286,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             file.fv_attributes()
         };
 
-        Ok((file.name(), attributes, file.data().len(), file.file_type_raw()))
+        Ok((file.name().into_inner(), attributes, file.data().len(), file.file_type_raw()))
     }
 
     fn new_fvb_protocol(parent_handle: Option<efi::Handle>) -> Box<pi::protocols::firmware_volume_block::Protocol> {
@@ -336,7 +336,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // install the protocol and return status
         core_install_protocol_interface(
             handle,
-            pi::protocols::firmware_volume_block::PROTOCOL_GUID,
+            pi::protocols::firmware_volume_block::PROTOCOL_GUID.into_inner(),
             protocol_ptr.as_ptr(),
         )
     }
@@ -358,7 +358,11 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         self.fv_metadata.insert(protocol_ptr.addr(), metadata);
 
         // install the protocol and return status
-        core_install_protocol_interface(handle, pi::protocols::firmware_volume::PROTOCOL_GUID, protocol_ptr.as_ptr())
+        core_install_protocol_interface(
+            handle,
+            pi::protocols::firmware_volume::PROTOCOL_GUID.into_inner(),
+            protocol_ptr.as_ptr(),
+        )
     }
 
     /// Installs both the FVB and FV protocols for a firmware volume at the specified base address.
@@ -410,7 +414,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         let device_path_ptr = match fv.fv_name() {
             Some(fv_name) => {
                 // Construct FvPiWgDevicePath
-                let device_path = FvPiWgDevicePath::new_fv(fv_name);
+                let device_path = FvPiWgDevicePath::new_fv(fv_name.into_inner());
                 Box::into_raw(Box::new(device_path)) as *mut c_void
             }
             None => {
@@ -630,6 +634,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
         let local_buffer_size = unsafe { buffer_size.read_unaligned() };
         // SAFETY: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
+        // SAFETY: name_guid is checked to be non-null above. The caller must ensure
+        // that it points to a valid GUID (as per the C interface).
         let name = unsafe { name_guid.read_unaligned() };
 
         let this = Self::instance();
@@ -742,6 +748,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
         // buffer are valid.
         let mut local_buffer_size = unsafe { buffer_size.read_unaligned() };
+        // SAFETY: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
+        // buffer are valid (as per the C interface).
         let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
         if local_buffer_ptr.is_null() {
@@ -924,8 +932,8 @@ mod tests {
                     header,
                     base_address: 0,
                     length: 0x8000,
-                    fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
-                    file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+                    fv_name: patina::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+                    file_name: patina::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
                 }
             }
             fn gen_firmware_volume() -> hob::FirmwareVolume {
@@ -1042,13 +1050,14 @@ mod tests {
             //let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
 
             /* Instance 2 - Create a FV  interface with Bad physical address to handle Error cases. */
-            let mut fv_interface3 = MockProtocolData::new_fv_protocol(parent_handle);
+            let fv_interface3 = MockProtocolData::new_fv_protocol(parent_handle);
 
             let fv_ptr3 = NonNull::from(&*fv_interface3).cast::<c_void>();
             let fv_ptr3_const = fv_ptr3.cast::<pi::protocols::firmware_volume::Protocol>().as_ptr();
 
-            /* Corrupt the base address to cover error conditions  */
-            let base_no2: u64 = fv_interface3.as_mut() as *mut _ as u64 + 0x1000;
+            /* Allocate a readable buffer with invalid content (no valid _FVH signature) */
+            let bad_fv_buf = vec![0u8; size_of::<fv::Header>()].leak();
+            let base_no2: u64 = bad_fv_buf.as_ptr() as u64;
             let metadata2 = Metadata::new_fv(fv_interface3, base_no2);
             //save the protocol structure we're about to install in the private data.
             CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr3.addr(), metadata2);
@@ -1794,6 +1803,7 @@ mod tests {
         test_support::with_global_lock(|| {
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
+            // SAFETY: Initializes the test GCD state for this test scope only.
             unsafe { test_support::init_test_gcd(None) };
 
             let fv_interface = MockProtocolData::new_fv_protocol(parent_handle);
@@ -1808,14 +1818,14 @@ mod tests {
             // functions it calls. This unsafe section encompasses all of the logic for the remaining
             // test since this is test code.
             unsafe {
-                // Use a known file GUID from the test FV
+                // Use a known file GUID(PrintDxe) from the test FV
                 let mut guid: efi::Guid = efi::Guid::from_fields(
-                    0x1fa1f39e,
-                    0xfeff,
-                    0x4aae,
-                    0xbd,
-                    0x7b,
-                    &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
+                    0x79E4A61C,
+                    0xED73,
+                    0x4312,
+                    0x94,
+                    0xFE,
+                    &[0xE3, 0xE7, 0x56, 0x33, 0x62, 0xA9],
                 );
                 let name_guid: *mut efi::Guid = &mut guid;
 

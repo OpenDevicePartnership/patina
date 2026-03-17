@@ -22,7 +22,7 @@ use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
-use patina::error::EfiError;
+use patina::{error::EfiError, log_debug_assert};
 use r_efi::efi;
 
 use crate::{runtime, tpl_mutex};
@@ -215,9 +215,11 @@ struct Event {
     period: Option<u64>,
 }
 
-// SAFETY: This structure is used within a lock on a single core and is not mutated
-// after creation. It is safe to share references to it.
+// SAFETY: Access and mutation of Event instances is serialized by the event DB lock,
+// so shared references are not concurrently accessed without synchronization.
 unsafe impl Sync for crate::event_db::Event {}
+// SAFETY: Access and mutation of Event instances is serialized by the event DB lock,
+// so moving between threads does not introduce data races.
 unsafe impl Send for crate::event_db::Event {}
 
 impl fmt::Debug for Event {
@@ -496,8 +498,7 @@ impl EventDb {
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
             } else {
-                debug_assert!(false, "Event {event:?} not found.");
-                log::error!("Event {event:?} not found.");
+                log_debug_assert!("Event {event:?} not found.");
                 continue;
             };
             if current_event.event_type.is_timer()
@@ -675,8 +676,7 @@ impl SpinLockedEventDb {
                 pending_signals.push(PendingSignals::Event(event));
                 Ok(())
             } else {
-                log::error!("Could not acquire pending signals lock to queue signal.");
-                debug_assert!(false, "Could not acquire pending signals lock to queue signal.");
+                log_debug_assert!("Could not acquire pending signals lock to queue signal.");
                 Ok(())
             }
         }
@@ -810,7 +810,9 @@ impl SpinLockedEventDb {
     }
 }
 
+// SAFETY: SpinLockedEventDb protects internal state with a lock.
 unsafe impl Send for SpinLockedEventDb {}
+// SAFETY: SpinLockedEventDb protects internal state with a lock.
 unsafe impl Sync for SpinLockedEventDb {}
 
 #[cfg(test)]

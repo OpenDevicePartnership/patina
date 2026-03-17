@@ -1,4 +1,3 @@
-extern crate alloc;
 use super::unwind::UnwindInfo;
 use crate::{
     byte_reader::ByteReader,
@@ -263,7 +262,7 @@ impl<'a> RuntimeFunction<'a> {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use alloc::vec::Vec;
+    use std::vec::Vec;
 
     const IMAGE_SIZE: usize = 0x2000;
     const PE_POINTER_OFFSET: usize = 0x3C;

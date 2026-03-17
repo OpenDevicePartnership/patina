@@ -34,8 +34,9 @@ struct EfiCpuArchProtocolImpl {
     pub(crate) interrupt_manager: Service<dyn InterruptManager>,
 }
 
+// SAFETY: EfiCpuArchProtocolImpl provides a valid protocol structure with stable GUID.
 unsafe impl ProtocolInterface for EfiCpuArchProtocolImpl {
-    const PROTOCOL_GUID: efi::Guid = PROTOCOL_GUID;
+    const PROTOCOL_GUID: patina::BinaryGuid = PROTOCOL_GUID;
 }
 
 // Helper function to convert a raw mutable pointer to a mutable reference.
@@ -44,6 +45,7 @@ fn get_impl_ref<'a>(this: *const Protocol) -> &'a EfiCpuArchProtocolImpl {
         panic!("Null pointer passed to get_impl_ref()");
     }
 
+    // SAFETY: this is non-null and points to an EfiCpuArchProtocolImpl instance.
     unsafe { &*(this as *const EfiCpuArchProtocolImpl) }
 }
 
@@ -52,6 +54,7 @@ fn get_impl_ref_mut<'a>(this: *mut Protocol) -> &'a mut EfiCpuArchProtocolImpl {
         panic!("Null pointer passed to get_impl_ref_mut()");
     }
 
+    // SAFETY: this is non-null and points to an EfiCpuArchProtocolImpl instance.
     unsafe { &mut *(this as *mut EfiCpuArchProtocolImpl) }
 }
 

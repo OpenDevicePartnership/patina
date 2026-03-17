@@ -25,7 +25,6 @@ use crate::{
 
 use alloc::vec::Vec;
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
-use r_efi::efi;
 
 /// Zero-copy view over a Firmware File System (FFS) file backed by a byte slice.
 ///
@@ -60,7 +59,7 @@ impl<'a> FileRef<'a> {
     /// use patina_ffs::section::{Section, SectionHeader};
     ///
     /// // Build a file and then parse the resulting bytes back.
-    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let guid = patina::guids::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// let section = Section::new_from_header_with_data(
@@ -155,7 +154,7 @@ impl<'a> FileRef<'a> {
     }
 
     /// The file name GUID from the FFS header.
-    pub fn name(&self) -> efi::Guid {
+    pub fn name(&self) -> patina::BinaryGuid {
         self.header.name
     }
 
@@ -246,7 +245,7 @@ impl<'a> FileRef<'a> {
     /// }
     ///
     /// // Build a simple file containing a single RAW section and parse it back.
-    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let guid = patina::guids::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// let section = Section::new_from_header_with_data(
@@ -294,7 +293,7 @@ impl fmt::Debug for FileRef<'_> {
 /// (e.g., data checksum, large-file), select erase polarity, and then
 /// [`serialize`](Self::serialize) into a well-formed byte stream.
 pub struct File {
-    name: efi::Guid,
+    name: patina::BinaryGuid,
     file_type_raw: u8,
     attributes: u8,
     erase_polarity: bool,
@@ -303,7 +302,7 @@ pub struct File {
 
 impl File {
     /// Create a new, empty FFS file builder with the given name and type.
-    pub fn new(name: efi::Guid, file_type_raw: u8) -> Self {
+    pub fn new(name: patina::BinaryGuid, file_type_raw: u8) -> Self {
         Self { name, file_type_raw, attributes: 0, erase_polarity: true, sections: Vec::new() }
     }
 
@@ -321,7 +320,7 @@ impl File {
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader};
     ///
-    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let guid = patina::guids::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// file.set_data_checksum(true);
     ///
@@ -532,7 +531,7 @@ impl File {
     ///     }
     /// }
     ///
-    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let guid = patina::guids::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// file.sections_mut().push(Section::new_from_header_with_data(
@@ -568,7 +567,7 @@ impl File {
     ///     }
     /// }
     ///
-    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let guid = patina::guids::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// file.sections_mut().push(Section::new_from_header_with_data(
@@ -614,7 +613,7 @@ impl File {
     }
 
     /// The file name GUID set for this file.
-    pub fn name(&self) -> efi::Guid {
+    pub fn name(&self) -> patina::BinaryGuid {
         self.name
     }
 

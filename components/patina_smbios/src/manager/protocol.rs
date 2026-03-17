@@ -18,10 +18,7 @@ use core::ffi::c_char;
 use patina::{tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
-use crate::{
-    error::SmbiosError,
-    service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType},
-};
+use crate::service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType};
 
 use super::core::SmbiosManager;
 
@@ -51,8 +48,7 @@ pub(super) struct SmbiosProtocolInternal {
 // SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
 // must match the SMBIOS protocol interface with function pointers in the correct order.
 unsafe impl ProtocolInterface for SmbiosProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
 }
 
 type SmbiosAdd =
@@ -199,21 +195,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::EmptyStringInPool) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::RecordTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-            Err(SmbiosError::MalformedRecordHeader) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::InvalidStringPoolTermination) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::StringPoolTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-            Err(SmbiosError::HandleExhausted) => efi::Status::OUT_OF_RESOURCES,
-            Err(SmbiosError::HandleOutOfRange) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::HandleInUse) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::AllocationFailed) => efi::Status::OUT_OF_RESOURCES,
-            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-            Err(e) => {
-                log::error!("[SMBIOS Add] Error: {:?}", e);
-                efi::Status::DEVICE_ERROR
-            }
+            Err(e) => e.into(),
         }
     }
 
@@ -263,11 +245,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
-            Err(SmbiosError::StringIndexOutOfRange) => efi::Status::INVALID_PARAMETER,
-            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-            Err(_) => efi::Status::DEVICE_ERROR,
+            Err(e) => e.into(),
         }
     }
 
@@ -297,8 +275,7 @@ impl SmbiosProtocol {
 
                 efi::Status::SUCCESS
             }
-            Err(SmbiosError::RecordNotFound) => efi::Status::NOT_FOUND,
-            Err(_) => efi::Status::DEVICE_ERROR,
+            Err(e) => e.into(),
         }
     }
 
@@ -384,7 +361,7 @@ impl SmbiosProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager::SmbiosManager;
+    use crate::{error::SmbiosError, manager::SmbiosManager};
     extern crate std;
     use std::vec::Vec;
 
@@ -496,8 +473,7 @@ mod tests {
         use patina::uefi_protocol::ProtocolInterface;
 
         // Verify the GUID matches the EDK2 SMBIOS protocol GUID
-        let expected_guid =
-            efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+        let expected_guid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
 
         assert_eq!(SmbiosProtocol::PROTOCOL_GUID, expected_guid);
     }
