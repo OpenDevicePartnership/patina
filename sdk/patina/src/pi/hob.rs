@@ -1009,15 +1009,12 @@ pub(crate) mod tests {
     use crate::pi::{
         BootMode, hob,
         hob::{
-            Capsule, Cpu, FirmwareVolume, MemoryAllocation, PhaseHandoffInformationTable,
-            ResourceDescriptor, get_pi_hob_list_size,
+            Capsule, Cpu, FirmwareVolume, MemoryAllocation, PhaseHandoffInformationTable, ResourceDescriptor,
+            get_pi_hob_list_size,
         },
     };
 
-    use core::{
-        mem::size_of,
-        slice::from_raw_parts,
-    };
+    use core::{mem::size_of, slice::from_raw_parts};
 
     use std::vec::Vec;
 

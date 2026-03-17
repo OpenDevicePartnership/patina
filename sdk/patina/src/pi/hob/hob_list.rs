@@ -77,15 +77,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::{
-    ffi::c_void,
-    mem::self,
-    slice,
-};
 use crate::pi::hob::{
-    Hob, HobTrait, ResourceDescriptorV2, ResourceDescriptor, Cpu, Capsule, FirmwareVolume, FirmwareVolume2, FirmwareVolume3, GuidHob, MemoryAllocation,MemoryAllocationModule, PhaseHandoffInformationTable, header,
-    END_OF_HOB_LIST, HANDOFF, MEMORY_ALLOCATION, RESOURCE_DESCRIPTOR, GUID_EXTENSION, FV, FV2, FV3, CPU, UEFI_CAPSULE, RESOURCE_DESCRIPTOR2,
+    CPU, Capsule, Cpu, END_OF_HOB_LIST, FV, FV2, FV3, FirmwareVolume, FirmwareVolume2, FirmwareVolume3, GUID_EXTENSION,
+    GuidHob, HANDOFF, Hob, HobTrait, MEMORY_ALLOCATION, MemoryAllocation, MemoryAllocationModule,
+    PhaseHandoffInformationTable, RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2, ResourceDescriptor, ResourceDescriptorV2,
+    UEFI_CAPSULE, header,
 };
+use core::{ffi::c_void, mem, slice};
 
 use indoc::indoc;
 
@@ -608,9 +606,10 @@ mod tests {
             ResourceDescriptor, get_pi_hob_list_size,
             hob_list::HobList,
             tests::{
-                gen_cpu, gen_capsule, gen_firmware_volume, gen_firmware_volume2, gen_firmware_volume3, gen_guid_hob,
-                gen_memory_allocation, gen_memory_allocation_module, gen_resource_descriptor, gen_resource_descriptor_v2,
-                gen_end_of_hoblist, guid_hob_refs, gen_phase_handoff_information_table
+                gen_capsule, gen_cpu, gen_end_of_hoblist, gen_firmware_volume, gen_firmware_volume2,
+                gen_firmware_volume3, gen_guid_hob, gen_memory_allocation, gen_memory_allocation_module,
+                gen_phase_handoff_information_table, gen_resource_descriptor, gen_resource_descriptor_v2,
+                guid_hob_refs,
             },
         },
     };
