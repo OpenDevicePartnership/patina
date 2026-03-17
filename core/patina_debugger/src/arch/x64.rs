@@ -10,7 +10,6 @@ use gdbstub::{
 };
 use patina_internal_cpu::interrupts::ExceptionContext;
 use patina_mtrr::Mtrr;
-use patina_paging::PagingType;
 
 use super::{DebuggerArch, UefiArchRegs};
 use crate::{ExceptionInfo, ExceptionType};
@@ -148,25 +147,11 @@ impl DebuggerArch for X64Arch {
     }
 
     fn get_page_table() -> Result<Self::PageTable, ()> {
-        let cr3: u64;
-        // SAFETY: This is simply reading the CR3 register, which is safe.
-        unsafe { asm!("mov {}, cr3", out(reg) cr3) };
-        let cr4: u64;
-        // SAFETY: This is simply reading the CR4 register, which is safe.
-        unsafe { asm!("mov {}, cr4", out(reg) cr4) };
-
-        // Check CR4 to determine if we are using 4-level or 5-level paging.
-        let paging_type = { if cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
-
-        // SAFETY: The CR3 is currently being should be identity mapped and so
-        // should point to a valid page table.
+        // SAFETY: We are operating in an exception context with interrupts disabled. No other entity is altering
+        // the page tables.
         unsafe {
-            patina_paging::x64::X64PageTable::from_existing(
-                cr3,
-                patina_paging::page_allocator::PageAllocatorStub,
-                paging_type,
-            )
-            .map_err(|_| ())
+            patina_paging::x64::X64PageTable::open_active(patina_paging::page_allocator::PageAllocatorStub)
+                .map_err(|_| ())
         }
     }
 

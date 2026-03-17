@@ -216,19 +216,11 @@ impl DebuggerArch for Aarch64Arch {
     }
 
     fn get_page_table() -> Result<Self::PageTable, ()> {
-        // TODO: Check for EL1?
-        let ttbr0_el2 = read_sysreg!(ttbr0_el2);
-
-        // SAFETY: We are creating from the existing page table root, so the
-        // page tables should be a valid structure. Using PageAllocatorStub
-        // ensures that no allocations are attempted.
+        // SAFETY: We are operating in an exception context with interrupts disabled. No other entity is altering
+        // the page tables.
         unsafe {
-            patina_paging::aarch64::AArch64PageTable::from_existing(
-                ttbr0_el2,
-                patina_paging::page_allocator::PageAllocatorStub,
-                patina_paging::PagingType::Paging4Level,
-            )
-            .map_err(|_| ())
+            patina_paging::aarch64::AArch64PageTable::open_active(patina_paging::page_allocator::PageAllocatorStub)
+                .map_err(|_| ())
         }
     }
 

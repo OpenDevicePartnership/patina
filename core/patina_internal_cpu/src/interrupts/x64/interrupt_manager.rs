@@ -16,7 +16,7 @@ use patina::{
 };
 #[cfg(target_arch = "x86_64")]
 use patina_mtrr::Mtrr;
-use patina_paging::{PageTable, PagingType};
+use patina_paging::PageTable;
 use patina_stacktrace::{StackFrame, StackTrace};
 
 use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x64::ExceptionContextX64};
@@ -116,11 +116,7 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
 
     (x64_context as &ExceptionContextX64).dump_system_context_registers();
 
-    let paging_type =
-        { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
-
-    // SAFETY: CR3 and the paging type are correct as they are from the current context.
-    unsafe { dump_pte(x64_context.cr2, x64_context.cr3, paging_type) };
+    dump_pte(x64_context.cr2);
 
     log::error!("Dumping Exception Stack Trace:");
     let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
@@ -178,21 +174,17 @@ fn interpret_gp_fault_exception_data(exception_data: u64) {
 
 // There is no value in coverage for this function.
 #[coverage(off)]
-/// Dumps the page table entries for the given CR2 and CR3 values.
+/// Dumps the page table entries for the given CR2. This uses the active page tables as they should be the same as the
+/// ones at the time of the fault.
 ///
-/// ## Safety
-///
-/// The caller is responsible for ensuring that the CR3 value is a valid and well-formed page table base address and
-/// matches the paging type requested.
-unsafe fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
-    // SAFETY: Caller must ensure cr3 & paging type are correct.
-    if let Ok(pt) = unsafe {
-        patina_paging::x64::X64PageTable::from_existing(
-            cr3,
-            patina_paging::page_allocator::PageAllocatorStub,
-            paging_type,
-        )
-    } {
+fn dump_pte(cr2: u64) {
+    if let Ok(pt) =
+        // SAFETY: We are in an exception handler and want to dump the page tables, there is no other active code
+        // modifying the page tables.
+        unsafe {
+            patina_paging::x64::X64PageTable::open_active(patina_paging::page_allocator::PageAllocatorStub)
+        }
+    {
         let _ = pt.dump_page_tables(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
     }
 

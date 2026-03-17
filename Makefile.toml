@@ -125,6 +125,23 @@ private = true
 command = "cargo"
 args = ["test", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
+[tasks.check-no-default-features-code]
+description = "Checks rust code compiles without default features."
+private = true
+command = "cargo"
+args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check-no-default-features-tests]
+description = "Checks rust test code compiles without default features."
+private = true
+command = "cargo"
+args = ["test", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check-no-default-features]
+description = "Checks rust code and tests compile without default features to catch feature-gate regressions."
+clear = true
+run_task = [{ name = ["check-no-default-features-code", "check-no-default-features-tests"], parallel = true }]
+
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
 clear = true
@@ -311,6 +328,7 @@ dependencies = [
     "deny",
     "cspell",
     "clippy",
+    "check-no-default-features",
     "build",
     "build-x64",
     "build-aarch64",
