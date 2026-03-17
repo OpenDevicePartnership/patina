@@ -1004,7 +1004,6 @@ pub struct EFiMemoryTypeInformation {
 }
 
 #[cfg(test)]
-/// make this fucntion available to the test module in this crate
 pub(crate) mod tests {
     use crate::pi::{
         BootMode, hob,
