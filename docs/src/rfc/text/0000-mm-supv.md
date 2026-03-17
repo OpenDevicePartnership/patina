@@ -89,8 +89,8 @@ performance and simplified implementation. The system will panic if 1GB page sup
 
   1. __Standalone MM__: The MM supervisor will be based on the Standalone MM model, which provides better isolation and
 security for MM operations. All MM drivers should be compatible with the Standalone MM model.
-  1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`. This
-requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
+  1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`.
+This requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
   1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
 environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
