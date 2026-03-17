@@ -214,6 +214,11 @@ impl DevicePath {
         self.buffer.len()
     }
 
+    /// Return the raw byte representation of the device path.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer
+    }
+
     /// Return the number of nodes in the device path.
     pub fn node_count(&self) -> usize {
         self.iter().count()

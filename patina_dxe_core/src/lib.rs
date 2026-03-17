@@ -538,8 +538,12 @@ impl<P: PlatformInfo> Core<P> {
             st.checksum_all();
 
             // Install HobList configuration table
-            config_tables::core_install_configuration_table(patina::guids::HOB_LIST.into_inner(), physical_hob_list, st)
-                .expect("Unable to create configuration table due to invalid table entry.");
+            config_tables::core_install_configuration_table(
+                patina::guids::HOB_LIST.into_inner(),
+                physical_hob_list,
+                st,
+            )
+            .expect("Unable to create configuration table due to invalid table entry.");
 
             // Install Memory Type Info configuration table.
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");

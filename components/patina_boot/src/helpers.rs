@@ -18,14 +18,18 @@ use core::ptr;
 use patina::{
     boot_services::{BootServices, event::EventType, protocol_handler::HandleSearchType, tpl::Tpl},
     device_path::{
-        node_defs::DevicePathType,
+        node_defs::{DevicePathType, HardDrive, MediaSubType},
         paths::{DevicePath, DevicePathBuf},
     },
     error::{EfiError, Result},
-    guids::EVENT_GROUP_END_OF_DXE,
+    guids::{EFI_GLOBAL_VARIABLE, EVENT_GROUP_END_OF_DXE},
     runtime_services::RuntimeServices,
 };
-use r_efi::{efi, protocols::simple_text_input, system::EVENT_GROUP_READY_TO_BOOT};
+use r_efi::{
+    efi,
+    protocols::simple_text_input,
+    system::{EVENT_GROUP_READY_TO_BOOT, VARIABLE_BOOTSERVICE_ACCESS, VARIABLE_NON_VOLATILE, VARIABLE_RUNTIME_ACCESS},
+};
 
 /// Watchdog timeout in seconds per UEFI Specification Section 3.1.2.
 const WATCHDOG_TIMEOUT_SECONDS: usize = 300; // 5 minutes
@@ -67,7 +71,6 @@ pub fn detect_hotkey<B: BootServices>(boot_services: &B, hotkey_scancode: u16) -
 ///
 /// - `handles` must contain valid handles obtained from `locate_handle_buffer`
 /// - Each handle must support the `SimpleTextInput` protocol for `handle_protocol` to succeed
-#[coverage(off)] // Uses raw protocol function pointers - tested via integration tests
 unsafe fn detect_hotkey_from_handles<B: BootServices>(
     boot_services: &B,
     handles: &[efi::Handle],
@@ -167,12 +170,6 @@ pub fn boot_from_device_path<B: BootServices>(
 ///
 /// Returns `Ok(())` when device topology enumeration is complete.
 ///
-/// # Coverage
-///
-/// This function is marked `#[coverage(off)]` because `BootServicesBox` return
-/// values from `locate_handle_buffer` cannot be created in unit tests. The
-/// function is tested via integration tests on real hardware/emulators.
-#[coverage(off)] // BootServicesBox return type cannot be mocked - tested via integration tests
 pub fn connect_all<B: BootServices>(boot_services: &B) -> Result<()> {
     // Loop until the number of handles stabilizes, indicating device topology is complete.
     // This is needed because connecting a PCI bus creates new handles for PCI devices,
@@ -268,35 +265,101 @@ pub fn signal_ready_to_boot<B: BootServices>(boot_services: &B) -> Result<()> {
     Ok(())
 }
 
-/// Discover console devices (stub implementation).
+/// Discover console devices and write ConIn, ConOut, and ErrOut UEFI variables.
 ///
-/// This is a placeholder that locates GOP and SimpleTextInput handles but does
-/// not yet write the `ConIn`, `ConOut`, and `ErrOut` UEFI variables.
+/// Enumerates all handles supporting console-related protocols (SimpleTextInput,
+/// SimpleTextOutput, GraphicsOutput) and writes multi-instance device paths to the
+/// corresponding UEFI global variables. These variables allow UEFI applications and
+/// OS loaders to discover available console devices.
 ///
-/// Platforms requiring full console variable support should implement this
-/// functionality or use platform-specific console initialization.
+/// Individual variable failures are non-fatal — the function logs a warning and
+/// continues with the remaining variables.
 ///
 /// # Arguments
 ///
-/// * `boot_services` - Boot services interface
-/// * `runtime_services` - Runtime services interface (unused in stub)
-#[allow(unused_variables)]
+/// * `boot_services` - Boot services interface for handle enumeration
+/// * `runtime_services` - Runtime services interface for writing UEFI variables
 pub fn discover_console_devices<B: BootServices, R: RuntimeServices>(
     boot_services: &B,
     runtime_services: &R,
 ) -> Result<()> {
-    // Stub: Locate handles to verify protocols exist, but don't write variables.
-    // Full implementation would create multi-instance device paths and write
-    // ConIn/ConOut/ErrOut variables via runtime_services.set_variable().
-    let _gop_handles = boot_services
-        .locate_handle_buffer(HandleSearchType::ByProtocol(&efi::protocols::graphics_output::PROTOCOL_GUID))
-        .ok();
+    let attrs = VARIABLE_NON_VOLATILE | VARIABLE_BOOTSERVICE_ACCESS | VARIABLE_RUNTIME_ACCESS;
 
-    let _input_handles = boot_services
-        .locate_handle_buffer(HandleSearchType::ByProtocol(&efi::protocols::simple_text_input::PROTOCOL_GUID))
-        .ok();
+    // UTF-16 null-terminated variable names
+    let con_in_name: &[u16] = &[b'C' as u16, b'o' as u16, b'n' as u16, b'I' as u16, b'n' as u16, 0];
+    let con_out_name: &[u16] = &[b'C' as u16, b'o' as u16, b'n' as u16, b'O' as u16, b'u' as u16, b't' as u16, 0];
+    let err_out_name: &[u16] = &[b'E' as u16, b'r' as u16, b'r' as u16, b'O' as u16, b'u' as u16, b't' as u16, 0];
+
+    let console_vars: &[(&str, &[u16], &[&'static efi::Guid])] = &[
+        ("ConIn", con_in_name, &[&simple_text_input::PROTOCOL_GUID]),
+        (
+            "ConOut",
+            con_out_name,
+            &[&efi::protocols::simple_text_output::PROTOCOL_GUID, &efi::protocols::graphics_output::PROTOCOL_GUID],
+        ),
+        ("ErrOut", err_out_name, &[&efi::protocols::simple_text_output::PROTOCOL_GUID]),
+    ];
+
+    for &(label, name, guids) in console_vars {
+        let device_path = build_multi_instance_device_path(boot_services, guids);
+
+        if let Some(dp) = device_path {
+            let bytes = dp.as_ref().as_bytes().to_vec();
+
+            if let Err(e) = runtime_services.set_variable(name, &EFI_GLOBAL_VARIABLE, attrs, &bytes) {
+                log::error!("{label}: failed to set variable: {e:?}");
+            }
+        }
+    }
 
     Ok(())
+}
+
+/// Build a multi-instance device path from all handles supporting the given protocols.
+///
+/// For each protocol GUID, locates all handles via `locate_handle_buffer` and extracts
+/// their device paths, combining them into a single multi-instance device path separated
+/// by `EndInstance` nodes.
+///
+fn build_multi_instance_device_path<B: BootServices>(
+    boot_services: &B,
+    protocol_guids: &[&'static efi::Guid],
+) -> Option<DevicePathBuf> {
+    let mut result: Option<DevicePathBuf> = None;
+    let mut seen_handles: Vec<efi::Handle> = Vec::new();
+
+    for &guid in protocol_guids {
+        let handles = match boot_services.locate_handle_buffer(HandleSearchType::ByProtocol(guid)) {
+            Ok(handles) => handles,
+            Err(_) => continue,
+        };
+
+        for &handle in handles.iter() {
+            if seen_handles.contains(&handle) {
+                continue;
+            }
+            seen_handles.push(handle);
+            // SAFETY: handle is valid from locate_handle_buffer, requesting device path protocol.
+            let dp_ptr = match unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }
+            {
+                Ok(ptr) => ptr,
+                Err(_) => continue,
+            };
+
+            // SAFETY: The device path pointer comes from a valid protocol interface.
+            let device_path = match unsafe { DevicePath::try_from_ptr(dp_ptr as *const _ as *const u8) } {
+                Ok(dp) => dp,
+                Err(_) => continue,
+            };
+
+            match &mut result {
+                Some(multi) => multi.append_device_path_instances(device_path),
+                None => result = Some(DevicePathBuf::from(device_path)),
+            }
+        }
+    }
+
+    result
 }
 
 /// No-op event callback for signal-only events.
@@ -325,9 +388,19 @@ pub fn is_partial_device_path(device_path: &DevicePath) -> bool {
         return false;
     };
 
-    // Full paths start with Hardware (1) or ACPI (2) nodes
-    // Partial paths start with Media (4), Messaging (3), or other nodes
+    // Full paths start with Hardware (1) or ACPI (2) nodes.
+    // Media FV/FvFile paths are also complete — LoadImage resolves them directly.
+    // Partial paths start with Media HardDrive (4/1), Messaging (3), or other nodes.
     let node_type = first_node.header.r#type;
+    let node_subtype = first_node.header.sub_type;
+
+    if node_type == DevicePathType::Media as u8
+        && (node_subtype == MediaSubType::PiwgFirmwareFile as u8
+            || node_subtype == MediaSubType::PiwgFirmwareVolume as u8)
+    {
+        return false;
+    }
+
     node_type != DevicePathType::Hardware as u8
         && node_type != DevicePathType::Acpi as u8
         && node_type != DevicePathType::End as u8
@@ -361,46 +434,93 @@ pub fn is_partial_device_path(device_path: &DevicePath) -> bool {
 /// Future enhancements may add support for:
 /// - FilePath-only paths (require filesystem enumeration)
 /// - Messaging node paths without root
-#[coverage(off)] // Uses raw protocol pointers - tested via integration tests
 pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &DevicePath) -> Result<DevicePathBuf> {
     // Return unchanged if already a full path
     if !is_partial_device_path(partial_path) {
         return Ok(partial_path.into());
     }
 
-    // Use LocateDevicePath to find the handle with the best matching device path.
-    // This is more efficient than enumerating all handles manually.
-    let mut device_path_ptr =
-        partial_path as *const DevicePath as *const u8 as *mut efi::protocols::device_path::Protocol;
-    // SAFETY: device_path_ptr points to a valid device path from partial_path.
-    let handle =
-        unsafe { boot_services.locate_device_path(&efi::protocols::device_path::PROTOCOL_GUID, &mut device_path_ptr) }
-            .map_err(EfiError::from)?;
+    // Parse the HardDrive node from the partial path to extract the partition signature.
+    let target_sig = partial_path.iter().find_map(|node| {
+        let hd = HardDrive::try_from_node(&node)?;
+        Some((hd.partition_signature.to_vec(), hd.signature_type))
+    });
 
-    // Get the full device path from the matched handle
-    // SAFETY: handle_protocol is safe when the handle is valid (from locate_device_path)
-    // and we're requesting the device path protocol.
-    let full_dp_ptr = unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }
+    let (target_sig, target_sig_type) = match target_sig {
+        Some(s) => s,
+        None => {
+            log::error!("expand_device_path: no HardDrive node found in partial path");
+            return Err(EfiError::InvalidParameter);
+        }
+    };
+
+    // Collect remaining nodes after the HardDrive node in the partial path.
+    // Typically this is the FilePath node (e.g., \EFI\Boot\BOOTX64.efi).
+    let remaining_nodes: Vec<_> = {
+        let mut past_hd = false;
+        partial_path
+            .iter()
+            .filter(move |node| {
+                if past_hd && node.header.r#type != DevicePathType::End as u8 {
+                    return true;
+                }
+                if HardDrive::try_from_node(node).is_some() {
+                    past_hd = true;
+                }
+                false
+            })
+            .collect()
+    };
+
+    // Enumerate all handles with DevicePath protocol
+    let handles = boot_services
+        .locate_handle_buffer(HandleSearchType::ByProtocol(&efi::protocols::device_path::PROTOCOL_GUID))
         .map_err(EfiError::from)?;
 
-    // SAFETY: The device path pointer comes from a valid protocol interface.
-    let full_path =
-        unsafe { DevicePath::try_from_ptr(full_dp_ptr as *const _ as *const u8) }.map_err(|_| EfiError::DeviceError)?;
+    // Search for a handle whose device path contains a matching HardDrive node
+    for &handle in handles.iter() {
+        // SAFETY: handle is valid from locate_handle_buffer, requesting device path protocol.
+        let dp_ptr = match unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) } {
+            Ok(ptr) => ptr,
+            Err(_) => continue,
+        };
 
-    // Combine the full path prefix with the remaining partial path.
-    // The remaining path (after the matched portion) needs to be appended.
-    let mut result = DevicePathBuf::from(full_path);
+        // SAFETY: The device path pointer comes from a valid protocol interface.
+        let handle_path = match unsafe { DevicePath::try_from_ptr(dp_ptr as *const _ as *const u8) } {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
 
-    // SAFETY: device_path_ptr was updated by locate_device_path to point to the remaining path.
-    let remaining_path = unsafe { DevicePath::try_from_ptr(device_path_ptr as *const u8) };
-    if let Ok(remaining) = remaining_path {
-        // Only append if there's a meaningful remaining path (not just EndEntire)
-        if remaining.iter().any(|node| node.header.r#type != DevicePathType::End as u8) {
-            result.append_device_path(&DevicePathBuf::from(remaining));
+        // Walk the handle's device path looking for a matching HardDrive node.
+        // Collect nodes up to and including the HD node so we truncate any nodes
+        // beyond HD (e.g., filesystem handles may extend past HD with FilePath nodes
+        // that would conflict with remaining_nodes from the partial path).
+        let mut prefix_nodes = Vec::new();
+        let mut found = false;
+        for node in handle_path.iter() {
+            if node.header.r#type == DevicePathType::End as u8 {
+                break;
+            }
+            let is_match = HardDrive::try_from_node(&node).is_some_and(|hd| {
+                hd.partition_signature == target_sig.as_slice() && hd.signature_type == target_sig_type
+            });
+            prefix_nodes.push(node);
+            if is_match {
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            let mut result = DevicePathBuf::from_device_path_node_iter(prefix_nodes.into_iter());
+            let remaining_dp = DevicePathBuf::from_device_path_node_iter(remaining_nodes.into_iter());
+            result.append_device_path(&remaining_dp);
+            return Ok(result);
         }
     }
 
-    Ok(result)
+    log::error!("expand_device_path: no matching partition found in device topology");
+    Err(EfiError::NotFound)
 }
 
 #[cfg(test)]
@@ -408,10 +528,12 @@ mod tests {
     extern crate alloc;
     extern crate std;
 
+    use alloc::boxed::Box;
+
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use patina::{
-        boot_services::MockBootServices,
+        boot_services::{MockBootServices, boxed::BootServicesBox},
         device_path::node_defs::{Acpi, EndEntire, HardDrive},
     };
 
@@ -685,103 +807,403 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_partial_path_success() {
-        use alloc::boxed::Box;
-        use patina::device_path::node_defs::FilePath;
-
-        let guid = [0xAA; 16];
-
-        // Create the partial path: HD(1,GPT,<guid>)/File(\EFI\BOOT\BOOTX64.EFI)
-        let mut partial = build_partial_hd_path(guid);
-        let file_path =
-            DevicePathBuf::from_device_path_node_iter([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")].into_iter());
-        partial.append_device_path(&file_path);
-
-        // Create the full path that the handle will have (ACPI/PCI/HD)
-        let full_handle_path = build_full_path_with_hd(guid);
-
-        // Expected result: ACPI/PCI/HD/File (full path + remaining file path)
-        let mut expected = full_handle_path.clone();
-        expected.append_device_path(&file_path);
-
-        // Clone the device path bytes into a Vec and leak it so we can return a pointer
-        let path_ref: &DevicePath = full_handle_path.as_ref();
-        // SAFETY: path_ref is a valid DevicePath reference and size() returns its exact byte length.
-        let bytes: alloc::vec::Vec<u8> = unsafe {
-            alloc::vec::Vec::from(core::slice::from_raw_parts(path_ref as *const _ as *const u8, path_ref.size()))
-        };
-        let leaked_bytes = Box::leak(bytes.into_boxed_slice());
-        let full_path_ptr: usize = leaked_bytes.as_ptr() as usize;
-
-        // Create a fake handle as usize for Send
-        let fake_handle_addr: usize = 0x12345678;
-
-        let mut mock = MockBootServices::new();
-
-        // Mock locate_device_path to return the fake handle and update the device path pointer
-        // to point to the remaining path (the FilePath node)
-        mock.expect_locate_device_path().returning(move |_protocol, device_path_ptr| {
-            // The device_path_ptr points to the partial path (HD/File)
-            // After matching, it should point to the remaining path (File)
-            // For this test, we'll advance it past the HD node to point at FilePath
-
-            // SAFETY: Test code - we're simulating what locate_device_path does
-            unsafe {
-                // Read the current device path to find the HD node size
-                let current_ptr = *device_path_ptr as *const u8;
-                let header = current_ptr as *const efi::protocols::device_path::Protocol;
-                let hd_node_size = u16::from_le_bytes([(*header).length[0], (*header).length[1]]) as usize;
-
-                // Advance past the HD node to point to FilePath
-                *device_path_ptr = current_ptr.add(hd_node_size) as *mut efi::protocols::device_path::Protocol;
-            }
-            Ok(fake_handle_addr as *mut core::ffi::c_void)
-        });
-
-        // Mock handle_protocol to return the full device path
-        mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>().returning(move |_handle| {
-            // SAFETY: Test code - returning reference to leaked bytes
-            Ok(unsafe { &mut *(full_path_ptr as *mut efi::protocols::device_path::Protocol) })
-        });
-
-        let result = expand_device_path(&mock, &partial);
-        assert!(result.is_ok(), "expand_device_path should succeed");
-
-        let expanded = result.unwrap();
-        assert_eq!(expanded, expected, "Expanded path should match expected full path with file");
-
-        // Note: leaked_bytes is intentionally leaked for the test - in tests this is acceptable
-    }
-
-    #[test]
-    fn test_expand_partial_path_not_found() {
+    fn test_expand_partial_path_locate_fails() {
         let partial = build_partial_hd_path([0xBB; 16]);
 
         let mut mock = MockBootServices::new();
 
-        // Mock locate_device_path to return NOT_FOUND
-        mock.expect_locate_device_path().returning(|_protocol, _device_path_ptr| Err(efi::Status::NOT_FOUND));
+        // locate_handle_buffer fails — no device path handles available
+        mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
 
         let result = expand_device_path(&mock, &partial);
-        assert!(result.is_err(), "expand_device_path should fail when device not found");
+        assert!(result.is_err(), "expand_device_path should fail when no handles found");
+    }
+
+    /// Helper: leaked MockBootServices whose only job is to accept free_pool calls
+    /// when a BootServicesBox is dropped.
+    fn leaked_boot_services_for_box() -> &'static MockBootServices {
+        Box::leak(Box::new({
+            let mut m = MockBootServices::new();
+            m.expect_free_pool().returning(|_| Ok(()));
+            m
+        }))
+    }
+
+    /// Helper: build a BootServicesBox<[Handle]> for use in test mock returns.
+    ///
+    /// Handle storage is intentionally leaked; the mock's free_pool is a no-op.
+    fn mock_handle_buffer(
+        handle_addrs: &[usize],
+        boot_services: &'static MockBootServices,
+    ) -> BootServicesBox<'static, [efi::Handle], MockBootServices> {
+        let handles: Vec<efi::Handle> = handle_addrs.iter().map(|&a| a as efi::Handle).collect();
+        let leaked = handles.leak();
+        // SAFETY: leaked is a valid pointer+length from Vec::leak.
+        unsafe { BootServicesBox::from_raw_parts_mut(leaked.as_mut_ptr(), leaked.len(), boot_services) }
     }
 
     #[test]
-    fn test_expand_partial_path_handle_protocol_fails() {
-        let partial = build_partial_hd_path([0xCC; 16]);
-        let fake_handle_addr: usize = 0x87654321;
+    fn test_build_multi_instance_device_path_single_protocol() {
+        let dp = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter());
+        let dp_addr = dp.as_ref() as *const DevicePath as *const u8 as usize;
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
 
         let mut mock = MockBootServices::new();
 
-        // Mock locate_device_path to succeed
-        mock.expect_locate_device_path()
-            .returning(move |_protocol, _device_path_ptr| Ok(fake_handle_addr as *mut core::ffi::c_void));
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
 
-        // Mock handle_protocol to fail
+        // SAFETY: Test code — returning a pointer to a valid DevicePathBuf kept alive by the test.
+        unsafe {
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .returning(move |_| Ok((dp_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
+
+        let result = build_multi_instance_device_path(&mock, &[&simple_text_input::PROTOCOL_GUID]);
+        assert!(result.is_some());
+
+        let multi = result.unwrap();
+        assert_eq!(multi.as_ref().as_bytes(), dp.as_ref().as_bytes());
+    }
+
+    #[test]
+    fn test_build_multi_instance_device_path_deduplicates_handles() {
+        let dp = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter());
+        let dp_addr = dp.as_ref() as *const DevicePath as *const u8 as usize;
+
+        // Same handle for both protocols — should appear only once
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .times(1) // Called only once despite two GUIDs — handle is deduplicated
+                .returning(move |_| Ok((dp_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
+
+        let result = build_multi_instance_device_path(
+            &mock,
+            &[&efi::protocols::simple_text_output::PROTOCOL_GUID, &efi::protocols::graphics_output::PROTOCOL_GUID],
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_build_multi_instance_device_path_handle_protocol_failure() {
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // handle_protocol fails — handle has no device path
         mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
-            .returning(|_handle| Err(efi::Status::UNSUPPORTED));
+            .returning(|_| Err(efi::Status::UNSUPPORTED));
+
+        let result = build_multi_instance_device_path(&mock, &[&simple_text_input::PROTOCOL_GUID]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_discover_console_devices_sets_variables() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter());
+        let dp_addr = dp.as_ref() as *const DevicePath as *const u8 as usize;
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut boot_mock = MockBootServices::new();
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            boot_mock
+                .expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .returning(move |_| Ok((dp_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
+
+        runtime_mock
+            .expect_set_variable::<Vec<u8>>()
+            .times(3) // ConIn, ConOut, ErrOut
+            .returning(|_, _, _, _| Ok(()));
+
+        let result = discover_console_devices(&boot_mock, &runtime_mock);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_discover_console_devices_set_variable_failure_is_non_fatal() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter());
+        let dp_addr = dp.as_ref() as *const DevicePath as *const u8 as usize;
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut boot_mock = MockBootServices::new();
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            boot_mock
+                .expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .returning(move |_| Ok((dp_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
+
+        // set_variable fails — should still return Ok
+        runtime_mock.expect_set_variable::<Vec<u8>>().returning(|_, _, _, _| Err(efi::Status::OUT_OF_RESOURCES));
+
+        let result = discover_console_devices(&boot_mock, &runtime_mock);
+        assert!(result.is_ok(), "set_variable failure should be non-fatal");
+    }
+
+    // Tests for connect_all
+
+    #[test]
+    fn test_connect_all_stabilizes_after_two_iterations() {
+        let box_mock = leaked_boot_services_for_box();
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        let mut mock = MockBootServices::new();
+
+        // First call returns 1 handle, second returns 2 (new device discovered),
+        // third returns 2 again (stabilized).
+        mock.expect_locate_handle_buffer().returning(move |_| {
+            let n = call_count_clone.fetch_add(1, Ordering::SeqCst);
+            let count = if n == 0 { 1 } else { 2 };
+            let addrs: Vec<usize> = (1..=count).collect();
+            Ok(mock_handle_buffer(&addrs, box_mock))
+        });
+
+        mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+
+        let result = connect_all(&mock);
+        assert!(result.is_ok());
+        // 3 iterations: 1 handle, 2 handles, 2 handles (stabilized)
+        assert_eq!(call_count.load(Ordering::SeqCst), 3);
+    }
+
+    // Tests for detect_hotkey_from_handles
+
+    /// Test extern "efiapi" read_key_stroke that returns F12 then NOT_READY.
+    extern "efiapi" fn mock_read_key_stroke_f12(
+        _this: *mut simple_text_input::Protocol,
+        key: *mut simple_text_input::InputKey,
+    ) -> efi::Status {
+        static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+        let n = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            // SAFETY: key is a valid pointer provided by the caller.
+            unsafe {
+                (*key).scan_code = 0x16; // F12
+                (*key).unicode_char = 0;
+            }
+            efi::Status::SUCCESS
+        } else {
+            efi::Status::NOT_READY
+        }
+    }
+
+    /// Test extern "efiapi" read_key_stroke that always returns NOT_READY.
+    extern "efiapi" fn mock_read_key_stroke_empty(
+        _this: *mut simple_text_input::Protocol,
+        _key: *mut simple_text_input::InputKey,
+    ) -> efi::Status {
+        efi::Status::NOT_READY
+    }
+
+    /// Test extern "efiapi" reset (unused, required for struct completeness).
+    extern "efiapi" fn mock_reset(_this: *mut simple_text_input::Protocol, _extended: efi::Boolean) -> efi::Status {
+        efi::Status::SUCCESS
+    }
+
+    #[test]
+    fn test_detect_hotkey_from_handles_finds_matching_key() {
+        let mut protocol = simple_text_input::Protocol {
+            reset: mock_reset,
+            read_key_stroke: mock_read_key_stroke_f12,
+            wait_for_key: ptr::null_mut(),
+        };
+        let protocol_addr = &mut protocol as *mut _ as usize;
+
+        let mut mock = MockBootServices::new();
+
+        // SAFETY: Test code — returning pointer to a valid Protocol kept alive by the test.
+        unsafe {
+            mock.expect_handle_protocol::<simple_text_input::Protocol>()
+                .returning(move |_| Ok((protocol_addr as *mut simple_text_input::Protocol).as_mut().unwrap()));
+        }
+
+        let handle: efi::Handle = 1usize as efi::Handle;
+        // SAFETY: handle is a test value, mock returns a valid protocol.
+        let result = unsafe { detect_hotkey_from_handles(&mock, &[handle], 0x16) };
+        assert!(result, "F12 hotkey should be detected");
+    }
+
+    #[test]
+    fn test_detect_hotkey_from_handles_no_keys_buffered() {
+        let mut protocol = simple_text_input::Protocol {
+            reset: mock_reset,
+            read_key_stroke: mock_read_key_stroke_empty,
+            wait_for_key: ptr::null_mut(),
+        };
+        let protocol_addr = &mut protocol as *mut _ as usize;
+
+        let mut mock = MockBootServices::new();
+
+        // SAFETY: Test code — returning pointer to a valid Protocol kept alive by the test.
+        unsafe {
+            mock.expect_handle_protocol::<simple_text_input::Protocol>()
+                .returning(move |_| Ok((protocol_addr as *mut simple_text_input::Protocol).as_mut().unwrap()));
+        }
+
+        let handle: efi::Handle = 1usize as efi::Handle;
+        // SAFETY: handle is a test value, mock returns a valid protocol.
+        let result = unsafe { detect_hotkey_from_handles(&mock, &[handle], 0x16) };
+        assert!(!result, "No keys in buffer should return false");
+    }
+
+    #[test]
+    fn test_detect_hotkey_from_handles_protocol_failure() {
+        let mut mock = MockBootServices::new();
+
+        // handle_protocol fails — no SimpleTextInput on this handle
+        mock.expect_handle_protocol::<simple_text_input::Protocol>().returning(|_| Err(efi::Status::UNSUPPORTED));
+
+        let handle: efi::Handle = 1usize as efi::Handle;
+        // SAFETY: handle is a test value, mock returns Err.
+        let result = unsafe { detect_hotkey_from_handles(&mock, &[handle], 0x16) };
+        assert!(!result, "Protocol failure should return false");
+    }
+
+    // Tests for expand_device_path success path
+
+    #[test]
+    fn test_expand_partial_path_matches_partition() {
+        let guid = [0xAA; 16];
+        let partial = build_partial_hd_path(guid);
+        let full = build_full_path_with_hd(guid);
+        let full_addr = full.as_ref() as *const DevicePath as *const u8 as usize;
+
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .returning(move |_| Ok((full_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
 
         let result = expand_device_path(&mock, &partial);
-        assert!(result.is_err(), "expand_device_path should fail when handle_protocol fails");
+        assert!(result.is_ok(), "Should find matching partition");
+
+        // The expanded path should start with ACPI root (from the full path)
+        let expanded = result.unwrap();
+        assert!(!is_partial_device_path(&expanded), "Expanded path should be a full path");
+    }
+
+    #[test]
+    fn test_expand_partial_path_no_matching_partition() {
+        let partial = build_partial_hd_path([0xAA; 16]);
+        // Full path has a different GUID — no match
+        let full = build_full_path_with_hd([0xBB; 16]);
+        let full_addr = full.as_ref() as *const DevicePath as *const u8 as usize;
+
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+                .returning(move |_| Ok((full_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap()));
+        }
+
+        let result = expand_device_path(&mock, &partial);
+        assert!(result.is_err(), "Should fail when no partition matches");
+    }
+
+    #[test]
+    /// Verify that expansion truncates the handle's device path at the matched node,
+    /// discarding any trailing nodes. This prevents duplication when a handle's path
+    /// extends past the node we match on (e.g., filesystem handles that include
+    /// FilePath nodes after HD). The same principle applies to any future partial
+    /// path types — we must only use the prefix up to the matched node.
+    fn test_expand_partial_path_truncates_at_matched_node() {
+        use patina::device_path::node_defs::FilePath;
+
+        let guid = [0xAA; 16];
+        // Partial path: HD()/FilePath(\EFI\Boot\BOOTX64.efi)
+        let mut partial =
+            DevicePathBuf::from_device_path_node_iter([HardDrive::new_gpt(1, 2048, 1000000, guid)].into_iter());
+        let fp = DevicePathBuf::from_device_path_node_iter([FilePath::new("\\EFI\\Boot\\BOOTX64.efi")].into_iter());
+        partial.append_device_path(&fp);
+
+        // Handle has nodes beyond the matched node — simulates a handle whose device
+        // path extends past the point we match on (e.g., a filesystem handle).
+        // ACPI/PCI/HD()/FilePath(\some\other\path)
+        let mut handle_dp = build_full_path_with_hd(guid);
+        let extra_fp = DevicePathBuf::from_device_path_node_iter([FilePath::new("\\some\\other\\path")].into_iter());
+        handle_dp.append_device_path(&extra_fp);
+
+        let handle_dp_addr = handle_dp.as_ref() as *const DevicePath as *const u8 as usize;
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // SAFETY: Test code — returning pointer to valid DevicePathBuf.
+        unsafe {
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>().returning(move |_| {
+                Ok((handle_dp_addr as *mut efi::protocols::device_path::Protocol).as_mut().unwrap())
+            });
+        }
+
+        let result = expand_device_path(&mock, &partial);
+        assert!(result.is_ok());
+
+        let expanded = result.unwrap();
+        let node_count = expanded.as_ref().node_count();
+        assert_eq!(node_count, 5, "Should have prefix(3) + remaining(1) + End, got {node_count} nodes");
+    }
+
+    #[test]
+    fn test_expand_partial_path_handle_protocol_failure() {
+        let partial = build_partial_hd_path([0xAA; 16]);
+
+        let handle_addr: usize = 1;
+        let box_mock = leaked_boot_services_for_box();
+
+        let mut mock = MockBootServices::new();
+
+        mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[handle_addr], box_mock)));
+
+        // handle_protocol fails
+        mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>()
+            .returning(|_| Err(efi::Status::UNSUPPORTED));
+
+        let result = expand_device_path(&mock, &partial);
+        assert!(result.is_err(), "Should fail when handle_protocol fails");
     }
 }
