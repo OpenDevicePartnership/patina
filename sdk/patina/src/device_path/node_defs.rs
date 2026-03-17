@@ -659,6 +659,16 @@ impl HardDrive {
     /// Signature type: MBR 32-bit signature
     pub const SIGNATURE_TYPE_MBR: u8 = 0x01;
 
+    /// Try to parse a `HardDrive` from a raw device path node.
+    ///
+    /// Returns `None` if the node type/subtype doesn't match or the data is malformed.
+    pub fn try_from_node(node: &parse_node::UnknownDevicePathNode<'_>) -> Option<Self> {
+        if !Self::is_type(node.header.r#type, node.header.sub_type) {
+            return None;
+        }
+        node.data.pread_with(0, scroll::LE).ok()
+    }
+
     /// Create a new HardDrive device path node for a GPT partition.
     ///
     /// # Arguments
