@@ -9,5 +9,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+#[cfg(any(test, feature = "alloc"))]
 #[path = "patina_mm_integration/mod.rs"]
 mod patina_mm_integration;

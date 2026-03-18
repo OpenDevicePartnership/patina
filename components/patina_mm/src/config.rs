@@ -18,7 +18,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
 use alloc::vec::Vec;
 use core::{fmt, pin::Pin, ptr::NonNull};
 

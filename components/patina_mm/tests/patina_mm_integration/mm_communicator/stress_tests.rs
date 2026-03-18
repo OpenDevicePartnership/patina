@@ -10,8 +10,6 @@
 
 use crate::patina_mm_integration::common::{constants::*, framework::*};
 
-extern crate alloc;
-use alloc::{boxed::Box, format, vec, vec::Vec};
 use core::pin::Pin;
 use patina::{
     Guid,

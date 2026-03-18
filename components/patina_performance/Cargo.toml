@@ -17,7 +17,7 @@ uuid = { workspace = true }
 
 mu_rust_helpers = { workspace = true }
 patina = { workspace = true }
-patina_mm = { workspace = true }
+patina_mm = { workspace = true, features = ["alloc"] }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 

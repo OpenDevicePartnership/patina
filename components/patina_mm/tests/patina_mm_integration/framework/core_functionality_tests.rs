@@ -12,14 +12,14 @@
 use patina::{BinaryGuid, Guid};
 use patina_mm::{
     component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
-    config::{CommunicateBuffer, EfiMmCommunicateHeader},
+    config::CommunicateBuffer,
+    comm_buffer_hob::EfiMmCommunicateHeader,
 };
 
 use core::pin::Pin;
 use std::collections::HashMap;
 
-extern crate alloc;
-use alloc::{boxed::Box, vec::Vec};
+use std::vec::Vec;
 
 /// Lightweight MM handler used for testing
 struct TestHandler {

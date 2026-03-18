@@ -23,7 +23,6 @@ use zerocopy::FromBytes;
 
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-extern crate alloc;
 use alloc::boxed::Box;
 
 /// Context for the MM Comm Buffer Update Protocol notify callback
@@ -289,8 +288,7 @@ mod tests {
     };
     use patina::boot_services::StandardBootServices;
 
-    extern crate alloc;
-    use alloc::{boxed::Box, vec};
+    use alloc::boxed::Box;
 
     /// Helper to create a test protocol notify context without boot services
     fn create_test_context(

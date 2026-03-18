@@ -28,7 +28,7 @@ use patina::{
         service::{IntoService, Service},
     },
 };
-extern crate alloc;
+
 use alloc::{boxed::Box, vec::Vec};
 
 use core::{
@@ -374,14 +374,14 @@ mod tests {
             communicator::{MmCommunicator, MockMmExecutor},
             sw_mmi_manager::SwMmiManager,
         },
-        config::{CommunicateBuffer, MmCommBufferStatus, MmCommunicationConfiguration},
+        config::{CommunicateBuffer, MmCommunicationConfiguration},
+        comm_buffer_hob::MmCommBufferStatus,
     };
     use patina::component::{IntoComponent, Storage};
 
     use core::{cell::RefCell, pin::Pin};
 
-    extern crate alloc;
-    use alloc::vec::Vec;
+    use std::vec::Vec;
 
     /// Simple MM Executor for unit tests that simulates MM handlers echoing request data back as the response
     struct EchoMmExecutor;

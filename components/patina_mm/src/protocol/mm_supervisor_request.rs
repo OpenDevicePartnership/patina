@@ -17,9 +17,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::{BinaryGuid, Guid};
-use zerocopy::FromBytes;
-use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use patina::BinaryGuid;
 
 // GUID for gMmSupervisorRequestHandlerGuid
 // { 0x8c633b23, 0x1260, 0x4ea6, { 0x83, 0xf, 0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11 } }
@@ -42,7 +40,7 @@ pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
 /// 0x0C    4     reserved    - Reserved for alignment, must be 0
 /// 0x10    8     result      - Return status (0 = success, set by supervisor on response)
 /// ```
-#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, Copy, zerocopy_derive::FromBytes, zerocopy_derive::IntoBytes, zerocopy_derive::Immutable, zerocopy_derive::KnownLayout)]
 #[repr(C)]
 pub struct MmSupervisorRequestHeader {
     /// Signature to identify the request ('MSUP' as little-endian).
@@ -65,16 +63,6 @@ impl MmSupervisorRequestHeader {
     pub fn is_valid(&self) -> bool {
         self.signature == SIGNATURE && self.revision <= REVISION
     }
-
-    /// Reads a header from a byte slice.
-    ///
-    /// Returns `None` if the slice is too small or misaligned.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < Self::SIZE {
-            return None;
-        }
-        Self::read_from_bytes(&bytes[..Self::SIZE]).ok()
-    }
 }
 
 /// Response from MM Supervisor version info request.
@@ -90,7 +78,7 @@ impl MmSupervisorRequestHeader {
 /// 0x04    4     patch_level                   - Supervisor patch level
 /// 0x08    8     max_supervisor_request_level  - Highest supported request type
 /// ```
-#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, Copy, zerocopy_derive::FromBytes, zerocopy_derive::IntoBytes, zerocopy_derive::Immutable, zerocopy_derive::KnownLayout)]
 #[repr(C)]
 pub struct MmSupervisorVersionInfo {
     /// Version of the MM Supervisor.
@@ -104,16 +92,6 @@ pub struct MmSupervisorVersionInfo {
 impl MmSupervisorVersionInfo {
     /// Size of the version info structure in bytes.
     pub const SIZE: usize = core::mem::size_of::<Self>();
-
-    /// Reads version info from a byte slice.
-    ///
-    /// Returns `None` if the slice is too small or misaligned.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < Self::SIZE {
-            return None;
-        }
-        Self::read_from_bytes(&bytes[..Self::SIZE]).ok()
-    }
 }
 
 // ============================================================================

@@ -7,6 +7,9 @@
 #![feature(coverage_attribute)]
 
 #[cfg(any(test, feature = "alloc"))]
+extern crate alloc;
+
+#[cfg(any(test, feature = "alloc"))]
 pub mod component;
 #[cfg(any(test, feature = "alloc"))]
 pub mod config;
