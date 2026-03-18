@@ -11,8 +11,9 @@ use super::gdt;
 use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
+#[cfg(feature = "alloc")]
+use patina::component::service::IntoService;
 use patina::{
-    component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
 };
@@ -21,8 +22,8 @@ use r_efi::efi;
 /// Struct to implement X64 Cpu Init.
 ///
 /// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the x86_64 architecture.
-#[derive(IntoService)]
-#[service(dyn Cpu)]
+#[cfg_attr(feature = "alloc", derive(IntoService))]
+#[cfg_attr(feature = "alloc", service(dyn Cpu))]
 pub struct EfiCpuX64 {
     timer_period: u64,
 }

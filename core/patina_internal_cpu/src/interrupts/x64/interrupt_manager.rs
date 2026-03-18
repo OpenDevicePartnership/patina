@@ -10,10 +10,11 @@
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
-    component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::EfiSystemContext,
 };
+#[cfg(feature = "alloc")]
+use patina::component::service::IntoService;
 #[cfg(target_arch = "x86_64")]
 use patina_mtrr::Mtrr;
 use patina_paging::PageTable;
@@ -25,8 +26,9 @@ use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x
 ///
 /// An x64 version of the InterruptManager for managing IDT based interrupts.
 ///
-#[derive(Default, Copy, Clone, IntoService)]
-#[service(dyn InterruptManager)]
+#[derive(Default, Copy, Clone)]
+#[cfg_attr(feature = "alloc", derive(IntoService))]
+#[cfg_attr(feature = "alloc", service(dyn InterruptManager))]
 pub struct InterruptsX64 {}
 
 impl InterruptsX64 {

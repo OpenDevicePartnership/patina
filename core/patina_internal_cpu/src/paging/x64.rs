@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::paging::{CacheAttributeValue, PatinaPageTable};
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 use patina::error::EfiError;
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
@@ -134,6 +135,7 @@ fn apply_caching_attributes<M: Mtrr>(
 }
 
 /// Create an x86_64 paging instance under the general PatinaPageTable trait.
+#[cfg(feature = "alloc")]
 pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<Box<dyn PatinaPageTable>, efi::Status> {

@@ -9,8 +9,9 @@
 use crate::cpu::Cpu;
 #[cfg(all(not(test), target_arch = "aarch64"))]
 use core::arch::asm;
+#[cfg(feature = "alloc")]
+use patina::component::service::IntoService;
 use patina::{
-    component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
 };
@@ -19,8 +20,9 @@ use r_efi::efi;
 /// Struct to implement AArch64 Cpu Init.
 ///
 /// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the AArch64 architecture.
-#[derive(Default, IntoService)]
-#[service(dyn Cpu)]
+#[derive(Default)]
+#[cfg_attr(feature = "alloc", derive(IntoService))]
+#[cfg_attr(feature = "alloc", service(dyn Cpu))]
 pub struct EfiCpuAarch64;
 
 impl EfiCpuAarch64 {

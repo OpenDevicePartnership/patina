@@ -10,9 +10,11 @@
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
-    component::service::IntoService,
     error::EfiError,
 };
+#[cfg(feature = "alloc")]
+use patina::component::service::IntoService;
+#[cfg(feature = "alloc")]
 use patina_paging::PageTable;
 
 use crate::interrupts::{
@@ -36,8 +38,9 @@ cfg_if::cfg_if! {
     }
 }
 /// AARCH64 Implementation of the InterruptManager.
-#[derive(Default, Copy, Clone, IntoService)]
-#[service(dyn InterruptManager)]
+#[derive(Default, Copy, Clone)]
+#[cfg_attr(feature = "alloc", derive(IntoService))]
+#[cfg_attr(feature = "alloc", service(dyn InterruptManager))]
 pub struct InterruptsAarch64 {}
 
 impl InterruptsAarch64 {
