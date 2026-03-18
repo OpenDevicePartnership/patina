@@ -30,20 +30,12 @@ use core::ffi::c_void;
 use r_efi::efi;
 use spin::Once;
 
-// =============================================================================
-// MM System Table Signature and Revision
-// =============================================================================
-
 /// MMST signature: `'S', 'M', 'S', 'T'` (same as C `MM_MMST_SIGNATURE`).
 pub const MM_MMST_SIGNATURE: u64 = 0x5453_4D53;
 
 /// PI Specification version encoded as `(major << 16) | minor`.
 /// PI 1.8 → `0x0001_0050`.
 pub const MM_SYSTEM_TABLE_REVISION: u32 = (1 << 16) | 80;
-
-// =============================================================================
-// EFI_MM_CPU_IO_PROTOCOL (embedded in MMST)
-// =============================================================================
 
 /// A single MM I/O access function pointer.
 ///
@@ -89,10 +81,6 @@ pub struct MmCpuIoProtocol {
     pub mem: MmCpuIoAccess,
     pub io: MmCpuIoAccess,
 }
-
-// =============================================================================
-// Function pointer types matching PiMmCis.h typedefs
-// =============================================================================
 
 /// `EFI_MM_INSTALL_CONFIGURATION_TABLE`
 pub type MmInstallConfigurationTableFn = unsafe extern "efiapi" fn(
@@ -210,10 +198,6 @@ pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(
     dispatch_handle: efi::Handle,
 ) -> efi::Status;
 
-// =============================================================================
-// EFI_MM_SYSTEM_TABLE (#[repr(C)])
-// =============================================================================
-
 /// The Management Mode System Table (MMST).
 ///
 /// This is the `#[repr(C)]` Rust definition of the C `_EFI_MM_SYSTEM_TABLE`
@@ -278,10 +262,6 @@ pub struct EfiMmSystemTable {
 unsafe impl Send for EfiMmSystemTable {}
 unsafe impl Sync for EfiMmSystemTable {}
 
-// =============================================================================
-// StandardMmServices
-// =============================================================================
-
 /// Wrapper around a raw `*mut EfiMmSystemTable` pointer that implements
 /// [`MmServices`] by calling through the C function-pointer table.
 ///
@@ -344,18 +324,12 @@ impl core::fmt::Debug for StandardMmServices {
     }
 }
 
-// =============================================================================
-// MmServices Trait
-// =============================================================================
-
 /// Safe Rust interface to the MM System Table services.
 ///
 /// This is the MM analogue of
 /// [`BootServices`](crate::boot_services::BootServices).
 /// Each method maps 1:1 to a function pointer in [`EfiMmSystemTable`].
 pub trait MmServices {
-    // ---- Memory services ------------------------------------------------
-
     /// Allocate pool memory.
     ///
     /// PI Spec: `EFI_MM_SYSTEM_TABLE.MmAllocatePool`
@@ -380,8 +354,6 @@ pub trait MmServices {
     ///
     /// PI Spec: `EFI_MM_SYSTEM_TABLE.MmFreePages`
     fn free_pages(&self, memory: u64, pages: usize) -> Result<(), efi::Status>;
-
-    // ---- Protocol services ----------------------------------------------
 
     /// Install a protocol interface on a handle.
     ///
@@ -437,8 +409,6 @@ pub trait MmServices {
         protocol: &efi::Guid,
     ) -> Result<*mut c_void, efi::Status>;
 
-    // ---- MMI management -------------------------------------------------
-
     /// Manage (dispatch) an MMI.
     ///
     /// PI Spec: `EFI_MM_SYSTEM_TABLE.MmiManage`
@@ -467,10 +437,6 @@ pub trait MmServices {
         dispatch_handle: efi::Handle,
     ) -> Result<(), efi::Status>;
 }
-
-// =============================================================================
-// MmServices implementation for StandardMmServices
-// =============================================================================
 
 impl MmServices for StandardMmServices {
     fn allocate_pool(&self, pool_type: efi::MemoryType, size: usize) -> Result<*mut u8, efi::Status> {
