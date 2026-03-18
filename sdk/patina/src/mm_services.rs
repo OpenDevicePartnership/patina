@@ -272,7 +272,7 @@ pub struct StandardMmServices {
 }
 
 // SAFETY: The raw pointer is only written once (protected by `Once`) and the
-// underlying table is not expected to change after initialisation.
+// underlying table is not expected to change after initialization.
 unsafe impl Sync for StandardMmServices {}
 unsafe impl Send for StandardMmServices {}
 
@@ -284,22 +284,22 @@ impl StandardMmServices {
         this
     }
 
-    /// Create an uninitialised instance.
+    /// Create an uninitialized instance.
     pub const fn new_uninit() -> Self {
         Self { efi_mm_system_table: Once::new() }
     }
 
-    /// Initialise with the given system table pointer.
+    /// Initialize with the given system table pointer.
     pub fn init(&self, mm_system_table: *mut EfiMmSystemTable) {
         self.efi_mm_system_table.call_once(|| mm_system_table);
     }
 
-    /// Returns `true` if the instance has been initialised.
+    /// Returns `true` if the instance has been initialized.
     pub fn is_init(&self) -> bool {
         self.efi_mm_system_table.is_completed()
     }
 
-    /// Returns the raw system table pointer (panics if uninitialised).
+    /// Returns the raw system table pointer (panics if uninitialized).
     pub fn as_mut_ptr(&self) -> *mut EfiMmSystemTable {
         *self.efi_mm_system_table.get().expect("StandardMmServices is not initialized!")
     }
