@@ -289,7 +289,11 @@ fn test_mm_supervisor_comm_update_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.request, mm_supv::RequestType::CommUpdate as u32, "Response should be for COMM_UPDATE request");
+    assert_eq!(
+        response_header.request,
+        mm_supv::RequestType::CommUpdate as u32,
+        "Response should be for COMM_UPDATE request"
+    );
     assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Comm update request should succeed");
 
     // Parse update result safely
@@ -337,7 +341,11 @@ fn test_mm_supervisor_unblock_mem_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.request, mm_supv::RequestType::UnblockMem as u32, "Response should be for UNBLOCK_MEM request");
+    assert_eq!(
+        response_header.request,
+        mm_supv::RequestType::UnblockMem as u32,
+        "Response should be for UNBLOCK_MEM request"
+    );
     assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Unblock mem request should succeed");
 
     // Parse unblock status safely

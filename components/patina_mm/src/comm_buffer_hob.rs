@@ -19,14 +19,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina::{Guid, BinaryGuid};
+use patina::{BinaryGuid, Guid};
 use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 /// GUID for the MM communication buffer HOB (`gMmCommBufferHobGuid`).
 ///
 /// `{ 0x6c2a2520, 0x0131, 0x4aee, { 0xa7, 0x50, 0xcc, 0x38, 0x4a, 0xac, 0xe8, 0xc6 } }`
-pub const MM_COMM_BUFFER_HOB_GUID: BinaryGuid =
-    BinaryGuid::from_string("6c2a2520-0131-4aee-a750-cc384aace8c6");
+pub const MM_COMM_BUFFER_HOB_GUID: BinaryGuid = BinaryGuid::from_string("6c2a2520-0131-4aee-a750-cc384aace8c6");
 
 /// MM Common Buffer HOB Data Structure.
 ///

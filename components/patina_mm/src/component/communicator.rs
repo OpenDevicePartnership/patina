@@ -16,8 +16,8 @@
 mod comm_buffer_update;
 
 use crate::{
-    config::{CommunicateBuffer, MmCommunicationConfiguration},
     comm_buffer_hob::EfiMmCommunicateHeader,
+    config::{CommunicateBuffer, MmCommunicationConfiguration},
     service::SwMmiTrigger,
 };
 use patina::{

@@ -17,9 +17,9 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+use patina::{BinaryGuid, Guid};
 use zerocopy::FromBytes;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
-use patina::{Guid, BinaryGuid};
 
 // GUID for gMmSupervisorRequestHandlerGuid
 // { 0x8c633b23, 0x1260, 0x4ea6, { 0x83, 0xf, 0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11 } }

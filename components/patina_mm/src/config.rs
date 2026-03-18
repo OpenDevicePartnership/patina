@@ -22,8 +22,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::{fmt, pin::Pin, ptr::NonNull};
 
+use crate::comm_buffer_hob::{EfiMmCommunicateHeader, MmCommBufferStatus};
 use patina::{BinaryGuid, Guid, base::UEFI_PAGE_MASK};
-use crate::comm_buffer_hob::{MmCommBufferStatus, EfiMmCommunicateHeader};
 
 /// Management Mode (MM) Configuration
 ///

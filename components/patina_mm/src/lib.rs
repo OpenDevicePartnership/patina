@@ -9,9 +9,9 @@
 #[cfg(any(test, feature = "alloc"))]
 pub mod component;
 #[cfg(any(test, feature = "alloc"))]
-pub mod service;
-#[cfg(any(test, feature = "alloc"))]
 pub mod config;
+#[cfg(any(test, feature = "alloc"))]
+pub mod service;
 
 pub mod comm_buffer_hob;
 pub mod protocol;

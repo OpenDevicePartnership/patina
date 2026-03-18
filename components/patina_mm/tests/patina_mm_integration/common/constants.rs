@@ -18,10 +18,7 @@ pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
 /// (VERSION, PATCH_LEVEL, etc.) are defined here as mock data.
 pub mod mm_supv {
     // Re-export shared protocol constants
-    pub use patina_mm::protocol::mm_supervisor_request::{
-        SIGNATURE, REVISION,
-        RequestType, requests, responses,
-    };
+    pub use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE, requests, responses};
 
     /// Request signature as a DWORD (same as shared SIGNATURE, kept for test compatibility)
     pub const REQUEST_SIGNATURE: u32 = SIGNATURE;

@@ -91,16 +91,11 @@ pub type MmInstallConfigurationTableFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_ALLOCATE_POOL` (shared with Boot Services)
-pub type MmAllocatePoolFn = unsafe extern "efiapi" fn(
-    pool_type: efi::MemoryType,
-    size: usize,
-    buffer: *mut *mut c_void,
-) -> efi::Status;
+pub type MmAllocatePoolFn =
+    unsafe extern "efiapi" fn(pool_type: efi::MemoryType, size: usize, buffer: *mut *mut c_void) -> efi::Status;
 
 /// `EFI_FREE_POOL` (shared with Boot Services)
-pub type MmFreePoolFn = unsafe extern "efiapi" fn(
-    buffer: *mut c_void,
-) -> efi::Status;
+pub type MmFreePoolFn = unsafe extern "efiapi" fn(buffer: *mut c_void) -> efi::Status;
 
 /// `EFI_ALLOCATE_PAGES` (shared with Boot Services)
 pub type MmAllocatePagesFn = unsafe extern "efiapi" fn(
@@ -111,17 +106,11 @@ pub type MmAllocatePagesFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_FREE_PAGES` (shared with Boot Services)
-pub type MmFreePagesFn = unsafe extern "efiapi" fn(
-    memory: efi::PhysicalAddress,
-    pages: usize,
-) -> efi::Status;
+pub type MmFreePagesFn = unsafe extern "efiapi" fn(memory: efi::PhysicalAddress, pages: usize) -> efi::Status;
 
 /// `EFI_MM_STARTUP_THIS_AP`
-pub type MmStartupThisApFn = unsafe extern "efiapi" fn(
-    procedure: usize,
-    cpu_number: usize,
-    proc_arguments: *mut c_void,
-) -> efi::Status;
+pub type MmStartupThisApFn =
+    unsafe extern "efiapi" fn(procedure: usize, cpu_number: usize, proc_arguments: *mut c_void) -> efi::Status;
 
 /// `EFI_INSTALL_PROTOCOL_INTERFACE` (shared with Boot Services)
 pub type MmInstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
@@ -132,11 +121,8 @@ pub type MmInstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_UNINSTALL_PROTOCOL_INTERFACE` (shared with Boot Services)
-pub type MmUninstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
-    handle: efi::Handle,
-    protocol: *mut efi::Guid,
-    interface: *mut c_void,
-) -> efi::Status;
+pub type MmUninstallProtocolInterfaceFn =
+    unsafe extern "efiapi" fn(handle: efi::Handle, protocol: *mut efi::Guid, interface: *mut c_void) -> efi::Status;
 
 /// `EFI_HANDLE_PROTOCOL` (shared with Boot Services)
 pub type MmHandleProtocolFn = unsafe extern "efiapi" fn(
@@ -194,9 +180,7 @@ pub type MmiHandlerRegisterFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_MM_INTERRUPT_UNREGISTER`
-pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(
-    dispatch_handle: efi::Handle,
-) -> efi::Status;
+pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(dispatch_handle: efi::Handle) -> efi::Status;
 
 /// The Management Mode System Table (MMST).
 ///
@@ -391,11 +375,7 @@ pub trait MmServices {
     /// # Safety
     ///
     /// The returned pointer must be used carefully to avoid aliasing violations.
-    unsafe fn handle_protocol(
-        &self,
-        handle: efi::Handle,
-        protocol: &efi::Guid,
-    ) -> Result<*mut c_void, efi::Status>;
+    unsafe fn handle_protocol(&self, handle: efi::Handle, protocol: &efi::Guid) -> Result<*mut c_void, efi::Status>;
 
     /// Locate the first device that supports a protocol.
     ///
@@ -404,10 +384,7 @@ pub trait MmServices {
     /// # Safety
     ///
     /// The returned pointer must be used carefully to avoid aliasing violations.
-    unsafe fn locate_protocol(
-        &self,
-        protocol: &efi::Guid,
-    ) -> Result<*mut c_void, efi::Status>;
+    unsafe fn locate_protocol(&self, protocol: &efi::Guid) -> Result<*mut c_void, efi::Status>;
 
     /// Manage (dispatch) an MMI.
     ///
@@ -432,10 +409,7 @@ pub trait MmServices {
     /// Unregister an MMI handler.
     ///
     /// PI Spec: `EFI_MM_SYSTEM_TABLE.MmiHandlerUnRegister`
-    fn mmi_handler_unregister(
-        &self,
-        dispatch_handle: efi::Handle,
-    ) -> Result<(), efi::Status>;
+    fn mmi_handler_unregister(&self, dispatch_handle: efi::Handle) -> Result<(), efi::Status>;
 }
 
 impl MmServices for StandardMmServices {
@@ -443,11 +417,7 @@ impl MmServices for StandardMmServices {
         let mmst = unsafe { &*self.as_mut_ptr() };
         let mut buffer: *mut c_void = core::ptr::null_mut();
         let status = unsafe { (mmst.mm_allocate_pool)(pool_type, size, &mut buffer) };
-        if status == efi::Status::SUCCESS {
-            Ok(buffer as *mut u8)
-        } else {
-            Err(status)
-        }
+        if status == efi::Status::SUCCESS { Ok(buffer as *mut u8) } else { Err(status) }
     }
 
     fn free_pool(&self, buffer: *mut u8) -> Result<(), efi::Status> {
@@ -501,36 +471,21 @@ impl MmServices for StandardMmServices {
     ) -> Result<(), efi::Status> {
         let mmst = unsafe { &*self.as_mut_ptr() };
         let status = unsafe {
-            (mmst.mm_uninstall_protocol_interface)(
-                handle,
-                protocol as *const efi::Guid as *mut efi::Guid,
-                interface,
-            )
+            (mmst.mm_uninstall_protocol_interface)(handle, protocol as *const efi::Guid as *mut efi::Guid, interface)
         };
         if status == efi::Status::SUCCESS { Ok(()) } else { Err(status) }
     }
 
-    unsafe fn handle_protocol(
-        &self,
-        handle: efi::Handle,
-        protocol: &efi::Guid,
-    ) -> Result<*mut c_void, efi::Status> {
+    unsafe fn handle_protocol(&self, handle: efi::Handle, protocol: &efi::Guid) -> Result<*mut c_void, efi::Status> {
         let mmst = unsafe { &*self.as_mut_ptr() };
         let mut interface: *mut c_void = core::ptr::null_mut();
         let status = unsafe {
-            (mmst.mm_handle_protocol)(
-                handle,
-                protocol as *const efi::Guid as *mut efi::Guid,
-                &mut interface,
-            )
+            (mmst.mm_handle_protocol)(handle, protocol as *const efi::Guid as *mut efi::Guid, &mut interface)
         };
         if status == efi::Status::SUCCESS { Ok(interface) } else { Err(status) }
     }
 
-    unsafe fn locate_protocol(
-        &self,
-        protocol: &efi::Guid,
-    ) -> Result<*mut c_void, efi::Status> {
+    unsafe fn locate_protocol(&self, protocol: &efi::Guid) -> Result<*mut c_void, efi::Status> {
         let mmst = unsafe { &*self.as_mut_ptr() };
         let mut interface: *mut c_void = core::ptr::null_mut();
         let status = unsafe {
@@ -567,10 +522,7 @@ impl MmServices for StandardMmServices {
         if status == efi::Status::SUCCESS { Ok(dispatch_handle) } else { Err(status) }
     }
 
-    fn mmi_handler_unregister(
-        &self,
-        dispatch_handle: efi::Handle,
-    ) -> Result<(), efi::Status> {
+    fn mmi_handler_unregister(&self, dispatch_handle: efi::Handle) -> Result<(), efi::Status> {
         let mmst = unsafe { &*self.as_mut_ptr() };
         let status = unsafe { (mmst.mmi_handler_unregister)(dispatch_handle) };
         if status == efi::Status::SUCCESS { Ok(()) } else { Err(status) }

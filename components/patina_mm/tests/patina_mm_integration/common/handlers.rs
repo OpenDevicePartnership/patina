@@ -23,10 +23,7 @@ use alloc::{string::String, vec::Vec};
 pub use zerocopy::IntoBytes;
 
 // Import shared protocol types from patina_mm
-pub use patina_mm::protocol::mm_supervisor_request::{
-    MmSupervisorRequestHeader,
-    MmSupervisorVersionInfo,
-};
+pub use patina_mm::protocol::mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo};
 
 /// Standardized error type for MM handlers
 #[derive(Debug, Clone, PartialEq, Eq)]
