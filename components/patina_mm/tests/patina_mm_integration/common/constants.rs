@@ -11,14 +11,13 @@ use patina::base::SIZE_4KB;
 /// Standard test buffer size
 pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
 
-/// MM Supervisor constants and definitions for testing.
+/// MM Supervisor constants and definitions for testing
 ///
-/// Protocol constants (SIGNATURE, REVISION, request types) are re-exported from the
-/// shared [`patina_mm::protocol::mm_supervisor_request`] module. Test-specific values
-/// (VERSION, PATCH_LEVEL, etc.) are defined here as mock data.
+/// Note: These values are only used for testing. They're not meant to be
+/// accurate or used in production code.
 pub mod mm_supv {
     // Re-export shared protocol constants
-    pub use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE, responses};
+    use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE, responses};
 
     /// Request signature as a DWORD (same as shared SIGNATURE, kept for test compatibility)
     pub const REQUEST_SIGNATURE: u32 = SIGNATURE;
