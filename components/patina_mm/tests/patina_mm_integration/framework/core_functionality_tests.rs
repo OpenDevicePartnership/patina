@@ -11,9 +11,9 @@
 
 use patina::{BinaryGuid, Guid};
 use patina_mm::{
+    comm_buffer_hob::EfiMmCommunicateHeader,
     component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
     config::CommunicateBuffer,
-    comm_buffer_hob::EfiMmCommunicateHeader,
 };
 
 use core::pin::Pin;

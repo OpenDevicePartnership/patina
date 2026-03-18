@@ -370,12 +370,12 @@ impl Default for MmCommunicator {
 mod tests {
     use super::*;
     use crate::{
+        comm_buffer_hob::MmCommBufferStatus,
         component::{
             communicator::{MmCommunicator, MockMmExecutor},
             sw_mmi_manager::SwMmiManager,
         },
         config::{CommunicateBuffer, MmCommunicationConfiguration},
-        comm_buffer_hob::MmCommBufferStatus,
     };
     use patina::component::{IntoComponent, Storage};
 

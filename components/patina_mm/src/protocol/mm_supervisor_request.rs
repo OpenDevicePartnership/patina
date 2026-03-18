@@ -40,7 +40,15 @@ pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
 /// 0x0C    4     reserved    - Reserved for alignment, must be 0
 /// 0x10    8     result      - Return status (0 = success, set by supervisor on response)
 /// ```
-#[derive(Debug, Clone, Copy, zerocopy_derive::FromBytes, zerocopy_derive::IntoBytes, zerocopy_derive::Immutable, zerocopy_derive::KnownLayout)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::IntoBytes,
+    zerocopy_derive::Immutable,
+    zerocopy_derive::KnownLayout
+)]
 #[repr(C)]
 pub struct MmSupervisorRequestHeader {
     /// Signature to identify the request ('MSUP' as little-endian).
@@ -78,7 +86,15 @@ impl MmSupervisorRequestHeader {
 /// 0x04    4     patch_level                   - Supervisor patch level
 /// 0x08    8     max_supervisor_request_level  - Highest supported request type
 /// ```
-#[derive(Debug, Clone, Copy, zerocopy_derive::FromBytes, zerocopy_derive::IntoBytes, zerocopy_derive::Immutable, zerocopy_derive::KnownLayout)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::IntoBytes,
+    zerocopy_derive::Immutable,
+    zerocopy_derive::KnownLayout
+)]
 #[repr(C)]
 pub struct MmSupervisorVersionInfo {
     /// Version of the MM Supervisor.
