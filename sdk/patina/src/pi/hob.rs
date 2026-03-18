@@ -6,11 +6,6 @@
 //! HOBs describe the physical memory layout, CPU information, firmware volumes,
 //! and other platform-specific data that DXE needs to continue the boot process.
 //!
-//! The HOB list is a contiguous list of HOB structures, each with a common header
-//! followed by type-specific data. Typically, the PEI Foundation creates and manages
-//! the HOB list during the PEI phase, and it is passed to the DXE Foundation
-//! during the PEI-to-DXE handoff.
-//!
 //! Based on the UEFI Platform Initialization Specification Volume III.
 //!
 //! ## Example
@@ -60,6 +55,7 @@
 //! let capsule = gen_capsule();
 //! let firmware_volume2 = gen_firmware_volume2();
 //! let end_of_hob_list = gen_end_of_hoblist();
+//! ```
 //!
 //! ## License
 //!

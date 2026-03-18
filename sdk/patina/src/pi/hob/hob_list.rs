@@ -1,10 +1,4 @@
-//! Hand-Off Blocks (HOB)
-//!
-//! Hand-Off Blocks provide a standardized method for passing information from
-//! the pre-DXE phase to the DXE phase during the platform initialization process.
-//!
-//! HOBs describe the physical memory layout, CPU information, firmware volumes,
-//! and other platform-specific data that DXE needs to continue the boot process.
+//! Hand-Off Block List (HOB)
 //!
 //! The HOB list is a contiguous list of HOB structures, each with a common header
 //! followed by type-specific data. Typically, the PEI Foundation creates and manages
@@ -12,63 +6,6 @@
 //! during the PEI-to-DXE handoff.
 //!
 //! Based on the UEFI Platform Initialization Specification Volume III.
-//!
-//! ## Example
-//! ```
-//! use patina::pi::{hob, hob::Hob, hob::HobList};
-//! use core::mem::size_of;
-//!
-//! // Generate HOBs to initialize a new HOB list
-//! fn gen_capsule() -> hob::Capsule {
-//!   let header = hob::header::Hob { r#type: hob::UEFI_CAPSULE, length: size_of::<hob::Capsule>() as u16, reserved: 0 };
-//!
-//!   hob::Capsule { header, base_address: 0, length: 0x12 }
-//! }
-//!
-//! fn gen_firmware_volume2() -> hob::FirmwareVolume2 {
-//!   let header = hob::header::Hob { r#type: hob::FV2, length: size_of::<hob::FirmwareVolume2>() as u16, reserved: 0 };
-//!
-//!   hob::FirmwareVolume2 {
-//!     header,
-//!     base_address: 0,
-//!     length: 0x0123456789abcdef,
-//!     fv_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
-//!     file_name: patina::BinaryGuid::from_string("00000001-0002-0003-0405-060708090A0B"),
-//!   }
-//! }
-//!
-//! fn gen_end_of_hoblist() -> hob::PhaseHandoffInformationTable {
-//!   let header = hob::header::Hob {
-//!     r#type: hob::END_OF_HOB_LIST,
-//!     length: size_of::<hob::PhaseHandoffInformationTable>() as u16,
-//!     reserved: 0,
-//!   };
-//!
-//!   hob::PhaseHandoffInformationTable {
-//!     header,
-//!     version: 0x00010000,
-//!     boot_mode: BootMode::BootWithFullConfiguration,
-//!     memory_top: 0xdeadbeef,
-//!     memory_bottom: 0xdeadc0de,
-//!     free_memory_top: 104,
-//!     free_memory_bottom: 255,
-//!     end_of_hob_list: 0xdeaddeadc0dec0de,
-//!   }
-//! }
-//!
-//! // Generate some example HOBs
-//! let capsule = gen_capsule();
-//! let firmware_volume2 = gen_firmware_volume2();
-//! let end_of_hob_list = gen_end_of_hoblist();
-//!
-//! // Create a new empty HOB list
-//! let mut hoblist = HobList::new();
-//!
-//! // Push the example HOBs onto the HOB list
-//! hoblist.push(Hob::Capsule(&capsule));
-//! hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
-//! hoblist.push(Hob::Handoff(&end_of_hob_list));
-//! ```
 //!
 //! ## License
 //!
