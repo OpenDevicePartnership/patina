@@ -18,6 +18,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use patina::BinaryGuid;
+use zerocopy::FromBytes;
 
 // GUID for gMmSupervisorRequestHandlerGuid
 // { 0x8c633b23, 0x1260, 0x4ea6, { 0x83, 0xf, 0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11 } }
@@ -71,6 +72,16 @@ impl MmSupervisorRequestHeader {
     pub fn is_valid(&self) -> bool {
         self.signature == SIGNATURE && self.revision <= REVISION
     }
+
+    /// Reads a header from a byte slice.
+    ///
+    /// Returns `None` if the slice is too small or misaligned.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < Self::SIZE {
+            return None;
+        }
+        Self::read_from_bytes(&bytes[..Self::SIZE]).ok()
+    }
 }
 
 /// Response from MM Supervisor version info request.
@@ -108,6 +119,16 @@ pub struct MmSupervisorVersionInfo {
 impl MmSupervisorVersionInfo {
     /// Size of the version info structure in bytes.
     pub const SIZE: usize = core::mem::size_of::<Self>();
+
+    /// Reads version info from a byte slice.
+    ///
+    /// Returns `None` if the slice is too small or misaligned.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < Self::SIZE {
+            return None;
+        }
+        Self::read_from_bytes(&bytes[..Self::SIZE]).ok()
+    }
 }
 
 // ============================================================================
