@@ -19,19 +19,13 @@
 
 use zerocopy::FromBytes;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
-use r_efi::efi::Guid;
+use patina::{Guid, BinaryGuid};
 
 // GUID for gMmSupervisorRequestHandlerGuid
 // { 0x8c633b23, 0x1260, 0x4ea6, { 0x83, 0xf, 0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11 } }
 /// GUID for the MM Supervisor Request Handler protocol.
-pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: Guid = Guid::from_fields(
-    0x8c633b23,
-    0x1260,
-    0x4ea6,
-    0x83,
-    0x0F,
-    &[0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11],
-);
+pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
+    BinaryGuid::from_string("8c633b23-1260-4ea6-830f-7ddc97382111");
 
 /// MM Supervisor request header.
 ///
@@ -217,7 +211,7 @@ pub struct MmSupervisorUnblockMemoryParams {
     /// Memory descriptor identifying the region to unblock.
     pub memory_descriptor: efi::MemoryDescriptor,
     /// GUID identifying the requesting driver/module.
-    pub identifier_guid: Guid,
+    pub identifier_guid: BinaryGuid,
 }
 
 impl MmSupervisorUnblockMemoryParams {
