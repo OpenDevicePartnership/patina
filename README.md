@@ -39,6 +39,21 @@ incremental migration of today's firmware components largely written in C to Rus
 objective for this effort is to improve the security and stability of system firmware by leveraging the memory safety
 offered by Rust while retaining similar boot performance.
 
+**Patina is not a simple port of C UEFI code to Rust**.
+
+Patina is a pure‑Rust UEFI firmware implementation that removes legacy complexity and introduces a modern architecture,
+while preserving compatibility with current PI Specifications and enabling a clear path toward writing more firmware
+components in pure Rust over time.
+
+**Simply writing individual C UEFI drivers in Rust is not equivalent to Patina**.
+
+To better understand the types of memory safety problems that
+Patina helps mitigate, see [Memory Safety Strategy](https://opendevicepartnership.github.io/patina/background/memory_safety_strategy.html).
+
+Otherwise, read the docs to learn about concepts like [Patina DXE Core Requirements](https://opendevicepartnership.github.io/patina/integrate/patina_dxe_core_requirements.html)
+and the [Patina Component Model](https://opendevicepartnership.github.io/patina/component/getting_started.html) to
+better understand how Patina is structured and how to integrate it into a platform.
+
 ## Docs
 
 * **[Getting Started](https://opendevicepartnership.github.io/patina/):** Patina's official getting started guide,
@@ -52,14 +67,23 @@ write a Patina component.
 
 ## Important Notes
 
-This repository is still considered to be in a "beta" stage at this time. Platform testing and integration feedback
-is very welcome.
+Content in the main branch of the patina repository is expected to be functionally stable with the following exception:
 
-Before making pull requests at a minimum, run:
+* Patina has optional pieces of functionality called "Patina components". While components are expected to adhere to
+the same standards of readiness as the rest of the repository, when evaluating a new component, consumers should
+verify that the component does not have special disclaimers or limitations noted in its documentation.
 
-```shell
-cargo make all
-```
+Also, be aware that Patina has other branches that may host work that is not yet ready for the main branch. To learn
+more about these branches and the overall Patina release process, read the
+[Patina Release Process](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text/0015-patina-release-process.md)
+RFC.
+
+Platform testing and integration feedback is very welcome.
+
+### AI Policy
+
+Patina does not accept contributions directly from AI tools (e.g. GitHub Copilot) and has an AI Policy defined in
+[CONTRIBUTING.md](CONTRIBUTING.md#ai-policy) that must be followed for any contributions that are AI-assisted.
 
 ## Performing a Release
 
