@@ -19,6 +19,13 @@
 
 use patina::BinaryGuid;
 use zerocopy::FromBytes;
+use r_efi::efi;
+
+/// The expected signature value ('MSUP' as little-endian u32).
+pub const SIGNATURE: u32 = 0x5055534D;
+
+/// Current revision of the request protocol.
+pub const REVISION: u32 = 1;
 
 // GUID for gMmSupervisorRequestHandlerGuid
 // { 0x8c633b23, 0x1260, 0x4ea6, { 0x83, 0xf, 0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11 } }
@@ -125,22 +132,10 @@ impl MmSupervisorVersionInfo {
     }
 }
 
-// ============================================================================
-// Protocol Constants
-// ============================================================================
-
-/// The expected signature value ('MSUP' as little-endian u32).
-pub const SIGNATURE: u32 = 0x5055534D;
-
-/// Current revision of the request protocol.
-pub const REVISION: u32 = 1;
-
-/// Standard MM Supervisor request types.
+/// MM Supervisor request types.
 ///
-/// Each variant corresponds to a specific supervisor operation. The enum is `#[repr(u32)]`
-/// to match the wire format of [`MmSupervisorRequestHeader::request`].
+/// Each variant corresponds to a specific supervisor operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
 pub enum RequestType {
     /// Request to unblock memory regions.
     UnblockMem = 0x0001,
@@ -153,8 +148,10 @@ pub enum RequestType {
 }
 
 impl RequestType {
-    /// The highest valid request type value.
-    pub const MAX: u64 = Self::CommUpdate as u64;
+    /// Tries to convert a raw u64 value into a `RequestType`.
+    ///
+    /// Returns `Err(value)` if the value does not correspond to a valid request type.
+    pub const MAX_REQUEST_TYPE: u64 = Self::CommUpdate as u64;
 }
 
 impl TryFrom<u32> for RequestType {
@@ -171,34 +168,57 @@ impl TryFrom<u32> for RequestType {
     }
 }
 
-/// Deprecated module — use [`RequestType`] enum variants instead.
+impl From<RequestType> for u32 {
+    fn from(request_type: RequestType) -> Self {
+        request_type as u32
+    }
+}
+
+/// Standard MM Supervisor response types.
 ///
-/// Kept temporarily for backward compatibility.
-pub mod requests {
-    use super::RequestType;
-    /// Request to unblock memory regions.
-    pub const UNBLOCK_MEM: u32 = RequestType::UnblockMem as u32;
-    /// Request to fetch security policy.
-    pub const FETCH_POLICY: u32 = RequestType::FetchPolicy as u32;
-    /// Request for version information.
-    pub const VERSION_INFO: u32 = RequestType::VersionInfo as u32;
-    /// Request to update communication buffer.
-    pub const COMM_UPDATE: u32 = RequestType::CommUpdate as u32;
+/// Each variant corresponds to a specific supervisor operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseType {
+    /// Response to unblock memory regions request.
+    Success = 0x0000,
+    /// Error: Invalid request index.
+    InvalidRequest = 0x0001,
+    /// Error: Invalid data buffer.
+    InvalidDataBuffer = 0x0002,
+    /// Error: Communication buffer initialization failed.
+    CommBufferInitError = 0x0003,
 }
 
-/// Response status constants.
-pub mod responses {
-    /// Operation completed successfully.
-    pub const SUCCESS: u64 = 0;
-    /// Operation failed with error.
-    pub const ERROR: u64 = 0xFFFFFFFFFFFFFFFF;
+impl TryFrom<u64> for ResponseType {
+    type Error = u64;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0x0000 => Ok(Self::Success),
+            0x0001 => Ok(Self::InvalidRequest),
+            0x0002 => Ok(Self::InvalidDataBuffer),
+            0x0003 => Ok(Self::CommBufferInitError),
+            other => Err(other),
+        }
+    }
 }
 
-// ============================================================================
-// Unblock Memory Params
-// ============================================================================
+impl From<ResponseType> for u64 {
+    fn from(response_type: ResponseType) -> Self {
+        response_type as u64
+    }
+}
 
-use r_efi::efi;
+impl From<ResponseType> for efi::Status {
+    fn from(response_type: ResponseType) -> Self {
+        match response_type {
+            ResponseType::Success => efi::Status::SUCCESS,
+            ResponseType::InvalidRequest => efi::Status::INVALID_PARAMETER,
+            ResponseType::InvalidDataBuffer => efi::Status::BUFFER_TOO_SMALL,
+            ResponseType::CommBufferInitError => efi::Status::DEVICE_ERROR,
+        }
+    }
+}
 
 /// MM Supervisor Unblock Memory Parameters.
 ///

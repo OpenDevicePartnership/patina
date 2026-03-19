@@ -20,10 +20,11 @@ use crate::patina_mm_integration::common::constants::*;
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
+use patina_mm::protocol::mm_supervisor_request::ResponseType;
 pub use zerocopy::IntoBytes;
 
 // Import shared protocol types from patina_mm
-pub use patina_mm::protocol::mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo};
+pub use patina_mm::protocol::mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo, SIGNATURE, REVISION, RequestType};
 
 /// Standardized error type for MM handlers
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,9 +125,9 @@ impl MmSupervisorHandler {
 
     fn handle_get_info_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::RequestType::VersionInfo as u32,
+            signature: SIGNATURE,
+            revision: REVISION,
+            request: RequestType::VersionInfo as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -134,7 +135,7 @@ impl MmSupervisorHandler {
         let version_info = MmSupervisorVersionInfo {
             version: mm_supv::VERSION,
             patch_level: mm_supv::PATCH_LEVEL,
-            max_supervisor_request_level: mm_supv::MAX_REQUEST_LEVEL,
+            max_supervisor_request_level: RequestType::MAX_REQUEST_TYPE,
         };
 
         let mut response = Vec::new();
@@ -147,9 +148,9 @@ impl MmSupervisorHandler {
 
     fn handle_get_capabilities_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::RequestType::FetchPolicy as u32,
+            signature: SIGNATURE,
+            revision: REVISION,
+            request: RequestType::FetchPolicy as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -166,9 +167,9 @@ impl MmSupervisorHandler {
 
     fn handle_comm_update_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::RequestType::CommUpdate as u32,
+            signature: SIGNATURE,
+            revision: REVISION,
+            request: RequestType::CommUpdate as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -186,9 +187,9 @@ impl MmSupervisorHandler {
 
     fn handle_unblock_mem_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::RequestType::UnblockMem as u32,
+            signature: SIGNATURE,
+            revision: REVISION,
+            request: RequestType::UnblockMem as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -221,38 +222,38 @@ impl MmHandler for MmSupervisorHandler {
             .ok_or_else(|| MmHandlerError::InvalidInput("Failed to parse header from bytes".to_string()))?;
 
         // Validate signature
-        if request_header.signature != mm_supv::REQUEST_SIGNATURE {
+        if request_header.signature != SIGNATURE {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid signature: 0x{:08X}, expected 0x{:08X}",
                 request_header.signature,
-                mm_supv::REQUEST_SIGNATURE
+                SIGNATURE
             )));
         }
 
         // Validate revision
-        if request_header.revision != mm_supv::REVISION {
+        if request_header.revision != REVISION {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid revision: 0x{:08X}, expected 0x{:08X}",
                 request_header.revision,
-                mm_supv::REVISION
+                REVISION
             )));
         }
 
         // Process based on request type
-        match mm_supv::RequestType::try_from(request_header.request) {
-            Ok(mm_supv::RequestType::VersionInfo) => {
+        match RequestType::try_from(request_header.request) {
+            Ok(RequestType::VersionInfo) => {
                 log::debug!(target: "supervisor_handler", "Processing get info request");
                 self.handle_get_info_request()
             }
-            Ok(mm_supv::RequestType::FetchPolicy) => {
+            Ok(RequestType::FetchPolicy) => {
                 log::debug!(target: "supervisor_handler", "Processing fetch policy request");
                 self.handle_get_capabilities_request()
             }
-            Ok(mm_supv::RequestType::CommUpdate) => {
+            Ok(RequestType::CommUpdate) => {
                 log::debug!(target: "supervisor_handler", "Processing comm update request");
                 self.handle_comm_update_request()
             }
-            Ok(mm_supv::RequestType::UnblockMem) => {
+            Ok(RequestType::UnblockMem) => {
                 log::debug!(target: "supervisor_handler", "Processing unblock mem request");
                 self.handle_unblock_mem_request()
             }
@@ -261,11 +262,11 @@ impl MmHandler for MmSupervisorHandler {
 
                 // Return error response
                 let error_header = MmSupervisorRequestHeader {
-                    signature: mm_supv::REQUEST_SIGNATURE,
-                    revision: mm_supv::REVISION,
+                    signature: SIGNATURE,
+                    revision: REVISION,
                     request: request_header.request,
                     reserved: 0,
-                    result: 0xFFFFFFFFFFFFFFFF, // Error
+                    result: ResponseType::InvalidRequest.into(), // Error
                 };
 
                 let mut response = Vec::new();

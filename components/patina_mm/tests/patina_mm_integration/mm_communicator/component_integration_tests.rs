@@ -20,6 +20,7 @@ use patina::{
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
     config::{CommunicateBuffer, MmCommunicationConfiguration},
+    protocol::mm_supervisor_request::{RequestType, ResponseType, SIGNATURE, REVISION},
 };
 
 use core::pin::Pin;
@@ -156,9 +157,9 @@ fn test_real_component_mm_supervisor_version_request() {
 
     // Create MM Supervisor version request using the actual structures
     let version_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::VersionInfo as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
@@ -181,10 +182,10 @@ fn test_real_component_mm_supervisor_version_request() {
         MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header from real component");
 
     // Verify header fields
-    assert_eq!(response_header.signature, mm_supv::REQUEST_SIGNATURE, "Response signature should match");
-    assert_eq!(response_header.revision, mm_supv::REVISION, "Response revision should match");
-    assert_eq!(response_header.request, mm_supv::RequestType::VersionInfo as u32, "Response request type should match");
-    assert_eq!(response_header.result, 0, "Response should indicate success");
+    assert_eq!(response_header.signature, SIGNATURE, "Response signature should match");
+    assert_eq!(response_header.revision, REVISION, "Response revision should match");
+    assert_eq!(response_header.request, RequestType::VersionInfo.into(), "Response request type should match");
+    assert_eq!(response_header.result, ResponseType::Success.into(), "Response should indicate success");
 
     // Parse version info from response
     let version_info_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -201,7 +202,7 @@ fn test_real_component_mm_supervisor_version_request() {
 
     assert_eq!(
         version_info.max_supervisor_request_level,
-        mm_supv::MAX_REQUEST_LEVEL,
+        RequestType::MAX_REQUEST_TYPE,
         "Max request level should match expected value"
     );
 }
@@ -275,9 +276,9 @@ fn test_real_component_multiple_handlers() {
 
     // Test MM supervisor handler
     let supervisor_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::FetchPolicy as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::FetchPolicy.into(),
         reserved: 0,
         result: 0,
     };

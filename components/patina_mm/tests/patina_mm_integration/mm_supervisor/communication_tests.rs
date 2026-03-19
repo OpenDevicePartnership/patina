@@ -15,6 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
+use patina_mm::protocol::mm_supervisor_request::{SIGNATURE, REVISION, RequestType, ResponseType};
 
 #[test]
 fn test_mm_supervisor_version_request_integration() {
@@ -25,9 +26,9 @@ fn test_mm_supervisor_version_request_integration() {
 
     // Create MM Supervisor version request using safe operations
     let version_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::VersionInfo as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
@@ -51,7 +52,7 @@ fn test_mm_supervisor_version_request_integration() {
     assert_eq!(response_header.signature, version_request.signature, "Signature should match");
     assert_eq!(response_header.revision, version_request.revision, "Revision should match");
     assert_eq!(response_header.request, version_request.request, "Request type should match");
-    assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Result should be success");
+    assert_eq!(response_header.result, ResponseType::Success.into(), "Result should be success");
 
     // Parse version info safely
     let version_info_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -75,9 +76,9 @@ fn test_mm_supervisor_capabilities_request() {
 
     // Create capabilities request using safe operations
     let capabilities_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::FetchPolicy as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::FetchPolicy.into(),
         reserved: 0,
         result: 0,
     };
@@ -97,7 +98,7 @@ fn test_mm_supervisor_capabilities_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Capabilities request should succeed");
+    assert_eq!(response_header.result, ResponseType::Success.into(), "Capabilities request should succeed");
 
     // Parse capabilities safely
     let capabilities_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -124,8 +125,8 @@ fn test_mm_supervisor_invalid_request() {
 
     // Create invalid request using safe operations
     let invalid_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
+        signature: SIGNATURE,
+        revision: REVISION,
         request: 0xFFFF, // Invalid request type
         reserved: 0,
         result: 0,
@@ -142,7 +143,7 @@ fn test_mm_supervisor_invalid_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.result, mm_supv::responses::ERROR, "Invalid request should return error");
+    assert_eq!(response_header.result, ResponseType::InvalidRequest.into(), "Invalid request should return error");
 }
 
 #[test]
@@ -153,8 +154,8 @@ fn test_mm_supervisor_invalid_signature() {
     // Create request with invalid signature using safe operations
     let invalid_request = MmSupervisorRequestHeader {
         signature: u32::from_le_bytes([b'I', b'N', b'V', b'D']), // Invalid signature
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::VersionInfo as u32,
+        revision: REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
@@ -207,9 +208,9 @@ fn test_mm_supervisor_builder_integration() {
 
     // Test MM Supervisor handler as well
     let version_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::VersionInfo as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
@@ -229,9 +230,9 @@ fn test_safe_message_parsing_with_mm_supervisor() {
     let mut buffer = vec![0u8; TEST_BUFFER_SIZE];
 
     let version_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::VersionInfo as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
@@ -267,9 +268,9 @@ fn test_mm_supervisor_comm_update_request() {
 
     // Create communication buffer update request using COMM_UPDATE constant
     let comm_update_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::CommUpdate as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::CommUpdate.into(),
         reserved: 0,
         result: 0,
     };
@@ -291,10 +292,10 @@ fn test_mm_supervisor_comm_update_request() {
 
     assert_eq!(
         response_header.request,
-        mm_supv::RequestType::CommUpdate as u32,
+        RequestType::CommUpdate.into(),
         "Response should be for COMM_UPDATE request"
     );
-    assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Comm update request should succeed");
+    assert_eq!(response_header.result, ResponseType::Success.into(), "Comm update request should succeed");
 
     // Parse update result safely
     let update_result_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -319,9 +320,9 @@ fn test_mm_supervisor_unblock_mem_request() {
 
     // Create memory unblock request using UNBLOCK_MEM constant
     let unblock_mem_request = MmSupervisorRequestHeader {
-        signature: mm_supv::SIGNATURE,
-        revision: mm_supv::REVISION,
-        request: mm_supv::RequestType::UnblockMem as u32,
+        signature: SIGNATURE,
+        revision: REVISION,
+        request: RequestType::UnblockMem.into(),
         reserved: 0,
         result: 0,
     };
@@ -343,10 +344,10 @@ fn test_mm_supervisor_unblock_mem_request() {
 
     assert_eq!(
         response_header.request,
-        mm_supv::RequestType::UnblockMem as u32,
+        RequestType::UnblockMem.into(),
         "Response should be for UNBLOCK_MEM request"
     );
-    assert_eq!(response_header.result, mm_supv::responses::SUCCESS, "Unblock mem request should succeed");
+    assert_eq!(response_header.result, ResponseType::Success.into(), "Unblock mem request should succeed");
 
     // Parse unblock status safely
     let unblock_status_offset = core::mem::size_of::<MmSupervisorRequestHeader>();

@@ -16,20 +16,11 @@ pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
 /// Note: These values are only used for testing. They're not meant to be
 /// accurate or used in production code.
 pub mod mm_supv {
-    // Re-export shared protocol constants
-    pub use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE, responses};
-
-    /// Request signature as a DWORD (same as shared SIGNATURE, kept for test compatibility)
-    pub const REQUEST_SIGNATURE: u32 = SIGNATURE;
-
     /// Mock supervisor version for testing
     pub const VERSION: u32 = 0x00130008;
-
+    
     /// Mock supervisor patch level for testing
     pub const PATCH_LEVEL: u32 = 0x00010001;
-
-    /// Mock maximum request level supported
-    pub const MAX_REQUEST_LEVEL: u64 = 0x0000000000000004; // COMM_UPDATE
 }
 
 /// Test GUIDs for different handlers
