@@ -20,10 +20,12 @@ use patina::{
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
     config::{CommunicateBuffer, MmCommunicationConfiguration},
-    protocol::mm_supervisor_request::{REVISION, RequestType, ResponseType, SIGNATURE},
+    protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE},
 };
 
 use core::pin::Pin;
+
+use r_efi::efi;
 
 use crate::patina_mm_integration::common::*;
 
@@ -185,7 +187,7 @@ fn test_real_component_mm_supervisor_version_request() {
     assert_eq!(response_header.signature, SIGNATURE, "Response signature should match");
     assert_eq!(response_header.revision, REVISION, "Response revision should match");
     assert_eq!(response_header.request, RequestType::VersionInfo.into(), "Response request type should match");
-    assert_eq!(response_header.result, ResponseType::Success.into(), "Response should indicate success");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Response should indicate success");
 
     // Parse version info from response
     let version_info_offset = core::mem::size_of::<MmSupervisorRequestHeader>();

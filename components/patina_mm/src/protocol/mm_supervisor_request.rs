@@ -44,7 +44,7 @@ pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
 /// Offset  Size  Field
 /// 0x00    4     signature   - Must be [`SIGNATURE`] ('MSUP' as little-endian u32)
 /// 0x04    4     revision    - Protocol revision, must be <= [`REVISION`]
-/// 0x08    4     request     - Request type (see [`requests`] module)
+/// 0x08    4     request     - Request type (see [`RequestType`] enum)
 /// 0x0C    4     reserved    - Reserved for alignment, must be 0
 /// 0x10    8     result      - Return status (0 = success, set by supervisor on response)
 /// ```
@@ -63,11 +63,11 @@ pub struct MmSupervisorRequestHeader {
     pub signature: u32,
     /// Revision of the request protocol.
     pub revision: u32,
-    /// The specific request type (see [`requests`] module constants).
+    /// The specific request type (see [`RequestType`] enum).
     pub request: u32,
     /// Reserved for alignment, must be 0.
     pub reserved: u32,
-    /// Result status. Set by the supervisor on response (0 = success).
+    /// Result status. The value of this field follows the [`efi::Status`] definitions.
     pub result: u64,
 }
 
@@ -91,7 +91,7 @@ impl MmSupervisorRequestHeader {
 /// Response from MM Supervisor version info request.
 ///
 /// Returned as the payload following an [`MmSupervisorRequestHeader`] when the request
-/// type is [`requests::VERSION_INFO`].
+/// type is [`RequestType::VersionInfo`].
 ///
 /// ## Layout
 ///
@@ -176,43 +176,23 @@ impl From<RequestType> for u32 {
 
 /// Standard MM Supervisor response types.
 ///
-/// Each variant corresponds to a specific supervisor operation.
+/// Each variant corresponds to a specific response status that the supervisor can return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseType {
-    /// Response to unblock memory regions request.
-    Success = 0x0000,
     /// Error: Invalid request index.
-    InvalidRequest = 0x0001,
+    InvalidRequest,
     /// Error: Invalid data buffer.
-    InvalidDataBuffer = 0x0002,
+    InvalidDataBuffer,
     /// Error: Communication buffer initialization failed.
-    CommBufferInitError = 0x0003,
+    CommBufferInitError,
 }
 
-impl TryFrom<u64> for ResponseType {
-    type Error = u64;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        match value {
-            0x0000 => Ok(Self::Success),
-            0x0001 => Ok(Self::InvalidRequest),
-            0x0002 => Ok(Self::InvalidDataBuffer),
-            0x0003 => Ok(Self::CommBufferInitError),
-            other => Err(other),
-        }
-    }
-}
-
-impl From<ResponseType> for u64 {
-    fn from(response_type: ResponseType) -> Self {
-        response_type as u64
-    }
-}
-
+/// Maps `ResponseType` variants to corresponding [`efi::Status`] codes, because this is how
+/// the supervisor request handlers map the [`MmSupervisorRequestHeader::result`] field in the
+/// response header.
 impl From<ResponseType> for efi::Status {
     fn from(response_type: ResponseType) -> Self {
         match response_type {
-            ResponseType::Success => efi::Status::SUCCESS,
             ResponseType::InvalidRequest => efi::Status::INVALID_PARAMETER,
             ResponseType::InvalidDataBuffer => efi::Status::BUFFER_TOO_SMALL,
             ResponseType::CommBufferInitError => efi::Status::DEVICE_ERROR,

@@ -17,6 +17,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::constants::*;
+use r_efi::efi;
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
@@ -266,7 +267,7 @@ impl MmHandler for MmSupervisorHandler {
                     revision: REVISION,
                     request: request_header.request,
                     reserved: 0,
-                    result: ResponseType::InvalidRequest.into(), // Error
+                    result: efi::Status::from(ResponseType::InvalidRequest).as_usize() as u64, // Error
                 };
 
                 let mut response = Vec::new();

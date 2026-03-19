@@ -15,7 +15,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
-use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, ResponseType, SIGNATURE};
+use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE};
+use r_efi::efi;
 
 #[test]
 fn test_mm_supervisor_version_request_integration() {
@@ -52,7 +53,7 @@ fn test_mm_supervisor_version_request_integration() {
     assert_eq!(response_header.signature, version_request.signature, "Signature should match");
     assert_eq!(response_header.revision, version_request.revision, "Revision should match");
     assert_eq!(response_header.request, version_request.request, "Request type should match");
-    assert_eq!(response_header.result, ResponseType::Success.into(), "Result should be success");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Result should be success");
 
     // Parse version info safely
     let version_info_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -98,7 +99,7 @@ fn test_mm_supervisor_capabilities_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.result, ResponseType::Success.into(), "Capabilities request should succeed");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Capabilities request should succeed");
 
     // Parse capabilities safely
     let capabilities_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -143,7 +144,11 @@ fn test_mm_supervisor_invalid_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(response_header.result, ResponseType::InvalidRequest.into(), "Invalid request should return error");
+    assert_eq!(
+        response_header.result,
+        efi::Status::INVALID_PARAMETER.as_usize() as u64,
+        "Invalid request should return error"
+    );
 }
 
 #[test]
@@ -291,7 +296,7 @@ fn test_mm_supervisor_comm_update_request() {
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
     assert_eq!(response_header.request, RequestType::CommUpdate.into(), "Response should be for COMM_UPDATE request");
-    assert_eq!(response_header.result, ResponseType::Success.into(), "Comm update request should succeed");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Comm update request should succeed");
 
     // Parse update result safely
     let update_result_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -339,7 +344,7 @@ fn test_mm_supervisor_unblock_mem_request() {
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
     assert_eq!(response_header.request, RequestType::UnblockMem.into(), "Response should be for UNBLOCK_MEM request");
-    assert_eq!(response_header.result, ResponseType::Success.into(), "Unblock mem request should succeed");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Unblock mem request should succeed");
 
     // Parse unblock status safely
     let unblock_status_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
