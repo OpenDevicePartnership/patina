@@ -84,7 +84,7 @@ impl MmSupervisorRequestHeader {
     ///
     /// Returns `None` if the slice is too small or misaligned.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        Self::read_from_bytes(&bytes.get(..Self::SIZE)?).ok()
+        Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
 }
 
@@ -128,7 +128,7 @@ impl MmSupervisorVersionInfo {
     ///
     /// Returns `None` if the slice is too small or misaligned.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        Self::read_from_bytes(&bytes.get(..Self::SIZE)?).ok()
+        Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
 }
 
