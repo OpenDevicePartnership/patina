@@ -18,7 +18,7 @@ pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
 pub mod mm_supv {
     /// Mock supervisor version for testing
     pub const VERSION: u32 = 0x00130008;
-    
+
     /// Mock supervisor patch level for testing
     pub const PATCH_LEVEL: u32 = 0x00010001;
 }

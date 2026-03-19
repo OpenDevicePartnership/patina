@@ -15,7 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
-use patina_mm::protocol::mm_supervisor_request::{SIGNATURE, REVISION, RequestType, ResponseType};
+use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, ResponseType, SIGNATURE};
 
 #[test]
 fn test_mm_supervisor_version_request_integration() {
@@ -290,11 +290,7 @@ fn test_mm_supervisor_comm_update_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(
-        response_header.request,
-        RequestType::CommUpdate.into(),
-        "Response should be for COMM_UPDATE request"
-    );
+    assert_eq!(response_header.request, RequestType::CommUpdate.into(), "Response should be for COMM_UPDATE request");
     assert_eq!(response_header.result, ResponseType::Success.into(), "Comm update request should succeed");
 
     // Parse update result safely
@@ -342,11 +338,7 @@ fn test_mm_supervisor_unblock_mem_request() {
     // Parse response header safely
     let response_header = MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header");
 
-    assert_eq!(
-        response_header.request,
-        RequestType::UnblockMem.into(),
-        "Response should be for UNBLOCK_MEM request"
-    );
+    assert_eq!(response_header.request, RequestType::UnblockMem.into(), "Response should be for UNBLOCK_MEM request");
     assert_eq!(response_header.result, ResponseType::Success.into(), "Unblock mem request should succeed");
 
     // Parse unblock status safely

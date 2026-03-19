@@ -24,7 +24,9 @@ use patina_mm::protocol::mm_supervisor_request::ResponseType;
 pub use zerocopy::IntoBytes;
 
 // Import shared protocol types from patina_mm
-pub use patina_mm::protocol::mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo, SIGNATURE, REVISION, RequestType};
+pub use patina_mm::protocol::mm_supervisor_request::{
+    MmSupervisorRequestHeader, MmSupervisorVersionInfo, REVISION, RequestType, SIGNATURE,
+};
 
 /// Standardized error type for MM handlers
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,8 +227,7 @@ impl MmHandler for MmSupervisorHandler {
         if request_header.signature != SIGNATURE {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid signature: 0x{:08X}, expected 0x{:08X}",
-                request_header.signature,
-                SIGNATURE
+                request_header.signature, SIGNATURE
             )));
         }
 
@@ -234,8 +235,7 @@ impl MmHandler for MmSupervisorHandler {
         if request_header.revision != REVISION {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid revision: 0x{:08X}, expected 0x{:08X}",
-                request_header.revision,
-                REVISION
+                request_header.revision, REVISION
             )));
         }
 

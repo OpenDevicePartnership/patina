@@ -20,7 +20,7 @@ use patina::{
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
     config::{CommunicateBuffer, MmCommunicationConfiguration},
-    protocol::mm_supervisor_request::{RequestType, ResponseType, SIGNATURE, REVISION},
+    protocol::mm_supervisor_request::{REVISION, RequestType, ResponseType, SIGNATURE},
 };
 
 use core::pin::Pin;

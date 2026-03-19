@@ -18,8 +18,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use patina::BinaryGuid;
-use zerocopy::FromBytes;
 use r_efi::efi;
+use zerocopy::FromBytes;
 
 /// The expected signature value ('MSUP' as little-endian u32).
 pub const SIGNATURE: u32 = 0x5055534D;
