@@ -124,6 +124,7 @@ use crate::component::{
     storage::{Storage, UnsafeStorageCell},
 };
 
+pub mod dxe_dispatch;
 pub mod memory;
 pub mod perf_timer;
 
