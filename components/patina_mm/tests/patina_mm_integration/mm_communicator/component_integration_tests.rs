@@ -283,7 +283,7 @@ fn test_real_component_multiple_handlers() {
     };
 
     let supervisor_result =
-        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &supervisor_request.as_bytes().to_vec());
+        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), supervisor_request.as_bytes());
     assert!(supervisor_result.is_ok(), "Supervisor communication should succeed");
 
     // Both handlers should work independently through the real component infrastructure
