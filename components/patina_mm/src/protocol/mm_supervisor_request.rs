@@ -21,8 +21,8 @@ use patina::BinaryGuid;
 use r_efi::efi;
 use zerocopy::FromBytes;
 
-/// The expected signature value ('MSUP' as little-endian u32).
-pub const SIGNATURE: u32 = 0x5055534D;
+/// Signature value for the request header ('MSUP' as little-endian u32).
+pub const SIGNATURE: u32 = u32::from_le_bytes([b'M', b'S', b'U', b'P']);
 
 /// Current revision of the request protocol.
 pub const REVISION: u32 = 1;
