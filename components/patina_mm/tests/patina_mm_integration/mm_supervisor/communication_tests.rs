@@ -15,7 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
-use patina_mm::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE};
+use patina::management_mode::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE};
 use r_efi::efi;
 
 #[test]

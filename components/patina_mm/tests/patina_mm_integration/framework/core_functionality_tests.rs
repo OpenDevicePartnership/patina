@@ -9,9 +9,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::{BinaryGuid, Guid};
+use patina::{BinaryGuid, Guid, management_mode::EfiMmCommunicateHeader};
 use patina_mm::{
-    comm_buffer_hob::EfiMmCommunicateHeader,
     component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
     config::CommunicateBuffer,
 };

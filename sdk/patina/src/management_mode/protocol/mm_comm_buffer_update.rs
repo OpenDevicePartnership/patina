@@ -10,7 +10,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina::BinaryGuid;
+use crate::BinaryGuid;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// GUID for the MM Communication Buffer Update Protocol

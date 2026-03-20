@@ -17,7 +17,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::BinaryGuid;
+use crate::BinaryGuid;
 use r_efi::efi;
 use zerocopy::FromBytes;
 

@@ -16,7 +16,6 @@
 mod comm_buffer_update;
 
 use crate::{
-    comm_buffer_hob::EfiMmCommunicateHeader,
     config::{CommunicateBuffer, MmCommunicationConfiguration},
     service::SwMmiTrigger,
 };
@@ -27,6 +26,7 @@ use patina::{
         Storage, component,
         service::{IntoService, Service},
     },
+    management_mode::EfiMmCommunicateHeader,
 };
 
 use alloc::{boxed::Box, vec::Vec};
@@ -370,7 +370,6 @@ impl Default for MmCommunicator {
 mod tests {
     use super::*;
     use crate::{
-        comm_buffer_hob::MmCommBufferStatus,
         component::{
             communicator::{MmCommunicator, MockMmExecutor},
             sw_mmi_manager::SwMmiManager,
@@ -378,6 +377,7 @@ mod tests {
         config::{CommunicateBuffer, MmCommunicationConfiguration},
     };
     use patina::component::{IntoComponent, Storage};
+    use patina::management_mode::MmCommBufferStatus;
 
     use core::{cell::RefCell, pin::Pin};
 

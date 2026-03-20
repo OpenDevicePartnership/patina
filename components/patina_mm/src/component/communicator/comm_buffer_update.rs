@@ -10,14 +10,11 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    component::communicator::MmCommunicator,
-    config::CommunicateBuffer,
-    protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
-};
+use crate::{component::communicator::MmCommunicator, config::CommunicateBuffer};
 use patina::{
     base::UEFI_PAGE_SIZE,
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
+    management_mode::protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
 };
 use zerocopy::FromBytes;
 

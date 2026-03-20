@@ -21,12 +21,11 @@ use r_efi::efi;
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
-use patina_mm::protocol::mm_supervisor_request::ResponseType;
 pub use zerocopy::IntoBytes;
 
 // Import shared protocol types from patina_mm
-pub use patina_mm::protocol::mm_supervisor_request::{
-    MmSupervisorRequestHeader, MmSupervisorVersionInfo, REVISION, RequestType, SIGNATURE,
+pub use patina::management_mode::protocol::mm_supervisor_request::{
+    MmSupervisorRequestHeader, MmSupervisorVersionInfo, REVISION, RequestType, ResponseType, SIGNATURE,
 };
 
 /// Standardized error type for MM handlers

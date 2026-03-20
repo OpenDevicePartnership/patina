@@ -19,7 +19,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina::{BinaryGuid, Guid};
+use crate::{BinaryGuid, Guid};
 use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 /// GUID for the MM communication buffer HOB (`gMmCommBufferHobGuid`).
@@ -92,7 +92,7 @@ impl MmCommBufferStatus {
 pub struct EfiMmCommunicateHeader {
     /// Allows for disambiguation of the message format.
     /// Used to identify the registered MM handlers that should be given the message.
-    header_guid: patina::BinaryGuid,
+    header_guid: BinaryGuid,
     /// The size of Data (in bytes) and does not include the size of the header.
     message_length: usize,
 }

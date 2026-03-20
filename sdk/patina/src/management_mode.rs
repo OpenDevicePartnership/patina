@@ -16,3 +16,6 @@
 
 pub mod comm_buffer_hob;
 pub mod protocol;
+
+// Re-export commonly used items for easier access
+pub use comm_buffer_hob::{EfiMmCommunicateHeader, MmCommBufferStatus};

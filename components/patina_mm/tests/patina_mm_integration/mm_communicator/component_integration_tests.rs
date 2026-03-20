@@ -16,11 +16,11 @@
 use patina::{
     Guid,
     component::{IntoComponent, Storage},
+    management_mode::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE},
 };
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
     config::{CommunicateBuffer, MmCommunicationConfiguration},
-    protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE},
 };
 
 use core::pin::Pin;
