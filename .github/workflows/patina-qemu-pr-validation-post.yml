@@ -20,8 +20,9 @@ permissions:
 
 jobs:
   post-process:
-    if: github.event.workflow_run.conclusion != 'cancelled'
     uses: OpenDevicePartnership/patina-devops/.github/workflows/PatinaQemuPrValidationPost.yml@patina_e2e_plat_validation
     with:
+      conclusion: ${{ github.event.workflow_run.conclusion }}
+      head-sha: ${{ github.event.workflow_run.head_sha }}
       triggering-run-id: ${{ fromJSON(github.event.workflow_run.id) }}
     secrets: inherit
