@@ -49,6 +49,7 @@ pub mod error;
 pub mod guids;
 pub mod hash;
 pub mod log;
+pub mod management_mode;
 #[cfg(any(test, feature = "alloc"))]
 pub mod performance;
 pub mod pi;
