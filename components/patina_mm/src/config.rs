@@ -21,8 +21,11 @@
 use alloc::vec::Vec;
 use core::{fmt, pin::Pin, ptr::NonNull};
 
-use patina::management_mode::{EfiMmCommunicateHeader, MmCommBufferStatus};
-use patina::{BinaryGuid, Guid, base::UEFI_PAGE_MASK};
+use patina::{
+    BinaryGuid, Guid,
+    base::UEFI_PAGE_MASK,
+    management_mode::{EfiMmCommunicateHeader, MmCommBufferStatus},
+};
 
 /// Management Mode (MM) Configuration
 ///
