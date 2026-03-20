@@ -224,6 +224,6 @@ pub struct MmSupervisorUnblockMemoryParams {
 }
 
 impl MmSupervisorUnblockMemoryParams {
-    /// Size of this structure in bytes (56).
+    /// Size of this structure in bytes.
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
