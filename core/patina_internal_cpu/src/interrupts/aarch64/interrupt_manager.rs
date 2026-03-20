@@ -7,13 +7,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+#[cfg(feature = "alloc")]
+use patina::component::service::IntoService;
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
     error::EfiError,
 };
-#[cfg(feature = "alloc")]
-use patina::component::service::IntoService;
 #[cfg(feature = "alloc")]
 use patina_paging::PageTable;
 
