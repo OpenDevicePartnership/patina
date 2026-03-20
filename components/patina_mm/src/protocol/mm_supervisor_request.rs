@@ -54,8 +54,7 @@ pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
     Copy,
     zerocopy_derive::FromBytes,
     zerocopy_derive::IntoBytes,
-    zerocopy_derive::Immutable,
-    zerocopy_derive::KnownLayout
+    zerocopy_derive::Immutable
 )]
 #[repr(C)]
 pub struct MmSupervisorRequestHeader {
