@@ -376,8 +376,10 @@ mod tests {
         },
         config::{CommunicateBuffer, MmCommunicationConfiguration},
     };
-    use patina::component::{IntoComponent, Storage};
-    use patina::management_mode::MmCommBufferStatus;
+    use patina::{
+        component::{IntoComponent, Storage},
+        management_mode::MmCommBufferStatus,
+    };
 
     use core::{cell::RefCell, pin::Pin};
 
