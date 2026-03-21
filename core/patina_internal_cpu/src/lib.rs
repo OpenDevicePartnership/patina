@@ -12,6 +12,9 @@
 #![feature(abi_x86_interrupt)]
 #![feature(coverage_attribute)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod cpu;
 pub mod interrupts;
 #[cfg(feature = "alloc")]

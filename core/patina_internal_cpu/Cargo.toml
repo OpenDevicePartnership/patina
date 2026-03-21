@@ -46,3 +46,4 @@ serial_test = { workspace = true }
 default = []
 std = []
 doc = []
+alloc = []

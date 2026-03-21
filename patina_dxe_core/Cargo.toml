@@ -32,7 +32,7 @@ uuid = { workspace = true  }
 patina = { workspace = true, features = ["core"] }
 patina_ffs = { workspace = true }
 patina_internal_collections = { workspace = true  }
-patina_internal_cpu = { workspace = true }
+patina_internal_cpu = { workspace = true, features = ["alloc"] }
 patina_debugger = { workspace = true, features = ["alloc"] }
 patina_internal_depex = { workspace = true}
 patina_performance = { workspace = true }

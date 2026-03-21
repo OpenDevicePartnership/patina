@@ -8,9 +8,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina_paging::{MemoryAttributes, PtError};
+use alloc::boxed::Box;
+use patina_paging::{CacheAttributeValue, MemoryAttributes, PtError};
 
-use crate::paging::{CacheAttributeValue, PatinaPageTable};
+use crate::paging::PatinaPageTable;
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
@@ -55,6 +56,6 @@ where
 /// Used to specify that this architecture paging implementation is not supported.
 pub fn create_cpu_null_paging<A: PageAllocator + 'static>(
     _page_allocator: A,
-) -> Result<EfiCpuPagingNull<A>, efi::Status> {
+) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
     Err(efi::Status::UNSUPPORTED)
 }
