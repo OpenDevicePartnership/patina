@@ -51,6 +51,8 @@ pub mod hash;
 pub mod log;
 pub mod management_mode;
 #[cfg(any(test, feature = "alloc"))]
+pub mod mm_services;
+#[cfg(any(test, feature = "alloc"))]
 pub mod performance;
 pub mod pi;
 #[cfg(any(test, feature = "alloc"))]
