@@ -156,6 +156,21 @@ pub type MmUninstallProtocolInterfaceFn = BootUninstallProtocolInterface;
 /// This function matches the C typedef `EFI_HANDLE_PROTOCOL`, which is already defined in `patina::standard::efi` as `BootHandleProtocol`.
 pub type MmHandleProtocolFn = BootHandleProtocol;
 
+/// Callback invoked when a protocol interface is installed.
+///
+/// This function matches the C typedef `EFI_MM_NOTIFY_FN`:
+/// ```c
+/// typedef
+/// EFI_STATUS
+/// (EFIAPI *EFI_MM_NOTIFY_FN)(
+///   IN CONST EFI_GUID  *Protocol,
+///   IN VOID            *Interface,
+///   IN EFI_HANDLE      Handle
+///   );
+/// ```
+pub type MmNotifyFn =
+    unsafe extern "efiapi" fn(protocol: *const efi::Guid, interface: *mut c_void, handle: efi::Handle) -> efi::Status;
+
 /// Register a callback function be called when a particular protocol interface is installed.
 ///
 /// This function matches the C typedef `EFI_MM_REGISTER_PROTOCOL_NOTIFY`:
