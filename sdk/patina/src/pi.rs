@@ -43,6 +43,7 @@ pub mod guid;
 pub mod hob;
 pub mod list_entry;
 pub mod mm_cis;
+pub mod mmram;
 pub mod protocol;
 #[cfg(feature = "serde")]
 pub mod serializable;
