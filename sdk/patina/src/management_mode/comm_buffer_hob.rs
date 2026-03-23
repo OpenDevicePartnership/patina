@@ -31,7 +31,7 @@ pub const MM_COMM_BUFFER_HOB_GUID: BinaryGuid = BinaryGuid::from_string("6c2a252
 ///
 /// Describes the communication buffer region passed via HOB from PEI to MM.
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, FromBytes, Immutable)]
 pub struct MmCommonBufferHobData {
     /// Physical start address of the common region.
     pub physical_start: u64,

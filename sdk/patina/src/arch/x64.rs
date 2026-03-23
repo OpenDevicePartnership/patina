@@ -425,7 +425,7 @@ pub fn get_timer_frequency() -> Option<NonZeroU64> {
         // SAFETY: Calling cpuid does not violate memory safety
         let core::arch::x86_64::CpuidResult { eax, .. } = unsafe { core::arch::x86_64::__cpuid(0x16) };
         if eax != 0 {
-            return NonZeroU64::new(u64::from(eax * 1_000_000));
+            return NonZeroU64::new(u64::from(eax) * 1_000_000);
         }
     }
 
