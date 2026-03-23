@@ -74,7 +74,7 @@ impl MmSupervisorRequestHeader {
 
     /// Reads a header from a byte slice.
     ///
-    /// Returns `None` if the slice is too small or misaligned.
+    /// Returns `None` if the slice is too small.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
@@ -118,7 +118,7 @@ impl MmSupervisorVersionInfo {
 
     /// Reads version info from a byte slice.
     ///
-    /// Returns `None` if the slice is too small or misaligned.
+    /// Returns `None` if the slice is too small.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
@@ -140,9 +140,7 @@ pub enum RequestType {
 }
 
 impl RequestType {
-    /// Tries to convert a raw u64 value into a `RequestType`.
-    ///
-    /// Returns `Err(value)` if the value does not correspond to a valid request type.
+    /// Highest valid `RequestType` value.
     pub const MAX_REQUEST_TYPE: u64 = Self::CommUpdate as u64;
 }
 
