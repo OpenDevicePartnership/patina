@@ -14,7 +14,6 @@ use patina::{
     bit,
     error::EfiError,
 };
-#[cfg(feature = "alloc")]
 use patina_paging::PageTable;
 
 use crate::interrupts::{
