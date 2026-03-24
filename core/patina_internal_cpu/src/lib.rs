@@ -17,5 +17,4 @@ extern crate alloc;
 
 pub mod cpu;
 pub mod interrupts;
-#[cfg(feature = "alloc")]
 pub mod paging;
