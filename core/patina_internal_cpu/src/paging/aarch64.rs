@@ -56,9 +56,7 @@ where
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<impl PatinaPageTable, efi::Status> {
-    Ok(EfiCpuPagingAArch64 {
-        paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
-    })
+    Ok(EfiCpuPagingAArch64 { paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap() })
 }
 
 #[cfg(test)]
