@@ -14,6 +14,7 @@ pub use spin_locked_gcd::DescriptorFilter;
 
 use goblin::pe::section_table;
 
+use alloc::boxed::Box;
 use core::{cell::Cell, ffi::c_void, ops::Range};
 use patina::{
     base::{align_down, align_up},
