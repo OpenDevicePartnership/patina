@@ -9,7 +9,6 @@
 use alloc::boxed::Box;
 use core::{
     clone::Clone,
-    convert::AsRef,
     ffi::c_void,
     mem,
     ops::BitOr,
@@ -53,29 +52,25 @@ pub mod event_callback {
     use super::*;
 
     /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
-    pub extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
-        event: efi::Event,
-        ctx: Box<(BB, RR, &TplMutex<F, B>)>,
-    ) where
-        BB: AsRef<B> + Clone,
-        B: BootServices + 'static,
-        RR: AsRef<R> + Clone + 'static,
-        R: RuntimeServices + 'static,
+    pub extern "efiapi" fn report_fbpt_record_buffer<B, R, F>(event: efi::Event, ctx: Box<(B, R, &TplMutex<F, B>)>)
+    where
+        B: BootServices + Clone + 'static,
+        R: RuntimeServices + Clone + 'static,
         F: FirmwareBasicBootPerfTable,
     {
         let (boot_services, runtime_services, fbpt) = *ctx;
-        let _ = boot_services.as_ref().close_event(event);
+        let _ = boot_services.close_event(event);
 
-        let Ok(fbpt_address) = fbpt.lock().report_table(
-            performance::table::find_previous_table_address(runtime_services.as_ref()),
-            boot_services.as_ref(),
-        ) else {
+        let Ok(fbpt_address) = fbpt
+            .lock()
+            .report_table(performance::table::find_previous_table_address(&runtime_services), &boot_services)
+        else {
             log::error!("Performance: Fail to report FBPT.");
             return;
         };
 
         // SAFETY: `p` is the only mutable reference to the `StatusCodeRuntimeProtocol` in this scope.
-        let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
+        let Ok(p) = (unsafe { boot_services.locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
             log::error!("Performance: Fail to find status code protocol.");
             return;
         };
@@ -95,7 +90,7 @@ pub mod event_callback {
         // SAFETY: This operation is valid because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
         // is a usize and the memory address is a valid and point to an FBPT.
         let status = unsafe {
-            boot_services.as_ref().install_configuration_table_unchecked(
+            boot_services.install_configuration_table_unchecked(
                 &EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
                 fbpt_address as *mut c_void,
             )
@@ -499,7 +494,6 @@ mod tests {
 
     use crate::{self as patina, device_path::fv_types::MediaFwVolDevicePath};
 
-    use alloc::rc::Rc;
     use core::{
         mem::MaybeUninit,
         ptr,
@@ -585,7 +579,7 @@ mod tests {
 
         event_callback::report_fbpt_record_buffer(
             1_usize as efi::Event,
-            Box::new((Rc::new(boot_services), Rc::new(runtime_services), fbpt)),
+            Box::new((boot_services, runtime_services, fbpt)),
         );
 
         assert!(REPORT_STATUS_CODE_CALLED.load(Ordering::Relaxed));

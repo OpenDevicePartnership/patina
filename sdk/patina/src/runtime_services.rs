@@ -466,6 +466,14 @@ impl RuntimeServices for StandardRuntimeServices {
     }
 }
 
+/// Clone implementation for MockRuntimeServices that creates a new mock with default expectations.
+#[cfg(any(test, feature = "mockall"))]
+impl Clone for MockRuntimeServices {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 #[coverage(off)]
 pub(crate) mod test {
