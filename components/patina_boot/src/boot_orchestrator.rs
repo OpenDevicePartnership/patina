@@ -11,7 +11,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina::{boot_services::StandardBootServices, error::EfiError, runtime_services::StandardRuntimeServices};
+use patina::{
+    boot_services::StandardBootServices, component::service::dxe_dispatch::DxeDispatch, error::EfiError,
+    runtime_services::StandardRuntimeServices,
+};
 use r_efi::efi;
 
 /// Trait for boot orchestration.
@@ -38,6 +41,7 @@ use r_efi::efi;
 ///         &self,
 ///         boot_services: &StandardBootServices,
 ///         runtime_services: &StandardRuntimeServices,
+///         dxe_services: &dyn DxeDispatch,
 ///         image_handle: efi::Handle,
 ///     ) -> Result<!, EfiError> {
 ///         // Custom boot flow...
@@ -65,6 +69,7 @@ pub trait BootOrchestrator: Send + Sync + 'static {
         &self,
         boot_services: &StandardBootServices,
         runtime_services: &StandardRuntimeServices,
+        dxe_services: &dyn DxeDispatch,
         image_handle: efi::Handle,
     ) -> Result<!, EfiError>;
 }
