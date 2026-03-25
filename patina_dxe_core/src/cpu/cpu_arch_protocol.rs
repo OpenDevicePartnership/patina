@@ -13,7 +13,7 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{component, service::Service, service::IntoService, Storage},
+    component::{Storage, component, service::IntoService, service::Service},
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
 };
@@ -28,15 +28,10 @@ use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandle
 
 #[derive(IntoService)]
 #[service(dyn Cpu)]
-struct DxeCpu (EfiCpu);
+struct DxeCpu(EfiCpu);
 
 impl Cpu for DxeCpu {
-    fn flush_data_cache(
-        &self,
-        start: efi::PhysicalAddress,
-        length: u64,
-        flush_type: CpuFlushType,
-    ) -> Result<()> {
+    fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<()> {
         self.0.flush_data_cache(start, length, flush_type)
     }
 
@@ -51,14 +46,10 @@ impl Cpu for DxeCpu {
 
 #[derive(IntoService)]
 #[service(dyn InterruptManager)]
-struct DxeInterruptManager (Interrupts);
+struct DxeInterruptManager(Interrupts);
 
 impl InterruptManager for DxeInterruptManager {
-    fn register_exception_handler(
-        &self,
-        interrupt_type: ExceptionType,
-        handler: HandlerType,
-    ) -> Result<()> {
+    fn register_exception_handler(&self, interrupt_type: ExceptionType, handler: HandlerType) -> Result<()> {
         self.0.register_exception_handler(interrupt_type, handler)
     }
 
