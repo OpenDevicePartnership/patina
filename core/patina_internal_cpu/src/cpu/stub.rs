@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::cpu::Cpu;
-#[cfg(feature = "alloc")]
-use patina::component::service::IntoService;
 use patina::{
     error::EfiError,
     pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
@@ -18,11 +16,9 @@ use r_efi::efi;
 /// Struct to implement Null Cpu Init.
 ///
 /// This struct cannot be used directly. It replaces the `EfiCpu` struct when not compiling for x86_64 or AArch64 UEFI architectures.
-#[derive(Default, Copy, Clone)]
-#[cfg_attr(feature = "alloc", derive(IntoService))]
-#[cfg_attr(feature = "alloc", service(dyn Cpu))]
 pub struct EfiCpuStub;
 
+#[allow(dead_code)]
 impl EfiCpuStub {
     /// Creates a new instance of the null implementation of the CPU.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
