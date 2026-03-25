@@ -13,7 +13,10 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{Storage, component, service::IntoService, service::Service},
+    component::{
+        Storage, component,
+        service::{IntoService, Service},
+    },
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
 };
