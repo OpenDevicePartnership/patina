@@ -77,6 +77,7 @@ mod cpu;
 mod debugger_reload;
 mod decompress;
 mod driver_services;
+mod dxe_dispatch_service;
 mod dxe_services;
 mod event_db;
 mod events;
@@ -401,7 +402,7 @@ impl<P: PlatformInfo> Core<P> {
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     ///
     /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
-    fn init_memory(&self, physical_hob_list: *const c_void) -> *mut c_void {
+    fn init_memory(&'static self, physical_hob_list: *const c_void) -> *mut c_void {
         log::info!("DXE Core Crate v{DXE_CORE_VERSION}");
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
@@ -474,6 +475,7 @@ impl<P: PlatformInfo> Core<P> {
         component_dispatcher.add_service(cpu);
         component_dispatcher.add_service(interrupt_manager);
         component_dispatcher.add_service(CoreMemoryManager);
+        component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
         component_dispatcher
             .add_service(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0)));
 

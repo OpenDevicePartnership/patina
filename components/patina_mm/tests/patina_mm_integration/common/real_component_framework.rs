@@ -108,7 +108,7 @@ impl MmExecutor for TestMmExecutor {
 /// the complete patina_mm component stack, including real `CommunicateBuffer` operations.
 pub struct RealComponentMmTestFramework {
     /// Real MM Communicator service using actual communication logic
-    mm_communicator: MmCommunicator,
+    mm_communicator: MmCommunicator<TestMmExecutor>,
 }
 
 impl RealComponentMmTestFramework {
@@ -174,7 +174,7 @@ impl RealComponentMmTestFrameworkBuilder {
         let test_executor = TestMmExecutor::new(handlers);
 
         // Create real MM communicator with test executor and test communication buffer
-        let mm_communicator = MmCommunicator::with_executor(Box::new(test_executor));
+        let mm_communicator = MmCommunicator::with_executor(test_executor);
 
         // Set up the communication buffer in the communicator
         mm_communicator.set_test_comm_buffers(vec![comm_buffer]);
