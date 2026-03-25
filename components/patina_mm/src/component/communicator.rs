@@ -28,7 +28,7 @@ use patina::{
     },
 };
 extern crate alloc;
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 
 use core::{
     cell::RefCell,
@@ -151,26 +151,23 @@ pub trait MmCommunication {
 ///
 /// Allows sending messages via a communication ("comm") buffer and receiving responses from the MM handler where
 /// the response is stored in the same buffer.
+///
+/// The default executor ([`RealMmExecutor`]) triggers MM via the SW MMI trigger service.
+/// Tests can substitute alternative executor implementations.
 #[derive(IntoService)]
 #[service(dyn MmCommunication)]
-pub struct MmCommunicator {
+pub struct MmCommunicator<E: MmExecutor + 'static = RealMmExecutor> {
     /// Configured communication buffers
     comm_buffers: RefCell<Vec<CommunicateBuffer>>,
     /// The MM Executor actively handling MM execution
-    mm_executor: Option<Box<dyn MmExecutor>>,
+    mm_executor: Option<E>,
     /// Context shared with protocol callback for pending buffer updates
     notify_context: Option<&'static comm_buffer_update::ProtocolNotifyContext>,
 }
 
-#[component]
-impl MmCommunicator {
-    /// Create a new `MmCommunicator` instance for testing.
-    pub fn new() -> Self {
-        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: None, notify_context: None }
-    }
-
-    /// Create a new `MmCommunicator` instance with a custom MM executor (for testing).
-    pub fn with_executor(executor: Box<dyn MmExecutor>) -> Self {
+impl<E: MmExecutor + 'static> MmCommunicator<E> {
+    /// Create a new `MmCommunicator` instance with a custom MM executor.
+    pub fn with_executor(executor: E) -> Self {
         Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: Some(executor), notify_context: None }
     }
 
@@ -178,6 +175,14 @@ impl MmCommunicator {
     #[coverage(off)]
     pub fn set_test_comm_buffers(&self, buffers: Vec<CommunicateBuffer>) {
         *self.comm_buffers.borrow_mut() = buffers;
+    }
+}
+
+#[component]
+impl MmCommunicator {
+    /// Create a new `MmCommunicator` instance.
+    pub fn new() -> Self {
+        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: None, notify_context: None }
     }
 
     /// Component entry point
@@ -196,7 +201,7 @@ impl MmCommunicator {
         log::info!(target: "mm_comm", "MM Communicator entry...");
 
         // Create the real MM executor
-        self.mm_executor = Some(Box::new(RealMmExecutor::new(sw_mmi_trigger)));
+        self.mm_executor = Some(RealMmExecutor::new(sw_mmi_trigger));
 
         let (comm_buffers, enable_buffer_updates, updatable_buffer_id) = {
             let config = storage
@@ -227,9 +232,7 @@ impl MmCommunicator {
                     buffer_id
                 );
 
-                // SAFETY: The communicator reference remains valid as a stored service
-                let self_ptr = &self as *const MmCommunicator;
-                let context = comm_buffer_update::register_buffer_update_notify(boot_services, buffer_id, self_ptr)?;
+                let context = comm_buffer_update::register_buffer_update_notify(boot_services, buffer_id)?;
 
                 // Store context reference for checking pending updates in communicate()
                 self.notify_context = Some(context);
@@ -249,7 +252,7 @@ impl MmCommunicator {
     }
 }
 
-impl Debug for MmCommunicator {
+impl<E: MmExecutor + 'static> Debug for MmCommunicator<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MM Communicator:")?;
         for buffer in self.comm_buffers.borrow().iter() {
@@ -260,7 +263,7 @@ impl Debug for MmCommunicator {
     }
 }
 
-impl MmCommunication for MmCommunicator {
+impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
     fn communicate<'a>(&self, id: u8, data_buffer: &[u8], recipient: Guid<'a>) -> Result<Vec<u8>, Status> {
         log::debug!(target: "mm_comm", "Starting MM communication: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
 
@@ -451,16 +454,16 @@ mod tests {
             let buffer: &'static mut [u8; $size] = Box::leak(Box::new([0u8; $size]));
             MmCommunicator {
                 comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(buffer), 0)]),
-                mm_executor: Some(Box::new($mock_executor)),
+                mm_executor: Some($mock_executor),
                 notify_context: None,
             }
         }};
     }
 
-    fn create_communicator_with_buffers(
+    fn create_communicator_with_buffers<E: MmExecutor + 'static>(
         buffers: Vec<CommunicateBuffer>,
-        executor: Box<dyn MmExecutor>,
-    ) -> MmCommunicator {
+        executor: E,
+    ) -> MmCommunicator<E> {
         MmCommunicator { comm_buffers: RefCell::new(buffers), mm_executor: Some(executor), notify_context: None }
     }
 
@@ -485,7 +488,7 @@ mod tests {
 
         let communicator = MmCommunicator {
             comm_buffers: RefCell::new(vec![]),
-            mm_executor: Some(Box::new(mock_executor)),
+            mm_executor: Some(mock_executor),
             notify_context: None,
         };
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
@@ -504,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_communicate_no_mm_executor() {
-        let communicator = MmCommunicator {
+        let communicator: MmCommunicator<MockMmExecutor> = MmCommunicator {
             comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0)]),
             mm_executor: None,
             notify_context: None,
@@ -582,7 +585,7 @@ mod tests {
             CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 256]))), 10),
         ];
 
-        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
+        let communicator = create_communicator_with_buffers(buffers, EchoMmExecutor);
 
         // Test communication with each buffer
         let test_data1 = b"Buffer 1 test";
@@ -660,7 +663,7 @@ mod tests {
         let buffer2 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 2);
         let buffers = vec![buffer1, buffer2];
 
-        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
+        let communicator = create_communicator_with_buffers(buffers, EchoMmExecutor);
 
         let debug_output = format!("{:?}", communicator);
         assert!(debug_output.contains("MM Communicator:"));
@@ -671,7 +674,7 @@ mod tests {
     #[test]
     fn test_mm_communicator_debug_no_executor() {
         let buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 512]))), 0);
-        let communicator =
+        let communicator: MmCommunicator<EchoMmExecutor> =
             MmCommunicator { comm_buffers: RefCell::new(vec![buffer]), mm_executor: None, notify_context: None };
 
         let debug_output = format!("{:?}", communicator);
@@ -689,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_mm_communicator_with_executor() {
-        let executor = Box::new(EchoMmExecutor);
+        let executor = EchoMmExecutor;
         let communicator = MmCommunicator::with_executor(executor);
 
         assert_eq!(communicator.comm_buffers.borrow().len(), 0);
@@ -737,7 +740,7 @@ mod tests {
         let mut buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0);
         buffer.disable();
 
-        let communicator = create_communicator_with_buffers(vec![buffer], Box::new(EchoMmExecutor));
+        let communicator = create_communicator_with_buffers(vec![buffer], EchoMmExecutor);
 
         // Should fail to find the buffer since it's disabled
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
@@ -756,7 +759,7 @@ mod tests {
         buffer3.disable(); // Disabled
 
         let buffers = vec![buffer1, buffer2, buffer3];
-        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
+        let communicator = create_communicator_with_buffers(buffers, EchoMmExecutor);
 
         // Buffer 1 is disabled - should fail
         let result1 = communicator.communicate(1, &TEST_DATA, test_recipient());
@@ -854,7 +857,7 @@ mod tests {
         }
 
         let communicator =
-            create_communicator_with_buffers(vec![buffer_with_mailbox], Box::new(NonZeroReturnExecutor { status_ptr }));
+            create_communicator_with_buffers(vec![buffer_with_mailbox], NonZeroReturnExecutor { status_ptr });
 
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert!(result.is_ok(), "Communication should succeed even with a non-zero MM return status");
@@ -923,7 +926,7 @@ mod tests {
             }
         }
 
-        let communicator = create_communicator_with_buffers(vec![buffer_with_mailbox], Box::new(CorruptBufferExecutor));
+        let communicator = create_communicator_with_buffers(vec![buffer_with_mailbox], CorruptBufferExecutor);
 
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::InvalidResponse));
