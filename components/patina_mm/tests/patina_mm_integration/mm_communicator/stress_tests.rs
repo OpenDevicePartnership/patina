@@ -111,7 +111,7 @@ impl TestDataGenerator {
 }
 
 /// Create a configured MM Communicator for stress testing
-fn create_stress_test_communicator() -> (MmCommunicator, MmTestFramework) {
+fn create_stress_test_communicator() -> (MmCommunicator<StressTestMmExecutor>, MmTestFramework) {
     // Create a comprehensive test framework with all handler types
     let framework = MmTestFramework::builder()
         .with_echo_handler()
@@ -123,7 +123,7 @@ fn create_stress_test_communicator() -> (MmCommunicator, MmTestFramework) {
         .expect("Framework creation should succeed");
 
     // Create MM Communicator with our test executor
-    let executor = Box::new(StressTestMmExecutor::new(framework.clone()));
+    let executor = StressTestMmExecutor::new(framework.clone());
     let communicator = MmCommunicator::with_executor(executor);
 
     // Create communication buffers for testing

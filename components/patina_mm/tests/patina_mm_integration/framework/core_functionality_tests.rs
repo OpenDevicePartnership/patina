@@ -74,13 +74,13 @@ mod tests {
     const TEST_GUID: BinaryGuid =
         BinaryGuid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
 
-    fn create_test_communicator() -> MmCommunicator {
+    fn create_test_communicator() -> MmCommunicator<CoreTestExecutor> {
         let mut executor = CoreTestExecutor::new();
         executor.add_handler(TestHandler::new(TEST_GUID, b"test response".to_vec()));
 
         let buffers = vec![CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0)];
 
-        let communicator = MmCommunicator::with_executor(Box::new(executor));
+        let communicator = MmCommunicator::with_executor(executor);
         communicator.set_test_comm_buffers(buffers);
         communicator
     }

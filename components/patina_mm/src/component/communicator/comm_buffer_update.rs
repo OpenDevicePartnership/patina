@@ -11,7 +11,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    component::communicator::MmCommunicator,
     config::CommunicateBuffer,
     protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
 };
@@ -35,7 +34,6 @@ use alloc::boxed::Box;
 pub(super) struct ProtocolNotifyContext {
     pub(super) boot_services: StandardBootServices,
     pub(super) updatable_buffer_id: u8,
-    pub(super) communicator: *const MmCommunicator,
     /// Pending buffer update - set by protocol callback, consumed by communicate()
     pub(super) pending_buffer: AtomicPtr<CommunicateBuffer>,
     /// Flag indicating if a buffer update is pending
@@ -50,26 +48,22 @@ pub(super) struct ProtocolNotifyContext {
 /// # Parameters
 /// - `boot_services`: Boot services for creating events and registering protocol notify
 /// - `updatable_buffer_id`: The buffer ID that should be updated when protocol is installed
-/// - `communicator`: Pointer to the MmCommunicator instance
 ///
 /// # Returns
 /// - `Ok(&'static ProtocolNotifyContext)`: Context that should be stored for later use
 /// - `Err(patina::error::Error)`: If event creation or protocol notify registration fails
 ///
 /// # Safety
-/// - The communicator pointer must remain valid for the lifetime of the context
 /// - The returned context is leaked and will live for a static lifetime
 pub(super) fn register_buffer_update_notify(
     boot_services: StandardBootServices,
     updatable_buffer_id: u8,
-    communicator: *const MmCommunicator,
 ) -> patina::error::Result<&'static ProtocolNotifyContext> {
     log::trace!(target: "mm_comm", "Setting up protocol notify callback for buffer ID {}", updatable_buffer_id);
 
     let context = Box::leak(Box::new(ProtocolNotifyContext {
         boot_services: boot_services.clone(),
         updatable_buffer_id,
-        communicator,
         pending_buffer: AtomicPtr::new(core::ptr::null_mut()),
         has_pending_update: AtomicBool::new(false),
     }));
@@ -174,7 +168,7 @@ pub(super) fn apply_pending_buffer_update(
 /// ELements of the protocol update process are unit tested but the notification function as a whole is not.
 #[coverage(off)]
 extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: &'static ProtocolNotifyContext) {
-    log::trace!(target: "mm_comm", "=== Protocol callback ENTRY === communicator ptr: {:p}", context.communicator);
+    log::trace!(target: "mm_comm", "=== Protocol callback ENTRY ===");
     log::info!(target: "mm_comm", "Protocol notify callback triggered for {}", mm_comm_buffer_update::GUID);
 
     let updatable_buffer_id = context.updatable_buffer_id;
@@ -281,7 +275,7 @@ extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{component::communicator::MmCommunicator, config::CommunicateBuffer};
+    use crate::config::CommunicateBuffer;
 
     use core::{
         pin::Pin,
@@ -293,10 +287,7 @@ mod tests {
     use alloc::{boxed::Box, vec};
 
     /// Helper to create a test protocol notify context without boot services
-    fn create_test_context(
-        updatable_buffer_id: u8,
-        communicator_ptr: *const MmCommunicator,
-    ) -> Box<ProtocolNotifyContext> {
+    fn create_test_context(updatable_buffer_id: u8) -> Box<ProtocolNotifyContext> {
         let mock_bs = Box::leak(Box::new([0u8; core::mem::size_of::<r_efi::system::BootServices>()]));
         let bs_ptr = mock_bs.as_mut_ptr() as *mut r_efi::system::BootServices;
         let bs = StandardBootServices::new(bs_ptr);
@@ -304,7 +295,6 @@ mod tests {
         Box::new(ProtocolNotifyContext {
             boot_services: bs,
             updatable_buffer_id,
-            communicator: communicator_ptr,
             pending_buffer: AtomicPtr::new(core::ptr::null_mut()),
             has_pending_update: AtomicBool::new(false),
         })
@@ -312,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_apply_pending_buffer_update_no_pending_update() {
-        let context = create_test_context(0, core::ptr::null());
+        let context = create_test_context(0);
         let mut comm_buffers = vec![];
 
         // No pending update should return false
@@ -322,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_apply_pending_buffer_update_with_pending_buffer() {
-        let context = create_test_context(5, core::ptr::null());
+        let context = create_test_context(5);
 
         // Create a new buffer to be the pending update
         let new_buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 4096]))), 5);
@@ -347,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_apply_pending_buffer_update_replaces_existing_buffer() {
-        let context = create_test_context(3, core::ptr::null());
+        let context = create_test_context(3);
 
         // Create existing buffer with ID 3
         let old_buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0xAA; 1024]))), 3);
@@ -382,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_apply_pending_buffer_update_flag_set_but_no_buffer() {
-        let context = create_test_context(0, core::ptr::null());
+        let context = create_test_context(0);
 
         // Set the flag but don't store a buffer
         context.has_pending_update.store(true, Ordering::Release);
@@ -397,19 +387,16 @@ mod tests {
 
     #[test]
     fn test_protocol_notify_context_creation() {
-        let communicator_ptr: *const MmCommunicator = 0x1000 as *const MmCommunicator;
-
-        let context = create_test_context(7, communicator_ptr);
+        let context = create_test_context(7);
 
         assert_eq!(context.updatable_buffer_id, 7);
-        assert_eq!(context.communicator, communicator_ptr);
         assert!(!context.has_pending_update.load(Ordering::Acquire));
         assert!(context.pending_buffer.load(Ordering::Acquire).is_null());
     }
 
     #[test]
     fn test_multiple_pending_buffer_updates() {
-        let context = create_test_context(1, core::ptr::null());
+        let context = create_test_context(1);
 
         // Set the first pending buffer
         let buffer1 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0xAA; 1024]))), 1);
@@ -446,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_pending_buffer_atomic_operations() {
-        let context = create_test_context(10, core::ptr::null());
+        let context = create_test_context(10);
 
         // Verify the initial state
         assert!(!context.has_pending_update.load(Ordering::Acquire));
