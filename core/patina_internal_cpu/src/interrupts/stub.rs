@@ -44,8 +44,6 @@ pub fn get_interrupt_state() -> Result<bool, EfiError> {
 
 /// Null Implementation of the InterruptManager.
 #[derive(Default, Copy, Clone)]
-#[cfg_attr(feature = "alloc", derive(IntoService))]
-#[cfg_attr(feature = "alloc", service(dyn InterruptManager))]
 pub struct InterruptsStub {}
 
 impl InterruptsStub {

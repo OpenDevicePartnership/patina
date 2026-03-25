@@ -22,7 +22,7 @@ use patina::{
 };
 use patina_internal_cpu::{
     cpu::{Cpu, EfiCpu},
-    interrupts::{self, ExceptionType, HandlerType, InterruptManager},
+    interrupts::{self, ExceptionType, HandlerType, InterruptManager, Interrupts},
 };
 use r_efi::efi;
 
@@ -30,7 +30,7 @@ use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandle
 
 #[derive(IntoService)]
 #[service(dyn Cpu)]
-struct DxeCpu(EfiCpu);
+pub(crate) struct DxeCpu(pub(crate) EfiCpu);
 
 impl Cpu for DxeCpu {
     fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<()> {
@@ -48,7 +48,7 @@ impl Cpu for DxeCpu {
 
 #[derive(IntoService)]
 #[service(dyn InterruptManager)]
-struct DxeInterruptManager(Interrupts);
+pub(crate) struct DxeInterruptManager(pub(crate) Interrupts);
 
 impl InterruptManager for DxeInterruptManager {
     fn register_exception_handler(&self, interrupt_type: ExceptionType, handler: HandlerType) -> Result<()> {

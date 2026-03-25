@@ -27,6 +27,7 @@ use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x
 #[derive(Default, Copy, Clone)]
 pub struct InterruptsX64 {}
 
+#[allow(dead_code)]
 impl InterruptsX64 {
     /// Creates a new instance of the x64 implementation of the InterruptManager.
     pub const fn new() -> Self {
