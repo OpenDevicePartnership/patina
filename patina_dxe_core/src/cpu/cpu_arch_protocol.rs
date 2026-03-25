@@ -51,12 +51,12 @@ impl Cpu for DxeCpu {
 pub(crate) struct DxeInterruptManager(pub(crate) Interrupts);
 
 impl InterruptManager for DxeInterruptManager {
-    fn register_exception_handler(&self, interrupt_type: ExceptionType, handler: HandlerType) -> Result<()> {
-        self.0.register_exception_handler(interrupt_type, handler)
+    fn register_exception_handler(&self, exception_type: ExceptionType, handler: HandlerType) -> Result<()> {
+        self.0.register_exception_handler(exception_type, handler)
     }
 
-    fn unregister_exception_handler(&self, interrupt_type: ExceptionType) -> Result<()> {
-        self.0.unregister_exception_handler(interrupt_type)
+    fn unregister_exception_handler(&self, exception_type: ExceptionType) -> Result<()> {
+        self.0.unregister_exception_handler(exception_type)
     }
 }
 
@@ -386,5 +386,45 @@ mod tests {
         let mut timer_period: u64 = 0;
         let status = get_timer_value(&protocol.protocol, 0, &mut timer_value as *mut _, &mut timer_period as *mut _);
         assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    // Tests for DxeCpu delegation
+    #[test]
+    fn test_dxe_cpu_flush_data_cache_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.flush_data_cache(0x1000, 0x100, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_cpu_init_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.init(CpuInitType::EfiCpuInit);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_cpu_get_timer_value_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.get_timer_value(0);
+        assert_eq!(result.unwrap(), (0, 0));
+    }
+
+    // Tests for DxeInterruptManager delegation
+    #[test]
+    fn test_dxe_interrupt_manager_register_delegates() {
+        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+        let result = dxe_interrupt_manager.register_exception_handler(
+            ExceptionType::from(0_usize),
+            HandlerType::UefiRoutine(mock_interrupt_handler),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_interrupt_manager_unregister_delegates() {
+        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+        let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+        assert!(result.is_ok());
     }
 }
