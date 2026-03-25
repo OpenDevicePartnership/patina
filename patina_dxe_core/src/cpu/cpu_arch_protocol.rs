@@ -13,17 +13,41 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{component, service::Service},
+    component::{component, service::Service, service::IntoService, Storage},
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
 };
 use patina_internal_cpu::{
     cpu::Cpu,
+    cpu::EfiCpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use r_efi::efi;
 
 use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
+
+#[derive(IntoService)]
+#[service(dyn Cpu)]
+struct DxeCpu (EfiCpu);
+
+impl Cpu for DxeCpu {
+    fn flush_data_cache(
+        &self,
+        start: efi::PhysicalAddress,
+        length: u64,
+        flush_type: CpuFlushType,
+    ) -> Result<()> {
+        self.0.flush_data_cache(start, length, flush_type)
+    }
+
+    fn init(&self, init_type: CpuInitType) -> Result<()> {
+        self.0.init(init_type)
+    }
+
+    fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64)> {
+        self.0.get_timer_value(timer_index)
+    }
+}
 
 #[repr(C)]
 struct EfiCpuArchProtocolImpl {
