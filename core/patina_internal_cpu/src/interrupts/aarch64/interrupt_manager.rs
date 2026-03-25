@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-#[cfg(feature = "alloc")]
-use patina::component::service::IntoService;
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
@@ -38,8 +36,6 @@ cfg_if::cfg_if! {
 }
 /// AARCH64 Implementation of the InterruptManager.
 #[derive(Default, Copy, Clone)]
-#[cfg_attr(feature = "alloc", derive(IntoService))]
-#[cfg_attr(feature = "alloc", service(dyn InterruptManager))]
 pub struct InterruptsAarch64 {}
 
 impl InterruptsAarch64 {

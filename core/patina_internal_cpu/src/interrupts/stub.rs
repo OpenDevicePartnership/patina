@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-#[cfg(feature = "alloc")]
-use patina::component::service::IntoService;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 
 use crate::interrupts::InterruptManager;

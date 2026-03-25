@@ -49,6 +49,24 @@ impl Cpu for DxeCpu {
     }
 }
 
+#[derive(IntoService)]
+#[service(dyn InterruptManager)]
+struct DxeInterruptManager (Interrupts);
+
+impl InterruptManager for DxeInterruptManager {
+    fn register_exception_handler(
+        &self,
+        interrupt_type: ExceptionType,
+        handler: HandlerType,
+    ) -> Result<()> {
+        self.0.register_exception_handler(interrupt_type, handler)
+    }
+
+    fn unregister_exception_handler(&self, interrupt_type: ExceptionType) -> Result<()> {
+        self.0.unregister_exception_handler(interrupt_type)
+    }
+}
+
 #[repr(C)]
 struct EfiCpuArchProtocolImpl {
     protocol: Protocol,

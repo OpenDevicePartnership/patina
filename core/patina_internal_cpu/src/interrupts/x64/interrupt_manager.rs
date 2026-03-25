@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-#[cfg(feature = "alloc")]
-use patina::component::service::IntoService;
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
@@ -27,8 +25,6 @@ use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x
 /// An x64 version of the InterruptManager for managing IDT based interrupts.
 ///
 #[derive(Default, Copy, Clone)]
-#[cfg_attr(feature = "alloc", derive(IntoService))]
-#[cfg_attr(feature = "alloc", service(dyn InterruptManager))]
 pub struct InterruptsX64 {}
 
 impl InterruptsX64 {
