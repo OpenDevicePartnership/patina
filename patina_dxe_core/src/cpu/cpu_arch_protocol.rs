@@ -18,8 +18,7 @@ use patina::{
     uefi_protocol::ProtocolInterface,
 };
 use patina_internal_cpu::{
-    cpu::Cpu,
-    cpu::EfiCpu,
+    cpu::{Cpu, EfiCpu},
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use r_efi::efi;
