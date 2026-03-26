@@ -4,22 +4,24 @@ Boot orchestration component for Patina-based firmware implementing UEFI boot ma
 
 ## Components
 
-- **BootOrchestrator**: Orchestrates device enumeration, BDS phase events, and boot option execution.
-- **ConsoleDiscovery**: Discovers console devices and populates UEFI console variables.
+- **BootDispatcher**: Installs the BDS architectural protocol and delegates to a `BootOrchestrator` implementation.
+- **BootOrchestrator**: Trait for custom boot flows. Platforms implement this to define boot behavior.
+- **SimpleBootManager**: Default `BootOrchestrator` for platforms with straightforward boot topologies.
 
 ## Usage
 
 ```rust
-use patina_boot::{component::BootOrchestrator, config::BootOptions};
+use patina_boot::{BootDispatcher, SimpleBootManager, config::BootConfig};
 
-// Configure boot options (devices are tried in order)
-let config = BootOptions::new()
-    .with_device(primary_boot_path)
-    .with_device(fallback_boot_path)
-    .with_failure_handler(|| { /* handle boot failure */ });
+// Minimal boot:
+let orchestrator = SimpleBootManager::new(
+    BootConfig::new(nvme_esp_path())
+        .with_device(nvme_recovery_path()),
+);
+add.component(BootDispatcher::new(orchestrator));
 
-// Add BootOrchestrator as a platform component
-add.component(BootOrchestrator);
+// Custom orchestrator:
+add.component(BootDispatcher::new(MyCustomOrchestrator::new()));
 ```
 
 ## Helper Functions

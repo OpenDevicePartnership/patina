@@ -17,7 +17,11 @@ use core::ffi::c_void;
 
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{component, params::Handle},
+    component::{
+        component,
+        params::Handle,
+        service::{Service, dxe_dispatch::DxeDispatch},
+    },
     error::{EfiError, Result},
     pi::protocols::bds,
     runtime_services::StandardRuntimeServices,
@@ -29,6 +33,7 @@ use crate::boot_orchestrator::BootOrchestrator;
 /// Context stored in a static for the BDS protocol callback to access.
 struct BdsContext {
     orchestrator: Box<dyn BootOrchestrator>,
+    dxe_dispatch: &'static dyn DxeDispatch,
     boot_services: StandardBootServices,
     runtime_services: StandardRuntimeServices,
     image_handle: r_efi::efi::Handle,
@@ -50,6 +55,7 @@ static BDS_CONTEXT: Once<BdsContext> = Once::new();
 /// This is the single Patina component for driving boot orchestration. It:
 /// - Accepts a [`BootOrchestrator`] implementation via [`BootDispatcher::new()`]
 /// - Installs the BDS architectural protocol during component dispatch
+/// - Consumes the [`DxeDispatch`] service via dependency injection
 /// - When the DXE core invokes BDS: delegates to `orchestrator.execute()`
 ///
 /// ## Usage
@@ -92,6 +98,7 @@ impl BootDispatcher {
         self,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
+        dxe_dispatch: Service<dyn DxeDispatch>,
         image_handle: Option<Handle>,
     ) -> Result<()> {
         let handle = image_handle.ok_or_else(|| {
@@ -102,6 +109,7 @@ impl BootDispatcher {
         // Store the orchestrator and services for the BDS callback
         BDS_CONTEXT.call_once(|| BdsContext {
             orchestrator: self.orchestrator,
+            dxe_dispatch: *dxe_dispatch,
             boot_services: boot_services.clone(),
             runtime_services: runtime_services.clone(),
             image_handle: *handle,
@@ -136,14 +144,22 @@ extern "efiapi" fn bds_entry_point(_this: *mut bds::Protocol) {
         panic!("BDS context not initialized — BootDispatcher entry_point was not called");
     };
 
-    let Err(e) = context.orchestrator.execute(&context.boot_services, &context.runtime_services, context.image_handle);
+    let Err(e) = context.orchestrator.execute(
+        &context.boot_services,
+        &context.runtime_services,
+        context.dxe_dispatch,
+        context.image_handle,
+    );
     panic!("BootOrchestrator::execute() failed: {e:?}");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patina::{boot_services::StandardBootServices, runtime_services::StandardRuntimeServices};
+    use patina::{
+        boot_services::StandardBootServices, component::service::dxe_dispatch::DxeDispatch,
+        runtime_services::StandardRuntimeServices,
+    };
     use r_efi::efi;
 
     struct MockOrchestrator;
@@ -153,6 +169,7 @@ mod tests {
             &self,
             _boot_services: &StandardBootServices,
             _runtime_services: &StandardRuntimeServices,
+            _dxe_dispatch: &dyn DxeDispatch,
             _image_handle: efi::Handle,
         ) -> core::result::Result<!, patina::error::EfiError> {
             Err(patina::error::EfiError::NotFound)
