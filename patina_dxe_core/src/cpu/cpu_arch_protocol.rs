@@ -412,21 +412,38 @@ mod tests {
 
     // Tests for DxeInterruptManager delegation
     #[test]
-    fn test_dxe_interrupt_manager_register_delegates() {
+    fn test_dxe_interrupt_manager_register_then_unregister_delegates() {
         with_locked_state(|| {
             let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+
+            // Register first
             let result = dxe_interrupt_manager.register_exception_handler(
                 ExceptionType::from(0_usize),
                 HandlerType::UefiRoutine(mock_interrupt_handler),
             );
             assert!(result.is_ok());
+
+            // Then unregister
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            assert!(result.is_ok());
         });
     }
 
     #[test]
-    fn test_dxe_interrupt_manager_unregister_delegates() {
+    fn test_dxe_interrupt_manager_unregister_then_register_delegates() {
         with_locked_state(|| {
             let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            // Expecting an error because there is no handler registered yet, but the method should still be callable.
+            assert!(result.is_err());
+
+            let result = dxe_interrupt_manager.register_exception_handler(
+                ExceptionType::from(0_usize),
+                HandlerType::UefiRoutine(mock_interrupt_handler),
+            );
+            assert!(result.is_ok());
+
+            // Now the unregister should succeed
             let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
             assert!(result.is_ok());
         });
