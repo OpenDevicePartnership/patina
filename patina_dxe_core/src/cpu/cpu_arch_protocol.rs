@@ -413,16 +413,22 @@ mod tests {
     // Tests for DxeInterruptManager delegation
     #[test]
     fn test_dxe_interrupt_manager_register_delegates() {
-        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
-        let result = dxe_interrupt_manager
-            .register_exception_handler(ExceptionType::from(0_usize), HandlerType::UefiRoutine(mock_interrupt_handler));
-        assert!(result.is_ok());
+        with_locked_state(|| {
+            let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+            let result = dxe_interrupt_manager.register_exception_handler(
+                ExceptionType::from(0_usize),
+                HandlerType::UefiRoutine(mock_interrupt_handler),
+            );
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
     fn test_dxe_interrupt_manager_unregister_delegates() {
-        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
-        let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
-        assert!(result.is_ok());
+        with_locked_state(|| {
+            let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            assert!(result.is_ok());
+        });
     }
 }
