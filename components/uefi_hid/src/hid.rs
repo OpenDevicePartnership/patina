@@ -34,7 +34,7 @@ struct HidInstance<T: BootServices + Clone + 'static> {
 
 // SAFETY: HidInstance GUID uniquely identifies this private protocol.
 unsafe impl<T: BootServices + Clone + 'static> ProtocolInterface for HidInstance<T> {
-    const PROTOCOL_GUID: efi::Guid = *BinaryGuid::from_string("0a87cfdb-c482-48e4-ade7-d9f99620e169").as_efi_guid();
+    const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("0a87cfdb-c482-48e4-ade7-d9f99620e169");
 }
 
 impl<T: BootServices + Clone + 'static> HidInstance<T> {

@@ -42,7 +42,7 @@ pub(crate) struct SimpleTextInFfi<T: BootServices + Clone + 'static> {
 // first field, so a pointer to SimpleTextInFfi<T> is a valid pointer to Protocol per the
 // first-field casting pattern.
 unsafe impl<T: BootServices + Clone + 'static> ProtocolInterface for SimpleTextInFfi<T> {
-    const PROTOCOL_GUID: efi::Guid = protocols::simple_text_input::PROTOCOL_GUID;
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid(protocols::simple_text_input::PROTOCOL_GUID);
 }
 
 impl<T: BootServices + Clone + 'static> SimpleTextInFfi<T> {

@@ -148,7 +148,9 @@ impl<T: BootServices + Clone + 'static> UefiHidIo<T> {
         if receivers.is_empty() {
             // No receivers initialized — close the protocol and report unsupported.
             log::trace!("UefiHidIo::new: no receivers initialized, returning UNSUPPORTED");
-            if let Err(status) = boot_services.close_protocol(controller, &HID_IO_PROTOCOL_GUID, agent, controller) {
+            if let Err(status) =
+                boot_services.close_protocol(controller, HID_IO_PROTOCOL_GUID.as_efi_guid(), agent, controller)
+            {
                 log::error!("Unexpected error closing HidIo protocol: {status:x?}");
             }
             return Err(efi::Status::UNSUPPORTED);
@@ -177,7 +179,7 @@ impl<T: BootServices + Clone + 'static> UefiHidIo<T> {
             )
         }
         .inspect_err(|_| {
-            let _ = boot_services.close_protocol(controller, &HID_IO_PROTOCOL_GUID, agent, controller);
+            let _ = boot_services.close_protocol(controller, HID_IO_PROTOCOL_GUID.as_efi_guid(), agent, controller);
         })?;
 
         report_queue.process_queue_event = process_queue_event;
@@ -190,7 +192,7 @@ impl<T: BootServices + Clone + 'static> UefiHidIo<T> {
             efi::Status::SUCCESS => (),
             err => {
                 let _ = boot_services.close_event(process_queue_event);
-                let _ = boot_services.close_protocol(controller, &HID_IO_PROTOCOL_GUID, agent, controller);
+                let _ = boot_services.close_protocol(controller, HID_IO_PROTOCOL_GUID.as_efi_guid(), agent, controller);
                 return Err(err);
             }
         }
@@ -268,9 +270,12 @@ impl<T: BootServices + Clone + 'static> Drop for UefiHidIo<T> {
         }
 
         let _ = self.boot_services.close_event(self.report_queue.process_queue_event);
-        if let Err(status) =
-            self.boot_services.close_protocol(self.controller, &HID_IO_PROTOCOL_GUID, self.agent, self.controller)
-        {
+        if let Err(status) = self.boot_services.close_protocol(
+            self.controller,
+            HID_IO_PROTOCOL_GUID.as_efi_guid(),
+            self.agent,
+            self.controller,
+        ) {
             log::error!("Unexpected error closing HidIo protocol: {status:x?}");
         }
 

@@ -49,7 +49,7 @@ pub(crate) struct AbsolutePointerFfi<T: BootServices + Clone + 'static> {
 // first field, so a pointer to AbsolutePointerFfi<T> is a valid pointer to Protocol per the
 // first-field casting pattern.
 unsafe impl<T: BootServices + Clone + 'static> ProtocolInterface for AbsolutePointerFfi<T> {
-    const PROTOCOL_GUID: efi::Guid = protocols::absolute_pointer::PROTOCOL_GUID;
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid(protocols::absolute_pointer::PROTOCOL_GUID);
 }
 
 impl<T: BootServices + Clone + 'static> Drop for AbsolutePointerFfi<T> {

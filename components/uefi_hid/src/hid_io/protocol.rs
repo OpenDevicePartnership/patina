@@ -18,8 +18,8 @@ use super::HidIo;
 use hidparser::ReportDescriptor;
 
 /// HidIo interface GUID: 3EA93936-6BF4-49D6-AA50-D9F5B9AD8CFF
-pub const HID_IO_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x3ea93936, 0x6bf4, 0x49d6, 0xaa, 0x50, &[0xd9, 0xf5, 0xb9, 0xad, 0x8c, 0xff]);
+pub const HID_IO_PROTOCOL_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("3EA93936-6BF4-49D6-AA50-D9F5B9AD8CFF");
 
 /// HID report types per the HID specification.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -75,7 +75,7 @@ pub struct HidIoProtocol {
 
 // SAFETY: HidIoProtocol is a C-compatible struct whose layout matches the HidIo GUID interface.
 unsafe impl patina::uefi_protocol::ProtocolInterface for HidIoProtocol {
-    const PROTOCOL_GUID: efi::Guid = HID_IO_PROTOCOL_GUID;
+    const PROTOCOL_GUID: patina::BinaryGuid = HID_IO_PROTOCOL_GUID;
 }
 
 #[cfg(test)]

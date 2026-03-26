@@ -47,7 +47,7 @@ struct UefiHidMarker;
 
 // SAFETY: UefiHidMarker is a ZST whose GUID uniquely identifies this component.
 unsafe impl ProtocolInterface for UefiHidMarker {
-    const PROTOCOL_GUID: efi::Guid = *BinaryGuid::from_string("122ffcfd-f8f8-46d6-81de-333e2419ebcb").as_efi_guid();
+    const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("122ffcfd-f8f8-46d6-81de-333e2419ebcb");
 }
 
 /// UEFI HID Patina component.
