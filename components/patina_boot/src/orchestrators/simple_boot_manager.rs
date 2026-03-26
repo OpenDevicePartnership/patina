@@ -23,7 +23,39 @@ use patina::{
 };
 use r_efi::efi;
 
+use patina::component::service::dxe_dispatch::DxeDispatch;
+
+use patina::boot_services::BootServices;
+
 use crate::{boot_orchestrator::BootOrchestrator, config::BootConfig, helpers};
+
+/// Interleave controller connection with DXE driver dispatch.
+///
+/// Alternates between connecting all controllers and dispatching newly loaded
+/// drivers (e.g., PCI option ROMs) until both the device topology stabilizes
+/// and no new drivers are dispatched.
+///
+/// This ensures that drivers loaded from firmware volumes during device
+/// enumeration (such as PCI option ROM drivers) are dispatched before
+/// continuing enumeration, allowing those drivers to bind to newly
+/// discovered controllers.
+fn interleave_connect_and_dispatch<B: BootServices, D: DxeDispatch + ?Sized>(
+    boot_services: &B,
+    dxe_services: &D,
+) -> patina::error::Result<()> {
+    const MAX_ROUNDS: usize = 10;
+
+    for _round in 0..MAX_ROUNDS {
+        helpers::connect_all(boot_services)?;
+        if !dxe_services.dispatch()? {
+            return Ok(());
+        }
+    }
+
+    debug_assert!(false, "connect-dispatch interleaving did not converge after {MAX_ROUNDS} rounds");
+
+    Ok(())
+}
 
 /// Simple boot manager implementing [`BootOrchestrator`].
 ///
@@ -32,7 +64,7 @@ use crate::{boot_orchestrator::BootOrchestrator, config::BootConfig, helpers};
 ///
 /// ## Boot Flow
 ///
-/// 1. Connect all controllers for device enumeration
+/// 1. Interleave controller connection with DXE driver dispatch for device enumeration
 /// 2. Signal EndOfDxe (security lockdown)
 /// 3. Discover console devices
 /// 4. Detect hotkey (if configured); select alternate devices if pressed
@@ -78,10 +110,11 @@ impl BootOrchestrator for SimpleBootManager {
         &self,
         boot_services: &StandardBootServices,
         runtime_services: &StandardRuntimeServices,
+        dxe_dispatch: &dyn DxeDispatch,
         image_handle: efi::Handle,
     ) -> Result<!, EfiError> {
-        if let Err(e) = helpers::connect_all(boot_services) {
-            log::error!("connect_all failed: {:?}", e);
+        if let Err(e) = interleave_connect_and_dispatch(boot_services, dxe_dispatch) {
+            log::error!("interleave_connect_and_dispatch failed: {:?}", e);
         }
 
         if let Err(e) = helpers::signal_bds_phase_entry(boot_services) {
@@ -132,12 +165,119 @@ mod tests {
     extern crate alloc;
 
     use super::*;
-    use alloc::sync::Arc;
+    use alloc::{boxed::Box, sync::Arc};
     use core::sync::atomic::{AtomicBool, Ordering};
-    use patina::device_path::{node_defs::EndEntire, paths::DevicePathBuf};
+    use patina::{
+        boot_services::{MockBootServices, boxed::BootServicesBox},
+        device_path::{node_defs::EndEntire, paths::DevicePathBuf},
+    };
 
     fn test_device_path() -> DevicePathBuf {
         DevicePathBuf::from_device_path_node_iter(core::iter::once(EndEntire))
+    }
+
+    // Tests for interleave_connect_and_dispatch
+
+    struct MockDxeDispatcher {
+        results: spin::Mutex<alloc::collections::VecDeque<patina::error::Result<bool>>>,
+    }
+
+    impl MockDxeDispatcher {
+        fn new(results: &[patina::error::Result<bool>]) -> Self {
+            Self { results: spin::Mutex::new(results.iter().cloned().collect()) }
+        }
+    }
+
+    impl DxeDispatch for MockDxeDispatcher {
+        fn dispatch(&self) -> patina::error::Result<bool> {
+            self.results.lock().pop_front().expect("MockDxeDispatcher: unexpected dispatch call")
+        }
+    }
+
+    fn leaked_boot_services_for_box() -> &'static MockBootServices {
+        Box::leak(Box::new({
+            let mut m = MockBootServices::new();
+            m.expect_free_pool().returning(|_| Ok(()));
+            m
+        }))
+    }
+
+    fn mock_handle_buffer(
+        handle_addrs: &[usize],
+        boot_services: &'static MockBootServices,
+    ) -> BootServicesBox<'static, [efi::Handle], MockBootServices> {
+        let handles: Vec<efi::Handle> = handle_addrs.iter().map(|&a| a as efi::Handle).collect();
+        let leaked = handles.leak();
+        // SAFETY: leaked is a valid pointer+length from Vec::leak.
+        unsafe { BootServicesBox::from_raw_parts_mut(leaked.as_mut_ptr(), leaked.len(), boot_services) }
+    }
+
+    #[test]
+    fn test_interleave_single_round_no_drivers_dispatched() {
+        let box_mock = leaked_boot_services_for_box();
+        let mut boot_mock = MockBootServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
+        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+
+        let dxe_mock = MockDxeDispatcher::new(&[Ok(false)]);
+
+        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_interleave_multiple_rounds() {
+        let box_mock = leaked_boot_services_for_box();
+        let mut boot_mock = MockBootServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
+        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+
+        let dxe_mock = MockDxeDispatcher::new(&[Ok(true), Ok(false)]);
+
+        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_interleave_connect_failure_propagates() {
+        let mut boot_mock = MockBootServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
+
+        let dxe_mock = MockDxeDispatcher::new(&[]);
+
+        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_interleave_dispatch_failure_propagates() {
+        let box_mock = leaked_boot_services_for_box();
+        let mut boot_mock = MockBootServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
+        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+
+        let dxe_mock = MockDxeDispatcher::new(&[Err(EfiError::DeviceError)]);
+
+        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_interleave_stops_at_max_rounds() {
+        let box_mock = leaked_boot_services_for_box();
+        let mut boot_mock = MockBootServices::new();
+
+        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
+        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+
+        let dxe_mock = MockDxeDispatcher::new(&[Ok(true); 10]);
+
+        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        assert!(result.is_ok());
     }
 
     #[test]
