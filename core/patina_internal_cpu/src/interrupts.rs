@@ -222,8 +222,6 @@ pub trait InterruptHandler<T = ExceptionContextArch>: Sync {
 #[coverage(off)]
 #[cfg(test)]
 mod tests {
-    extern crate std;
-
     use super::*;
 
     #[test]

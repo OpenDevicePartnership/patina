@@ -116,6 +116,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
+use cpu::{DxeCpu, DxeInterruptManager};
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use patina::{
@@ -472,8 +473,8 @@ impl<P: PlatformInfo> Core<P> {
         log::info!("GCD - After memory init:\n{GCD}");
 
         let mut component_dispatcher = self.component_dispatcher.lock();
-        component_dispatcher.add_service(cpu);
-        component_dispatcher.add_service(interrupt_manager);
+        component_dispatcher.add_service(DxeCpu(cpu));
+        component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
         component_dispatcher.add_service(CoreMemoryManager);
         component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
         component_dispatcher

@@ -9,7 +9,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::paging::{CacheAttributeValue, PatinaPageTable};
-use alloc::boxed::Box;
 use patina::error::EfiError;
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
 use patina_paging::{
@@ -136,12 +135,12 @@ fn apply_caching_attributes<M: Mtrr>(
 /// Create an x86_64 paging instance under the general PatinaPageTable trait.
 pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
-    Ok(Box::new(EfiCpuPagingX64 {
+) -> Result<impl PatinaPageTable, efi::Status> {
+    Ok(EfiCpuPagingX64 {
         paging: X64PageTable::new(page_allocator, PagingType::Paging4Level)
             .map_err(|_| efi::Status::INVALID_PARAMETER)?,
         mtrr: create_mtrr_lib(0),
-    }))
+    })
 }
 
 fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {

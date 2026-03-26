@@ -13,17 +13,52 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{component, service::Service},
+    component::{
+        Storage, component,
+        service::{IntoService, Service},
+    },
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
 };
 use patina_internal_cpu::{
-    cpu::Cpu,
-    interrupts::{self, ExceptionType, HandlerType, InterruptManager},
+    cpu::{Cpu, EfiCpu},
+    interrupts::{self, ExceptionType, HandlerType, InterruptManager, Interrupts},
 };
 use r_efi::efi;
 
 use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
+
+#[derive(IntoService)]
+#[service(dyn Cpu)]
+pub(crate) struct DxeCpu(pub(crate) EfiCpu);
+
+impl Cpu for DxeCpu {
+    fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<()> {
+        self.0.flush_data_cache(start, length, flush_type)
+    }
+
+    fn init(&self, init_type: CpuInitType) -> Result<()> {
+        self.0.init(init_type)
+    }
+
+    fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64)> {
+        self.0.get_timer_value(timer_index)
+    }
+}
+
+#[derive(IntoService)]
+#[service(dyn InterruptManager)]
+pub(crate) struct DxeInterruptManager(pub(crate) Interrupts);
+
+impl InterruptManager for DxeInterruptManager {
+    fn register_exception_handler(&self, exception_type: ExceptionType, handler: HandlerType) -> Result<()> {
+        self.0.register_exception_handler(exception_type, handler)
+    }
+
+    fn unregister_exception_handler(&self, exception_type: ExceptionType) -> Result<()> {
+        self.0.unregister_exception_handler(exception_type)
+    }
+}
 
 #[repr(C)]
 struct EfiCpuArchProtocolImpl {
@@ -351,5 +386,43 @@ mod tests {
         let mut timer_period: u64 = 0;
         let status = get_timer_value(&protocol.protocol, 0, &mut timer_value as *mut _, &mut timer_period as *mut _);
         assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    // Tests for DxeCpu delegation
+    #[test]
+    fn test_dxe_cpu_flush_data_cache_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.flush_data_cache(0x1000, 0x100, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_cpu_init_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.init(CpuInitType::EfiCpuInit);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_cpu_get_timer_value_delegates() {
+        let dxe_cpu = DxeCpu(EfiCpu::default());
+        let result = dxe_cpu.get_timer_value(0);
+        assert_eq!(result.unwrap(), (0, 0));
+    }
+
+    // Tests for DxeInterruptManager delegation
+    #[test]
+    fn test_dxe_interrupt_manager_register_delegates() {
+        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+        let result = dxe_interrupt_manager
+            .register_exception_handler(ExceptionType::from(0_usize), HandlerType::UefiRoutine(mock_interrupt_handler));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dxe_interrupt_manager_unregister_delegates() {
+        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+        let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+        assert!(result.is_ok());
     }
 }

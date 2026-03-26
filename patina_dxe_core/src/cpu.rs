@@ -13,7 +13,7 @@ mod cpu_arch_protocol;
 mod hw_interrupt_protocol;
 mod perf_timer;
 
-pub(crate) use cpu_arch_protocol::CpuArchProtocolInstaller;
+pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeCpu, DxeInterruptManager};
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use perf_timer::PerfTimer;

@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina::{component::service::IntoService, error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 
 use crate::interrupts::InterruptManager;
 
@@ -43,8 +43,7 @@ pub fn get_interrupt_state() -> Result<bool, EfiError> {
 }
 
 /// Null Implementation of the InterruptManager.
-#[derive(Default, Copy, Clone, IntoService)]
-#[service(dyn InterruptManager)]
+#[derive(Default, Copy, Clone)]
 pub struct InterruptsStub {}
 
 impl InterruptsStub {
