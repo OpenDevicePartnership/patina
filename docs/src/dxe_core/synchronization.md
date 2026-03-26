@@ -168,7 +168,7 @@ guard is active.
 
 Prefer:
 
-```rust
+```rust,ignore
 {
     let guard = my_tpl_mutex.lock();
     // TPL raised to level associated with my_tpl_mutex
@@ -182,7 +182,7 @@ my_tpl_mutex.lock().mutation2();
 
 instead of:
 
-```rust
+```rust,ignore
 let guard = my_tpl_mutex.lock();
 guard.mutation();
 //mutex held and TPL stays high during long_running_computation
@@ -217,7 +217,7 @@ described in
 of the UEFI spec. For example, the following usage of
 `TplMutex` would be an error:
 
-```rust
+```rust,ignore
 let my_tpl_mutex = TplMutex<Data>::new(efi::TPL_NOTIFY, Data::new(), "my lock");
 let _guard = my_tpl_mutex.lock(); //TPL raised to NOTIFY while _guard is in scope.
 let acpi_services = locate_acpi_table_protocol();
