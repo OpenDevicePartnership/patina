@@ -296,133 +296,177 @@ mod tests {
 
     #[test]
     fn test_flush_data_cache() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        cpu_init.expect_flush_data_cache().with(eq(0), eq(0), always()).returning(|_, _, _| Ok(()));
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+        with_locked_state(|| {
+            let mut cpu_init = MockEfiCpuInit::new();
+            cpu_init.expect_flush_data_cache().with(eq(0), eq(0), always()).returning(|_, _, _| Ok(()));
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
 
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
 
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let status = flush_data_cache(&protocol.protocol, 0, 0, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let status = flush_data_cache(&protocol.protocol, 0, 0, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     #[test]
     fn test_enable_interrupt() {
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+        with_locked_state(|| {
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let status = enable_interrupt(&protocol.protocol);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let status = enable_interrupt(&protocol.protocol);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     #[test]
     fn test_disable_interrupt() {
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+        with_locked_state(|| {
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let status = disable_interrupt(&protocol.protocol);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let status = disable_interrupt(&protocol.protocol);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     #[test]
     fn test_get_interrupt_state() {
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+        with_locked_state(|| {
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let mut state = false;
-        let status = get_interrupt_state(&protocol.protocol, &mut state as *mut bool);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let mut state = false;
+            let status = get_interrupt_state(&protocol.protocol, &mut state as *mut bool);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     #[test]
     fn test_init() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        cpu_init.expect_init().with(always()).returning(|_| Ok(()));
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+        with_locked_state(|| {
+            let mut cpu_init = MockEfiCpuInit::new();
+            cpu_init.expect_init().with(always()).returning(|_| Ok(()));
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
 
-        let mut im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let mut im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
 
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let status = init(&protocol.protocol, CpuInitType::EfiCpuInit);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let status = init(&protocol.protocol, CpuInitType::EfiCpuInit);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     extern "efiapi" fn mock_interrupt_handler(_type: EfiExceptionType, _context: EfiSystemContext) {}
 
     #[test]
     fn test_register_interrupt_handler() {
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+        with_locked_state(|| {
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
 
-        let mut interrupt_manager = MockInterruptManager::new();
-        interrupt_manager
-            .expect_register_exception_handler()
-            .with(eq(ExceptionType::from(0_usize)), always())
-            .returning(|_, _| Ok(()));
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(interrupt_manager));
+            let mut interrupt_manager = MockInterruptManager::new();
+            interrupt_manager
+                .expect_register_exception_handler()
+                .with(eq(ExceptionType::from(0_usize)), always())
+                .returning(|_, _| Ok(()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(interrupt_manager));
 
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let status = register_interrupt_handler(&protocol.protocol, 0, mock_interrupt_handler);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let status = register_interrupt_handler(&protocol.protocol, 0, mock_interrupt_handler);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     #[test]
     fn test_get_timer_value() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        cpu_init.expect_get_timer_value().with(eq(0)).returning(|_| Ok((0, 0)));
-        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+        with_locked_state(|| {
+            let mut cpu_init = MockEfiCpuInit::new();
+            cpu_init.expect_get_timer_value().with(eq(0)).returning(|_| Ok((0, 0)));
+            let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
 
-        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+            let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
 
-        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
+            let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
-        let mut timer_value: u64 = 0;
-        let mut timer_period: u64 = 0;
-        let status = get_timer_value(&protocol.protocol, 0, &mut timer_value as *mut _, &mut timer_period as *mut _);
-        assert_eq!(status, efi::Status::SUCCESS);
+            let mut timer_value: u64 = 0;
+            let mut timer_period: u64 = 0;
+            let status =
+                get_timer_value(&protocol.protocol, 0, &mut timer_value as *mut _, &mut timer_period as *mut _);
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
     }
 
     // Tests for DxeCpu delegation
     #[test]
     fn test_dxe_cpu_flush_data_cache_delegates() {
-        let dxe_cpu = DxeCpu(EfiCpu::default());
-        let result = dxe_cpu.flush_data_cache(0x1000, 0x100, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
-        assert!(result.is_ok());
+        with_locked_state(|| {
+            let dxe_cpu = DxeCpu(EfiCpu::default());
+            let result = dxe_cpu.flush_data_cache(0x1000, 0x100, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
     fn test_dxe_cpu_init_delegates() {
-        let dxe_cpu = DxeCpu(EfiCpu::default());
-        let result = dxe_cpu.init(CpuInitType::EfiCpuInit);
-        assert!(result.is_ok());
+        with_locked_state(|| {
+            let dxe_cpu = DxeCpu(EfiCpu::default());
+            let result = dxe_cpu.init(CpuInitType::EfiCpuInit);
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
     fn test_dxe_cpu_get_timer_value_delegates() {
-        let dxe_cpu = DxeCpu(EfiCpu::default());
-        let result = dxe_cpu.get_timer_value(0);
-        assert_eq!(result.unwrap(), (0, 0));
+        with_locked_state(|| {
+            let dxe_cpu = DxeCpu(EfiCpu::default());
+            let result = dxe_cpu.get_timer_value(0);
+            assert_eq!(result.unwrap(), (0, 0));
+        });
     }
 
     // Tests for DxeInterruptManager delegation
     #[test]
-    fn test_dxe_interrupt_manager_register_delegates() {
-        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
-        let result = dxe_interrupt_manager
-            .register_exception_handler(ExceptionType::from(0_usize), HandlerType::UefiRoutine(mock_interrupt_handler));
-        assert!(result.is_ok());
+    fn test_dxe_interrupt_manager_register_then_unregister_delegates() {
+        with_locked_state(|| {
+            let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+
+            // Register first
+            let result = dxe_interrupt_manager.register_exception_handler(
+                ExceptionType::from(0_usize),
+                HandlerType::UefiRoutine(mock_interrupt_handler),
+            );
+            assert!(result.is_ok());
+
+            // Then unregister
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
-    fn test_dxe_interrupt_manager_unregister_delegates() {
-        let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
-        let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
-        assert!(result.is_ok());
+    fn test_dxe_interrupt_manager_unregister_then_register_delegates() {
+        with_locked_state(|| {
+            let dxe_interrupt_manager = DxeInterruptManager(Interrupts::default());
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            // Expecting an error because there is no handler registered yet, but the method should still be callable.
+            assert!(result.is_err());
+
+            let result = dxe_interrupt_manager.register_exception_handler(
+                ExceptionType::from(0_usize),
+                HandlerType::UefiRoutine(mock_interrupt_handler),
+            );
+            assert!(result.is_ok());
+
+            // Now the unregister should succeed
+            let result = dxe_interrupt_manager.unregister_exception_handler(ExceptionType::from(0_usize));
+            assert!(result.is_ok());
+        });
     }
 }
