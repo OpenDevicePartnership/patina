@@ -73,10 +73,6 @@ alloc = ["dep:goblin", "dep:mu_rust_helpers", "dep:fixedbitset"]
 mockall = ["dep:mockall", "std"]
 global_allocator = []
 default = ['alloc']
-# Opting in to the `enable_patina_tests` feature requires registering at least one test
-# with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
-# occur!
-enable_patina_tests = ["patina_macro/enable_patina_tests"]
 serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 serde-with-yaml = ["serde", "dep:serde_yaml"]
 

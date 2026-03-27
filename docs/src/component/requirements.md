@@ -99,11 +99,12 @@ be used as seen below:
 
 ```rust
 # extern crate patina;
+# extern crate patina_test;
 use patina::{
    error::Result,
    component::component,
-   test::patina_test,
 };
+use patina_test::patina_test;
 
 pub struct MyComponent(u32);
 
@@ -119,12 +120,12 @@ trait MyService {
 }
 
 #[patina_test]
-fn test_my_component_name_for_test() -> patina::test::Result {
+fn test_my_component_name_for_test() -> patina_test::error::Result {
    Ok(())
 }
 
 #[patina_test]
-fn test_my_service_name_for_test() -> patina::test::Result {
+fn test_my_service_name_for_test() -> patina_test::error::Result {
    Ok(())
 }
 ```

@@ -13,9 +13,8 @@ use core::{ffi::c_void, mem};
 use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::service::Service,
-    test::patina_test,
-    u_assert, u_assert_eq,
 };
+use patina_test::{patina_test, u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{
@@ -40,7 +39,7 @@ struct MockLargeTable {
 
 #[coverage(off)]
 #[patina_test]
-fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
+fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Result {
     let original_length = table_manager.iter_tables().len();
 
     // Install a dummy ACPI table.
@@ -98,7 +97,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina::test::Result {
 
 #[coverage(off)]
 #[patina_test]
-fn acpi_protocol_test(bs: StandardBootServices) -> patina::test::Result {
+fn acpi_protocol_test(bs: StandardBootServices) -> patina_test::error::Result {
     // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
     let table_protocol =
         unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");

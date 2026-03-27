@@ -8,7 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::boxed::Box;
 use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, aarch64::AArch64PageTable};
 
 use crate::paging::{CacheAttributeValue, PatinaPageTable};
@@ -56,10 +55,8 @@ where
 /// Create an AArch64 paging instance under the general PatinaPageTable trait.
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
-    Ok(Box::new(EfiCpuPagingAArch64 {
-        paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
-    }))
+) -> Result<impl PatinaPageTable, efi::Status> {
+    Ok(EfiCpuPagingAArch64 { paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap() })
 }
 
 #[cfg(test)]

@@ -12,32 +12,37 @@
 
 use core::marker::PhantomData;
 
-use crate::BinaryGuid;
-
-use crate::component::{
-    MetaData, Storage, UnsafeStorageCell,
-    params::{Param, ParamFunction},
+use patina::{
+    BinaryGuid,
+    component::{
+        MetaData, Storage, UnsafeStorageCell,
+        params::{Param, ParamFunction},
+    },
 };
 
+use crate::component::Filter;
+
 /// Where all the test cases marked with `#[patina_test]` are collated to.
-#[cfg(feature = "enable_patina_tests")]
+#[cfg(feature = "test-runner")]
 #[linkme::distributed_slice]
 pub static TEST_CASES: [TestCase];
 
-/// returns the test cases to run.
+/// Returns the test cases to run.
 ///
-/// TEST_CASES exists only when the `enable_patina_tests` feature is
+/// Tests are only collected when the `test-runner` feature is
 /// explicitly enabled. This feature is opt-in and explicit because external
 /// consumers of `patina` who do not register at least one test case with
 /// the `#[patina_test]` attribute may encounter a surprising linker crash (not
 /// just a linker failure), due to the testing infrastructure relying on the
 /// `linkme` crate.
+///
+/// If the `test-runner` feature is not enabled, this function will return an empty slice.
 pub fn test_cases() -> &'static [TestCase] {
-    #[cfg(feature = "enable_patina_tests")]
+    #[cfg(feature = "test-runner")]
     {
         &TEST_CASES
     }
-    #[cfg(not(feature = "enable_patina_tests"))]
+    #[cfg(not(feature = "test-runner"))]
     {
         &[]
     }
@@ -66,14 +71,29 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    pub fn should_run(&self, filters: &[&str]) -> bool {
-        if filters.is_empty() {
-            return !self.skip;
+    pub fn should_run(&self, filters: &[Filter]) -> bool {
+        if self.skip {
+            return false;
         }
-        filters.iter().any(|pattern| self.name.contains(pattern)) && !self.skip
+
+        let mut has_includes = false;
+        let mut included = false;
+
+        for filter in filters {
+            match filter {
+                Filter::Exclude(p) if self.name.contains(p) => return false,
+                Filter::Exclude(_) => {}
+                Filter::Include(p) => {
+                    has_includes = true;
+                    included |= self.name.contains(p);
+                }
+            }
+        }
+
+        included || !has_includes
     }
 
-    pub fn run(&self, storage: &mut Storage, debug_mode: bool) -> super::Result {
+    pub fn run(&self, storage: &mut Storage, debug_mode: bool) -> crate::error::Result {
         let ret = if debug_mode {
             log::debug!("#### {} Test Output Start ####", self.name);
             let ret = (self.func)(storage);
@@ -149,7 +169,8 @@ where
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::component::Storage;
+
+    extern crate std;
 
     #[test]
     fn test_should_run() {
@@ -162,10 +183,45 @@ mod tests {
             func: |_| Ok(true),
         };
 
-        std::assert!(test_case.should_run(&["test"]));
-        std::assert!(test_case.should_run(&["t"]));
+        std::assert!(test_case.should_run(&[Filter::include("test")]));
+        std::assert!(test_case.should_run(&[Filter::include("t")]));
         std::assert!(test_case.should_run(&[]));
-        std::assert!(!test_case.should_run(&["not"]));
+        std::assert!(!test_case.should_run(&[Filter::include("not")]));
+    }
+
+    #[test]
+    fn test_should_run_with_no_filters() {
+        let test_case = TestCase {
+            name: "test",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+
+        std::assert!(test_case.should_run(&[]));
+    }
+
+    #[test]
+    fn test_should_run_with_exclude_filters() {
+        let test_case = TestCase {
+            name: "my_crate::tests::test_case",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+
+        // Exclude filter matches - should not run
+        std::assert!(!test_case.should_run(&[Filter::exclude("test_case")]));
+        // Exclude filter does not match - should run
+        std::assert!(test_case.should_run(&[Filter::exclude("other")]));
+        // Include filter matches but exclude filter also matches - should not run
+        std::assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
+        // Include filter matches and exclude filter does not match - should run
+        std::assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
     }
 
     #[test]
@@ -258,5 +314,13 @@ mod tests {
 
         let result = test_case.run(&mut storage, false);
         std::assert_eq!(result, Err("Failed to install protocol interface"));
+    }
+
+    #[test]
+    fn test_test_with_invalid_param_combination_is_caught() {
+        assert_eq!(
+            crate::component::tests::TEST_CASE_INVALID.run(&mut Storage::new(), false),
+            Err("Test failed to run due to un-retrievable parameters.")
+        );
     }
 }

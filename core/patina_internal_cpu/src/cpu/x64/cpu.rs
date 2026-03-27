@@ -12,7 +12,6 @@ use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
 use patina::{
-    component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
 };
@@ -21,12 +20,11 @@ use r_efi::efi;
 /// Struct to implement X64 Cpu Init.
 ///
 /// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the x86_64 architecture.
-#[derive(IntoService)]
-#[service(dyn Cpu)]
 pub struct EfiCpuX64 {
     timer_period: u64,
 }
 
+#[allow(dead_code)]
 impl EfiCpuX64 {
     /// Creates a new instance of the x86_64 implementation of the CPU trait.
     pub fn new() -> Self {

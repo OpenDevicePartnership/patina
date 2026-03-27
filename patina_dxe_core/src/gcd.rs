@@ -14,6 +14,7 @@ pub use spin_locked_gcd::DescriptorFilter;
 
 use goblin::pe::section_table;
 
+use alloc::boxed::Box;
 use core::{cell::Cell, ffi::c_void, ops::Range};
 use patina::{
     base::{align_down, align_up},
@@ -23,7 +24,7 @@ use patina::{
         hob::{self, Hob, HobList, PhaseHandoffInformationTable},
     },
 };
-use patina_internal_cpu::paging::create_cpu_paging;
+use patina_internal_cpu::paging::{PatinaPageTable, create_cpu_paging};
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
@@ -516,7 +517,8 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
 /// in the SpinLockedGcd struct, which is covered by unit tests.
 pub fn init_paging(hob_list: &HobList) {
     let page_allocator = PagingAllocator::new(&GCD);
-    let page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
+    let page_table: Box<dyn PatinaPageTable> =
+        Box::new(create_cpu_paging(page_allocator).expect("Failed to create CPU page table"));
     GCD.init_paging_with(hob_list, page_table);
 }
 
