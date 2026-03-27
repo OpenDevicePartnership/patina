@@ -59,6 +59,10 @@ pub struct MmCommBufferStatus {
     /// FALSE = user buffer, TRUE = supervisor buffer
     pub talk_to_supervisor: u8,
 
+    /// Padding to align to 8 bytes.
+    /// This padding is necessary to match the structure layout defined in edk2 and mu_basecore.
+    pub _padding: [u8; 6],
+
     /// The return status when returning from MM to non-MM.
     pub return_status: u64,
 
@@ -76,7 +80,7 @@ impl Default for MmCommBufferStatus {
 impl MmCommBufferStatus {
     /// Create a new mailbox status with all fields zeroed
     pub const fn new() -> Self {
-        Self { is_comm_buffer_valid: 0, talk_to_supervisor: 0, return_status: 0, return_buffer_size: 0 }
+        Self { is_comm_buffer_valid: 0, talk_to_supervisor: 0, _padding: [0; 6], return_status: 0, return_buffer_size: 0 }
     }
 }
 
