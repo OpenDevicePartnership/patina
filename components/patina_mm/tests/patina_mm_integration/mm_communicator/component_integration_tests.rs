@@ -16,7 +16,8 @@
 use patina::{
     Guid,
     component::{IntoComponent, Storage},
-    management_mode::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE},
+    management_mode::protocol::mm_supervisor_request,
+    management_mode::protocol::mm_supervisor_request::RequestType,
 };
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
@@ -159,8 +160,8 @@ fn test_real_component_mm_supervisor_version_request() {
 
     // Create MM Supervisor version request using the actual structures
     let version_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
@@ -184,8 +185,8 @@ fn test_real_component_mm_supervisor_version_request() {
         MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header from real component");
 
     // Verify header fields
-    assert_eq!(response_header.signature, SIGNATURE, "Response signature should match");
-    assert_eq!(response_header.revision, REVISION, "Response revision should match");
+    assert_eq!(response_header.signature, mm_supervisor_request::SIGNATURE, "Response signature should match");
+    assert_eq!(response_header.revision, mm_supervisor_request::REVISION, "Response revision should match");
     assert_eq!(response_header.request, RequestType::VersionInfo.into(), "Response request type should match");
     assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Response should indicate success");
 
@@ -278,8 +279,8 @@ fn test_real_component_multiple_handlers() {
 
     // Test MM supervisor handler
     let supervisor_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::FetchPolicy.into(),
         reserved: 0,
         result: 0,

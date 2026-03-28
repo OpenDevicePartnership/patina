@@ -15,7 +15,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
-use patina::management_mode::protocol::mm_supervisor_request::{REVISION, RequestType, SIGNATURE};
+use patina::management_mode::protocol::mm_supervisor_request;
+use patina::management_mode::protocol::mm_supervisor_request::RequestType;
 use r_efi::efi;
 
 #[test]
@@ -27,8 +28,8 @@ fn test_mm_supervisor_version_request_integration() {
 
     // Create MM Supervisor version request using safe operations
     let version_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
@@ -77,8 +78,8 @@ fn test_mm_supervisor_capabilities_request() {
 
     // Create capabilities request using safe operations
     let capabilities_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::FetchPolicy.into(),
         reserved: 0,
         result: 0,
@@ -126,8 +127,8 @@ fn test_mm_supervisor_invalid_request() {
 
     // Create invalid request using safe operations
     let invalid_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: 0xFFFF, // Invalid request type
         reserved: 0,
         result: 0,
@@ -159,7 +160,7 @@ fn test_mm_supervisor_invalid_signature() {
     // Create request with invalid signature using safe operations
     let invalid_request = MmSupervisorRequestHeader {
         signature: u32::from_le_bytes([b'I', b'N', b'V', b'D']), // Invalid signature
-        revision: REVISION,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
@@ -213,8 +214,8 @@ fn test_mm_supervisor_builder_integration() {
 
     // Test MM Supervisor handler as well
     let version_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
@@ -235,8 +236,8 @@ fn test_safe_message_parsing_with_mm_supervisor() {
     let mut buffer = vec![0u8; TEST_BUFFER_SIZE];
 
     let version_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
@@ -273,8 +274,8 @@ fn test_mm_supervisor_comm_update_request() {
 
     // Create communication buffer update request using COMM_UPDATE constant
     let comm_update_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::CommUpdate.into(),
         reserved: 0,
         result: 0,
@@ -321,8 +322,8 @@ fn test_mm_supervisor_unblock_mem_request() {
 
     // Create memory unblock request using UNBLOCK_MEM constant
     let unblock_mem_request = MmSupervisorRequestHeader {
-        signature: SIGNATURE,
-        revision: REVISION,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
         request: RequestType::UnblockMem.into(),
         reserved: 0,
         result: 0,
