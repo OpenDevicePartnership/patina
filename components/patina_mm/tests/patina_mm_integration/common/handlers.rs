@@ -227,7 +227,8 @@ impl MmHandler for MmSupervisorHandler {
         if request_header.signature != mm_supervisor_request::SIGNATURE {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid signature: 0x{:08X}, expected 0x{:08X}",
-                request_header.signature, mm_supervisor_request::SIGNATURE
+                request_header.signature,
+                mm_supervisor_request::SIGNATURE
             )));
         }
 
@@ -235,7 +236,8 @@ impl MmHandler for MmSupervisorHandler {
         if request_header.revision != mm_supervisor_request::REVISION {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid revision: 0x{:08X}, expected 0x{:08X}",
-                request_header.revision, mm_supervisor_request::REVISION
+                request_header.revision,
+                mm_supervisor_request::REVISION
             )));
         }
 

@@ -80,7 +80,13 @@ impl Default for MmCommBufferStatus {
 impl MmCommBufferStatus {
     /// Create a new mailbox status with all fields zeroed
     pub const fn new() -> Self {
-        Self { is_comm_buffer_valid: 0, talk_to_supervisor: 0, _padding: [0; 6], return_status: 0, return_buffer_size: 0 }
+        Self {
+            is_comm_buffer_valid: 0,
+            talk_to_supervisor: 0,
+            _padding: [0; 6],
+            return_status: 0,
+            return_buffer_size: 0,
+        }
     }
 }
 
