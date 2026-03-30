@@ -26,7 +26,7 @@ use patina::{
         Storage, component,
         service::{IntoService, Service},
     },
-    management_mode::EfiMmCommunicateHeader,
+    pi::protocols::communication::EfiMmCommunicateHeader,
 };
 
 use alloc::vec::Vec;

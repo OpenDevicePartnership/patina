@@ -10,9 +10,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use crate::pi::spec_version;
 use core::ffi::c_void;
 use r_efi::efi;
-use crate::pi::spec_version;
 
 /// MMST signature: `'S', 'M', 'S', 'T'` (same as C `MM_MMST_SIGNATURE`).
 pub const MM_MMST_SIGNATURE: u32 = u32::from_le_bytes([b'S', b'M', b'S', b'T']);
@@ -83,16 +83,11 @@ pub type MmInstallConfigurationTableFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_ALLOCATE_POOL` (shared with Boot Services)
-pub type MmAllocatePoolFn = unsafe extern "efiapi" fn(
-    pool_type: efi::MemoryType,
-    size: usize,
-    buffer: *mut *mut c_void,
-) -> efi::Status;
+pub type MmAllocatePoolFn =
+    unsafe extern "efiapi" fn(pool_type: efi::MemoryType, size: usize, buffer: *mut *mut c_void) -> efi::Status;
 
 /// `EFI_FREE_POOL` (shared with Boot Services)
-pub type MmFreePoolFn = unsafe extern "efiapi" fn(
-    buffer: *mut c_void,
-) -> efi::Status;
+pub type MmFreePoolFn = unsafe extern "efiapi" fn(buffer: *mut c_void) -> efi::Status;
 
 /// `EFI_ALLOCATE_PAGES` (shared with Boot Services)
 pub type MmAllocatePagesFn = unsafe extern "efiapi" fn(
@@ -103,17 +98,11 @@ pub type MmAllocatePagesFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_FREE_PAGES` (shared with Boot Services)
-pub type MmFreePagesFn = unsafe extern "efiapi" fn(
-    memory: efi::PhysicalAddress,
-    pages: usize,
-) -> efi::Status;
+pub type MmFreePagesFn = unsafe extern "efiapi" fn(memory: efi::PhysicalAddress, pages: usize) -> efi::Status;
 
 /// `EFI_MM_STARTUP_THIS_AP`
-pub type MmStartupThisApFn = unsafe extern "efiapi" fn(
-    procedure: usize,
-    cpu_number: usize,
-    proc_arguments: *mut c_void,
-) -> efi::Status;
+pub type MmStartupThisApFn =
+    unsafe extern "efiapi" fn(procedure: usize, cpu_number: usize, proc_arguments: *mut c_void) -> efi::Status;
 
 /// `EFI_INSTALL_PROTOCOL_INTERFACE` (shared with Boot Services)
 pub type MmInstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
@@ -124,11 +113,8 @@ pub type MmInstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_UNINSTALL_PROTOCOL_INTERFACE` (shared with Boot Services)
-pub type MmUninstallProtocolInterfaceFn = unsafe extern "efiapi" fn(
-    handle: efi::Handle,
-    protocol: *mut efi::Guid,
-    interface: *mut c_void,
-) -> efi::Status;
+pub type MmUninstallProtocolInterfaceFn =
+    unsafe extern "efiapi" fn(handle: efi::Handle, protocol: *mut efi::Guid, interface: *mut c_void) -> efi::Status;
 
 /// `EFI_HANDLE_PROTOCOL` (shared with Boot Services)
 pub type MmHandleProtocolFn = unsafe extern "efiapi" fn(
@@ -186,9 +172,7 @@ pub type MmiHandlerRegisterFn = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// `EFI_MM_INTERRUPT_UNREGISTER`
-pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(
-    dispatch_handle: efi::Handle,
-) -> efi::Status;
+pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(dispatch_handle: efi::Handle) -> efi::Status;
 
 /// EFI_MM_ENTRY_CONTEXT structure.
 ///

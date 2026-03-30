@@ -22,9 +22,8 @@ use alloc::vec::Vec;
 use core::{fmt, pin::Pin, ptr::NonNull};
 
 use patina::{
-    BinaryGuid, Guid,
-    base::UEFI_PAGE_MASK,
-    management_mode::{EfiMmCommunicateHeader, MmCommBufferStatus},
+    BinaryGuid, Guid, base::UEFI_PAGE_MASK, management_mode::MmCommBufferStatus,
+    pi::protocols::communication::EfiMmCommunicateHeader,
 };
 
 /// Management Mode (MM) Configuration
