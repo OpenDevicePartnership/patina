@@ -16,8 +16,7 @@
 use patina::{
     Guid,
     component::{IntoComponent, Storage},
-    management_mode::protocol::mm_supervisor_request,
-    management_mode::protocol::mm_supervisor_request::RequestType,
+    management_mode::protocol::{mm_supervisor_request, mm_supervisor_request::RequestType},
 };
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},

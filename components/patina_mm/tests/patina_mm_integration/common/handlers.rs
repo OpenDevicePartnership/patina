@@ -23,9 +23,9 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 pub use zerocopy::IntoBytes;
 
-pub use patina::management_mode::protocol::mm_supervisor_request;
-pub use patina::management_mode::protocol::mm_supervisor_request::{
-    MmSupervisorRequestHeader, MmSupervisorVersionInfo, RequestType, ResponseType,
+pub use patina::management_mode::protocol::{
+    mm_supervisor_request,
+    mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo, RequestType, ResponseType},
 };
 
 /// Standardized error type for MM handlers

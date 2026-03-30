@@ -15,8 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::*;
-use patina::management_mode::protocol::mm_supervisor_request;
-use patina::management_mode::protocol::mm_supervisor_request::RequestType;
+use patina::management_mode::protocol::{mm_supervisor_request, mm_supervisor_request::RequestType};
 use r_efi::efi;
 
 #[test]
