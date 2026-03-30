@@ -2,6 +2,11 @@
 //!
 //! This crate provides the Management Mode (MM) related definitions for Patina.
 //!
+//! ## Features
+//!
+//! - `comm_buffer_hob`: Provides data and HOB definitions to support the MM communication.
+//! - `protocol`: Contains MM-related protocol structures and definitions.
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation.
@@ -13,4 +18,4 @@ pub mod comm_buffer_hob;
 pub mod protocol;
 
 // Re-export commonly used items for easier access
-pub use comm_buffer_hob::{EfiMmCommunicateHeader, MmCommBufferStatus};
+pub use comm_buffer_hob::MmCommBufferStatus;

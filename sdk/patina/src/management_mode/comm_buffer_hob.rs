@@ -19,7 +19,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{BinaryGuid, Guid};
+use crate::BinaryGuid;
 use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 /// GUID for the MM communication buffer HOB (`gMmCommBufferHobGuid`).
@@ -88,94 +88,4 @@ impl MmCommBufferStatus {
             return_buffer_size: 0,
         }
     }
-}
-
-/// UEFI MM Communicate Header
-///
-/// A standard header that must be present at the beginning of any MM communication buffer.
-///
-/// ## Notes
-///
-/// - This only supports V1 and V2 of the MM Communicate header format.
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct EfiMmCommunicateHeader {
-    /// Allows for disambiguation of the message format.
-    /// Used to identify the registered MM handlers that should be given the message.
-    header_guid: BinaryGuid,
-    /// The size of Data (in bytes) and does not include the size of the header.
-    message_length: usize,
-}
-
-impl EfiMmCommunicateHeader {
-    /// Create a new communicate header with the specified GUID and message length.
-    pub fn new(header_guid: Guid, message_length: usize) -> Self {
-        Self { header_guid: header_guid.to_efi_guid().into(), message_length }
-    }
-
-    /// Returns the communicate header as a slice of bytes using safe conversion.
-    ///
-    /// Useful if byte-level access to the header structure is needed.
-    pub fn as_bytes(&self) -> &[u8] {
-        // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
-        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, Self::size()) }
-    }
-
-    /// Returns the size of the header in bytes.
-    pub const fn size() -> usize {
-        core::mem::size_of::<Self>()
-    }
-
-    /// Get the header GUID from the communication buffer.
-    ///
-    /// Returns `Some(guid)` if the buffer has been properly initialized with a GUID,
-    /// or `None` if the buffer is not initialized.
-    ///
-    /// # Returns
-    ///
-    /// The GUID from the communication header if available.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the communication buffer header cannot be read.
-    pub fn header_guid(&self) -> Guid<'_> {
-        Guid::from_ref(&self.header_guid)
-    }
-
-    /// Returns the message length from this communicate header.
-    ///
-    /// The length represents the size of the message data that follows the header.
-    ///
-    /// # Returns
-    ///
-    /// The length in bytes of the message data (excluding the header size).
-    pub const fn message_length(&self) -> usize {
-        self.message_length
-    }
-}
-
-/// EFI_MM_ENTRY_CONTEXT structure.
-///
-/// Processor information and functionality needed by MM Foundation.
-/// Matches the C `EFI_MM_ENTRY_CONTEXT` / `EFI_SMM_ENTRY_CONTEXT` from PI specification.
-///
-/// Layout (x86_64, all fields 8 bytes):
-/// - `mm_startup_this_ap`: Function pointer for `EFI_MM_STARTUP_THIS_AP`
-/// - `currently_executing_cpu`: Index of the processor executing the MM Foundation
-/// - `number_of_cpus`: Total number of possible processors in the platform (1-based)
-/// - `cpu_save_state_size`: Pointer to array of save state sizes per CPU
-/// - `cpu_save_state`: Pointer to array of CPU save state pointers
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct EfiMmEntryContext {
-    /// Function pointer for EFI_MM_STARTUP_THIS_AP.
-    pub mm_startup_this_ap: u64,
-    /// Index of the currently executing CPU.
-    pub currently_executing_cpu: u64,
-    /// Total number of CPUs (1-based).
-    pub number_of_cpus: u64,
-    /// Pointer to array of per-CPU save state sizes.
-    pub cpu_save_state_size: u64,
-    /// Pointer to array of per-CPU save state pointers.
-    pub cpu_save_state: u64,
 }

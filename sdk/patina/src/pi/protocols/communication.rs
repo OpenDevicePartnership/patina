@@ -12,7 +12,8 @@
 //!
 
 use core::ffi::c_void;
-use r_efi::{efi, system};
+use r_efi::efi;
+use crate::{BinaryGuid, Guid};
 
 /// MM Communication Protocol GUID.
 pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("C68ED8E2-9DC6-4CBD-9D94-DB65ACC5C332");
@@ -91,18 +92,55 @@ pub struct Protocol {
 /// MM communication header structure.
 pub struct EfiMmCommunicateHeader {
     /// To avoid confusion in interpreting frames, the communication buffer should always begin with the header.
-    pub header_guid: r_efi::base::Guid,
+    pub header_guid: BinaryGuid,
     /// Describes the size of Data (in bytes) and does not include the size of the header.
     pub message_length: usize,
     // Comm buffer data follows the header
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-/// MM initialization header structure.
-pub struct EfiMmInitializationHeader {
-    /// To avoid confusion in interpreting frames, the communication buffer should always begin with the header.
-    pub comm_header: EfiMmCommunicateHeader,
-    /// Describes the size of Data (in bytes) and does not include the size of the header.
-    pub system_table: *mut system::SystemTable,
+impl EfiMmCommunicateHeader {
+    /// Create a new communicate header with the specified GUID and message length.
+    pub fn new(header_guid: Guid, message_length: usize) -> Self {
+        Self { header_guid: header_guid.to_efi_guid().into(), message_length }
+    }
+
+    /// Returns the communicate header as a slice of bytes using safe conversion.
+    ///
+    /// Useful if byte-level access to the header structure is needed.
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, Self::size()) }
+    }
+
+    /// Returns the size of the header in bytes.
+    pub const fn size() -> usize {
+        core::mem::size_of::<Self>()
+    }
+
+    /// Get the header GUID from the communication buffer.
+    ///
+    /// Returns `Some(guid)` if the buffer has been properly initialized with a GUID,
+    /// or `None` if the buffer is not initialized.
+    ///
+    /// # Returns
+    ///
+    /// The GUID from the communication header if available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the communication buffer header cannot be read.
+    pub fn header_guid(&self) -> Guid<'_> {
+        Guid::from_ref(&self.header_guid)
+    }
+
+    /// Returns the message length from this communicate header.
+    ///
+    /// The length represents the size of the message data that follows the header.
+    ///
+    /// # Returns
+    ///
+    /// The length in bytes of the message data (excluding the header size).
+    pub const fn message_length(&self) -> usize {
+        self.message_length
+    }
 }
