@@ -10,8 +10,6 @@
 #[cfg(feature = "global_allocator")]
 pub mod global_allocator;
 
-extern crate alloc;
-
 pub mod allocation;
 pub mod boxed;
 pub mod c_ptr;

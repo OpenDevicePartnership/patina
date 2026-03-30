@@ -1174,16 +1174,24 @@ impl GCD {
                 let prev = &mut descriptors[write_idx - 1];
                 if prev.r#type == current.r#type
                     && prev.attribute == current.attribute
-                    && prev.physical_start + (prev.number_of_pages * UEFI_PAGE_SIZE as u64) == current.physical_start
+                    && prev.physical_start + uefi_pages_to_size!(prev.number_of_pages as usize) as u64
+                        == current.physical_start
                 {
                     // Free memory shouldn't even need to be merged because it should already be consistent and coalesced.
                     // If this fails to be true it can cause odd behavior if applications try to allocate blocks of free
                     // memory by address, which is a common pattern for OS loaders.
-                    debug_assert!(
-                        prev.r#type != efi::CONVENTIONAL_MEMORY,
-                        "Free memory is fragmented in memory descriptors!"
-                    );
-
+                    if prev.r#type == efi::CONVENTIONAL_MEMORY {
+                        log::error!(
+                            "Free memory is fragmented in memory descriptors! prev: {:#x}-{:#x} (attr: {:#x}), current: {:#x}-{:#x} (attr: {:#x})",
+                            prev.physical_start,
+                            prev.physical_start + uefi_pages_to_size!(prev.number_of_pages as usize) as u64,
+                            prev.attribute,
+                            current.physical_start,
+                            current.physical_start + uefi_pages_to_size!(current.number_of_pages as usize) as u64,
+                            current.attribute,
+                        );
+                        debug_assert!(false);
+                    }
                     // Merge by extending the previous descriptor
                     prev.number_of_pages += current.number_of_pages;
                     continue;

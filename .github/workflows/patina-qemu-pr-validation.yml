@@ -121,6 +121,7 @@ jobs:
     if: needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true'
     uses: OpenDevicePartnership/patina-devops/.github/workflows/PatinaQemuPrValidation.yml@patina_e2e_plat_validation
     with:
-      pr-number: ${{ fromJSON(needs.prepare.outputs.pr_number) }}
+      head-sha: ${{ github.event.workflow_run.head_sha }}
       patina-ref: ${{ github.event.workflow_run.head_sha }}
+      pr-number: ${{ fromJSON(needs.prepare.outputs.pr_number) }}
     secrets: inherit

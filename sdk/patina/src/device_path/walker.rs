@@ -8,8 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
 use core::{mem::size_of_val, ptr::slice_from_raw_parts, slice::from_raw_parts};
 use r_efi::protocols::device_path::{End, Hardware, Media};

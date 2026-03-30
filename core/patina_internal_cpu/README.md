@@ -4,6 +4,9 @@ The `patina_internal_cpu` crate hosts core CPU functionality that Patina core co
 cache control, interrupt dispatch, and paging management. It is compiled as part of the monolithic Patina image and
 runs in `no_std` UEFI environments.
 
+As a foundational component, this crate is intentionally designed to avoid dependencies on `alloc` and the associated
+global allocator.
+
 As an "internal" Patina crate, it is not intended for direct use by code outside of Patina core environments.
 
 ## Overview
@@ -26,9 +29,6 @@ Protocol.
   operations to instructions such as `wbinvd`/`invd`.
 - `EfiCpuAarch64` performs cache maintenance operations for Arm.
 - `EfiCpuNull` is available for documentation and host-based unit tests that do not require actual CPU services.
-
-All implementations derive `IntoService`, allowing the Patina storage layer to register them as `Service<dyn Cpu>`
-instances during core bring-up.
 
 ### `interrupts`
 

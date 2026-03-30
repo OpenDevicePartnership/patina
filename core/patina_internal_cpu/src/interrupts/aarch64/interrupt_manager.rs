@@ -10,7 +10,6 @@
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
-    component::service::IntoService,
     error::EfiError,
 };
 use patina_paging::PageTable;
@@ -36,10 +35,10 @@ cfg_if::cfg_if! {
     }
 }
 /// AARCH64 Implementation of the InterruptManager.
-#[derive(Default, Copy, Clone, IntoService)]
-#[service(dyn InterruptManager)]
+#[derive(Default, Copy, Clone)]
 pub struct InterruptsAarch64 {}
 
+#[allow(dead_code)]
 impl InterruptsAarch64 {
     /// Creates a new instance of the AARCH64 implementation of the InterruptManager.
     pub const fn new() -> Self {

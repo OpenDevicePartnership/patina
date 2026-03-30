@@ -10,9 +10,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-
-extern crate alloc;
-
 use core::{mem, ptr, slice};
 
 use r_efi::efi;

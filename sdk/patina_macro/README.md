@@ -81,7 +81,7 @@ struct FirmwareVolumeHeader {
   - `#[skip]`
 
 ```rust
-use patina::test::{patina_test, Result};
+use patina_test::{patina_test, error::Result};
 
 #[cfg_attr(target_arch = "x86_64", patina_test)]
 fn spi_smoke_test() -> Result {

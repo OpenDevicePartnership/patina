@@ -20,8 +20,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use crate::{
     component::{
         Component,

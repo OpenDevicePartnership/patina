@@ -10,8 +10,6 @@
 //! ```
 //!
 
-extern crate alloc;
-
 /// Variable-services-specific structs and utilities
 pub mod variable_services;
 
@@ -465,6 +463,14 @@ impl RuntimeServices for StandardRuntimeServices {
         );
 
         if status.is_error() { Err(status) } else { Ok(var_info) }
+    }
+}
+
+/// Clone implementation for MockRuntimeServices that creates a new mock with default expectations.
+#[cfg(any(test, feature = "mockall"))]
+impl Clone for MockRuntimeServices {
+    fn clone(&self) -> Self {
+        Self::new()
     }
 }
 

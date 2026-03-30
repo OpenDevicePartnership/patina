@@ -57,8 +57,6 @@
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
-extern crate alloc;
-
 use alloc::boxed::Box;
 use core::{
     mem::{self, ManuallyDrop},

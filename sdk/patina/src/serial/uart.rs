@@ -28,7 +28,6 @@ impl super::SerialIO for UartNull {
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
-        extern crate alloc;
 
         use uart_16550::MmioSerialPort;
         use uart_16550::SerialPort as IoSerialPort;

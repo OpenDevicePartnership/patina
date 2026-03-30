@@ -10,7 +10,6 @@
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
-    component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::EfiSystemContext,
 };
@@ -25,10 +24,10 @@ use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x
 ///
 /// An x64 version of the InterruptManager for managing IDT based interrupts.
 ///
-#[derive(Default, Copy, Clone, IntoService)]
-#[service(dyn InterruptManager)]
+#[derive(Default, Copy, Clone)]
 pub struct InterruptsX64 {}
 
+#[allow(dead_code)]
 impl InterruptsX64 {
     /// Creates a new instance of the x64 implementation of the InterruptManager.
     pub const fn new() -> Self {

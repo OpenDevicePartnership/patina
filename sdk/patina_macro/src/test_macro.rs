@@ -56,7 +56,7 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_SHOULD_FAIL, quote! {false});
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
-    map.insert(KEY_TRIGGER, quote! { &[patina::test::__private_api::TestTrigger::Manual] });
+    map.insert(KEY_TRIGGER, quote! { &[patina_test::__private_api::TestTrigger::Manual] });
 
     let mut triggers = Vec::new();
 
@@ -146,21 +146,21 @@ fn parse_on_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
                 Meta::NameValue(nv) if nv.path.is_ident("event") => {
                     let value = &nv.value;
                     return Ok(quote! {
-                        patina::test::__private_api::TestTrigger::Event(#value)
+                        patina_test::__private_api::TestTrigger::Event(#value)
                     });
                 }
                 // CASE2: $[on(timer = interval_in_100ns_units)]
                 Meta::NameValue(nv) if nv.path.is_ident("timer") => {
                     let value = &nv.value;
                     return Ok(quote! {
-                        patina::test::__private_api::TestTrigger::Timer(#value)
+                        patina_test::__private_api::TestTrigger::Timer(#value)
                     });
                 }
                 // No other cases are supported right now.
                 _ => {
                     return Err(syn::Error::new(
                         meta.span(),
-                        "Unsupported attribute key. See patina::test::__private_api::TestTrigger for supported keys.",
+                        "Unsupported attribute key. See patina_test::__private_api::TestTrigger for supported keys.",
                     ));
                 }
             }
@@ -184,17 +184,17 @@ fn generate_expanded_test_case(
     let trigger = test_case_config.get(KEY_TRIGGER).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
-        #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-        #[linkme(crate = patina::test::linkme)]
+        #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+        #[linkme(crate = patina_test::linkme)]
         #[allow(non_upper_case_globals)]
-        static #struct_name: patina::test::__private_api::TestCase =
-        patina::test::__private_api::TestCase {
+        static #struct_name: patina_test::__private_api::TestCase =
+        patina_test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
             triggers: #trigger,
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
-            func: |storage| patina::test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
+            func: |storage| patina_test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
         };
         #item
     };
@@ -232,16 +232,16 @@ mod tests {
 
         let expanded = patina_test2(stream);
         let expected = quote! {
-                #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-                #[linkme(crate = patina::test::linkme)]
+                #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+                #[linkme(crate = patina_test::linkme)]
                 #[allow(non_upper_case_globals)]
-                static __my_test_case_TestCase: patina::test::__private_api::TestCase = patina::test::__private_api::TestCase {
+                static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                    triggers: &[patina::test::__private_api::TestTrigger::Manual],
+                    triggers: &[patina_test::__private_api::TestTrigger::Manual],
                     skip: false,
                     should_fail: false,
                     fail_msg: None,
-                    func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                    func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
                 };
                 fn my_test_case() -> Result {
                     assert!(true);
@@ -264,17 +264,17 @@ mod tests {
         let expanded = patina_test2(stream);
 
         let expected = quote! {
-            #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina::test::linkme)]
+            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina::test::__private_api::TestCase =
-            patina::test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
+            patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Manual],
+                triggers: &[patina_test::__private_api::TestTrigger::Manual],
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -328,7 +328,7 @@ mod tests {
         let tokens = parse_on_attr(&attr).unwrap();
 
         let expected = quote! {
-            patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)
+            patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)
         };
         assert_eq!(tokens.to_string(), expected.to_string());
     }
@@ -354,7 +354,7 @@ mod tests {
         let tokens = parse_on_attr(&attr).unwrap();
 
         let expected = quote! {
-            patina::test::__private_api::TestTrigger::Timer(1000000)
+            patina_test::__private_api::TestTrigger::Timer(1000000)
         };
         assert_eq!(tokens.to_string(), expected.to_string());
     }
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
         assert_eq!(
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
-            "& [patina :: test :: __private_api :: TestTrigger :: Manual]"
+            "& [patina_test :: __private_api :: TestTrigger :: Manual]"
         );
     }
 
@@ -436,7 +436,7 @@ mod tests {
 
         let expanded = patina_test2(stream);
         let expected = quote! {
-            ::core::compile_error ! { "Unsupported attribute key. See patina::test::__private_api::TestTrigger for supported keys." }
+            ::core::compile_error ! { "Unsupported attribute key. See patina_test::__private_api::TestTrigger for supported keys." }
         };
         assert_eq!(expanded.to_string(), expected.to_string());
     }
@@ -455,17 +455,17 @@ mod tests {
 
         let expanded = patina_test2(stream);
         let expected = quote! {
-            #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina::test::linkme)]
+            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina::test::__private_api::TestCase =
-            patina::test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
+            patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
+                triggers: &[patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -491,21 +491,21 @@ mod tests {
         let expanded = patina_test2(stream);
 
         let expected = quote! {
-            #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina::test::linkme)]
+            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina::test::__private_api::TestCase =
-            patina::test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
+            patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 triggers: &[
-                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
-                    patina::test::__private_api::TestTrigger::Timer(1000000),
-                    patina::test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_READY_TO_BOOT)
+                    patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
+                    patina_test::__private_api::TestTrigger::Timer(1000000),
+                    patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_READY_TO_BOOT)
                 ],
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -529,22 +529,22 @@ mod tests {
         config.insert(KEY_SHOULD_FAIL, quote! {true});
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
-        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Manual });
+        config.insert(KEY_TRIGGER, quote! { patina_test::__private_api::TestTrigger::Manual });
 
         let expanded = generate_expanded_test_case(&item, &config);
 
         let expected = quote! {
-            #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina::test::linkme)]
+            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina::test::__private_api::TestCase =
-            patina::test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
+            patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: patina::test::__private_api::TestTrigger::Manual,
+                triggers: patina_test::__private_api::TestTrigger::Manual,
                 skip: false,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);

@@ -115,8 +115,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use alloc::{borrow::Cow, boxed::Box};
 use core::{any::Any, cell::OnceCell, marker::PhantomData, ops::Deref};
 
@@ -126,6 +124,7 @@ use crate::component::{
     storage::{Storage, UnsafeStorageCell},
 };
 
+pub mod dxe_dispatch;
 pub mod memory;
 pub mod perf_timer;
 

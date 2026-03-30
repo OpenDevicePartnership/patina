@@ -27,15 +27,15 @@ name = "basic_hob_usage"
 
 [dependencies]
 patina_macro = { workspace = true }
-fixedbitset = { workspace = true }
+fixedbitset = { workspace = true, optional = true }
 
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
-goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"]}
+goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
 log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
-mu_rust_helpers = { workspace = true }
+mu_rust_helpers = { workspace = true, optional = true }
 num-traits = { workspace = true }
 indoc = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
@@ -69,15 +69,11 @@ trybuild = { version = "1.0", features = ["diff"] }
 core = ['alloc']
 std = ['alloc']
 doc = ['alloc']
-alloc = []
+alloc = ["dep:goblin", "dep:mu_rust_helpers", "dep:fixedbitset"]
 mockall = ["dep:mockall", "std"]
 global_allocator = []
 default = ['alloc']
-# Opting in to the `enable_patina_tests` feature requires registering at least one test
-# with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
-# occur!
-enable_patina_tests = ["patina_macro/enable_patina_tests"]
-serde = ["alloc", "dep:serde", "dep:serde_json"]
+serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 serde-with-yaml = ["serde", "dep:serde_yaml"]
 
 unstable = ["unstable-device-path"]

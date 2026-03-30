@@ -14,7 +14,9 @@ pub mod communication;
 pub mod communication2;
 pub mod communication3;
 pub mod cpu_arch;
+#[cfg(any(test, feature = "alloc"))]
 pub mod firmware_volume;
+#[cfg(any(test, feature = "alloc"))]
 pub mod firmware_volume_block;
 pub mod metronome;
 pub mod runtime;
