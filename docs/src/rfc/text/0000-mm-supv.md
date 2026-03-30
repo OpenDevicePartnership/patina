@@ -310,6 +310,9 @@ During the very first MMI, on all of the cores, the Rust MM supervisor will perf
 - Initialize the patina-paging instance using the currently installed page table, and inspect the incoming HOB list
 against the page table to make sure the MM foundation setup has properly mapped all the necessary regions with the correct
 attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table itself, save state regions).
+- SMRR related initializations:
+  - If SMRR is supported through inspecting `IA32_MTRR_CAP`, the supervisor will program the `MSR_SMRR_BASE` and `MSR_SMRR_MASK` based on the reported and coalesced MMRAM regions. Specifically, it will set the cahcing attribute to `MTRR_CACHE_WRITE_BACK` for the `MSR_SMRR_BASE`, and clear the upper bits of calculated MMRAM size for the `MSR_SMRR_MASK`.
+  - Figure out if SMRR2 is supported, also through inspecting `IA32_MTRR_CAP`.
 
 #### MMI Targeting
 
@@ -503,8 +506,9 @@ The supervisor pool allocator will stem from dedicated supervisor pages and does
 The MP support will be similar to the existing C implementation, where the Rust MM supervisor loader will initialize all
 processors during the mm_init phase.
 
-Upon invocation of each MMI, Rust MM supervisor will rendezvous all processors to ensure proper synchronization before
-handling the MMI.
+Upon each MMI invocation, the Rust MM supervisor will rendezvous all processors to ensure proper synchronization before
+processing the MMI. During this rendezvous, the supervisor reprograms the `SMRR` MSRs on each _processor_. If `SMRR2` is
+supported, it will also be programmed with the appropriate lock bit set.
 
 After rendezvous, the Rust MM supervisor inspects the APIC ID of each incoming processor. The supervisor designates the
 register-confirmed processor as the BSP and places remaining processors (APs) into a holding pen. The BSP completes MMI
