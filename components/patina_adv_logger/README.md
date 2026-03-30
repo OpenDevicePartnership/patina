@@ -43,14 +43,14 @@ below.
 ```rust
 use patina_dxe_core::*;
 use patina::{log::Format, serial::uart::UartNull};
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use patina_adv_logger::{component::AdvancedLoggerComponent, logger::{AdvancedLogger, TargetFilter}};
 
 use log::LevelFilter;
 use core::ffi::c_void;
 
 static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
    Format::Standard, // How logs are formatted
-   &[("allocations", LevelFilter::Off)], // set custom log levels per module
+   &[TargetFilter { target: "allocations", log_level: LevelFilter::Off, hw_filter_override: None }], // set custom log levels per module
    log::LevelFilter::Info, // Default log level
    UartNull { }, // Serial writer instance
 );

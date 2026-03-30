@@ -29,13 +29,27 @@ use spin::RwLock;
 #[used]
 static mut DBG_ADV_LOG_BUFFER: u64 = 0;
 
+/// Per-target filter that binds a target name prefix with its log level and optional hardware print level override.
+pub struct TargetFilter<'a> {
+    /// Target name prefix to match.
+    pub target: &'a str,
+    /// Maximum log level for this target. Messages above this are dropped entirely.
+    pub log_level: log::LevelFilter,
+    /// Optional override for the hardware print level for this target. Messages above this level will not be printed
+    /// to the hardware port, but may still be logged to the memory log based on log_level and the overall max_level.
+    /// - `None` = use global `hw_print_level` from memory log header.
+    /// - `Some(level_filter)` Use the provided level filter to control hardware printing for this target, instead
+    ///   of the global `hw_print_level`.
+    pub hw_filter_override: Option<log::LevelFilter>,
+}
+
 /// The logger for memory/hardware port logging.
 pub struct AdvancedLogger<'a, S>
 where
     S: SerialIO + Send,
 {
     hardware_port: S,
-    target_filters: &'a [(&'a str, log::LevelFilter)],
+    target_filters: &'a [TargetFilter<'a>],
     max_level: log::LevelFilter,
     format: Format,
     memory_log: RwLock<Option<AdvancedLogWriter>>,
@@ -51,13 +65,13 @@ where
     /// ## Arguments
     ///
     /// * `format` - The format to use for logging.
-    /// * `target_filters` - A list of target filters to apply to the logger.
+    /// * `target_filters` - Per-target filters that control log level and optionally the hardware print filter.
     /// * `max_level` - The maximum log level to log.
     /// * `hardware_port` - The hardware port to write logs to.
     ///
     pub const fn new(
         format: Format,
-        target_filters: &'a [(&'a str, log::LevelFilter)],
+        target_filters: &'a [TargetFilter<'a>],
         max_level: log::LevelFilter,
         hardware_port: S,
     ) -> Self {
@@ -116,12 +130,18 @@ where
     }
 
     /// Writes a log entry to the hardware port and memory log if available.
-    pub(crate) fn log_write(&self, error_level: u32, data: &[u8]) {
+    ///
+    /// `hw_print_mask_override` optionally overrides the global hw_print_level
+    /// from the memory log header, enabling per-target hardware print filtering.
+    pub(crate) fn log_write(&self, error_level: u32, hw_print_mask_override: Option<u32>, data: &[u8]) {
         self.refresh_log_info_address();
         let mut hw_write = true;
         let log_guard = self.memory_log.read();
         if let Some(memory_log) = log_guard.as_ref() {
-            hw_write = memory_log.hardware_write_enabled(error_level);
+            hw_write = match hw_print_mask_override {
+                Some(mask) => memory_log.hardware_write_enabled_with_mask(error_level, mask),
+                None => memory_log.hardware_write_enabled(error_level),
+            };
             let timestamp = self.timer.map_or(0, |timer| timer.cpu_count());
             let _ = memory_log.add_log_entry(LogEntry {
                 phase: memory_log::ADVANCED_LOGGER_PHASE_DXE,
@@ -198,6 +218,11 @@ where
             self.set_log_info_address(new_address);
         }
     }
+
+    /// Returns the matching target filter for the given target name, if any.
+    fn target_filter(&self, target: &str) -> Option<&TargetFilter<'a>> {
+        self.target_filters.iter().find(|f| target.starts_with(f.target))
+    }
 }
 
 impl<S> log::Log for AdvancedLogger<'_, S>
@@ -205,19 +230,18 @@ where
     S: SerialIO + Send,
 {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level().to_level_filter()
-            <= *self
-                .target_filters
-                .iter()
-                .find(|(name, _)| metadata.target().starts_with(name))
-                .map(|(_, level)| level)
-                .unwrap_or(&self.max_level)
+        let max_level = self.target_filter(metadata.target()).map(|f| f.log_level).unwrap_or(self.max_level);
+        metadata.level().to_level_filter() <= max_level
     }
 
     fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
+        let filter = self.target_filter(record.target());
+        let max_level = filter.map(|f| f.log_level).unwrap_or(self.max_level);
+
+        if record.metadata().level().to_level_filter() <= max_level {
             let level = log_level_to_debug_level(record.metadata().level());
-            let mut writer = BufferedWriter::new(level, self);
+            let hw_print_mask_override = filter.and_then(|f| f.hw_filter_override).map(log_level_filter_to_debug_mask);
+            let mut writer = BufferedWriter::new(level, hw_print_mask_override, self);
             self.format.write(&mut writer, record);
             writer.flush();
         }
@@ -239,6 +263,24 @@ const fn log_level_to_debug_level(level: Level) -> u32 {
     }
 }
 
+/// Converts a `log::LevelFilter` to a hardware print mask.
+const fn log_level_filter_to_debug_mask(level_filter: log::LevelFilter) -> u32 {
+    match level_filter {
+        log::LevelFilter::Error => memory_log::DEBUG_LEVEL_ERROR,
+        log::LevelFilter::Warn => memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING,
+        log::LevelFilter::Info => {
+            memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING | memory_log::DEBUG_LEVEL_INFO
+        }
+        log::LevelFilter::Debug | log::LevelFilter::Trace => {
+            memory_log::DEBUG_LEVEL_ERROR
+                | memory_log::DEBUG_LEVEL_WARNING
+                | memory_log::DEBUG_LEVEL_INFO
+                | memory_log::DEBUG_LEVEL_VERBOSE
+        }
+        log::LevelFilter::Off => 0,
+    }
+}
+
 /// Size of the buffer for the buffered writer.
 const WRITER_BUFFER_SIZE: usize = 128;
 
@@ -248,6 +290,7 @@ where
     S: SerialIO + Send,
 {
     level: u32,
+    hw_print_mask_override: Option<u32>,
     writer: &'a AdvancedLogger<'a, S>,
     buffer: [u8; WRITER_BUFFER_SIZE],
     buffer_size: usize,
@@ -257,9 +300,9 @@ impl<'a, S> BufferedWriter<'a, S>
 where
     S: SerialIO + Send,
 {
-    /// Creates a new BufferedWriter with the specified log level and writer.
-    const fn new(level: u32, writer: &'a AdvancedLogger<'a, S>) -> Self {
-        Self { level, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }
+    /// Creates a new BufferedWriter with the specified log level, optional hardware print mask override, and writer.
+    const fn new(level: u32, hw_print_mask_override: Option<u32>, writer: &'a AdvancedLogger<'a, S>) -> Self {
+        Self { level, hw_print_mask_override, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }
     }
 
     /// Flushes the current buffer to the underlying writer.
@@ -269,7 +312,7 @@ where
         }
 
         let data = &self.buffer[0..self.buffer_size];
-        self.writer.log_write(self.level, data);
+        self.writer.log_write(self.level, self.hw_print_mask_override, data);
         self.buffer_size = 0;
     }
 }
@@ -293,7 +336,7 @@ where
         } else {
             // this message is too big to buffer, flush then write the message.
             self.flush();
-            self.writer.log_write(self.level, data);
+            self.writer.log_write(self.level, self.hw_print_mask_override, data);
         }
 
         Ok(())
@@ -306,6 +349,7 @@ mod tests {
     use core::{ffi::c_void, ptr};
 
     use alloc::boxed::Box;
+    use log::Log;
     use patina::{
         component::service::{IntoService, perf_timer::ArchTimerFunctionality},
         log::Format,
@@ -314,7 +358,11 @@ mod tests {
     };
     use r_efi::efi;
 
-    use crate::{logger::AdvancedLogger, memory_log, writer::AdvancedLogWriter};
+    use crate::{
+        logger::{AdvancedLogger, TargetFilter},
+        memory_log,
+        writer::AdvancedLogWriter,
+    };
 
     #[derive(IntoService)]
     #[service(dyn ArchTimerFunctionality)]
@@ -334,7 +382,7 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[("test_target", log::LevelFilter::Info)],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_filter_override: None }],
             log::LevelFilter::Debug,
             serial,
         );
@@ -346,7 +394,7 @@ mod tests {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
             Format::Standard,
-            &[("test_target", log::LevelFilter::Info)],
+            &[TargetFilter { target: "test_target", log_level: log::LevelFilter::Info, hw_filter_override: None }],
             log::LevelFilter::Debug,
             serial,
         );
@@ -400,5 +448,88 @@ mod tests {
         assert!(TEST_LOGGER.get_log_address().is_some_and(|addr| addr == log_address));
 
         // TODO: Need to mock the protocol interface but requires final component interface.
+    }
+
+    // Helper to build Metadata for a given target and level.
+    fn metadata(target: &str, level: log::Level) -> log::Metadata<'_> {
+        log::Metadata::builder().target(target).level(level).build()
+    }
+
+    // === Global level filtering (no target filters) ===
+
+    #[test]
+    fn enabled_respects_global_max_level() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Info, UartNull {});
+
+        assert!(logger.enabled(&metadata("any", log::Level::Error)));
+        assert!(logger.enabled(&metadata("any", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("any", log::Level::Info)));
+        assert!(!logger.enabled(&metadata("any", log::Level::Debug)));
+        assert!(!logger.enabled(&metadata("any", log::Level::Trace)));
+    }
+
+    #[test]
+    fn enabled_at_trace_allows_everything() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
+
+        assert!(logger.enabled(&metadata("x", log::Level::Error)));
+        assert!(logger.enabled(&metadata("x", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("x", log::Level::Info)));
+        assert!(logger.enabled(&metadata("x", log::Level::Debug)));
+        assert!(logger.enabled(&metadata("x", log::Level::Trace)));
+    }
+
+    #[test]
+    fn enabled_at_off_blocks_everything() {
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Off, UartNull {});
+
+        assert!(!logger.enabled(&metadata("x", log::Level::Error)));
+        assert!(!logger.enabled(&metadata("x", log::Level::Trace)));
+    }
+
+    // === Target filter level overrides ===
+
+    #[test]
+    fn target_filter_overrides_global_to_be_more_permissive() {
+        let filters = [TargetFilter { target: "my_mod", log_level: log::LevelFilter::Info, hw_filter_override: None }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Error, UartNull {});
+
+        // Matching target uses the filter's level (Info)
+        assert!(logger.enabled(&metadata("my_mod", log::Level::Info)));
+        assert!(logger.enabled(&metadata("my_mod", log::Level::Error)));
+        assert!(!logger.enabled(&metadata("my_mod", log::Level::Debug)));
+
+        // Non-matching target falls back to global (Error)
+        assert!(!logger.enabled(&metadata("other", log::Level::Info)));
+        assert!(logger.enabled(&metadata("other", log::Level::Error)));
+    }
+
+    #[test]
+    fn target_filter_restricts_below_global() {
+        let filters = [TargetFilter { target: "noisy", log_level: log::LevelFilter::Error, hw_filter_override: None }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Trace, UartNull {});
+
+        // "noisy" target is restricted to Error only
+        assert!(!logger.enabled(&metadata("noisy", log::Level::Info)));
+        assert!(!logger.enabled(&metadata("noisy", log::Level::Warn)));
+        assert!(logger.enabled(&metadata("noisy", log::Level::Error)));
+
+        // Other targets use global Trace (everything passes)
+        assert!(logger.enabled(&metadata("other", log::Level::Trace)));
+    }
+
+    #[test]
+    fn target_filter_matches_by_prefix() {
+        let filters =
+            [TargetFilter { target: "my_crate", log_level: log::LevelFilter::Info, hw_filter_override: None }];
+        // Global is Off so anything not matching the filter is blocked.
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Off, UartNull {});
+
+        // Prefix match
+        assert!(logger.enabled(&metadata("my_crate::submod", log::Level::Info)));
+        // Exact match (also a valid prefix)
+        assert!(logger.enabled(&metadata("my_crate", log::Level::Info)));
+        // No match → falls to global Off
+        assert!(!logger.enabled(&metadata("other_crate", log::Level::Error)));
     }
 }
