@@ -40,7 +40,7 @@ scenarios.
 ```admonish warning
 Care must be taken when selecting the `tpl_lock_level` for a `TplMutex`. Code
 executing at a TPL higher than the `TplMutex` will panic if it attempts to
-accquire the lock (because it will attempt to raise the TPL to a lower level,
+acquire the lock (because it will attempt to raise the TPL to a lower level,
 which is an error). But setting a `tpl_lock_level` to a high TPL level will
 prevent other (unrelated) usage of that TPL, potentially reducing system
 responsiveness. It is recommended to set the `tpl_lock_level` as low as possible
@@ -78,7 +78,8 @@ mutex.
 
 The `try_lock()` routine in `TplMutex` allows a lock to be attempted and fail
 without blocking; this can be used for scenarios where a lock might be held by
-another agent in a lower TPL but the caller can handle not acquiring the lock.
+another agent in a lower TPL but the caller can handle not acquiring the lock,
+or in scenarios where a call is re-entrant at the same TPL.
 
 ## TplGuard
 
@@ -148,55 +149,56 @@ break mutual exclusion and cause data races.
 [Table 7.3](https://uefi.org/specs/UEFI/2.11/07_Services_Boot_Services.html#tpl-restrictions)
 lists the TPL restrictions associated with various core services and common protocols.
 
-```admonish warning
-Note: it is important to understand that the TPL level associated with a
-`TplMutex` is not the same thing as the TPL level associated with an event
-callback routine. The TPL level associated with an event callback determines
-the TPL level at which the event callback is permitted to run and can be thought
-of as the "ground state" TPL that the event callback executes at. The callback
-is permitted to acquire a TplMutex at a higher level than the event callback is
-running at, and the TPL will be raised for the duration that the TPL guard is
-owned to prevent data races with event callbacks running at the higher context.
-```
+   ```admonish warning
+   Note: it is important to understand that the TPL level associated with a
+   `TplMutex` is not the same thing as the TPL level associated with an event
+   callback routine. The TPL level associated with an event callback determines
+   the TPL level at which the event callback is permitted to run and can be
+   thought of as the "ground state" TPL that the event callback executes at. The
+   callback is permitted to acquire a TplMutex at a higher level than the event
+   callback is running at, and the TPL will be raised for the duration that the
+   TPL guard is owned to prevent data races with event callbacks running at the
+   higher context.
+   ```
 
-1. Care should be taken to ensure that `TplMutex` usages are scoped so that the
+4. Care should be taken to ensure that `TplMutex` usages are scoped so that the
 critical sections are as narrow as possible. This is especially true if
 accessing shared data from a TPL context that is at a lower TPL than the
 `TplMutex` lock level since holding the lock at a higher TPL for long periods
 will starve event servicing at or below the `TplMutex` lock level as long as the
 guard is active.
 
-Prefer:
+   Prefer:
 
-```rust,ignore
-{
-    let guard = my_tpl_mutex.lock();
-    // TPL raised to level associated with my_tpl_mutex
-    guard.mutation();
-}
-// mutex dropped, TPL restored to the base TPL level for the event callback.
-long_running_computation();
-// re-acquire mutex
-my_tpl_mutex.lock().mutation2();
-```
+   ```rust,ignore
+   {
+       let guard = my_tpl_mutex.lock();
+       // TPL raised to level associated with my_tpl_mutex
+       guard.mutation();
+   }
+   // mutex dropped, TPL restored to the base TPL level for the event callback.
+   long_running_computation();
+   // re-acquire mutex
+   my_tpl_mutex.lock().mutation2();
+   ```
 
-instead of:
+   instead of:
 
-```rust,ignore
-let guard = my_tpl_mutex.lock();
-guard.mutation();
-//mutex held and TPL stays high during long_running_computation
-long_running_computation();
-guard.mutation2();
-```
+   ```rust,ignore
+   let guard = my_tpl_mutex.lock();
+   guard.mutation();
+   //mutex held and TPL stays high during long_running_computation
+   long_running_computation();
+   guard.mutation2();
+   ```
 
-1. If the design calls for interior mutability on data that is _not_ shared between
+5. If the design calls for interior mutability on data that is _not_ shared between
 contexts, use a standard Rust interior mutability primitive (i.e. `UnsafeCell`
 and its derivatives). Do not use `TplMutex` for interior mutability on non-shared
 data. A good rule of thumb is that if your usage doesn't require `Sync`/`Send`,
 then you don't need a `TplMutex`.
 
-1. The UEFI spec APIs often use constructs like `context: *mut c_void` to share
+6. The UEFI spec APIs often use constructs like `context: *mut c_void` to share
 data between contexts. When implementing FFI interfaces to support these API
 contracts, `TplMutex` should be used to guard shared data accessed via these
 context raw pointers even though the raw pointers are not required to be `Sync`/
@@ -206,23 +208,23 @@ pointer. Sometimes the `context` pointer is known to be unique to the event
 callback and never accessed from other contexts, in which case a `TplMutex` is
 not required.
 
-1. Direct `raise_tpl` and `restore_tpl` calls should be avoided. Directly
+7. Direct `raise_tpl` and `restore_tpl` calls should be avoided. Directly
 manipulating the TPL decouples the mutual exclusion primitives from the data
 that is being protected and makes it hard to associate the TPL requirements with
 the data synchronization model of the code.
 
-1. Care should be taken to avoid UEFI spec caller restrictions on TPL as
-described in
+8. Care should be taken to avoid violating UEFI spec caller restrictions on TPL
+as described in
 [Table 7.3](https://uefi.org/specs/UEFI/2.11/07_Services_Boot_Services.html#tpl-restrictions)
-of the UEFI spec. For example, the following usage of
-`TplMutex` would be an error:
+of the UEFI spec. For example, the following usage of `TplMutex` would be an
+error:
 
-```rust,ignore
-let my_tpl_mutex = TplMutex<Data>::new(efi::TPL_NOTIFY, Data::new(), "my lock");
-let _guard = my_tpl_mutex.lock(); //TPL raised to NOTIFY while _guard is in scope.
-let acpi_services = locate_acpi_table_protocol();
-acpi_services.install_acpi_table(); //BUG: UEFI spec requires invocation at < TPL_NOTIFY
-```
+   ```rust,ignore
+   let my_tpl_mutex = TplMutex::<Data>::new(efi::TPL_NOTIFY, Data::new(), "my lock");
+   let _guard = my_tpl_mutex.lock(); //TPL raised to NOTIFY while _guard is in scope.
+   let acpi_services = locate_acpi_table_protocol();
+   acpi_services.install_acpi_table(); //BUG: UEFI spec requires invocation at < TPL_NOTIFY
+   ```
 
 As with any set of guidelines, exceptions to the above may be required for
 specific cases; these should include design rationale for the departure from
