@@ -18,8 +18,8 @@ use r_efi::efi;
 pub const MM_MMST_SIGNATURE: u32 = u32::from_le_bytes([b'S', b'M', b'S', b'T']);
 
 /// MMST revision tuples
-pub const MM_MMST_REVISION_MAJOR: u32 = spec_version::PI_SEPCIFICATION_MAJOR_REVISION;
-pub const MM_MMST_REVISION_MINOR: u32 = spec_version::PI_SEPCIFICATION_MINOR_REVISION;
+pub const MM_MMST_REVISION_MAJOR: u32 = spec_version::PI_SPECIFICATION_MAJOR_REVISION;
+pub const MM_MMST_REVISION_MINOR: u32 = spec_version::PI_SPECIFICATION_MINOR_REVISION;
 
 /// PI Specification version encoded as `(major << 16) | minor`.
 pub const MM_SYSTEM_TABLE_REVISION: u32 = (MM_MMST_REVISION_MAJOR << 16) | MM_MMST_REVISION_MINOR;
