@@ -30,7 +30,7 @@ See reference: [PI specification v1.9](https://uefi.org/specs/PI/1.9/V4_Overview
 A [project MU feature](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This
 module provides supervised MM functionality.
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
-code. However, it lacks the safety and modern features that Rust can offer.
+code. However, it lacks the safety and modern features that Rust canc offer.
 
 The goal of this RFC is to re-implement the critical MM supervisor functionalities (resource protection and page table management)
 in Rust using the Patina framework. This will allow the supervisor entity in Trusted Execution Environment (TEE) to provide
@@ -46,7 +46,7 @@ However, the Rust implementation of some common resultant functionalities within
 services, UEFI variable services, etc.) will be supported across both x86_64 and AArch64 architectures, in the format of
 both a Patina component and a Hafnium EC service compatible crate.
 
-See documentation of the [Hafnium EC service](https://github.com/OpenDevicePartnership/haf-ec-service/blob/main/README.md) for
+See documentation of the [Hafnium secure service](https://github.com/OpenDevicePartnership/odp-secure-services/blob/main/README.md) for
 more information on this approach.
 
 ## Goals
@@ -732,7 +732,7 @@ to the appropriate handlers in the Rust MM supervisor.
 
 ### User-Level Explanation
 
-A regular MM standalone MM driver will be executed in the MM user mode and will interact with the MM supervisor through
+A regular MM standalone MM driver will bce executed in the MM user mode acnd will interact with the MM supervisor through
 a syscall. The Rust MM supervisor will handle these syscalls, manage memory and page tables, and enforce security policies.
 
 The MM Rust user core will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
