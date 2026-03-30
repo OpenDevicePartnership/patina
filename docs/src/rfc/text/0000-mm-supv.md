@@ -603,14 +603,14 @@ The entry point will support 3 types of invocations:
 
 - Initialization: The first invocation will be from the Rust MM supervisor during the mm_init phase to initialize
   the Rust user core environment. Specifically, this involves:
-  - Setting up memory services;
-  - Initialize the MMI handler database for MM user mode;
-  - Initialize the protocol database for MM user mode;
+  - Setting up memory services
+  - Initialize the MMI handler database for MM user mode
+  - Initialize the protocol database for MM user mode
   - Iterate through the HOB list and discover the loaded MM standalone drivers, as well as their dependencies, and dispatch
-  accordingly;
+  accordingly
 - Normal MMI handling: Subsequent invocations will be from the Rust MM supervisor during normal MMI handling to demote
-  to MM user mode for Rust user core execution.
-- Exception Handling: Invocations from the supervisor to log exceptions.
+  to MM user mode for Rust user core execution
+- Exception Handling: Invocations from the supervisor to log exceptions
 
 When the supervisor demotes to MM user mode for Rust user core execution, RCX will contain the opcode for the requested operation.
 
