@@ -27,7 +27,7 @@ See reference: [PI specification v1.9](https://uefi.org/specs/PI/1.9/V4_Overview
 
 ### MM Supervisor
 
-A [project MU module](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This
+A [project MU feature](https://github.com/microsoft/mu_feature_mm_supv) implements a standalone MM supervisor in C. This
 module provides supervised MM functionality.
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
 code. However, it lacks the safety and modern features that Rust can offer.
@@ -39,14 +39,14 @@ the same level of protection while yielding less attack surfaces.
 ### Cross-Architecture Support
 
 The standalone MM supervisor in C supports only x86_64 architecture. The Rust implementation for the core framework does
-__NOT__ aim to support both x86_64 and AArch64 architectures in terms of isolation, due to the potential for different
-approaches might be taken for AArch64 (secure partitions vs. supervisor-based isolation).
+__NOT__ aim to support isolation for both x86_64 and AArch64 architectures due to architectural differences for AArch64
+(secure partitions vs. supervisor-based isolation).
 
 However, the Rust implementation of some common resultant functionalities within the scope of Standalone MM (such as TPM
 services, UEFI variable services, etc.) will be supported across both x86_64 and AArch64 architectures, in the format of
 both a Patina component and a Hafnium EC service compatible crate.
 
-See documentation of [Hafnium EC service](https://github.com/OpenDevicePartnership/haf-ec-service/blob/main/README.md) for
+See documentation of the [Hafnium EC service](https://github.com/OpenDevicePartnership/haf-ec-service/blob/main/README.md) for
 more information on this approach.
 
 ## Goals
@@ -67,10 +67,10 @@ for the supervisor mode, ensuring that they are managed securely and efficiently
 1. __Pool Management, Protocol DB, Module Dispatching in user mode__: This is to ensure that the pool and protocol database
 are managed in user mode for better isolation and easier management of protocol crosstalk and dependencies, allowing more
 flexible interactions.
-1. __Standalone MM driver continue to work__: The existing Standalone MM drivers will continue to work as the currently
-supervised module. It could involve some platform level integration changes due to the model shift (i.e. not use the syscall
-to query hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation
-when the software component is finalized.
+1. __Standalone MM driver compatibility__: Existing Standalone MM drivers will continue to work as they do in the current
+supervisor enviornment. However, some platform level integration changes due to the model shift (i.e. not use the syscall to query
+hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation when
+the software component is finalized.
 1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
 This will ensure a smaller attack surface from non-MM environment and pave way to earlier lock down for future improvements.
 
@@ -88,8 +88,8 @@ performance and simplified implementation. The system will panic if 1GB page sup
 - Software Requirements:
 
   1. __Standalone MM__: The MM supervisor will be based on the Standalone MM model, which provides better isolation and
-security for MM operations. All MM drivers should be compatible with the Standalone MM model.
-  1. __PEI Launching__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`.
+security for MM operations. All MM drivers must be compatible with the Standalone MM model.
+  1. __PEI Launch__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`.
 This requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
   1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
@@ -101,20 +101,20 @@ buffers, and recommended to directly write into the communication buffer regions
 
 Current C implementation of the MM supervisor is based on the Project MU framework, which is a C-based Standalone MM implementation.
 
-Specifically, this module includes the functionality Standalone MM core, PiSmmCpuDxeSmm and the page table management portion
+Specifically, this module includes the following functionality: Standalone MM core, PiSmmCpuDxeSmm and the page table management portion
 of the PiSmmCore as well as the privilege management component.
 
 The current core services for the existing C implementation can be found in this illustrated diagram:
 ![Current C-based Supervisor](0000-mm-supv/c-supervisor-flowchart.png)
 
 The launching of the MM supervisor is done through the MM supervisor specific IPL, which is responsible for opening the
-MMRAM regions, locating the "standalone MM supervisor core", executing it in MMRAM.
+MMRAM regions, locating the "standalone MM supervisor core", and executing it in MMRAM.
 
 Upon executing, the MM supervisor initializes the memory services, copies all reported HOBs from the non-MM environment,
-sets up basic stack buffer for all processors and both supervisor and user modes, sets up the necessary page tables, sets
+sets up basic stack buffer for all processors and both supervisor and user modes, sets up the necessary page tables, and sets
 up the privilege management components.
 
-Upon MMIs, the MM supervisor can handle incoming MMIs by dispatching them to the appropriate user handlers, or dispatching
+Upon MMIs, the MM supervisor can handle incoming MMIs by dispatching them to the appropriate user handlers, dispatching
 user drivers in demoted execution mode, or dispatching supervisor MMI handlers in supervisor mode.
 
 ## Alternatives
@@ -136,7 +136,7 @@ This section will discuss the technical details of the Rust-based MM supervisor 
 
 The intention is to leverage the existing EDK2 components to open the MMRAMs, locate the "standalone MM core", execute it
 in MMRAM, produce the necessary PPIs, and runtime protocols. The MM supervisor specific services, such as MM interfaces
-that route to supervisor specific MM handlers, will be provided in a light weighted C component. Specifically, given the
+that route to supervisor specific MM handlers, will be provided in a lightweight C component. Specifically, given the
 supervisor interfaces are no longer needed during runtime, the channel for communicating to MM supervisor during OS runtime
 will be shut down at ExitBootServices, and the DXE agent hosting Supervisor communication channel (currently known as
 [DxeSupport](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Drivers/MmPeiLaunchers/MmDxeSupport.inf))
@@ -168,14 +168,14 @@ RX for code) and prepare the corresponding HOBs of `MemoryAllocationModule` type
 - Invoke the first MMI to transfer control to the MM supervisor in Rust.
 
 Note that the MM relocation should be already handled by the [`SmmRelocationLib`](https://github.com/tianocore/edk2/blob/master/UefiCpuPkg/Library/SmmRelocationLib/SmmRelocationLib.inf)
-from PEIM before entering MM.
+from PEI before entering MM.
 
 The global state (data) will be stored in MMRAM, in a dedicated supervisor region that is ready to to handed off to the
 Rust MM supervisor.
 
 #### HOBs Required for bootstrapping
 
-- The following HOBs will be required for bootstrapping the MM Foundattion setup (needed in `CreateMmPlatformHob`):
+- The following HOBs will be required for bootstrapping the MM Foundation setup (needed in `CreateMmPlatformHob`):
 
 | HOB Info | Description |
 | - | - |
@@ -196,7 +196,7 @@ Rust MM supervisor.
 
 #### Related definitions
 
-- Memory allcoation module hob GUID definition, `gMmSupervisorHobMemoryAllocModuleGuid`:
+- Memory allocation module hob GUID definition, `gMmSupervisorHobMemoryAllocModuleGuid`:
 
   ```rust
   // GUID for gMmSupervisorHobMemoryAllocModuleGuid
@@ -305,8 +305,8 @@ previous section.
 During the very first MMI, on all of the cores, the Rust MM supervisor will perform the one-time initialization, which includes:
 
 - Inspecting the shared data HOBs and deploying available MMRAM regions into the supervisor region.
-- Initialize the interrupt manager using patina framework, as well as patching the IDT fixup in the MMI entry point code.
-- Initialize the patina-paging instance using the currently installed page table, and inspect the incoming hob list
+- Initialize the interrupt manager using the Patina framework, as well as patching the IDT fixup in the MMI entry point code.
+- Initialize the patina-paging instance using the currently installed page table, and inspect the incoming HOB list
 against the page table to make sure the MM foundation setup has properly mapped all the necessary regions with the correct
 attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table itself, save state regions).
 
@@ -318,7 +318,7 @@ Specifically, the Rust MM supervisor will first copy all the content of the inco
 into a local buffer and determine the targeting mode of the MMI by checking the MMI targeting field in the shared data
 section `MM_BUFFER_STATUS`. The targeting mode will determine whether the MMI is targeting supervisor mode or MM user
 mode and whether it is synchronous or not. If the MMI is targeting supervisor mode, the MMI must be synchronous. The Rust
-MM supervisor will dispatch the MMI to the corresponding supervisor handler by iterating through static list of handlers.
+MM supervisor will dispatch the MMI to the corresponding supervisor handler by iterating through a static list of handlers.
 
 If the MMI is targeting MM user mode, and if the MMI is synchronous, the Rust MM supervisor will copy the communication
 buffer into a local buffer and then demote to MM user mode to execute the Rust user core.
@@ -457,10 +457,10 @@ As the MM core does not have a GCD, it will need to manage the page tables direc
 Rust MM supervisor loader will implement a page pool allocator for `patina-paging` usage.
 
 The supervisor will inherit the incoming page table and initialize the patina-paging instance. This instance will be used
-for all the page table management needs during runtime, specifically for  inspecting the incoming hob list and mapping the
+for all the page table management needs during runtime, specifically for inspecting the incoming hob list and mapping the
 pages allocated for user mode.
 
-At the end of the MM foundation setup, the loader will page table to read-only to prevent tampering from MM code, marking
+At the end of the MM foundation setup, the loader will mark the page table read-only to prevent tampering from MM code, marking
 the supervisor code sections as supervisor executable and supervisor data sections as supervisor non-executable.
 
 During runtime, the Rust MM supervisor will manage page table updates for MM user mode allocations and frees by disabling
@@ -477,13 +477,13 @@ specify the buffer location and size upfront.
 
 #### Memory Security Policy Reporting
 
-When external agent indicates ready to lock event, MM supervisor will cease to accept any further unblock requests and produce
+When an external agent indicates ready to lock event, MM supervisor will cease to accept any further unblock requests and produce
 a report of all the unblocked regions for attestation purposes.
 
-Whenever external agent requests the security policy report, the MM supervisor will generate a fresh report based on the
+Whenever an external agent requests the security policy report, the MM supervisor will generate a fresh report based on the
 current page table but compare it against the snapshot reported during ready to lock event to ensure integrity.
 
-Note that if memory policy is queried before ready to lock event, the MM supervisor will produce a report based on the
+Note that if the memory policy is queried before ready to lock event, the MM supervisor will produce a report based on the
 current page table and lock down the unblock requests going forward.
 
 The produced report will be concatenated with the platform supplied policy of 4 other categories and handed off to the non-MM
@@ -515,7 +515,7 @@ to the function pointer that is requested.
 
 If the requested operation is initiated from MM user mode, the Rust MM supervisor will first inspect the requested operation
 and ensure the operation belongs to user mode code region before populating the function pointer and arguments into the
-command buffer. Upon dispatching, the Rust MM supervisor will demote APs to user mode through callgate before executing
+command buffer. Upon dispatching, the Rust MM supervisor will demote APs to user mode through a callgate before executing
 the requested operation. During the operation, should the user mode operations require supervisor mode services, the APs
 will trigger syscall interrupts to transition back to supervisor mode to handle the requests, if this is allowed by the
 security policies.
@@ -540,8 +540,8 @@ The Rust MM supervisor should consist of the following main components:
 
 | Component | Description | Executor | Status |
 | - | - | - | - |
-| Core Rendezvous | The frontier after processor come out of the MMI entry block | All processors | To be implemented |
-| Syscall Dispatcher | The syscall dispatcher for handling  from MM user mode | All processors | To be implemented, as part of patina-isolation crate |
+| Core Rendezvous | The frontier after processors come out of the MMI entry block | All processors | To be implemented |
+| Syscall Dispatcher | The syscall dispatcher for handling from MM user mode | All processors | To be implemented, as part of patina-isolation crate |
 | Privilege Manager | The privilege manager for managing callgates and TSS for ring transitions | All processors | To be implemented, as part of patina-isolation crate |
 | Exception Handler | The exception handler for handling exceptions in supervisor mode | All processors | patina_internal_cpu |
 | Initialization Routine | The one-time initialization routine for the Rust MM supervisor | BSP | Similar to the entrypoint of patina_dxe_core, but needs some heavy adaptations |
@@ -575,13 +575,13 @@ policy guided adjudication.
 This component will be responsible for:
 
 - Initializing the MM user mode environment
-- Setting up telemetry reporting and fail fast component
-- Hosting the single jump pointer from supervisor mode to user mode through callgate
-- Providing shim version of MP services
-- Hosting pool allocator for MM user mode allocations
-- Hosting page allocator for MM user mode through syscall
-- Hosting protocol database for MM user mode
-- Hosting MMI handler database for MM user mode
+- Setting up telemetry reporting and the fail fast component
+- Hosting the single jump pointer from supervisor mode to user mode through a callgate
+- Providing a shim version of MP services
+- Hosting the pool allocator for MM user mode allocations
+- Hosting the page allocator for MM user mode through a syscall
+- Hosting the protocol database for MM user mode
+- Hosting the MMI handler database for MM user mode
 - Registering and dispatching fundamental events during boot phase for MM user mode
 - Dispatching other MM user mode drivers
 
@@ -596,16 +596,16 @@ The entry point will support 3 types of invocations:
 
 - Initialization: The first invocation will be from the Rust MM supervisor during the mm_init phase to initialize
   the Rust user core environment. Specifically, this involves:
-  - Setting up memory service;
-  - Initialize MMI handler database for MM user mode;
-  - Initialize protocol database for MM user mode;
+  - Setting up memory services;
+  - Initialize the MMI handler database for MM user mode;
+  - Initialize the protocol database for MM user mode;
   - Iterate through the HOB list and discover the loaded MM standalone drivers, as well as their dependencies, and dispatch
   accordingly;
 - Normal MMI handling: Subsequent invocations will be from the Rust MM supervisor during normal MMI handling to demote
   to MM user mode for Rust user core execution.
 - Exception Handling: Invocations from the supervisor to log exceptions.
 
-When the supervisor demotes to MM user mode for Rust user core execution, RCX will contain the opcode for needed operation.
+When the supervisor demotes to MM user mode for Rust user core execution, RCX will contain the opcode for the requested operation.
 
 #### MM Rust User Core `Nutrient` Content
 
@@ -661,16 +661,16 @@ pub const WHEA_TELEMETRY_SECTION_TYPE_GUID: efi::Guid =
 If the UEFI variable service is available, the Rust user core will attempt to write the log entry into a HwErrRec UEFI
 variable for persistence across reboots. Otherwise, it will store the log entry into CMOS for retrieval across reboots.
 
-Fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Rust user core
+The fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Rust user core
 will inject a fatal error into the HEST table before returning back to supervisor mode.
 
 Once back in supervisor mode, the Rust MM supervisor will inject an NMI into the current core before returning, which will
-be handled by the existing NMI handler from the non-MM component, be it Patina core or OS.
+be handled by the existing NMI handler from the non-MM component, be it the Patina core or OS.
 
 The MM supervisor will cease to accept any further MMIs once the fail fast mechanism is triggered.
 
-The point of implementing fail fast mechanism is to extract the corresponding non-MM crash dump for further analysis. This
-is especially important for analyzing why syscall dispatcher run into denied operations.
+The point of implementing the fail fast mechanism is to extract the corresponding non-MM crash dump for further analysis. This
+is especially important for analyzing why the syscall dispatcher ran into denied operations.
 
 ### DXE Agents
 
@@ -689,7 +689,7 @@ With the Rust MM supervisor in place, we can integrate SMM Enhanced Attestation 
 of the MM environment.
 
 Given the supervisor loader has been separated from the MM core, and the prepared data is handed off to the Rust MM supervisor
-as data _section_, we can minimize the security rules needed for SEA to inspect the passed data section for attestation
+as a data _section_, we can minimize the security rules needed for SEA to inspect the passed data section for attestation
 purposes.
 
 In addition, for the remaining global data that is needed by the Rust MM supervisor, we can keep applying the de-relocation
@@ -704,11 +704,11 @@ The Rust-based MM supervisor will provide a safer implementation of the MM opera
 leveraging Rust's safety guarantees and modern features. It will be integrated with the Patina framework to ensure a
 consistent implementation.
 
-  The supervisor will handle MMIs, manage memory and page tables, and enforce security policies, while the Rust user core
-  will provide a safe interface for MM clients to interact with the MM supervisor.
+The supervisor will handle MMIs, manage memory and page tables, and enforce security policies, while the Rust user core
+will provide a safe interface for MM clients to interact with the MM supervisor.
 
-  The Rust MM supervisor will be designed to minimize the amount of code in supervisor mode, reduce the attack surface,
-  and improve performance.
+The Rust MM supervisor will be designed to minimize the amount of code in supervisor mode, reduce the attack surface,
+and improve performance.
 
 ### High-Level Boot Flow
 
@@ -716,7 +716,7 @@ The illustrated diagram below shows the high-level boot flow of the Rust-based M
 ![Control flow of rust based supervisor](0000-mm-supv/rust-supv-flowchart.png)
 
 1. __MM IPL Setup__: The MM IPL setup will be performed by the existing C implementation from EDK2, which will prepare the
-environment for the Rust MM supervisor. This includes opening MMRAMs, loading MM initializer to MMRAM and execute from there,
+environment for the Rust MM supervisor. This includes opening MMRAMs, loading the MM initializer to MMRAM and execute from there,
 as well as closing and locking MMRAMs after initialization.
 1. __MM Foundation Setup__: The MM foundation setup will be performed by the MM initialization module, which will prepare
 the environment for the Rust MM supervisor. This includes initializing memory services, setting up MM entry code, stack
@@ -732,8 +732,8 @@ to the appropriate handlers in the Rust MM supervisor.
 
 ### User-Level Explanation
 
-A regular MM standalone MM driver will be execute in the MM user mode, and will interact with the MM supervisor through
-syscall. The Rust MM supervisor will handle these syscall, manage memory and page tables, and enforce security policies.
+A regular MM standalone MM driver will be executed in the MM user mode and will interact with the MM supervisor through
+a syscall. The Rust MM supervisor will handle these syscalls, manage memory and page tables, and enforce security policies.
 
 The MM Rust user core will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
 required by MM clients, such as memory allocation, protocol database access, and MMI handler registration.
