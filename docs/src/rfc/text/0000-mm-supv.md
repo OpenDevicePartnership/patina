@@ -68,7 +68,7 @@ for the supervisor mode, ensuring that they are managed securely and efficiently
 are managed in user mode for better isolation and easier management of protocol crosstalk and dependencies, allowing more
 flexible interactions.
 1. __Standalone MM driver compatibility__: Existing Standalone MM drivers will continue to work as they do in the current
-supervisor enviornment. However, some platform level integration changes due to the model shift (i.e. not use the syscall to query
+supervisor environment. However, some platform level integration changes due to the model shift (i.e. not use the syscall to query
 hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation when
 the software component is finalized.
 1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
