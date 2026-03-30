@@ -540,9 +540,9 @@ The [user level core](#mm-rust-user-core-in-rust), on the other hand, will suppo
 
 #### Supervisor Handlers
 
-To simplify the implementation, the Rust MM supervisor will host a static set of critical handlers in the supervisor mode
-through `linkme`. The handlers will be iterated through if an MMI is found targeting the supervisor, and the first matched
-handler will be dispatched after validation.
+The Rust MM supervisor will host a static set of critical handlers in supervisor mode using the `linkme` crate. When an MMI targets the supervisor, the supervisor iterates through these handlers to find and dispatch the first matching handler after validation.
+
+The (linkme)[https://docs.rs/linkme/latest/linkme/] crate coalesces distributed globals of the same type into a static slice, enabling compile-time handler registration without requiring a dynamic database or registration function. This approach simplifies the implementation by allowing platforms to add handlers (such as SEA test handlers or paging audit handlers) through simple static declarations, which the compiler automatically coalesces into the supervisor's handler enumeration list.
 
 #### Rust MM Supervisor `Nutrient` Content
 
