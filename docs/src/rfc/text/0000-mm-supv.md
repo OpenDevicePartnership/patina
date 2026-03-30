@@ -184,6 +184,7 @@ Rust MM supervisor.
 | EFI_HOB_TYPE_GUID_EXTENSION | To describe the MM communication buffer for supervisor mode and user mode. Under the name of [`gMmCommonRegionHobGuid`](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Include/Guid/MmCommonRegion.h) for user mode. |
 | EFI_HOB_TYPE_GUID_EXTENSION | To describe the MM stack buffer for all processors and both supervisor and user modes. Under the name of [`gMmSupvUnblockRegionHobGuid`](https://github.com/microsoft/mu_feature_mm_supv/blob/main/MmSupervisorPkg/Include/Guid/MmSupvUnblockRegion.h). |
 | EFI_HOB_TYPE_RESOURCE_DESCRIPTOR | To describe the MMIO memory resources for MM usage. This could include UART, APIC, and PCIe regions. |
+| EFI_HOB_TYPE_RESOURCE_DESCRIPTOR_V2 | The usage will be the same as EFI_HOB_TYPE_RESOURCE_DESCRIPTOR, but the attributes will not be honored for security purpose. |
 
 - The following HOBs will be required for bootstrapping the Rust MM supervisor:
 
@@ -505,8 +506,9 @@ processors during the mm_init phase.
 Upon invocation of each MMI, Rust MM supervisor will rendezvous all processors to ensure proper synchronization before
 handling the MMI.
 
-After rendezvous, the Rust MM supervisor will perform necessary BSP elections and put the APs into the holding pen, and
-wait for the BSP to complete the MMI handling before releasing the APs back to normal execution.
+After rendezvous, the Rust MM supervisor inspects the APIC ID of each incoming processor. The supervisor designates the
+register-confirmed processor as the BSP and places remaining processors (APs) into a holding pen. The BSP completes MMI
+handling while APs remain idle, then the supervisor releases the APs to resume normal execution.
 
 Should either the MMI handlers need to send signals to all processors to perform certain operations, or the BSP that handles
 the MMI needs to write to the command buffer with provided function pointer and arguments for APs to execute, the Rust MM
@@ -523,9 +525,14 @@ security policies.
 #### Supervisor Patina Components
 
 Sticking to the same sensation of componentization as the existing Patina implementation for DXE environment, the Rust MM
-supervisor will also support extensible components through the Patina component model. The components will be linked in
-the supervisor mode during build time and no dynamic loading will be supported for supervisor mode components to minimize
-the attack surface and simplify the implementation.
+supervisor will also support extra static components through during linking process. The components will be linked in the
+supervisor mode during build time and no dynamic loading will be supported for supervisor mode components to minimize the
+attack surface and simplify the implementation.
+
+The pristine Patina component will not be supported from the supervisor level because this is to avoid pulling in unnecessary
+allocator logic that could potentially expand the attack surfaces.
+
+The [user level core](#mm-rust-user-core-in-rust), on the other hand, will support native Patina compononent.
 
 #### Supervisor Handlers
 
