@@ -732,7 +732,7 @@ to the appropriate handlers in the Rust MM supervisor.
 
 ### User-Level Explanation
 
-A regular MM standalone MM driver will be executed in the MM user mode acnd will interact with the MM supervisor through
+A regular MM standalone MM driver will be executed in the MM user mode, and will interact with the MM supervisor through
 a syscall. The Rust MM supervisor will handle these syscalls, manage memory and page tables, and enforce security policies.
 
 The MM Rust user core will provide a safe instance of `gMmst` for MM clients to support the fundamental services that are
