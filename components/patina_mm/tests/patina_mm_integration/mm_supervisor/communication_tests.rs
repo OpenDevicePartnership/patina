@@ -34,10 +34,10 @@ fn test_mm_supervisor_version_request_integration() {
         result: 0,
     };
 
-    let request_bytes = version_request.as_bytes().to_vec();
+    let request_bytes = version_request.as_bytes();
 
     // Send the request using framework
-    let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
+    let result = framework.communicate(&test_guids::MM_SUPERVISOR, request_bytes);
     assert!(result.is_ok(), "MM Supervisor communication should succeed: {:?}", result.err());
 
     let response = result.unwrap();
@@ -84,10 +84,10 @@ fn test_mm_supervisor_capabilities_request() {
         result: 0,
     };
 
-    let request_bytes = capabilities_request.as_bytes().to_vec();
+    let request_bytes = capabilities_request.as_bytes();
 
     // Send the request using framework
-    let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
+    let result = framework.communicate(&test_guids::MM_SUPERVISOR, request_bytes);
     assert!(result.is_ok(), "MM Supervisor capabilities communication should succeed");
 
     let response = result.unwrap();
@@ -133,10 +133,10 @@ fn test_mm_supervisor_invalid_request() {
         result: 0,
     };
 
-    let request_bytes = invalid_request.as_bytes().to_vec();
+    let request_bytes = invalid_request.as_bytes();
 
     // Send the request using framework
-    let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
+    let result = framework.communicate(&test_guids::MM_SUPERVISOR, request_bytes);
     assert!(result.is_ok(), "Communication should succeed even with invalid request");
 
     let response = result.unwrap();
@@ -165,10 +165,10 @@ fn test_mm_supervisor_invalid_signature() {
         result: 0,
     };
 
-    let request_bytes = invalid_request.as_bytes().to_vec();
+    let request_bytes = invalid_request.as_bytes();
 
     // Test handler directly
-    let result = mm_supervisor.handle_request(&request_bytes);
+    let result = mm_supervisor.handle_request(request_bytes);
     assert!(result.is_err(), "Invalid signature should cause handler to fail");
 
     let error_msg = format!("{}", result.unwrap_err());
@@ -221,8 +221,8 @@ fn test_mm_supervisor_builder_integration() {
     };
 
     // Use framework directly instead of mm_comm_service
-    let request_data = version_request.as_bytes().to_vec(); // Convert to bytes
-    let supervisor_result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_data);
+    let request_data = version_request.as_bytes(); // Convert to bytes
+    let supervisor_result = framework.communicate(&test_guids::MM_SUPERVISOR, request_data);
     assert!(supervisor_result.is_ok(), "MM Supervisor should work");
 
     // Verify both triggers worked (we made 2 communication calls: echo + supervisor)
@@ -242,19 +242,19 @@ fn test_safe_message_parsing_with_mm_supervisor() {
         result: 0,
     };
 
-    let request_data = version_request.as_bytes().to_vec();
+    let request_data = version_request.as_bytes();
 
     // Test writing MM Supervisor message safely
     let mut parser = MmMessageParser::new(&mut buffer);
     parser
-        .write_message(&test_guids::MM_SUPERVISOR, &request_data)
+        .write_message(&test_guids::MM_SUPERVISOR, request_data)
         .expect("Should write MM Supervisor message successfully");
 
     // Test parsing the message back safely
     let (parsed_guid, parsed_data) = parser.parse_message().expect("Should parse MM Supervisor message successfully");
 
     assert_eq!(parsed_guid, test_guids::MM_SUPERVISOR);
-    assert_eq!(parsed_data, &request_data);
+    assert_eq!(parsed_data, request_data);
 
     // Verify we can parse the MM Supervisor request from the parsed data
     let parsed_request =
@@ -280,10 +280,10 @@ fn test_mm_supervisor_comm_update_request() {
         result: 0,
     };
 
-    let request_bytes = comm_update_request.as_bytes().to_vec();
+    let request_bytes = comm_update_request.as_bytes();
 
     // Send the request using framework
-    let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
+    let result = framework.communicate(&test_guids::MM_SUPERVISOR, request_bytes);
     assert!(result.is_ok(), "MM Supervisor comm update communication should succeed");
 
     let response = result.unwrap();
@@ -328,10 +328,10 @@ fn test_mm_supervisor_unblock_mem_request() {
         result: 0,
     };
 
-    let request_bytes = unblock_mem_request.as_bytes().to_vec();
+    let request_bytes = unblock_mem_request.as_bytes();
 
     // Send the request using framework
-    let result = framework.communicate(&test_guids::MM_SUPERVISOR, &request_bytes);
+    let result = framework.communicate(&test_guids::MM_SUPERVISOR, request_bytes);
     assert!(result.is_ok(), "MM Supervisor unblock mem communication should succeed");
 
     let response = result.unwrap();

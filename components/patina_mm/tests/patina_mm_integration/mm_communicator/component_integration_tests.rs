@@ -166,10 +166,10 @@ fn test_real_component_mm_supervisor_version_request() {
         result: 0,
     };
 
-    let request_bytes = version_request.as_bytes().to_vec();
+    let request_bytes = version_request.as_bytes();
 
     // Send the request using the real component framework
-    let result = framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &request_bytes);
+    let result = framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), request_bytes);
     assert!(result.is_ok(), "Real component MM Supervisor communication should succeed: {:?}", result.err());
 
     let response = result.unwrap();
