@@ -10,5 +10,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+/// The major revision number of the PI Specification that this implementation targets.
 pub const PI_SPECIFICATION_MAJOR_REVISION: u32 = 1;
+/// The minor revision number of the PI Specification that this implementation targets.
 pub const PI_SPECIFICATION_MINOR_REVISION: u32 = 80;
