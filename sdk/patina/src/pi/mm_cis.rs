@@ -12,10 +12,12 @@
 
 use crate::pi::spec_version;
 use core::ffi::c_void;
-use r_efi::efi;
-use r_efi::efi::{
-    BootAllocatePages, BootAllocatePool, BootFreePages, BootFreePool, BootHandleProtocol, BootInstallProtocolInterface,
-    BootLocateHandle, BootLocateProtocol, BootUninstallProtocolInterface,
+use r_efi::{
+    efi,
+    efi::{
+        BootAllocatePages, BootAllocatePool, BootFreePages, BootFreePool, BootHandleProtocol,
+        BootInstallProtocolInterface, BootLocateHandle, BootLocateProtocol, BootUninstallProtocolInterface,
+    },
 };
 
 /// MMST signature: `'S', 'M', 'S', 'T'` (same as C `MM_MMST_SIGNATURE`).
