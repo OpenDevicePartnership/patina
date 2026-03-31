@@ -108,7 +108,6 @@ environment and MM. The platform should ensure that the communication buffer is 
   1. __No MTRR Reconfiguration in MMI__: This is legacy IA32 behavior and the logic was removed for simplicity.
   1. __No CET Support__: This feature is to be added in the future.
 
-
 ## Prior Art (Existing PI C Implementation)
 
 Current C implementation of the MM supervisor is based on the Project MU framework, which is a C-based Standalone MM implementation.
@@ -558,7 +557,7 @@ The Rust MM supervisor will host a static set of critical handlers in supervisor
 MMI targets the supervisor, the supervisor iterates through these handlers to find and dispatch the first matching handler
 after validation.
 
-The (linkme)[https://docs.rs/linkme/latest/linkme/] crate coalesces distributed globals of the same type into a static
+The [linkme](https://docs.rs/linkme/latest/linkme) crate coalesces distributed globals of the same type into a static
 slice, enabling compile-time handler registration without requiring a dynamic database or registration function. This approach
 simplifies the implementation by allowing platforms to add handlers (such as SEA test handlers or paging audit handlers)
 through simple static declarations, which the compiler automatically coalesces into the supervisor's handler enumeration
