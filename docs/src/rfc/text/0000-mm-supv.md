@@ -91,11 +91,19 @@ performance and simplified implementation. The system will panic if 1GB page sup
 security for MM operations. All MM drivers must be compatible with the Standalone MM model.
   1. __PEI Launch__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`.
 This requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
+  1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
+buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication. Use `MmUnblockMemoryRequest` before MM IPL to make the memory available to MM environment.
+  1. __PEI Memory Bin Must be Enabled__: The platform have to enable memory bin feature from PEI phase in order to support runtime memory allocation without potentially breaking OS hybernation.
+  1. __No Overlap in HOB Reported Resources__: There must be no overlaps between Resource Descriptor HOB entries. Minimize the exposed HOBs to Standalone MM environment to avoid the issues.
+  1. __All MM drivers Must be Comipled with Supervisor-aware Libraries__: This is to prevent the `BaseLib`, `CpuLib` and `IoLib` that access the previleged intrusctions from user level code.
   1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
 environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
-  1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
-buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication.
+  1. __No CPU Hotplug Support__: CPU hotplug feature/protocol will not be support to prevent unnecessary software complication.
+  1. __No BSP Election__: To prevent MMI lands on non-performant cores, BSP election will be disabled for Rust supervisor.
+  1. __No MTRR Reconfiguration in MMI__: This is legacy IA32 behavior and the logic was removed for simplicity.
+  1. __No CET Support__: This feature is to be added in the future.
+
 
 ## Prior Art (Existing PI C Implementation)
 
