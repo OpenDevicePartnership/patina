@@ -46,8 +46,8 @@ However, the Rust implementation of some common resultant functionalities within
 services, UEFI variable services, etc.) will be supported across both x86_64 and AArch64 architectures, in the format of
 both a Patina component and a Hafnium EC service compatible crate.
 
-See documentation of the [Hafnium secure service](https://github.com/OpenDevicePartnership/odp-secure-services/blob/main/README.md) for
-more information on this approach.
+See documentation of the [Hafnium secure service](https://github.com/OpenDevicePartnership/odp-secure-services/blob/main/README.md)
+for more information on this approach.
 
 ## Goals
 
@@ -68,9 +68,9 @@ for the supervisor mode, ensuring that they are managed securely and efficiently
 are managed in user mode for better isolation and easier management of protocol crosstalk and dependencies, allowing more
 flexible interactions.
 1. __Standalone MM driver compatibility__: Existing Standalone MM drivers will continue to work as they do in the current
-supervisor environment. However, some platform level integration changes due to the model shift (i.e. not use the syscall to query
-hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation when
-the software component is finalized.
+supervisor environment. However, some platform level integration changes due to the model shift (i.e. not use the syscall
+to query hob start and not explicitly invoking call gate to return to supervisor mode) which will be covered by the documentation
+when the software component is finalized.
 1. __Only support PEI launching__: With the new model, the only supported phase to launch MM foundation would be in PEI.
 This will ensure a smaller attack surface from non-MM environment and pave way to earlier lock down for future improvements.
 
@@ -92,10 +92,14 @@ security for MM operations. All MM drivers must be compatible with the Standalon
   1. __PEI Launch__: The MM supervisor will be launched during the PEI phase using the existing `StandaloneMmIplPei`.
 This requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
   1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
-buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication. Use `MmUnblockMemoryRequest` before MM IPL to make the memory available to MM environment.
-  1. __PEI Memory Bin Must be Enabled__: The platform have to enable memory bin feature from PEI phase in order to support runtime memory allocation without potentially breaking OS hibernation.
-  1. __No Overlap in HOB Reported Resources__: There must be no overlaps between Resource Descriptor HOB entries. Minimize the exposed HOBs to Standalone MM environment to avoid the issues.
-  1. __All MM drivers Must be Compiled with Supervisor-aware Libraries__: This is to prevent the `BaseLib`, `CpuLib` and `IoLib` that access the previleged instructions from user level code.
+buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication.
+Use `MmUnblockMemoryRequest` before MM IPL to make the memory available to MM environment.
+  1. __PEI Memory Bin Must be Enabled__: The platform have to enable memory bin feature from PEI phase in order to support
+runtime memory allocation without potentially breaking OS hibernation.
+  1. __No Overlap in HOB Reported Resources__: There must be no overlaps between Resource Descriptor HOB entries. Minimize
+the exposed HOBs to Standalone MM environment to avoid the issues.
+  1. __All MM drivers Must be Compiled with Supervisor-aware Libraries__: This is to prevent the `BaseLib`, `CpuLib` and
+`IoLib` that access the previleged instructions from user level code.
   1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
 environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
@@ -109,8 +113,8 @@ environment and MM. The platform should ensure that the communication buffer is 
 
 Current C implementation of the MM supervisor is based on the Project MU framework, which is a C-based Standalone MM implementation.
 
-Specifically, this module includes the following functionality: Standalone MM core, PiSmmCpuDxeSmm and the page table management portion
-of the PiSmmCore as well as the privilege management component.
+Specifically, this module includes the following functionality: Standalone MM core, PiSmmCpuDxeSmm and the page table management
+portion of the PiSmmCore as well as the privilege management component.
 
 The current core services for the existing C implementation can be found in this illustrated diagram:
 ![Current C-based Supervisor](0000-mm-supv/c-supervisor-flowchart.png)
@@ -119,8 +123,8 @@ The launching of the MM supervisor is done through the MM supervisor specific IP
 MMRAM regions, locating the "standalone MM supervisor core", and executing it in MMRAM.
 
 Upon executing, the MM supervisor initializes the memory services, copies all reported HOBs from the non-MM environment,
-sets up basic stack buffer for all processors and both supervisor and user modes, sets up the necessary page tables, and sets
-up the privilege management components.
+sets up basic stack buffer for all processors and both supervisor and user modes, sets up the necessary page tables, and
+sets up the privilege management components.
 
 Upon MMIs, the MM supervisor can handle incoming MMIs by dispatching them to the appropriate user handlers, dispatching
 user drivers in demoted execution mode, or dispatching supervisor MMI handlers in supervisor mode.
@@ -319,7 +323,9 @@ During the very first MMI, on all of the cores, the Rust MM supervisor will perf
 against the page table to make sure the MM foundation setup has properly mapped all the necessary regions with the correct
 attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table itself, save state regions).
 - SMRR related initializations:
-  - If SMRR is supported through inspecting `IA32_MTRR_CAP`, the supervisor will program the `MSR_SMRR_BASE` and `MSR_SMRR_MASK` based on the reported and coalesced MMRAM regions. Specifically, it will set the caching attribute to `MTRR_CACHE_WRITE_BACK` for the `MSR_SMRR_BASE`, and clear the upper bits of calculated MMRAM size for the `MSR_SMRR_MASK`.
+  - If SMRR is supported through inspecting `IA32_MTRR_CAP`, the supervisor will program the `MSR_SMRR_BASE` and `MSR_SMRR_MASK`
+  based on the reported and coalesced MMRAM regions. Specifically, it will set the caching attribute to `MTRR_CACHE_WRITE_BACK`
+  for the `MSR_SMRR_BASE`, and clear the upper bits of calculated MMRAM size for the `MSR_SMRR_MASK`.
   - Figure out if SMRR2 is supported, also through inspecting `IA32_MTRR_CAP`.
 
 #### MMI Targeting
@@ -489,17 +495,17 @@ specify the buffer location and size upfront.
 
 #### Memory Security Policy Reporting
 
-When an external agent indicates ready to lock event, MM supervisor will cease to accept any further unblock requests and produce
-a report of all the unblocked regions for attestation purposes.
+When an external agent indicates ready to lock event, MM supervisor will cease to accept any further unblock requests and
+produce a report of all the unblocked regions for attestation purposes.
 
-Whenever an external agent requests the security policy report, the MM supervisor will generate a fresh report based on the
-current page table but compare it against the snapshot reported during ready to lock event to ensure integrity.
+Whenever an external agent requests the security policy report, the MM supervisor will generate a fresh report based on
+the current page table but compare it against the snapshot reported during ready to lock event to ensure integrity.
 
-Note that if the memory policy is queried before ready to lock event, the MM supervisor will produce a report based on the
-current page table and lock down the unblock requests going forward.
+Note that if the memory policy is queried before ready to lock event, the MM supervisor will produce a report based on
+the current page table and lock down the unblock requests going forward.
 
-The produced report will be concatenated with the platform supplied policy of 4 other categories and handed off to the non-MM
-environment supplied buffer for attestation purposes.
+The produced report will be concatenated with the platform supplied policy of 4 other categories and handed off to the
+non-MM environment supplied buffer for attestation purposes.
 
 Change from previous C implementation: The lock event will be moved from the end of DXE phase to the end of MM foundation
 setup phase to minimize the attack surface. This bears with the prerequisite that all necessary non-MM regions are unblocked
@@ -548,9 +554,15 @@ The [user level core](#mm-rust-user-core-in-rust), on the other hand, will suppo
 
 #### Supervisor Handlers
 
-The Rust MM supervisor will host a static set of critical handlers in supervisor mode using the `linkme` crate. When an MMI targets the supervisor, the supervisor iterates through these handlers to find and dispatch the first matching handler after validation.
+The Rust MM supervisor will host a static set of critical handlers in supervisor mode using the `linkme` crate. When an
+MMI targets the supervisor, the supervisor iterates through these handlers to find and dispatch the first matching handler
+after validation.
 
-The (linkme)[https://docs.rs/linkme/latest/linkme/] crate coalesces distributed globals of the same type into a static slice, enabling compile-time handler registration without requiring a dynamic database or registration function. This approach simplifies the implementation by allowing platforms to add handlers (such as SEA test handlers or paging audit handlers) through simple static declarations, which the compiler automatically coalesces into the supervisor's handler enumeration list.
+The (linkme)[https://docs.rs/linkme/latest/linkme/] crate coalesces distributed globals of the same type into a static
+slice, enabling compile-time handler registration without requiring a dynamic database or registration function. This approach
+simplifies the implementation by allowing platforms to add handlers (such as SEA test handlers or paging audit handlers)
+through simple static declarations, which the compiler automatically coalesces into the supervisor's handler enumeration
+list.
 
 #### Rust MM Supervisor `Nutrient` Content
 
@@ -646,8 +658,8 @@ The Rust MM supervisor should consist of the following main components:
 
 ### Telemetry Reporting and Fail Fast Mechanism
 
-The telemetry reporting and fail fast mechanism will be hosted in the Rust user core in the form of a patina component so
-that the coverage will be comprehensive since the boot phase.
+The telemetry reporting and fail fast mechanism will be hosted in the Rust user core in the form of a patina component
+so that the coverage will be comprehensive since the boot phase.
 
 When this operation is invoked from supervisor mode, the Rust MM supervisor will pass the some information from the exception
 site to the Rust user core for logging, including:
@@ -680,16 +692,16 @@ pub const WHEA_TELEMETRY_SECTION_TYPE_GUID: efi::Guid =
 If the UEFI variable service is available, the Rust user core will attempt to write the log entry into a HwErrRec UEFI
 variable for persistence across reboots. Otherwise, it will store the log entry into CMOS for retrieval across reboots.
 
-The fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Rust user core
-will inject a fatal error into the HEST table before returning back to supervisor mode.
+The fail fast mechanism will be HEST ACPI table based. Once the telemetry reporting routine is completed, the Rust user
+core will inject a fatal error into the HEST table before returning back to supervisor mode.
 
 Once back in supervisor mode, the Rust MM supervisor will inject an NMI into the current core before returning, which will
 be handled by the existing NMI handler from the non-MM component, be it the Patina core or OS.
 
 The MM supervisor will cease to accept any further MMIs once the fail fast mechanism is triggered.
 
-The point of implementing the fail fast mechanism is to extract the corresponding non-MM crash dump for further analysis. This
-is especially important for analyzing why the syscall dispatcher ran into denied operations.
+The point of implementing the fail fast mechanism is to extract the corresponding non-MM crash dump for further analysis.
+This is especially important for analyzing why the syscall dispatcher ran into denied operations.
 
 ### DXE Agents
 
@@ -734,17 +746,19 @@ and improve performance.
 The illustrated diagram below shows the high-level boot flow of the Rust-based MM supervisor:
 ![Control flow of rust based supervisor](0000-mm-supv/rust-supv-flowchart.png)
 
-1. __MM IPL Setup__: The MM IPL setup will be performed by the existing C implementation from EDK2, which will prepare the
-environment for the Rust MM supervisor. This includes opening MMRAMs, loading the MM initializer to MMRAM and execute from there,
-as well as closing and locking MMRAMs after initialization.
+1. __MM IPL Setup__: The MM IPL setup will be performed by the existing C implementation from EDK2, which will prepare
+the environment for the Rust MM supervisor. This includes opening MMRAMs, loading the MM initializer to MMRAM and execute
+from there, as well as closing and locking MMRAMs after initialization.
 1. __MM Foundation Setup__: The MM foundation setup will be performed by the MM initialization module, which will prepare
 the environment for the Rust MM supervisor. This includes initializing memory services, setting up MM entry code, stack
-buffers, setting up page tables, initializing secure policies, setting up IDT and GDT, as well as privilege management routines.
+buffers, setting up page tables, initializing secure policies, setting up IDT and GDT, as well as privilege management
+routines.
 1. __MM Foundation Handoff__: The data prepared during the mm_init phase will be updated to the Rust MM supervisor.
-The handoff data will is generated by the foundation setup module and will only include shared data and external data, but
-not initialization-only data.
+The handoff data will is generated by the foundation setup module and will only include shared data and external data,
+but not initialization-only data.
 1. __MM Supervisor in Rust__: Once the foundation setup is complete, the first MMI will transfer control to the Rust MM
-supervisor. The Rust MM supervisor will then handle incoming MMIs, manage memory and page tables, and enforce security policies.
+supervisor. The Rust MM supervisor will then handle incoming MMIs, manage memory and page tables, and enforce security
+policies.
 1. __MM User Core in Rust__: The MM Rust user core will run in the MM user mode, serving as the core component in the user
 mode while interacting with the Rust MM supervisor. The Rust user core will handle user mode operations and dispatch them
 to the appropriate handlers in the Rust MM supervisor.
@@ -765,8 +779,8 @@ configurations and tools.
 
 The Rust MM supervisor will integrate with SMM Enhanced Attestation (SEA) to enhance the security of the MM environment.
 This will involve minimizing the security rules needed for SEA to inspect the passed data section for attestation purposes.
-In addition, for the remaining global data that is needed by the Rust MM supervisor, we will
-apply the de-relocation techniques from SEA against the rules for MM core verification.
+In addition, for the remaining global data that is needed by the Rust MM supervisor, we will apply the de-relocation
+techniques from SEA against the rules for MM core verification.
 
 In this new model, only the Rust MM supervisor will be inspected for its global state, which will have a smaller attack
 surface and given a fewer number of functions and thus global variables to inspect.
