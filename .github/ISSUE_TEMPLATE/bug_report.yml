@@ -61,11 +61,9 @@ body:
       description: |
         examples:
           - **OS**: Ubuntu 20.04 or Windows 11...
-          - **Tool Chain**: GCC5 or VS2022 or CLANGPDB...
           - **Targets Impacted**: RELEASE, DEBUG, NO-TARGET, NOOPT...
       value: |
           - OS(s):
-          - Tool Chain(s):
           - Targets Impacted:
       render: markdown
     validations:

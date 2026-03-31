@@ -151,7 +151,7 @@ run_task = [{ name = ["check_code", "check_tests"], parallel = true }]
 description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "enable_patina_tests"]
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "test-runner"]
 dependencies = ["individual-package-targets"]
 
 [tasks.generate-lockfile]
