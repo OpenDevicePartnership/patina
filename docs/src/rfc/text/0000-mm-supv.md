@@ -93,9 +93,9 @@ security for MM operations. All MM drivers must be compatible with the Standalon
 This requires the platform to prepare necessary data hobs in PEI phase before launching MM IPL.
   1. __Minimize Side Buffer Usage__: The platform MM drivers should minimize the use of side buffers nested inside communication
 buffers, and recommended to directly write into the communication buffer regions that are mapped for user communication. Use `MmUnblockMemoryRequest` before MM IPL to make the memory available to MM environment.
-  1. __PEI Memory Bin Must be Enabled__: The platform have to enable memory bin feature from PEI phase in order to support runtime memory allocation without potentially breaking OS hybernation.
+  1. __PEI Memory Bin Must be Enabled__: The platform have to enable memory bin feature from PEI phase in order to support runtime memory allocation without potentially breaking OS hibernation.
   1. __No Overlap in HOB Reported Resources__: There must be no overlaps between Resource Descriptor HOB entries. Minimize the exposed HOBs to Standalone MM environment to avoid the issues.
-  1. __All MM drivers Must be Comipled with Supervisor-aware Libraries__: This is to prevent the `BaseLib`, `CpuLib` and `IoLib` that access the previleged intrusctions from user level code.
+  1. __All MM drivers Must be Compiled with Supervisor-aware Libraries__: This is to prevent the `BaseLib`, `CpuLib` and `IoLib` that access the previleged instructions from user level code.
   1. __DMA Protection__: Even MMRAM will be locked and closed at its best effort, the Standalone MM model will still have
 a designated communication buffer, living outside of the range of MMRAM, for MMIs and other interactions between non-MM
 environment and MM. The platform should ensure that the communication buffer is protected against DMA based tampering.
@@ -319,7 +319,7 @@ During the very first MMI, on all of the cores, the Rust MM supervisor will perf
 against the page table to make sure the MM foundation setup has properly mapped all the necessary regions with the correct
 attributes (MM_STANDALONE drivers, communication buffers, IDT, GDT, page table itself, save state regions).
 - SMRR related initializations:
-  - If SMRR is supported through inspecting `IA32_MTRR_CAP`, the supervisor will program the `MSR_SMRR_BASE` and `MSR_SMRR_MASK` based on the reported and coalesced MMRAM regions. Specifically, it will set the cahcing attribute to `MTRR_CACHE_WRITE_BACK` for the `MSR_SMRR_BASE`, and clear the upper bits of calculated MMRAM size for the `MSR_SMRR_MASK`.
+  - If SMRR is supported through inspecting `IA32_MTRR_CAP`, the supervisor will program the `MSR_SMRR_BASE` and `MSR_SMRR_MASK` based on the reported and coalesced MMRAM regions. Specifically, it will set the caching attribute to `MTRR_CACHE_WRITE_BACK` for the `MSR_SMRR_BASE`, and clear the upper bits of calculated MMRAM size for the `MSR_SMRR_MASK`.
   - Figure out if SMRR2 is supported, also through inspecting `IA32_MTRR_CAP`.
 
 #### MMI Targeting
@@ -544,7 +544,7 @@ attack surface and simplify the implementation.
 The pristine Patina component will not be supported from the supervisor level because this is to avoid pulling in unnecessary
 allocator logic that could potentially expand the attack surfaces.
 
-The [user level core](#mm-rust-user-core-in-rust), on the other hand, will support native Patina compononent.
+The [user level core](#mm-rust-user-core-in-rust), on the other hand, will support native Patina component.
 
 #### Supervisor Handlers
 

@@ -167,6 +167,7 @@ words:
   - smram
   - swmmis
   - syscall
+  - syscalls
   - sysreg
   - sysret
   - tiano
