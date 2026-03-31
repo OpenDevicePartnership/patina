@@ -14,15 +14,8 @@ use crate::pi::spec_version;
 use core::ffi::c_void;
 use r_efi::efi;
 use r_efi::efi::{
-    BootAllocatePages,
-    BootFreePages,
-    BootAllocatePool,
-    BootFreePool,
-    BootInstallProtocolInterface,
-    BootUninstallProtocolInterface,
-    BootHandleProtocol,
-    BootLocateHandle,
-    BootLocateProtocol,
+    BootAllocatePages, BootAllocatePool, BootFreePages, BootFreePool, BootHandleProtocol, BootInstallProtocolInterface,
+    BootLocateHandle, BootLocateProtocol, BootUninstallProtocolInterface,
 };
 
 /// MMST signature: `'S', 'M', 'S', 'T'` (same as C `MM_MMST_SIGNATURE`).
@@ -297,104 +290,104 @@ pub struct EfiMmEntryContext {
 /// ```
 #[repr(C)]
 pub struct EfiMmSystemTable {
-  ///
-  /// The table header for the SMST.
-  ///
+    ///
+    /// The table header for the SMST.
+    ///
     pub hdr: efi::TableHeader,
 
-  ///
-  /// A pointer to a NULL-terminated Unicode string containing the vendor name.
-  /// It is permissible for this pointer to be NULL.
-  ///
+    ///
+    /// A pointer to a NULL-terminated Unicode string containing the vendor name.
+    /// It is permissible for this pointer to be NULL.
+    ///
     pub mm_firmware_vendor: *mut u16,
-  ///
-  /// The particular revision of the firmware.
-  ///
+    ///
+    /// The particular revision of the firmware.
+    ///
     pub mm_firmware_revision: u32,
 
     /// Function to add, update, or remove a configuration table entry from the MMST.
     pub mm_install_configuration_table: MmInstallConfigurationTableFn,
 
-  ///
-  /// I/O Service
-  ///
+    ///
+    /// I/O Service
+    ///
     pub mm_io: MmCpuIoProtocol,
 
-  ///
-  /// Runtime memory services
-  ///
-  /// This function matches the C typedef `EFI_MM_ALLOCATE_POOL`, which allocates pool memory from the specified memory type.
+    ///
+    /// Runtime memory services
+    ///
+    /// This function matches the C typedef `EFI_MM_ALLOCATE_POOL`, which allocates pool memory from the specified memory type.
     pub mm_allocate_pool: MmAllocatePoolFn,
     /// This function matches the C typedef `EFI_MM_FREE_POOL`, which frees pool memory.
     pub mm_free_pool: MmFreePoolFn,
-        /// This function matches the C typedef `EFI_ALLOCATE_PAGES`, which allocates memory pages from the system.
+    /// This function matches the C typedef `EFI_ALLOCATE_PAGES`, which allocates memory pages from the system.
     pub mm_allocate_pages: MmAllocatePagesFn,
     /// This function matches the C typedef `EFI_FREE_PAGES`, which frees memory pages.
     pub mm_free_pages: MmFreePagesFn,
 
-  ///
-  /// MP service
-  ///
+    ///
+    /// MP service
+    ///
     pub mm_startup_this_ap: MmStartupThisApFn,
 
-  ///
-  /// CPU information records
-  ///
-  /// A number between zero and and the NumberOfCpus field. This field designates
-  /// which processor is executing the MM infrastructure.
-  ///
+    ///
+    /// CPU information records
+    ///
+    /// A number between zero and and the NumberOfCpus field. This field designates
+    /// which processor is executing the MM infrastructure.
+    ///
     pub currently_executing_cpu: usize,
-      ///
-  /// The number of possible processors in the platform.  This is a 1 based counter.
-  ///
+    ///
+    /// The number of possible processors in the platform.  This is a 1 based counter.
+    ///
     pub number_of_cpus: usize,
-  ///
-  /// Points to an array, where each element describes the number of bytes in the
-  /// corresponding save state specified by CpuSaveState. There are always
-  /// NumberOfCpus entries in the array.
-  ///
+    ///
+    /// Points to an array, where each element describes the number of bytes in the
+    /// corresponding save state specified by CpuSaveState. There are always
+    /// NumberOfCpus entries in the array.
+    ///
     pub cpu_save_state_size: *mut usize,
-  ///
-  /// Points to an array, where each element is a pointer to a CPU save state. The
-  /// corresponding element in CpuSaveStateSize specifies the number of bytes in the
-  /// save state area. There are always NumberOfCpus entries in the array.
-  ///
+    ///
+    /// Points to an array, where each element is a pointer to a CPU save state. The
+    /// corresponding element in CpuSaveStateSize specifies the number of bytes in the
+    /// save state area. There are always NumberOfCpus entries in the array.
+    ///
     pub cpu_save_state: *mut *mut c_void,
 
-  ///
-  /// Extensibility table
-  ///
-  ///
-  /// The number of UEFI Configuration Tables in the buffer MmConfigurationTable.
-  ///
+    ///
+    /// Extensibility table
+    ///
+    ///
+    /// The number of UEFI Configuration Tables in the buffer MmConfigurationTable.
+    ///
     pub number_of_table_entries: usize,
-      ///
-  /// A pointer to the UEFI Configuration Tables. The number of entries in the table is
-  /// NumberOfTableEntries.
-  ///
+    ///
+    /// A pointer to the UEFI Configuration Tables. The number of entries in the table is
+    /// NumberOfTableEntries.
+    ///
     pub mm_configuration_table: *mut efi::ConfigurationTable,
 
-  ///
-  /// Protocol services
-  ///
-  ///
-  /// This function matches the C typedef `EFI_INSTALL_PROTOCOL_INTERFACE`, which installs a protocol interface on a device handle.
+    ///
+    /// Protocol services
+    ///
+    ///
+    /// This function matches the C typedef `EFI_INSTALL_PROTOCOL_INTERFACE`, which installs a protocol interface on a device handle.
     pub mm_install_protocol_interface: MmInstallProtocolInterfaceFn,
     /// This function matches the C typedef `EFI_UNINSTALL_PROTOCOL_INTERFACE`, which removes a protocol interface from a device handle.
     pub mm_uninstall_protocol_interface: MmUninstallProtocolInterfaceFn,
-        /// This function matches the C typedef `EFI_HANDLE_PROTOCOL`, which queries a handle to determine if it supports a specified protocol.
+    /// This function matches the C typedef `EFI_HANDLE_PROTOCOL`, which queries a handle to determine if it supports a specified protocol.
     pub mm_handle_protocol: MmHandleProtocolFn,
-        /// This function matches the C typedef `EFI_MM_REGISTER_PROTOCOL_NOTIFY`, which registers a callback function be called when a particular protocol interface is installed.
+    /// This function matches the C typedef `EFI_MM_REGISTER_PROTOCOL_NOTIFY`, which registers a callback function be called when a particular protocol interface is installed.
     pub mm_register_protocol_notify: MmRegisterProtocolNotifyFn,
-        /// This function matches the C typedef `EFI_LOCATE_HANDLE`, which returns an array of handles that support a specified protocol.
+    /// This function matches the C typedef `EFI_LOCATE_HANDLE`, which returns an array of handles that support a specified protocol.
     pub mm_locate_handle: MmLocateHandleFn,
-        /// This function matches the C typedef `EFI_LOCATE_PROTOCOL`, which returns the first protocol instance that matches the given protocol.
+    /// This function matches the C typedef `EFI_LOCATE_PROTOCOL`, which returns the first protocol instance that matches the given protocol.
     pub mm_locate_protocol: MmLocateProtocolFn,
 
-  ///
-  /// MMI Management functions
-  ///
-  /// This function matches the C typedef `EFI_MM_INTERRUPT_MANAGE`, which manages MMI of a particular type.
+    ///
+    /// MMI Management functions
+    ///
+    /// This function matches the C typedef `EFI_MM_INTERRUPT_MANAGE`, which manages MMI of a particular type.
     pub mmi_manage: MmiManageFn,
     /// This function matches the C typedef `EFI_MM_HANDLER_REGISTER`, which registers a handler entry point for a particular MMI handler type.
     pub mmi_handler_register: MmiHandlerRegisterFn,
