@@ -105,36 +105,35 @@ impl EfiMmCommunicateHeader {
     }
 
     /// Returns the communicate header as a slice of bytes using safe conversion.
-    ///
     /// Useful if byte-level access to the header structure is needed.
+    ///
+    /// # Returns
+    ///
+    /// A slice of bytes representing the header.
     pub fn as_bytes(&self) -> &[u8] {
         // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
         unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, Self::size()) }
     }
 
-    /// Returns the size of the header in bytes.
+    /// Function to get the size of the header in bytes.
+    ///
+    /// # Returns
+    ///
+    /// The size of the header in bytes.
     pub const fn size() -> usize {
         core::mem::size_of::<Self>()
     }
 
     /// Get the header GUID from the communication buffer.
     ///
-    /// Returns `Some(guid)` if the buffer has been properly initialized with a GUID,
-    /// or `None` if the buffer is not initialized.
-    ///
     /// # Returns
     ///
-    /// The GUID from the communication header if available.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the communication buffer header cannot be read.
+    /// The GUID from the communication header.
     pub fn header_guid(&self) -> Guid<'_> {
         Guid::from_ref(&self.header_guid)
     }
 
     /// Returns the message length from this communicate header.
-    ///
     /// The length represents the size of the message data that follows the header.
     ///
     /// # Returns

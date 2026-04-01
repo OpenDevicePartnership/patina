@@ -1,4 +1,4 @@
-//! Platform Initialization Specification MM Core Interface
+//! Management Mode (MM) Core Interface Definitions
 //!
 //! This module contains definitions related to the MM Core Interface as defined
 //! in the UEFI Platform Initialization Specification.
@@ -33,8 +33,7 @@ pub const MM_MMST_REVISION_MINOR: u32 = spec_version::PI_SPECIFICATION_MINOR_REV
 pub const MM_SYSTEM_TABLE_REVISION: u32 = (MM_MMST_REVISION_MAJOR << 16) | MM_MMST_REVISION_MINOR;
 
 //
-// This gnarly POS of EFI_MM_CPU_IO_PROTOCOL is embedded in MMST,
-// so we need to define it here to be able to parse the MMST correctly.
+// This EFI_MM_CPU_IO_PROTOCOL is embedded in MMST, so we need to define it here to be able to parse the MMST correctly.
 //
 
 /// A single MM I/O access function pointer.

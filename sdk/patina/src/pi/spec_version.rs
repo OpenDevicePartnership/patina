@@ -1,7 +1,7 @@
-//! Platform Initialization Specification MM Core Interface
+//! Platform Initialization Specification Version
 //!
-//! This module contains definitions related to the MM Core Interface as defined
-//! in the UEFI Platform Initialization Specification.
+//! This module contains definitions related to the version of the Platform Initialization (PI)
+//! Specification that this implementation targets.
 //!
 //! ## License
 //!
