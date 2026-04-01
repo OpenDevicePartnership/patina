@@ -41,7 +41,7 @@ patina_internal_depex = { version = "21.0.0", path = "core/patina_internal_depex
 patina_lzma_rs = { version = "0.3.1", default-features = false }
 patina_macro = { version = "21.0.0", path = "sdk/patina_macro" }
 patina_mm = { version = "21.0.0", path = "components/patina_mm" }
-patina_mtrr = { version = "^1.1.4" }
+patina_mtrr = { version = "^1.1.6" }
 patina_paging = { version = "11.0.2" }
 patina_performance = { version = "21.0.0", path = "components/patina_performance" }
 patina_smbios = { version = "21.0.0", path = "components/patina_smbios" }

@@ -85,18 +85,30 @@ pub(crate) fn arch_perf_frequency() -> u64 {
     {
         use core::arch::{x86_64, x86_64::CpuidResult};
 
-        let CpuidResult { eax, ebx, ecx, .. } = x86_64::__cpuid(0x15);
+        // SAFETY: The `cpuid` instruction is guaranteed to be supported on all x86_64 processors.
+        //
+        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
+        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
+        // consider __cpuid safe.
+        #[allow(unused_unsafe)]
+        let CpuidResult { eax, ebx, ecx, .. } = unsafe { x86_64::__cpuid(0x15) };
         if eax != 0 && ebx != 0 && ecx != 0 {
             // CPUID 0x15 gives TSC_frequency = (ECX * EAX) / EBX.
             // Most modern x86 platforms support this leaf.
             return (ecx as u64 * ebx as u64) / eax as u64;
         }
 
-        // CPUID 0x16 gives base frequency in MHz in EAX.
-        // This is supported on some older x86 platforms.
-        // This is a nominal frequency and is less accurate for reflecting actual operating conditions.
-        let CpuidResult { eax, .. } = x86_64::__cpuid(0x16);
+        // SAFETY: The `cpuid` instruction is guaranteed to be supported on all x86_64 processors.
+        //
+        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
+        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
+        // consider __cpuid safe.
+        #[allow(unused_unsafe)]
+        let CpuidResult { eax, .. } = unsafe { x86_64::__cpuid(0x16) };
         if eax != 0 {
+            // CPUID 0x16 gives base frequency in MHz in EAX.
+            // This is supported on some older x86 platforms.
+            // This is a nominal frequency and is less accurate for reflecting actual operating conditions.
             return (eax * 1_000_000) as u64;
         }
 
