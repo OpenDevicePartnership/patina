@@ -41,6 +41,10 @@ updates:
     ignore:
       # Ignore dependencies that are synced from patina-devops
       - dependency-name: "OpenDevicePartnership/patina-devops*"
+    groups:
+      all-actions-dependencies:
+        patterns:
+          - "*"
     commit-message:
       prefix: "GitHub Action"
     labels:
@@ -55,6 +59,10 @@ updates:
       day: "wednesday"
       timezone: "America/Los_Angeles"
       time: "01:00"
+    groups:
+      all-pip-dependencies:
+        patterns:
+          - "*"
     commit-message:
       prefix: "pip"
     labels:
