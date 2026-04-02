@@ -16,7 +16,7 @@
 mod comm_buffer_update;
 
 use crate::{
-    config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
+    config::{CommunicateBuffer, MmCommunicationConfiguration},
     service::SwMmiTrigger,
 };
 use patina::{
@@ -26,8 +26,9 @@ use patina::{
         Storage, component,
         service::{IntoService, Service},
     },
+    pi::protocols::communication::EfiMmCommunicateHeader,
 };
-extern crate alloc;
+
 use alloc::vec::Vec;
 
 use core::{
@@ -376,14 +377,16 @@ mod tests {
             communicator::{MmCommunicator, MockMmExecutor},
             sw_mmi_manager::SwMmiManager,
         },
-        config::{CommunicateBuffer, MmCommBufferStatus, MmCommunicationConfiguration},
+        config::{CommunicateBuffer, MmCommunicationConfiguration},
     };
-    use patina::component::{IntoComponent, Storage};
+    use patina::{
+        component::{IntoComponent, Storage},
+        management_mode::MmCommBufferStatus,
+    };
 
     use core::{cell::RefCell, pin::Pin};
 
-    extern crate alloc;
-    use alloc::vec::Vec;
+    use std::vec::Vec;
 
     /// Simple MM Executor for unit tests that simulates MM handlers echoing request data back as the response
     struct EchoMmExecutor;

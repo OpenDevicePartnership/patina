@@ -17,11 +17,16 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::patina_mm_integration::common::constants::*;
+use r_efi::efi;
 
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
-use zerocopy::{FromBytes, IntoBytes};
-use zerocopy_derive::*;
+pub use zerocopy::IntoBytes;
+
+pub use patina::management_mode::protocol::{
+    mm_supervisor_request,
+    mm_supervisor_request::{MmSupervisorRequestHeader, MmSupervisorVersionInfo, RequestType, ResponseType},
+};
 
 /// Standardized error type for MM handlers
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,64 +114,6 @@ impl MmHandler for VersionInfoHandler {
     }
 }
 
-/// MM Supervisor request header
-#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
-#[repr(C)]
-pub struct MmSupervisorRequestHeader {
-    pub signature: u32,
-    pub revision: u32,
-    pub request: u32,
-    pub reserved: u32,
-    pub result: u64,
-}
-
-impl MmSupervisorRequestHeader {
-    const SIZE: usize = core::mem::size_of::<Self>();
-
-    /// Converts a byte slice to a MmSupervisorRequestHeader
-    #[allow(dead_code)] // // Usage not recognized
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MmHandlerError> {
-        if bytes.len() < Self::SIZE {
-            return Err(MmHandlerError::InvalidInput("Buffer too small for header".to_string()));
-        }
-
-        Self::read_from_bytes(&bytes[..Self::SIZE])
-            .map_err(|_| MmHandlerError::InvalidInput("Failed to parse header from bytes".to_string()))
-    }
-
-    /// Converts a MmSupervisorRequestHeader instance to a byte vector
-    pub fn to_bytes(self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-}
-
-/// MM Supervisor version information
-#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
-#[repr(C)]
-pub struct MmSupervisorVersionInfo {
-    pub version: u32,
-    pub patch_level: u32,
-    pub max_supervisor_request_level: u64,
-}
-
-impl MmSupervisorVersionInfo {
-    const SIZE: usize = core::mem::size_of::<Self>();
-
-    #[allow(dead_code)] // Usage not recognized
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MmHandlerError> {
-        if bytes.len() < Self::SIZE {
-            return Err(MmHandlerError::InvalidInput("Buffer too small for version info".to_string()));
-        }
-
-        Self::read_from_bytes(&bytes[..Self::SIZE])
-            .map_err(|_| MmHandlerError::InvalidInput("Failed to parse version info from bytes".to_string()))
-    }
-
-    fn to_bytes(self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-}
-
 /// MM Supervisor handler for testing supervisor communication patterns
 pub struct MmSupervisorHandler {
     #[allow(dead_code)] // Usage not recognized
@@ -180,9 +127,9 @@ impl MmSupervisorHandler {
 
     fn handle_get_info_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::requests::VERSION_INFO,
+            signature: mm_supervisor_request::SIGNATURE,
+            revision: mm_supervisor_request::REVISION,
+            request: RequestType::VersionInfo as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -190,12 +137,12 @@ impl MmSupervisorHandler {
         let version_info = MmSupervisorVersionInfo {
             version: mm_supv::VERSION,
             patch_level: mm_supv::PATCH_LEVEL,
-            max_supervisor_request_level: mm_supv::MAX_REQUEST_LEVEL,
+            max_supervisor_request_level: RequestType::MAX_REQUEST_TYPE,
         };
 
         let mut response = Vec::new();
-        response.extend_from_slice(&response_header.to_bytes());
-        response.extend_from_slice(&version_info.to_bytes());
+        response.extend_from_slice(response_header.as_bytes());
+        response.extend_from_slice(version_info.as_bytes());
 
         log::debug!(target: "supervisor_handler", "Generated get info response: {} bytes", response.len());
         Ok(response)
@@ -203,9 +150,9 @@ impl MmSupervisorHandler {
 
     fn handle_get_capabilities_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::requests::FETCH_POLICY,
+            signature: mm_supervisor_request::SIGNATURE,
+            revision: mm_supervisor_request::REVISION,
+            request: RequestType::FetchPolicy as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -213,7 +160,7 @@ impl MmSupervisorHandler {
         let capabilities: u64 = 0x00000007; // Mock capabilities value
 
         let mut response = Vec::new();
-        response.extend_from_slice(&response_header.to_bytes());
+        response.extend_from_slice(response_header.as_bytes());
         response.extend_from_slice(&capabilities.to_le_bytes());
 
         log::debug!(target: "supervisor_handler", "Generated get capabilities response: {} bytes", response.len());
@@ -222,9 +169,9 @@ impl MmSupervisorHandler {
 
     fn handle_comm_update_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::requests::COMM_UPDATE,
+            signature: mm_supervisor_request::SIGNATURE,
+            revision: mm_supervisor_request::REVISION,
+            request: RequestType::CommUpdate as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -233,7 +180,7 @@ impl MmSupervisorHandler {
         let update_result: u32 = 0x00000001; // Success status
 
         let mut response = Vec::new();
-        response.extend_from_slice(&response_header.to_bytes());
+        response.extend_from_slice(response_header.as_bytes());
         response.extend_from_slice(&update_result.to_le_bytes());
 
         log::debug!(target: "supervisor_handler", "Generated comm update response: {} bytes", response.len());
@@ -242,9 +189,9 @@ impl MmSupervisorHandler {
 
     fn handle_unblock_mem_request(&self) -> MmHandlerResult<Vec<u8>> {
         let response_header = MmSupervisorRequestHeader {
-            signature: mm_supv::REQUEST_SIGNATURE,
-            revision: mm_supv::REVISION,
-            request: mm_supv::requests::UNBLOCK_MEM,
+            signature: mm_supervisor_request::SIGNATURE,
+            revision: mm_supervisor_request::REVISION,
+            request: RequestType::UnblockMem as u32,
             reserved: 0,
             result: 0, // Success
         };
@@ -253,7 +200,7 @@ impl MmSupervisorHandler {
         let unblock_status: u64 = 0x0000000000000001; // Success - memory regions unblocked
 
         let mut response = Vec::new();
-        response.extend_from_slice(&response_header.to_bytes());
+        response.extend_from_slice(response_header.as_bytes());
         response.extend_from_slice(&unblock_status.to_le_bytes());
 
         log::debug!(target: "supervisor_handler", "Generated unblock mem response: {} bytes", response.len());
@@ -273,58 +220,59 @@ impl MmHandler for MmSupervisorHandler {
             )));
         }
 
-        let request_header = MmSupervisorRequestHeader::from_bytes(data)?;
+        let request_header = MmSupervisorRequestHeader::from_bytes(data)
+            .ok_or_else(|| MmHandlerError::InvalidInput("Failed to parse header from bytes".to_string()))?;
 
         // Validate signature
-        if request_header.signature != mm_supv::REQUEST_SIGNATURE {
+        if request_header.signature != mm_supervisor_request::SIGNATURE {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid signature: 0x{:08X}, expected 0x{:08X}",
                 request_header.signature,
-                mm_supv::REQUEST_SIGNATURE
+                mm_supervisor_request::SIGNATURE
             )));
         }
 
         // Validate revision
-        if request_header.revision != mm_supv::REVISION {
+        if request_header.revision != mm_supervisor_request::REVISION {
             return Err(MmHandlerError::InvalidInput(format!(
                 "Invalid revision: 0x{:08X}, expected 0x{:08X}",
                 request_header.revision,
-                mm_supv::REVISION
+                mm_supervisor_request::REVISION
             )));
         }
 
         // Process based on request type
-        match request_header.request {
-            mm_supv::requests::VERSION_INFO => {
+        match RequestType::try_from(request_header.request) {
+            Ok(RequestType::VersionInfo) => {
                 log::debug!(target: "supervisor_handler", "Processing get info request");
                 self.handle_get_info_request()
             }
-            mm_supv::requests::FETCH_POLICY => {
+            Ok(RequestType::FetchPolicy) => {
                 log::debug!(target: "supervisor_handler", "Processing fetch policy request");
                 self.handle_get_capabilities_request()
             }
-            mm_supv::requests::COMM_UPDATE => {
+            Ok(RequestType::CommUpdate) => {
                 log::debug!(target: "supervisor_handler", "Processing comm update request");
                 self.handle_comm_update_request()
             }
-            mm_supv::requests::UNBLOCK_MEM => {
+            Ok(RequestType::UnblockMem) => {
                 log::debug!(target: "supervisor_handler", "Processing unblock mem request");
                 self.handle_unblock_mem_request()
             }
-            _ => {
+            Err(_) => {
                 log::warn!(target: "supervisor_handler", "Unsupported request type: 0x{:08X}", request_header.request);
 
                 // Return error response
                 let error_header = MmSupervisorRequestHeader {
-                    signature: mm_supv::REQUEST_SIGNATURE,
-                    revision: mm_supv::REVISION,
+                    signature: mm_supervisor_request::SIGNATURE,
+                    revision: mm_supervisor_request::REVISION,
                     request: request_header.request,
                     reserved: 0,
-                    result: 0xFFFFFFFFFFFFFFFF, // Error
+                    result: efi::Status::from(ResponseType::InvalidRequest).as_usize() as u64, // Error
                 };
 
                 let mut response = Vec::new();
-                response.extend_from_slice(&error_header.to_bytes());
+                response.extend_from_slice(error_header.as_bytes());
                 Ok(response)
             }
         }
@@ -482,11 +430,11 @@ mod tests {
             result: 0x123456789ABCDEF0,
         };
 
-        let bytes = original.to_bytes();
+        let bytes = original.as_bytes();
         assert_eq!(bytes.len(), MmSupervisorRequestHeader::SIZE);
 
-        let recovered = MmSupervisorRequestHeader::from_bytes(&bytes);
-        assert!(recovered.is_ok(), "Should successfully parse the header");
+        let recovered = MmSupervisorRequestHeader::from_bytes(bytes);
+        assert!(recovered.is_some(), "Should successfully parse the header");
 
         let recovered = recovered.unwrap();
         assert_eq!(recovered.signature, original.signature);

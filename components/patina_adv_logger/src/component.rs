@@ -69,7 +69,7 @@ where
         // SAFETY: We must trust the C code was a responsible steward of this buffer.
         let internal = unsafe { &*(this as *const AdvancedLoggerProtocolInternal<S>) };
 
-        internal.adv_logger.log_write(error_level, data);
+        internal.adv_logger.log_write(error_level, None, data);
         efi::Status::SUCCESS
     }
 

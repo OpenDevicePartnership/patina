@@ -10,19 +10,16 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    config::CommunicateBuffer,
-    protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
-};
+use crate::config::CommunicateBuffer;
 use patina::{
     base::UEFI_PAGE_SIZE,
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
+    management_mode::protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
 };
 use zerocopy::FromBytes;
 
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-extern crate alloc;
 use alloc::boxed::Box;
 
 /// Context for the MM Comm Buffer Update Protocol notify callback
@@ -283,8 +280,7 @@ mod tests {
     };
     use patina::boot_services::StandardBootServices;
 
-    extern crate alloc;
-    use alloc::{boxed::Box, vec};
+    use alloc::boxed::Box;
 
     /// Helper to create a test protocol notify context without boot services
     fn create_test_context(updatable_buffer_id: u8) -> Box<ProtocolNotifyContext> {

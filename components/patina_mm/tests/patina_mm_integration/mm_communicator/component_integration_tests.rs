@@ -16,6 +16,7 @@
 use patina::{
     Guid,
     component::{IntoComponent, Storage},
+    management_mode::protocol::{mm_supervisor_request, mm_supervisor_request::RequestType},
 };
 use patina_mm::{
     component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
@@ -23,6 +24,8 @@ use patina_mm::{
 };
 
 use core::pin::Pin;
+
+use r_efi::efi;
 
 use crate::patina_mm_integration::common::*;
 
@@ -156,17 +159,17 @@ fn test_real_component_mm_supervisor_version_request() {
 
     // Create MM Supervisor version request using the actual structures
     let version_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
-        revision: mm_supv::REVISION,
-        request: mm_supv::requests::VERSION_INFO,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
+        request: RequestType::VersionInfo.into(),
         reserved: 0,
         result: 0,
     };
 
-    let request_bytes = version_request.to_bytes();
+    let request_bytes = version_request.as_bytes();
 
     // Send the request using the real component framework
-    let result = framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &request_bytes);
+    let result = framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), request_bytes);
     assert!(result.is_ok(), "Real component MM Supervisor communication should succeed: {:?}", result.err());
 
     let response = result.unwrap();
@@ -181,10 +184,10 @@ fn test_real_component_mm_supervisor_version_request() {
         MmSupervisorRequestHeader::from_bytes(&response).expect("Should parse response header from real component");
 
     // Verify header fields
-    assert_eq!(response_header.signature, mm_supv::REQUEST_SIGNATURE, "Response signature should match");
-    assert_eq!(response_header.revision, mm_supv::REVISION, "Response revision should match");
-    assert_eq!(response_header.request, mm_supv::requests::VERSION_INFO, "Response request type should match");
-    assert_eq!(response_header.result, 0, "Response should indicate success");
+    assert_eq!(response_header.signature, mm_supervisor_request::SIGNATURE, "Response signature should match");
+    assert_eq!(response_header.revision, mm_supervisor_request::REVISION, "Response revision should match");
+    assert_eq!(response_header.request, RequestType::VersionInfo.into(), "Response request type should match");
+    assert_eq!(response_header.result, efi::Status::SUCCESS.as_usize() as u64, "Response should indicate success");
 
     // Parse version info from response
     let version_info_offset = core::mem::size_of::<MmSupervisorRequestHeader>();
@@ -201,7 +204,7 @@ fn test_real_component_mm_supervisor_version_request() {
 
     assert_eq!(
         version_info.max_supervisor_request_level,
-        mm_supv::MAX_REQUEST_LEVEL,
+        RequestType::MAX_REQUEST_TYPE,
         "Max request level should match expected value"
     );
 }
@@ -275,15 +278,15 @@ fn test_real_component_multiple_handlers() {
 
     // Test MM supervisor handler
     let supervisor_request = MmSupervisorRequestHeader {
-        signature: u32::from_le_bytes(mm_supv::SIGNATURE),
-        revision: mm_supv::REVISION,
-        request: mm_supv::requests::FETCH_POLICY,
+        signature: mm_supervisor_request::SIGNATURE,
+        revision: mm_supervisor_request::REVISION,
+        request: RequestType::FetchPolicy.into(),
         reserved: 0,
         result: 0,
     };
 
     let supervisor_result =
-        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), &supervisor_request.to_bytes());
+        framework.communicate(&Guid::from_ref(&test_guids::MM_SUPERVISOR), supervisor_request.as_bytes());
     assert!(supervisor_result.is_ok(), "Supervisor communication should succeed");
 
     // Both handlers should work independently through the real component infrastructure

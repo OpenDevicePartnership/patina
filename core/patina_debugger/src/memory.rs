@@ -77,7 +77,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
             page_table.map_memory_region(page, PAGE_SIZE, attributes & !MemoryAttributes::ReadOnly).map_err(|_| ())?;
         }
 
-        let ptr = address as *mut u8;
+        let ptr = current as *mut u8;
         // SAFETY: We have ensured these pages are writable before accessing them.
         unsafe {
             ptr::copy_nonoverlapping(buffer.as_ptr().offset(offset), ptr, len);
@@ -306,5 +306,48 @@ mod tests {
         let result = write_memory::<MockMemDebuggerArch>(address, &buffer);
         assert!(result.is_ok());
         assert_eq!(buffer, data);
+    }
+
+    #[test]
+    fn test_write_memory_cross_page_boundary() {
+        // Allocate a page-aligned buffer large enough to span two pages.
+        // Write a pattern across the page boundary and verify all bytes land
+        // at the correct addresses.
+        const SIZE: usize = PAGE_SIZE as usize * 2;
+        let layout = std::alloc::Layout::from_size_align(SIZE, PAGE_SIZE as usize).unwrap();
+        // SAFETY: layout has non-zero size and power-of-two alignment.
+        let dest = unsafe { std::alloc::alloc_zeroed(layout) };
+        assert!(!dest.is_null());
+
+        // Start the write halfway into the first page so it crosses the boundary.
+        let offset = (PAGE_SIZE / 2) as usize;
+        let write_len = PAGE_SIZE as usize; // spans from page-mid to page-mid
+        let address = dest as u64 + offset as u64;
+
+        // Fill the source buffer with a recognizable pattern.
+        let src: Vec<u8> = (0..write_len).map(|i| (i & 0xFF) as u8).collect();
+
+        let _lock = PAGE_LOCK.lock().unwrap();
+        let poke_ctx = MockMemDebuggerArch::memory_poke_test_context();
+        poke_ctx.expect().returning(|_| Ok(()));
+        let ctx = MockMemDebuggerArch::get_page_table_context();
+        ctx.expect().returning(|| {
+            let mut mock_page_table = MockMemPageTable::new();
+            mock_page_table.expect_query_memory_region().returning(|_, _| Ok(MemoryAttributes::empty()));
+            Ok(mock_page_table)
+        });
+
+        let result = write_memory::<MockMemDebuggerArch>(address, &src);
+        assert!(result.is_ok());
+
+        // Verify every byte was written to the correct location.
+        for (i, &expected) in src.iter().enumerate() {
+            // SAFETY: dest is valid for SIZE bytes and we read within bounds.
+            let actual = unsafe { *dest.add(offset + i) };
+            assert_eq!(actual, expected, "Mismatch at byte offset {i}: expected {expected}, got {actual}");
+        }
+
+        // SAFETY: dest was allocated with this layout.
+        unsafe { std::alloc::dealloc(dest, layout) };
     }
 }

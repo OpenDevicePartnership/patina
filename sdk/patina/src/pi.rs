@@ -35,9 +35,11 @@ pub mod error_codes;
 pub mod fw_fs;
 pub mod hob;
 pub mod list_entry;
+pub mod mm_cis;
 pub mod protocols;
 #[cfg(feature = "serde")]
 pub mod serializable;
+pub mod spec_version;
 pub mod status_code;
 
 pub use boot_mode::Mode as BootMode;

@@ -165,7 +165,10 @@ where
     ///
     pub fn get(&self, key: &D::Key) -> Option<&D> {
         match self.get_node(key) {
-            Some(node) => Some(&node.data),
+            Some(node) => {
+                // SAFETY: Nodes in the tree always have initialized data
+                Some(unsafe { node.data() })
+            }
             None => None,
         }
     }
@@ -189,7 +192,7 @@ where
         match self.get_node(key) {
             // SAFETY: The pointer comes from as_mut_ptr() on a valid node reference obtained from get_node().
             // The caller is responsible for ensuring the mutable reference doesn't modify key-affecting values.
-            Some(node) => Some(unsafe { &mut (*node.as_mut_ptr()).data }),
+            Some(node) => Some(unsafe { (*node.as_mut_ptr()).data_mut() }),
             None => None,
         }
     }
@@ -211,7 +214,10 @@ where
     ///
     pub fn get_with_idx(&self, idx: usize) -> Option<&D> {
         match self.storage.get(idx) {
-            Some(node) => Some(&node.data),
+            Some(node) => {
+                // SAFETY: Nodes in storage always have initialized data
+                Some(unsafe { node.data() })
+            }
             None => None,
         }
     }
@@ -238,7 +244,10 @@ where
     ///
     pub unsafe fn get_with_idx_mut(&mut self, idx: usize) -> Option<&mut D> {
         match self.storage.get_mut(idx) {
-            Some(node) => Some(&mut node.data),
+            Some(node) => {
+                // SAFETY: Nodes in storage always have initialized data
+                Some(unsafe { node.data_mut() })
+            }
             None => None,
         }
     }
@@ -283,7 +292,8 @@ where
         let mut current = self.root();
         let mut closest = None;
         while let Some(node) = current {
-            match key.cmp(node.data.key()) {
+            // SAFETY: Nodes in the tree always have initialized data
+            match key.cmp(unsafe { node.data() }.key()) {
                 Ordering::Equal => return Some(self.storage.idx(node.as_mut_ptr())),
                 Ordering::Less => current = node.left(),
                 Ordering::Greater => {
@@ -877,7 +887,8 @@ where
     fn _dfs(node: Option<&Node<D>>, values: &mut alloc::vec::Vec<D>) {
         if let Some(node) = node {
             Self::_dfs(node.left(), values);
-            values.push(node.data);
+            // SAFETY: Nodes in the tree always have initialized data
+            values.push(unsafe { *node.data() });
             Self::_dfs(node.right(), values);
         }
     }
@@ -907,6 +918,7 @@ where
 
 #[cfg(test)]
 #[coverage(off)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod tests {
     extern crate std;
 
@@ -1031,25 +1043,25 @@ mod tests {
         // Validate left child (9)
         let left = root.left().unwrap();
         assert!(left.is_black());
-        assert_eq!(left.data, 9);
+        assert_eq!(unsafe { *left.data() }, 9);
         assert_eq!(left.parent_ptr(), root.as_mut_ptr());
 
         // Validate right child(24)
         let right = root.right().unwrap();
         assert!(right.is_black());
-        assert_eq!(right.data, 24);
+        assert_eq!(unsafe { *right.data() }, 24);
         assert_eq!(right.parent_ptr(), root.as_mut_ptr());
 
         // Validate right child's left child (19)
         let right_l = right.left().unwrap();
         assert!(right_l.is_red());
-        assert_eq!(right_l.data, 19);
+        assert_eq!(unsafe { *right_l.data() }, 19);
         assert_eq!(right_l.parent_ptr(), right.as_mut_ptr());
 
         // Validate right child's right child (75)
         let right_r = right.right().unwrap();
         assert!(right_r.is_red());
-        assert_eq!(right_r.data, 75);
+        assert_eq!(unsafe { *right_r.data() }, 75);
     }
 
     #[test]
@@ -1249,7 +1261,7 @@ mod tests {
 
         // Validate the new root
         assert_eq!(new_root.as_mut_ptr(), right.as_mut_ptr());
-        assert_eq!(right.data, 19);
+        assert_eq!(unsafe { *right.data() }, 19);
         assert!(right.is_black());
         assert!(right.parent().is_none());
         assert_eq!(right.left_ptr(), root.as_mut_ptr());
@@ -1257,21 +1269,21 @@ mod tests {
 
         //Validate the left child
         assert_eq!(root.parent_ptr(), right.as_mut_ptr());
-        assert_eq!(root.data, 17);
+        assert_eq!(unsafe { *root.data() }, 17);
         assert!(root.is_black());
         assert!(root.left().is_none());
         assert_eq!(root.right_ptr(), right_l.as_mut_ptr());
 
         // Validate the right child
         assert_eq!(right_r.parent_ptr(), right.as_mut_ptr());
-        assert_eq!(right_r.data, 75);
+        assert_eq!(unsafe { *right_r.data() }, 75);
         assert!(right_r.is_black());
         assert!(right_r.left().is_none());
         assert!(right_r.right().is_none());
 
         // validate the right child of the left child
         assert_eq!(right_l.parent_ptr(), root.as_mut_ptr());
-        assert_eq!(right_l.data, 18);
+        assert_eq!(unsafe { *right_l.data() }, 18);
         assert!(right_l.is_red());
         assert!(right_l.left().is_none());
         assert!(right_l.right().is_none());
@@ -1334,38 +1346,38 @@ mod tests {
         // by remove_node_from_tree. The pointer points to a Node<D> in storage.
         let new_root = unsafe { &*root_ptr.get() };
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
-        assert_eq!(new_root.data, 17);
+        assert_eq!(unsafe { *new_root.data() }, 17);
         assert!(new_root.is_black());
         assert!(new_root.parent().is_none());
         assert_eq!(new_root.left_ptr(), left.as_mut_ptr());
         assert_eq!(new_root.right_ptr(), right.as_mut_ptr());
 
         assert_eq!(left.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(left.data, 9);
+        assert_eq!(unsafe { *left.data() }, 9);
         assert!(left.is_black());
         assert_eq!(left.left_ptr(), left_l.as_mut_ptr());
         assert_eq!(left.right_ptr(), left_r.as_mut_ptr());
 
         assert_eq!(left_l.parent_ptr(), left.as_mut_ptr());
-        assert_eq!(left_l.data, 3);
+        assert_eq!(unsafe { *left_l.data() }, 3);
         assert!(left_l.is_red());
         assert!(left_l.left().is_none());
         assert!(left_l.right().is_none());
 
         assert_eq!(left_r.parent_ptr(), left.as_mut_ptr());
-        assert_eq!(left_r.data, 12);
+        assert_eq!(unsafe { *left_r.data() }, 12);
         assert!(left_r.is_red());
         assert!(left_r.left().is_none());
         assert!(left_r.right().is_none());
 
         assert_eq!(right.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(right.data, 19);
+        assert_eq!(unsafe { *right.data() }, 19);
         assert!(right.is_black());
         assert_eq!(right.left_ptr(), right_l.as_mut_ptr());
         assert!(right.right().is_none());
 
         assert_eq!(right_l.parent_ptr(), right.as_mut_ptr());
-        assert_eq!(right_l.data, 18);
+        assert_eq!(unsafe { *right_l.data() }, 18);
         assert!(right_l.is_red());
         assert!(right_l.left().is_none());
         assert!(right_l.right().is_none());
@@ -1428,38 +1440,38 @@ mod tests {
         // by remove_node_from_tree. The pointer points to a Node<D> in storage.
         let new_root = unsafe { &*root_ptr.get() };
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
-        assert_eq!(new_root.data, 17);
+        assert_eq!(unsafe { *new_root.data() }, 17);
         assert!(new_root.is_black());
         assert!(new_root.parent().is_none());
         assert_eq!(new_root.left_ptr(), left.as_mut_ptr());
         assert_eq!(new_root.right_ptr(), right.as_mut_ptr());
 
         assert_eq!(left.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(left.data, 9);
+        assert_eq!(unsafe { *left.data() }, 9);
         assert!(left.is_red());
         assert_eq!(left.left_ptr(), left_l.as_mut_ptr());
         assert_eq!(left.right_ptr(), left_r.as_mut_ptr());
 
         assert_eq!(left_l.parent_ptr(), left.as_mut_ptr());
-        assert_eq!(left_l.data, 3);
+        assert_eq!(unsafe { *left_l.data() }, 3);
         assert!(left_l.is_black());
         assert!(left_l.left().is_none());
         assert!(left_l.right().is_none());
 
         assert_eq!(left_r.parent_ptr(), left.as_mut_ptr());
-        assert_eq!(left_r.data, 12);
+        assert_eq!(unsafe { *left_r.data() }, 12);
         assert!(left_r.is_black());
         assert!(left_r.left().is_none());
         assert!(left_r.right().is_none());
 
         assert_eq!(right.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(right.data, 19);
+        assert_eq!(unsafe { *right.data() }, 19);
         assert!(right.is_black());
         assert!(right.left().is_none());
         assert_eq!(right.right_ptr(), right_r.as_mut_ptr());
 
         assert_eq!(right_r.parent_ptr(), right.as_mut_ptr());
-        assert_eq!(right_r.data, 75);
+        assert_eq!(unsafe { *right_r.data() }, 75);
         assert!(right_r.is_red());
         assert!(right_r.left().is_none());
         assert!(right_r.right().is_none());
@@ -1517,32 +1529,32 @@ mod tests {
         let new_root = unsafe { &*root_ptr.get() };
 
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
-        assert_eq!(new_root.data, 17);
+        assert_eq!(unsafe { *new_root.data() }, 17);
         assert!(new_root.is_black());
         assert!(new_root.parent().is_none());
         assert_eq!(new_root.left_ptr(), left.as_mut_ptr());
         assert_eq!(new_root.right_ptr(), right_r_l.as_mut_ptr());
 
         assert_eq!(left.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(left.data, 9);
+        assert_eq!(unsafe { *left.data() }, 9);
         assert!(left.is_black());
         assert!(left.left().is_none());
         assert!(left.right().is_none());
 
         assert_eq!(right_r_l.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(right_r_l.data, 24);
+        assert_eq!(unsafe { *right_r_l.data() }, 24);
         assert!(right_r_l.is_red());
         assert_eq!(right_r_l.left_ptr(), right.as_mut_ptr());
         assert_eq!(right_r_l.right_ptr(), right_r.as_mut_ptr());
 
         assert_eq!(right.parent_ptr(), right_r_l.as_mut_ptr());
-        assert_eq!(right.data, 19);
+        assert_eq!(unsafe { *right.data() }, 19);
         assert!(right.is_black());
         assert!(right.left().is_none());
         assert!(right.right().is_none());
 
         assert_eq!(right_r.parent_ptr(), right_r_l.as_mut_ptr());
-        assert_eq!(right_r.data, 75);
+        assert_eq!(unsafe { *right_r.data() }, 75);
         assert!(right_r.is_black());
         assert!(right_r.left().is_none());
         assert!(right_r.right().is_none());
@@ -1606,38 +1618,38 @@ mod tests {
         let new_root = unsafe { &*root_ptr.get() };
 
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
-        assert_eq!(new_root.data, 17);
+        assert_eq!(unsafe { *new_root.data() }, 17);
         assert!(new_root.is_black());
         assert!(new_root.parent().is_none());
         assert_eq!(new_root.left_ptr(), left.as_mut_ptr());
         assert_eq!(new_root.right_ptr(), right_r.as_mut_ptr());
 
         assert_eq!(left.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(left.data, 9);
+        assert_eq!(unsafe { *left.data() }, 9);
         assert!(left.is_black());
         assert!(left.left().is_none());
         assert!(left.right().is_none());
 
         assert_eq!(right_r.parent_ptr(), new_root.as_mut_ptr());
-        assert_eq!(right_r.data, 75);
+        assert_eq!(unsafe { *right_r.data() }, 75);
         assert!(right_r.is_red());
         assert_eq!(right_r.left_ptr(), right.as_mut_ptr());
         assert_eq!(right_r.right_ptr(), right_r_r.as_mut_ptr());
 
         assert_eq!(right.parent_ptr(), right_r.as_mut_ptr());
-        assert_eq!(right.data, 19);
+        assert_eq!(unsafe { *right.data() }, 19);
         assert!(right.is_black());
         assert!(right.left().is_none());
         assert_eq!(right.right_ptr(), right_r_l.as_mut_ptr());
 
         assert_eq!(right_r_r.parent_ptr(), right_r.as_mut_ptr());
-        assert_eq!(right_r_r.data, 81);
+        assert_eq!(unsafe { *right_r_r.data() }, 81);
         assert!(right_r_r.is_black());
         assert!(right_r_r.left().is_none());
         assert!(right_r_r.right().is_none());
 
         assert_eq!(right_r_l.parent_ptr(), right.as_mut_ptr());
-        assert_eq!(right_r_l.data, 24);
+        assert_eq!(unsafe { *right_r_l.data() }, 24);
         assert!(right_r_l.is_red());
         assert!(right_r_l.left().is_none());
         assert!(right_r_l.right().is_none());
@@ -1828,6 +1840,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod fuzz_tests {
     extern crate std;
     use crate::{Rbt, node_size};

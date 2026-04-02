@@ -9,3 +9,4 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 pub mod mm_comm_buffer_update;
+pub mod mm_supervisor_request;

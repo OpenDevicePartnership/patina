@@ -32,9 +32,13 @@ pub const ADV_LOGGER_INFO_VERSION_V5: u16 = 5;
 pub const ADV_LOGGER_INFO_VERSION_V6: u16 = 6;
 
 // UEFI Debug Levels
+/// Error
 pub const DEBUG_LEVEL_ERROR: u32 = 0x80000000;
+/// Warnings
 pub const DEBUG_LEVEL_WARNING: u32 = 0x00000002;
+/// Informational debug messages
 pub const DEBUG_LEVEL_INFO: u32 = 0x00000040;
+/// Detailed debug messages that may significantly impact boot performance
 pub const DEBUG_LEVEL_VERBOSE: u32 = 0x00400000;
 
 // Phase definitions.

@@ -11,52 +11,16 @@ use patina::base::SIZE_4KB;
 /// Standard test buffer size
 pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
 
-/// MM Supervisor constants and definitions
+/// MM Supervisor constants and definitions for testing
 ///
 /// Note: These values are only used for testing. They're not meant to be
 /// accurate or used in production code.
 pub mod mm_supv {
-    /// Supervisor signature bytes
-    pub const SIGNATURE: [u8; 4] = [b'M', b'S', b'U', b'P'];
-
-    /// Communication protocol revision
-    pub const REVISION: u32 = 1;
-
-    /// Request signature as a DWORD
-    pub const REQUEST_SIGNATURE: u32 = 0x5055534D; // 'MSUP'
-
-    /// Supervisor version
+    /// Mock supervisor version for testing
     pub const VERSION: u32 = 0x00130008;
 
-    /// Supervisor patch level
+    /// Mock supervisor patch level for testing
     pub const PATCH_LEVEL: u32 = 0x00010001;
-
-    /// Maximum request level supported
-    pub const MAX_REQUEST_LEVEL: u64 = 0x0000000000000004; // COMM_UPDATE
-
-    /// Request type constants
-    pub mod requests {
-        /// Request for unblocking memory regions
-        pub const UNBLOCK_MEM: u32 = 0x0001;
-
-        /// Request to fetch security policy
-        pub const FETCH_POLICY: u32 = 0x0002;
-
-        /// Request version information
-        pub const VERSION_INFO: u32 = 0x0003;
-
-        /// Request to update the communication buffer address
-        pub const COMM_UPDATE: u32 = 0x0004;
-    }
-
-    /// Response code constants
-    pub mod responses {
-        /// Operation completed successfully
-        pub const SUCCESS: u64 = 0;
-
-        /// Operation failed with error
-        pub const ERROR: u64 = 0xFFFFFFFFFFFFFFFF;
-    }
 }
 
 /// Test GUIDs for different handlers

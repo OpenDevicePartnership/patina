@@ -6,7 +6,8 @@
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![feature(coverage_attribute)]
 
+extern crate alloc;
+
 pub mod component;
 pub mod config;
-pub mod protocol;
 pub mod service;

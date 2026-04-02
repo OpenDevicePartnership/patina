@@ -159,7 +159,10 @@ where
     ///
     pub fn get(&self, key: &D::Key) -> Option<&D> {
         match self.get_node(key) {
-            Some(node) => Some(&node.data),
+            Some(node) => {
+                // SAFETY: Nodes in the tree always have initialized data
+                Some(unsafe { node.data() })
+            }
             None => None,
         }
     }
@@ -186,7 +189,7 @@ where
                 // SAFETY: The pointer comes from as_mut_ptr() on a valid node reference obtained from get_node().
                 // The caller is responsible for ensuring that the mutable reference doesn't modify key-affecting
                 // values.
-                Some(unsafe { &mut (*ptr).data })
+                Some(unsafe { (*ptr).data_mut() })
             }
             None => None,
         }
@@ -209,7 +212,10 @@ where
     ///
     pub fn get_with_idx(&self, idx: usize) -> Option<&D> {
         match self.storage.get(idx) {
-            Some(node) => Some(&node.data),
+            Some(node) => {
+                // SAFETY: Nodes in storage always have initialized data
+                Some(unsafe { node.data() })
+            }
             None => None,
         }
     }
@@ -236,7 +242,10 @@ where
     ///
     pub unsafe fn get_with_idx_mut(&mut self, idx: usize) -> Option<&mut D> {
         match self.storage.get_mut(idx) {
-            Some(node) => Some(&mut node.data),
+            Some(node) => {
+                // SAFETY: Nodes in storage always have initialized data
+                Some(unsafe { node.data_mut() })
+            }
             None => None,
         }
     }
@@ -281,7 +290,8 @@ where
         let mut current = self.root();
         let mut closest = None;
         while let Some(node) = current {
-            match key.cmp(node.data.key()) {
+            // SAFETY: Nodes in the tree always have initialized data
+            match key.cmp(unsafe { node.data() }.key()) {
                 Ordering::Equal => return Some(self.storage.idx(node.as_mut_ptr())),
                 Ordering::Less => current = node.left(),
                 Ordering::Greater => {
@@ -494,7 +504,8 @@ where
     fn get_node(&self, key: &D::Key) -> Option<&Node<D>> {
         let mut current_idx = self.root();
         while let Some(node) = current_idx {
-            match key.cmp(node.data.key()) {
+            // SAFETY: Nodes in the tree always have initialized data
+            match key.cmp(unsafe { node.data() }.key()) {
                 Ordering::Equal => return Some(node),
                 Ordering::Less => current_idx = node.left(),
                 Ordering::Greater => current_idx = node.right(),
@@ -646,7 +657,8 @@ where
     fn _dfs(node: Option<&Node<D>>, values: &mut alloc::vec::Vec<D>) {
         if let Some(node) = node {
             Self::_dfs(node.left(), values);
-            values.push(node.data);
+            // SAFETY: Nodes in the tree always have initialized data
+            values.push(unsafe { *node.data() });
             Self::_dfs(node.right(), values);
         }
     }
@@ -666,6 +678,7 @@ where
 
 #[cfg(test)]
 #[coverage(off)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod tests {
     use crate::{Bst, node_size};
 
@@ -883,6 +896,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod fuzz_tests {
     extern crate std;
     use crate::{Bst, node_size};
