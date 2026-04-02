@@ -77,5 +77,6 @@ default = ['alloc']
 serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 serde-with-yaml = ["serde", "dep:serde_yaml"]
 
+test-stubs = []
 unstable = ["unstable-device-path"]
 unstable-device-path = []

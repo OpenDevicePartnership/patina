@@ -10,6 +10,7 @@
 pub mod decompress;
 pub mod performance_measurement;
 pub mod status_code;
+pub mod usb_io;
 
 use crate::BinaryGuid;
 

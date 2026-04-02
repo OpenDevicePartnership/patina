@@ -188,7 +188,10 @@ impl<T: BootServices + Clone + 'static> UefiHidIo<T> {
         // report_callback can safely signal it. This also configures HidIo to start sending reports.
         // SAFETY: hid_io points to a protocol opened BY_DRIVER above; valid for our lifetime.
         let hid_io_protocol = unsafe { &*hid_io };
-        match (hid_io_protocol.register_report_callback)(hid_io, Self::report_callback, queue_ptr as *mut c_void) {
+        // SAFETY: hid_io points to a valid protocol; callback and context are valid.
+        match unsafe {
+            (hid_io_protocol.register_report_callback)(hid_io, Self::report_callback, queue_ptr as *mut c_void)
+        } {
             efi::Status::SUCCESS => (),
             err => {
                 let _ = boot_services.close_event(process_queue_event);
@@ -208,7 +211,16 @@ impl<T: BootServices + Clone + 'static> UefiHidIo<T> {
 
     /// HidIo protocol report callback. Enqueues the report and signals the drain event. This runs at
     /// whatever TPL the HidIo instance generating the report runs at, which may vary by controller and report type.
-    extern "efiapi" fn report_callback(report_buffer_size: u16, report_buffer: *mut c_void, context: *mut c_void) {
+    ///
+    /// # Safety
+    ///
+    /// `context` must be a valid pointer to the [`ReportQueue`] that was passed during
+    /// `register_report_callback`. `report_buffer` must be valid for `report_buffer_size` bytes.
+    unsafe extern "efiapi" fn report_callback(
+        report_buffer_size: u16,
+        report_buffer: *mut c_void,
+        context: *mut c_void,
+    ) {
         // SAFETY: context is a valid *mut ReportQueue<T> set during register_report_callback in new().
         // The HidIo protocol callback signature requires *mut c_void, but this function only takes a
         // shared reference; no mutable aliasing occurs because mutation goes through the TplMutex on the queue.
@@ -257,7 +269,9 @@ impl<T: BootServices + Clone + 'static> Drop for UefiHidIo<T> {
     fn drop(&mut self) {
         // SAFETY: hid_io points to a protocol opened BY_DRIVER in new; valid until this drop.
         let hid_io_protocol = unsafe { &*self.hid_io };
-        let unregister_status = (hid_io_protocol.unregister_report_callback)(self.hid_io, Self::report_callback);
+        // SAFETY: hid_io points to a valid protocol opened BY_DRIVER.
+        let unregister_status =
+            unsafe { (hid_io_protocol.unregister_report_callback)(self.hid_io, Self::report_callback) };
 
         if unregister_status != efi::Status::SUCCESS {
             // Callback may still fire — poison the queue so report_callback becomes a no-op,
@@ -481,11 +495,14 @@ mod test {
         // Simulate the HidIo producer calling report_callback.
         let report_data = [0x10u8, 0x20, 0x30];
         let queue_ptr: *mut ReportQueue<MockBootServices> = &mut **device.report_queue as *mut _;
-        UefiHidIo::<MockBootServices>::report_callback(
-            report_data.len() as u16,
-            report_data.as_ptr() as *mut c_void,
-            queue_ptr as *mut c_void,
-        );
+        // SAFETY: test-only call with valid report data and context.
+        unsafe {
+            UefiHidIo::<MockBootServices>::report_callback(
+                report_data.len() as u16,
+                report_data.as_ptr() as *mut c_void,
+                queue_ptr as *mut c_void,
+            );
+        }
 
         // Manually invoke the process_queued_reports handler (normally triggered by the UEFI event system).
         UefiHidIo::<MockBootServices>::process_queued_reports(core::ptr::null_mut(), queue_ptr);
