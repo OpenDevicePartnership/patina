@@ -16,7 +16,10 @@ use alloc::vec::Vec;
 use core::ptr;
 
 use patina::{
-    boot_services::{BootServices, event::EventType, protocol_handler::HandleSearchType, tpl::Tpl},
+    boot_services::{
+        BootServices, StandardBootServices, event::EventType, protocol_handler::HandleSearchType, tpl::Tpl,
+    },
+    component::service::dxe_dispatch::DxeDispatch,
     device_path::{
         node_defs::{DevicePathType, HardDrive, MediaSubType},
         paths::{DevicePath, DevicePathBuf},
@@ -25,6 +28,8 @@ use patina::{
     guids::{EFI_GLOBAL_VARIABLE, EVENT_GROUP_END_OF_DXE},
     runtime_services::RuntimeServices,
 };
+
+use crate::connect_controller::ConnectController;
 use r_efi::{
     efi,
     protocols::simple_text_input,
@@ -196,6 +201,52 @@ pub fn connect_all<B: BootServices>(boot_services: &B) -> Result<()> {
 
         prev_handle_count = current_handle_count;
     }
+
+    Ok(())
+}
+
+/// Interleave controller connection with DXE driver dispatch.
+///
+/// Alternates between the given connection strategy and dispatching newly loaded
+/// drivers (e.g., PCI option ROM drivers) until both the device topology stabilizes
+/// and no new drivers are dispatched.
+///
+/// This ensures that drivers loaded from firmware volumes during device
+/// enumeration (such as PCI option ROM drivers) are dispatched before
+/// continuing enumeration, allowing those drivers to bind to newly
+/// discovered controllers.
+///
+/// # Arguments
+///
+/// * `connect_controller` - The connection strategy to use each round
+/// * `boot_services` - Boot services interface
+/// * `dxe_services` - DXE dispatch service for driver dispatch
+#[coverage(off)]
+pub fn interleave_connect_and_dispatch<D: DxeDispatch + ?Sized>(
+    connect_controller: &dyn ConnectController,
+    boot_services: &StandardBootServices,
+    dxe_services: &D,
+) -> Result<()> {
+    interleave_connect_and_dispatch_inner(|bs| connect_controller.connect(bs), boot_services, dxe_services)
+}
+
+/// Inner implementation of connect-dispatch interleaving, generic over the
+/// connection function. This allows testing with mock boot services.
+pub(crate) fn interleave_connect_and_dispatch_inner<B: BootServices, D: DxeDispatch + ?Sized>(
+    connect_fn: impl Fn(&B) -> Result<()>,
+    boot_services: &B,
+    dxe_services: &D,
+) -> Result<()> {
+    const MAX_ROUNDS: usize = 10;
+
+    for _round in 0..MAX_ROUNDS {
+        connect_fn(boot_services)?;
+        if !dxe_services.dispatch()? {
+            return Ok(());
+        }
+    }
+
+    debug_assert!(false, "connect-dispatch interleaving did not converge after {MAX_ROUNDS} rounds");
 
     Ok(())
 }
