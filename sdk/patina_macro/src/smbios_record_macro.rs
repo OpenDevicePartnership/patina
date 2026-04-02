@@ -3,6 +3,15 @@
 //! This macro generates a complete `SmbiosRecordStructure` trait implementation,
 //! eliminating the need for manual boilerplate code.
 //!
+//! ## Field Requirements
+//!
+//! All non-header, non-string-pool fields must implement `zerocopy::IntoBytes`.
+//! This is satisfied by:
+//! - Primitive types (`u8`, `u16`, `u32`, `u64`, etc.)
+//! - Byte arrays (`[u8; N]`)
+//! - Custom types with `#[derive(IntoBytes)]` and `#[repr(C)]`, `#[repr(u8)]`,
+//!   or another valid representation
+//!
 //! ## Usage
 //!
 //! ```rust,ignore
@@ -102,8 +111,6 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
     let name = &record.item.ident;
     let (impl_generics, ty_generics, where_clause) = record.item.generics.split_for_impl();
 
-    // Detect if we're inside patina_smbios crate or using it externally
-    // Use crate:: for internal, ::patina_smbios:: for external
     let crate_path = quote! { ::patina_smbios };
 
     // Get the record type - required for trait implementation
@@ -133,56 +140,30 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
                 continue;
             }
 
-            // Validate field type - must be a primitive integer type or byte array
-            let is_valid_type = match field_ty {
-                syn::Type::Path(type_path) => {
-                    let path = &type_path.path;
-                    path.segments.len() == 1 && {
-                        let segment = &path.segments[0];
-                        matches!(
-                            segment.ident.to_string().as_str(),
-                            "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
-                        )
-                    }
-                }
-                syn::Type::Array(type_array) => {
-                    matches!(&*type_array.elem,
+            // Check if this is a [u8; N] byte array (special case: copy directly)
+            let is_u8_array = matches!(field_ty,
+                syn::Type::Array(type_array)
+                    if matches!(&*type_array.elem,
                         syn::Type::Path(elem_path)
                             if elem_path.path.segments.len() == 1 &&
-                               elem_path.path.segments[0].ident == "u8")
-                }
-                _ => false,
-            };
+                               elem_path.path.segments[0].ident == "u8"));
 
-            if !is_valid_type {
-                return syn::Error::new(
-                    field.span(),
-                    format!(
-                        "Field '{}' has unsupported type. SMBIOS record fields must be primitive integer types (u8, u16, u32, u64, i8, i16, i32, i64) or byte arrays ([u8; N]). Found: {}",
-                        field_name,
-                        quote!(#field_ty)
-                    ),
-                )
-                .to_compile_error();
-            }
-
-            // Add field size to structured size calculation
+            // Add field size to structured size calculation.
+            // This relies on size_of matching the serialized layout, which is
+            // guaranteed by IntoBytes requiring repr(C/packed/transparent).
             structured_size_calc = quote! {
                 #structured_size_calc + core::mem::size_of::<#field_ty>()
             };
 
             // Generate serialization for this field based on type
-            // Special case for byte arrays (like UUID) - copy directly without to_le_bytes()
-            let serialization = match field_ty {
-                syn::Type::Array(_) => {
-                    quote! {
-                        bytes.extend_from_slice(&self.#field_name);
-                    }
+            // [u8; N] arrays are copied directly; everything else uses zerocopy::IntoBytes
+            let serialization = if is_u8_array {
+                quote! {
+                    bytes.extend_from_slice(&self.#field_name);
                 }
-                _ => {
-                    quote! {
-                        bytes.extend_from_slice(&self.#field_name.to_le_bytes());
-                    }
+            } else {
+                quote! {
+                    bytes.extend_from_slice(#crate_path::zerocopy::IntoBytes::as_bytes(&self.#field_name));
                 }
             };
 
@@ -314,49 +295,10 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_field_type_string() {
-        let input = quote! {
-            #[derive(SmbiosRecord)]
-            #[smbios(record_type = 0x80)]
-            pub struct TestRecord {
-                pub header: SmbiosTableHeader,
-                pub invalid_field: String,
-                #[string_pool]
-                pub strings: Vec<String>,
-            }
-        };
-
-        let output = smbios_record_derive(input);
-        let output_str = output.to_string();
-        // Should error about unsupported type for invalid_field
-        assert!(output_str.contains("compile_error"));
-        assert!(output_str.contains("invalid_field"));
-        assert!(output_str.contains("unsupported type"));
-    }
-
-    #[test]
-    fn test_unsupported_field_type_vec() {
-        let input = quote! {
-            #[derive(SmbiosRecord)]
-            #[smbios(record_type = 0x80)]
-            pub struct TestRecord {
-                pub header: SmbiosTableHeader,
-                pub data: Vec<u8>,
-                #[string_pool]
-                pub strings: Vec<String>,
-            }
-        };
-
-        let output = smbios_record_derive(input);
-        let output_str = output.to_string();
-        // Should error about unsupported Vec type
-        assert!(output_str.contains("compile_error"));
-        assert!(output_str.contains("data"));
-        assert!(output_str.contains("unsupported type"));
-    }
-
-    #[test]
-    fn test_unsupported_field_type_custom_struct() {
+    fn test_custom_types_accepted_by_macro() {
+        // The macro no longer rejects custom types at expansion time.
+        // Types that don't implement zerocopy::IntoBytes will fail at
+        // compile time when the generated code is type-checked.
         let input = quote! {
             #[derive(SmbiosRecord)]
             #[smbios(record_type = 0x80)]
@@ -370,31 +312,9 @@ mod tests {
 
         let output = smbios_record_derive(input);
         let output_str = output.to_string();
-        // Should error about unsupported custom struct type
-        assert!(output_str.contains("compile_error"));
-        assert!(output_str.contains("custom"));
-        assert!(output_str.contains("unsupported type"));
-    }
-
-    #[test]
-    fn test_unsupported_field_type_option() {
-        let input = quote! {
-            #[derive(SmbiosRecord)]
-            #[smbios(record_type = 0x80)]
-            pub struct TestRecord {
-                pub header: SmbiosTableHeader,
-                pub optional: Option<u32>,
-                #[string_pool]
-                pub strings: Vec<String>,
-            }
-        };
-
-        let output = smbios_record_derive(input);
-        let output_str = output.to_string();
-        // Should error about unsupported Option type
-        assert!(output_str.contains("compile_error"));
-        assert!(output_str.contains("optional"));
-        assert!(output_str.contains("unsupported type"));
+        // Macro should generate valid tokens — type checking happens later
+        assert!(!output_str.contains("compile_error"));
+        assert!(output_str.contains("IntoBytes"));
     }
 
     #[test]
@@ -447,13 +367,13 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_array_type() {
+    fn test_non_u8_array_uses_into_bytes() {
         let input = quote! {
             #[derive(SmbiosRecord)]
             #[smbios(record_type = 0x80)]
             pub struct TestRecord {
                 pub header: SmbiosTableHeader,
-                pub invalid_array: [u32; 4],
+                pub data: [u32; 4],
                 #[string_pool]
                 pub strings: Vec<String>,
             }
@@ -461,10 +381,9 @@ mod tests {
 
         let output = smbios_record_derive(input);
         let output_str = output.to_string();
-        // Should error - only [u8; N] arrays are allowed
-        assert!(output_str.contains("compile_error"));
-        assert!(output_str.contains("invalid_array"));
-        assert!(output_str.contains("unsupported type"));
+        // Non-[u8; N] arrays are serialized via IntoBytes, not copied directly
+        assert!(!output_str.contains("compile_error"));
+        assert!(output_str.contains("IntoBytes"));
     }
 
     #[test]

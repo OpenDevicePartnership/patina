@@ -312,6 +312,11 @@
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![feature(coverage_attribute)]
 
+// SMBIOS tables require little-endian byte order. The SmbiosRecord derive macro
+// uses zerocopy::IntoBytes::as_bytes() which returns native byte order.
+#[cfg(not(target_endian = "little"))]
+compile_error!("patina_smbios requires a little-endian target");
+
 // Allow the derive macro to reference this crate using `::patina_smbios::`
 extern crate self as patina_smbios;
 
@@ -321,3 +326,6 @@ pub mod service;
 pub mod smbios_record;
 
 mod manager;
+
+#[doc(hidden)]
+pub use zerocopy;
