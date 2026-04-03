@@ -116,7 +116,7 @@ Specifically, this module includes the following functionality: Standalone MM co
 portion of the PiSmmCore as well as the privilege management component.
 
 The current core services for the existing C implementation can be found in this illustrated diagram:
-![Current C-based Supervisor](0000-mm-supv/c-supervisor-flowchart.png)
+![Current C-based Supervisor](0026-mm-supv/c-supervisor-flowchart.png)
 
 The launching of the MM supervisor is done through the MM supervisor specific IPL, which is responsible for opening the
 MMRAM regions, locating the "standalone MM supervisor core", and executing it in MMRAM.
@@ -141,7 +141,7 @@ user drivers in demoted execution mode, or dispatching supervisor MMI handlers i
 
 This section will discuss the technical details of the Rust-based MM supervisor implementation.
 
-![control flow of rust based supervisor](0000-mm-supv/rust-supv-flowchart.png)
+![control flow of rust based supervisor](0026-mm-supv/rust-supv-flowchart.png)
 
 ### Standalone MM Bootstrapping (the IPL)
 
@@ -214,14 +214,8 @@ Rust MM supervisor.
   // GUID for gMmSupervisorHobMemoryAllocModuleGuid
   // { 0x3efafe72, 0x3dbf, 0x4341, { 0xad, 0x04, 0x1c, 0xb6, 0xe8, 0xb6, 0x8e, 0x5e }}
   /// GUID used in MemoryAllocationModule HOBs to identify MM Supervisor module allocations.
-  pub const MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID: efi::Guid = efi::Guid::from_fields(
-      0x3efafe72,
-      0x3dbf,
-      0x4341,
-      0xad,
-      0x04,
-      &[0x1c, 0xb6, 0xe8, 0xb6, 0x8e, 0x5e],
-  );
+  pub const MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID: patina::BinaryGuid =
+      patina::BinaryGuid::from_string("3efafe72-3dbf-4341-ad04-1cb6e8b68e5e");
   ```
 
 - Loaded image depex GUIDed hobs, `gMmSupervisorDepexHobGuid`:
@@ -230,14 +224,8 @@ Rust MM supervisor.
   // GUID for gMmSupervisorDepexHobGuid
   // { 0xb17f0049, 0xaffd, 0x4530, { 0xac, 0xd6, 0xe2, 0x45, 0xe1, 0x9d, 0xea, 0xf1 } }
   /// GUID used in Depex HOBs to identify MM Supervisor module allocations.
-  pub const MM_SUPERVISOR_HOB_DEPEX_GUID: efi::Guid = efi::Guid::from_fields(
-      0xb17f0049,
-      0xaffd,
-      0x4530,
-      0xac,
-      0xd6,
-      &[0xe2, 0x45, 0xe1, 0x9d, 0xea, 0xf1],
-  );
+  pub const MM_SUPERVISOR_HOB_DEPEX_GUID: patina::BinaryGuid =
+      patina::BinaryGuid::from_string("b17f0049-affd-4530-acd6-e245e19deaf1");
 
   // HOB structure for MM Supervisor module depex
   //
@@ -247,7 +235,7 @@ Rust MM supervisor.
   //   UINT8                     Data[];
   // } MM_SUPV_DEPEX_HOB_DATA;
   struct {
-    name: efi::Guid, // The name of the module, which should match the name in MemoryAllocationModule HOB.
+    name: patina::BinaryGuid, // The name of the module, which should match the name in MemoryAllocationModule HOB.
     length: u64, // The length of the depex data.
     data: [u8], // The depex data, which is an array of EFI_DEPENDENCY_ENTRY structures.
   };
@@ -684,8 +672,8 @@ Under the GUID of:
 
 ```Rust
 // { 0x85183a8b, 0x9c41, 0x429c, { 0x93, 0x9c, 0x5c, 0x3c, 0x08, 0x7c, 0xa2, 0x80 } }
-pub const WHEA_TELEMETRY_SECTION_TYPE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x85183a8b, 0x9c41, 0x429c, 0x93, 0x9c, &[0x5c, 0x3c, 0x08, 0x7c, 0xa2, 0x80]);
+pub const WHEA_TELEMETRY_SECTION_TYPE_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("85183a8b-9c41-429c-939c-5c3c087ca280");
 ```
 
 If the UEFI variable service is available, the Rust user core will attempt to write the log entry into a HwErrRec UEFI
@@ -743,7 +731,7 @@ and improve performance.
 ### High-Level Boot Flow
 
 The illustrated diagram below shows the high-level boot flow of the Rust-based MM supervisor:
-![Control flow of rust based supervisor](0000-mm-supv/rust-supv-flowchart.png)
+![Control flow of rust based supervisor](0026-mm-supv/rust-supv-flowchart.png)
 
 1. __MM IPL Setup__: The MM IPL setup will be performed by the existing C implementation from EDK2, which will prepare
 the environment for the Rust MM supervisor. This includes opening MMRAMs, loading the MM initializer to MMRAM and execute
