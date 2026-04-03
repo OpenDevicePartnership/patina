@@ -141,7 +141,7 @@ user drivers in demoted execution mode, or dispatching supervisor MMI handlers i
 
 This section will discuss the technical details of the Rust-based MM supervisor implementation.
 
-![control flow of rust based supervisor](0026-mm-supv/rust-supv-flowchart.png)
+See the [High-Level Boot Flow](#high-level-boot-flow) section for the flowchart of the Rust-based MM supervisor architecture.
 
 ### Standalone MM Bootstrapping (the IPL)
 
