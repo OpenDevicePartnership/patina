@@ -505,8 +505,10 @@ pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Resul
 /// Returns [Goblin(Malformed)](error::Error::Goblin) error if the section size is invalid
 /// Returns [Goblin(BufferTooShort)](error::Error::Goblin) error if the section is not fully contained in the image
 pub fn get_section<'a>(target: &str, pe_info: &UefiPeInfo, image: &'a [u8]) -> error::Result<Option<&'a [u8]>> {
+    let target_bytes = target.as_bytes();
     for section in &pe_info.sections {
-        if String::from_utf8_lossy(&section.name).trim_end_matches('\0') == target {
+        let section_name_bytes = section.name.split(|&b| b == 0).next().unwrap_or_default();
+        if section_name_bytes == target_bytes {
             let mut size = section.virtual_size;
             if size == 0 || size > section.size_of_raw_data {
                 size = section.size_of_raw_data;
