@@ -406,8 +406,107 @@ pub fn flatten_runtime_relocation_data(relocation_data: &[RelocationBlock]) -> &
 /// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Result<Option<(usize, usize)>> {
+    let Some(resource_section) = get_section(".rsrc", pe_info, image)? else {
+        return Ok(None);
+    };
+    let size = resource_section.len() as u32;
+    let mut directory: Directory = resource_section.pread(0)?;
+
+    let mut offset = directory.size_in_bytes();
+
+    if offset > size as usize {
+        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
+    }
+
+    for i in 0..directory.number_of_named_entries {
+        let entry_offset = core::mem::size_of::<Directory>() + (i as usize) * core::mem::size_of::<DirectoryEntry>();
+        let mut directory_entry: DirectoryEntry = resource_section.pread(entry_offset)?;
+
+        if directory_entry.name_is_string() {
+            if directory_entry.name_offset() >= size {
+                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
+                    directory_entry.name_offset() as usize,
+                    "bytes",
+                )));
+            }
+
+            let resource_directory_string =
+                resource_section.pread::<DirectoryString>(directory_entry.name_offset() as usize)?;
+
+            let name_start_offset = directory_entry.name_offset() as usize + core::mem::size_of::<DirectoryString>();
+            let name_end_offset = name_start_offset + (resource_directory_string.length as usize) * 2;
+            let string_val = resource_section
+                .get(name_start_offset..name_end_offset)
+                .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(name_end_offset, "bytes")))?;
+
+            // L"HII" in UTF-16LE = [0x48, 0x00, 0x49, 0x00, 0x49, 0x00]
+            if resource_directory_string.length == 3 && string_val == [0x48, 0x00, 0x49, 0x00, 0x49, 0x00] {
+                if directory_entry.data_is_directory() {
+                    if directory_entry.offset_to_directory() > size {
+                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
+                            directory_entry.offset_to_directory() as usize,
+                            "bytes",
+                        )));
+                    }
+
+                    directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
+                    offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
+
+                    if offset > size as usize {
+                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
+                    }
+
+                    directory_entry = resource_section
+                        .pread((directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>())?;
+
+                    if directory_entry.data_is_directory() {
+                        if directory_entry.offset_to_directory() > size {
+                            return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
+                                directory_entry.offset_to_directory() as usize,
+                                "bytes",
+                            )));
+                        }
+
+                        directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
+
+                        offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
+
+                        if offset > size as usize {
+                            return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
+                        }
+
+                        directory_entry = resource_section.pread(
+                            (directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>(),
+                        )?;
+                    }
+                }
+
+                if !directory_entry.data_is_directory() {
+                    if directory_entry.data >= size {
+                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
+                            directory_entry.data as usize,
+                            "bytes",
+                        )));
+                    }
+
+                    let resource_data_entry: DataEntry = resource_section.pread(directory_entry.data as usize)?;
+                    return Ok(Some((resource_data_entry.offset_to_data as usize, resource_data_entry.size as usize)));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Returns a slice of the provided image containing the data in the requested section, if it exists.
+///
+/// ## Errors
+///
+/// Returns [Goblin(Malformed)](error::Error::Goblin) error if the section size is invalid
+/// Returns [Goblin(BufferTooShort)](error::Error::Goblin) error if the section is not fully contained in the image
+pub fn get_section<'a>(target: &str, pe_info: &UefiPeInfo, image: &'a [u8]) -> error::Result<Option<&'a [u8]>> {
     for section in &pe_info.sections {
-        if String::from_utf8_lossy(&section.name).trim_end_matches('\0') == ".rsrc" {
+        if String::from_utf8_lossy(&section.name).trim_end_matches('\0') == target {
             let mut size = section.virtual_size;
             if size == 0 || size > section.size_of_raw_data {
                 size = section.size_of_raw_data;
@@ -417,115 +516,20 @@ pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Resul
             let end = match section.pointer_to_raw_data.checked_add(size) {
                 Some(offset) => offset as usize,
                 None => {
-                    return Err(error::Error::Goblin(goblin::error::Error::Malformed(String::from(
-                        "HII resource section size is invalid",
+                    return Err(error::Error::Goblin(goblin::error::Error::Malformed(format!(
+                        "Section {target} size of {size} is invalid."
                     ))));
                 }
             };
-            let resource_section = image
-                .get(start..end)
-                .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(end - start, "bytes")))?;
-            let mut directory: Directory = resource_section.pread(0)?;
 
-            let mut offset = directory.size_in_bytes();
-
-            if offset > size as usize {
-                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
-            }
-
-            let mut directory_entry: DirectoryEntry;
-
-            for i in 0..directory.number_of_named_entries {
-                let entry_offset =
-                    core::mem::size_of::<Directory>() + (i as usize) * core::mem::size_of::<DirectoryEntry>();
-                directory_entry = resource_section.pread(entry_offset)?;
-
-                if directory_entry.name_is_string() {
-                    if directory_entry.name_offset() >= size {
-                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                            directory_entry.name_offset() as usize,
-                            "bytes",
-                        )));
-                    }
-
-                    let resource_directory_string =
-                        resource_section.pread::<DirectoryString>(directory_entry.name_offset() as usize)?;
-
-                    let name_start_offset =
-                        directory_entry.name_offset() as usize + core::mem::size_of::<DirectoryString>();
-                    let name_end_offset = name_start_offset + (resource_directory_string.length as usize) * 2;
-                    let string_val = resource_section
-                        .get(name_start_offset..name_end_offset)
-                        .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(name_end_offset, "bytes")))?;
-
-                    // L"HII" in UTF-16LE = [0x48, 0x00, 0x49, 0x00, 0x49, 0x00]
-                    if resource_directory_string.length == 3 && string_val == [0x48, 0x00, 0x49, 0x00, 0x49, 0x00] {
-                        if directory_entry.data_is_directory() {
-                            if directory_entry.offset_to_directory() > size {
-                                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                    directory_entry.offset_to_directory() as usize,
-                                    "bytes",
-                                )));
-                            }
-
-                            directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
-                            offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
-
-                            if offset > size as usize {
-                                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                    offset, "bytes",
-                                )));
-                            }
-
-                            directory_entry = resource_section.pread(
-                                (directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>(),
-                            )?;
-
-                            if directory_entry.data_is_directory() {
-                                if directory_entry.offset_to_directory() > size {
-                                    return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                        directory_entry.offset_to_directory() as usize,
-                                        "bytes",
-                                    )));
-                                }
-
-                                directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
-
-                                offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
-
-                                if offset > size as usize {
-                                    return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                        offset, "bytes",
-                                    )));
-                                }
-
-                                directory_entry = resource_section.pread(
-                                    (directory_entry.offset_to_directory() as usize)
-                                        + core::mem::size_of::<Directory>(),
-                                )?;
-                            }
-                        }
-
-                        if !directory_entry.data_is_directory() {
-                            if directory_entry.data >= size {
-                                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                    directory_entry.data as usize,
-                                    "bytes",
-                                )));
-                            }
-
-                            let resource_data_entry: DataEntry =
-                                resource_section.pread(directory_entry.data as usize)?;
-                            return Ok(Some((
-                                resource_data_entry.offset_to_data as usize,
-                                resource_data_entry.size as usize,
-                            )));
-                        }
-                    }
-                }
-            }
+            return Ok(Some(
+                image
+                    .get(start..end)
+                    .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(end - start, "bytes")))?,
+            ));
         }
     }
+
     Ok(None)
 }
 
@@ -972,5 +976,25 @@ mod tests {
 
         let result = load_resource_section(&pe_info, &rsrc).unwrap();
         assert_eq!(result, Some((0xABCD, 0x100)));
+    }
+
+    #[test]
+    fn test_get_section_with_valid_section() {
+        test_support::init_test_logger();
+        let image = include_bytes!("../resources/test/pe32/test_image_with_sbom_section.bin");
+        let expected = include_bytes!("../resources/test/pe32/sbom_section.bin");
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        let section_bytes = get_section(".sbom", &image_info, image).unwrap().unwrap();
+        assert_eq!(section_bytes, expected);
+    }
+
+    #[test]
+    fn test_get_section_with_nonexistent_section() {
+        test_support::init_test_logger();
+        let image = include_bytes!("../resources/test/pe32/test_image_with_sbom_section.bin");
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        assert!(get_section(".fake", &image_info, image).unwrap().is_none());
     }
 }
