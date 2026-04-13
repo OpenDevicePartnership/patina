@@ -356,7 +356,7 @@ pub enum Measurement {
 
 impl Measurement {
     /// [u32] representation of the measurement.
-    pub fn as_u32(&self) -> u32 {
+    pub const fn as_u32(&self) -> u32 {
         match self {
             Measurement::StartImage => Measurement::StartImage as u32,
             Measurement::LoadImage => Measurement::LoadImage as u32,

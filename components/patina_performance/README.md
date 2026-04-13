@@ -13,58 +13,47 @@ The Patina performance component maintains the infrastructure to report firmware
 
 ## Configuration
 
-- `PerfConfig.enable_component` must be set to enable the component.
-- `PerfConfig.enabled_measurements` carries the bitmask of `patina::performance::Measurement` values that should be
-  recorded.
-- Platforms that need runtime configuration can include the `PerformanceConfigurationProvider` component, which reads a
-  `PerformanceConfigHob` and locks the `PerfConfig` values for the session.
+By default (e.g. `Performance::new()`), performance measurements are disabled. Performance measurements can then be
+enabled by one of two ways:
 
-To enable performance measurements in Patina, add the `Performance` component and provide a `PerfConfig` using
-`configs(mut add: Add<Config>)` in your platform's `ComponentInfo` implementation. For example:
+1. Usage of the `Performance::measure(...)` method to specify the bitmask of `Measurement` values that should be
+   recorded.
+2. Production of the `PerformanceConfigHob` prior to Patina DXE Core execution.
+
+If both methods are used, the configuration via `PerformanceConfigHob` takes priority. You can change this behavior
+to ignore the HOB configuration using `Performance::ignore_hob()`.
 
 ```rust
-use patina_performance::component::Performance;
-use patina_performance::component::performance_config_provider::PerformanceConfigurationProvider;
 use patina_dxe_core::*;
+use patina_performance::component::*;
 
-impl ComponentInfo for ExamplePlatform {
-    fn configs(mut add: Add<Config>) {
-        add.config(patina_performance::config::PerfConfig {
-            enable_component: true,
-            enabled_measurements: {
-                patina::performance::Measurement::DriverBindingStart
-                | patina::performance::Measurement::DriverBindingStop
-                | patina::performance::Measurement::DriverBindingSupport
-                | patina::performance::Measurement::LoadImage
-                | patina::performance::Measurement::StartImage
-            }
-        });
-    }
+struct ExampleComponent;
 
-    fn components(mut add: Add<Component>) {
-        // Add your other components as needed, e.g.:
-        // add.component(AdvancedLoggerComponent::<YourUartType>::new(&LOGGER));
-        add.component(PerformanceConfigurationProvider);
-        add.component(Performance);
-    }
+impl ComponentInfo for ExampleComponent {
+  fn components(mut add: Add<Component>) {
+    // Performance measurements are enabled by default, but can be overridden by a performance config HOB.
+    add.component(Performance::new().measure(
+       Measurement::DriverBindingStart
+        | Measurement::DriverBindingStop
+        | Measurement::DriverBindingSupport
+        | Measurement::LoadImage
+        | Measurement::StartImage
+    ));
+
+    // Performance measurements are disabled by default, but can be overridden by a performance config HOB.
+    add.component(Performance::new());
+
+    // Performance measurements are enabled with no ability to override.
+    add.component(Performance::new().ignore_hob().measure(
+       Measurement::DriverBindingStart
+        | Measurement::DriverBindingStop
+        | Measurement::DriverBindingSupport
+        | Measurement::LoadImage
+        | Measurement::StartImage
+    ));
+  }  
 }
 ```
-
-> **Note:** The `PerformanceConfigurationProvider` component is optional. Include it if you want to allow runtime
-configuration of performance measurements via a HOB. If you only want static configuration, you can omit it.
-
-### Enabling Performance Measurements During Boot
-
-A component called `PerformanceConfigurationProvider` is used to enable performance measurements during the boot
-process. This component depends on a `PerformanceConfigHob` HOB to be produced during boot to determine whether the
-performance component should be enabled and which measurements should be active.
-
-If a platform needs to use a single Patina DXE Core and support firmware builds where performance measurements can
-be enabled or disabled, it should produce a `PerformanceConfigHob` HOB during the boot process and include the
-`PerformanceConfigurationProvider` component in the DXE Core build. The HOB can be populated by any platform-specific
-logic, such as a PCD value or a build variable.
-
-> **Note:** `PerformanceConfigurationProvider` will override the enabled measurements based on the HOB value.
 
 ## API
 
@@ -100,25 +89,6 @@ use patina::performance::{
 use mu_rust_helpers::guid::CALLER_ID;
 
 perf_function_begin("foo", &CALLER_ID, create_performance_measurement);
-```
-
-*Example of measurement from outside the core:*
-
-```rust,no_run
-# extern crate mu_rust_helpers;
-# extern crate patina;
-# let bs = patina::boot_services::StandardBootServices::new_uninit();
-use mu_rust_helpers::guid::CALLER_ID;
-use patina::{
-   boot_services::BootServices,
-   performance::logging::perf_function_begin,
-   uefi_protocol::performance_measurement::EdkiiPerformanceMeasurement,
-};
-
-let create_performance_measurement = unsafe { bs.locate_protocol::<EdkiiPerformanceMeasurement>(None) }
- .map_or(None, |p| Some(p.create_performance_measurement));
-
-create_performance_measurement.inspect(|f| perf_function_begin("foo", &CALLER_ID, *f));
 ```
 
 ## Performance Component Overview

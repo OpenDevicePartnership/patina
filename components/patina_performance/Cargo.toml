@@ -23,4 +23,5 @@ zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
 patina = { path = "../../sdk/patina", features = ["mockall"] }
+patina_dxe_core = { path = "../../patina_dxe_core"}
 mockall = { workspace = true }
