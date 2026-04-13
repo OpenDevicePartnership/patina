@@ -452,21 +452,13 @@ use patina_dxe_core::*;
 struct ExamplePlatform;
 
 impl ComponentInfo for ExamplePlatform {
-    fn configs(mut add: Add<Config>) {
-        add.config(patina_performance::config::PerfConfig {
-            enable_component: true,
-            enabled_measurements: {
-            patina::performance::Measurement::DriverBindingStart
-                | patina::performance::Measurement::DriverBindingStop
-                | patina::performance::Measurement::LoadImage
-                | patina::performance::Measurement::StartImage
-            }
-        });
-    }
-
     fn components(mut add: Add<Component>) {
-        add.component(patina_performance::component::performance_config_provider::PerformanceConfigurationProvider);
-        add.component(patina_performance::component::performance::Performance);
+        add.component(patina_performance::component::Performance::new().measure(
+            patina_performance::component::DriverBindingStart
+                | patina_performance::component::Measurement::DriverBindingStop
+                | patina_performance::component::Measurement::LoadImage
+                | patina_performance::component::Measurement::StartImage
+        ));
     }
 }
 ```
@@ -543,23 +535,18 @@ impl ComponentInfo for ExamplePlatform {
             updatable_buffer_id: None,
             comm_buffers: vec![],
         });
-        add.config(patina_performance::config::PerfConfig {
-            enable_component: true,
-            enabled_measurements: {
-            patina::performance::Measurement::DriverBindingStart
-                | patina::performance::Measurement::DriverBindingStop
-                | patina::performance::Measurement::LoadImage
-                | patina::performance::Measurement::StartImage
-            }
-        });
     }
 
     fn components(mut add: Add<Component>) {
         add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
         // Platform Mm Init hook
         // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
-        add.component(patina_performance::component::performance_config_provider::PerformanceConfigurationProvider);
-        add.component(patina_performance::component::performance::Performance);
+        add.component(patina_performance::component::Performance::new().measure(
+            patina_performance::component::DriverBindingStart
+                | patina_performance::component::Measurement::DriverBindingStop
+                | patina_performance::component::Measurement::LoadImage
+                | patina_performance::component::Measurement::StartImage
+        ));
     }
 }
 
