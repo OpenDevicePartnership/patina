@@ -15,46 +15,62 @@
 //!
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 
 use patina::{
-    boot_services::StandardBootServices, device_path::paths::DevicePathBuf, error::EfiError,
+    boot_services::{BootServices, StandardBootServices, protocol_handler::HandleSearchType},
+    device_path::paths::DevicePathBuf,
+    error::EfiError,
     runtime_services::StandardRuntimeServices,
 };
 use r_efi::efi;
 
 use patina::component::service::dxe_dispatch::DxeDispatch;
 
-use patina::boot_services::BootServices;
-
-use crate::{boot_orchestrator::BootOrchestrator, config::BootConfig, helpers};
+use crate::{
+    boot_orchestrator::BootOrchestrator, config::BootConfig, connect_controller::ConnectController, helpers,
+    strategies::ConnectAllStrategy,
+};
 
 /// Interleave controller connection with DXE driver dispatch.
 ///
-/// Alternates between connecting all controllers and dispatching newly loaded
-/// drivers (e.g., PCI option ROMs) until both the device topology stabilizes
-/// and no new drivers are dispatched.
+/// Alternates between the given connect function and dispatching newly loaded
+/// drivers (e.g., PCI option ROM drivers) until the total system handle count
+/// stops growing across a connect+dispatch round.
 ///
 /// This ensures that drivers loaded from firmware volumes during device
 /// enumeration (such as PCI option ROM drivers) are dispatched before
 /// continuing enumeration, allowing those drivers to bind to newly
 /// discovered controllers.
 fn interleave_connect_and_dispatch<B: BootServices, D: DxeDispatch + ?Sized>(
+    connect_fn: impl Fn(&B) -> patina::error::Result<()>,
     boot_services: &B,
     dxe_services: &D,
 ) -> patina::error::Result<()> {
-    const MAX_ROUNDS: usize = 10;
+    let mut prev_handle_count = total_handle_count(boot_services)?;
+    #[cfg(debug_assertions)]
+    let mut rounds = 0usize;
 
-    for _round in 0..MAX_ROUNDS {
-        helpers::connect_all(boot_services)?;
-        if !dxe_services.dispatch()? {
+    loop {
+        connect_fn(boot_services)?;
+        dxe_services.dispatch()?;
+
+        let curr_handle_count = total_handle_count(boot_services)?;
+        if curr_handle_count == prev_handle_count {
             return Ok(());
         }
+        prev_handle_count = curr_handle_count;
+
+        #[cfg(debug_assertions)]
+        {
+            rounds += 1;
+            debug_assert!(rounds < 10_000, "connect-dispatch interleaving did not converge");
+        }
     }
+}
 
-    debug_assert!(false, "connect-dispatch interleaving did not converge after {MAX_ROUNDS} rounds");
-
-    Ok(())
+fn total_handle_count<B: BootServices>(boot_services: &B) -> patina::error::Result<usize> {
+    boot_services.locate_handle_buffer(HandleSearchType::AllHandle).map(|h| h.len()).map_err(EfiError::from)
 }
 
 /// Simple boot manager implementing [`BootOrchestrator`].
@@ -73,10 +89,15 @@ fn interleave_connect_and_dispatch<B: BootServices, D: DxeDispatch + ?Sized>(
 /// 7. Call failure handler if all options exhausted
 pub struct SimpleBootManager {
     config: BootConfig,
+    connect_strategy: Box<dyn ConnectController>,
 }
 
 impl SimpleBootManager {
     /// Create a `SimpleBootManager` from a boot configuration.
+    ///
+    /// Uses [`ConnectAllStrategy`] by default. To customize which controllers
+    /// are connected during device enumeration, use
+    /// [`with_connect_strategy()`](Self::with_connect_strategy).
     ///
     /// ## Example
     ///
@@ -92,7 +113,29 @@ impl SimpleBootManager {
     /// );
     /// ```
     pub fn new(config: BootConfig) -> Self {
-        Self { config }
+        Self { config, connect_strategy: Box::new(ConnectAllStrategy) }
+    }
+
+    /// Create a `SimpleBootManager` with a custom connection strategy.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,ignore
+    /// use patina_boot::{ConnectController, SimpleBootManager, config::BootConfig};
+    /// use patina::{boot_services::BootServices, error::Result};
+    ///
+    /// struct MyPlatformConnect;
+    /// impl<B: BootServices> ConnectController<B> for MyPlatformConnect {
+    ///     fn connect(&self, bs: &B) -> Result<()> { /* sequence-specific connect */ Ok(()) }
+    /// }
+    ///
+    /// let manager = SimpleBootManager::with_connect_strategy(
+    ///     BootConfig::new(nvme_esp_path()),
+    ///     MyPlatformConnect,
+    /// );
+    /// ```
+    pub fn with_connect_strategy(config: BootConfig, strategy: impl ConnectController) -> Self {
+        Self { config, connect_strategy: Box::new(strategy) }
     }
 }
 
@@ -113,7 +156,9 @@ impl BootOrchestrator for SimpleBootManager {
         dxe_dispatch: &dyn DxeDispatch,
         image_handle: efi::Handle,
     ) -> Result<!, EfiError> {
-        if let Err(e) = interleave_connect_and_dispatch(boot_services, dxe_dispatch) {
+        if let Err(e) =
+            interleave_connect_and_dispatch(|bs| self.connect_strategy.connect(bs), boot_services, dxe_dispatch)
+        {
             log::error!("interleave_connect_and_dispatch failed: {:?}", e);
         }
 
@@ -213,76 +258,98 @@ mod tests {
         unsafe { BootServicesBox::from_raw_parts_mut(leaked.as_mut_ptr(), leaked.len(), boot_services) }
     }
 
-    #[test]
-    fn test_interleave_single_round_no_drivers_dispatched() {
+    /// Mock `locate_handle_buffer` that returns the next handle count from a sequence on each call.
+    /// The final value repeats once the sequence is exhausted.
+    fn expect_handle_count_sequence(boot_mock: &mut MockBootServices, counts: &'static [usize]) {
         let box_mock = leaked_boot_services_for_box();
+        let call_idx = Arc::new(core::sync::atomic::AtomicUsize::new(0));
+        boot_mock.expect_locate_handle_buffer().returning(move |_| {
+            let i = call_idx.fetch_add(1, Ordering::SeqCst).min(counts.len() - 1);
+            let addrs: Vec<usize> = (1..=counts[i]).collect();
+            Ok(mock_handle_buffer(&addrs, box_mock))
+        });
+    }
+
+    #[test]
+    fn test_simple_boot_manager_interleave_converges_when_handle_count_stable() {
         let mut boot_mock = MockBootServices::new();
-
-        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
-        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
-
+        expect_handle_count_sequence(&mut boot_mock, &[1, 1]);
         let dxe_mock = MockDxeDispatcher::new(&[Ok(false)]);
 
-        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        let result = interleave_connect_and_dispatch(|_bs: &MockBootServices| Ok(()), &boot_mock, &dxe_mock);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_interleave_multiple_rounds() {
-        let box_mock = leaked_boot_services_for_box();
+    fn test_simple_boot_manager_interleave_loops_while_handle_count_grows() {
         let mut boot_mock = MockBootServices::new();
-
-        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
-        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
-
+        // initial probe: 1, after round 1: 2 (grew → continue), after round 2: 2 (stable → exit)
+        expect_handle_count_sequence(&mut boot_mock, &[1, 2, 2]);
         let dxe_mock = MockDxeDispatcher::new(&[Ok(true), Ok(false)]);
 
-        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        let result = interleave_connect_and_dispatch(|_bs: &MockBootServices| Ok(()), &boot_mock, &dxe_mock);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_interleave_connect_failure_propagates() {
+    fn test_simple_boot_manager_interleave_initial_probe_failure_propagates() {
         let mut boot_mock = MockBootServices::new();
-
         boot_mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
-
         let dxe_mock = MockDxeDispatcher::new(&[]);
 
-        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        let result = interleave_connect_and_dispatch(|_bs: &MockBootServices| Ok(()), &boot_mock, &dxe_mock);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_interleave_dispatch_failure_propagates() {
-        let box_mock = leaked_boot_services_for_box();
+    fn test_simple_boot_manager_interleave_dispatch_failure_propagates() {
         let mut boot_mock = MockBootServices::new();
-
-        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
-        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
-
+        expect_handle_count_sequence(&mut boot_mock, &[1]);
         let dxe_mock = MockDxeDispatcher::new(&[Err(EfiError::DeviceError)]);
 
-        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        let result = interleave_connect_and_dispatch(|_bs: &MockBootServices| Ok(()), &boot_mock, &dxe_mock);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_interleave_stops_at_max_rounds() {
-        let box_mock = leaked_boot_services_for_box();
+    fn test_simple_boot_manager_interleave_custom_connect_fn_failure() {
         let mut boot_mock = MockBootServices::new();
+        expect_handle_count_sequence(&mut boot_mock, &[1]);
+        let dxe_mock = MockDxeDispatcher::new(&[]);
 
-        boot_mock.expect_locate_handle_buffer().returning(move |_| Ok(mock_handle_buffer(&[1], box_mock)));
-        boot_mock.expect_connect_controller().returning(|_, _, _, _| Ok(()));
+        let result =
+            interleave_connect_and_dispatch(|_bs: &MockBootServices| Err(EfiError::DeviceError), &boot_mock, &dxe_mock);
+        assert!(result.is_err());
+    }
 
-        let dxe_mock = MockDxeDispatcher::new(&[Ok(true); 10]);
+    #[test]
+    fn test_simple_boot_manager_interleave_custom_connect_fn_success() {
+        let mut boot_mock = MockBootServices::new();
+        expect_handle_count_sequence(&mut boot_mock, &[1, 1]);
+        let dxe_mock = MockDxeDispatcher::new(&[Ok(false)]);
 
-        let result = interleave_connect_and_dispatch(&boot_mock, &dxe_mock);
+        let result = interleave_connect_and_dispatch(|_bs: &MockBootServices| Ok(()), &boot_mock, &dxe_mock);
         assert!(result.is_ok());
     }
 
+    // Tests for ConnectController and with_connect_strategy
+
     #[test]
-    fn test_new() {
+    fn test_simple_boot_manager_with_connect_strategy() {
+        let config = BootConfig::new(test_device_path());
+        let manager = SimpleBootManager::with_connect_strategy(config, ConnectAllStrategy);
+        assert_eq!(manager.config().devices().count(), 1);
+    }
+
+    #[test]
+    fn test_simple_boot_manager_with_closure_connect_strategy() {
+        let config = BootConfig::new(test_device_path()).with_hotkey(0x16);
+        let manager = SimpleBootManager::with_connect_strategy(config, |_bs: &StandardBootServices| Ok(()));
+        assert_eq!(manager.config().hotkey(), Some(0x16));
+    }
+
+    #[test]
+    fn test_simple_boot_manager_new() {
         let config = BootConfig::new(test_device_path()).with_hotkey(0x16).with_hotkey_device(test_device_path());
         let manager = SimpleBootManager::new(config);
         assert_eq!(manager.config().hotkey(), Some(0x16));
@@ -291,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_hotkey() {
+    fn test_simple_boot_manager_with_hotkey() {
         let config = BootConfig::new(test_device_path())
             .with_device(test_device_path())
             .with_hotkey(0x16)
@@ -303,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn test_without_hotkey() {
+    fn test_simple_boot_manager_without_hotkey() {
         let config = BootConfig::new(test_device_path()).with_device(test_device_path());
         let manager = SimpleBootManager::new(config);
         assert!(manager.config().hotkey().is_none());
@@ -312,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_failure_handler() {
+    fn test_simple_boot_manager_with_failure_handler() {
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
 
