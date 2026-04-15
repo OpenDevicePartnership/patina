@@ -80,41 +80,37 @@ impl PerformanceConfig {
 
 /// Performance Component.
 ///
+/// This component provides performance measurement capabilities in the UEFI boot environment. Even when instantiated,
+/// the component is off by default. Using [Self::with_measurements] can enable specific performance measurements,
+/// however a performance config HOB **will override** any settings made during instantiation of this component. This
+/// includes enabling or disabling the component as well as the specific measurements to be collected.
+///
 /// ## Example Usage
 ///
 /// ```rust
 /// use patina_performance::component::*;
 ///
-/// // Performance measurements are enabled by default, but can be overridden by a performance config HOB.
-/// let enabled_component = Performance::new().measure(Measurement::DriverBindingStart | Measurement::LoadImage);
-///
 /// // Performance measurements are disabled by default, but can be overridden by a performance config HOB.
-/// let disabled_component = Performance::new();
+/// let component = Performance::new();
 ///
-/// // Performance measurements are enabled with no ability to override via a HOB.
-/// let enabled_no_hob_component = Performance::new().measure(Measurement::DriverBindingStart | Measurement::LoadImage).ignore_hob();
+/// // Performance measurements are enabled by default (with `DriverBindingStart` and `LoadImage` measurements),
+/// // but can be overridden by a performance config HOB.
+/// let enabled_component = Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::LoadImage);
 /// ```
 #[derive(Default)]
 pub struct Performance {
     config: PerformanceConfig,
-    ignore_hob: bool,
 }
 
 #[component]
 impl Performance {
-    /// Creates a new instance of the Performance component with the given configuration.
+    /// Creates a new instance of the Performance component that is off by default.
     pub const fn new() -> Self {
-        Self { config: PerformanceConfig::new(), ignore_hob: false }
-    }
-
-    /// Ignores HOB configuration if present.
-    pub const fn ignore_hob(mut self) -> Self {
-        self.ignore_hob = true;
-        self
+        Self { config: PerformanceConfig::new() }
     }
 
     /// Enables performance measuring with the specified measurements.
-    pub const fn measure(mut self, measurements: u32) -> Self {
+    pub const fn with_measurements(mut self, measurements: u32) -> Self {
         self.config.enable_component = PerformanceConfig::ENABLED;
         self.config.enabled_measurements = measurements;
         self
@@ -133,8 +129,11 @@ impl Performance {
     ) -> Result<(), EfiError> {
         // Use HOB config if available, otherwise fall back to component config
         let config = match hob {
-            Some(hob) if !self.ignore_hob => *hob,
-            _ => self.config,
+            Some(hob) => {
+                log::info!("patina_performance: HOB configuration found, overriding component configuration.");
+                *hob
+            }
+            None => self.config,
         };
 
         if config.enable_component == PerformanceConfig::DISABLED {

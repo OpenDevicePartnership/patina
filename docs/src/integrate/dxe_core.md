@@ -453,7 +453,7 @@ struct ExamplePlatform;
 
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        add.component(patina_performance::component::Performance::new().measure(
+        add.component(patina_performance::component::Performance::new().with_measurements(
             patina_performance::component::Measurement::DriverBindingStart
                 | patina_performance::component::Measurement::DriverBindingStop
                 | patina_performance::component::Measurement::LoadImage
@@ -541,7 +541,7 @@ impl ComponentInfo for ExamplePlatform {
         add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
         // Platform Mm Init hook
         // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
-        add.component(patina_performance::component::Performance::new().measure(
+        add.component(patina_performance::component::Performance::new().with_measurements(
             patina_performance::component::Measurement::DriverBindingStart
                 | patina_performance::component::Measurement::DriverBindingStop
                 | patina_performance::component::Measurement::LoadImage

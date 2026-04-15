@@ -16,12 +16,11 @@ The Patina performance component maintains the infrastructure to report firmware
 By default (e.g. `Performance::new()`), performance measurements are disabled. Performance measurements can then be
 enabled by one of two ways:
 
-1. Usage of the `Performance::measure(...)` method to specify the bitmask of `Measurement` values that should be
-   recorded.
+1. Usage of the `Performance::with_measurements(...)` method to specify the bitmask of `Measurement` values that should
+   be recorded.
 2. Production of the `PerformanceConfigHob` prior to Patina DXE Core execution.
 
-If both methods are used, the configuration via `PerformanceConfigHob` takes priority. You can change this behavior
-to ignore the HOB configuration using `Performance::ignore_hob()`.
+If both methods are used, the configuration via `PerformanceConfigHob` takes priority.
 
 ```rust
 use patina_dxe_core::*;
@@ -31,20 +30,11 @@ struct ExampleComponent;
 
 impl ComponentInfo for ExampleComponent {
   fn components(mut add: Add<Component>) {
-    // Performance measurements are enabled by default, but can be overridden by a performance config HOB.
-    add.component(Performance::new().measure(
-       Measurement::DriverBindingStart
-        | Measurement::DriverBindingStop
-        | Measurement::DriverBindingSupport
-        | Measurement::LoadImage
-        | Measurement::StartImage
-    ));
-
     // Performance measurements are disabled by default, but can be overridden by a performance config HOB.
     add.component(Performance::new());
 
-    // Performance measurements are enabled with no ability to override.
-    add.component(Performance::new().ignore_hob().measure(
+    // Performance measurements are enabled by default, but can be overridden by a performance config HOB.
+    add.component(Performance::new().with_measurements(
        Measurement::DriverBindingStart
         | Measurement::DriverBindingStop
         | Measurement::DriverBindingSupport
