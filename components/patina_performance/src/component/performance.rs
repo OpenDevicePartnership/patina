@@ -127,7 +127,6 @@ impl Performance {
         timer: Service<dyn ArchTimerFunctionality>,
         mm_comm_service: Option<Service<dyn MmCommunication>>,
     ) -> Result<(), EfiError> {
-        // Use HOB config if available, otherwise fall back to component config
         let config = self.get_config(hob);
 
         if config.enable_component == PerformanceConfig::DISABLED {
