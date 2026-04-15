@@ -128,13 +128,7 @@ impl Performance {
         mm_comm_service: Option<Service<dyn MmCommunication>>,
     ) -> Result<(), EfiError> {
         // Use HOB config if available, otherwise fall back to component config
-        let config = match hob {
-            Some(hob) => {
-                log::info!("patina_performance: HOB configuration found, overriding component configuration.");
-                *hob
-            }
-            None => self.config,
-        };
+        let config = self.get_config(hob);
 
         if config.enable_component == PerformanceConfig::DISABLED {
             log::warn!("Patina Performance Component is not enabled, skipping entry point.");
@@ -246,6 +240,17 @@ impl Performance {
         };
 
         Ok(())
+    }
+
+    /// Retrieves the performance configuration, with priority given to the HOB configuration if available.
+    fn get_config(&self, hob: Option<Hob<PerformanceConfig>>) -> PerformanceConfig {
+        match hob {
+            Some(hob) => {
+                log::info!("patina_performance: HOB configuration found, overriding component configuration.");
+                *hob
+            }
+            None => self.config,
+        }
     }
 }
 
@@ -506,6 +511,7 @@ mod tests {
         boot_services::{MockBootServices, c_ptr::CPtr},
         component::service::{IntoService, Service},
         performance::{
+            Measurement,
             record::{PerformanceRecordBuffer, hob::MockHobPerformanceDataExtractor},
             table::MockFirmwareBasicBootPerfTable,
         },
@@ -964,5 +970,43 @@ mod tests {
 
         assert!(error_occurred, "Expected error for invalid length");
         assert!(iterations <= 5, "Should terminate quickly without infinite loop");
+    }
+
+    #[test]
+    fn test_performance_component_configuration_with_no_hob_override() {
+        let component = Performance::new();
+        let config = component.get_config(None);
+        assert_eq!(config.enable_component, PerformanceConfig::DISABLED);
+        let measurements = config.enabled_measurements;
+        assert_eq!(measurements, 0);
+
+        let component = Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::LoadImage);
+        let config = component.get_config(None);
+        let measurements = config.enabled_measurements;
+        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
+        assert_eq!(measurements, 0b1010u32);
+    }
+
+    #[test]
+    fn test_performance_configuration_with_hob_override() {
+        let test_config =
+            PerformanceConfig { enable_component: PerformanceConfig::ENABLED, enabled_measurements: 0b1010u32 };
+
+        let hob = Hob::mock(vec![test_config]);
+
+        let component = Performance::new();
+        let config = component.get_config(Some(hob));
+        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
+        let measurements = config.enabled_measurements;
+        assert_eq!(measurements, 0b1010u32);
+
+        let hob = Hob::mock(vec![test_config]);
+
+        let component =
+            Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::DriverBindingStop);
+        let config = component.get_config(Some(hob));
+        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
+        let measurements = config.enabled_measurements;
+        assert_eq!(measurements, 0b1010u32);
     }
 }
