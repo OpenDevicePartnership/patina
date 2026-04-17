@@ -20,7 +20,7 @@ use patina::{
     vendor_protocols::hid_io,
 };
 
-use crate::{descriptors, device::UsbHidDevice, hid_io_impl, transfers, usb_requests};
+use crate::{descriptors, device::UsbHidDevice, hid_io_impl, interrupt_transfers, control_transfers};
 use patina::boot_services::event::EventTimerType;
 
 /// USB HID driver that implements [`DriverBinding`].
@@ -112,7 +112,7 @@ impl DriverBinding for UsbHidDriver {
 
         // Boot devices: explicitly set report protocol mode.
         if descriptors.interface_descriptor.interface_sub_class == SUBCLASS_BOOT
-            && let Err(status) = usb_requests::set_protocol_request(
+            && let Err(status) = control_transfers::set_protocol_request(
                 usb_io,
                 descriptors.interface_descriptor.interface_number,
                 REPORT_PROTOCOL,
@@ -127,14 +127,14 @@ impl DriverBinding for UsbHidDriver {
             usb_io: usb_io as *const EfiUsbIoProtocol,
             descriptors,
             report_callback: crate::device::ReportCallbackState::default(),
-            timer_services: boot_services as &'static dyn transfers::TimerServices,
+            timer_services: boot_services as &'static dyn interrupt_transfers::TransferRecoveryTimer,
             recovery_event: core::ptr::null_mut(),
         }));
 
         // Create a recovery timer event for delayed re-submission on transfer errors.
         // SAFETY: device_ptr is a valid heap-allocated UsbHidDevice that will outlive
         // the event (closed in stop before the device is freed).
-        match unsafe { transfers::create_recovery_event(boot_services, device_ptr) } {
+        match unsafe { interrupt_transfers::create_recovery_event(boot_services, device_ptr) } {
             Ok(event) => {
                 // SAFETY: device_ptr is valid; setting the pre-allocated field.
                 unsafe { (*device_ptr).recovery_event = event };
@@ -200,7 +200,7 @@ impl DriverBinding for UsbHidDriver {
         let _ = boot_services.close_event(device.recovery_event);
 
         // Shutdown async transfers if active.
-        let _ = transfers::shutdown_async_interrupt_input_transfers(device);
+        let _ = interrupt_transfers::shutdown_async_interrupt_input_transfers(device);
 
         // Uninstall HidIo protocol.
         // SAFETY: Uninstalling the HidIo protocol interface.

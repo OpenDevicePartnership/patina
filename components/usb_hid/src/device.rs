@@ -16,7 +16,7 @@ use patina::uefi_protocol::usb_io::{
     types::{EfiUsbEndpointDescriptor, EfiUsbInterfaceDescriptor},
 };
 
-use crate::transfers::TimerServices;
+use crate::interrupt_transfers::TransferRecoveryTimer;
 
 /// USB HID descriptor set read from the device during initialization.
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub struct UsbHidDevice {
     pub descriptors: UsbHidDescriptors,
     pub report_callback: ReportCallbackState,
     /// Boot services timer interface for delayed error recovery.
-    pub(crate) timer_services: &'static dyn TimerServices,
+    pub(crate) timer_services: &'static dyn TransferRecoveryTimer,
     /// Timer event armed by the interrupt callback on transfer errors. The event's
     /// notify function re-submits the async interrupt transfer after a delay.
     pub(crate) recovery_event: efi::Event,
@@ -75,7 +75,7 @@ mod test {
     #[test]
     fn from_hid_io_protocol_recovers_device() {
         struct NoopTimer;
-        impl crate::transfers::TimerServices for NoopTimer {
+        impl crate::interrupt_transfers::TransferRecoveryTimer for NoopTimer {
             fn arm_recovery_timer(&self, _: efi::Event, _: u64) -> Result<(), efi::Status> {
                 Ok(())
             }

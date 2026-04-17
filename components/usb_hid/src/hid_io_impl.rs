@@ -13,7 +13,7 @@ use r_efi::efi;
 
 use patina::vendor_protocols::hid_io::{HidIoProtocol, HidIoReportCallback, HidReportType};
 
-use crate::{device::UsbHidDevice, transfers, usb_requests};
+use crate::{device::UsbHidDevice, interrupt_transfers, control_transfers};
 
 /// Creates a new `HidIoProtocol` populated with this module's function pointers.
 pub fn new_hid_io_protocol() -> HidIoProtocol {
@@ -102,7 +102,7 @@ unsafe extern "efiapi" fn hid_get_report(
     // SAFETY: usb_io is valid for the device's lifetime.
     let usb_io = unsafe { &*device.usb_io };
 
-    match usb_requests::usb_get_report_request(
+    match control_transfers::usb_get_report_request(
         usb_io,
         device.descriptors.interface_descriptor.interface_number,
         report_id,
@@ -143,7 +143,7 @@ unsafe extern "efiapi" fn hid_set_report(
     // SAFETY: usb_io is valid for the device's lifetime.
     let usb_io = unsafe { &*device.usb_io };
 
-    match usb_requests::usb_set_report_request(
+    match control_transfers::usb_set_report_request(
         usb_io,
         device.descriptors.interface_descriptor.interface_number,
         report_id,
@@ -182,7 +182,7 @@ unsafe extern "efiapi" fn hid_register_report_callback(
     device.report_callback.callback = Some(callback);
     device.report_callback.context = context;
 
-    match transfers::initiate_async_interrupt_input_transfers(device) {
+    match interrupt_transfers::initiate_async_interrupt_input_transfers(device) {
         Ok(()) => efi::Status::SUCCESS,
         Err(status) => {
             device.report_callback.callback = None;
@@ -214,7 +214,7 @@ unsafe extern "efiapi" fn hid_unregister_report_callback(
         _ => return efi::Status::NOT_STARTED,
     }
 
-    match transfers::shutdown_async_interrupt_input_transfers(device) {
+    match interrupt_transfers::shutdown_async_interrupt_input_transfers(device) {
         Ok(()) => {}
         Err(status) => {
             log::error!("USB HID: error shutting down transfers during unregister: {status:x?}");
@@ -238,16 +238,16 @@ mod test {
 
     use crate::{
         device::{ReportCallbackState, UsbHidDescriptors, UsbHidDevice},
-        transfers::TimerServices,
+        interrupt_transfers::TransferRecoveryTimer,
     };
 
-    struct NoopTimerServices;
-    impl TimerServices for NoopTimerServices {
+    struct NoopTransferRecoveryTimer;
+    impl TransferRecoveryTimer for NoopTransferRecoveryTimer {
         fn arm_recovery_timer(&self, _event: efi::Event, _delay: u64) -> Result<(), efi::Status> {
             Ok(())
         }
     }
-    static NOOP_TIMER: NoopTimerServices = NoopTimerServices;
+    static NOOP_RECOVERY_TIMER: NoopTransferRecoveryTimer = NoopTransferRecoveryTimer;
 
     // ---- Mock USB IO ----
 
@@ -328,7 +328,7 @@ mod test {
                 report_descriptor,
             },
             report_callback: ReportCallbackState::default(),
-            timer_services: &NOOP_TIMER,
+            timer_services: &NOOP_RECOVERY_TIMER,
             recovery_event: core::ptr::null_mut(),
         })
     }

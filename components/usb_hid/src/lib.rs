@@ -16,8 +16,8 @@ pub mod descriptors;
 pub mod device;
 pub mod driver;
 pub mod hid_io_impl;
-pub mod transfers;
-pub mod usb_requests;
+pub mod interrupt_transfers;
+pub mod control_transfers;
 
 use alloc::boxed::Box;
 

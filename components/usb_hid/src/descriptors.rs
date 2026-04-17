@@ -9,7 +9,7 @@ use core::{ffi::c_void, mem::size_of};
 
 use r_efi::efi;
 
-use crate::{device::UsbHidDescriptors, usb_requests};
+use crate::{device::UsbHidDescriptors, control_transfers};
 use patina::uefi_protocol::usb_io::{EfiUsbDataDirection, EfiUsbDeviceRequest, EfiUsbIoProtocol, types::*};
 
 /// Owned wrapper around the variable-length USB HID descriptor.
@@ -102,7 +102,7 @@ fn read_report_descriptor(
 
     let mut buffer = vec![0u8; descriptor_length];
 
-    usb_requests::usb_get_report_descriptor(
+    control_transfers::usb_get_report_descriptor(
         usb_io,
         interface_descriptor.interface_number,
         descriptor_length as u16,
