@@ -54,16 +54,15 @@ pub struct UsbHidDevice {
 }
 
 impl UsbHidDevice {
-    /// Recovers a `&mut UsbHidDevice` from a pointer to its `hid_io` field.
+    /// Recovers a raw pointer to the `UsbHidDevice` from a pointer to its `hid_io` field.
     ///
-    /// # Safety
-    ///
-    /// `hid_io_ptr` must point to the `hid_io` field of a valid, heap-allocated
-    /// `UsbHidDevice` instance.
-    pub unsafe fn from_hid_io_protocol(hid_io_ptr: *const HidIoProtocol) -> &'static mut Self {
-        // SAFETY: Caller guarantees hid_io_ptr points into a valid UsbHidDevice.
-        // hid_io is the first field in a #[repr(C)] struct, so the pointers coincide.
-        unsafe { &mut *(hid_io_ptr as *mut UsbHidDevice) }
+    /// This is a pure pointer cast (no dereference) and is therefore safe. The
+    /// caller is responsible for ensuring the returned pointer is valid before
+    /// dereferencing it — `hid_io_ptr` must point to the `hid_io` field of a
+    /// heap-allocated `UsbHidDevice`, and the `hid_io` field must be the first
+    /// field in the `#[repr(C)]` layout.
+    pub fn from_hid_io_protocol(hid_io_ptr: *const HidIoProtocol) -> *mut Self {
+        hid_io_ptr as *mut UsbHidDevice
     }
 }
 
@@ -96,9 +95,8 @@ mod test {
         });
 
         let hid_io_ptr = &device.hid_io as *const HidIoProtocol;
-        // SAFETY: hid_io_ptr points to a valid UsbHidDevice on the heap.
-        let recovered = unsafe { UsbHidDevice::from_hid_io_protocol(hid_io_ptr) };
-        assert_eq!(recovered as *mut _ as usize, &*device as *const _ as usize);
+        let recovered = UsbHidDevice::from_hid_io_protocol(hid_io_ptr);
+        assert_eq!(recovered as usize, &*device as *const _ as usize);
 
         // Prevent drop from double-freeing the leaked box.
         core::mem::forget(device);

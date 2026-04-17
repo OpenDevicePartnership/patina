@@ -9,7 +9,7 @@ use core::{ffi::c_void, mem::size_of};
 
 use r_efi::efi;
 
-use crate::{device::UsbHidDescriptors, control_transfers};
+use crate::{control_transfers, device::UsbHidDescriptors};
 use patina::uefi_protocol::usb_io::{EfiUsbDataDirection, EfiUsbDeviceRequest, EfiUsbIoProtocol, types::*};
 
 /// Owned wrapper around the variable-length USB HID descriptor.
@@ -188,6 +188,15 @@ fn find_hid_descriptor_in_config(
                     let next_header = unsafe { &*(buffer.as_ptr().add(next_offset) as *const UsbDescHead) };
                     if next_header.desc_type == USB_DESC_TYPE_HID {
                         let len = next_header.len as usize;
+                        if next_offset + len > buffer.len() {
+                            log::error!("USB HID: HID descriptor length overflows config buffer");
+                            return Err(efi::Status::DEVICE_ERROR);
+                        }
+                        let min_size = size_of::<EfiUsbHidDescriptor>() + size_of::<HidClassDescriptor>();
+                        if len < min_size {
+                            log::error!("USB HID: HID descriptor too short for header + class descriptor");
+                            return Err(efi::Status::DEVICE_ERROR);
+                        }
                         return Ok(HidDescriptor { data: buffer[next_offset..next_offset + len].to_vec() });
                     }
                 }
@@ -357,6 +366,32 @@ mod test {
         let iface = make_interface(0, 0, 1);
         let buffer = interface_bytes(0, 0, 1);
         assert_eq!(find_hid_descriptor_in_config(&buffer, &iface).unwrap_err(), efi::Status::UNSUPPORTED);
+    }
+
+    #[test]
+    fn find_hid_desc_fails_when_hid_length_overflows_buffer() {
+        let iface = make_interface(0, 0, 1);
+        // HID descriptor claims length of 9 bytes but buffer only has 4 bytes after the interface.
+        let mut buffer = interface_bytes(0, 0, 1);
+        buffer.extend_from_slice(&[9, USB_DESC_TYPE_HID, 0x11, 0x01]);
+        assert_eq!(find_hid_descriptor_in_config(&buffer, &iface).unwrap_err(), efi::Status::DEVICE_ERROR);
+    }
+
+    #[test]
+    fn find_hid_desc_fails_when_hid_descriptor_too_short() {
+        let iface = make_interface(0, 0, 1);
+        // HID descriptor with length smaller than the minimum (header + one class descriptor).
+        let min_size = size_of::<EfiUsbHidDescriptor>() + size_of::<HidClassDescriptor>();
+        let short_len = (min_size - 1) as u8;
+        let mut buffer = interface_bytes(0, 0, 1);
+        // Pad to ensure the buffer is long enough that the bounds check passes,
+        // but the length field is too short for a valid HID descriptor.
+        let mut hid = vec![short_len, USB_DESC_TYPE_HID];
+        hid.resize(short_len as usize, 0);
+        buffer.extend_from_slice(&hid);
+        // Pad buffer to avoid the overflow check triggering first.
+        buffer.resize(buffer.len() + 16, 0);
+        assert_eq!(find_hid_descriptor_in_config(&buffer, &iface).unwrap_err(), efi::Status::DEVICE_ERROR);
     }
 
     #[test]

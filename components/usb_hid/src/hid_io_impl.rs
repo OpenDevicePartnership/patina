@@ -13,7 +13,7 @@ use r_efi::efi;
 
 use patina::vendor_protocols::hid_io::{HidIoProtocol, HidIoReportCallback, HidReportType};
 
-use crate::{device::UsbHidDevice, interrupt_transfers, control_transfers};
+use crate::{control_transfers, device::UsbHidDevice, interrupt_transfers};
 
 /// Creates a new `HidIoProtocol` populated with this module's function pointers.
 pub fn new_hid_io_protocol() -> HidIoProtocol {
@@ -44,7 +44,7 @@ unsafe extern "efiapi" fn hid_get_report_descriptor(
     }
 
     // SAFETY: this points to the hid_io field of a valid UsbHidDevice.
-    let device = unsafe { UsbHidDevice::from_hid_io_protocol(this) };
+    let device = unsafe { &mut *UsbHidDevice::from_hid_io_protocol(this) };
 
     if device.descriptors.report_descriptor.is_empty() {
         return efi::Status::NOT_FOUND;
@@ -98,7 +98,7 @@ unsafe extern "efiapi" fn hid_get_report(
     }
 
     // SAFETY: this points to the hid_io field of a valid UsbHidDevice.
-    let device = unsafe { UsbHidDevice::from_hid_io_protocol(this) };
+    let device = unsafe { &*UsbHidDevice::from_hid_io_protocol(this) };
     // SAFETY: usb_io is valid for the device's lifetime.
     let usb_io = unsafe { &*device.usb_io };
 
@@ -139,7 +139,7 @@ unsafe extern "efiapi" fn hid_set_report(
     }
 
     // SAFETY: this points to the hid_io field of a valid UsbHidDevice.
-    let device = unsafe { UsbHidDevice::from_hid_io_protocol(this) };
+    let device = unsafe { &*UsbHidDevice::from_hid_io_protocol(this) };
     // SAFETY: usb_io is valid for the device's lifetime.
     let usb_io = unsafe { &*device.usb_io };
 
@@ -173,7 +173,7 @@ unsafe extern "efiapi" fn hid_register_report_callback(
     }
 
     // SAFETY: this points to the hid_io field of a valid UsbHidDevice.
-    let device = unsafe { UsbHidDevice::from_hid_io_protocol(this) };
+    let device = unsafe { &mut *UsbHidDevice::from_hid_io_protocol(this) };
 
     if device.report_callback.callback.is_some() {
         return efi::Status::ALREADY_STARTED;
@@ -206,7 +206,7 @@ unsafe extern "efiapi" fn hid_unregister_report_callback(
     }
 
     // SAFETY: this points to the hid_io field of a valid UsbHidDevice.
-    let device = unsafe { UsbHidDevice::from_hid_io_protocol(this) };
+    let device = unsafe { &mut *UsbHidDevice::from_hid_io_protocol(this) };
 
     // Verify the callback matches the registered one.
     match device.report_callback.callback {

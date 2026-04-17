@@ -14,7 +14,7 @@ use patina::boot_services::{
     tpl::Tpl,
 };
 
-use crate::{device::UsbHidDevice, control_transfers};
+use crate::{control_transfers, device::UsbHidDevice};
 use patina::uefi_protocol::usb_io::types::*;
 
 /// Delay in 100ns units before re-submitting after a transfer error.

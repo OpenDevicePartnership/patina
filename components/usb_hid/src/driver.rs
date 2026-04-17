@@ -20,7 +20,7 @@ use patina::{
     vendor_protocols::hid_io,
 };
 
-use crate::{descriptors, device::UsbHidDevice, hid_io_impl, interrupt_transfers, control_transfers};
+use crate::{control_transfers, descriptors, device::UsbHidDevice, hid_io_impl, interrupt_transfers};
 use patina::boot_services::event::EventTimerType;
 
 /// USB HID driver that implements [`DriverBinding`].
@@ -50,10 +50,9 @@ fn is_usb_hid(usb_io: &EfiUsbIoProtocol) -> bool {
 
 // efi::Handle is an opaque *mut c_void that is never actually dereferenced as a pointer.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-// FFI wrapper trait; core logic is tested elsewhere via unit tests on individual modules.
-#[coverage(off)]
 impl DriverBinding for UsbHidDriver {
     /// Tests if the given controller has USB IO with HID interface class.
+    #[coverage(off)]
     fn driver_binding_supported<U: BootServices + 'static>(
         &self,
         boot_services: &'static U,
@@ -193,14 +192,15 @@ impl DriverBinding for UsbHidDriver {
         }? as *const hid_io::HidIoProtocol;
 
         // SAFETY: hid_io_ptr points into a valid heap-allocated UsbHidDevice.
-        let device = unsafe { UsbHidDevice::from_hid_io_protocol(hid_io_ptr) };
+        let device = unsafe { &mut *UsbHidDevice::from_hid_io_protocol(hid_io_ptr) };
 
-        // Cancel the recovery timer and close the event before shutting down transfers.
+        // Shutdown async transfers first so that no further interrupt callbacks can
+        // fire and attempt to arm the recovery timer after we close it.
+        let _ = interrupt_transfers::shutdown_async_interrupt_input_transfers(device);
+
+        // Now that no callbacks can fire, cancel and close the recovery timer event.
         let _ = boot_services.set_timer(device.recovery_event, EventTimerType::Cancel, 0);
         let _ = boot_services.close_event(device.recovery_event);
-
-        // Shutdown async transfers if active.
-        let _ = interrupt_transfers::shutdown_async_interrupt_input_transfers(device);
 
         // Uninstall HidIo protocol.
         // SAFETY: Uninstalling the HidIo protocol interface.

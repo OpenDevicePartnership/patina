@@ -12,12 +12,12 @@
 
 extern crate alloc;
 
-pub mod descriptors;
-pub mod device;
-pub mod driver;
-pub mod hid_io_impl;
-pub mod interrupt_transfers;
-pub mod control_transfers;
+pub(crate) mod control_transfers;
+pub(crate) mod descriptors;
+pub(crate) mod device;
+pub(crate) mod driver;
+pub(crate) mod hid_io_impl;
+pub(crate) mod interrupt_transfers;
 
 use alloc::boxed::Box;
 
