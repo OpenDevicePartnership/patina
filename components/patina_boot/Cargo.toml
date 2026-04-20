@@ -16,6 +16,8 @@ patina = { workspace = true, features = ["unstable-device-path"] }
 patina_macro = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
 patina = { path = "../../sdk/patina", features = ["mockall", "unstable-device-path"] }
