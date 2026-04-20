@@ -523,6 +523,163 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &Dev
     Err(EfiError::NotFound)
 }
 
+const LOAD_OPTION_ACTIVE: u32 = 0x00000001;
+
+use zerocopy::FromBytes;
+use zerocopy_derive::*;
+
+#[derive(FromBytes, KnownLayout, Immutable)]
+#[repr(C, packed)]
+struct LoadOptionHeader {
+    attributes: zerocopy::little_endian::U32,
+    file_path_list_length: zerocopy::little_endian::U16,
+}
+
+/// Discover boot options from UEFI `BootOrder` and `Boot####` variables.
+///
+/// Reads the `BootOrder` variable to determine boot attempt order, then reads
+/// each corresponding `Boot####` variable and parses the `EFI_LOAD_OPTION`
+/// structure to extract device paths. Only active boot options are returned.
+///
+/// Returns a [`BootConfig`](crate::config::BootConfig) populated with the discovered device paths, or
+/// an error if `BootOrder` cannot be read.
+pub fn discover_boot_options<R: RuntimeServices>(runtime_services: &R) -> Result<super::config::BootConfig> {
+    let namespace = EFI_GLOBAL_VARIABLE.into_inner();
+
+    let boot_order_name: Vec<u16> = "BootOrder\0".encode_utf16().collect();
+    let boot_order_name = boot_order_name.as_slice();
+
+    let (boot_order_bytes, _attributes): (Vec<u8>, u32) =
+        runtime_services.get_variable(boot_order_name, &namespace, None)?;
+
+    if boot_order_bytes.len() % 2 != 0 || boot_order_bytes.is_empty() {
+        log::error!("discover_boot_options: invalid BootOrder variable length");
+        return Err(EfiError::NotFound);
+    }
+
+    let boot_order: Vec<u16> =
+        boot_order_bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect();
+
+    let mut device_paths: Vec<DevicePathBuf> = Vec::new();
+
+    for option_number in &boot_order {
+        let var_name = boot_option_variable_name(*option_number);
+
+        let load_option_bytes = match runtime_services.get_variable::<Vec<u8>>(&var_name, &namespace, None) {
+            Ok((bytes, _)) => bytes,
+            Err(e) => {
+                log::warn!("discover_boot_options: failed to read Boot{:04X}: {:?}", option_number, e);
+                continue;
+            }
+        };
+
+        if let Some(device_path_buf) = parse_load_option(&load_option_bytes) {
+            device_paths.push(device_path_buf);
+        }
+    }
+
+    let mut iter = device_paths.into_iter();
+    let first = iter.next().ok_or(EfiError::NotFound)?;
+    let config = iter.fold(super::config::BootConfig::new(first), |config, dp| config.with_device(dp));
+
+    Ok(config)
+}
+
+/// Build a null-terminated UTF-16 variable name for `Boot####`.
+fn boot_option_variable_name(option_number: u16) -> Vec<u16> {
+    let mut name = alloc::format!("Boot{:04X}", option_number).encode_utf16().collect::<Vec<u16>>();
+    name.push(0);
+    name
+}
+
+/// Validate that all device path node lengths stay within the buffer.
+///
+/// Walks the node list checking that each node's Length field doesn't exceed the
+/// remaining buffer and that the path terminates with an EndEntire node.
+fn validate_device_path_nodes(buffer: &[u8]) -> bool {
+    const NODE_HEADER_SIZE: usize = 4;
+    const END_ENTIRE_TYPE: u8 = 0x7F;
+    const END_ENTIRE_SUBTYPE: u8 = 0xFF;
+
+    let mut pos = 0;
+    loop {
+        if pos + NODE_HEADER_SIZE > buffer.len() {
+            return false;
+        }
+
+        let node_type = buffer[pos];
+        let node_subtype = buffer[pos + 1];
+        let node_length = u16::from_le_bytes([buffer[pos + 2], buffer[pos + 3]]) as usize;
+
+        if node_length < NODE_HEADER_SIZE {
+            return false;
+        }
+        if pos + node_length > buffer.len() {
+            return false;
+        }
+
+        if node_type == END_ENTIRE_TYPE && node_subtype == END_ENTIRE_SUBTYPE {
+            return true;
+        }
+
+        pos += node_length;
+    }
+}
+
+/// Parse an `EFI_LOAD_OPTION` structure and return the device path if active.
+///
+/// EFI_LOAD_OPTION layout:
+///   u32    Attributes
+///   u16    FilePathListLength
+///   [u16]  Description (null-terminated UTF-16)
+///   [u8]   FilePathList (device path, FilePathListLength bytes)
+///   [u8]   OptionalData (remaining bytes, ignored)
+fn parse_load_option(data: &[u8]) -> Option<DevicePathBuf> {
+    let (header, rest) = LoadOptionHeader::read_from_prefix(data).ok()?;
+
+    if header.attributes.get() & LOAD_OPTION_ACTIVE == 0 {
+        return None;
+    }
+
+    let file_path_list_length = header.file_path_list_length.get() as usize;
+
+    // Skip past the null-terminated UTF-16 description string
+    let mut offset = 0;
+    loop {
+        if offset + 1 >= rest.len() {
+            return None;
+        }
+        let ch = u16::from_le_bytes([rest[offset], rest[offset + 1]]);
+        offset += 2;
+        if ch == 0 {
+            break;
+        }
+    }
+
+    let file_path_end = offset + file_path_list_length;
+    if file_path_end > rest.len() {
+        return None;
+    }
+
+    let file_path_bytes = &rest[offset..file_path_end];
+
+    if !validate_device_path_nodes(file_path_bytes) {
+        log::warn!("discover_boot_options: device path node lengths exceed buffer");
+        return None;
+    }
+
+    // SAFETY: file_path_bytes contains a validated device path — all node lengths
+    // are within the buffer and a terminating EndEntire node is present.
+    let device_path = unsafe { DevicePath::try_from_ptr(file_path_bytes.as_ptr()) };
+    match device_path {
+        Ok(dp) => Some(DevicePathBuf::from(dp)),
+        Err(e) => {
+            log::warn!("discover_boot_options: invalid device path in load option: {}", e);
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -1205,5 +1362,259 @@ mod tests {
 
         let result = expand_device_path(&mock, &partial);
         assert!(result.is_err(), "Should fail when handle_protocol fails");
+    }
+
+    // Tests for discover_boot_options / parse_load_option / boot_option_variable_name
+
+    fn build_load_option(attributes: u32, description: &str, device_path: &DevicePathBuf) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&attributes.to_le_bytes());
+        let dp_bytes = device_path.as_ref().as_bytes();
+        data.extend_from_slice(&(dp_bytes.len() as u16).to_le_bytes());
+        for c in description.encode_utf16() {
+            data.extend_from_slice(&c.to_le_bytes());
+        }
+        data.extend_from_slice(&0u16.to_le_bytes()); // null terminator
+        data.extend_from_slice(dp_bytes);
+        data
+    }
+
+    fn build_boot_order(option_numbers: &[u16]) -> Vec<u8> {
+        option_numbers.iter().flat_map(|n| n.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn test_boot_option_variable_name() {
+        let name = boot_option_variable_name(0x0001);
+        let expected: Vec<u16> = "Boot0001\0".encode_utf16().collect();
+        assert_eq!(name, expected);
+    }
+
+    #[test]
+    fn test_boot_option_variable_name_hex() {
+        let name = boot_option_variable_name(0x00AB);
+        let expected: Vec<u16> = "Boot00AB\0".encode_utf16().collect();
+        assert_eq!(name, expected);
+    }
+
+    #[test]
+    fn test_parse_load_option_active() {
+        let dp = create_test_device_path();
+        let data = build_load_option(LOAD_OPTION_ACTIVE, "Test", &dp);
+        let result = parse_load_option(&data);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_load_option_inactive() {
+        let dp = create_test_device_path();
+        let data = build_load_option(0, "Test", &dp);
+        let result = parse_load_option(&data);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_load_option_too_short() {
+        let result = parse_load_option(&[0; 4]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_valid() {
+        // EndEntire node: type=0x7F, subtype=0xFF, length=4
+        let buffer = [0x7F, 0xFF, 0x04, 0x00];
+        assert!(validate_device_path_nodes(&buffer));
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_multi_node() {
+        // HW node (type=1, subtype=1, length=6) + 2 pad bytes + EndEntire
+        let buffer = [0x01, 0x01, 0x06, 0x00, 0xAA, 0xBB, 0x7F, 0xFF, 0x04, 0x00];
+        assert!(validate_device_path_nodes(&buffer));
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_length_exceeds_buffer() {
+        // Node claims length=100 but buffer is only 4 bytes
+        let buffer = [0x01, 0x01, 0x64, 0x00];
+        assert!(!validate_device_path_nodes(&buffer));
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_length_too_small() {
+        // Node length < 4 (minimum header size)
+        let buffer = [0x01, 0x01, 0x02, 0x00];
+        assert!(!validate_device_path_nodes(&buffer));
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_no_end_node() {
+        // Valid node but no EndEntire — runs past buffer
+        let buffer = [0x01, 0x01, 0x04, 0x00];
+        assert!(!validate_device_path_nodes(&buffer));
+    }
+
+    #[test]
+    fn test_validate_device_path_nodes_empty_buffer() {
+        assert!(!validate_device_path_nodes(&[]));
+    }
+
+    #[test]
+    fn test_parse_load_option_malformed_device_path_node_length() {
+        // Build a load option with a device path whose node claims a huge length
+        let mut data = Vec::new();
+        data.extend_from_slice(&LOAD_OPTION_ACTIVE.to_le_bytes()); // attributes
+        let fake_dp = [0x01, 0x01, 0xFF, 0x00]; // node type=1, subtype=1, length=255 (OOB)
+        data.extend_from_slice(&(fake_dp.len() as u16).to_le_bytes()); // file path list length
+        data.extend_from_slice(&[0x00, 0x00]); // empty description (null terminator)
+        data.extend_from_slice(&fake_dp); // malformed device path
+        let result = parse_load_option(&data);
+        assert!(result.is_none(), "malformed device path node length must be rejected");
+    }
+
+    #[test]
+    fn test_parse_load_option_truncated_description() {
+        // Active attributes + file path length but no null terminator for description
+        let mut data = Vec::new();
+        data.extend_from_slice(&LOAD_OPTION_ACTIVE.to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes()); // file path length
+        data.extend_from_slice(&[0x41, 0x00]); // 'A' in UTF-16 but no null terminator
+        let result = parse_load_option(&data);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_discover_boot_options_single_option() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = create_test_device_path();
+        let load_option = build_load_option(LOAD_OPTION_ACTIVE, "Windows", &dp);
+        let boot_order = build_boot_order(&[0x0001]);
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(move |name, _, _| {
+            if name[0] == 'B' as u16 && name[4] == 'O' as u16 {
+                Ok((boot_order.clone(), 0))
+            } else {
+                Ok((load_option.clone(), 0))
+            }
+        });
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().devices().count(), 1);
+    }
+
+    #[test]
+    fn test_discover_boot_options_multiple_options() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = create_test_device_path();
+        let load_option = build_load_option(LOAD_OPTION_ACTIVE, "Option", &dp);
+        let boot_order = build_boot_order(&[0x0001, 0x0002, 0x0003]);
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(move |name, _, _| {
+            if name[0] == 'B' as u16 && name[4] == 'O' as u16 {
+                Ok((boot_order.clone(), 0))
+            } else {
+                Ok((load_option.clone(), 0))
+            }
+        });
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().devices().count(), 3);
+    }
+
+    #[test]
+    fn test_discover_boot_options_skips_inactive() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = create_test_device_path();
+        let active = build_load_option(LOAD_OPTION_ACTIVE, "Active", &dp);
+        let inactive = build_load_option(0, "Inactive", &dp);
+        let boot_order = build_boot_order(&[0x0001, 0x0002]);
+
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(move |name, _, _| {
+            if name[0] == 'B' as u16 && name[4] == 'O' as u16 {
+                Ok((boot_order.clone(), 0))
+            } else {
+                let n = call_count_clone.fetch_add(1, Ordering::SeqCst);
+                if n == 0 { Ok((active.clone(), 0)) } else { Ok((inactive.clone(), 0)) }
+            }
+        });
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().devices().count(), 1);
+    }
+
+    #[test]
+    fn test_discover_boot_options_boot_order_not_found() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(|_, _, _| Err(efi::Status::NOT_FOUND));
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_discover_boot_options_all_inactive() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = create_test_device_path();
+        let inactive = build_load_option(0, "Inactive", &dp);
+        let boot_order = build_boot_order(&[0x0001]);
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(move |name, _, _| {
+            if name[0] == 'B' as u16 && name[4] == 'O' as u16 {
+                Ok((boot_order.clone(), 0))
+            } else {
+                Ok((inactive.clone(), 0))
+            }
+        });
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_discover_boot_options_skips_unreadable_option() {
+        use patina::runtime_services::MockRuntimeServices;
+
+        let dp = create_test_device_path();
+        let active = build_load_option(LOAD_OPTION_ACTIVE, "Good", &dp);
+        let boot_order = build_boot_order(&[0x0001, 0x0002]);
+
+        let call_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        let mut runtime_mock = MockRuntimeServices::new();
+
+        runtime_mock.expect_get_variable::<Vec<u8>>().returning(move |name, _, _| {
+            if name[0] == 'B' as u16 && name[4] == 'O' as u16 {
+                Ok((boot_order.clone(), 0))
+            } else {
+                let n = call_count_clone.fetch_add(1, Ordering::SeqCst);
+                if n == 0 { Err(efi::Status::NOT_FOUND) } else { Ok((active.clone(), 0)) }
+            }
+        });
+
+        let result = discover_boot_options(&runtime_mock);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().devices().count(), 1);
     }
 }

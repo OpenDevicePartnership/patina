@@ -129,10 +129,6 @@ impl BootOrchestrator for SimpleBootManager {
         let use_hotkey_devices =
             if let Some(hotkey) = self.config.hotkey() { helpers::detect_hotkey(boot_services, hotkey) } else { false };
 
-        if let Err(e) = helpers::signal_ready_to_boot(boot_services) {
-            log::error!("signal_ready_to_boot failed: {:?}", e);
-        }
-
         // Select boot devices based on hotkey detection
         let boot_devices: Vec<&DevicePathBuf> = if use_hotkey_devices {
             log::info!("Using alternate boot options (hotkey detected)");
@@ -142,6 +138,11 @@ impl BootOrchestrator for SimpleBootManager {
         };
 
         for device_path in boot_devices {
+            // Signal ReadyToBoot before each boot attempt per UEFI 2.11 §3
+            if let Err(e) = helpers::signal_ready_to_boot(boot_services) {
+                log::error!("signal_ready_to_boot failed: {:?}", e);
+            }
+
             match helpers::boot_from_device_path(boot_services, image_handle, device_path) {
                 Ok(()) => {
                     // Boot image returned control (e.g., EFI application exited).
