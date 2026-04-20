@@ -21,7 +21,7 @@ parseable structures.
 
 Supporting DSTs will require some fundamental changes to how ACPI table data is managed (described in-depth below),
 which means we have the opportunity to make some other fundamental changes to improve the code, such as using zerocopy
-instead of raw pointer manipulation.
+instead of raw pointer manipulation. This also allows for tightening the memory safety of the current design.
 
 ## Technology Background
 
@@ -41,16 +41,6 @@ instead of raw pointer manipulation.
 2. Documentation is updated and better usage documentation created.
 
 ## Unresolved Questions
-
-- Do we find the const SIGNATURE in the `AcpiTable` trait defintion useful? Currently we cache the `TypeId` when
-  adding a table with the service, which is used to validate against if someone attempts to retrieve the table from the
-  database. This has the downside that if a ACPI table was added via the protocol, we do not have a `TypeId` associated
-  with the table, and cannot validate it, if we attempt to retrieve it on the rust side. Replacing the TypeId with
-  signature validation would better validate the `C protocol -> Service` story while also 100% validating the
-  `Service -> Service` story.
-
-- As noted in the Technology Background, DSTs must always be a reference to the data, since they are an unknown size.
-  Examples of this are `&MyStruct`, `Box<MyStruct>`, `Rc<MyStruct>`, etc. 
 
 ## Alternatives
 
@@ -106,7 +96,7 @@ multiple zerocopy traits be implemented on it.
 /// 2. length: u32
 /// 3. revision: u8
 /// 4. checksum: u8
-unsafe trait AcpiTable: FromBytes + IntoBytes + Immutable + KnownLayout {
+unsafe trait AcpiTable: FromBytes + IntoBytes + Immutable + KnownLayout + Packed {
     /// The signature of the table. Must match the signature field in the table.
     const SIGNATURE: u32
 }
@@ -133,12 +123,70 @@ unsafe trait AcpiTable: FromBytes + IntoBytes + Immutable + KnownLayout {
 pub use patina_macro::AcpiTable;
 ```
 
-### Acpi service definition
+### ACPI Table defintion
 
 To support ACPI Tables that are DSTs, the interface consuming and retrieving
 
 ```rust
-pub trait AcpiProvider {
+
+struct Table<'a, T: AcpiTable> {
+    data: Vec<u8>,
+    _phantom: PhantomData<T>,
+}
+
+impl <T: AcpiTable> Table<'_, T> {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &[u8] {
+        &mut self.data
+    }
+
+    /// Clones and appends all elements into the ACPI Table.
+    /// 
+    /// Useful for DST ACPI tables that are runtime parseable objects who can have table entries appended to.
+    pub fn extend_from_slice(&mut self, other: &[u8]) {
+        self.data.extend_from_slice(other)
+    }
+}
+
+impl <T: AcpiTable> Deref for Table<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        <T as zerocopy::FromBytes>::ref_from_bytes(&self).unwrap()
+    }
+}
+
+impl <T: AcpiTable> DerefMut for Table<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        <T as zerocopy::FromBytes>::mut_from_bytes(&self).unwrap()
+    }
+}
+
+impl<T: AcpiTable>TryInto<T> for Table<'_, AcpiTableHeader> {
+    type Error = AcpiError;
+
+    fn try_into(self) -> Result<T, Self::Error> {
+        if self.header().signature != T::SIGNATURE {
+            return AcpiError::InvalidTableFormat;
+        }
+
+        Table {
+            data: self.data,
+            _marker: core::marker::PhantomData
+        } 
+    }
+
+}
+
+```
+
+### ACPI service definition
+
+```rust 
+pub trait Acpi {
     /// Installs the ACPI table and returns a key that can be used for future manipulation
     ///
     /// This method copies the byte slice into the correct memory type.
