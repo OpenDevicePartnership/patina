@@ -89,6 +89,7 @@ where
             "{} `input` is `None` during run. Did this component already run?",
             core::any::type_name::<Self>()
         );
+        log::info!("Dispatching {}", self.metadata.name());
         self.func.run(&mut self.input, param_value).map(|_| true)
     }
 

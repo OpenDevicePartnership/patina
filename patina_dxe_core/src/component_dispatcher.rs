@@ -223,10 +223,7 @@ impl ComponentDispatcher {
             let name = component.metadata().name();
             log::trace!("Dispatch Start: Id = [{name:?}]");
             !match component.run(&mut self.storage) {
-                Ok(true) => {
-                    log::info!("Dispatched: Id = [{name:?}] Status = [Success]");
-                    true
-                }
+                Ok(true) => true,
                 Ok(false) => false,
                 Err(err) => {
                     log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
