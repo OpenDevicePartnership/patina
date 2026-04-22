@@ -29,7 +29,10 @@ impl HidDescriptor {
 
     fn class_descriptors(&self) -> &[HidClassDescriptor] {
         let count = self.header().num_descriptors as usize;
-        // SAFETY: data was copied from a valid HID descriptor with trailing class descriptor entries.
+        let available =
+            self.data.len().saturating_sub(size_of::<EfiUsbHidDescriptor>()) / size_of::<HidClassDescriptor>();
+        let count = count.min(available);
+        // SAFETY: Construction validates data.len() >= header + at least `count` class descriptors.
         unsafe {
             let base = self.data.as_ptr().add(size_of::<EfiUsbHidDescriptor>()) as *const HidClassDescriptor;
             core::slice::from_raw_parts(base, count)
@@ -176,7 +179,10 @@ fn find_hid_descriptor_in_config(
         }
 
         if header.desc_type == USB_DESC_TYPE_INTERFACE {
-            // SAFETY: We've checked desc_type; the interface descriptor is at cursor.
+            if cursor + size_of::<EfiUsbInterfaceDescriptor>() > buffer.len() {
+                break;
+            }
+            // SAFETY: bounds check above ensures EfiUsbInterfaceDescriptor fits at cursor.
             let iface = unsafe { &*(buffer.as_ptr().add(cursor) as *const EfiUsbInterfaceDescriptor) };
             if iface.interface_number == interface_descriptor.interface_number
                 && iface.alternate_setting == interface_descriptor.alternate_setting
@@ -308,6 +314,27 @@ mod test {
         assert_eq!(entry.descriptor_type, USB_DESC_TYPE_REPORT);
         let len = entry.descriptor_length;
         assert_eq!(len, 256);
+    }
+
+    #[test]
+    fn hid_descriptor_class_descriptors_clamps_inflated_count() {
+        // Build a HID descriptor that claims 4 class descriptors but only has space for 1.
+        let mut data = hid_bytes(64);
+        // Overwrite num_descriptors (offset 5 in the HID descriptor) to claim 4.
+        data[5] = 4;
+        let hid = HidDescriptor { data };
+        // Should be clamped to the 1 entry that actually fits.
+        let class_descs = hid.class_descriptors();
+        assert_eq!(class_descs.len(), 1);
+    }
+
+    #[test]
+    fn find_hid_desc_fails_when_interface_truncated_in_buffer() {
+        let iface = make_interface(0, 0, 1);
+        // Buffer has the UsbDescHead for an interface (2 bytes match) but is too short
+        // for a full EfiUsbInterfaceDescriptor.
+        let buffer = vec![9, USB_DESC_TYPE_INTERFACE, 0, 0];
+        assert_eq!(find_hid_descriptor_in_config(&buffer, &iface).unwrap_err(), efi::Status::UNSUPPORTED);
     }
 
     // ---- find_hid_descriptor_in_config tests ----

@@ -64,6 +64,7 @@ unsafe extern "efiapi" fn hid_get_report_descriptor(
 
     // SAFETY: Both pointers are valid for report_descriptor.len() bytes.
     unsafe {
+        *report_descriptor_size = device.descriptors.report_descriptor.len();
         core::ptr::copy_nonoverlapping(
             device.descriptors.report_descriptor.as_ptr(),
             report_descriptor_buffer as *mut u8,
@@ -424,6 +425,7 @@ mod test {
         // SAFETY: device is a valid UsbHidDevice; buffer is large enough.
         let status = unsafe { hid_get_report_descriptor(hid_io_ptr, &mut size, buffer.as_mut_ptr() as *mut c_void) };
         assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(size, descriptor.len(), "size should be updated to actual descriptor length on success");
         assert_eq!(&buffer[..descriptor.len()], &descriptor);
         core::mem::forget(device);
     }

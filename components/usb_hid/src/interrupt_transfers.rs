@@ -71,6 +71,12 @@ extern "efiapi" fn recovery_timer_notify(_event: efi::Event, context: *mut UsbHi
     }
     // SAFETY: context is a valid UsbHidDevice pointer set during event creation.
     let device = unsafe { &mut *context };
+
+    // If the callback was unregistered while the timer was armed, do not re-submit.
+    if device.report_callback.callback.is_none() {
+        return;
+    }
+
     if let Err(status) = initiate_async_interrupt_input_transfers(device) {
         log::warn!("USB HID: recovery re-submit failed: {status:x?}");
     }
@@ -598,6 +604,20 @@ mod test {
         assert_eq!(mock_usb.async_call_count.get(), 1);
         // Recovery timer should have been armed.
         assert!(mock_timer.arm_called.get());
+        core::mem::forget(device);
+    }
+
+    #[test]
+    fn recovery_timer_does_not_resubmit_after_callback_unregistered() {
+        let mock_usb = make_mock_usb_io(efi::Status::SUCCESS, efi::Status::SUCCESS);
+        let mut device = make_device(&mock_usb);
+        // No callback registered — simulates unregister having cleared it.
+        assert!(device.report_callback.callback.is_none());
+        let device_ptr = &mut *device as *mut UsbHidDevice;
+        // Simulate the recovery timer firing.
+        recovery_timer_notify(core::ptr::null_mut(), device_ptr);
+        // Should NOT have attempted to re-submit async transfers.
+        assert_eq!(mock_usb.async_call_count.get(), 0);
         core::mem::forget(device);
     }
 }
