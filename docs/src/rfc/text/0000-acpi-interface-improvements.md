@@ -1,7 +1,7 @@
 # RFC: `patina_acpi` service interface improvements
 
 This RFC proposes interface changes to reduce the two services (`Service<dyn AcpiProvider>` and
-`Service<AcpiTableManager`>) to a single `Service<dyn Acpi>` service and provide a public Helper struct,`Table` for
+`Service<AcpiTableManager`>) to a single `Service<dyn Acpi>` service and provide a public Helper struct, `Table` for
 managing ACPI tables both internal to the service implementation and as a consumer of the service. This `Table`
 structure would better support multiple types of ACPI tables, such as statically sized and dynamically sized ACPI
 tables.
@@ -14,12 +14,12 @@ tables.
 
 The main motivation behind this change is to add support for DSTs (Dynamically Sized Types) in the generics portion of
 the service interface. DST ACPI tables are currently supported via usage of the non-generic interfaces ACPI service
-methods, as they simply take a slice of bytes that start with an ACPI table header. This puts all safety burdons on the
+methods, as they simply take a slice of bytes that start with an ACPI table header. This puts all safety burdens on the
 developer. The proposed interface changes and additional support for DSTs would be highly beneficial as it would
 provide a standard interface for interacting with both static and dynamically sized ACPI tables.
 
 Supporting DSTs will require some fundamental changes to how ACPI table data is managed (described in-depth below). The
-high level description is that we will be removing the current generic table structure in favor of `Box<[u8]>`, which
+high-level description is that we will be removing the current generic table structure in favor of `Box<[u8]>`, which
 self manages the ACPI page allocation while relying on `zerocopy` to interpret the table byte prefixes as an
 `AcpiTableHeader`. Due to this, it will remove a large chunk of `unsafe` blocks throughout the crate.
 
@@ -71,7 +71,7 @@ it was not directly referencing the true ACPI table memory.
 
 This change is focused mostly on the service API to provide common logic for table management (creation, updating)
 on the consumer side of the service. Only a very minimal set of changes are made to the service implementation to
-accompidate the interface changes. These changes will remove unsafe code in the service implementation as table
+accommodate the interface changes. These changes will remove unsafe code in the service implementation as table
 access will move away from pointers and dereferencing to slices and safe byte interpretation via `zerocopy`.
 
 Starting with changes to the service implementation and data management: A new unsafe trait, `AcpiTable` is created to
@@ -82,7 +82,7 @@ do this validation when implementing the `AcpiTable` trait. Implementation detai
 
 On the consumer side service changes, a new struct, `Table` is used to ensure you can safely work with your ACPI table
 without breaking any UB guarantees. While this table supports statically sized tables (allowing for safe interpretation
-of the table as the underlying type), it's focus is on simplifying the data management when it comes to dynamically
+of the table as the underlying type), its focus is on simplifying the data management when it comes to dynamically
 sized tables. Broadly speaking, it provides an API for inserting, removing, and manipulating elements at the end of
 a dynamically sized ACPI table with formats similar to this:
 
@@ -145,9 +145,19 @@ pub trait Element: IntoBytes + FromBytes + Immutable + KnownLayout + Unaligned {
 
     /// Returns the runtime size (in bytes) of the element.
     /// 
-    /// This is used to determine the size (in bytes) 
+    /// This is used to determine the size (in bytes) of the element. 
     fn element_size(&self) -> usize;
 }
+
+/// A blanket implementation of `Element` for all sized types
+impl <E: IntoBytes + FromBytes + Immutable + KnownLayout + Unaligned> Element for E {
+    const SIZE: usize = core::mem::size_of::<E>();
+
+    fn element_size(&self) -> usize {
+        Self::SIZE
+    }
+}
+
 
 /// A trait to specify the type of ACPI table this is
 /// 
@@ -171,8 +181,8 @@ As mentioned above, there are minimal changes to the table management logic insi
 change is that the object that manages the underlying data for each table is being changed from a custom struct that
 wraps a leaked pointer, to a `Box<[u8]>`. In the current implementation, a union is used to treat the underlying data as
 either a (1) signature, (2) AcpiTableHeader, or (3), the entire table. In the new implementation as seen below, we will
-utilize `zerocopy` to safely interpret the prefix bytes as a `AcpiTableHeader`, which is used for all interior table
-management. Other then some helper functions to assist with this, no other changes will be made.
+utilize `zerocopy` to safely interpret the prefix bytes as an `AcpiTableHeader`, which is used for all interior table
+management. Other than some helper functions to assist with this, no other changes will be made.
 
 ```rust
 struct StandardAcpiProvider<B: BootServices + 'static> {
@@ -208,14 +218,14 @@ impl<B: BootServices> AcpiProvider for StandardAcpiProvider<B> {
     /// Uninstalls the ACPI table.
     fn uninstall_acpi_table(&self, table_key: usize) -> Result<(), AcpiTableError> {
         // Uninstalling a table is slightly simplified as the Box<[u8]> will automatically deallocate the table once
-        // it is removed form the BTreeMap and goes out of scope.
+        // it is removed from the BTreeMap and goes out of scope.
         //
         // Note: We are still responsible for updating the XSDT or other special table handling for the DSDT / FACS
     }
 
     /// Returns a copy of the table if it exists.
     fn get_table(&self, key: &usize) -> Result<Table<AcpiTableHeader>, AcpiTableError> {
-        let copied_bytes: Vec<u8> = self.acpi_tables.lock().get(key).ok_or(AcpiEror::NotFound)?.as_ref().clone();
+        let copied_bytes: Vec<u8> = self.acpi_tables.lock().get(key).ok_or(AcpiError::NotFound)?.as_ref().clone();
         let table: Table<AcpiTableHeader> = Table {
             data: copied_bytes,
             _marker: PhantomData,
@@ -281,7 +291,7 @@ pub trait AcpiExt {
     /// 
     fn install_table<T: AcpiTable>(&self, table: &T) -> Result<u32, AcpiError>;
 
-    /// Gets a table by it's key.
+    /// Gets a table by its key.
     /// 
     /// ## Errors
     /// 
@@ -306,7 +316,7 @@ pub trait AcpiExt {
 
 /// This is a way to have generic methods on a service interface, by implementing the generics on the
 /// service itself.
-impl AcpiExt on Service<dyn Acpi> { ... }
+impl AcpiExt for Service<dyn Acpi> { ... }
 
 ```
 
@@ -320,7 +330,7 @@ tables that can consumed by the service. The main purpose is to create an easy w
 sized ACPI tables outside of the service.
 
 The `Table` structure provides a rich interface for creating ACPI Tables and working with DSTs as if they were a vector
-of the underlying elements. That is to say a ACPI Table with a layout of `{ AcpiHeader, [MyElement] }` should will
+of the underlying elements. That is to say, an ACPI Table with a layout of `{ AcpiHeader, [MyElement] }` will
 have an interface similar to a `Vec<MyElement>`. Below is the provided interface. The implementations are left out for
 brevity's sake
 
@@ -459,7 +469,7 @@ struct Fields {
 }
 
 #[derive(AcpiTable, FromBytes, IntoBytes, KnownLayout, Unaligned, Immutable)]
-#[signature('S', 'T', 'B', 'L')]
+#[signature = "STBL"]
 struct SimpleTable {
     header: AcpiTableHeader,
     fields: Fields,
