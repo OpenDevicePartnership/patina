@@ -456,7 +456,7 @@ impl<T: BootServices + Clone + 'static> KeyboardHidHandler<T> {
             self.boot_services.create_event_ex_unchecked(
                 EventType::NOTIFY_SIGNAL,
                 Tpl::NOTIFY,
-                Self::on_layout_update,
+                Some(Self::on_layout_update),
                 context_ptr,
                 &protocols::hii_database::SET_KEYBOARD_LAYOUT_EVENT_GUID,
             )
