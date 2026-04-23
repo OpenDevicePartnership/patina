@@ -7,13 +7,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::arch::global_asm;
-use lazy_static::lazy_static;
+use core::{arch::global_asm, cell::UnsafeCell};
 use patina::base::SIZE_4GB;
-use x86_64::{
-    VirtAddr,
-    structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
-};
 
 global_asm!(include_str!("interrupt_handler.asm"));
 // Use efiapi for the consistent calling convention.
@@ -21,78 +16,119 @@ unsafe extern "efiapi" {
     fn AsmGetVectorAddress(index: usize) -> u64;
 }
 
-// The x86_64 crate requires the IDT to be static, which makes sense as the IDT
-// can live beyond any code lifetime.
-lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
-        let mut idt = InterruptDescriptorTable::new();
+/// A single 16-byte gate descriptor in the IDT.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct IdtEntry {
+    offset_low: u16,
+    selector: u16,
+    ist: u8,
+    type_attr: u8,
+    offset_mid: u16,
+    offset_high: u32,
+    reserved: u32,
+}
 
-        // Initialize all of the index-able well-known entries.
-        for vector in [0, 1, 2, 3, 4, 5, 6, 7, 9, 16, 19, 20, 28] {
-            // SAFETY: We are constructing the well known IDT handlers which must be present in the IDT
-            unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
-        }
+impl IdtEntry {
+    const fn empty() -> Self {
+        Self { offset_low: 0, selector: 0, ist: 0, type_attr: 0, offset_mid: 0, offset_high: 0, reserved: 0 }
+    }
 
-        // Intentionally use direct function for double fault. This allows for
-        // more robust diagnostics of the exception stack. Currently this also
-        // means external caller cannot register for double fault call backs.
-        // Fix it: Below line is excluded from std builds because rustc fails to
-        //        compile with following error "offset is not a multiple of 16"
-        // SAFETY: We are adding a double fault handler to our static IDT that already exists
-        unsafe { idt.double_fault.set_handler_addr(VirtAddr::new(double_fault_handler as *const () as u64)).set_stack_index(0); }
+    /// Configure this entry as a present interrupt gate (DPL 0) pointing to `addr`.
+    fn set_handler(&mut self, addr: u64, selector: u16, ist_index: u8) {
+        self.offset_low = addr as u16;
+        self.offset_mid = (addr >> 16) as u16;
+        self.offset_high = (addr >> 32) as u32;
+        self.selector = selector;
+        self.ist = ist_index & 0x7;
+        self.type_attr = 0x8E; // Present | DPL 0 | Interrupt Gate
+        self.reserved = 0;
+    }
+}
 
-        // Initialize the error code vectors. the x86_64 crate does not allow these
-        // to be indexed.
-        // SAFETY: We are using a static IDT and configuring all exception handlers
-        unsafe {
-            idt.invalid_tss.set_handler_addr(get_vector_address(10));
-            idt.segment_not_present.set_handler_addr(get_vector_address(11));
-            idt.stack_segment_fault.set_handler_addr(get_vector_address(12));
-            idt.general_protection_fault.set_handler_addr(get_vector_address(13));
-            idt.page_fault.set_handler_addr(get_vector_address(14));
-            idt.alignment_check.set_handler_addr(get_vector_address(17));
-            idt.cp_protection_exception.set_handler_addr(get_vector_address(19));
-            idt.vmm_communication_exception.set_handler_addr(get_vector_address(29));
-            idt.security_exception.set_handler_addr(get_vector_address(30));
-        }
+/// The 256-entry x86-64 Interrupt Descriptor Table.
+#[repr(C, align(16))]
+struct Idt {
+    entries: [IdtEntry; 256],
+}
 
-        // Initialize generic interrupts.
-        for vector in 32..=255 {
-            // SAFETY: We are using a static IDT and configuring the expected list of generic interrupts
-            unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
-        }
+struct StaticIdt(UnsafeCell<Idt>);
 
-        idt
-    };
+// SAFETY: IDT initialization and loading is serialized during early CPU init before
+// interrupts are enabled and before concurrent access is possible.
+unsafe impl Sync for StaticIdt {}
+
+/// Pointer structure passed to the `lidt` instruction.
+#[repr(C, packed)]
+struct Idtr {
+    limit: u16,
+    base: u64,
 }
 
 /// Gets the address of the assembly entry point for the given vector index.
-fn get_vector_address(index: usize) -> VirtAddr {
-    // Verify the index is in [0-255]
+fn get_vector_address(index: usize) -> u64 {
     if index >= 256 {
         panic!("Invalid vector index! 0x{index:#X?}");
     }
-
-    // SAFETY: We have validated we are using the architecturally guaranteed indices
-    unsafe { VirtAddr::from_ptr(AsmGetVectorAddress(index) as *const ()) }
+    // SAFETY: Index has been validated to be in [0, 255].
+    unsafe { AsmGetVectorAddress(index) }
 }
 
+static IDT: StaticIdt = StaticIdt(UnsafeCell::new(Idt { entries: [IdtEntry::empty(); 256] }));
+
 pub fn initialize_idt() {
-    if &IDT as *const _ as usize >= SIZE_4GB {
-        // TODO: Come back and ensure the IDT is below 4GB
+    let cs = crate::cpu::x64::gdt::CODE_SELECTOR;
+    // SAFETY: There is only path to access the IDT and it is not possible to have concurrent access.
+    let idt = unsafe { &mut *IDT.0.get() };
+
+    // Point every vector at its corresponding assembly handler.
+    for vector in 0..=255usize {
+        idt.entries[vector].set_handler(get_vector_address(vector), cs, 0);
+    }
+
+    // Override double fault (vector 8): use a direct Rust handler and IST 1
+    // for more robust diagnostics when the normal interrupt stack is corrupt.
+    idt.entries[8].set_handler(double_fault_handler as *const () as u64, cs, 1);
+
+    if IDT.0.get() as usize >= SIZE_4GB {
         panic!("IDT above 4GB, MP services will fail");
     }
     #[cfg(target_os = "uefi")]
-    IDT.load();
+    {
+        let idtr = Idtr { limit: (core::mem::size_of::<Idt>() - 1) as u16, base: IDT.0.get() as *mut Idt as u64 };
+        // SAFETY: Loading our fully initialized IDT.
+        unsafe { core::arch::asm!("lidt [{}]", in(reg) &idtr, options(nostack)) };
+    }
     log::info!("Loaded IDT");
+}
+
+/// Stack frame pushed by the CPU on interrupt/exception entry.
+#[repr(C)]
+struct InterruptStackFrame {
+    rip: u64,
+    cs: u64,
+    rflags: u64,
+    rsp: u64,
+    ss: u64,
+}
+
+impl core::fmt::Debug for InterruptStackFrame {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("InterruptStackFrame")
+            .field("rip", &format_args!("{:#X}", self.rip))
+            .field("cs", &format_args!("{:#X}", self.cs))
+            .field("rflags", &format_args!("{:#X}", self.rflags))
+            .field("rsp", &format_args!("{:#X}", self.rsp))
+            .field("ss", &format_args!("{:#X}", self.ss))
+            .finish()
+    }
 }
 
 /// Handler for double faults.
 ///
-/// Handler for double faults that is configured to run as a direct interrupt
-/// handler without using the normal handler assembly or stack. This is done to
-/// increase the diagnosability of faults in the interrupt handling code.
-///
+/// Configured to run as a direct interrupt handler without using the normal
+/// handler assembly or stack. This is done to increase the diagnosability of
+/// faults in the interrupt handling code.
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#X?}");
+    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#?}");
 }

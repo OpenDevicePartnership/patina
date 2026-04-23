@@ -22,7 +22,7 @@ mod aarch64;
 #[cfg(not(target_os = "uefi"))]
 mod stub;
 #[cfg(target_arch = "x86_64")]
-mod x64;
+pub(crate) mod x64;
 
 cfg_if::cfg_if! {
     if #[cfg(not(target_os = "uefi"))] {

@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 mod cpu;
-mod gdt;
+pub(crate) mod gdt;
 
 #[allow(unused)]
 pub use cpu::EfiCpuX64;

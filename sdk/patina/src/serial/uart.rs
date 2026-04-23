@@ -31,7 +31,26 @@ cfg_if::cfg_if! {
 
         use uart_16550::MmioSerialPort;
         use uart_16550::SerialPort as IoSerialPort;
-        use x86_64::instructions::interrupts;
+
+        /// Runs `f` with CPU interrupts disabled, restoring the previous interrupt state afterward.
+        fn without_interrupts<F, R>(f: F) -> R
+        where
+            F: FnOnce() -> R,
+        {
+            let flags: u64;
+            // SAFETY: Reading RFLAGS and disabling interrupts around the closure is safe because we restore
+            // interrupts afterwards, but only if they were previously enabled.
+            unsafe {
+                core::arch::asm!("pushfq; pop {0}; cli", out(reg) flags, options(nomem));
+            }
+            let result = f();
+            // Restore interrupts only if they were previously enabled (IF bit).
+            if flags & (1 << 9) != 0 {
+                // SAFETY: Re-enabling interrupts that were enabled before.
+                unsafe { core::arch::asm!("sti", options(nostack, nomem)); }
+            }
+            result
+        }
 
         /// An interface for writing to a Uart16550 device.
         #[derive(Debug)]
@@ -71,7 +90,7 @@ cfg_if::cfg_if! {
                     Uart16550::Io { base } => {
                         // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        interrupts::without_interrupts(|| {
+                        without_interrupts(|| {
                             for b in buffer {
                                 serial_port.send(*b);
                             }
@@ -80,7 +99,7 @@ cfg_if::cfg_if! {
                     Uart16550::Mmio { base, reg_stride } => {
                         // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        interrupts::without_interrupts(|| {
+                        without_interrupts(|| {
                             for b in buffer {
                                 serial_port.send(*b);
                             }

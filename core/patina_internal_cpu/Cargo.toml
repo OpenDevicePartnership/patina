@@ -24,20 +24,12 @@ cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
-x86_64 = { workspace = true, features = [
-    "instructions",
-    "abi_x86_interrupt",
-] }
 patina_mtrr = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
 
 [dev-dependencies]
-x86_64 = { workspace = true, features = [
-    "instructions",
-    "abi_x86_interrupt",
-] }
 mockall = { workspace = true }
 serial_test = { workspace = true }
 

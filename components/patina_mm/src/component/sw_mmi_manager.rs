@@ -22,9 +22,6 @@ use patina::component::{
     service::{IntoService, Service},
 };
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))]
-use x86_64::instructions::port;
-
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
@@ -121,7 +118,14 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         //    initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI command port is the defined mechanism for triggering software MMIs
-                        unsafe { port::Port::new(_port).write(_cmd_port_value); }
+                        unsafe {
+                            core::arch::asm!(
+                                "out dx, al",
+                                in("dx") _port,
+                                in("al") _cmd_port_value,
+                                options(nostack, nomem, preserves_flags)
+                            );
+                        }
                         log::trace!(target: "sw_mmi", "SMI command port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI command port write skipped (not on target platform)");
@@ -147,7 +151,14 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         //     initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI data port is the defined mechanism for passing data to MMI handlers
-                        unsafe { port::Port::new(_port).write(_data_port_value); }
+                        unsafe {
+                            core::arch::asm!(
+                                "out dx, al",
+                                in("dx") _port,
+                                in("al") _data_port_value,
+                                options(nostack, nomem, preserves_flags)
+                            );
+                        }
                         log::trace!(target: "sw_mmi", "SMI data port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI data port write skipped (not on target platform)");
