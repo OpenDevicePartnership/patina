@@ -16,7 +16,7 @@ The workspace is organized into four top-level areas:
 
 Crate dependency rules are strict. Components depend on `sdk/` only - never on each other or on `core/`. The SDK
 depends only on generic external crates. Core crates may depend on each other and on the SDK. See
-[code_organization.md](docs/src/dev/code_organization.md) for the full dependency matrix.
+`docs/src/dev/code_organization.md` for the full dependency matrix.
 
 ## Build and Test Commands
 
@@ -31,7 +31,7 @@ All commands go through `cargo make`. Never run raw `cargo` commands.
 - `cargo make coverage` - Generate test coverage reports
 - `cargo make doc` - Build documentation
 
-See [Makefile.toml](Makefile.toml) for the complete command list.
+See `Makefile.toml` for the complete command list.
 
 ## Module Organization
 
@@ -49,7 +49,7 @@ See [Makefile.toml](Makefile.toml) for the complete command list.
 // src/memory.rs
 ```
 
-See [component requirements](docs/src/component/requirements.md) for crate layout standards.
+See `docs/src/component/requirements.md` for crate layout standards.
 
 ## Safety Conventions
 
@@ -64,7 +64,7 @@ See [component requirements](docs/src/component/requirements.md) for crate layou
   itself cannot verify internally. If the function validates all inputs before the
   unsafe operation, it can remain safe.
 
-See [unsafe.md](docs/src/dev/principles/unsafe.md) for the full safety philosophy
+See `docs/src/dev/principles/unsafe.md` for the full safety philosophy
 (software safety vs. hardware safety distinctions).
 
 ## Error Handling
@@ -77,7 +77,7 @@ See [unsafe.md](docs/src/dev/principles/unsafe.md) for the full safety philosoph
 - Use `expect("descriptive message")` over bare `unwrap()`. Reserve `unwrap()` for
   test code only.
 
-See [error-handling.md](docs/src/dev/principles/error-handling.md) for error
+See `docs/src/dev/principles/error-handling.md` for error
 propagation patterns and examples.
 
 ## Component Model
@@ -98,8 +98,8 @@ A component only executes when all its declared dependencies are available.
 - Use the **stored dependencies** pattern: store all dependency references as fields in
   the component struct. The entry point stores references; methods use them.
 
-See [component interface](docs/src/component/interface.md) and
-[getting started](docs/src/component/getting_started.md) for details and examples.
+See `docs/src/component/interface.md` and
+`docs/src/component/getting_started.md` for details and examples.
 
 ## Mocking and Testing
 
@@ -109,18 +109,18 @@ See [component interface](docs/src/component/interface.md) and
 - Prefer `mockall` for trait mocking in unit tests. Use `#[automock]` on traits to generate mocks.
 - Use `pretty_assertions` for readable test diffs.
 
-See [testing.md](docs/src/dev/testing.md) for the full testing strategy.
+See `docs/src/dev/testing.md` for the full testing strategy.
 
 ## Trait Design
 
 Traits serve as **abstraction points** - not code reuse mechanisms. Use crates for
-code reuse (see [reuse.md](docs/src/dev/principles/reuse.md)).
+code reuse (see `docs/src/dev/principles/reuse.md`).
 
 - Define traits to represent swappable behavior (e.g., `BootServices`, `SerialIO`).
 - Implementations can vary per platform without affecting consumers.
 - Keep traits focused on a single responsibility (Interface Segregation).
 
-See [abstractions.md](docs/src/dev/principles/abstractions.md) for the full trait
+See `docs/src/dev/principles/abstractions.md` for the full trait
 design philosophy.
 
 ## Documentation Standards
@@ -133,7 +133,7 @@ design philosophy.
   should be self-evident. In cases where there is unavoidable ambiguity, add these sections
   to provide clarity.
 
-See [documenting.md](docs/src/dev/documenting.md) for templates and style guides.
+See `docs/src/dev/documenting.md` for templates and style guides.
 
 ## UEFI-Specific Guidelines
 
@@ -142,9 +142,9 @@ See [documenting.md](docs/src/dev/documenting.md) for templates and style guides
 - Do not use `TplMutex` for interior mutability on non-shared data.
 - No memory allocation or deallocation after `ExitBootServices`.
 
-See [synchronization.md](docs/src/dxe_core/synchronization.md),
-[memory management](docs/src/dxe_core/memory_management.md), and
-[platform requirements](docs/src/integrate/patina_dxe_core_requirements.md).
+See `docs/src/dxe_core/synchronization.md`,
+`docs/src/dxe_core/memory_management.md`, and
+`docs/src/integrate/patina_dxe_core_requirements.md`.
 
 ## Hardware Access
 
@@ -155,7 +155,7 @@ insert spurious reads through references, which can clear interrupt status bits,
 FIFO entries, or trigger other device side-effects. MMIO must be accessed exclusively
 through raw pointers with volatile operations.
 
-Patina uses the [`safe-mmio`](https://github.com/google/safe-mmio) crate for all MMIO
+Patina uses the `https://github.com/google/safe-mmio` crate for all MMIO
 access. `safe-mmio` provides `UniqueMmioPointer<T>` which never creates a `&T` to device
 memory. Its field wrapper types encode read side-effect semantics at the type level:
 
@@ -163,8 +163,14 @@ memory. Its field wrapper types encode read side-effect semantics at the type le
 - `ReadOnly<T>` / `ReadWrite<T>` — reads have side-effects (require `&mut` access).
 - `WriteOnly<T>` — write-only register.
 
-See [mmio.md](docs/src/dev/hardware_access/mmio.md) for the full rationale, wrapper
+See `docs/src/dev/hardware_access/mmio.md` for the full rationale, wrapper
 reference table, and links to `safe-mmio` documentation.
+
+### Architectural Interfaces
+
+Minimize the use of inline assembly. Generally, architectural interfaces accessed through
+inline assembly should be wrapped in safe Rust abstractions in the SDK. The exception to
+this is if the interface is not generally applicable.
 
 ## Dependency Management
 
@@ -172,11 +178,11 @@ reference table, and links to `safe-mmio` documentation.
   security advisories, and allowed sources.
 - Use workspace-level dependency declarations in the root `Cargo.toml` for consistency.
 - Evaluate new dependencies against the criteria in
-  [dependency-management.md](docs/src/dev/principles/dependency-management.md).
+  `docs/src/dev/principles/dependency-management.md`.
 
 ## Formatting
 
-Formatting is enforced by `rustfmt` via [rustfmt.toml](rustfmt.toml). Always run
+Formatting is enforced by `rustfmt` via `rustfmt.toml`. Always run
 `cargo make fmt` after editing code.
 
 ## Common Anti-Patterns

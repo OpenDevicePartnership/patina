@@ -61,16 +61,11 @@ impl Default for PerfTimer {
 fn arch_cpu_count() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
-        let lo: u32;
-        let hi: u32;
-        // SAFETY: _rdtsc only reads the TSC on x86_64. No invariants are required for safety.
-        unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nostack, nomem)) };
-        ((hi as u64) << 32) | lo as u64
+        patina::arch::x64::rdtsc()
     }
     #[cfg(target_arch = "aarch64")]
     {
-        use aarch64_cpu::registers::{self, Readable};
-        registers::CNTPCT_EL0.get()
+        patina::read_sysreg!(CNTPCT_EL0)
     }
 }
 

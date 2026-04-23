@@ -118,14 +118,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         //    initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI command port is the defined mechanism for triggering software MMIs
-                        unsafe {
-                            core::arch::asm!(
-                                "out dx, al",
-                                in("dx") _port,
-                                in("al") _cmd_port_value,
-                                options(nostack, nomem, preserves_flags)
-                            );
-                        }
+                        unsafe { patina::arch::x64::io_out8(_port, _cmd_port_value) };
                         log::trace!(target: "sw_mmi", "SMI command port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI command port write skipped (not on target platform)");
@@ -151,14 +144,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         //     initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI data port is the defined mechanism for passing data to MMI handlers
-                        unsafe {
-                            core::arch::asm!(
-                                "out dx, al",
-                                in("dx") _port,
-                                in("al") _data_port_value,
-                                options(nostack, nomem, preserves_flags)
-                            );
-                        }
+                        unsafe { patina::arch::x64::io_out8(_port, _data_port_value) };
                         log::trace!(target: "sw_mmi", "SMI data port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI data port write skipped (not on target platform)");
