@@ -3,8 +3,8 @@
 //! Defines the `EFI_USB_IO_PROTOCOL` interface and associated USB descriptor
 //! types needed to interact with USB devices.
 //!
-//! The underlying protocol is defined in the UEFI Specification, Chapter 16
-//! (USB Driver Model).
+//! The underlying protocol is defined in the UEFI Specification 2.11 section
+//! 17.2.4 (USB I/O Protocol).
 //!
 //! ## License
 //!
