@@ -46,6 +46,8 @@ impl InterruptsX64 {
         crate::interrupts::x64::idt::initialize_idt();
 
         // Register some default handlers.
+        self.register_exception_handler(8, HandlerType::UefiRoutine(double_fault_handler))
+            .expect("Failed to install default exception handler!");
         self.register_exception_handler(13, HandlerType::UefiRoutine(general_protection_fault_handler))
             .expect("Failed to install default exception handler!");
         self.register_exception_handler(14, HandlerType::UefiRoutine(page_fault_handler))
@@ -56,6 +58,31 @@ impl InterruptsX64 {
 }
 
 impl InterruptManager for InterruptsX64 {}
+
+#[coverage(off)]
+/// Default handler for double faults.
+extern "efiapi" fn double_fault_handler(_exception_type: isize, context: EfiSystemContext) {
+    // SAFETY: We don't have any choice here, we are in an exception and have to do our best
+    // to report. The system is dead anyway.
+    let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
+    log::error!("EXCEPTION: DOUBLE FAULT");
+    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
+    log::error!("Code Segment: {:#X?}", x64_context.cs);
+    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
+    log::error!("Stack Segment: {:#X?}", x64_context.ss);
+    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
+    log::error!("Data Segment: {:#X?}", x64_context.ds);
+    log::error!("Paging Enable: {}", x64_context.cr0 & 0x80000000 != 0);
+    log::error!("Protection Enable: {}", x64_context.cr0 & 0x00000001 != 0);
+    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
+    log::error!("Control Flags (cr4): {:#X?}", x64_context.cr4);
+
+    log::error!("");
+
+    (x64_context as &ExceptionContextX64).dump_system_context_registers();
+
+    panic!("EXCEPTION: Double Fault");
+}
 
 #[coverage(off)]
 /// Default handler for GP faults.

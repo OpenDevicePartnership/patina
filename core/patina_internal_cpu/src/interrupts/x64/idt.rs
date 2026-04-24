@@ -54,8 +54,8 @@ struct Idt {
 
 struct StaticIdt(UnsafeCell<Idt>);
 
-// SAFETY: IDT initialization and loading is serialized during early CPU init before
-// interrupts are enabled and before concurrent access is possible.
+// SAFETY: IDT initialization and loading is serialized during early CPU init and concurrent
+// access is not possible
 unsafe impl Sync for StaticIdt {}
 
 /// Pointer structure passed to the `lidt` instruction.
@@ -83,12 +83,10 @@ pub fn initialize_idt() {
 
     // Point every vector at its corresponding assembly handler.
     for vector in 0..=255usize {
-        idt.entries[vector].set_handler(get_vector_address(vector), cs, 0);
+        // Use IST 1 for double fault (vector 8) to ensure it has a valid stack
+        let ist_index = if vector == 8 { 1 } else { 0 };
+        idt.entries[vector].set_handler(get_vector_address(vector), cs, ist_index);
     }
-
-    // Override double fault (vector 8): use a direct Rust handler and IST 1
-    // for more robust diagnostics when the normal interrupt stack is corrupt.
-    idt.entries[8].set_handler(double_fault_handler as *const () as u64, cs, 1);
 
     if IDT.0.get() as usize >= SIZE_4GB {
         panic!("IDT above 4GB, MP services will fail");
@@ -100,35 +98,4 @@ pub fn initialize_idt() {
         unsafe { core::arch::asm!("lidt [{}]", in(reg) &idtr, options(nostack)) };
     }
     log::info!("Loaded IDT");
-}
-
-/// Stack frame pushed by the CPU on interrupt/exception entry.
-#[repr(C)]
-struct InterruptStackFrame {
-    rip: u64,
-    cs: u64,
-    rflags: u64,
-    rsp: u64,
-    ss: u64,
-}
-
-impl core::fmt::Debug for InterruptStackFrame {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("InterruptStackFrame")
-            .field("rip", &format_args!("{:#X}", self.rip))
-            .field("cs", &format_args!("{:#X}", self.cs))
-            .field("rflags", &format_args!("{:#X}", self.rflags))
-            .field("rsp", &format_args!("{:#X}", self.rsp))
-            .field("ss", &format_args!("{:#X}", self.ss))
-            .finish()
-    }
-}
-
-/// Handler for double faults.
-///
-/// Configured to run as a direct interrupt handler without using the normal
-/// handler assembly or stack. This is done to increase the diagnosability of
-/// faults in the interrupt handling code.
-extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#?}");
 }
