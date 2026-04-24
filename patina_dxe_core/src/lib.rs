@@ -454,10 +454,6 @@ impl<P: PlatformInfo> Core<P> {
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
-        patina_debugger::add_monitor_command("gcd", "Prints the GCD", false, |_, out| {
-            let _ = write!(out, "GCD -\n{GCD}");
-        });
-
         #[cfg(feature = "debugger_reload")]
         debugger_reload::initialize_debugger_reload(physical_hob_list);
 
