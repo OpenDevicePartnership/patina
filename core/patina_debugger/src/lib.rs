@@ -42,7 +42,7 @@
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
 //!     // Setup a custom monitor command for this platform.
-//!     patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
+//!     patina_debugger::add_monitor_command("my_command", Some("Description of my_command"), |args, writer| {
 //!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
 //!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
 //!     });
@@ -177,7 +177,7 @@ trait Debugger: Sync {
     fn add_monitor_command(
         &'static self,
         command: &'static str,
-        description: &'static str,
+        description: Option<&'static str>,
         callback: alloc::boxed::Box<MonitorCommandFn>,
     );
 }
@@ -297,14 +297,14 @@ pub fn initialized() -> bool {
 /// ## Example
 ///
 /// ```rust
-/// patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
+/// patina_debugger::add_monitor_command("my_command", Some("Description of my_command"), |args, writer| {
 ///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
 ///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
 /// });
 /// ```
 ///
 #[cfg(feature = "alloc")]
-pub fn add_monitor_command<F>(cmd: &'static str, description: &'static str, function: F)
+pub fn add_monitor_command<F>(cmd: &'static str, description: Option<&'static str>, function: F)
 where
     F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
 {
@@ -320,14 +320,14 @@ where
 /// ## Example
 ///
 /// ```rust
-/// patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
+/// patina_debugger::add_monitor_command("my_command", Some("Description of my_command"), |args, writer| {
 ///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
 ///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
 /// });
 /// ```
 ///
 #[cfg(not(feature = "alloc"))]
-pub fn add_monitor_command<F>(cmd: &'static str, _description: &'static str, _function: F)
+pub fn add_monitor_command<F>(cmd: &'static str, _description: Option<&'static str>, _function: F)
 where
     F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
 {

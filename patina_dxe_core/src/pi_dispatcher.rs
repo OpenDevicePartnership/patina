@@ -196,9 +196,13 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             core::ptr::write_volatile(&mut (*ptr).crc32, crc32);
         }
 
-        patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", move |_, out| {
-            let _ = write!(out, "{address:x}");
-        });
+        patina_debugger::add_monitor_command(
+            "system_table_ptr",
+            Some("Prints the system table pointer"),
+            move |_, out| {
+                let _ = write!(out, "{address:x}");
+            },
+        );
     }
 
     /// Installs any firmware volumes from FV HOBs in the hob list

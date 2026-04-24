@@ -38,7 +38,7 @@ impl SystemState {
     pub fn add_monitor_command(
         &mut self,
         command: &'static str,
-        description: &'static str,
+        description: Option<&'static str>,
         callback: Box<MonitorCommandFn>,
     ) {
         let monitor = MonitorCallback { command, description, callback };
@@ -49,7 +49,11 @@ impl SystemState {
 impl SystemStateTrait for SystemState {
     fn dump_monitor_commands(&self, out: &mut dyn core::fmt::Write) {
         for cmd in &self.monitor_commands {
-            let _ = writeln!(out, "    {} - {}", cmd.command, cmd.description);
+            if let Some(description) = cmd.description {
+                let _ = writeln!(out, "    {} - {}", cmd.command, description);
+            } else {
+                continue;
+            }
         }
     }
 
@@ -134,8 +138,9 @@ struct ModuleInfo {
 struct MonitorCallback {
     /// The monitor command string that triggers the callback.
     command: &'static str,
-    /// The description of the monitor command.
-    description: &'static str,
+    /// The description of the monitor command. If `None`, the command is hidden
+    /// from the default help listing.
+    description: Option<&'static str>,
     /// The callback function that will be invoked when the command is executed.
     /// See [MonitorCommandFn] for more details on the function signature.
     callback: Box<MonitorCommandFn>,
@@ -200,7 +205,7 @@ mod tests {
         let callback: Box<MonitorCommandFn> = Box::new(|args, out| {
             let _ = writeln!(out, "Executed with args: {:?}", args.collect::<Vec<_>>());
         });
-        system_state.add_monitor_command(command, description, callback);
+        system_state.add_monitor_command(command, Some(description), callback);
 
         let mut out = String::new();
         let args = &mut "arg1 arg2".split_whitespace();
@@ -220,7 +225,7 @@ mod tests {
         let callback: Box<MonitorCommandFn> = Box::new(move |_args, out| {
             let _ = writeln!(out, "Captured state: {}", x);
         });
-        system_state.add_monitor_command(command, description, callback);
+        system_state.add_monitor_command(command, Some(description), callback);
 
         let mut out = String::new();
         let args = &mut "arg1 arg2".split_whitespace();
@@ -233,8 +238,8 @@ mod tests {
     #[test]
     fn test_dump_monitor_commands() {
         let mut state = SystemState::new();
-        state.add_monitor_command("cmd_a", "Description A", Box::new(|_, _| {}));
-        state.add_monitor_command("cmd_b", "Description B", Box::new(|_, _| {}));
+        state.add_monitor_command("cmd_a", Some("Description A"), Box::new(|_, _| {}));
+        state.add_monitor_command("cmd_b", Some("Description B"), Box::new(|_, _| {}));
 
         let mut out = String::new();
         state.dump_monitor_commands(&mut out);
@@ -288,5 +293,23 @@ mod tests {
         let printed = state.dump_modules(&mut out, 10, usize::MAX);
         assert_eq!(printed, 0);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_hidden_monitor_command() {
+        let mut system_state = SystemState::new();
+        let command = "hidden_command";
+        let callback: Box<MonitorCommandFn> = Box::new(|_args, out| {
+            let _ = writeln!(out, "Hidden command was executed!");
+        });
+        system_state.add_monitor_command(command, None, callback);
+
+        let mut out = String::new();
+        system_state.dump_monitor_commands(&mut out);
+        assert!(!out.contains("hidden_command"));
+
+        let args = &mut "".split_whitespace();
+        system_state.handle_monitor_command(command, args, &mut out);
+        assert!(out.contains("Hidden command was executed!"));
     }
 }

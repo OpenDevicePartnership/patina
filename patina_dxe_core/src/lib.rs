@@ -454,7 +454,7 @@ impl<P: PlatformInfo> Core<P> {
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
-        patina_debugger::add_monitor_command("gcd", "Prints the GCD", |_, out| {
+        patina_debugger::add_monitor_command("gcd", "Prints the GCD", false, |_, out| {
             let _ = write!(out, "GCD -\n{GCD}");
         });
 

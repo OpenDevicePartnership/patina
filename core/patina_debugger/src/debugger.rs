@@ -439,7 +439,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
     fn add_monitor_command(
         &'static self,
         command: &'static str,
-        description: &'static str,
+        description: Option<&'static str>,
         callback: Box<crate::MonitorCommandFn>,
     ) {
         if !self.enabled() {

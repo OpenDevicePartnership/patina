@@ -37,7 +37,9 @@ const ARCH_ALLOCATION_STRATEGY: PageAllocationStrategy = PageAllocationStrategy:
 /// Initializes the debugger reload command subsystem.
 pub fn initialize_debugger_reload(hob_list: *const c_void) {
     HOB_LIST_ADDRESS.store(hob_list as usize, core::sync::atomic::Ordering::Relaxed);
-    patina_debugger::add_monitor_command("reload", "Used to reload the core", reload_monitor);
+    // This is not intended to be called by a user so hide it from the monitor command list. UefiExt will call this
+    // automatically.
+    patina_debugger::add_monitor_command("reload", None, reload_monitor);
 }
 
 /// Tears down the debugger reload command subsystem.
