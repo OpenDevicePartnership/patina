@@ -9,7 +9,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
-#![feature(abi_x86_interrupt)]
 #![feature(coverage_attribute)]
 
 pub mod cpu;
