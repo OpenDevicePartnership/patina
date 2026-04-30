@@ -35,6 +35,7 @@ pub mod boot_orchestrator;
 pub mod config;
 pub mod helpers;
 pub mod orchestrators;
+pub mod partition;
 
 pub use boot_dispatcher::BootDispatcher;
 pub use boot_orchestrator::BootOrchestrator;

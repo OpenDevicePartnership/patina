@@ -43,6 +43,7 @@ words:
   - bitvec
   - bootaa
   - bootx
+  - bpwps
   - bucketize
   - bumpalo
   - cbindgen
