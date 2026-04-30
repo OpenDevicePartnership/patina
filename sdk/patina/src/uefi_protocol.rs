@@ -9,6 +9,7 @@
 
 pub mod decompress;
 pub mod performance_measurement;
+pub mod ram_disk;
 pub mod status_code;
 
 use crate::BinaryGuid;
