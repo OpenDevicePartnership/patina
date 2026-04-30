@@ -11,6 +11,8 @@
 //!   delegates to a `BootOrchestrator` implementation when invoked by the DXE core.
 //! - [`SimpleBootManager`]: A default `BootOrchestrator` implementation for platforms with
 //!   straightforward boot topologies.
+//! - [`SreBootManager`]: A `BootOrchestrator` implementation for platforms shipping a System
+//!   Recovery Environment alongside the main OS. Skeleton — normal boot path only.
 //!
 //! ## Configuration
 //!
@@ -39,4 +41,4 @@ pub mod partition;
 
 pub use boot_dispatcher::BootDispatcher;
 pub use boot_orchestrator::BootOrchestrator;
-pub use orchestrators::SimpleBootManager;
+pub use orchestrators::{SimpleBootManager, SreBootManager};

@@ -8,5 +8,7 @@
 //!
 
 mod simple_boot_manager;
+mod sre_boot_manager;
 
 pub use simple_boot_manager::SimpleBootManager;
+pub use sre_boot_manager::SreBootManager;
