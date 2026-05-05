@@ -15,7 +15,7 @@
 //!
 extern crate alloc;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 
 use patina::{
     boot_services::{BootServices, StandardBootServices, protocol_handler::HandleSearchType},
@@ -79,12 +79,12 @@ fn total_handle_count<B: BootServices>(boot_services: &B) -> patina::error::Resu
 /// 5. Signal ReadyToBoot
 /// 6. Iterate boot devices, attempt `LoadImage()`/`StartImage()` for each
 /// 7. Call failure handler if all options exhausted
-pub struct SimpleBootManager {
+pub struct SimpleBootManager<C: ConnectController = ConnectAllStrategy> {
     config: BootConfig,
-    connect_strategy: Box<dyn ConnectController>,
+    connect_strategy: C,
 }
 
-impl SimpleBootManager {
+impl SimpleBootManager<ConnectAllStrategy> {
     /// Create a `SimpleBootManager` from a boot configuration.
     ///
     /// Uses [`ConnectAllStrategy`] by default. To customize which controllers
@@ -105,9 +105,11 @@ impl SimpleBootManager {
     /// );
     /// ```
     pub fn new(config: BootConfig) -> Self {
-        Self { config, connect_strategy: Box::new(ConnectAllStrategy) }
+        Self { config, connect_strategy: ConnectAllStrategy }
     }
+}
 
+impl<C: ConnectController> SimpleBootManager<C> {
     /// Create a `SimpleBootManager` with a custom connection strategy.
     ///
     /// ## Example
@@ -126,20 +128,20 @@ impl SimpleBootManager {
     ///     MyPlatformConnect,
     /// );
     /// ```
-    pub fn with_connect_strategy(config: BootConfig, strategy: impl ConnectController) -> Self {
-        Self { config, connect_strategy: Box::new(strategy) }
+    pub fn with_connect_strategy(config: BootConfig, strategy: C) -> Self {
+        Self { config, connect_strategy: strategy }
     }
 }
 
 // Expose config for test assertions
 #[cfg(test)]
-impl SimpleBootManager {
+impl<C: ConnectController> SimpleBootManager<C> {
     pub(crate) fn config(&self) -> &BootConfig {
         &self.config
     }
 }
 
-impl BootOrchestrator for SimpleBootManager {
+impl<C: ConnectController> BootOrchestrator for SimpleBootManager<C> {
     #[coverage(off)] // Integration point — delegates to helper functions which are individually tested
     fn execute(
         &self,
