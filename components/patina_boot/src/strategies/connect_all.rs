@@ -13,7 +13,6 @@ use crate::{connect_controller::ConnectController, helpers};
 
 /// Connects all controllers recursively via
 /// [`helpers::connect_all()`](crate::helpers::connect_all).
-/// Used as the default strategy by [`SimpleBootManager::new()`](crate::SimpleBootManager::new).
 pub struct ConnectAllStrategy;
 
 impl<B: BootServices> ConnectController<B> for ConnectAllStrategy {

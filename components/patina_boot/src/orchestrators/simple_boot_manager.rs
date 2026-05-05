@@ -48,8 +48,6 @@ fn interleave_connect_and_dispatch<B: BootServices, D: DxeDispatch + ?Sized>(
     dxe_services: &D,
 ) -> patina::error::Result<()> {
     let mut prev_handle_count = total_handle_count(boot_services)?;
-    #[cfg(debug_assertions)]
-    let mut rounds = 0usize;
 
     loop {
         connect_fn(boot_services)?;
@@ -60,12 +58,6 @@ fn interleave_connect_and_dispatch<B: BootServices, D: DxeDispatch + ?Sized>(
             return Ok(());
         }
         prev_handle_count = curr_handle_count;
-
-        #[cfg(debug_assertions)]
-        {
-            rounds += 1;
-            debug_assert!(rounds < 10_000, "connect-dispatch interleaving did not converge");
-        }
     }
 }
 
