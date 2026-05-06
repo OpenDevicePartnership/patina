@@ -216,7 +216,7 @@ pub fn signal_bds_phase_entry<B: BootServices>(boot_services: &B) -> Result<()> 
         boot_services.create_event_ex_unchecked::<()>(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            signal_event_noop,
+            Some(signal_event_noop),
             ptr::null_mut(),
             &EVENT_GROUP_END_OF_DXE,
         )
@@ -248,7 +248,7 @@ pub fn signal_ready_to_boot<B: BootServices>(boot_services: &B) -> Result<()> {
         boot_services.create_event_ex_unchecked::<()>(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            signal_event_noop,
+            Some(signal_event_noop),
             ptr::null_mut(),
             &EVENT_GROUP_READY_TO_BOOT,
         )
