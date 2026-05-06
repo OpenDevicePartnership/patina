@@ -41,7 +41,8 @@ use patina_smbios::{
     smbios_record::{
         SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type1SystemInformation, Type2BaseboardInformation,
         Type3SystemEnclosure,
-    }, smbios_types::*,
+    },
+    smbios_types::*,
 };
 
 /// Example custom vendor-specific OEM record (Type 0x80)
@@ -161,14 +162,19 @@ impl SmbiosExampleComponent {
             bios_starting_address_segment: 0xE800,
             firmware_release_date: 3,
             firmware_rom_size: 0xFF, // 16MB
-            characteristics: BiosCharacteristics::new(false,false,false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 0, 0),   // PCI supported
-            characteristics_ext1: BiosCharacteristicsExt1::new(true, true, false, false, false, false, false, true),
-            characteristics_ext2: BiosCharacteristicsExt2::new(true, false, false, true, false),
+            characteristics: BiosCharacteristics::new().with_pci_supported(true),
+            characteristics_ext1: BiosCharacteristicsExt1::new()
+                .with_acpi_supported(true)
+                .with_usb_legacy_supported(true)
+                .with_smart_battery_supported(true),
+            characteristics_ext2: BiosCharacteristicsExt2::new()
+                .with_bios_boot_specification_supported(true)
+                .with_uefi_spec_supported(true),
             system_bios_major_release: 1,
             system_bios_minor_release: 0,
             embedded_controller_major_release: 0xFF,
             embedded_controller_minor_release: 0xFF,
-            extended_bios_rom_size: ExtendedBiosRomSize::new(0,0),
+            extended_bios_rom_size: ExtendedBiosRomSize::new(),
             string_pool: vec![
                 String::from("Example Firmware Vendor"),
                 String::from("1.0.0"),
@@ -229,7 +235,7 @@ impl SmbiosExampleComponent {
             version: 3,
             serial_number: 4,
             asset_tag: 5,
-            feature_flags: FeatureFlags::new(true, true, false, false, false), // Board is a hosting board
+            feature_flags: FeatureFlags::new().with_hosting_board(true).with_require_aux_board(true),
             location_in_chassis: 6,
             chassis_handle: 0x0003,
             board_type: BoardType::Motherboard, // Motherboard
@@ -264,8 +270,8 @@ impl SmbiosExampleComponent {
             version: 2,
             serial_number: 3,
             asset_tag_number: 4,
-            bootup_state: BootUpState::Desktop,
-            power_supply_state: PowerSupplyState::CentralProcessor,
+            bootup_state: BootUpState::Safe,
+            power_supply_state: PowerSupplyState::Safe,
             thermal_state: ThermalState::Safe,
             security_status: SecurityStatus::Unknown,
             oem_defined: 0x00000000,

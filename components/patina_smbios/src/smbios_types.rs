@@ -1,6 +1,12 @@
 //! SMBIOS Types
 //!
-//! Defines the types used in SMBIOS Records 
+//! Defines the types used in SMBIOS Records.
+//!
+//! Bitfield types are defined with [`bitfield_struct::bitfield`] and derive
+//! [`zerocopy::IntoBytes`] so they can be serialized directly by the
+//! `SmbiosRecord` derive macro. Enum types are tagged with `#[repr(u8)]` or
+//! `#[repr(u16)]` per the SMBIOS specification field width and likewise
+//! derive `IntoBytes`.
 //!
 //! ## License
 //!
@@ -8,398 +14,204 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use bitfield::bitfield;
+#![allow(missing_docs)]
+
 extern crate alloc;
 
+use bitfield_struct::bitfield;
+use zerocopy::{Immutable, IntoBytes, KnownLayout};
 
-bitfield! {
-    ///
-    /// BIOS Characteristics
-    /// 
-    pub struct BiosCharacteristics (u64);
-    impl Debug;
-    pub reserved, set_reserved: 1, 0;
-    pub unknown, set_unknown: 2;
-    pub bios_characteristics_unsupported, set_bios_characteristics_unsupported: 3;
-    pub isa_supported, set_isa_supported: 4;
-    pub mca_supported, set_mca_supported: 5;
-    pub eisa_supported, set_eisa_supported: 6;
-    pub pci_supported, set_pci_supported: 7;
-    pub pcmcia_supported, set_pcmcia_supported: 8;
-    pub plug_play_supported, set_plug_play_supported: 9;
-    pub apm_supported, set_apm_supported: 10;
-    pub bios_is_upgradable, set_bios_is_upgradable: 11;
-    pub bios_shadowing_allowed, set_bios_shadowing_allowed: 12;
-    pub vlvesa_supported, set_vlvesa_supported: 13;
-    pub escd_supported, set_escd_supported: 14;
-    pub cd_boot_supported, set_cd_boot_supported: 15;
-    pub selectable_boot_supported, set_selectable_boot_supported: 16;
-    pub bios_rom_socketed, set_bios_rom_socketed: 17;
-    pub pc_card_boot_supported, set_pc_card_boot_supported: 18;
-    pub edd_spec_supported, set_edd_spec_supported: 19;
-    pub japanese_nec_9800_supported, set_japanese_nec_9800_supported: 20;
-    pub japanese_toshiba_supported, set_japanese_toshiba_supported: 21;
-    pub kb_525_360_supported, set_kb_525_360_supported: 22;
-    pub mb_535_12_supported, set_mb_535_12_supported: 23;
-    pub mb_35_720_supported, set_mb_35_720_supported: 24;
-    pub mb_35_288_supported, set_mb_35_288_supported: 25;
-    pub print_screen_supported, set_print_screen_supported: 26;
-    pub keyboard_8042_supported, set_keyboard_8042_supported: 27;
-    pub serial_services_supported, set_serial_services_supported: 28;
-    pub printer_services_supported, set_printer_services_supported: 29;
-    pub cga_mono_video_supported, set_cga_mono_video_supported: 30;
-    pub nec_pc_98, set_nec_pc_98: 31;
-    pub reserved_bios_vendor, set_reserved_bios_vendor: 47, 32;
-    pub reserved_system_vendor, set_reserved_system_vendor: 63, 48;
+/// BIOS Characteristics (Type 0, offset 0x0A) - 8 bytes
+#[bitfield(u64)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct BiosCharacteristics {
+    #[bits(2)]
+    pub reserved: u8,
+    pub unknown: bool,
+    pub bios_characteristics_unsupported: bool,
+    pub isa_supported: bool,
+    pub mca_supported: bool,
+    pub eisa_supported: bool,
+    pub pci_supported: bool,
+    pub pcmcia_supported: bool,
+    pub plug_play_supported: bool,
+    pub apm_supported: bool,
+    pub bios_is_upgradable: bool,
+    pub bios_shadowing_allowed: bool,
+    pub vlvesa_supported: bool,
+    pub escd_supported: bool,
+    pub cd_boot_supported: bool,
+    pub selectable_boot_supported: bool,
+    pub bios_rom_socketed: bool,
+    pub pc_card_boot_supported: bool,
+    pub edd_spec_supported: bool,
+    pub japanese_nec_9800_supported: bool,
+    pub japanese_toshiba_supported: bool,
+    pub kb_525_360_supported: bool,
+    pub mb_535_12_supported: bool,
+    pub mb_35_720_supported: bool,
+    pub mb_35_288_supported: bool,
+    pub print_screen_supported: bool,
+    pub keyboard_8042_supported: bool,
+    pub serial_services_supported: bool,
+    pub printer_services_supported: bool,
+    pub cga_mono_video_supported: bool,
+    pub nec_pc_98: bool,
+    #[bits(16)]
+    pub reserved_bios_vendor: u16,
+    #[bits(16)]
+    pub reserved_system_vendor: u16,
 }
 
-impl BiosCharacteristics {
-    pub fn new(
-        unknown: bool,
-        bios_characteristics_unsupported: bool,
-        isa_supported: bool,
-        mca_supported: bool,
-        eisa_supported: bool,
-        pci_supported: bool,
-        pcmcia_supported: bool,
-        plug_play_supported: bool,
-        apm_supported: bool,
-        bios_is_upgradable: bool,
-        bios_shadowing_allowed: bool,
-        vlvesa_supported: bool,
-        escd_supported: bool,
-        cd_boot_supported: bool,
-        selectable_boot_supported: bool,
-        bios_rom_socketed: bool,
-        pc_card_boot_supported: bool,
-        edd_spec_supported: bool,
-        japanese_nec_9800_supported: bool,
-        japanese_toshiba_supported: bool,
-        kb_525_360_supported: bool,
-        mb_535_12_supported: bool,
-        mb_35_720_supported: bool,
-        mb_35_288_supported: bool,
-        print_screen_supported: bool,
-        keyboard_8042_supported: bool,
-        serial_services_supported: bool,
-        printer_services_supported: bool,
-        cga_mono_video_supported: bool,
-        nec_pc_98: bool,
-        reserved_bios_vendor: u64,
-        reserved_system_vendor:u64,
-    ) -> Self{
-        let mut config = BiosCharacteristics(0);
-        config.set_reserved(0);
-        config.set_unknown(unknown);
-        config.set_bios_characteristics_unsupported(bios_characteristics_unsupported);
-        config.set_isa_supported(isa_supported);
-        config.set_mca_supported(mca_supported);
-        config.set_eisa_supported(eisa_supported);
-        config.set_pci_supported(pci_supported);
-        config.set_pcmcia_supported(pcmcia_supported);
-        config.set_plug_play_supported(plug_play_supported);
-        config.set_apm_supported(apm_supported);
-        config.set_bios_is_upgradable(bios_is_upgradable);
-        config.set_bios_shadowing_allowed(bios_shadowing_allowed);
-        config.set_vlvesa_supported(vlvesa_supported);
-        config.set_escd_supported(escd_supported);
-        config.set_cd_boot_supported(cd_boot_supported);
-        config.set_selectable_boot_supported(selectable_boot_supported);
-        config.set_bios_rom_socketed(bios_rom_socketed);
-        config.set_pc_card_boot_supported(pc_card_boot_supported);
-        config.set_edd_spec_supported(edd_spec_supported);
-        config.set_japanese_nec_9800_supported(japanese_nec_9800_supported);
-        config.set_japanese_toshiba_supported(japanese_toshiba_supported);
-        config.set_kb_525_360_supported(kb_525_360_supported);
-        config.set_mb_535_12_supported(mb_535_12_supported);
-        config.set_mb_35_720_supported(mb_35_720_supported);
-        config.set_mb_35_288_supported(mb_35_288_supported);
-        config.set_print_screen_supported(print_screen_supported);
-        config.set_keyboard_8042_supported(keyboard_8042_supported);
-        config.set_serial_services_supported(serial_services_supported);
-        config.set_printer_services_supported(printer_services_supported);
-        config.set_cga_mono_video_supported(cga_mono_video_supported);
-        config.set_nec_pc_98(nec_pc_98);
-        config.set_reserved_bios_vendor(reserved_bios_vendor);
-        config.set_reserved_system_vendor(reserved_system_vendor);
-        config
-    }
+/// BIOS Characteristics Extension Byte 1 (Type 0, offset 0x12)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct BiosCharacteristicsExt1 {
+    pub acpi_supported: bool,
+    pub usb_legacy_supported: bool,
+    pub agp_supported: bool,
+    pub i20_supported: bool,
+    pub superdisk_boot_supported: bool,
+    pub zip_drive_boot_supported: bool,
+    pub boot_1394_supported: bool,
+    pub smart_battery_supported: bool,
 }
 
-bitfield! {
-    ///
-    /// BIOS Characteristics Extension Byte 1
-    /// 
-    pub struct BiosCharacteristicsExt1 (u8);
-    impl Debug;
-    pub acpi_supported, set_acpi_supported: 0;
-    pub usb_legacy_supported, set_usb_legacy_supported: 1;
-    pub agp_supported, set_agp_supported: 2;
-    pub i20_supported, set_i20_supported: 3;
-    pub superdisk_boot_supported, set_superdisk_boot_supported: 4;
-    pub zip_drive_boot_supported, set_zip_drive_boot_supported: 5;
-    pub boot_1394_supported, set_boot_1394_supported: 6;
-    pub smart_battery_supported, set_smart_battery_supported: 7;
+/// BIOS Characteristics Extension Byte 2 (Type 0, offset 0x13)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct BiosCharacteristicsExt2 {
+    pub bios_boot_specification_supported: bool,
+    pub fn_network_service_boot_supported: bool,
+    pub enable_targeted_content_distribution: bool,
+    pub uefi_spec_supported: bool,
+    pub smbios_describes_vm: bool,
+    #[bits(3)]
+    pub reserved: u8,
 }
 
-impl BiosCharacteristicsExt1 {
-    pub fn new(
-        acpi_supported: bool,
-        usb_legacy_supported: bool,
-        agp_supported: bool,
-        i20_supported: bool,
-        superdisk_boot_supported: bool,
-        zip_drive_boot_supported: bool,
-        boot_1394_supported: bool,
-        smart_battery_supported: bool,
-    ) -> Self{
-        let mut config = BiosCharacteristicsExt1(0);
-        config.set_acpi_supported(acpi_supported);
-        config.set_usb_legacy_supported(usb_legacy_supported);
-        config.set_agp_supported(agp_supported);
-        config.set_i20_supported(i20_supported);
-        config.set_superdisk_boot_supported(superdisk_boot_supported);
-        config.set_zip_drive_boot_supported(zip_drive_boot_supported);
-        config.set_boot_1394_supported(boot_1394_supported);
-        config.set_smart_battery_supported(smart_battery_supported);
-        config
-    }
+/// Extended BIOS ROM Size (Type 0, offset 0x18) - 2 bytes
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct ExtendedBiosRomSize {
+    #[bits(14)]
+    pub size: u16,
+    #[bits(2)]
+    pub unit: u8,
 }
 
-bitfield! {
-    ///
-    /// BIOS Characteristics Extension Byte 2
-    /// 
-    pub struct BiosCharacteristicsExt2 (u8);
-    impl Debug;
-    pub bios_boot_specification_supported, set_bios_boot_specification_supported: 0;
-    pub fn_network_service_boot_supported, set_fn_network_service_boot_supported: 1;
-    pub enable_targeted_content_distribution, set_enable_targeted_content_distribution: 2;
-    pub uefi_spec_supported, set_uefi_spec_supported: 3;
-    pub smbios_describes_vm, set_smbios_describes_vm: 4;
-    pub reserved, set_reserved: 7, 5;
-}
-
-impl BiosCharacteristicsExt2 {
-    pub fn new(
-        bios_boot_specification_supported: bool,
-        fn_network_service_boot_supported: bool,
-        enable_targeted_content_distribution: bool,
-        uefi_spec_supported: bool,
-        smbios_describes_vm: bool,
-    ) -> Self{
-        let mut config = BiosCharacteristicsExt2(0);
-        config.set_bios_boot_specification_supported(bios_boot_specification_supported);
-        config.set_fn_network_service_boot_supported(fn_network_service_boot_supported);
-        config.set_enable_targeted_content_distribution(enable_targeted_content_distribution);
-        config.set_uefi_spec_supported(uefi_spec_supported);
-        config.set_smbios_describes_vm(smbios_describes_vm);
-        config.set_reserved(0);
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// Extended BIOS Rom Size
-    /// 
-    pub struct ExtendedBiosRomSize (u16);
-    impl Debug;
-    pub size, set_size: 13, 0;
-    pub unit, set_unit: 15, 14;
-}
-
-impl ExtendedBiosRomSize {
-    pub fn new(
-        size: u16,
-        unit: u16,
-    ) -> Self{
-        let mut config = ExtendedBiosRomSize(0);
-        config.set_size(size);
-        config.set_unit(unit);
-        config
-    }
-}
-
-
-
-///
-/// Wake Up Type
-/// 
-#[derive(Copy, Clone, Debug)]
+/// Wake-Up Type (Type 1, offset 0x18)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum WakeUpType {
-    Reserved = 0x0,
-    Other,
-    Unknown,
-    ApmTimer,
-    ModemRing,
-    LanRemote,
-    PowerSwitch,
-    PciPme,
-    AcPowerRestored
+    Reserved = 0x00,
+    Other = 0x01,
+    Unknown = 0x02,
+    ApmTimer = 0x03,
+    ModemRing = 0x04,
+    LanRemote = 0x05,
+    PowerSwitch = 0x06,
+    PciPme = 0x07,
+    AcPowerRestored = 0x08,
 }
 
-bitfield! {
-    ///
-    /// Feature Flags
-    /// 
-    pub struct FeatureFlags (u8);
-    impl Debug;
-    pub hosting_board, set_hosting_board: 0;
-    pub require_aux_board, set_require_aux_board: 1;
-    pub removable_board, set_removable_board: 2;
-    pub replaceable_board, set_replaceable_board: 3;
-    pub hot_swappable_board, set_hot_swappable_board: 4;
-    pub reserved, set_reserved: 7, 5;
+/// Baseboard Feature Flags (Type 2, offset 0x09)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct FeatureFlags {
+    pub hosting_board: bool,
+    pub require_aux_board: bool,
+    pub removable_board: bool,
+    pub replaceable_board: bool,
+    pub hot_swappable_board: bool,
+    #[bits(3)]
+    pub reserved: u8,
 }
 
-impl FeatureFlags {
-    pub fn new(
-        hosting_board: bool,
-        require_aux_board: bool,
-        removable_board: bool,
-        replaceable_board: bool,
-        hot_swappable_board: bool,
-    ) -> Self{
-        let mut config = FeatureFlags(0);
-        config.set_hosting_board(hosting_board);
-        config.set_require_aux_board(require_aux_board);
-        config.set_removable_board(removable_board);
-        config.set_replaceable_board(replaceable_board);
-        config.set_hot_swappable_board(hot_swappable_board);
-        config.set_reserved(0);
-        config
-    }
-}
-
-///
-/// Board Type
-/// 
-#[derive(Copy, Clone, Debug)]
+/// Baseboard Type (Type 2, offset 0x0D)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum BoardType {
     Unknown = 0x01,
-    Other,
-    ServerBlade,
-    ConnectivitySwitch,
-    SystemManagementModule,
-    ProcessorModule,
-    IoModule,
-    MemoryModule,
-    DaughterBoard,
-    Motherboard,
-    ProcessorMemoryModule,
-    ProcessorIoModule,
-    InterconnectBoard
+    Other = 0x02,
+    ServerBlade = 0x03,
+    ConnectivitySwitch = 0x04,
+    SystemManagementModule = 0x05,
+    ProcessorModule = 0x06,
+    IoModule = 0x07,
+    MemoryModule = 0x08,
+    DaughterBoard = 0x09,
+    Motherboard = 0x0A,
+    ProcessorMemoryModule = 0x0B,
+    ProcessorIoModule = 0x0C,
+    InterconnectBoard = 0x0D,
 }
 
+/// System Enclosure Boot-Up State (Type 3, offset 0x09).
 ///
-/// Boot Up State
-///
-#[derive(Copy, Clone, Debug)]
+/// Per SMBIOS spec Table 17 (System — Boot Up State).
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum BootUpState {
     Other = 0x01,
-    Unknown,
-    Desktop,
-    LowProfileDesktop,
-    Pizzabox,
-    MiniTower,
-    Tower,
-    Portable,
-    Laptop,
-    Notebook,
-    HandHeld,
-    DockingStation,
-    AllInOne,
-    SubNotebook,
-    SpaceSaving,
-    LunchBox,
-    MainServerChassis,
-    ExpansionChassis,
-    SubChassis,
-    BusExpansionChassis,
-    PeripheralChassis,
-    RaidChassis,
-    RackMountChassis,
-    SealedCasePc,
-    MultiSystemChassis,
-    CompactPci,
-    AdvancedTca,
-    Blade,
-    BladeEnclosure,
-    Tablet,
-    Convertible,
-    Detachable,
-    IotGateway,
-    EmbeddedPc,
-    MiniPc,
-    StickPc
+    Unknown = 0x02,
+    Safe = 0x03,
+    Warning = 0x04,
+    Critical = 0x05,
+    NonRecoverable = 0x06,
 }
 
+/// System Enclosure Power Supply State (Type 3, offset 0x0A).
 ///
-/// Power Supply State
-///
-#[derive(Copy, Clone, Debug)]
+/// Per SMBIOS spec Table 17 (Power Supply State).
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum PowerSupplyState {
-    ProcessorOther = 0x01,
-    ProcessorUnknown,
-    CentralProcessor,
-    MathProcessor,
-    DspProcessor,
-    VideoProcessor,
+    Other = 0x01,
+    Unknown = 0x02,
+    Safe = 0x03,
+    Warning = 0x04,
+    Critical = 0x05,
+    NonRecoverable = 0x06,
 }
 
-///
-/// Thermal State
-///
-#[derive(Copy, Clone, Debug)]
+/// System Enclosure Thermal State (Type 3, offset 0x0B)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ThermalState {
     Other = 0x01,
-    Unknown,
-    Safe,
-    Warning,
-    Critical,
-    NonRecoverable
+    Unknown = 0x02,
+    Safe = 0x03,
+    Warning = 0x04,
+    Critical = 0x05,
+    NonRecoverable = 0x06,
 }
 
+/// System Enclosure Security Status (Type 3, offset 0x0C).
 ///
-/// Security Status
-///
-#[derive(Copy, Clone, Debug)]
+/// `NoneStatus` is named to avoid the reserved `None` keyword.
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum SecurityStatus {
     Other = 0x01,
-    Unknown,
-    _None,
-    ExternalInterfaceLockedOut,
-    ExternalInterfaceEnabled
+    Unknown = 0x02,
+    NoneStatus = 0x03,
+    ExternalInterfaceLockedOut = 0x04,
+    ExternalInterfaceEnabled = 0x05,
 }
 
-bitfield! {
-    ///
-    /// Contained Elements - Contained Element Type
-    ///
-    #[derive(Copy, Clone)] 
-    pub struct  ContainedElementType(u8);
-    impl Debug;
-    pub _type, set_type : 6, 0;
-    pub type_select, set_type_select : 7;
+/// Contained Element Type (Type 3 element record, byte 0)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct ContainedElementType {
+    #[bits(7)]
+    pub r#type: u8,
+    pub type_select: bool,
 }
 
-impl ContainedElementType {
-    pub fn new(
-        _type: u8,
-        type_select: bool,
-    ) -> Self{
-        let mut config = ContainedElementType(0);
-        config.set_type(_type);
-        config.set_type_select(type_select);
-        config
-    }
-}
-
-///
-/// Contained Elements
-///
-#[derive(Copy, Clone, Debug)]
+/// Contained Element (Type 3 element record - 3 bytes)
+#[repr(C, packed)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub struct ContainedElements {
     pub contained_element_type: ContainedElementType,
     pub contained_element_minimum: u8,
@@ -409,906 +221,681 @@ pub struct ContainedElements {
 impl Default for ContainedElements {
     fn default() -> Self {
         Self {
-            contained_element_type: ContainedElementType::new(0, false),
+            contained_element_type: ContainedElementType::new(),
             contained_element_minimum: 0,
-            contained_element_maximum: 0
+            contained_element_maximum: 0,
         }
     }
 }
 
-///
-/// Processor Information
-///
-#[derive(Copy, Clone, Debug)]
+/// Processor Type (Type 4, offset 0x05)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ProcessorTypeData {
     ProcessorOther = 0x01,
-    ProcessorUnknown,
-    CentralProcessor,
-    MathProcessor,
-    DspProcessor,
-    VideoProcessor,
+    ProcessorUnknown = 0x02,
+    CentralProcessor = 0x03,
+    MathProcessor = 0x04,
+    DspProcessor = 0x05,
+    VideoProcessor = 0x06,
 }
 
+/// Processor Family / Family 2 (Type 4, offset 0x06 BYTE / 0x28 WORD).
 ///
-/// Processor Information - Processor Family
-///
-#[derive(Copy, Clone, Debug)]
+/// Tagged `#[repr(u16)]` to cover the full SMBIOS extended family list.
+/// The 1-byte `processor_family` field on `Type4ProcessorInformation` is a
+/// raw `u8`; set it to `0xFE` (IndicatorFamily2) when using the extended
+/// `processor_family2` field for values >= 0x100.
+#[repr(u16)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ProcessorFamilyData {
     Other = 0x01,
-    Unknown,
-    Processor8086,
-    Processor80286,
-    Intel386,
-    Intel486,
-    Processor8087,
-    Processor80287,
-    Processor80387,
-    Processor80487,
-    Pentium,
-    PentiumPro,
-    PentiumII,
-    PentiumMMX,
-    Celeron,
-    PentiumIIXeon,
-    PentiumIII,
-    M1Family,
-    M2Family,
-    IntelCeleronM,
-    IntelPentium4Ht,
-    IntelProcessor,
+    Unknown = 0x02,
+    Processor8086 = 0x03,
+    Processor80286 = 0x04,
+    Intel386 = 0x05,
+    Intel486 = 0x06,
+    Processor8087 = 0x07,
+    Processor80287 = 0x08,
+    Processor80387 = 0x09,
+    Processor80487 = 0x0A,
+    Pentium = 0x0B,
+    PentiumPro = 0x0C,
+    PentiumII = 0x0D,
+    PentiumMMX = 0x0E,
+    Celeron = 0x0F,
+    PentiumIIXeon = 0x10,
+    PentiumIII = 0x11,
+    M1Family = 0x12,
+    M2Family = 0x13,
+    IntelCeleronM = 0x14,
+    IntelPentium4Ht = 0x15,
+    IntelProcessor = 0x16,
     AmdDuron = 0x18,
-    K5Family,
-    K6Family,
-    K6_2,
-    K6_3,
-    AmdAthlon,
-    Amd29000,
-    K6_2Plus,
-    PowerPC,
-    PowerPC601,
-    PowerPC603,
-    PowerPC603Plus,
-    PowerPC604,
-    PowerPC620,
-    PowerPCx704,
-    PowerPC750,
-    IntelCoreDuo,
-    IntelCoreDuoMobile,
-    IntelCoreSoloMobile,
-    IntelAtom,
-    IntelCoreM,
-    IntelCorem3,
-    IntelCorem5,
-    IntelCorem7,
-    Alpha,
-    Alpha21064,
-    Alpha21066,
-    Alpha21164,
-    Alpha21164PC,
-    Alpha21164a,
-    Alpha21264,
-    Alpha21364,
-    AmdTurionIIUltraDualCoreMobileM,
-    AmdTurionIIDualCoreMobileM,
-    AmdAthlonIIDualCoreM,
-    AmdOpteron6100Series,
-    AmdOpteron4100Series,
-    AmdOpteron6200Series,
-    AmdOpteron4200Series,
-    AmdFxSeries,
-    MipsFamily,
-    MipsR4000,
-    MipsR4200,
-    MipsR4400,
-    MipsR4600,
-    MipsR10000,
-    AmdCSeries,
-    AmdESeries,
-    AmdASeries,
-    AmdGSeries,
-    AmdZSeries,
-    AmdRSeries,
-    AmdOpteron4300,
-    AmdOpteron6300,
-    AmdOpteron3300,
-    AmdFireProSeries,
-    Sparc,
-    SuperSparc,
-    MicroSparcII,
-    MicroSparcIIep,
-    UltraSparc,
-    UltraSparcII,
-    UltraSparcIii,
-    UltraSparcIII,
-    UltraSparcIIIi,
+    K5Family = 0x19,
+    K6Family = 0x1A,
+    K6_2 = 0x1B,
+    K6_3 = 0x1C,
+    AmdAthlon = 0x1D,
+    Amd29000 = 0x1E,
+    K6_2Plus = 0x1F,
+    PowerPC = 0x20,
+    PowerPC601 = 0x21,
+    PowerPC603 = 0x22,
+    PowerPC603Plus = 0x23,
+    PowerPC604 = 0x24,
+    PowerPC620 = 0x25,
+    PowerPCx704 = 0x26,
+    PowerPC750 = 0x27,
+    IntelCoreDuo = 0x28,
+    IntelCoreDuoMobile = 0x29,
+    IntelCoreSoloMobile = 0x2A,
+    IntelAtom = 0x2B,
+    IntelCoreM = 0x2C,
+    IntelCorem3 = 0x2D,
+    IntelCorem5 = 0x2E,
+    IntelCorem7 = 0x2F,
+    Alpha = 0x30,
+    Alpha21064 = 0x31,
+    Alpha21066 = 0x32,
+    Alpha21164 = 0x33,
+    Alpha21164PC = 0x34,
+    Alpha21164a = 0x35,
+    Alpha21264 = 0x36,
+    Alpha21364 = 0x37,
+    AmdTurionIIUltraDualCoreMobileM = 0x38,
+    AmdTurionIIDualCoreMobileM = 0x39,
+    AmdAthlonIIDualCoreM = 0x3A,
+    AmdOpteron6100Series = 0x3B,
+    AmdOpteron4100Series = 0x3C,
+    AmdOpteron6200Series = 0x3D,
+    AmdOpteron4200Series = 0x3E,
+    AmdFxSeries = 0x3F,
+    MipsFamily = 0x40,
+    MipsR4000 = 0x41,
+    MipsR4200 = 0x42,
+    MipsR4400 = 0x43,
+    MipsR4600 = 0x44,
+    MipsR10000 = 0x45,
+    AmdCSeries = 0x46,
+    AmdESeries = 0x47,
+    AmdASeries = 0x48,
+    AmdGSeries = 0x49,
+    AmdZSeries = 0x4A,
+    AmdRSeries = 0x4B,
+    AmdOpteron4300 = 0x4C,
+    AmdOpteron6300 = 0x4D,
+    AmdOpteron3300 = 0x4E,
+    AmdFireProSeries = 0x4F,
+    Sparc = 0x50,
+    SuperSparc = 0x51,
+    MicroSparcII = 0x52,
+    MicroSparcIIep = 0x53,
+    UltraSparc = 0x54,
+    UltraSparcII = 0x55,
+    UltraSparcIii = 0x56,
+    UltraSparcIII = 0x57,
+    UltraSparcIIIi = 0x58,
     Processor68040 = 0x60,
-    Processor68xxx,
-    Processor68000,
-    Processor68010,
-    Processor68020,
-    Processor68030,
-    AmdAthlonX4QuadCore,
-    AmdOpteronX1000Series,
-    AmdOpteronX2000Series,
-    AmdOpteronASeries,
-    AmdOpteronX3000Series,
-    AmdZen,
+    Processor68xxx = 0x61,
+    Processor68000 = 0x62,
+    Processor68010 = 0x63,
+    Processor68020 = 0x64,
+    Processor68030 = 0x65,
+    AmdAthlonX4QuadCore = 0x66,
+    AmdOpteronX1000Series = 0x67,
+    AmdOpteronX2000Series = 0x68,
+    AmdOpteronASeries = 0x69,
+    AmdOpteronX3000Series = 0x6A,
+    AmdZen = 0x6B,
     HobbitFamily = 0x70,
     CrusoeTM5000 = 0x78,
-    CrusoeTM3000,
-    EfficeonTM8000,
+    CrusoeTM3000 = 0x79,
+    EfficeonTM8000 = 0x7A,
     Weitek = 0x80,
     Itanium = 0x82,
-    AmdAthlon64,
-    AmdOpteron,
-    AmdSempron,
-    AmdTurion64Mobile,
-    DualCoreAmdOpteron,
-    AmdAthlon64X2DualCore,
-    AmdTurion64X2Mobile,
-    QuadCoreAmdOpteron,
-    ThirdGenerationAmdOpteron,
-    AmdPhenomFxQuadCore,
-    AmdPhenomX4QuadCore,
-    AmdPhenomX2DualCore,
-    AmdAthlonX2DualCore,
-    Parisc,
-    PaRisc8500,
-    PaRisc8000,
-    PaRisc7300LC,
-    PaRisc7200,
-    PaRisc7100LC,
-    PaRisc7100,
+    AmdAthlon64 = 0x83,
+    AmdOpteron = 0x84,
+    AmdSempron = 0x85,
+    AmdTurion64Mobile = 0x86,
+    DualCoreAmdOpteron = 0x87,
+    AmdAthlon64X2DualCore = 0x88,
+    AmdTurion64X2Mobile = 0x89,
+    QuadCoreAmdOpteron = 0x8A,
+    ThirdGenerationAmdOpteron = 0x8B,
+    AmdPhenomFxQuadCore = 0x8C,
+    AmdPhenomX4QuadCore = 0x8D,
+    AmdPhenomX2DualCore = 0x8E,
+    AmdAthlonX2DualCore = 0x8F,
+    Parisc = 0x90,
+    PaRisc8500 = 0x91,
+    PaRisc8000 = 0x92,
+    PaRisc7300LC = 0x93,
+    PaRisc7200 = 0x94,
+    PaRisc7100LC = 0x95,
+    PaRisc7100 = 0x96,
     V30Family = 0xA0,
-    QuadCoreIntelXeon3200Series,
-    DualCoreIntelXeon3000Series,
-    QuadCoreIntelXeon5300Series,
-    DualCoreIntelXeon5100Series,
-    DualCoreIntelXeon5000Series,
-    DualCoreIntelXeonLV,
-    DualCoreIntelXeonULV,
-    DualCoreIntelXeon7100Series,
-    QuadCoreIntelXeon5400Series,
-    QuadCoreIntelXeon,
-    DualCoreIntelXeon5200Series,
-    DualCoreIntelXeon7200Series,
-    QuadCoreIntelXeon7300Series,
-    QuadCoreIntelXeon7400Series,
-    MultiCoreIntelXeon7400Series,
-    PentiumIIIXeon,
-    PentiumIIISpeedStep,
-    Pentium4,
-    IntelXeon,
-    As400,
-    IntelXeonMP,
-    AMDAthlonXP,
-    AMDAthlonMP,
-    IntelItanium2,
-    IntelPentiumM,
-    IntelCeleronD,
-    IntelPentiumD,
-    IntelPentiumEx,
-    IntelCoreSolo,
-    Reserved,
-    IntelCore2,
-    IntelCore2Solo,
-    IntelCore2Extreme,
-    IntelCore2Quad,
-    IntelCore2ExtremeMobile,
-    IntelCore2DuoMobile,
-    IntelCore2SoloMobile,
-    IntelCoreI7,
-    DualCoreIntelCeleron,
-    Ibm390,
-    G4,
-    G5,
-    EsaG6,
-    ZArchitecture,
-    IntelCoreI5,
-    IntelCoreI3,
-    IntelCoreI9,
-    IntelXeonD,
+    QuadCoreIntelXeon3200Series = 0xA1,
+    DualCoreIntelXeon3000Series = 0xA2,
+    QuadCoreIntelXeon5300Series = 0xA3,
+    DualCoreIntelXeon5100Series = 0xA4,
+    DualCoreIntelXeon5000Series = 0xA5,
+    DualCoreIntelXeonLV = 0xA6,
+    DualCoreIntelXeonULV = 0xA7,
+    DualCoreIntelXeon7100Series = 0xA8,
+    QuadCoreIntelXeon5400Series = 0xA9,
+    QuadCoreIntelXeon = 0xAA,
+    DualCoreIntelXeon5200Series = 0xAB,
+    DualCoreIntelXeon7200Series = 0xAC,
+    QuadCoreIntelXeon7300Series = 0xAD,
+    QuadCoreIntelXeon7400Series = 0xAE,
+    MultiCoreIntelXeon7400Series = 0xAF,
+    PentiumIIIXeon = 0xB0,
+    PentiumIIISpeedStep = 0xB1,
+    Pentium4 = 0xB2,
+    IntelXeon = 0xB3,
+    As400 = 0xB4,
+    IntelXeonMP = 0xB5,
+    AMDAthlonXP = 0xB6,
+    AMDAthlonMP = 0xB7,
+    IntelItanium2 = 0xB8,
+    IntelPentiumM = 0xB9,
+    IntelCeleronD = 0xBA,
+    IntelPentiumD = 0xBB,
+    IntelPentiumEx = 0xBC,
+    IntelCoreSolo = 0xBD,
+    Reserved = 0xBE,
+    IntelCore2 = 0xBF,
+    IntelCore2Solo = 0xC0,
+    IntelCore2Extreme = 0xC1,
+    IntelCore2Quad = 0xC2,
+    IntelCore2ExtremeMobile = 0xC3,
+    IntelCore2DuoMobile = 0xC4,
+    IntelCore2SoloMobile = 0xC5,
+    IntelCoreI7 = 0xC6,
+    DualCoreIntelCeleron = 0xC7,
+    Ibm390 = 0xC8,
+    G4 = 0xC9,
+    G5 = 0xCA,
+    EsaG6 = 0xCB,
+    ZArchitecture = 0xCC,
+    IntelCoreI5 = 0xCD,
+    IntelCoreI3 = 0xCE,
+    IntelCoreI9 = 0xCF,
+    IntelXeonD = 0xD0,
     ViaC7M = 0xD2,
-    ViaC7D,
-    ViaC7,
-    ViaEden,
-    MultiCoreIntelXeon,
-    DualCoreIntelXeon3Series,
-    QuadCoreIntelXeon3Series,
-    ViaNano,
-    DualCoreIntelXeon5Series,
-    QuadCoreIntelXeon5Series,
+    ViaC7D = 0xD3,
+    ViaC7 = 0xD4,
+    ViaEden = 0xD5,
+    MultiCoreIntelXeon = 0xD6,
+    DualCoreIntelXeon3Series = 0xD7,
+    QuadCoreIntelXeon3Series = 0xD8,
+    ViaNano = 0xD9,
+    DualCoreIntelXeon5Series = 0xDA,
+    QuadCoreIntelXeon5Series = 0xDB,
     DualCoreIntelXeon7Series = 0xDD,
-    QuadCoreIntelXeon7Series,
-    MultiCoreIntelXeon7Series,
-    MultiCoreIntelXeon3400Series,
+    QuadCoreIntelXeon7Series = 0xDE,
+    MultiCoreIntelXeon7Series = 0xDF,
+    MultiCoreIntelXeon3400Series = 0xE0,
     AmdOpteron3000Series = 0xE4,
-    AmdSempronII,
-    EmbeddedAmdOpteronQuadCore,
-    AmdPhenomTripleCore,
-    AmdTurionUltraDualCoreMobile,
-    AmdTurionDualCoreMobile,
-    AmdAthlonDualCore,
-    AmdSempronSI,
-    AmdPhenomII,
-    AmdAthlonII,
-    SixCoreAmdOpteron,
-    AmdSempronM,
+    AmdSempronII = 0xE5,
+    EmbeddedAmdOpteronQuadCore = 0xE6,
+    AmdPhenomTripleCore = 0xE7,
+    AmdTurionUltraDualCoreMobile = 0xE8,
+    AmdTurionDualCoreMobile = 0xE9,
+    AmdAthlonDualCore = 0xEA,
+    AmdSempronSI = 0xEB,
+    AmdPhenomII = 0xEC,
+    AmdAthlonII = 0xED,
+    SixCoreAmdOpteron = 0xEE,
+    AmdSempronM = 0xEF,
     I860 = 0xFA,
-    I960,
+    I960 = 0xFB,
+    /// Use this u8 marker (0xFE) in `processor_family` to indicate that the
+    /// real value is in `processor_family2`.
     IndicatorFamily2 = 0xFE,
-    Reserved1,
+    Reserved1 = 0xFF,
     ARMv7 = 0x0100,
-    ARMv8,
-    ARMv9,
-    Sh3,
-    Sh4,
+    ARMv8 = 0x0101,
+    ARMv9 = 0x0102,
+    Sh3 = 0x0103,
+    Sh4 = 0x0104,
     Arm = 0x0118,
-    StrongARM,
+    StrongARM = 0x0119,
     Processor6x86 = 0x012C,
-    MediaGX,
-    Mii,
+    MediaGX = 0x012D,
+    Mii = 0x012E,
     WinChip = 0x0140,
     Dsp = 0x015E,
     VideoProcessor = 0x01F4,
     RiscvRV32 = 0x0200,
-    RiscVRV64,
-    RiscVRV128,
+    RiscVRV64 = 0x0201,
+    RiscVRV128 = 0x0202,
     LoongArch = 0x0258,
-    Loongson1,
-    Loongson2,
-    Loongson3,
-    Loongson2K,
-    Loongson3A,
-    Loongson3B,
-    Loongson3C,
-    Loongson3D,
-    Loongson3E,
-    DualCoreLoongson2K,
+    Loongson1 = 0x0259,
+    Loongson2 = 0x025A,
+    Loongson3 = 0x025B,
+    Loongson2K = 0x025C,
+    Loongson3A = 0x025D,
+    Loongson3B = 0x025E,
+    Loongson3C = 0x025F,
+    Loongson3D = 0x0260,
+    Loongson3E = 0x0261,
+    DualCoreLoongson2K = 0x0262,
     QuadCoreLoongson3A = 0x026C,
-    MultiCoreLoongson3A,
-    QuadCoreLoongson3B,
-    MultiCoreLoongson3B,
-    MultiCoreLoongson3C,
-    MultiCoreLoongson3D,
+    MultiCoreLoongson3A = 0x026D,
+    QuadCoreLoongson3B = 0x026E,
+    MultiCoreLoongson3B = 0x026F,
+    MultiCoreLoongson3C = 0x0270,
+    MultiCoreLoongson3D = 0x0271,
     IntelCore3 = 0x0300,
-    IntelCore5,
-    IntelCore7,
-    IntelCore9,
-    IntelCoreUltra3,
-    IntelCoreUltra5,
-    IntelCoreUltra7,
-    IntelCoreUltra9,
+    IntelCore5 = 0x0301,
+    IntelCore7 = 0x0302,
+    IntelCore9 = 0x0303,
+    IntelCoreUltra3 = 0x0304,
+    IntelCoreUltra5 = 0x0305,
+    IntelCoreUltra7 = 0x0306,
+    IntelCoreUltra9 = 0x0307,
 }
 
-///
-/// Processor Information - Processor Upgrade
-///
-#[derive(Copy, Clone, Debug)]
+/// Processor Upgrade (Type 4, offset 0x19)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ProcessorUpgrade {
     Other = 0x01,
-    Unknown,
-    DaughterBoard,
-    ZIFSocket,
-    ReplaceablePiggyBack,
-    None,
-    LIFSocket,
-    Slot1,
-    Slot2,
-    Pin370Socket,
-    SlotA,
-    SlotM,
-    Socket423,
-    SocketA, //  Socket 462
-    Socket478,
-    Socket754,
-    Socket940,
-    Socket939,
-    SocketmPGA604,
-    SocketLGA771,
-    SocketLGA775,
-    SocketS1,
-    SocketAM2,
-    SocketF1207,
-    SocketLGA1366,
-    SocketG34,
-    SocketAM3,
-    SocketC32,
-    SocketLGA1156,
-    SocketLGA1567,
-    SocketPGA988A,
-    SocketBGA1288,
-    SocketrPGA988B,
-    SocketBGA1023,
-    SocketBGA1224,
-    SocketLGA1155,
-    SocketLGA1356,
-    SocketLGA2011,
-    SocketFS1,
-    SocketFS2,
-    SocketFM1,
-    SocketFM2,
-    SocketLGA2011_3,
-    SocketLGA1356_3,
-    SocketLGA1150,
-    SocketBGA1168,
-    SocketBGA1234,
-    SocketBGA1364,
-    SocketAM4,
-    SocketLGA1151,
-    SocketBGA1356,
-    SocketBGA1440,
-    SocketBGA1515,
-    SocketLGA3647_1,
-    SocketSP3,
-    SocketSP3r2,
-    SocketLGA2066,
-    SocketBGA1392,
-    SocketBGA1510,
-    SocketBGA1528,
-    SocketLGA4189,
-    SocketLGA1200,
-    SocketLGA4677,
-    SocketLGA1700,
-    SocketBGA1744,
-    SocketBGA1781,
-    SocketBGA1211,
-    SocketBGA2422,
-    SocketLGA1211,
-    SocketLGA2422,
-    SocketLGA5773,
-    SocketBGA5773,
-    SocketAM5,
-    SocketSP5,
-    SocketSP6,
-    SocketBGA883,
-    SocketBGA1190,
-    SocketBGA4129,
-    SocketLGA4710,
-    SocketLGA7529,
-    SocketBGA1964, //ANS: check for the rest of list, not on 3.7
-    SocketBGA1792,
-    SocketBGA2049,
-    SocketBGA2551,
-    SocketLGA1851,
-    SocketBGA2114,
-    SocketBGA2833,
-    // Use this when no other valid enumeration is available.
-    // When this enumeration is used, Socket Type at offset 32h must be non-null.
+    Unknown = 0x02,
+    DaughterBoard = 0x03,
+    ZIFSocket = 0x04,
+    ReplaceablePiggyBack = 0x05,
+    NoUpgrade = 0x06,
+    LIFSocket = 0x07,
+    Slot1 = 0x08,
+    Slot2 = 0x09,
+    Pin370Socket = 0x0A,
+    SlotA = 0x0B,
+    SlotM = 0x0C,
+    Socket423 = 0x0D,
+    SocketA = 0x0E,
+    Socket478 = 0x0F,
+    Socket754 = 0x10,
+    Socket940 = 0x11,
+    Socket939 = 0x12,
+    SocketmPGA604 = 0x13,
+    SocketLGA771 = 0x14,
+    SocketLGA775 = 0x15,
+    SocketS1 = 0x16,
+    SocketAM2 = 0x17,
+    SocketF1207 = 0x18,
+    SocketLGA1366 = 0x19,
+    SocketG34 = 0x1A,
+    SocketAM3 = 0x1B,
+    SocketC32 = 0x1C,
+    SocketLGA1156 = 0x1D,
+    SocketLGA1567 = 0x1E,
+    SocketPGA988A = 0x1F,
+    SocketBGA1288 = 0x20,
+    SocketrPGA988B = 0x21,
+    SocketBGA1023 = 0x22,
+    SocketBGA1224 = 0x23,
+    SocketLGA1155 = 0x24,
+    SocketLGA1356 = 0x25,
+    SocketLGA2011 = 0x26,
+    SocketFS1 = 0x27,
+    SocketFS2 = 0x28,
+    SocketFM1 = 0x29,
+    SocketFM2 = 0x2A,
+    SocketLGA2011_3 = 0x2B,
+    SocketLGA1356_3 = 0x2C,
+    SocketLGA1150 = 0x2D,
+    SocketBGA1168 = 0x2E,
+    SocketBGA1234 = 0x2F,
+    SocketBGA1364 = 0x30,
+    SocketAM4 = 0x31,
+    SocketLGA1151 = 0x32,
+    SocketBGA1356 = 0x33,
+    SocketBGA1440 = 0x34,
+    SocketBGA1515 = 0x35,
+    SocketLGA3647_1 = 0x36,
+    SocketSP3 = 0x37,
+    SocketSP3r2 = 0x38,
+    SocketLGA2066 = 0x39,
+    SocketBGA1392 = 0x3A,
+    SocketBGA1510 = 0x3B,
+    SocketBGA1528 = 0x3C,
+    SocketLGA4189 = 0x3D,
+    SocketLGA1200 = 0x3E,
+    SocketLGA4677 = 0x3F,
+    SocketLGA1700 = 0x40,
+    SocketBGA1744 = 0x41,
+    SocketBGA1781 = 0x42,
+    SocketBGA1211 = 0x43,
+    SocketBGA2422 = 0x44,
+    SocketLGA1211 = 0x45,
+    SocketLGA2422 = 0x46,
+    SocketLGA5773 = 0x47,
+    SocketBGA5773 = 0x48,
+    SocketAM5 = 0x49,
+    SocketSP5 = 0x4A,
+    SocketSP6 = 0x4B,
+    SocketBGA883 = 0x4C,
+    SocketBGA1190 = 0x4D,
+    SocketBGA4129 = 0x4E,
+    SocketLGA4710 = 0x4F,
+    SocketLGA7529 = 0x50,
+    SocketBGA1964 = 0x51,
+    SocketBGA1792 = 0x52,
+    SocketBGA2049 = 0x53,
+    SocketBGA2551 = 0x54,
+    SocketLGA1851 = 0x55,
+    SocketBGA2114 = 0x56,
+    SocketBGA2833 = 0x57,
     NotAvailable = 0xFF,
 }
 
-bitfield! {
-    ///
-    /// Processor Information - Voltage
-    ///
-    pub struct ProcessorVoltage (u8);
-    impl Debug;
-    pub processor_voltage_capability_5v, set_processor_voltage_capability_5v: 0;
-    pub processor_voltage_capability_3_3v, set_processor_voltage_capability_3_3v: 1;
-    pub processor_voltage_capability_2_9v, set_processor_voltage_capability_2_9v: 2;
-    pub processor_voltage_capability_reserved, set_processor_voltage_capability_reserved: 3;
-    pub processor_voltage_reserved, set_processor_voltage_reserved: 6, 4;
-    pub processor_voltage_indicate_legacy, set_processor_voltage_indicate_legacy: 7;
+/// Processor Voltage (Type 4, offset 0x11)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct ProcessorVoltage {
+    pub processor_voltage_capability_5v: bool,
+    pub processor_voltage_capability_3_3v: bool,
+    pub processor_voltage_capability_2_9v: bool,
+    pub processor_voltage_capability_reserved: bool,
+    #[bits(3)]
+    pub processor_voltage_reserved: u8,
+    pub processor_voltage_indicate_legacy: bool,
 }
 
-impl ProcessorVoltage {
-    pub fn new(
-        processor_voltage_capability_5v: bool,
-        processor_voltage_capability_3_3v: bool,
-        processor_voltage_capability_2_9v: bool,
-        processor_voltage_capability_reserved: bool,
-        processor_voltage_reserved: u8,
-        processor_voltage_indicate_legacy: bool,
-    ) -> Self{
-        let mut config = ProcessorVoltage(0);
-        config.set_processor_voltage_capability_5v(processor_voltage_capability_5v);
-        config.set_processor_voltage_capability_3_3v(processor_voltage_capability_3_3v);
-        config.set_processor_voltage_capability_2_9v(processor_voltage_capability_2_9v);
-        config.set_processor_voltage_capability_reserved(processor_voltage_capability_reserved);
-        config.set_processor_voltage_reserved(processor_voltage_reserved);
-        config.set_processor_voltage_indicate_legacy(processor_voltage_indicate_legacy);
-        config
-    }
+/// Processor Information Status (Type 4, offset 0x18)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct ProcessorInformationStatus {
+    #[bits(3)]
+    pub cpu_status: u8,
+    #[bits(3)]
+    pub reserved: u8,
+    pub cpu_socket_populated: bool,
+    pub reserved2: bool,
 }
 
-bitfield! {
-    ///
-    /// Processor Information - Status
-    ///
-    pub struct ProcessorInformationStatus (u8);
-    impl Debug;
-    pub cpu_status, set_cpu_status: 2, 0;
-    // reserved must be zero
-    pub reserved, set_reserved: 5, 3;
-    pub cpu_socket_populated, set_cpu_socket_populated: 6;
-    // reserved2 must be zero
-    pub reserved2, set_reserved2: 7;
+/// Processor Characteristics (Type 4, offset 0x26)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct ProcessorCharacteristics {
+    pub reserved: bool,
+    pub unknown: bool,
+    pub capable_64bit: bool,
+    pub multi_core: bool,
+    pub hardware_thread: bool,
+    pub execute_protection: bool,
+    pub enhanced_virtualization: bool,
+    pub performance_control: bool,
+    pub capable_128bit: bool,
+    pub arm64_soc_id: bool,
+    #[bits(6)]
+    pub reserved2: u8,
 }
 
-impl ProcessorInformationStatus {
-    pub fn new(
-        cpu_status: u8,
-        cpu_socket_populated: bool,
-    ) -> Self{
-        let mut config = ProcessorInformationStatus(0);
-        config.set_cpu_status(cpu_status);
-        config.set_reserved(0);
-        config.set_cpu_socket_populated(cpu_socket_populated);
-        config.set_reserved2(false);
-        config
-    }
+/// Cache Configuration (Type 7, offset 0x05)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct CacheConfiguration {
+    #[bits(3)]
+    pub cache_level: u8,
+    pub cache_socketed: bool,
+    pub reserved: bool,
+    #[bits(2)]
+    pub location: u8,
+    pub enabled_disabled: bool,
+    #[bits(2)]
+    pub operational_mode: u8,
+    #[bits(6)]
+    pub reserved2: u8,
 }
 
-bitfield! {
-    ///
-    /// Processor Information - Status
-    ///
-    pub struct ProcessorCharacteristics (u16);
-    impl Debug;
-    pub reserved, set_reserved : 0;
-    pub unknown, set_unknown : 1;
-    pub _64bit_capable, set_64bit_capable : 2;
-    pub multi_core, set_multi_core : 3;
-    pub hardware_thread, set_hardware_thread : 4;
-    pub execute_protection, set_execute_protection : 5;
-    pub enhanced_virtualization, set_enhanced_virtualization : 6;
-    pub performance_control, set_performance_control : 7;
-    pub _128bit_capable, set_128bit_capable : 8;
-    pub arm64_soc_id, set_arm64_soc_id : 9;
-    pub reserved2, set_reserved2 : 15, 10;
+/// Cache Size (Type 7, offset 0x07 / 0x09)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct CacheSize {
+    #[bits(15)]
+    pub max_size: u16,
+    pub granularity: bool,
 }
 
-impl ProcessorCharacteristics {
-    pub fn new(
-        unknown: bool,
-        _64bit_capable: bool,
-        multi_core: bool,
-        hardware_thread: bool,
-        execute_protection: bool,
-        enhanced_virtualization: bool,
-        performance_control: bool,
-        _128bit_capable: bool,
-        arm64_soc_id: bool,
-    ) -> Self{
-        let mut config = ProcessorCharacteristics(0);
-        config.set_reserved(false);
-        config.set_unknown(unknown);
-        config.set_64bit_capable(_64bit_capable);
-        config.set_multi_core(multi_core);
-        config.set_hardware_thread(hardware_thread);
-        config.set_execute_protection(execute_protection);
-        config.set_enhanced_virtualization(enhanced_virtualization);
-        config.set_performance_control(performance_control);
-        config.set_128bit_capable(_128bit_capable);
-        config.set_arm64_soc_id(arm64_soc_id);
-        config.set_reserved2(0);
-        config
-    }
+/// Cache Size 2 (Type 7, offset 0x13 / 0x17)
+#[bitfield(u32)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct CacheSize2 {
+    #[bits(31)]
+    pub max_size: u32,
+    pub granularity: bool,
 }
 
-bitfield! {
-    ///
-    /// Cache Information - Cache Configuration
-    ///
-    pub struct CacheConfiguration (u16);
-    impl Debug;
-    pub cache_level, set_cache_level: 2, 0;
-    pub cache_socketed, set_cache_socketed: 3;
-    // reserved must be zero
-    pub reserved, set_reserved: 4;
-    pub location, set_location: 6, 5;
-    pub enabled_disabled, set_enabled_disabled: 7;
-    pub operational_mode, set_operational_mode: 9, 8;
-    // reserved2 must be zero
-    pub reserved2, set_reserved2: 15, 10;
+/// Cache SRAM Type (Type 7, offset 0x0B / 0x0D)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct CacheSramTypeData {
+    pub other: bool,
+    pub unknown: bool,
+    pub non_burst: bool,
+    pub burst: bool,
+    pub pipeline_burst: bool,
+    pub synchronous: bool,
+    pub asynchronous: bool,
+    #[bits(9)]
+    pub reserved: u16,
 }
 
-impl CacheConfiguration {
-    pub fn new(
-        cache_level: u16,
-        cache_socketed: bool,
-        location: u16,
-        enabled_disabled: bool,
-        operational_mode: u16,
-    ) -> Self {
-        let mut config = CacheConfiguration(0);
-        config.set_cache_level(cache_level);
-        config.set_cache_socketed(cache_socketed);
-        config.set_reserved(false); // reserved must be zero
-        config.set_location(location);
-        config.set_enabled_disabled(enabled_disabled);
-        config.set_operational_mode(operational_mode);
-        config.set_reserved2(0); // reserved2 must be zero
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// Cache Information - Cache Size
-    ///
-    pub struct CacheSize (u16);
-    impl Debug;
-    pub max_size, set_max_size : 14, 0;
-    pub granularity, set_granularity : 15;
-}
-
-impl CacheSize {
-    pub fn new(
-        max_size: u16,
-        granularity: bool,
-    ) -> Self {
-        let mut config = CacheSize(0);
-        config.set_max_size(max_size);
-        config.set_granularity(granularity);
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// Cache Information - Cache Size 2
-    ///
-    pub struct CacheSize2 (u32);
-    impl Debug;
-    pub max_size, set_max_size : 30, 0;
-    pub granularity, set_granularity : 31;
-}
-
-impl CacheSize2 {
-    pub fn new(
-        max_size: u32,
-        granularity: bool,
-    ) -> Self {
-        let mut config = CacheSize2(0);
-        config.set_max_size(max_size);
-        config.set_granularity(granularity);
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// Cache Information - SRAM Type
-    ///
-    pub struct CacheSramTypeData(u16);
-    impl Debug;
-    pub other, set_other: 0;
-    pub unknown, set_unknown: 1;
-    pub non_burst, set_non_burst: 2;
-    pub burst, set_burst: 3;
-    pub pipeline_burst, set_pipeline_burst: 4;
-    pub synchronous, set_synchronous: 5;
-    pub asynchronous, set_asynchronous: 6;
-    // reserved must be zero
-    pub reserved, set_reserved: 15, 7;
-}
-
-impl CacheSramTypeData {
-    pub fn new(
-        other: bool,
-        unknown: bool,
-        non_burst: bool,
-        burst: bool,
-        pipeline_burst: bool,
-        synchronous: bool,
-        asynchronous: bool,
-    ) -> Self {
-        let mut config = CacheSramTypeData(0);
-        config.set_other(other);
-        config.set_unknown(unknown);
-        config.set_non_burst(non_burst);
-        config.set_burst(burst);
-        config.set_pipeline_burst(pipeline_burst);
-        config.set_synchronous(synchronous);
-        config.set_asynchronous(asynchronous);
-        config.set_reserved(0);
-        config
-    }
-}
-
-///
-/// Cache Information - Error Correction Type
-///
-#[derive(Copy, Clone, Debug)]
+/// Cache Error Correction Type (Type 7, offset 0x10)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ErrorCorrectionType {
     Other = 0x01,
-    Unknown,
-    None,
-    Parity,
-    SingleBitEcc,
-    MutliBitEcc,
+    Unknown = 0x02,
+    NoEcc = 0x03,
+    Parity = 0x04,
+    SingleBitEcc = 0x05,
+    MutliBitEcc = 0x06,
 }
 
-///
-/// Cache Information - System Cache Type
-///
-#[derive(Copy, Clone, Debug)]
+/// System Cache Type (Type 7, offset 0x11)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum SystemCacheType {
     Other = 0x01,
-    Unknown,
-    Instruction,
-    Data,
-    Unified,
+    Unknown = 0x02,
+    Instruction = 0x03,
+    Data = 0x04,
+    Unified = 0x05,
 }
 
-///
-/// Cache Information - Error Correction Type
-///
-#[derive(Copy, Clone, Debug)]
+/// Cache Associativity Field (Type 7, offset 0x12)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum AssociativityField {
     Other = 0x01,
-    Unknown,
-    DirectMapped,
-    SetAssociative2Way,
-    SetAssociative4Way,
-    FullyAssociative,
-    SetAssociative8Way,
-    SetAssociative16Way,
-    SetAssociative12Way,
-    SetAssociative24Way,
-    SetAssociative32Way,
-    SetAssociative48Way,
-    SetAssociative64Way,
-    SetAssociative20Way,
+    Unknown = 0x02,
+    DirectMapped = 0x03,
+    SetAssociative2Way = 0x04,
+    SetAssociative4Way = 0x05,
+    FullyAssociative = 0x06,
+    SetAssociative8Way = 0x07,
+    SetAssociative16Way = 0x08,
+    SetAssociative12Way = 0x09,
+    SetAssociative24Way = 0x0A,
+    SetAssociative32Way = 0x0B,
+    SetAssociative48Way = 0x0C,
+    SetAssociative64Way = 0x0D,
+    SetAssociative20Way = 0x0E,
 }
 
-///
-/// System Slots - Slot Type
-///
-#[derive(Copy, Clone, Debug)]
+/// System Slot Type (Type 9, offset 0x05) - BYTE per spec
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum SlotType {
     Other = 0x01,
-    Unknown,
-    Isa,
-    Mca,
-    Eisa,
-    Pci,
-    PcCard,
-    VlVesa,
-    Proprietary,
-    ProcessorCardSlot,
-    ProprietaryMemroyCardSlot,
-    IoRiserCardSlot,
-    NuBus,
-    // 66MHz Capable PCI
-    Pci66mhz,
-    Agp,
-    Agp2x,
-    Agp4x,
-    PciX,
-    Agp8x,
-    M2Socket1DP,
-    M2Socket1SD,
-    M2Socket2,
-    M2Socket3,
-    MxmTypeI,
-    MxmTypeII,
-    MxmTypeIIIStandard,
-    MxmTypeIIIHe,
-    MxmTypeIV,
-    Mxm3TypeA,
-    Mxm3TypeB,
-    // PCI Express Gen 2 SFF-8639 (U.2)
-    PciExpressGen2Sff8629,
-    // PCI Express Gen 3 SFF-8639 (U.2)
-    PciExpressGen3Sff8629,
-    // PCI Express Mini 52-pin (CEM spec. 2.0) with bottom-side keep-outs
-    PciExpressMini52PinBottomSideKeepOuts,
-    // PCI Express Mini 52-pin (CEM spec. 2.0) without bottom-side keep-outs.
-    PciExpressMini52Pin,
-    PciExpressMini76Pin,
-    // PCI Express Gen 4 SFF-8639 (U.2)
-    PciExpressGen4Sff8639,
-    // PCI Express Gen 5 SFF-8639 (U.2)
-    PciExpressGen5Sff8639,
-    OcpNic3SFF,
-    OcpNic3LFF,
-    // OCP NIC Prior to 3.0
-    OcpNicPrior,
+    Unknown = 0x02,
+    Isa = 0x03,
+    Mca = 0x04,
+    Eisa = 0x05,
+    Pci = 0x06,
+    PcCard = 0x07,
+    VlVesa = 0x08,
+    Proprietary = 0x09,
+    ProcessorCardSlot = 0x0A,
+    ProprietaryMemroyCardSlot = 0x0B,
+    IoRiserCardSlot = 0x0C,
+    NuBus = 0x0D,
+    Pci66mhz = 0x0E,
+    Agp = 0x0F,
+    Agp2x = 0x10,
+    Agp4x = 0x11,
+    PciX = 0x12,
+    Agp8x = 0x13,
+    M2Socket1DP = 0x14,
+    M2Socket1SD = 0x15,
+    M2Socket2 = 0x16,
+    M2Socket3 = 0x17,
+    MxmTypeI = 0x18,
+    MxmTypeII = 0x19,
+    MxmTypeIIIStandard = 0x1A,
+    MxmTypeIIIHe = 0x1B,
+    MxmTypeIV = 0x1C,
+    Mxm3TypeA = 0x1D,
+    Mxm3TypeB = 0x1E,
+    PciExpressGen2Sff8629 = 0x1F,
+    PciExpressGen3Sff8629 = 0x20,
+    PciExpressMini52PinBottomSideKeepOuts = 0x21,
+    PciExpressMini52Pin = 0x22,
+    PciExpressMini76Pin = 0x23,
+    PciExpressGen4Sff8639 = 0x24,
+    PciExpressGen5Sff8639 = 0x25,
+    OcpNic3SFF = 0x26,
+    OcpNic3LFF = 0x27,
+    OcpNicPrior = 0x28,
     Pc98C20 = 0xA0,
-    Pc98C24,
-    Pc98E,
-    Pc98LocalBus,
-    Pc98Card,
-    PciExpress,
-    PciExpressx1,
-    PciExpressx2,
-    PciExpressx4,
-    PciExpressx8,
-    PciExpressx16,
-    PciExpressGen2,
-    PciExpressGen2x1,
-    PciExpressGen2x2,
-    PciExpressGen2x4,
-    PciExpressGen2x8,
-    PciExpressGen2x16,
-    PciExpressGen3,
-    PciExpressGen3x1,
-    PciExpressGen3x2,
-    PciExpressGen3x4,
-    PciExpressGen3x8,
-    PciExpressGen3x16,
+    Pc98C24 = 0xA1,
+    Pc98E = 0xA2,
+    Pc98LocalBus = 0xA3,
+    Pc98Card = 0xA4,
+    PciExpress = 0xA5,
+    PciExpressx1 = 0xA6,
+    PciExpressx2 = 0xA7,
+    PciExpressx4 = 0xA8,
+    PciExpressx8 = 0xA9,
+    PciExpressx16 = 0xAA,
+    PciExpressGen2 = 0xAB,
+    PciExpressGen2x1 = 0xAC,
+    PciExpressGen2x2 = 0xAD,
+    PciExpressGen2x4 = 0xAE,
+    PciExpressGen2x8 = 0xAF,
+    PciExpressGen2x16 = 0xB0,
+    PciExpressGen3 = 0xB1,
+    PciExpressGen3x1 = 0xB2,
+    PciExpressGen3x2 = 0xB3,
+    PciExpressGen3x4 = 0xB4,
+    PciExpressGen3x8 = 0xB5,
+    PciExpressGen3x16 = 0xB6,
     PciExpressGen4 = 0xB8,
-    PciExpressGen4x1,
-    PciExpressGen4x2,
-    PciExpressGen4x4,
-    PciExpressGen4x8,
-    PciExpressGen4x16,
-    PciExpressGen5,
-    PciExpressGen5x1,
-    PciExpressGen5x2,
-    PciExpressGen5x4,
-    PciExpressGen5x8,
-    PciExpressGen5x16,
-    PciExpressGen6,
-    // Enterprise and Datacenter 1U E1 Form Factor Slot (EDSFF E1.S, E1.L)
-    EdsffE1SE1L,
-    // Enterprise and Datacenter 3" E3 Form Factor Slot (EDSFF E3.S, E3.L)
-    EdsffE3SE3L,
+    PciExpressGen4x1 = 0xB9,
+    PciExpressGen4x2 = 0xBA,
+    PciExpressGen4x4 = 0xBB,
+    PciExpressGen4x8 = 0xBC,
+    PciExpressGen4x16 = 0xBD,
+    PciExpressGen5 = 0xBE,
+    PciExpressGen5x1 = 0xBF,
+    PciExpressGen5x2 = 0xC0,
+    PciExpressGen5x4 = 0xC1,
+    PciExpressGen5x8 = 0xC2,
+    PciExpressGen5x16 = 0xC3,
+    PciExpressGen6 = 0xC4,
+    EdsffE1SE1L = 0xC5,
+    EdsffE3SE3L = 0xC6,
 }
 
-///
-/// System Slots - Slot Data Bus Width
-///
-#[derive(Copy, Clone, Debug)]
+/// System Slot Data Bus Width (Type 9, offset 0x06)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum SlotWidth {
     Other = 0x01,
-    Unknown,
-    Bit8,
-    Bit16,
-    Bit32,
-    Bit64,
-    Bit128,
-    X1,
-    X2,
-    X4,
-    X8,
-    X12,
-    X16,
-    X32,
+    Unknown = 0x02,
+    Bit8 = 0x03,
+    Bit16 = 0x04,
+    Bit32 = 0x05,
+    Bit64 = 0x06,
+    Bit128 = 0x07,
+    X1 = 0x08,
+    X2 = 0x09,
+    X4 = 0x0A,
+    X8 = 0x0B,
+    X12 = 0x0C,
+    X16 = 0x0D,
+    X32 = 0x0E,
 }
 
-///
-/// System Slots - Current Usage
-///
-#[derive(Copy, Clone, Debug)]
+/// System Slot Current Usage (Type 9, offset 0x07)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum CurrentUsage {
     Other = 0x01,
-    Unknown,
-    Available,
-    InUse,
-    Unavailable,
+    Unknown = 0x02,
+    Available = 0x03,
+    InUse = 0x04,
+    Unavailable = 0x05,
 }
 
-///
-/// System Slots - Slot Length
-///
-#[derive(Copy, Clone, Debug)]
+/// System Slot Length (Type 9, offset 0x08)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum SlotLength {
     Other = 0x01,
-    Unknown,
-    ShortLength,
-    LongLength,
-    // 2.5" drive form factor
-    DriveFF25,
-    // 3.5" drive form factor
-    DriveFF35,
+    Unknown = 0x02,
+    ShortLength = 0x03,
+    LongLength = 0x04,
+    DriveFF25 = 0x05,
+    DriveFF35 = 0x06,
 }
 
-bitfield! {
-    ///
-    /// System Slots - Slot Charcteristics 1
-    ///
-    pub struct SlotCharacteristics1(u8);
-    impl Debug;
-    pub characteristics_unknown, set_characteristics_unknown: 0;
-    pub provides_5_volts, set_provides_5_volts: 1;
-    pub provides_3_volts, set_provides_3_volts: 2;
-    pub shared_slot, set_shared_slot: 3;
-    pub pc_supports_pccard16, set_pc_supports_pccard16: 4;
-    pub pc_supports_cardbus, set_pc_supports_cardbus: 5;
-    pub pc_supports_zoomvideo, set_pc_supports_zoomvideo: 6;
-    pub pc_supports_modemringresume, set_pc_supports_modemringresume: 7;
+/// System Slot Characteristics 1 (Type 9, offset 0x0B)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct SlotCharacteristics1 {
+    pub characteristics_unknown: bool,
+    pub provides_5_volts: bool,
+    pub provides_3_volts: bool,
+    pub shared_slot: bool,
+    pub pc_supports_pccard16: bool,
+    pub pc_supports_cardbus: bool,
+    pub pc_supports_zoomvideo: bool,
+    pub pc_supports_modemringresume: bool,
 }
 
-impl SlotCharacteristics1 {
-    pub fn new(
-        characteristics_unknown: bool,
-        provides_5_volts: bool,
-        provides_3_volts: bool,
-        shared_slot: bool,
-        pc_supports_pccard16: bool,
-        pc_supports_cardbus: bool,
-        pc_supports_zoomvideo: bool,
-        pc_supports_modemringresume: bool,
-    ) -> Self{
-        let mut config = SlotCharacteristics1(0);
-        config.set_characteristics_unknown(characteristics_unknown);
-        config.set_provides_5_volts(provides_5_volts);
-        config.set_provides_3_volts(provides_3_volts);
-        config.set_shared_slot(shared_slot);
-        config.set_pc_supports_pccard16(pc_supports_pccard16);
-        config.set_pc_supports_cardbus(pc_supports_cardbus);
-        config.set_pc_supports_zoomvideo(pc_supports_zoomvideo);
-        config.set_pc_supports_modemringresume(pc_supports_modemringresume);
-        config
-    }
+/// System Slot Characteristics 2 (Type 9, offset 0x0C)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct SlotCharacteristics2 {
+    pub pci_supports_pme: bool,
+    pub supports_hotplug: bool,
+    pub pci_supports_smbus: bool,
+    pub pcie_supports_bifurcation: bool,
+    pub supports_async_removal: bool,
+    pub flexbus_slot1: bool,
+    pub flexbus_slot2: bool,
+    pub flexbus_slot3: bool,
 }
 
-bitfield! {
-    ///
-    /// System Slots - Slot Charcteristics 2
-    ///
-    /// Various fields were added through SMBIOS Version 3. For not-applicable fields use '0'.
-    ///
-    pub struct  SlotCharacteristics2(u8);
-    impl Debug;
-    pub pci_supports_pme, set_pci_supports_pme: 0;
-    pub supports_hotplug, set_supports_hotplug: 1;
-    pub pci_supports_smbus, set_pci_supports_smbus: 2;
-    pub pcie_supports_bifurcation, set_pcie_supports_bifurcation: 3;
-    pub supports_async_removal, set_supports_async_removal: 4;
-    // Flexbus slot, CXL 1.0 capable
-    pub flexbus_slot1, set_flexbus_slot1: 5;
-    // Flexbus slot, CXL 2.0 capable
-    pub flexbus_slot2, set_flexbus_slot2: 6;
-    // Flexbus slot, CXL 3.0 capable
-    pub flexbus_slot3, set_flexbus_slot3: 7;
+/// System Slot Device/Function Number (Type 9, offset 0x10)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct DeviceFunctionNumber {
+    #[bits(3)]
+    pub function_number: u8,
+    #[bits(5)]
+    pub device_number: u8,
 }
 
-impl SlotCharacteristics2 {
-    pub fn new(
-        pci_supports_pme: bool,
-        supports_hotplug: bool,
-        pci_supports_smbus: bool,
-        pcie_supports_bifurcation: bool,
-        supports_async_removal: bool,
-        flexbus_slot1: bool,
-        flexbus_slot2: bool,
-        flexbus_slot3: bool,
-    ) -> Self{
-        let mut config = SlotCharacteristics2(0);
-        config.set_pci_supports_pme(pci_supports_pme);
-        config.set_supports_hotplug(supports_hotplug);
-        config.set_pci_supports_smbus(pci_supports_smbus);
-        config.set_pcie_supports_bifurcation(pcie_supports_bifurcation);
-        config.set_supports_async_removal(supports_async_removal);
-        config.set_flexbus_slot1(flexbus_slot1);
-        config.set_flexbus_slot2(flexbus_slot2);
-        config.set_flexbus_slot3(flexbus_slot3);
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// System Slots - Device/Function Number
-    ///
-    #[derive(Copy, Clone)] 
-    pub struct  DeviceFunctionNumber(u8);
-    impl Debug;
-    pub function_number, set_function_number : 2, 0;
-    pub device_number, set_device_number : 7, 3;
-}
-
-impl DeviceFunctionNumber {
-    pub fn new(
-        function_number: u8,
-        device_number: u8
-    ) -> Self{
-        let mut config = DeviceFunctionNumber(0);
-        config.set_function_number(function_number);
-        config.set_device_number(device_number);
-        config
-    }
-}
-
-///
-/// System Slots - Peer Segment/Bus/Device/Function/Width Groups
-///
-#[derive(Copy, Clone, Debug)]
+/// System Slot Peer Group entry (5 bytes)
+#[repr(C, packed)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub struct MiscSlotPeerGroup {
     pub segment_group_num: u16,
     pub bus_num: u8,
@@ -1316,366 +903,173 @@ pub struct MiscSlotPeerGroup {
     pub data_bus_width: u8,
 }
 
-///
-/// Memory Array - Location
-///
-#[derive(Copy, Clone, Debug)]
+/// Memory Array Location (Type 16, offset 0x04)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum MemoryArrayLocation {
     Other = 0x01,
-    Unknown,
-    SystemBoard,
-    IsaAddOn,
-    EisaAddOn,
-    PciAddOn,
-    McaAddOn,
-    PcmciaAddOn,
-    ProprietaryAddOn,
-    NuBus,
+    Unknown = 0x02,
+    SystemBoard = 0x03,
+    IsaAddOn = 0x04,
+    EisaAddOn = 0x05,
+    PciAddOn = 0x06,
+    McaAddOn = 0x07,
+    PcmciaAddOn = 0x08,
+    ProprietaryAddOn = 0x09,
+    NuBus = 0x0A,
     Pc98C20AddOn = 0xA0,
-    Pc98C24AddOn,
-    Pc98EAddOn,
-    Pc98LocalAddOn,
-    CxlAddOn,
+    Pc98C24AddOn = 0xA1,
+    Pc98EAddOn = 0xA2,
+    Pc98LocalAddOn = 0xA3,
+    CxlAddOn = 0xA4,
 }
 
-///
-/// Memory Array - Use
-///
-#[derive(Copy, Clone, Debug)]
+/// Memory Array Use (Type 16, offset 0x05)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum MemoryArrayUse {
     Other = 0x01,
-    Unknown,
-    SystemMemory,
-    VideoMemory,
-    FlashMemory,
-    NonVolatileRam,
-    CacheMemory,
+    Unknown = 0x02,
+    SystemMemory = 0x03,
+    VideoMemory = 0x04,
+    FlashMemory = 0x05,
+    NonVolatileRam = 0x06,
+    CacheMemory = 0x07,
 }
 
-///
-/// Memory Array - Error Correction Types
-///
-#[derive(Copy, Clone, Debug)]
+/// Memory Array Error Correction Types (Type 16, offset 0x06)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum ErrorCorrectionTypes {
     Other = 0x01,
-    Unknown,
-    None,
-    Parity,
-    SingleBitEcc,
-    MultiBitEcc,
-    Crc,
+    Unknown = 0x02,
+    NoEcc = 0x03,
+    Parity = 0x04,
+    SingleBitEcc = 0x05,
+    MultiBitEcc = 0x06,
+    Crc = 0x07,
 }
 
-///
-/// Memory Device - Form Factor
-///
+/// Memory Device Form Factor (Type 17, offset 0x0E)
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum MemoryFormFactor {
     Other = 0x01,
-    Unknown,
-    Simm,
-    Sip,
-    Chip,
-    Dip,
-    Zip,
-    ProprietaryCard,
-    Dimm,
-    Tsop,
-    RowOfChips,
-    Rimm,
-    Sodimm,
-    Srimm,
-    FbDimm,
-    Die,
-    Camm,
-    Cudimm,
-    Csodimm,
+    Unknown = 0x02,
+    Simm = 0x03,
+    Sip = 0x04,
+    Chip = 0x05,
+    Dip = 0x06,
+    Zip = 0x07,
+    ProprietaryCard = 0x08,
+    Dimm = 0x09,
+    Tsop = 0x0A,
+    RowOfChips = 0x0B,
+    Rimm = 0x0C,
+    Sodimm = 0x0D,
+    Srimm = 0x0E,
+    FbDimm = 0x0F,
+    Die = 0x10,
+    Camm = 0x11,
+    Cudimm = 0x12,
+    Csodimm = 0x13,
 }
 
-///
-/// Memory Device - Type
-///
-#[derive(Copy, Clone, Debug)]
+/// Memory Device Memory Type (Type 17, offset 0x12)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum MemoryDeviceType {
     Other = 0x01,
-    Unknown,
-    Dram,
-    Edram,
-    Vram,
-    Sram,
-    Ram,
-    Rom,
-    Flash,
-    Eeprom,
-    Feprom,
-    Eprom,
-    Cdram,
-    ThreeDram,
-    Sdram,
-    Sgram,
-    Rdram,
-    Ddr,
-    Ddr2,
-    Ddr2FbDimm,
+    Unknown = 0x02,
+    Dram = 0x03,
+    Edram = 0x04,
+    Vram = 0x05,
+    Sram = 0x06,
+    Ram = 0x07,
+    Rom = 0x08,
+    Flash = 0x09,
+    Eeprom = 0x0A,
+    Feprom = 0x0B,
+    Eprom = 0x0C,
+    Cdram = 0x0D,
+    ThreeDram = 0x0E,
+    Sdram = 0x0F,
+    Sgram = 0x10,
+    Rdram = 0x11,
+    Ddr = 0x12,
+    Ddr2 = 0x13,
+    Ddr2FbDimm = 0x14,
     Ddr3 = 0x18,
-    Fbd2,
-    Ddr4,
-    Lpddr,
-    Lpddr2,
-    Lpddr3,
-    Lpddr4,
-    LogicalNonVolatileDevice,
-    Hbm,
-    Hbm2,
-    Ddr5,
-    Lpddr5,
-    Hbm3,
-    Mrdimm,
+    Fbd2 = 0x19,
+    Ddr4 = 0x1A,
+    Lpddr = 0x1B,
+    Lpddr2 = 0x1C,
+    Lpddr3 = 0x1D,
+    Lpddr4 = 0x1E,
+    LogicalNonVolatileDevice = 0x1F,
+    Hbm = 0x20,
+    Hbm2 = 0x21,
+    Ddr5 = 0x22,
+    Lpddr5 = 0x23,
+    Hbm3 = 0x24,
+    Mrdimm = 0x25,
 }
 
-bitfield! {
-    ///
-    /// Memory Device - Type Detail
-    ///
-    pub struct MemoryDeviceTypeDetails(u16);
-    impl Debug;
-    pub reserved, set_reserved: 0;
-    pub other, set_other: 1;
-    pub unknown, set_unknown: 2;
-    pub fast_paged, set_fast_paged: 3;
-    pub static_column, set_static_column: 4;
-    pub pseudo_static, set_pseudo_static: 5;
-    pub rambus, set_rambus: 6;
-    pub synchronous, set_synchronous: 7;
-    pub cmos, set_cmos: 8;
-    pub edo, set_edo: 9;
-    pub window_dram, set_window_dram: 10;
-    pub cache_dram, set_cache_dram: 11;
-    pub nonvolatile, set_nonvolatile: 12;
-    pub registered, set_registered: 13;
-    pub unbuffered, set_unbuffered: 14;
-    pub lr_dimm, set_lr_dimm: 15;
+/// Memory Device Type Detail (Type 17, offset 0x13)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct MemoryDeviceTypeDetails {
+    pub reserved: bool,
+    pub other: bool,
+    pub unknown: bool,
+    pub fast_paged: bool,
+    pub static_column: bool,
+    pub pseudo_static: bool,
+    pub rambus: bool,
+    pub synchronous: bool,
+    pub cmos: bool,
+    pub edo: bool,
+    pub window_dram: bool,
+    pub cache_dram: bool,
+    pub nonvolatile: bool,
+    pub registered: bool,
+    pub unbuffered: bool,
+    pub lr_dimm: bool,
 }
 
-impl MemoryDeviceTypeDetails {
-    pub fn new(
-        other: bool,
-        unknown: bool,
-        fast_paged: bool,
-        static_column: bool,
-        pseudo_static: bool,
-        rambus: bool,
-        synchronous: bool,
-        cmos: bool,
-        edo: bool,
-        window_dram: bool,
-        cache_dram: bool,
-        nonvolatile: bool,
-        registered: bool,
-        unbuffered: bool,
-        lr_dimm: bool
-    ) -> Self {
-        let mut config = MemoryDeviceTypeDetails(0);
-        config.set_reserved(false);
-        config.set_other(other);
-        config.set_unknown(unknown);
-        config.set_fast_paged(fast_paged);
-        config.set_static_column(static_column);
-        config.set_pseudo_static(pseudo_static);
-        config.set_rambus(rambus);
-        config.set_synchronous(synchronous);
-        config.set_cmos(cmos);
-        config.set_edo(edo);
-        config.set_window_dram(window_dram);
-        config.set_cache_dram(cache_dram);
-        config.set_nonvolatile(nonvolatile);
-        config.set_registered(registered);
-        config.set_unbuffered(unbuffered);
-        config.set_lr_dimm(lr_dimm);        
-        config
-    }
-}
-
-///
-/// Memory Device - Memory Technology
-///
-#[derive(Copy, Clone, Debug)]
+/// Memory Device Memory Technology (Type 17, offset 0x28)
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
 pub enum MemoryDeviceTechnology {
     Other = 0x01,
-    Unknown,
-    Dram,
-    NvdimmN,
-    NvdimmF,
-    NvdimmP,
-    IntelOptanePersistentMemory,
+    Unknown = 0x02,
+    Dram = 0x03,
+    NvdimmN = 0x04,
+    NvdimmF = 0x05,
+    NvdimmP = 0x06,
+    IntelOptanePersistentMemory = 0x07,
 }
 
-bitfield! {
-    ///
-    /// Memory Device - Attributes
-    ///
-    pub struct MemoryDeviceAttributes(u8);
-    impl Debug;
-    pub rank, set_rank: 3, 0;
-    pub reserved, set_reserved: 7, 4;
+/// Memory Device Attributes (Type 17, offset 0x21)
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct MemoryDeviceAttributes {
+    #[bits(4)]
+    pub rank: u8,
+    #[bits(4)]
+    pub reserved: u8,
 }
 
-impl MemoryDeviceAttributes {
-    pub fn new(
-        rank: u8
-    ) -> Self{
-        let mut config = MemoryDeviceAttributes(0);
-        config.set_rank(rank);
-        config.set_reserved(0);
-        config
-    }
-}
-
-bitfield! {
-    ///
-    /// Memory Device - Operating Mode Capability
-    ///
-    pub struct MemoryCapability(u16);
-    impl Debug;
-    // reserved is set to zero
-    pub reserved, set_reserved : 0;
-    pub other, set_other : 1;
-    pub unknown, set_unknown : 2;
-    pub volatile_memory, set_volatile_memory : 3;
-    // Byte-accessible persistent memory
-    pub byte_persistent_memory, set_byte_persistent_memory : 4;
-    // Block-accessible persistent memory
-    pub block_persistent_memory, set_block_persistent_memory : 5;
-    // reserved2 is set to zero
-    pub reserved2, set_reserved2 : 15, 6;
-}
-
-impl MemoryCapability {
-    pub fn new(
-        other: bool,
-        unknown: bool,
-        volatile_memory: bool,
-        byte_persistent_memory: bool,
-        block_persistent_memory: bool,
-    ) -> Self {
-        let mut config = MemoryCapability(0);
-        config.set_reserved(false);
-        config.set_other(other);
-        config.set_unknown(unknown);
-        config.set_volatile_memory(volatile_memory);
-        config.set_byte_persistent_memory(byte_persistent_memory);
-        config.set_block_persistent_memory(block_persistent_memory);
-        config.set_reserved2(0);
-        config
-    }
-}
-
-macro_rules! impl_to_le_bytes_u8 {
-    ($($t:ty),*) => {
-        $(
-            impl $t {
-                pub fn to_le_bytes(&self) -> alloc::vec::Vec<u8> {
-                    alloc::vec![*self as u8]
-                }
-            }
-        )*
-    };
-}
-
-macro_rules! impl_to_le_bytes_u16 {
-    ($($t:ty),*) => {
-        $(
-            impl $t {
-                pub fn to_le_bytes(&self) -> alloc::vec::Vec<u8> {
-                    (*self as u16).to_le_bytes().to_vec()
-                }
-            }
-        )*
-    };
-}
-
-macro_rules! impl_to_le_bytes_bitfield {
-    ($($t:ty),*) => {
-        $(
-            impl $t {
-                pub fn to_le_bytes(&self) -> alloc::vec::Vec<u8> {
-                    self.0.to_le_bytes().to_vec()
-                }
-            }
-        )*
-    };
-}
-
-// Use the macros
-impl_to_le_bytes_u8!(
-    ProcessorTypeData,
-    ProcessorUpgrade,
-    ErrorCorrectionType,
-    SystemCacheType,
-    AssociativityField,
-    SlotWidth,
-    CurrentUsage,
-    SlotLength,
-    MemoryArrayLocation,
-    MemoryArrayUse,
-    ErrorCorrectionTypes,
-    MemoryFormFactor,
-    MemoryDeviceType,
-    MemoryDeviceTechnology,
-    BoardType,
-    WakeUpType,
-    BootUpState,
-    PowerSupplyState,
-    ThermalState,
-    SecurityStatus
-);
-
-impl_to_le_bytes_u16!(
-    ProcessorFamilyData,
-    SlotType
-);
-
-impl_to_le_bytes_bitfield!(
-    ProcessorCharacteristics,
-    CacheConfiguration,
-    CacheSize,
-    CacheSramTypeData,
-    MemoryDeviceTypeDetails,
-    MemoryCapability,
-    ExtendedBiosRomSize,
-    CacheSize2,
-    BiosCharacteristics,
-    ProcessorVoltage,
-    ProcessorInformationStatus,
-    SlotCharacteristics1,
-    SlotCharacteristics2,
-    DeviceFunctionNumber,
-    MemoryDeviceAttributes,
-    BiosCharacteristicsExt1,
-    BiosCharacteristicsExt2,
-    ContainedElementType,
-    FeatureFlags
-);
-
-// special to_le_bytes for structs that use bitfields
-impl MiscSlotPeerGroup {
-    pub fn to_le_bytes(&self) -> alloc::vec::Vec<u8> {
-        let mut bytes = alloc::vec::Vec::new();
-        bytes.extend_from_slice(&self.segment_group_num.to_le_bytes());
-        bytes.push(self.bus_num);
-        bytes.push(self.dev_func_num.0);
-        bytes.push(self.data_bus_width);
-        bytes
-    }
-}
-
-impl ContainedElements {
-    pub fn to_le_bytes(&self) -> alloc::vec::Vec<u8> {
-        let mut bytes = alloc::vec::Vec::new();
-        bytes.push(self.contained_element_type.0);
-        bytes.push(self.contained_element_minimum);
-        bytes.push(self.contained_element_maximum);
-        bytes
-    }
+/// Memory Device Operating Mode Capability (Type 17, offset 0x29)
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, KnownLayout)]
+pub struct MemoryCapability {
+    pub reserved: bool,
+    pub other: bool,
+    pub unknown: bool,
+    pub volatile_memory: bool,
+    pub byte_persistent_memory: bool,
+    pub block_persistent_memory: bool,
+    #[bits(10)]
+    pub reserved2: u16,
 }

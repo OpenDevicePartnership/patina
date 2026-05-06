@@ -33,6 +33,36 @@ allowCompoundWords: true
 words:
   - aarch
   - acpibase
+  - athlon
+  - cdram
+  - celeron
+  - corem
+  - csodimm
+  - cudimm
+  - duron
+  - edram
+  - edsff
+  - eeprom
+  - efficeon
+  - eprom
+  - expressx
+  - feprom
+  - loong
+  - loongson
+  - lpddr
+  - mrdimm
+  - mutli
+  - opteron
+  - rdram
+  - riscv
+  - sgram
+  - socketm
+  - socketr
+  - sodimm
+  - srimm
+  - turion
+  - vlvesa
+  - weitek
   - addrs
   - amanieu
   - anstream
