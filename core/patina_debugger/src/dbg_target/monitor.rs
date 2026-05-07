@@ -15,6 +15,7 @@ use gdbstub::target::ext::{self, monitor_cmd::ConsoleOutput};
 
 use crate::{
     arch::{DebuggerArch, SystemArch},
+    memory,
     system::SystemStateTrait,
 };
 
@@ -22,19 +23,21 @@ use super::PatinaTarget;
 
 const MONITOR_HELP: &str = "
 Patina Rust Debugger monitor commands:
-    help - Display this help.
     ? - Display information about the state of the machine.
-    reboot - Prepares to reboot the machine on the next continue.
-    mod ... - Commands for breaking on or quering modules.
     arch ... - Architecture specific commands.
+    mod ... - Commands for breaking on or quering modules.
+    help - Display this help.
+    reboot - Prepares to reboot the machine on the next continue.
+    toggle_uncached_access - Toggle accessing uncached memory regions.
+                             By default uncached memory access is disabled.
 ";
 
 const MOD_HELP: &str = "
 Mod commands:
-    list [count] [index] - List loaded modules.
     break [module] - Set load breakpoint for a module.
     breakall - Break on all module loads.
     clear - clear all module breakpoints.
+    list [count] [index] - List loaded modules.
 ";
 
 impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
@@ -91,6 +94,14 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
             }
             Some("arch") => {
                 SystemArch::monitor_cmd(&mut tokens, &mut buf);
+            }
+            Some("toggle_uncached_access") => {
+                let enabled = memory::toggle_uncached_access();
+                if enabled {
+                    let _ = buf.write_str("Uncached memory access enabled.");
+                } else {
+                    let _ = buf.write_str("Uncached memory access disabled.");
+                }
             }
             Some(cmd) => match self.system_state.try_lock() {
                 Some(state) => {

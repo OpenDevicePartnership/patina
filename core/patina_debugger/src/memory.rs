@@ -7,7 +7,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::ptr;
+use core::{
+    ptr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use patina_internal_cpu::paging::PatinaPageTable;
 use patina_paging::MemoryAttributes;
@@ -16,6 +19,16 @@ use crate::arch::DebuggerArch;
 
 const PAGE_SIZE: u64 = 0x1000;
 const PAGE_MASK: u64 = !(PAGE_SIZE - 1);
+
+/// Controls whether the debugger will read/write uncached memory regions.
+/// By default (`false`), uncached regions are skipped to avoid side-effects
+/// on memory-mapped I/O. A monitor command can toggle this to `true`.
+static ALLOW_UNCACHED_ACCESS: AtomicBool = AtomicBool::new(false);
+
+/// Toggles uncached memory access and returns the new state.
+pub fn toggle_uncached_access() -> bool {
+    !ALLOW_UNCACHED_ACCESS.fetch_xor(true, Ordering::Relaxed)
+}
 
 /// Reads memory from the specified address into the buffer.
 ///
@@ -122,6 +135,8 @@ fn check_range_access<Arch: DebuggerArch>(
 /// to read from. If the region is uncached and uncached access is not allowed, it will
 /// be treated as invalid.
 fn check_paging_range<P: PatinaPageTable>(page_table: &P, start_address: u64, length: usize) -> Result<usize, ()> {
+    let allow_uncached = ALLOW_UNCACHED_ACCESS.load(Ordering::Relaxed);
+
     // This is done page-by-page because it is unknown if the memory region has
     // consistent attributes across the entire range.
     // The length takes us to the start of the next memory range, so we go until the end of the range, e.g
@@ -130,7 +145,10 @@ fn check_paging_range<P: PatinaPageTable>(page_table: &P, start_address: u64, le
     while page <= start_address + (length - 1) as u64 {
         let res = page_table.query_memory_region(page, PAGE_SIZE);
         let valid = match res {
-            Ok(attributes) => !attributes.contains(MemoryAttributes::ReadProtect),
+            Ok(attributes) => {
+                !attributes.contains(MemoryAttributes::ReadProtect)
+                    && (allow_uncached || !attributes.contains(MemoryAttributes::Uncached))
+            }
             Err(_) => false,
         };
 
@@ -358,5 +376,49 @@ mod tests {
 
         // SAFETY: dest was allocated with this layout.
         unsafe { std::alloc::dealloc(dest, layout) };
+    }
+
+    #[test]
+    fn test_access_check_uncached_page_skipped_by_default() {
+        let _lock = PAGE_LOCK.lock().unwrap();
+        // Reset the toggle to the default (disabled).
+        ALLOW_UNCACHED_ACCESS.store(false, Ordering::Relaxed);
+
+        let mut mock_page_table = MockMemPageTable::new();
+        mock_page_table.expect_query_memory_region().once().returning(|_, _| Ok(MemoryAttributes::Uncached));
+
+        let result = check_paging_range(&mock_page_table, 0, 0x1000);
+        result.expect_err("Uncached page should be treated as invalid by default.");
+    }
+
+    #[test]
+    fn test_access_check_uncached_page_allowed_when_toggled() {
+        let _lock = PAGE_LOCK.lock().unwrap();
+        // Enable uncached access.
+        ALLOW_UNCACHED_ACCESS.store(true, Ordering::Relaxed);
+
+        let mut mock_page_table = MockMemPageTable::new();
+        mock_page_table.expect_query_memory_region().once().returning(|_, _| Ok(MemoryAttributes::Uncached));
+
+        let result = check_paging_range(&mock_page_table, 0, 0x1000);
+        assert_eq!(result.expect("Uncached page should be allowed when toggled."), 0x1000);
+
+        // Reset the toggle back to default.
+        ALLOW_UNCACHED_ACCESS.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_toggle_uncached_access() {
+        let _lock = PAGE_LOCK.lock().unwrap();
+        ALLOW_UNCACHED_ACCESS.store(false, Ordering::Relaxed);
+        assert!(!ALLOW_UNCACHED_ACCESS.load(Ordering::Relaxed));
+
+        let enabled = toggle_uncached_access();
+        assert!(enabled);
+        assert!(ALLOW_UNCACHED_ACCESS.load(Ordering::Relaxed));
+
+        let disabled = toggle_uncached_access();
+        assert!(!disabled);
+        assert!(!ALLOW_UNCACHED_ACCESS.load(Ordering::Relaxed));
     }
 }
