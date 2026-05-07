@@ -202,7 +202,7 @@ impl SmbiosExampleComponent {
             version: 3,
             serial_number: 4,
             uuid: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0],
-            wake_up_type: WakeUpType::PowerSwitch, // Power switch
+            wake_up_type: WakeUpType::PowerSwitch,
             sku_number: 5,
             family: 6,
             string_pool: vec![
@@ -238,7 +238,7 @@ impl SmbiosExampleComponent {
             feature_flags: FeatureFlags::new().with_hosting_board(true).with_require_aux_board(true),
             location_in_chassis: 6,
             chassis_handle: 0x0003,
-            board_type: BoardType::Motherboard, // Motherboard
+            board_type: BoardType::Motherboard,
             contained_object_handles: 0,
             string_pool: vec![
                 String::from("Example Corporation"),
