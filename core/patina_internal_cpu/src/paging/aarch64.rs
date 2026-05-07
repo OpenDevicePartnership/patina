@@ -53,10 +53,24 @@ where
 }
 
 /// Create an AArch64 paging instance under the general PatinaPageTable trait.
+#[coverage(off)]
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<impl PatinaPageTable, efi::Status> {
     Ok(EfiCpuPagingAArch64 { paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap() })
+}
+
+/// Open the active AArch64 page table wrapped in the PatinaPageTable trait.
+///
+/// ## Safety
+/// The caller must ensure no other entity is concurrently modifying the page tables.
+#[coverage(off)]
+pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
+    page_allocator: A,
+) -> Result<impl PatinaPageTable, PtError> {
+    // SAFETY: Caller ensures no concurrent page table modifications.
+    let page_table = unsafe { AArch64PageTable::open_active(page_allocator)? };
+    Ok(EfiCpuPagingAArch64 { paging: page_table })
 }
 
 #[cfg(test)]

@@ -14,8 +14,7 @@
 //!
 
 use gdbstub::target::ext::breakpoints;
-use patina_internal_cpu::interrupts::ExceptionContext;
-use patina_paging::PageTable;
+use patina_internal_cpu::{interrupts::ExceptionContext, paging::PatinaPageTable};
 
 use crate::ExceptionInfo;
 
@@ -42,8 +41,6 @@ pub trait DebuggerArch {
     const BREAKPOINT_INSTRUCTION: &'static [u8];
     const GDB_TARGET_XML: &'static str;
     const GDB_REGISTERS_XML: &'static str;
-
-    type PageTable: PageTable;
 
     /// Executes a breakpoint instruction if the debugger is enabled and initialized.
     fn breakpoint();
@@ -72,7 +69,7 @@ pub trait DebuggerArch {
     fn reboot();
 
     /// Gets the current page table.
-    fn get_page_table() -> Result<Self::PageTable, ()>;
+    fn get_page_table() -> Result<impl PatinaPageTable, ()>;
 
     /// Process architecture specific monitor commands.
     fn monitor_cmd(_tokens: &mut core::str::SplitWhitespace, _out: &mut dyn core::fmt::Write) {}

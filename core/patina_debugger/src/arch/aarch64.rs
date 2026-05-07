@@ -7,7 +7,7 @@ use core::{
 
 use gdbstub::arch::{RegId, Registers};
 use patina::{read_sysreg, write_sysreg};
-use patina_internal_cpu::interrupts::ExceptionContext;
+use patina_internal_cpu::{interrupts::ExceptionContext, paging::PatinaPageTable};
 
 use crate::{ExceptionInfo, ExceptionType};
 
@@ -55,8 +55,6 @@ impl DebuggerArch for Aarch64Arch {
     const BREAKPOINT_INSTRUCTION: &'static [u8] = &[0x00, 0x00, 0x20, 0xD4]; // BRK #0
     const GDB_TARGET_XML: &'static str = r#"<?xml version="1.0"?><!DOCTYPE target SYSTEM "gdb-target.dtd"><target><architecture>aarch64</architecture><xi:include href="registers.xml"/></target>"#;
     const GDB_REGISTERS_XML: &'static str = include_str!("xml/aarch64_registers.xml");
-
-    type PageTable = patina_paging::aarch64::AArch64PageTable<patina_paging::page_allocator::PageAllocatorStub>;
 
     #[inline(always)]
     fn breakpoint() {
@@ -215,11 +213,11 @@ impl DebuggerArch for Aarch64Arch {
         }
     }
 
-    fn get_page_table() -> Result<Self::PageTable, ()> {
+    fn get_page_table() -> Result<impl PatinaPageTable, ()> {
         // SAFETY: We are operating in an exception context with interrupts disabled. No other entity is altering
         // the page tables.
         unsafe {
-            patina_paging::aarch64::AArch64PageTable::open_active(patina_paging::page_allocator::PageAllocatorStub)
+            patina_internal_cpu::paging::open_active_cpu_paging(patina_paging::page_allocator::PageAllocatorStub)
                 .map_err(|_| ())
         }
     }

@@ -133,6 +133,7 @@ fn apply_caching_attributes<M: Mtrr>(
 }
 
 /// Create an x86_64 paging instance under the general PatinaPageTable trait.
+#[coverage(off)]
 pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<impl PatinaPageTable, efi::Status> {
@@ -141,6 +142,19 @@ pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
             .map_err(|_| efi::Status::INVALID_PARAMETER)?,
         mtrr: create_mtrr_lib(0),
     })
+}
+
+/// Open the active x86_64 page table wrapped in the PatinaPageTable trait.
+///
+/// ## Safety
+/// The caller must ensure no other entity is concurrently modifying the page tables.
+#[coverage(off)]
+pub unsafe fn open_active_cpu_x64_paging<A: PageAllocator + 'static>(
+    page_allocator: A,
+) -> Result<impl PatinaPageTable, PtError> {
+    // SAFETY: Caller ensures no concurrent page table modifications.
+    let page_table = unsafe { X64PageTable::open_active(page_allocator)? };
+    Ok(EfiCpuPagingX64 { paging: page_table, mtrr: create_mtrr_lib(0) })
 }
 
 fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {
