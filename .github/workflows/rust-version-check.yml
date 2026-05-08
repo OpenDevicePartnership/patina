@@ -14,7 +14,7 @@
 name: Rust Version Change Detection
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [opened, synchronize]
     paths:
@@ -22,9 +22,5 @@ on:
 
 jobs:
   check-rust-version:
-      permissions:
-        pull-requests: write
-        contents: read
-
       uses: OpenDevicePartnership/patina-devops/.github/workflows/RustVersionCheck.yml@v0.3.10
       secrets: inherit
