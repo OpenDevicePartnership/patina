@@ -50,7 +50,6 @@ jobs:
           path: docs/book/html
 
   publish:
-    if: github.repository_owner == 'OpenDevicePartnership'
     name: Publish Documentation
 
     needs: [build]
