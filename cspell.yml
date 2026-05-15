@@ -31,6 +31,7 @@ minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true
 words:
+  - aapcs
   - aarch
   - acpibase
   - addrs
@@ -189,6 +190,7 @@ words:
   - unreg
   - unspec
   - unsynchronized
+  - variadics
   - vcvarsamd
   - vcvarsarm
   - vtable
