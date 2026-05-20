@@ -54,10 +54,7 @@ impl SmmCommHeader {
 
     /// Write this header into the destination buffer.
     pub fn write_into(&self, dest: &mut [u8]) -> Result<usize, ()> {
-        if dest.len() < SMM_COMM_HEADER_SIZE {
-            return Err(());
-        }
-        dest[..SMM_COMM_HEADER_SIZE].copy_from_slice(self.as_bytes());
+        dest.get_mut(..SMM_COMM_HEADER_SIZE).ok_or(())?.copy_from_slice(self.as_bytes());
         Ok(SMM_COMM_HEADER_SIZE)
     }
 
@@ -193,7 +190,13 @@ impl<const BUFFER_SIZE: usize> GetRecordDataByOffset<BUFFER_SIZE> {
         let mut boot_record_data = [0u8; BUFFER_SIZE];
         let remaining = src.len().saturating_sub(header_consumed);
         let take = core::cmp::min(remaining, BUFFER_SIZE);
-        boot_record_data[..take].copy_from_slice(&src[header_consumed..header_consumed + take]);
+        boot_record_data
+            .get_mut(..take)
+            .ok_or(ParseError::BufferTooSmall { required: take, available: BUFFER_SIZE })?
+            .copy_from_slice(
+                src.get(header_consumed..header_consumed + take)
+                    .ok_or(ParseError::BufferTooSmall { required: header_consumed + take, available: src.len() })?,
+            );
 
         Ok((
             Self {
