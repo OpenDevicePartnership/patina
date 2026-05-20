@@ -146,7 +146,7 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
                     if matches!(&*type_array.elem,
                         syn::Type::Path(elem_path)
                             if elem_path.path.segments.len() == 1 &&
-                               elem_path.path.segments[0].ident == "u8"));
+                               elem_path.path.segments.first().is_some_and(|s| s.ident == "u8")));
 
             // Add field size to structured size calculation.
             // This relies on size_of matching the serialized layout, which is
