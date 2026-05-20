@@ -85,7 +85,11 @@ pub fn initialize_idt() {
     for vector in 0..=255usize {
         // Use IST 1 for double fault (vector 8) to ensure it has a valid stack
         let ist_index = if vector == 8 { 1 } else { 0 };
-        idt.entries[vector].set_handler(get_vector_address(vector), cs, ist_index);
+        idt.entries.get_mut(vector).expect("vector out of bounds").set_handler(
+            get_vector_address(vector),
+            cs,
+            ist_index,
+        );
     }
 
     if IDT.0.get() as usize >= SIZE_4GB {

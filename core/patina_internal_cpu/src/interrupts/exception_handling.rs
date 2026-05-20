@@ -51,11 +51,7 @@ pub(crate) fn register_exception_handler(exception_type: ExceptionType, handler:
         return Err(EfiError::InvalidParameter);
     }
 
-    if exception_type >= NUM_EXCEPTION_TYPES {
-        return Err(EfiError::InvalidParameter);
-    }
-
-    let mut entry = EXCEPTION_HANDLERS[exception_type].write();
+    let mut entry = EXCEPTION_HANDLERS.get(exception_type).ok_or(EfiError::InvalidParameter)?.write();
     if !(*entry).is_none() {
         return Err(EfiError::AlreadyStarted);
     }
@@ -72,11 +68,7 @@ pub(crate) fn register_exception_handler(exception_type: ExceptionType, handler:
 /// Returns [`InvalidParameter`](EfiError::InvalidParameter) if no callback currently exists.
 ///
 pub(crate) fn unregister_exception_handler(exception_type: ExceptionType) -> Result<(), EfiError> {
-    if exception_type >= NUM_EXCEPTION_TYPES {
-        return Err(EfiError::InvalidParameter);
-    }
-
-    let mut entry = EXCEPTION_HANDLERS[exception_type].write();
+    let mut entry = EXCEPTION_HANDLERS.get(exception_type).ok_or(EfiError::InvalidParameter)?.write();
     if (*entry).is_none() {
         return Err(EfiError::InvalidParameter);
     }
@@ -99,8 +91,11 @@ pub(crate) fn unregister_exception_handler(exception_type: ExceptionType) -> Res
 ///
 #[unsafe(no_mangle)]
 extern "efiapi" fn exception_handler(exception_type: usize, context: &mut ExceptionContext) {
-    let handler_lock =
-        EXCEPTION_HANDLERS[exception_type].try_read().expect("Failed to read lock in exception handler!");
+    let handler_lock = EXCEPTION_HANDLERS
+        .get(exception_type)
+        .unwrap_or_else(|| panic!("Invalid exception type: {exception_type}"))
+        .try_read()
+        .expect("Failed to read lock in exception handler!");
 
     match *handler_lock {
         HandlerType::UefiRoutine(handler) => {
