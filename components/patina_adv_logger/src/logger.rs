@@ -311,8 +311,9 @@ where
             return;
         }
 
-        let data = &self.buffer[0..self.buffer_size];
-        self.writer.log_write(self.level, self.hw_print_mask_override, data);
+        if let Some(data) = self.buffer.get(0..self.buffer_size) {
+            self.writer.log_write(self.level, self.hw_print_mask_override, data);
+        }
         self.buffer_size = 0;
     }
 }
@@ -331,8 +332,10 @@ where
             if len > WRITER_BUFFER_SIZE - self.buffer_size {
                 self.flush();
             }
-            self.buffer[self.buffer_size..self.buffer_size + len].copy_from_slice(data);
-            self.buffer_size += len;
+            if let Some(dest) = self.buffer.get_mut(self.buffer_size..self.buffer_size + len) {
+                dest.copy_from_slice(data);
+                self.buffer_size += len;
+            }
         } else {
             // this message is too big to buffer, flush then write the message.
             self.flush();
