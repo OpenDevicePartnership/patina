@@ -166,8 +166,11 @@ fn decompress_image(compressed_image: &[u8], out: &mut dyn core::fmt::Write) -> 
 
     // Get the decompressed size. By spec it will be the second u32 in the compressed image.
     let decompressed_size = {
-        u32::from_le_bytes([compressed_image[4], compressed_image[5], compressed_image[6], compressed_image[7]])
-            as usize
+        let bytes: [u8; 4] = compressed_image
+            .get(4..8)
+            .and_then(|s| s.try_into().ok())
+            .expect("compressed_image.len() >= 8 checked above");
+        u32::from_le_bytes(bytes) as usize
     };
 
     let decompressed_image = alloc::boxed::Box::leak(alloc::vec![0u8; decompressed_size].into_boxed_slice());

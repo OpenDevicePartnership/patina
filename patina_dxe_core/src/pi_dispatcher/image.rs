@@ -129,11 +129,11 @@ impl ImageStack {
 
     #[allow(unused)]
     fn guard(&self) -> &[u8] {
-        &self.stack[..UEFI_PAGE_SIZE]
+        self.stack.get(..UEFI_PAGE_SIZE).expect("stack is always > UEFI_PAGE_SIZE")
     }
 
     fn body(&self) -> &[u8] {
-        &self.stack[UEFI_PAGE_SIZE..]
+        self.stack.get(UEFI_PAGE_SIZE..).expect("stack is always > UEFI_PAGE_SIZE")
     }
 }
 
@@ -250,17 +250,17 @@ impl PrivateImageData {
 
         let Some((resource_section_offset, resource_section_size)) = result else { return Ok(()) };
 
-        if resource_section_offset + resource_section_size > loaded_image.len() {
-            let pe_file_name = self.pe_info.filename_or("Unknown");
-            log_debug_assert!(
-                "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
-                resource_section_offset,
-                resource_section_size
-            );
-            return Err(EfiError::LoadError);
-        }
-
-        let resource_section = &loaded_image[resource_section_offset..resource_section_offset + resource_section_size];
+        let resource_section = loaded_image
+            .get(resource_section_offset..resource_section_offset + resource_section_size)
+            .ok_or_else(|| {
+                let pe_file_name = self.pe_info.filename_or("Unknown");
+                log_debug_assert!(
+                    "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
+                    resource_section_offset,
+                    resource_section_size
+                );
+                EfiError::LoadError
+            })?;
         let size = resource_section.len();
 
         let alignment = usize::try_from(self.pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
@@ -274,7 +274,7 @@ impl PrivateImageData {
 
         let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_boxed_slice::<u8>();
 
-        bytes[..resource_section.len()].copy_from_slice(resource_section);
+        bytes.get_mut(..resource_section.len()).ok_or(EfiError::LoadError)?.copy_from_slice(resource_section);
 
         self.hii_resource_section = Some(bytes);
         Ok(())

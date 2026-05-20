@@ -709,7 +709,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
         // and is of sufficient size to contain the data.
         let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
-        out_buffer.copy_from_slice(&file.content()[..copy_size]);
+        out_buffer.copy_from_slice(file.content().get(..copy_size).expect("copy_size <= file.content().len()"));
 
         status
     }
@@ -790,7 +790,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // is of sufficient size to contain the data. We copy the minimum of section_data.len() and local_buffer_size to ensure we do not
         // copy beyond the bounds of either buffer.
         let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
-        dest_buffer.copy_from_slice(&section_data[0..dest_buffer.len()]);
+        dest_buffer.copy_from_slice(
+            section_data.get(..dest_buffer.len()).expect("copy_size = min(section_data.len(), local_buffer_size)"),
+        );
 
         //TODO: authentication status not yet supported.
 

@@ -895,7 +895,9 @@ extern "efiapi" fn get_memory_map(
         }
     }
 
-    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&buffer[..actual_count]));
+    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(
+        buffer.get(..actual_count).expect("actual_count <= buffer.len() from populate_efi_memory_map")
+    ));
 
     if log::log_enabled!(target: "memory_bin", log::Level::Debug) {
         dump_memory_bin_stats();

@@ -327,7 +327,8 @@ impl MemoryBinManager {
             }
 
             let entry_size = uefi_pages_to_size!(entry.number_of_pages as usize) as u64;
-            let stats = &mut self.statistics[mem_type as usize];
+            let stats =
+                self.statistics.get_mut(mem_type as usize).expect("Defined memory types should be in statistics");
             stats.maximum_address = top - 1;
             top -= entry_size;
 
@@ -366,20 +367,24 @@ impl MemoryBinManager {
     /// in the memory type information array.
     fn finalize_information_index(&mut self, memory_type_info: &[EFiMemoryTypeInformation]) {
         for mem_type in 0..EFI_MAX_MEMORY_TYPE {
+            let stats = self.statistics.get_mut(mem_type).expect("All defined memory types should be in statistics");
             for (index, entry) in memory_type_info.iter().enumerate() {
                 if mem_type == entry.memory_type as usize {
-                    self.statistics[mem_type].information_index = index;
+                    stats.information_index = index;
                 }
             }
-            self.statistics[mem_type].current_number_of_pages = 0;
+            stats.current_number_of_pages = 0;
         }
         log::trace!(target: LOG_TARGET, "Bin stats: finalized information indices, reset current_number_of_pages to 0 for all types");
     }
 
     /// Copies memory type information entries into the fixed-size array.
     fn copy_memory_type_info(&mut self, memory_type_info: &[EFiMemoryTypeInformation]) {
-        let count = memory_type_info.len().min(MAX_MEMORY_TYPE_INFO_ENTRIES);
-        self.memory_type_information[..count].copy_from_slice(&memory_type_info[..count]);
+        let count = memory_type_info.len().min(self.memory_type_information.len());
+        let src = memory_type_info.get(..count).expect("Failed to get source slice");
+        let dest = self.memory_type_information.get_mut(..count).expect("Failed to get destination slice");
+
+        dest.copy_from_slice(src);
         self.memory_type_information_count = count;
 
         if log::log_enabled!(target: LOG_TARGET, log::Level::Trace) {
@@ -389,13 +394,15 @@ impl MemoryBinManager {
                 count
             );
 
-            for entry in &self.memory_type_information[..count] {
-                log::trace!(
-                    target: LOG_TARGET,
-                    "  Bin table: {} pages={}",
-                    memory_type_name(entry.memory_type),
-                    entry.number_of_pages
-                );
+            if let Some(entries) = self.memory_type_information.get(..count) {
+                for entry in entries {
+                    log::trace!(
+                        target: LOG_TARGET,
+                        "  Bin table: {} pages={}",
+                        memory_type_name(entry.memory_type),
+                        entry.number_of_pages
+                    );
+                }
             }
         }
     }
@@ -411,18 +418,18 @@ impl MemoryBinManager {
         }
 
         let type_idx = memory_type as usize;
-        if type_idx >= EFI_MAX_MEMORY_TYPE || !self.statistics[type_idx].special {
+        let Some(stats) = self.statistics.get_mut(type_idx).filter(|s| s.special) else {
             return;
-        }
+        };
 
         let aligned_pages = align_pages_to_granularity(pages, Self::granularity_for_type(memory_type));
-        self.statistics[type_idx].current_number_of_pages += aligned_pages;
+        stats.current_number_of_pages += aligned_pages;
         log::debug!(
             target: LOG_TARGET,
             "PEI seed: {} +{} pages. total={}",
             memory_type_name(memory_type),
             pages,
-            self.statistics[type_idx].current_number_of_pages
+            stats.current_number_of_pages
         );
     }
 
@@ -431,11 +438,7 @@ impl MemoryBinManager {
     /// Returns 0 for invalid memory types.
     #[cfg(test)]
     pub(crate) fn current_pages_for_type(&self, memory_type: efi::MemoryType) -> u64 {
-        let type_idx = memory_type as usize;
-        if type_idx >= EFI_MAX_MEMORY_TYPE {
-            return 0;
-        }
-        self.statistics[type_idx].current_number_of_pages
+        self.statistics.get(memory_type as usize).map_or(0, |s| s.current_number_of_pages)
     }
 
     /// Returns an iterator over all active bins: `(memory_type, base_address, max_address, pages)`.
@@ -463,39 +466,38 @@ impl MemoryBinManager {
         }
 
         let type_idx = memory_type as usize;
-        if type_idx >= EFI_MAX_MEMORY_TYPE || !self.statistics[type_idx].special {
+        let Some(stats) = self.statistics.get_mut(type_idx).filter(|s| s.special) else {
             return;
-        }
+        };
 
         let aligned_pages = align_pages_to_granularity(pages, Self::granularity_for_type(memory_type));
-        let prev = self.statistics[type_idx].current_number_of_pages;
-        self.statistics[type_idx].current_number_of_pages += aligned_pages;
+        let prev = stats.current_number_of_pages;
+        stats.current_number_of_pages += aligned_pages;
+        let current = stats.current_number_of_pages;
+        let info_idx = stats.information_index;
 
         log::trace!(
             target: LOG_TARGET,
             "Bin stats: {} current_pages {} -> {} (alloc +{} aligned to {})",
             memory_type_name(memory_type),
             prev,
-            self.statistics[type_idx].current_number_of_pages,
+            current,
             pages,
             aligned_pages
         );
 
         // Update peak tracking: if current exceeds previous peak, update for BDS
-        let info_idx = self.statistics[type_idx].information_index;
-        if info_idx < self.memory_type_information_count
-            && self.statistics[type_idx].current_number_of_pages
-                > self.memory_type_information[info_idx].number_of_pages as u64
+        if let Some(mti_entry) = self.memory_type_information.get_mut(info_idx)
+            && current > mti_entry.number_of_pages as u64
         {
-            let prev_peak = self.memory_type_information[info_idx].number_of_pages;
-            self.memory_type_information[info_idx].number_of_pages =
-                self.statistics[type_idx].current_number_of_pages as u32;
+            let prev_peak = mti_entry.number_of_pages;
+            mti_entry.number_of_pages = current as u32;
             log::trace!(
                 target: LOG_TARGET,
                 "Bin table: {} pages {} -> {} (peak update)",
                 memory_type_name(memory_type),
                 prev_peak,
-                self.memory_type_information[info_idx].number_of_pages
+                mti_entry.number_of_pages
             );
         }
     }
@@ -509,21 +511,20 @@ impl MemoryBinManager {
         }
 
         let type_idx = memory_type as usize;
-        if type_idx >= EFI_MAX_MEMORY_TYPE || !self.statistics[type_idx].special {
+        let Some(stats) = self.statistics.get_mut(type_idx).filter(|s| s.special) else {
             return;
-        }
+        };
 
         let aligned_pages = align_pages_to_granularity(pages, Self::granularity_for_type(memory_type));
-        let prev = self.statistics[type_idx].current_number_of_pages;
-        self.statistics[type_idx].current_number_of_pages =
-            self.statistics[type_idx].current_number_of_pages.saturating_sub(aligned_pages);
+        let prev = stats.current_number_of_pages;
+        stats.current_number_of_pages = stats.current_number_of_pages.saturating_sub(aligned_pages);
 
         log::trace!(
             target: LOG_TARGET,
             "Bin stats: {} current_pages {} -> {} (free -{} aligned to {})",
             memory_type_name(memory_type),
             prev,
-            self.statistics[type_idx].current_number_of_pages,
+            stats.current_number_of_pages,
             pages,
             aligned_pages
         );
@@ -547,15 +548,15 @@ impl MemoryBinManager {
             return count;
         }
 
+        let buffer_len = buffer.len();
         let mut current_count = count;
 
         for mem_type in 0..(EFI_MAX_MEMORY_TYPE as u32) {
-            let stats = &self.statistics[mem_type as usize];
-
             // Only process special types with actual bin pages
-            if stats.number_of_pages == 0 || !stats.special {
+            let Some(stats) = self.statistics.get(mem_type as usize).filter(|s| s.special && s.number_of_pages > 0)
+            else {
                 continue;
-            }
+            };
 
             let bin_start = stats.base_address;
             let bin_end = stats.maximum_address;
@@ -578,16 +579,14 @@ impl MemoryBinManager {
                 let mut did_modify = false;
 
                 for i in 0..entry_count {
-                    if buffer[i].r#type != efi::CONVENTIONAL_MEMORY {
+                    let Some(entry) =
+                        buffer.get_mut(i).filter(|e| e.r#type == efi::CONVENTIONAL_MEMORY && e.number_of_pages > 0)
+                    else {
                         continue;
-                    }
+                    };
 
-                    if buffer[i].number_of_pages == 0 {
-                        continue;
-                    }
-
-                    let entry_start = buffer[i].physical_start;
-                    let entry_end = entry_start + uefi_pages_to_size!(buffer[i].number_of_pages as usize) as u64 - 1;
+                    let entry_start = entry.physical_start;
+                    let entry_end = entry_start + uefi_pages_to_size!(entry.number_of_pages as usize) as u64 - 1;
 
                     // No overlap
                     if entry_end < bin_start || entry_start > bin_end {
@@ -596,7 +595,7 @@ impl MemoryBinManager {
 
                     // Case 1: Entry completely within bin
                     if entry_start >= bin_start && entry_end <= bin_end {
-                        Self::set_descriptor_type(&mut buffer[i], mem_type, stats.runtime);
+                        Self::set_descriptor_type(entry, mem_type, stats.runtime);
                         did_modify = true;
                         break;
                     }
@@ -607,10 +606,10 @@ impl MemoryBinManager {
                         // prevented if the buffer-sizing precondition is violated.
                         let extra_needed = if entry_end > bin_end { 2 } else { 1 };
                         debug_assert!(
-                            current_count + extra_needed <= buffer.len(),
+                            current_count + extra_needed <= buffer_len,
                             "apply_bin_descriptors: buffer is too small, caller must reserve max_additional_descriptors()"
                         );
-                        if current_count + extra_needed > buffer.len() {
+                        if current_count + extra_needed > buffer_len {
                             log::error!(
                                 target: LOG_TARGET,
                                 "Buffer is too small for memory bin descriptor split, leaving entry as EfiConventionalMemory."
@@ -620,27 +619,26 @@ impl MemoryBinManager {
 
                         // Shrink original entry to end at bin start
                         let pre_bin_pages = uefi_size_to_pages!((bin_start - entry_start) as usize);
-                        buffer[i].number_of_pages = pre_bin_pages as u64;
+                        entry.number_of_pages = pre_bin_pages as u64;
 
                         // Insert new entry for in-bin portion
                         current_count = Self::insert_descriptor_after(buffer, current_count, i);
                         let new_idx = i + 1;
-                        buffer[new_idx].physical_start = bin_start;
-                        buffer[new_idx].number_of_pages =
-                            uefi_size_to_pages!((entry_end - bin_start + 1) as usize) as u64;
-                        Self::set_descriptor_type(&mut buffer[new_idx], mem_type, stats.runtime);
+                        let new_entry = buffer.get_mut(new_idx).expect("Newly inserted entry not found");
+                        new_entry.physical_start = bin_start;
+                        new_entry.number_of_pages = uefi_size_to_pages!((entry_end - bin_start + 1) as usize) as u64;
+                        Self::set_descriptor_type(new_entry, mem_type, stats.runtime);
 
                         // If entry also extends past bin end, split again
                         if entry_end > bin_end {
-                            buffer[new_idx].number_of_pages =
-                                uefi_size_to_pages!((bin_end - bin_start + 1) as usize) as u64;
+                            new_entry.number_of_pages = uefi_size_to_pages!((bin_end - bin_start + 1) as usize) as u64;
 
                             current_count = Self::insert_descriptor_after(buffer, current_count, new_idx);
                             let post_idx = new_idx + 1;
-                            buffer[post_idx].physical_start = bin_end + 1;
-                            buffer[post_idx].number_of_pages =
-                                uefi_size_to_pages!((entry_end - bin_end) as usize) as u64;
-                            Self::set_descriptor_type(&mut buffer[post_idx], efi::CONVENTIONAL_MEMORY, false);
+                            let post_entry = buffer.get_mut(post_idx).expect("Failed to get post-bin entry");
+                            post_entry.physical_start = bin_end + 1;
+                            post_entry.number_of_pages = uefi_size_to_pages!((entry_end - bin_end) as usize) as u64;
+                            Self::set_descriptor_type(post_entry, efi::CONVENTIONAL_MEMORY, false);
                         }
 
                         did_modify = true;
@@ -650,10 +648,10 @@ impl MemoryBinManager {
                     // Case 3: Entry ends after bin (entry_start >= bin_start implied here)
                     if entry_end > bin_end {
                         debug_assert!(
-                            current_count < buffer.len(),
+                            current_count < buffer_len,
                             "apply_bin_descriptors: buffer is too small, caller must reserve max_additional_descriptors() slack"
                         );
-                        if current_count + 1 > buffer.len() {
+                        if current_count + 1 > buffer_len {
                             log::error!(
                                 target: LOG_TARGET,
                                 "Buffer is too small for memory bin descriptor split, leaving entry as EfiConventionalMemory."
@@ -662,15 +660,16 @@ impl MemoryBinManager {
                         }
 
                         // Shrink original entry to cover only the in-bin portion
-                        buffer[i].number_of_pages = uefi_size_to_pages!((bin_end - entry_start + 1) as usize) as u64;
-                        Self::set_descriptor_type(&mut buffer[i], mem_type, stats.runtime);
+                        entry.number_of_pages = uefi_size_to_pages!((bin_end - entry_start + 1) as usize) as u64;
+                        Self::set_descriptor_type(entry, mem_type, stats.runtime);
 
                         // Insert new entry for the post-bin portion
                         current_count = Self::insert_descriptor_after(buffer, current_count, i);
                         let post_idx = i + 1;
-                        buffer[post_idx].physical_start = bin_end + 1;
-                        buffer[post_idx].number_of_pages = uefi_size_to_pages!((entry_end - bin_end) as usize) as u64;
-                        Self::set_descriptor_type(&mut buffer[post_idx], efi::CONVENTIONAL_MEMORY, false);
+                        let post_entry = buffer.get_mut(post_idx).expect("Failed to get newly created post-bin entry");
+                        post_entry.physical_start = bin_end + 1;
+                        post_entry.number_of_pages = uefi_size_to_pages!((entry_end - bin_end) as usize) as u64;
+                        Self::set_descriptor_type(post_entry, efi::CONVENTIONAL_MEMORY, false);
 
                         did_modify = true;
                         break;
@@ -699,7 +698,9 @@ impl MemoryBinManager {
     ///
     /// Contains peak usage data that BDS can use to recommend next-boot bin sizes.
     pub(crate) fn memory_type_information(&self) -> &[EFiMemoryTypeInformation] {
-        &self.memory_type_information[..self.memory_type_information_count]
+        self.memory_type_information
+            .get(..self.memory_type_information_count)
+            .expect("Memory Type Info count should be correct")
     }
 
     /// Returns the maximum number of additional descriptors that bin splitting could add.
@@ -731,8 +732,10 @@ impl MemoryBinManager {
     fn insert_descriptor_after(buffer: &mut [efi::MemoryDescriptor], count: usize, after_idx: usize) -> usize {
         // Shift entries after `after_idx` right by one
         buffer.copy_within((after_idx + 1)..count, after_idx + 2);
-        // Copy the current entry as a template for the new one
-        buffer[after_idx + 1] = buffer[after_idx];
+        // Copy the current entry as a template for the new one. copy_within will panic if the range is invalid.
+        let source = buffer.get(after_idx).copied().expect("Failed to get source entry");
+        let dest = buffer.get_mut(after_idx + 1).expect("Failed to get destination entry");
+        *dest = source;
         count + 1
     }
 
@@ -746,19 +749,24 @@ impl MemoryBinManager {
 
         let mut write_idx = 0;
         for read_idx in 1..count {
-            let prev_end = buffer[write_idx].physical_start
-                + uefi_pages_to_size!(buffer[write_idx].number_of_pages as usize) as u64;
+            let write_entry = *buffer.get(write_idx).expect("count should be accurate");
+            let read_entry = *buffer.get(read_idx).expect("count should be correct");
 
-            if buffer[read_idx].r#type == buffer[write_idx].r#type
-                && buffer[read_idx].attribute == buffer[write_idx].attribute
-                && buffer[read_idx].physical_start == prev_end
+            let prev_end =
+                write_entry.physical_start + uefi_pages_to_size!(write_entry.number_of_pages as usize) as u64;
+
+            if read_entry.r#type == write_entry.r#type
+                && read_entry.attribute == write_entry.attribute
+                && read_entry.physical_start == prev_end
             {
                 // Merge into the current entry
-                buffer[write_idx].number_of_pages += buffer[read_idx].number_of_pages;
+                let write_entry = buffer.get_mut(write_idx).expect("count should be accurate");
+                write_entry.number_of_pages += read_entry.number_of_pages;
             } else {
                 write_idx += 1;
                 if write_idx != read_idx {
-                    buffer[write_idx] = buffer[read_idx];
+                    let write_entry = buffer.get_mut(write_idx).expect("count should be accurate");
+                    *write_entry = read_entry;
                 }
             }
         }
