@@ -46,7 +46,7 @@ where
         };
 
         self.slice.copy_within(idx..self.len(), idx + 1);
-        self.slice[idx] = element;
+        *self.slice.get_mut(idx).ok_or(Error::OutOfSpace)? = element;
         self.item_count += 1;
         Ok(idx)
     }
@@ -72,12 +72,13 @@ where
             }
         }
 
-        let Err(idx) = self.search(elements[0]) else {
+        let first = *elements.first().ok_or(Error::NotSorted)?;
+        let Err(idx) = self.search(first) else {
             return Err(Error::AlreadyExists);
         };
 
         if let Some(next) = self.get(idx) {
-            let last = elements[elements.len() - 1];
+            let last = *elements.last().ok_or(Error::NotSorted)?;
             match last.key().cmp(next.key()) {
                 core::cmp::Ordering::Equal => return Err(Error::AlreadyExists),
                 core::cmp::Ordering::Greater => return Err(Error::NotSorted),
@@ -86,7 +87,7 @@ where
         }
 
         self.slice.copy_within(idx..self.len(), idx + elements.len());
-        self.slice[idx..idx + elements.len()].copy_from_slice(elements);
+        self.slice.get_mut(idx..idx + elements.len()).ok_or(Error::OutOfSpace)?.copy_from_slice(elements);
         self.item_count += elements.len();
         Ok(idx)
     }
@@ -105,7 +106,7 @@ where
         if idx >= self.item_count {
             return None;
         }
-        let item = self.slice[idx];
+        let item = *self.slice.get(idx)?;
         self.slice.copy_within(idx + 1..self.len(), idx);
         self.item_count -= 1;
         Some(item)
@@ -123,17 +124,28 @@ where
     ///
     /// Returns the exact datum if it exists, or the closest datum that is greater than the key if it does not.
     pub fn search_with_key(&self, key: &T::Key) -> Result<&T, &T> {
-        self.binary_search_by_key(&key, |e| e.key()).map(|idx| &self[idx]).map_err(|idx| &self[idx])
+        assert!(!self.is_empty());
+        match self.binary_search_by_key(&key, |e| e.key()) {
+            Ok(idx) => Ok(self.get(idx).expect("binary_search Ok index is always in bounds")),
+            Err(idx) => {
+                // Clamp to last valid index when binary_search returns past-the-end.
+                let idx = idx.min(self.len().saturating_sub(1));
+                Err(self.get(idx).expect("slice is non-empty for binary_search Err"))
+            }
+        }
     }
 
     /// Returns a mutable reference to a datum.
     ///
     /// Returns the exact datum if it exists, or the closest datum that is greater than the key if it does not.
     pub fn search_with_key_mut(&mut self, key: &T::Key) -> Result<&mut T, &mut T> {
-        let index = self.binary_search_by_key(&key, |e| e.key());
-        match index {
-            Ok(idx) => Ok(&mut self[idx]),
-            Err(idx) => Err(&mut self[idx]),
+        match self.binary_search_by_key(&key, |e| e.key()) {
+            Ok(idx) => Ok(self.get_mut(idx).expect("binary_search Ok index is always in bounds")),
+            Err(idx) => {
+                // Clamp to last valid index when binary_search returns past-the-end.
+                let idx = idx.min(self.len().saturating_sub(1));
+                Err(self.get_mut(idx).expect("slice is non-empty for binary_search Err"))
+            }
         }
     }
 
@@ -152,14 +164,14 @@ impl<T> core::ops::Deref for SortedSlice<'_, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        &self.slice[..self.item_count]
+        self.slice.get(..self.item_count).expect("item_count <= slice.len()")
     }
 }
 
 // TODO Maybe adding manually the interesting function and add a way to mutate element that validate that is still sorted after.
 impl<T> core::ops::DerefMut for SortedSlice<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.slice[..self.item_count]
+        self.slice.get_mut(..self.item_count).expect("item_count <= slice.len()")
     }
 }
 

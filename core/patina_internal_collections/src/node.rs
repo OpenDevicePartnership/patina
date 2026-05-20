@@ -74,18 +74,17 @@ where
 
         if !storage.data.is_empty() {
             Self::build_linked_list(storage.data);
-            storage.available.set(storage.data[0].as_mut_ptr());
+            // first() is safe: is_empty() check above guarantees at least one element.
+            storage.available.set(storage.data.first().expect("non-empty data").as_mut_ptr());
         }
 
         storage
     }
 
     fn build_linked_list(buffer: &[Node<D>]) {
-        let mut node = &buffer[0];
-        for next in buffer.iter().skip(1) {
+        for [node, next] in buffer.array_windows::<2>() {
             node.set_right(Some(next));
             next.set_left(Some(node));
-            node = next;
         }
     }
 
@@ -235,49 +234,56 @@ where
         if self.capacity() == 0 {
             self.data = buffer;
             Self::build_linked_list(self.data);
-            self.available.set(self.data[0].as_mut_ptr());
+            // if the buffer is empty, we set the available list to null as is expected
+            self.available.set(self.data.first().map(|n| n.as_mut_ptr()).unwrap_or_default());
             return;
         }
 
         // Copy the data from the old buffer to the new buffer. Update the pointers to the new buffer
         for i in 0..self.len() {
-            let old = &self.data[i];
+            let old = self.data.get(i).expect("i < self.len() <= self.capacity() <= self.data.len()");
 
             // SAFETY: Nodes at indices 0..self.len() are "in use" and have initialized data.
-            // We copy the initialized data from old to new.
+            // We copy the initialized data from old to new. This mutable borrow must complete
+            // before we take shared references to buffer elements below.
             unsafe {
                 let old_data = old.data();
-                buffer[i].data = MaybeUninit::new(*old_data);
+                let new_node_mut = buffer.get_mut(i).expect("i < self.len() <= self.capacity() <= buffer.len()");
+                new_node_mut.data = MaybeUninit::new(*old_data);
             }
-            buffer[i].set_color(old.color());
+
+            let new_node = buffer.get(i).expect("i is in bounds");
+            new_node.set_color(old.color());
 
             if let Some(left) = old.left() {
                 let idx = self.idx(left.as_mut_ptr());
-                buffer[i].set_left(Some(&buffer[idx]));
+                new_node.set_left(buffer.get(idx));
             } else {
-                buffer[i].set_left(None);
+                new_node.set_left(None);
             }
 
             if let Some(right) = old.right() {
                 let idx = self.idx(right.as_mut_ptr());
-                buffer[i].set_right(Some(&buffer[idx]));
+                new_node.set_right(buffer.get(idx));
             } else {
-                buffer[i].set_right(None);
+                new_node.set_right(None);
             }
 
             if let Some(parent) = old.parent() {
                 let idx = self.idx(parent.as_mut_ptr());
-                buffer[i].set_parent(Some(&buffer[idx]));
+                new_node.set_parent(buffer.get(idx));
             } else {
-                buffer[i].set_parent(None);
+                new_node.set_parent(None);
             }
         }
 
         let idx = if !self.available.get().is_null() { self.idx(self.available.get()) } else { self.len() };
 
-        if idx < buffer.len() {
-            Self::build_linked_list(&buffer[idx..]);
-            self.available.set(buffer[idx].as_mut_ptr());
+        if let Some(tail) = buffer.get(idx..) {
+            Self::build_linked_list(tail);
+            if let Some(first) = buffer.get(idx) {
+                self.available.set(first.as_mut_ptr());
+            }
         } else {
             self.available.set(core::ptr::null_mut());
         }
