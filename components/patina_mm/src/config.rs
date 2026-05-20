@@ -405,12 +405,10 @@ impl CommunicateBuffer {
     ///
     /// Returns `Ok(())` if state verification passes, otherwise returns the appropriate error.
     fn verify_state_consistency(&self) -> Result<(), CommunicateBufferStatus> {
-        if self.len() < Self::MESSAGE_START_OFFSET {
+        let header_slice = self.as_slice().get(..Self::MESSAGE_START_OFFSET).ok_or_else(|| {
             log::error!(target: "mm_comm", "Buffer {} is too small for the communicate header", self.id);
-            return Err(CommunicateBufferStatus::TooSmallForHeader);
-        }
-
-        let header_slice = &self.as_slice()[..Self::MESSAGE_START_OFFSET];
+            CommunicateBufferStatus::TooSmallForHeader
+        })?;
 
         // SAFETY: Buffer size validated, BinaryGuid is repr(transparent) over repr(C) efi::Guid at offset 0.
         // read_unaligned is used because the buffer may not be aligned to the type's requirements.
@@ -499,7 +497,10 @@ impl CommunicateBuffer {
         // Update memory buffer using safe byte operations
         let header = EfiMmCommunicateHeader::new(recipient, self.private_message_length);
         let header_bytes = header.as_bytes();
-        self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
+        self.as_slice_mut()
+            .get_mut(..Self::MESSAGE_START_OFFSET)
+            .ok_or(CommunicateBufferStatus::TooSmallForHeader)?
+            .copy_from_slice(header_bytes);
 
         // Verify state consistency after update
         self.verify_state_consistency()?;
@@ -533,10 +534,15 @@ impl CommunicateBuffer {
         // Update memory buffer using safe byte operations for header
         let header = EfiMmCommunicateHeader::new(Guid::from_ref(&recipient), message.len());
         let header_bytes = header.as_bytes();
-        self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
+        self.as_slice_mut()
+            .get_mut(..Self::MESSAGE_START_OFFSET)
+            .ok_or(CommunicateBufferStatus::TooSmallForHeader)?
+            .copy_from_slice(header_bytes);
 
         // Copy message data
-        self.as_slice_mut()[Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message.len()]
+        self.as_slice_mut()
+            .get_mut(Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message.len())
+            .ok_or(CommunicateBufferStatus::TooSmallForMessage)?
             .copy_from_slice(message);
 
         // Verify state consistency after update
@@ -563,14 +569,20 @@ impl CommunicateBuffer {
         let start_offset = Self::MESSAGE_START_OFFSET;
         let end_offset = start_offset + self.private_message_length;
 
-        // Ensure we don't read beyond the buffer
-        if end_offset > self.len() {
-            log::error!(target: "mm_comm", "Buffer {} message extends beyond buffer: end_offset={}, buffer_len={}",
-                self.id, end_offset, self.len());
-            return Err(CommunicateBufferStatus::TooSmallForMessage);
-        }
-
-        let message = self.as_slice()[start_offset..end_offset].to_vec();
+        let message = self
+            .as_slice()
+            .get(start_offset..end_offset)
+            .ok_or_else(|| {
+                log::error!(
+                    target: "mm_comm",
+                    "Buffer {} message extends beyond buffer: end_offset={}, buffer_len={}",
+                    self.id,
+                    end_offset,
+                    self.len()
+                );
+                CommunicateBufferStatus::TooSmallForMessage
+            })?
+            .to_vec();
         log::trace!(target: "mm_comm", "Retrieved message from buffer {}: message_size={}", self.id, message.len());
         Ok(message)
     }

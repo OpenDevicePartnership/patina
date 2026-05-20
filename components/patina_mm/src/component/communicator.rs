@@ -319,7 +319,7 @@ impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
         })?;
 
         log::debug!(target: "mm_comm", "Outgoing MM communication request: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
-        log::debug!(target: "mm_comm", "Request Data (hex): {:02X?}", &data_buffer[..core::cmp::min(data_buffer.len(), 64)]);
+        log::debug!(target: "mm_comm", "Request Data (hex): {:02X?}", data_buffer.get(..core::cmp::min(data_buffer.len(), 64)).unwrap_or(data_buffer));
         log::trace!(target: "mm_comm", "Comm buffer before request: {:?}", comm_buffer);
 
         // Set the mailbox status to indicate buffer is valid before triggering MMI
