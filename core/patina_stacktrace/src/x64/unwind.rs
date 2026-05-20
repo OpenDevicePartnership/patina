@@ -67,7 +67,9 @@ impl<'a> UnwindInfo<'a> {
         }
 
         // Extract the unwind codes (each unwind code is two bytes).
-        let unwind_codes: &[u8] = &bytes[offset..offset + count_of_unwind_codes as usize * 2];
+        let unwind_codes: &[u8] = bytes
+            .get(offset..offset + count_of_unwind_codes as usize * 2)
+            .ok_or(Error::Malformed { module: image_name, reason: "Malformed unwind code bytes" })?;
         Ok(Self {
             unwind_info_bytes: bytes,
             image_name,

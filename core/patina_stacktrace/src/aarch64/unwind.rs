@@ -183,7 +183,9 @@ impl<'a> UnwindInfo<'a> {
             // 0. Packed unwind data not used; remaining bits point to an `.xdata` record.
             0 => {
                 let xdata_rva = unwind_info as usize;
-                let xdata = &bytes[xdata_rva..];
+                let xdata = bytes
+                    .get(xdata_rva..)
+                    .ok_or(Error::Malformed { module: image_name, reason: "xdata RVA out of bounds" })?;
                 let xdata_header: u32 = xdata.read32(0)?;
                 let function_length = (xdata_header & 0x3FFFF) * 4;
                 let mut unwind_code_words = ((xdata_header >> 27) & 0x1F) as u16;
@@ -226,7 +228,9 @@ impl<'a> UnwindInfo<'a> {
                 let unwind_code_rva_end = unwind_code_rva_begin + unwind_code_words as usize * 4;
 
                 // create the unwind code slice
-                let unwind_codes = &bytes[unwind_code_rva_begin..unwind_code_rva_end];
+                let unwind_codes = bytes
+                    .get(unwind_code_rva_begin..unwind_code_rva_end)
+                    .ok_or(Error::Malformed { module: image_name, reason: "Unwind code range out of bounds" })?;
 
                 if e == 1 {
                     epilog_count = 1;
@@ -437,15 +441,6 @@ impl fmt::Display for UnwindCode {
 }
 
 impl UnwindCode {
-    #[inline]
-    fn ensure_in_bounds(unwind_codes: &[u8], index: usize) -> StResult<()> {
-        if index < unwind_codes.len() {
-            Ok(())
-        } else {
-            Err(Error::UnwindCodeOutOfBounds { module: None, requested: index, available: unwind_codes.len() })
-        }
-    }
-
     /// Returns the previous stack frame for packed unwind codes.
     ///
     /// # Safety
@@ -600,11 +595,19 @@ impl UnwindCode {
         let mut prev_pc = stack_frame.pc;
         let mut prev_fp = stack_frame.fp;
 
+        let at = |idx: usize| -> StResult<u8> {
+            unwind_codes.get(idx).copied().ok_or(Error::UnwindCodeOutOfBounds {
+                module: None,
+                requested: idx,
+                available: unwind_codes.len(),
+            })
+        };
+
         log::debug!("    > IN(unpacked): {}", stack_frame); // debug
 
         // The main unwind decode logic
         while i < unwind_codes.len() {
-            let byte = unwind_codes[i];
+            let byte = at(i)?;
             if (byte >> 5) & 0b111 == 0b000 {
                 // AllocS(u8) -> 000xxxxx
                 // 000xxxxx: allocate small stack with size < 512 (2^5 * 16).
@@ -670,8 +673,8 @@ impl UnwindCode {
                 // AllocM(u16) -> 11000xxx'xxxxxxxx
                 // 11000xxx'xxxxxxxx: allocate large stack with size < 32K (2^11 * 16).
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = (((byte & 0b111) as u16) << 8) | unwind_codes[i + 1] as u16;
+                let b1 = at(i + 1)?;
+                let x = (((byte & 0b111) as u16) << 8) | b1 as u16;
                 log::debug!("    > {}", UnwindCode::AllocM(x)); // debug
 
                 prev_sp += x as u64 * 16; // deallocate space on the stack
@@ -682,9 +685,9 @@ impl UnwindCode {
                 // 110010xx'xxzzzzzz: save x(19+#X) pair at [sp+#Z*8], offset <= 504
                 // example: stp   x19,x20,[sp,#0x80]
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b11) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b11) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveRegP(x, z)); // debug
 
                 i += 2;
@@ -692,9 +695,9 @@ impl UnwindCode {
                 // SaveRegPX(u8, u8) -> 110011xx'xxzzzzzz
                 // 110011xx'xxzzzzzz: save pair x(19+#X) at [sp-(#Z+1)*8]!, pre-indexed offset >= -512
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b11) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b11) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveRegPX(x, z)); // debug
 
                 prev_sp += (z as u64 + 1) * 8; // pre increment the offset
@@ -705,9 +708,9 @@ impl UnwindCode {
                 // 110100xx'xxzzzzzz: save reg x(19+#X) at [sp+#Z*8], offset <= 504
                 // example: str   lr,[sp,#0x90] or str   x30,[sp,#0x90]
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b11) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b11) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveReg(x, z)); // debug
 
                 // Sometimes the LR alone can be saved using SaveReg unwind code.
@@ -727,9 +730,9 @@ impl UnwindCode {
                 // SaveRegX(u8, u8) -> 1101010x'xxxzzzzz
                 // 1101010x'xxxzzzzz: save reg x(19+#X) at [sp-(#Z+1)*8]!, pre-indexed offset >= -256
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 3) | ((unwind_codes[i + 1] >> 5) & 0b111);
-                let z = unwind_codes[i + 1] & 0b00011111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b1) << 3) | ((b1 >> 5) & 0b111);
+                let z = b1 & 0b00011111;
                 log::debug!("    > {}", UnwindCode::SaveRegX(x, z)); // debug
 
                 // Sometimes the LR alone can be saved using SaveRegX unwind code.
@@ -752,9 +755,9 @@ impl UnwindCode {
                 // 1101011x'xxzzzzzz: save pair <x(19+2*#X),lr> at [sp+#Z*8], offset <= 504
                 // example: stp x19, lr, [sp,#0x90]
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b1) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveLrPair(x, z)); // debug
 
                 // no pre decrement of sp
@@ -771,9 +774,9 @@ impl UnwindCode {
                 // SaveFRegP(u8, u8) -> 1101100x'xxzzzzzz
                 // 1101100x'xxzzzzzz: save pair d(8+#X) at [sp+#Z*8], offset <= 504
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b1) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveFRegP(x, z)); // debug
 
                 i += 2;
@@ -781,9 +784,9 @@ impl UnwindCode {
                 // SaveFRegPX(u8, u8) -> 1101101x'xxzzzzzz
                 // 1101101x'xxzzzzzz: save pair d(8+#X) at [sp-(#Z+1)*8]!, pre-indexed offset >= -512
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b1) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveFRegPX(x, z)); // debug
 
                 i += 2;
@@ -791,9 +794,9 @@ impl UnwindCode {
                 // SaveFReg(u8, u8) -> 1101110x'xxzzzzzz
                 // 1101110x'xxzzzzzz: save reg d(8+#X) at [sp+#Z*8], offset <= 504
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let b1 = at(i + 1)?;
+                let x = ((byte & 0b1) << 2) | ((b1 >> 6) & 0b11);
+                let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveFReg(x, z)); // debug
 
                 i += 2;
@@ -801,9 +804,9 @@ impl UnwindCode {
                 // SaveFRegX(u8, u8) -> 11011110'xxxzzzzz
                 // 11011110'xxxzzzzz: save reg d(8+#X) at [sp-(#Z+1)*8]!, pre-indexed offset >= -256
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = (unwind_codes[i + 1] >> 5) & 0b111;
-                let z = unwind_codes[i + 1] & 0b0011111;
+                let b1 = at(i + 1)?;
+                let x = (b1 >> 5) & 0b111;
+                let z = b1 & 0b0011111;
                 log::debug!("    > {}", UnwindCode::SaveFRegX(x, z)); // debug
 
                 prev_sp += (z as u64 + 1) * 8; // pre increment the offset
@@ -813,8 +816,7 @@ impl UnwindCode {
                 // AllocZ(u32) -> 11011111'zzzzzzzz
                 // 11011111'zzzzzzzz: allocate stack with size z * SVE-VL
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = unwind_codes[i + 1] as u32;
+                let x = at(i + 1)? as u32;
                 log::debug!("    > {}", UnwindCode::AllocZ(x)); // debug
 
                 i += 2;
@@ -822,10 +824,10 @@ impl UnwindCode {
                 // AllocL(u32) -> 11100000'xxxxxxxx'xxxxxxxx'xxxxxxxx
                 // 11100000'xxxxxxxx'xxxxxxxx'xxxxxxxx: allocate large stack with size < 256M (2^24 * 16)
 
-                Self::ensure_in_bounds(unwind_codes, i + 3)?;
-                let x = ((unwind_codes[i + 1] as u32) << 16)
-                    | ((unwind_codes[i + 2] as u32) << 8)
-                    | (unwind_codes[i + 3] as u32);
+                let b1 = at(i + 1)?;
+                let b2 = at(i + 2)?;
+                let b3 = at(i + 3)?;
+                let x = ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
                 log::debug!("    > {}", UnwindCode::AllocL(x)); // debug
 
                 prev_sp += x as u64 * 16; // pre increment the offset
@@ -843,8 +845,7 @@ impl UnwindCode {
                 // AddFp(u8) -> 11100010'xxxxxxxx
                 // 11100010'xxxxxxxx: set up x29 with add x29,sp,#x*8
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = unwind_codes[i + 1];
+                let x = at(i + 1)?;
                 log::debug!("    > {}", UnwindCode::AddFp(x)); // debug
 
                 prev_sp = prev_fp - (x as u64 * 8); // restore sp from fp
@@ -944,37 +945,37 @@ impl UnwindCode {
             } else if byte == 0b11111000 {
                 // Reserved12(u8) -> 11111000'yyyyyyyy
 
-                Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let y = unwind_codes[i + 1];
+                let y = at(i + 1)?;
                 log::debug!("    > {}", UnwindCode::Reserved12(y)); // debug
 
                 i += 2;
             } else if byte == 0b11111001 {
                 // Reserved13(u16) -> 11111001'yyyyyyyy'yyyyyyyy
 
-                Self::ensure_in_bounds(unwind_codes, i + 2)?;
-                let y = ((unwind_codes[i + 1] as u16) << 8) | (unwind_codes[i + 2] as u16);
+                let b1 = at(i + 1)?;
+                let b2 = at(i + 2)?;
+                let y = ((b1 as u16) << 8) | (b2 as u16);
                 log::debug!("    > {}", UnwindCode::Reserved13(y)); // debug
 
                 i += 3;
             } else if byte == 0b11111010 {
                 // Reserved14(u32) -> 11111010'yyyyyyyy'yyyyyyyy'yyyyyyyy
 
-                Self::ensure_in_bounds(unwind_codes, i + 3)?;
-                let y = ((unwind_codes[i + 1] as u32) << 16)
-                    | ((unwind_codes[i + 2] as u32) << 8)
-                    | (unwind_codes[i + 3] as u32);
+                let b1 = at(i + 1)?;
+                let b2 = at(i + 2)?;
+                let b3 = at(i + 3)?;
+                let y = ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
                 log::debug!("    > {}", UnwindCode::Reserved14(y)); // debug
 
                 i += 4;
             } else if byte == 0b11111011 {
                 // Reserved15(u32) -> 11111011'yyyyyyyy'yyyyyyyy'yyyyyyyy'yyyyyyyy
 
-                Self::ensure_in_bounds(unwind_codes, i + 4)?;
-                let y = ((unwind_codes[i + 1] as u32) << 24)
-                    | ((unwind_codes[i + 2] as u32) << 16)
-                    | ((unwind_codes[i + 3] as u32) << 8)
-                    | (unwind_codes[i + 4] as u32);
+                let b1 = at(i + 1)?;
+                let b2 = at(i + 2)?;
+                let b3 = at(i + 3)?;
+                let b4 = at(i + 4)?;
+                let y = ((b1 as u32) << 24) | ((b2 as u32) << 16) | ((b3 as u32) << 8) | (b4 as u32);
                 log::debug!("    > {}", UnwindCode::Reserved15(y)); // debug
 
                 i += 5;

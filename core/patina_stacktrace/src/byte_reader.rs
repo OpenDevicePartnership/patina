@@ -16,35 +16,39 @@ pub(crate) trait ByteReader {
 
 impl ByteReader for [u8] {
     fn read8(&self, index: usize) -> StResult<u8> {
-        if index + 1 > self.len() {
-            return Err(Error::OutOfBoundsRead { module: None, index });
-        }
-        let slice = &self[index..index + 1];
-        Ok(u8::from_le_bytes([slice[0]]))
+        let bytes: [u8; 1] = self
+            .get(index..index + 1)
+            .ok_or(Error::OutOfBoundsRead { module: None, index })?
+            .try_into()
+            .map_err(|_| Error::OutOfBoundsRead { module: None, index })?;
+        Ok(u8::from_le_bytes(bytes))
     }
 
     fn read16(&self, index: usize) -> StResult<u16> {
-        if index + 2 > self.len() {
-            return Err(Error::OutOfBoundsRead { module: None, index });
-        }
-        let slice = &self[index..index + 2];
-        Ok(u16::from_le_bytes([slice[0], slice[1]]))
+        let bytes: [u8; 2] = self
+            .get(index..index + 2)
+            .ok_or(Error::OutOfBoundsRead { module: None, index })?
+            .try_into()
+            .map_err(|_| Error::OutOfBoundsRead { module: None, index })?;
+        Ok(u16::from_le_bytes(bytes))
     }
 
     fn read32(&self, index: usize) -> StResult<u32> {
-        if index + 4 > self.len() {
-            return Err(Error::OutOfBoundsRead { module: None, index });
-        }
-        let slice = &self[index..index + 4];
-        Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+        let bytes: [u8; 4] = self
+            .get(index..index + 4)
+            .ok_or(Error::OutOfBoundsRead { module: None, index })?
+            .try_into()
+            .map_err(|_| Error::OutOfBoundsRead { module: None, index })?;
+        Ok(u32::from_le_bytes(bytes))
     }
 
     fn _read64(&self, index: usize) -> StResult<u64> {
-        if index + 8 > self.len() {
-            return Err(Error::OutOfBoundsRead { module: None, index });
-        }
-        let slice = &self[index..index + 8];
-        Ok(u64::from_le_bytes([slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7]]))
+        let bytes: [u8; 8] = self
+            .get(index..index + 8)
+            .ok_or(Error::OutOfBoundsRead { module: None, index })?
+            .try_into()
+            .map_err(|_| Error::OutOfBoundsRead { module: None, index })?;
+        Ok(u64::from_le_bytes(bytes))
     }
 
     fn read8_with(&self, index: &mut usize) -> StResult<u8> {
