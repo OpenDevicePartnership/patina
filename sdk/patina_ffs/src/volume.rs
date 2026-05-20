@@ -84,18 +84,13 @@ impl<'a> VolumeRef<'a> {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // Header length must fit inside the buffer.
-        if header_length > buffer.len() {
-            Err(FirmwareFileSystemError::InvalidHeader)?;
-        }
-
         // Header length must be a multiple of 2
         if header_length & 0x01 != 0 {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
         // Header checksum must be correct
-        let header_slice = &buffer[..header_length];
+        let header_slice = buffer.get(..header_length).ok_or(FirmwareFileSystemError::InvalidHeader)?;
         let sum = header_slice
             .chunks_exact(2)
             .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
@@ -134,13 +129,11 @@ impl<'a> VolumeRef<'a> {
         let ext_header = {
             if fv_header.ext_header_offset != 0 {
                 let ext_header_offset = fv_header.ext_header_offset as usize;
-                if ext_header_offset + mem::size_of::<fv::ExtHeader>() > buffer.len() {
-                    Err(FirmwareFileSystemError::InvalidHeader)?;
-                }
-
-                //Safety: previous check ensures that fv_data is large enough to contain the ext_header
-                let ext_header =
-                    unsafe { ptr::read_unaligned(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
+                let ext_header_slice = buffer
+                    .get(ext_header_offset..ext_header_offset + mem::size_of::<fv::ExtHeader>())
+                    .ok_or(FirmwareFileSystemError::InvalidHeader)?;
+                // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
+                let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr() as *const fv::ExtHeader) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -152,7 +145,9 @@ impl<'a> VolumeRef<'a> {
         };
 
         //block map must fit within the fv header (which is checked above to guarantee it is within the fv_data buffer).
-        let block_map = &buffer[mem::size_of::<fv::Header>()..fv_header.header_length as usize];
+        let block_map = buffer
+            .get(mem::size_of::<fv::Header>()..fv_header.header_length as usize)
+            .ok_or(FirmwareFileSystemError::InvalidHeader)?;
 
         //block map should be a multiple of 8 in size
         if block_map.len() & 0x7 != 0 {
@@ -162,8 +157,10 @@ impl<'a> VolumeRef<'a> {
         let mut block_map = block_map
             .chunks_exact(8)
             .map(|x| fv::BlockMapEntry {
-                num_blocks: u32::from_le_bytes(x[..4].try_into().unwrap()),
-                length: u32::from_le_bytes(x[4..].try_into().unwrap()),
+                num_blocks: u32::from_le_bytes(
+                    x.get(..4).expect("chunks_exact(8) guarantees 8 bytes").try_into().unwrap(),
+                ),
+                length: u32::from_le_bytes(x.get(4..).expect("chunks_exact(8) guarantees 8 bytes").try_into().unwrap()),
             })
             .collect::<Vec<_>>();
 
@@ -261,7 +258,11 @@ impl<'a> VolumeRef<'a> {
             let header_size = mem::size_of_val(&ext_header);
             let ext_header_data_start = self.fv_header.ext_header_offset as usize + header_size;
             let ext_header_end = ext_header_data_start + ext_header.ext_header_size as usize - header_size;
-            let header_data = self.data[ext_header_data_start..ext_header_end].to_vec();
+            let header_data = self
+                .data
+                .get(ext_header_data_start..ext_header_end)
+                .expect("ext_header offsets validated during VolumeRef::new()")
+                .to_vec();
             (ext_header, header_data)
         })
     }
@@ -329,7 +330,11 @@ impl<'a> VolumeRef<'a> {
     ///
     /// PAD files are filtered out per PI spec. Parsing errors are surfaced as iterator items.
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
-        FileRefIter::new(&self.data[self.content_offset..], self.erase_byte()).filter(|x| {
+        FileRefIter::new(
+            self.data.get(self.content_offset..).expect("content_offset validated during VolumeRef::new()"),
+            self.erase_byte(),
+        )
+        .filter(|x| {
             //Per PI spec 1.8A, V3, section 2.1.4.1.8: "Standard firmware file system services will not return the
             //handle of any PAD files, nor will they permit explicit creation of such files."
             //Pad files are ignored on read, and will be inserted on serialization as needed to honor alignment
@@ -387,19 +392,14 @@ impl<'a> Iterator for FileRefIter<'a> {
         if self.error {
             return None;
         }
-        if self.next_offset > self.data.len() {
+        let remaining = self.data.get(self.next_offset..)?;
+        if remaining.len() < mem::size_of::<file::Header>() {
             return None;
         }
-        if self.data[self.next_offset..].len() < mem::size_of::<file::Header>() {
+        if remaining.get(..mem::size_of::<file::Header>())?.iter().all(|&x| x == self.erase_byte) {
             return None;
         }
-        if self.data[self.next_offset..self.next_offset + mem::size_of::<file::Header>()]
-            .iter()
-            .all(|&x| x == self.erase_byte)
-        {
-            return None;
-        }
-        let result = FileRef::new(&self.data[self.next_offset..]);
+        let result = FileRef::new(remaining);
         if let Ok(ref file) = result {
             // per the PI spec, "Given a file F, the next file FvHeader is located at the next 8-byte aligned firmware volume
             // offset following the last byte the file F"
@@ -654,7 +654,9 @@ impl Volume {
             ext_header_offset.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
 
         // calculate the checksum.
-        let checksum = fv_buffer[..header_len]
+        let checksum = fv_buffer
+            .get(..header_len)
+            .ok_or(FirmwareFileSystemError::InvalidHeader)?
             .chunks_exact(2)
             //in the fv_buffer the following 3 fields are still set to zero, so manually add them to the checksum calculation.
             .chain(fv_header.fv_length.to_le_bytes().chunks_exact(2))
@@ -665,12 +667,16 @@ impl Volume {
 
         //re-write the updated fv_header into the front of the fv_buffer.
         // SAFETY: fv_header is repr(C) so it is safe to treat as a byte array.
-        fv_buffer[..mem::size_of_val(&fv_header)]
+        fv_buffer
+            .get_mut(..mem::size_of_val(&fv_header))
+            .ok_or(FirmwareFileSystemError::InvalidHeader)?
             .copy_from_slice(unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)) });
 
         // verify the checksum
         debug_assert_eq!(
-            fv_buffer[..header_len]
+            fv_buffer
+                .get(..header_len)
+                .expect("header_len is within fv_buffer")
                 .chunks_exact(2)
                 .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap()))),
             0

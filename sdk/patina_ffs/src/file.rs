@@ -99,11 +99,6 @@ impl<'a> FileRef<'a> {
             }
         };
 
-        // Verify that the total size of the file fits within the buffer.
-        if size > buffer.len() {
-            Err(FirmwareFileSystemError::InvalidHeader)?;
-        }
-
         // Verify the state field.
         // Interpreting the state field requires knowledge of the EFI_FVB_ERASE_POLARITY from the FV header, which is not
         // available here unless the constructor API is modified to specify it. So it is inferred based on the state of
@@ -127,7 +122,8 @@ impl<'a> FileRef<'a> {
         }
 
         // Verify the file header checksum.
-        let sum = buffer[..content_offset].iter().fold(0u8, |sum, val| sum.wrapping_add(*val));
+        let header_bytes = buffer.get(..content_offset).ok_or(FirmwareFileSystemError::InvalidHeader)?;
+        let sum = header_bytes.iter().fold(0u8, |sum, val| sum.wrapping_add(*val));
         let sum = sum.wrapping_sub(header.state);
         let sum = sum.wrapping_sub(header.integrity_check_file);
         if sum != 0 {
@@ -140,12 +136,19 @@ impl<'a> FileRef<'a> {
                 Err(FirmwareFileSystemError::InvalidHeader)?;
             }
         } else {
-            let sum = buffer[content_offset..size].iter().fold(0u8, |sum, val| sum.wrapping_add(*val));
+            let data_bytes = buffer.get(content_offset..size).ok_or(FirmwareFileSystemError::DataCorrupt)?;
+            let sum = data_bytes.iter().fold(0u8, |sum, val| sum.wrapping_add(*val));
             if sum != 0 {
                 Err(FirmwareFileSystemError::DataCorrupt)?;
             }
         }
-        Ok(Self { data: &buffer[..size], header, erase_polarity, size, content_offset })
+        Ok(Self {
+            data: buffer.get(..size).ok_or(FirmwareFileSystemError::InvalidHeader)?,
+            header,
+            erase_polarity,
+            size,
+            content_offset,
+        })
     }
 
     /// Total serialized size of the file in bytes (header + content).
@@ -165,7 +168,7 @@ impl<'a> FileRef<'a> {
 
     /// The file payload bytes (sections area), excluding the header.
     pub fn content(&self) -> &[u8] {
-        &self.data[self.content_offset..]
+        self.data.get(self.content_offset..).expect("content_offset validated in FileRef::new()")
     }
 
     /// Byte offset from the start of the file to the beginning of content.
@@ -218,8 +221,9 @@ impl<'a> FileRef<'a> {
     ///
     /// Returns a flattened list of sections; nested containers are expanded.
     pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
-        let sections = SectionIterator::new(&self.data[self.content_offset..])
-            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        let sections =
+            SectionIterator::new(self.data.get(self.content_offset..).ok_or(FirmwareFileSystemError::DataCorrupt)?)
+                .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
     }
 
@@ -263,14 +267,15 @@ impl<'a> FileRef<'a> {
         &self,
         extractor: &dyn SectionExtractor,
     ) -> Result<Vec<Section>, FirmwareFileSystemError> {
-        let sections = SectionIterator::new(&self.data[self.content_offset..])
-            .map(|mut x| {
-                if let Ok(ref mut section) = x {
-                    section.extract(extractor)?;
-                }
-                x
-            })
-            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        let sections =
+            SectionIterator::new(self.data.get(self.content_offset..).ok_or(FirmwareFileSystemError::DataCorrupt)?)
+                .map(|mut x| {
+                    if let Ok(ref mut section) = x {
+                        section.extract(extractor)?;
+                    }
+                    x
+                })
+                .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
     }
 }
