@@ -74,6 +74,7 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 lzma-rs = { version = "0.3" }
 
 [workspace.lints.clippy]
+indexing_slicing = "deny"
 undocumented_unsafe_blocks = "warn"
 
 # Profile used to build workspace dependencies for `mdbook test`. Inherits from `dev`
