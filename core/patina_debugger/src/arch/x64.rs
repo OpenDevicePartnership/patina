@@ -289,11 +289,10 @@ impl Registers for X64CoreRegs {
 
         macro_rules! read {
             ($t:ty) => {{
-                if offset + core::mem::size_of::<$t>() > bytes.len() {
-                    return Err(());
-                }
+                let end = offset + core::mem::size_of::<$t>();
+                let slice = bytes.get(offset..end).ok_or(())?;
                 let mut array = [0u8; core::mem::size_of::<$t>()];
-                array.copy_from_slice(&bytes[offset..offset + core::mem::size_of::<$t>()]);
+                array.copy_from_slice(slice);
                 offset += 8;
                 <$t>::from_le_bytes(array)
             }};
@@ -450,11 +449,11 @@ impl UefiArchRegs for X64CoreRegs {
                 _ => Err(()),
             },
             X64CoreRegId::Fpu(_) => {
-                buf[..4].fill(0);
+                buf.get_mut(..4).ok_or(())?.fill(0);
                 Ok(4)
             }
             X64CoreRegId::St(_) => {
-                buf[..10].fill(0);
+                buf.get_mut(..10).ok_or(())?.fill(0);
                 Ok(10)
             }
         }

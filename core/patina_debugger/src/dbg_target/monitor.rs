@@ -203,7 +203,7 @@ impl<const N: usize> Write for MonitorBuffer<'_, N> {
                 return Ok(());
             } else {
                 // Adjust the data to skip the start offset.
-                data = &data[self.start_offset..];
+                data = data.get(self.start_offset..).ok_or(core::fmt::Error)?;
                 len = data.len();
                 self.start_offset = 0; // Reset start offset after using it.
             }
@@ -215,8 +215,10 @@ impl<const N: usize> Write for MonitorBuffer<'_, N> {
             if len > N - self.pos {
                 self.flush();
             }
-            self.buffer[self.pos..self.pos + len].copy_from_slice(data);
-            self.pos += len;
+            if let Some(dest) = self.buffer.get_mut(self.pos..self.pos + len) {
+                dest.copy_from_slice(data);
+                self.pos += len;
+            }
         } else {
             // this message is too big to buffer, flush then write the message.
             self.flush();
