@@ -64,7 +64,9 @@ impl<V> SparseVec<V> {
         if index >= self.values.len() {
             self.values.resize_with(index + 1, || None);
         }
-        self.values[index] = Some(value);
+
+        let slot = self.values.get_mut(index).expect("inserted value should be in bounds");
+        *slot = Some(value);
     }
 }
 

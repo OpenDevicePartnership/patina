@@ -49,7 +49,13 @@ impl FromHob for HobPerformanceData {
             log::error!("Performance: error while parsing HobPerformanceRecordBuffer, return default value.");
             return Self::default();
         };
-        let records_data_buffer = bytes[offset..offset + size_of_all_entries as usize].to_vec();
+        let records_data_buffer = bytes
+            .get(offset..offset + size_of_all_entries as usize)
+            .unwrap_or_else(|| {
+                debug_assert!(false, "Performance: records_data_buffer slice out of bounds");
+                &[]
+            })
+            .to_vec();
 
         Self { load_image_count, records_data_buffer }
     }

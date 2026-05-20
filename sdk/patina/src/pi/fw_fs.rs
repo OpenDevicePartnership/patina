@@ -196,17 +196,12 @@ impl<'a> FirmwareVolume<'a> {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
-        // header_length: buffer must be large enough to hold the header.
-        if (fv_header.header_length as usize) > buffer.len() {
-            Err(efi::Status::VOLUME_CORRUPTED)?;
-        }
-
         // checksum: fv header must sum to zero (and must be multiple of 2 bytes)
         if fv_header.header_length & 0x01 != 0 {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
-        let header_slice = &buffer[..fv_header.header_length as usize];
+        let header_slice = buffer.get(..fv_header.header_length as usize).ok_or(efi::Status::VOLUME_CORRUPTED)?;
         let sum: Wrapping<u16> =
             header_slice.chunks_exact(2).map(|x| Wrapping(u16::from_le_bytes(x.try_into().unwrap()))).sum();
 
@@ -246,24 +241,25 @@ impl<'a> FirmwareVolume<'a> {
         let ext_header = {
             if fv_header.ext_header_offset != 0 {
                 let ext_header_offset = fv_header.ext_header_offset as usize;
-                if ext_header_offset + mem::size_of::<fv::ExtHeader>() > buffer.len() {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
+                let ext_header_slice = buffer
+                    .get(ext_header_offset..ext_header_offset + mem::size_of::<fv::ExtHeader>())
+                    .ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
-                // SAFETY: The size is validated to contain ExtHeader and slice bounds checked
-                let ext_header = unsafe { &*(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
+                // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
+                let ext_header = unsafe { &*(ext_header_slice.as_ptr() as *const fv::ExtHeader) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
-                if ext_header_end > buffer.len() {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
-                Some(FirmwareVolumeExtHeader { header: *ext_header, data: &buffer[ext_header_offset..ext_header_end] })
+                let ext_header_data =
+                    buffer.get(ext_header_offset..ext_header_end).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                Some(FirmwareVolumeExtHeader { header: *ext_header, data: ext_header_data })
             } else {
                 None
             }
         };
 
         //block map must fit within the fv header (which is checked above to guarantee it is within the fv_data buffer).
-        let block_map = &buffer[mem::size_of::<fv::Header>()..fv_header.header_length as usize];
+        let block_map = buffer
+            .get(mem::size_of::<fv::Header>()..fv_header.header_length as usize)
+            .ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
         //block map should be a multiple of 8 in size
         if block_map.len() & 0x7 != 0 {
@@ -273,8 +269,10 @@ impl<'a> FirmwareVolume<'a> {
         let mut block_map = block_map
             .chunks_exact(8)
             .map(|x| fv::BlockMapEntry {
-                num_blocks: u32::from_le_bytes(x[..4].try_into().unwrap()),
-                length: u32::from_le_bytes(x[4..].try_into().unwrap()),
+                num_blocks: u32::from_le_bytes(
+                    x.get(..4).expect("chunks_exact(8) guarantees 8 bytes").try_into().unwrap(),
+                ),
+                length: u32::from_le_bytes(x.get(4..).expect("chunks_exact(8) guarantees 8 bytes").try_into().unwrap()),
             })
             .collect::<Vec<_>>();
 
@@ -343,7 +341,10 @@ impl<'a> FirmwareVolume<'a> {
 
     /// Returns an iterator of the files in this FV.
     pub fn file_iter(&self) -> impl Iterator<Item = Result<File<'a>, efi::Status>> {
-        FvFileIterator::new(&self.data[self.data_offset..], self.erase_byte)
+        FvFileIterator::new(
+            self.data.get(self.data_offset..).expect("data_offset validated in FirmwareVolume::new()"),
+            self.erase_byte,
+        )
     }
 
     /// returns the (linear block offset from FV base, block_size, remaining_blocks) given an LBA.
@@ -454,19 +455,12 @@ impl<'a> File<'a> {
             } else {
                 //extended header with 64-bit size
                 let extended_size_length = mem::size_of::<u64>();
-                if buffer[header_size..].len() < extended_size_length {
-                    Err(efi::Status::VOLUME_CORRUPTED)?;
-                }
-                let size =
-                    u64::from_le_bytes(buffer[header_size..header_size + extended_size_length].try_into().unwrap());
+                let extended_size_bytes =
+                    buffer.get(header_size..header_size + extended_size_length).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+                let size = u64::from_le_bytes(extended_size_bytes.try_into().unwrap());
                 (header_size + extended_size_length, size as u64)
             }
         };
-
-        // Verify that the total size of the file fits within the buffer.
-        if size as usize > buffer.len() {
-            Err(efi::Status::VOLUME_CORRUPTED)?;
-        }
 
         // Interpreting the state field requires knowledge of the EFI_FVB_ERASE_POLARITY from the FV header, which is not
         // available here unless the constructor API is modified to specify it. So it is inferred based on the state of
@@ -487,7 +481,8 @@ impl<'a> File<'a> {
         }
 
         //Verify the header checksum.
-        let header_sum: Wrapping<u8> = buffer[..header_size].iter().map(|&x| Wrapping(x)).sum();
+        let header_bytes = buffer.get(..header_size).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+        let header_sum: Wrapping<u8> = header_bytes.iter().map(|&x| Wrapping(x)).sum();
         // integrity_check_file and state are assumed to be zero for checksum, so subtract them here.
         let header_sum = header_sum.wrapping_sub(&Wrapping(file_header.integrity_check_file));
         let header_sum = header_sum.wrapping_sub(&Wrapping(file_header.state));
@@ -497,7 +492,8 @@ impl<'a> File<'a> {
 
         //Verify the file data checksum.
         if file_header.attributes & ffs::attributes::raw::CHECKSUM != 0 {
-            let data_sum: Wrapping<u8> = buffer[header_size..size as usize].iter().map(|&x| Wrapping(x)).sum();
+            let data_bytes = buffer.get(header_size..size as usize).ok_or(efi::Status::VOLUME_CORRUPTED)?;
+            let data_sum: Wrapping<u8> = data_bytes.iter().map(|&x| Wrapping(x)).sum();
             if data_sum != Wrapping(0u8) {
                 Err(efi::Status::VOLUME_CORRUPTED)?;
             }
@@ -509,7 +505,7 @@ impl<'a> File<'a> {
         }
 
         Ok(Self {
-            data: &buffer[..size as usize],
+            data: buffer.get(..size as usize).ok_or(efi::Status::VOLUME_CORRUPTED)?,
             name: file_header.name,
             file_type: file_header.file_type,
             attributes: file_header.attributes,
@@ -592,7 +588,7 @@ impl<'a> File<'a> {
 
     /// Returns the raw data from the file (without extracting any sections), not including the header.
     pub fn content(&self) -> &[u8] {
-        &self.data[self.header_size..self.size as usize]
+        self.data.get(self.header_size..self.size as usize).expect("header_size and size validated in File::new()")
     }
 
     /// Returns the raw data for the file, including the header.
@@ -634,7 +630,12 @@ impl<'a> File<'a> {
             // RAW files have no sections
             FileSectionIterator::new(&[], extractor)
         } else {
-            FileSectionIterator::new(&self.data[self.header_size..self.size as usize], extractor)
+            FileSectionIterator::new(
+                self.data
+                    .get(self.header_size..self.size as usize)
+                    .expect("header_size and size validated in File::new()"),
+                extractor,
+            )
         }
     }
 }
@@ -720,7 +721,8 @@ impl Section {
                 let size =
                     buffer.get(header_end..header_end + mem::size_of::<u32>()).ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
-                let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]);
+                let size: [u8; 4] = size.try_into().map_err(|_| efi::Status::VOLUME_CORRUPTED)?;
+                let size = u32::from_le_bytes(size);
                 (size as usize, header_end + mem::size_of::<u32>())
             } else {
                 //standard header
@@ -897,19 +899,14 @@ impl<'a> Iterator for FvFileIterator<'a> {
         if self.error {
             return None;
         }
-        if self.next_offset > self.buffer.len() {
+        let remaining = self.buffer.get(self.next_offset..)?;
+        if remaining.len() < mem::size_of::<file::Header>() {
             return None;
         }
-        if self.buffer[self.next_offset..].len() < mem::size_of::<file::Header>() {
+        if remaining.get(..mem::size_of::<file::Header>())?.iter().all(|&x| x == self.erase_byte) {
             return None;
         }
-        if self.buffer[self.next_offset..self.next_offset + mem::size_of::<file::Header>()]
-            .iter()
-            .all(|&x| x == self.erase_byte)
-        {
-            return None;
-        }
-        let result = File::new(&self.buffer[self.next_offset..]);
+        let result = File::new(remaining);
         if let Ok(ref file) = result {
             // per the PI spec, "Given a file F, the next file FvHeader is located at the next 8-byte aligned firmware volume
             // offset following the last byte the file F"
@@ -961,14 +958,11 @@ impl Iterator for FileSectionIterator<'_> {
             return Some(result);
         }
 
-        if self.next_offset > self.buffer.len() {
+        let remaining = self.buffer.get(self.next_offset..)?;
+        if remaining.len() < mem::size_of::<ffs::section::Header>() {
             return None;
         }
-
-        if self.buffer[self.next_offset..].len() < mem::size_of::<ffs::section::Header>() {
-            return None;
-        }
-        let result = Section::new(&self.buffer[self.next_offset..]);
+        let result = Section::new(remaining);
         if let Ok(ref section) = result {
             if section.is_encapsulation() {
                 // attempt to extract the encapsulated section.

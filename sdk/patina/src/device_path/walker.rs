@@ -281,8 +281,8 @@ pub fn concat_device_path_to_boxed_slice(
     let b_slice = device_path_as_slice(b)?;
     let end_path_size = core::mem::size_of::<efi::protocols::device_path::End>();
     let mut out_bytes = vec![0u8; a_slice.len() + b_slice.len() - end_path_size];
-    out_bytes[..a_slice.len()].copy_from_slice(a_slice);
-    out_bytes[a_slice.len() - end_path_size..].copy_from_slice(b_slice);
+    out_bytes.get_mut(..a_slice.len()).ok_or(efi::Status::BAD_BUFFER_SIZE)?.copy_from_slice(a_slice);
+    out_bytes.get_mut(a_slice.len() - end_path_size..).ok_or(efi::Status::BAD_BUFFER_SIZE)?.copy_from_slice(b_slice);
     Ok(out_bytes.into_boxed_slice())
 }
 

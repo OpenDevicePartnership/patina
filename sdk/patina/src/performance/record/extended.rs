@@ -314,7 +314,7 @@ fn ensure_space(buff: &[u8], offset: usize, needed: usize) -> Result<(), Error> 
 
 fn write_bytes(dest: &mut [u8], offset: &mut usize, src: &[u8]) -> Result<(), Error> {
     ensure_space(dest, *offset, src.len())?;
-    dest[*offset..*offset + src.len()].copy_from_slice(src);
+    dest.get_mut(*offset..*offset + src.len()).ok_or(Error::Serialization)?.copy_from_slice(src);
     *offset += src.len();
     Ok(())
 }

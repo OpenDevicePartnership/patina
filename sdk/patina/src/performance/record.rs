@@ -116,7 +116,9 @@ pub trait PerformanceRecord {
 
         // Write the complete header
         let header_bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
-        buff[start..start + PERFORMANCE_RECORD_HEADER_SIZE].copy_from_slice(&header_bytes);
+        buff.get_mut(start..start + PERFORMANCE_RECORD_HEADER_SIZE)
+            .ok_or(Error::Serialization)?
+            .copy_from_slice(&header_bytes);
 
         Ok(record_size)
     }
@@ -166,7 +168,7 @@ impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
         if data.len() > remaining {
             return Err(Error::Serialization);
         }
-        buff[*offset..*offset + data.len()].copy_from_slice(data);
+        buff.get_mut(*offset..*offset + data.len()).ok_or(Error::Serialization)?.copy_from_slice(data);
         *offset += data.len();
         Ok(())
     }
@@ -214,7 +216,7 @@ impl PerformanceRecordBuffer {
         if buffer.len() < size {
             return Err(Error::BufferTooSmall);
         }
-        buffer[..size].clone_from_slice(current_buffer);
+        buffer.get_mut(..size).ok_or(Error::BufferTooSmall)?.clone_from_slice(current_buffer);
         *self = Self::Published(buffer, size);
         Ok(())
     }
@@ -223,7 +225,7 @@ impl PerformanceRecordBuffer {
     pub fn buffer(&self) -> &[u8] {
         match &self {
             Self::Unpublished(b) => b.as_slice(),
-            Self::Published(b, len) => &b[..*len],
+            Self::Published(b, len) => b.get(..*len).unwrap_or(b),
         }
     }
 
@@ -294,8 +296,8 @@ impl<'a> Iterator for Iter<'a> {
         let length = self.buffer.gread::<u8>(&mut offset).unwrap();
         let revision = self.buffer.gread::<u8>(&mut offset).unwrap();
 
-        let data = &self.buffer[offset..length as usize];
-        self.buffer = &self.buffer[length as usize..];
+        let data = self.buffer.get(offset..length as usize)?;
+        self.buffer = self.buffer.get(length as usize..)?;
         Some(GenericPerformanceRecord::new(record_type, length, revision, data))
     }
 }
@@ -360,13 +362,11 @@ impl DynamicStringEventRecordData {
 
     /// Get the string portion from the full record data
     pub fn extract_string(full_data: &[u8]) -> &str {
-        if full_data.len() <= core::mem::size_of::<Self>() {
+        let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
             return "";
-        }
-        let string_bytes = &full_data[core::mem::size_of::<Self>()..];
-        // Find the null terminator
+        };
         let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(&string_bytes[..string_len]).unwrap_or("<invalid UTF-8>")
+        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
     }
 }
 
@@ -406,13 +406,11 @@ impl DualGuidStringEventRecordData {
 
     /// Get the string portion from the full record data
     pub fn extract_string(full_data: &[u8]) -> &str {
-        if full_data.len() <= core::mem::size_of::<Self>() {
+        let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
             return "";
-        }
-        let string_bytes = &full_data[core::mem::size_of::<Self>()..];
-        // Find the null terminator
+        };
         let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(&string_bytes[..string_len]).unwrap_or("<invalid UTF-8>")
+        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
     }
 }
 
@@ -496,13 +494,11 @@ impl GuidQwordStringEventRecordData {
 
     /// Get the string portion from the full record data
     pub fn extract_string(full_data: &[u8]) -> &str {
-        if full_data.len() <= core::mem::size_of::<Self>() {
+        let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
             return "";
-        }
-        let string_bytes = &full_data[core::mem::size_of::<Self>()..];
-        // Find the null terminator
+        };
         let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(&string_bytes[..string_len]).unwrap_or("<invalid UTF-8>")
+        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
     }
 }
 

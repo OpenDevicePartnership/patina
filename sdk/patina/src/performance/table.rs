@@ -177,7 +177,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
             .map_err(|_| Error::BufferTooSmall)?;
 
         debug_assert_eq!(Self::size_of_empty_table(), offset);
-        self.other_records.report(&mut fbpt_buffer[offset..])?;
+        self.other_records.report(fbpt_buffer.get_mut(offset..).ok_or(Error::BufferTooSmall)?)?;
 
         self._length.1.store(length_ptr, Ordering::Relaxed);
         Ok(self.fbpt_address)

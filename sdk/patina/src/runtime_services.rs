@@ -406,7 +406,7 @@ impl RuntimeServices for StandardRuntimeServices {
         if next_name.len() < prev_name.len() {
             next_name.resize(prev_name.len(), 0);
         }
-        next_name[..prev_name.len()].clone_from_slice(prev_name);
+        next_name.get_mut(..prev_name.len()).ok_or(efi::Status::BAD_BUFFER_SIZE)?.clone_from_slice(prev_name);
         next_namespace.clone_from(prev_namespace);
 
         let mut next_name_size: usize = next_name.len();
@@ -431,7 +431,7 @@ impl RuntimeServices for StandardRuntimeServices {
                 next_name.resize(next_name_size, 0);
 
                 // Reset fields which may have been overwritten
-                next_name[..prev_name.len()].clone_from_slice(prev_name);
+                next_name.get_mut(..prev_name.len()).ok_or(efi::Status::BAD_BUFFER_SIZE)?.clone_from_slice(prev_name);
                 next_namespace.clone_from(prev_namespace);
             } else if status.is_error() {
                 return Err(status);
