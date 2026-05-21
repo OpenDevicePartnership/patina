@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina::error::EfiError;
+use patina::{error::EfiError, writelncrlf};
 use r_efi::efi;
 
 use super::{AllocationStatistics, AllocationStrategy, PageAllocator};
@@ -274,7 +274,7 @@ where
     A: PageAllocator + GlobalAlloc + Allocator + Display + Sync + Send,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Memory Type: {}", string_for_memory_type(self.memory_type()))?;
+        writelncrlf!(f, "Memory Type: {}", string_for_memory_type(self.memory_type()))?;
         self.allocator.fmt(f)
     }
 }
@@ -652,18 +652,18 @@ mod tests {
             assert_eq!(
                 std::format!("{ua}"),
                 concat!(
-                    "Memory Type: BootServices Data\n",
-                    "Memory Type: 4\n",
-                    "Allocation Ranges:\n",
-                    "Bucket Range: None\n",
-                    "Allocation Stats:\n",
-                    "  pool_allocation_calls: 0\n",
-                    "  pool_free_calls: 0\n",
-                    "  page_allocation_calls: 0\n",
-                    "  page_free_calls: 0\n",
-                    "  reserved_size: 0\n",
-                    "  reserved_used: 0\n",
-                    "  claimed_pages: 0\n"
+                    "Memory Type: BootServices Data\r\n",
+                    "Memory Type: 4\r\n",
+                    "Allocation Ranges:\r\n",
+                    "Bucket Range: None\r\n",
+                    "Allocation Stats:\r\n",
+                    "  pool_allocation_calls: 0\r\n",
+                    "  pool_free_calls: 0\r\n",
+                    "  page_allocation_calls: 0\r\n",
+                    "  page_free_calls: 0\r\n",
+                    "  reserved_size: 0\r\n",
+                    "  reserved_used: 0\r\n",
+                    "  claimed_pages: 0\r\n"
                 )
             );
         });

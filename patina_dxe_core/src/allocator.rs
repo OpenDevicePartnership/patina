@@ -46,7 +46,7 @@ pub use uefi_allocator::UefiAllocator;
 use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guids, uefi_size_to_pages,
+    guids, uefi_size_to_pages, writelncrlf,
 };
 
 // Type alias for a UefiAllocator with a SpinLockedFixedSizeBlockAllocator
@@ -370,13 +370,17 @@ impl Debug for MemoryDescriptorRef<'_> {
 
 impl Debug for MemoryDescriptorSlice<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        writeln!(
+        writelncrlf!(
             f,
             "{:<24} {:<20} {:<15} {:<15} {:<20}",
-            "Type", "Physical Start", "Virtual Start", "Number of Pages", "Attributes"
+            "Type",
+            "Physical Start",
+            "Virtual Start",
+            "Number of Pages",
+            "Attributes"
         )?;
         for descriptor in self.0 {
-            writeln!(f, "{:?}", MemoryDescriptorRef(descriptor))?;
+            writelncrlf!(f, "{:?}", MemoryDescriptorRef(descriptor))?;
         }
         Ok(())
     }

@@ -23,7 +23,7 @@ use core::{fmt, pin::Pin, ptr::NonNull};
 
 use patina::{
     BinaryGuid, Guid, base::UEFI_PAGE_MASK, management_mode::MmCommBufferStatus,
-    pi::protocols::communication::EfiMmCommunicateHeader,
+    pi::protocols::communication::EfiMmCommunicateHeader, writelncrlf,
 };
 
 /// Management Mode (MM) Configuration
@@ -64,17 +64,23 @@ impl Default for MmCommunicationConfiguration {
 
 impl fmt::Display for MmCommunicationConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MM Communication Configuration:")?;
-        writeln!(f, "  ACPI Base: {}", self.acpi_base)?;
-        writeln!(f, "  Command Port: {}", self.cmd_port)?;
-        writeln!(f, "  Data Port: {}", self.data_port)?;
-        writeln!(f, "  Communication Buffers ({}):", self.comm_buffers.len())?;
+        writelncrlf!(f, "MM Communication Configuration:")?;
+        writelncrlf!(f, "  ACPI Base: {}", self.acpi_base)?;
+        writelncrlf!(f, "  Command Port: {}", self.cmd_port)?;
+        writelncrlf!(f, "  Data Port: {}", self.data_port)?;
+        writelncrlf!(f, "  Communication Buffers ({}):", self.comm_buffers.len())?;
 
         if self.comm_buffers.is_empty() {
-            writeln!(f, "    <none>")
+            writelncrlf!(f, "    <none>")
         } else {
             for buffer in &self.comm_buffers {
-                writeln!(f, "    Buffer {:#04X}: ptr={:p}, len=0x{:X}", buffer.id(), buffer.as_ptr(), buffer.len(),)?;
+                writelncrlf!(
+                    f,
+                    "    Buffer {:#04X}: ptr={:p}, len=0x{:X}",
+                    buffer.id(),
+                    buffer.as_ptr(),
+                    buffer.len(),
+                )?;
             }
             Ok(())
         }
@@ -596,7 +602,7 @@ impl CommunicateBuffer {
 #[coverage(off)]
 impl fmt::Debug for CommunicateBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "CommunicateBuffer(id: 0x{:X}. len: 0x{:X})", self.id(), self.len())?;
+        writelncrlf!(f, "CommunicateBuffer(id: 0x{:X}. len: 0x{:X})", self.id(), self.len())?;
         for (i, chunk) in self.as_slice().chunks(16).enumerate() {
             // Print the offset
             write!(f, "{:08X}: ", i * 16)?;
@@ -617,7 +623,7 @@ impl fmt::Debug for CommunicateBuffer {
                     write!(f, ".")?;
                 }
             }
-            writeln!(f, "|")?;
+            writelncrlf!(f, "|")?;
         }
         Ok(())
     }

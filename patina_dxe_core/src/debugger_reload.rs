@@ -19,7 +19,7 @@ use patina::{
     component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
     guids,
     pi::hob::{self},
-    uefi_size_to_pages,
+    uefi_size_to_pages, writelncrlf,
 };
 
 use crate::{memory_manager::CoreMemoryManager, pecoff};
@@ -51,7 +51,7 @@ pub fn tear_down_debugger_reload() {
 /// extension and so is not intended to be human friendly.
 fn reload_monitor(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::fmt::Write) {
     if TEAR_DOWN.load(core::sync::atomic::Ordering::Relaxed) {
-        let _ = writeln!(out, "Only supported at initial breakpoint");
+        let _ = writelncrlf!(out, "Only supported at initial breakpoint");
         return;
     }
 
@@ -63,7 +63,7 @@ fn reload_monitor(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core:
             load_command(args, out);
         }
         _ => {
-            let _ = writeln!(out, "Unknown command");
+            let _ = writelncrlf!(out, "Unknown command");
         }
     }
 }
@@ -76,18 +76,18 @@ fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut 
         Some(size_str) => match size_str.parse::<usize>() {
             Ok(size) => size,
             Err(_) => {
-                let _ = writeln!(out, "Invalid buffer size");
+                let _ = writelncrlf!(out, "Invalid buffer size");
                 return;
             }
         },
         None => {
-            let _ = writeln!(out, "Usage: reload alloc_buffer <size>");
+            let _ = writelncrlf!(out, "Usage: reload alloc_buffer <size>");
             return;
         }
     };
 
     if buffer_size == 0 {
-        let _ = writeln!(out, "Buffer size must be greater than 0");
+        let _ = writelncrlf!(out, "Buffer size must be greater than 0");
         return;
     }
 
@@ -95,13 +95,13 @@ fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut 
     let pages = match CoreMemoryManager.allocate_pages(uefi_size_to_pages!(buffer_size), AllocationOptions::new()) {
         Ok(pages) => pages,
         Err(err) => {
-            let _ = writeln!(out, "Failed to allocate reload buffer: {:?}", err);
+            let _ = writelncrlf!(out, "Failed to allocate reload buffer: {:?}", err);
             return;
         }
     };
 
     let address = pages.into_raw_ptr::<u8>().expect("Page allocation size check failed for u8") as usize;
-    let _ = write!(out, "{:x}", address);
+    let _ = writelncrlf!(out, "{:x}", address);
 }
 
 /// Implements the "reload load" command. This command loads the core image from the specified address and size.
@@ -111,12 +111,12 @@ fn load_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::f
         Some(addr_str) => match addr_str.parse::<usize>() {
             Ok(addr) => addr,
             Err(_) => {
-                let _ = writeln!(out, "Invalid address");
+                let _ = writelncrlf!(out, "Invalid address");
                 return;
             }
         },
         None => {
-            let _ = writeln!(out, "No address provided");
+            let _ = writelncrlf!(out, "No address provided");
             return;
         }
     };
@@ -125,18 +125,18 @@ fn load_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::f
         Some(size_str) => match size_str.parse::<usize>() {
             Ok(size) => size,
             Err(_) => {
-                let _ = writeln!(out, "Invalid size");
+                let _ = writelncrlf!(out, "Invalid size");
                 return;
             }
         },
         None => {
-            let _ = writeln!(out, "No size provided");
+            let _ = writelncrlf!(out, "No size provided");
             return;
         }
     };
 
     if address == 0 || size == 0 {
-        let _ = writeln!(out, "Address and size must be greater than 0");
+        let _ = writelncrlf!(out, "Address and size must be greater than 0");
         return;
     }
 
@@ -160,7 +160,7 @@ fn load_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::f
 /// fails.
 fn decompress_image(compressed_image: &[u8], out: &mut dyn core::fmt::Write) -> Option<&'static [u8]> {
     if compressed_image.len() < 8 {
-        let _ = writeln!(out, "Compressed image size too small");
+        let _ = writelncrlf!(out, "Compressed image size too small");
         return None;
     }
 
@@ -174,7 +174,7 @@ fn decompress_image(compressed_image: &[u8], out: &mut dyn core::fmt::Write) -> 
     if let Err(error) =
         decompress_into_with_algo(compressed_image, decompressed_image, DecompressionAlgorithm::UefiDecompress)
     {
-        let _ = writeln!(out, "Failed to decompress image: {:?}", error);
+        let _ = writelncrlf!(out, "Failed to decompress image: {:?}", error);
         return None;
     }
 
@@ -187,7 +187,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     let pe_info = match pecoff::UefiPeInfo::parse(image) {
         Ok(info) => info,
         Err(err) => {
-            let _ = writeln!(out, "Failed to parse PE image: {:?}", err);
+            let _ = writelncrlf!(out, "Failed to parse PE image: {:?}", err);
             return;
         }
     };
@@ -200,7 +200,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     ) {
         Ok(pages) => pages,
         Err(err) => {
-            let _ = writeln!(out, "Failed to allocate load buffer: {:?}", err);
+            let _ = writelncrlf!(out, "Failed to allocate load buffer: {:?}", err);
             return;
         }
     };
@@ -208,14 +208,14 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     // Step 2: load the image.
     let loaded_image = alloc.leak_as_slice::<u8>();
     if let Err(error) = pecoff::load_image(&pe_info, image, loaded_image) {
-        let _ = writeln!(out, "Failed to load image. {:?}", error);
+        let _ = writelncrlf!(out, "Failed to load image. {:?}", error);
         return;
     }
 
     // Step 3: relocate the image.
     let loaded_image_addr = loaded_image.as_ptr() as usize;
     if let Err(error) = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new()) {
-        let _ = writeln!(out, "Failed to relocate image. {:?}", error);
+        let _ = writelncrlf!(out, "Failed to relocate image. {:?}", error);
         return;
     }
 
@@ -224,7 +224,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     let (hob_list, stack_ptr) = match fixup_hob_list(loaded_image_addr, image_size, entry_point) {
         Ok(hob_list) => hob_list,
         Err(error) => {
-            let _ = writeln!(out, "Failed to fixup HOB list: {}", error);
+            let _ = writelncrlf!(out, "Failed to fixup HOB list: {}", error);
             return;
         }
     };

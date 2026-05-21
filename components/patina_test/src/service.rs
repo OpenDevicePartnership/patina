@@ -27,6 +27,7 @@ use patina::{
         tpl::Tpl,
     },
     component::{Storage, service::IntoService},
+    writelncrlf,
 };
 
 use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
@@ -276,18 +277,18 @@ impl Display for Recorder {
         self.with_mut(|records| {
             let mut total_passes = 0;
             let mut total_fails = 0;
-            writeln!(f, "Patina on-system unit-test results:")?;
+            writelncrlf!(f, "Patina on-system unit-test results:")?;
             for (name, record) in records.iter() {
                 total_passes += record.pass;
                 total_fails += record.fail;
                 if record.fail == 0 && record.pass == 0 {
-                    writeln!(f, "  {name} ... not triggered")?;
+                    writelncrlf!(f, "  {name} ... not triggered")?;
                     continue;
                 }
                 if record.fail == 0 {
-                    writeln!(f, "  {name} ... ok ({} passes)", record.pass)?;
+                    writelncrlf!(f, "  {name} ... ok ({} passes)", record.pass)?;
                 } else {
-                    writeln!(
+                    writelncrlf!(
                         f,
                         "  {name} ... fail ({} fails, {} passes): {}",
                         record.fail,
@@ -296,7 +297,7 @@ impl Display for Recorder {
                     )?;
                 }
             }
-            writeln!(f, "Patina on-system unit-test result totals: {total_passes} passes, {total_fails} fails")?;
+            writelncrlf!(f, "Patina on-system unit-test result totals: {total_passes} passes, {total_fails} fails")?;
 
             Ok(())
         })

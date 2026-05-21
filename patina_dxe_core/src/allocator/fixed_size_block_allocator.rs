@@ -31,7 +31,7 @@ use patina::{
     base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
     pi::{dxe_services::GcdMemoryType, hob::EFiMemoryTypeInformation},
-    uefi_pages_to_size, uefi_size_to_pages,
+    uefi_pages_to_size, uefi_size_to_pages, writelncrlf,
 };
 use r_efi::efi;
 
@@ -437,12 +437,12 @@ impl FixedSizeBlockAllocator {
 
 impl Display for FixedSizeBlockAllocator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Memory Type: {:x?}", self.memory_type())?;
-        writeln!(f, "Allocation Ranges:")?;
+        writelncrlf!(f, "Memory Type: {:x?}", self.memory_type())?;
+        writelncrlf!(f, "Allocation Ranges:")?;
         for node in AllocatorIterator::new(self.allocators) {
             // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
             let allocator = unsafe { &mut (*node).allocator };
-            writeln!(
+            writelncrlf!(
                 f,
                 "  PhysRange: {:#x}-{:#x}, Size: {:#x}, Used: {:#x} Free: {:#x}",
                 align_down_size(allocator.bottom() as usize, 0x1000), //account for AllocatorListNode
@@ -452,15 +452,15 @@ impl Display for FixedSizeBlockAllocator {
                 allocator.free(),
             )?;
         }
-        writeln!(f, "Bucket Range: {:x?}", self.reserved_range)?;
-        writeln!(f, "Allocation Stats:")?;
-        writeln!(f, "  pool_allocation_calls: {}", self.stats.pool_allocation_calls)?;
-        writeln!(f, "  pool_free_calls: {}", self.stats.pool_free_calls)?;
-        writeln!(f, "  page_allocation_calls: {}", self.stats.page_allocation_calls)?;
-        writeln!(f, "  page_free_calls: {}", self.stats.page_free_calls)?;
-        writeln!(f, "  reserved_size: {}", self.stats.reserved_size)?;
-        writeln!(f, "  reserved_used: {}", self.stats.reserved_used)?;
-        writeln!(f, "  claimed_pages: {}", self.stats.claimed_pages)?;
+        writelncrlf!(f, "Bucket Range: {:x?}", self.reserved_range)?;
+        writelncrlf!(f, "Allocation Stats:")?;
+        writelncrlf!(f, "  pool_allocation_calls: {}", self.stats.pool_allocation_calls)?;
+        writelncrlf!(f, "  pool_free_calls: {}", self.stats.pool_free_calls)?;
+        writelncrlf!(f, "  page_allocation_calls: {}", self.stats.page_allocation_calls)?;
+        writelncrlf!(f, "  page_free_calls: {}", self.stats.page_free_calls)?;
+        writelncrlf!(f, "  reserved_size: {}", self.stats.reserved_size)?;
+        writelncrlf!(f, "  reserved_used: {}", self.stats.reserved_used)?;
+        writelncrlf!(f, "  claimed_pages: {}", self.stats.claimed_pages)?;
         Ok(())
     }
 }
