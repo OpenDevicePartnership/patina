@@ -39,6 +39,8 @@
 mod serial_logger;
 pub use serial_logger::Logger as SerialLogger;
 
+use crate::writelncrlf;
+
 /// Enum to describe the format of the log message.
 pub enum Format {
     /// Standard text format containing the log level and message.
@@ -59,7 +61,7 @@ impl Format {
         //       writing.
         match self {
             Format::Standard if record.level() == log::Level::Trace => {
-                writeln!(
+                writelncrlf!(
                     target,
                     "TRACE - {}:{}: {}",
                     record.file().unwrap_or("unknown"),
@@ -69,31 +71,75 @@ impl Format {
                 .expect("Printing to serial failed");
             }
             Format::Standard => {
-                writeln!(target, "{} - {}", record.level(), record.args()).expect("Printing to serial failed");
+                writelncrlf!(target, "{} - {}", record.level(), record.args()).expect("Printing to serial failed");
             }
             Format::Json => {
-                write!(
+                writelncrlf!(
                     target,
                     "{}",
-                    format_args!("{{\"level\": \"{}\" \"message\": \"{}\"}}\n", record.level(), record.args())
+                    format_args!("{{\"level\": \"{}\" \"message\": \"{}\"}}", record.level(), record.args())
                 )
                 .expect("Printing to serial failed");
             }
             Format::VerboseJson => {
-                write!(
+                writelncrlf!(
                     target,
                     "{}",
                     format_args!(
-            "{{\"level\": \"{}\", \"target\": \"{}\", \"message\": \"{}\", \"file\": \"{}\", \"line\": \"{}\"}}\n",
-            record.level(),
-            record.target(),
-            record.args(),
-            record.file().unwrap_or("unknown"),
-            record.line().unwrap_or(0)
-          )
+                        "{{\"level\": \"{}\", \"target\": \"{}\", \"message\": \"{}\", \"file\": \"{}\", \"line\": \"{}\"}}",
+                        record.level(),
+                        record.target(),
+                        record.args(),
+                        record.file().unwrap_or("unknown"),
+                        record.line().unwrap_or(0)
+                    )
                 )
                 .expect("Printing to serial failed");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Format;
+    use alloc::string::String;
+
+    /// Writes a log record through the given Format into a String buffer and returns it.
+    fn format_record(format: &Format, level: log::Level, target: &str, message: &str) -> String {
+        let mut buf = String::new();
+        let args = format_args!("{message}");
+        let record =
+            log::Record::builder().args(args).level(level).target(target).file(Some("test.rs")).line(Some(42)).build();
+        format.write(&mut buf, &record);
+        buf
+    }
+
+    #[test]
+    fn test_format_standard_ends_with_crlf() {
+        let output = format_record(&Format::Standard, log::Level::Info, "test", "hello");
+        assert!(output.ends_with("\r\n"), "expected CRLF line ending, got: {:?}", output);
+        assert!(!output.ends_with("\n\r\n"), "should not have bare LF before CRLF");
+    }
+
+    #[test]
+    fn test_format_standard_trace_ends_with_crlf() {
+        let output = format_record(&Format::Standard, log::Level::Trace, "test", "verbose");
+        assert!(output.ends_with("\r\n"), "expected CRLF line ending, got: {:?}", output);
+        assert!(output.starts_with("TRACE - test.rs:42:"));
+    }
+
+    #[test]
+    fn test_format_json_ends_with_crlf() {
+        let output = format_record(&Format::Json, log::Level::Warn, "test", "warning");
+        assert!(output.ends_with("\r\n"), "expected CRLF line ending, got: {:?}", output);
+    }
+
+    #[test]
+    fn test_format_verbose_json_ends_with_crlf() {
+        let output = format_record(&Format::VerboseJson, log::Level::Error, "my_target", "oops");
+        assert!(output.ends_with("\r\n"), "expected CRLF line ending, got: {:?}", output);
+        assert!(output.contains("my_target"));
+        assert!(output.contains("test.rs"));
     }
 }
