@@ -20,14 +20,6 @@ use patina::{
 
 use super::GicBases;
 
-// NOTE: Wrapped in `Option` so the C-ABI NULL bit pattern (used by
-// `RegisterInterruptSource` to unregister a handler) is representable. A bare
-// `extern "efiapi" fn(..)` is a non-nullable function pointer in Rust, which
-// makes `(handler as *const c_void).is_null()` a constant-false expression
-// LLVM is free to fold away — causing every unregister call to be treated as
-// a register call and producing spurious `EFI_ALREADY_STARTED` returns.
-// `Option<fn(..)>` uses the null-pointer niche, so the ABI layout is unchanged
-// but the NULL handler value is now expressible and discriminable.
 pub type HwInterruptHandler = Option<extern "efiapi" fn(u64, &mut ExceptionContext)>;
 
 #[repr(C)]
