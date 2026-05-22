@@ -1,6 +1,5 @@
 use crate::tpl_mutex::TplMutex;
 use alloc::{boxed::Box, format, vec, vec::Vec};
-use core::ffi::c_void;
 use patina_internal_cpu::interrupts::{
     ExceptionContext, InterruptHandler, InterruptManager, gic_manager::AArch64InterruptInitializer,
 };
@@ -21,7 +20,15 @@ use patina::{
 
 use super::GicBases;
 
-pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
+// NOTE: Wrapped in `Option` so the C-ABI NULL bit pattern (used by
+// `RegisterInterruptSource` to unregister a handler) is representable. A bare
+// `extern "efiapi" fn(..)` is a non-nullable function pointer in Rust, which
+// makes `(handler as *const c_void).is_null()` a constant-false expression
+// LLVM is free to fold away — causing every unregister call to be treated as
+// a register call and producing spurious `EFI_ALREADY_STARTED` returns.
+// `Option<fn(..)>` uses the null-pointer niche, so the ABI layout is unchanged
+// but the NULL handler value is now expressible and discriminable.
+pub type HwInterruptHandler = Option<extern "efiapi" fn(u64, &mut ExceptionContext)>;
 
 #[repr(C)]
 #[non_exhaustive]
@@ -383,7 +390,7 @@ impl From<HardwareInterrupt2TriggerType> for Trigger {
 }
 
 struct HwInterruptProtocolHandler {
-    handlers: Vec<RwLock<Option<HwInterruptHandler>>>,
+    handlers: Vec<RwLock<HwInterruptHandler>>,
     aarch64_int: TplMutex<AArch64InterruptInitializer>,
 }
 
@@ -426,7 +433,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 }
 
 impl HwInterruptProtocolHandler {
-    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer) -> Self {
+    pub fn new(handlers: Vec<HwInterruptHandler>, aarch64_int: AArch64InterruptInitializer) -> Self {
         Self {
             handlers: handlers.into_iter().map(RwLock::new).collect(),
             aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock"),
@@ -439,20 +446,18 @@ impl HwInterruptProtocolHandler {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let m_handler = handler as *const c_void;
-
         if let Some(rw_handler) = self.handlers[interrupt_source].try_read() {
             // Use read access to test the state of the handler
-            if m_handler.is_null() && (*rw_handler).is_none() {
+            if handler.is_none() && (*rw_handler).is_none() {
                 return efi::Status::INVALID_PARAMETER;
             }
 
-            if !m_handler.is_null() && (*rw_handler).is_some() {
+            if handler.is_some() && (*rw_handler).is_some() {
                 return efi::Status::ALREADY_STARTED;
             }
         }
 
-        if m_handler.is_null() {
+        if handler.is_none() {
             // If the operation is to unregister the interrupt handler, we first disable the interrupt
             if let Err(err) = self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64) {
                 return err.into();
@@ -467,7 +472,7 @@ impl HwInterruptProtocolHandler {
         } else {
             // Register the interrupt handler
             if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
-                *rw_handler = Some(handler);
+                *rw_handler = handler;
             } else {
                 return efi::Status::DEVICE_ERROR;
             }
