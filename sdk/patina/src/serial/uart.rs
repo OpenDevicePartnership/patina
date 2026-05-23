@@ -26,6 +26,7 @@ impl super::SerialIO for UartNull {
     }
 }
 
+
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
 
@@ -33,19 +34,25 @@ cfg_if::cfg_if! {
         use uart_16550::SerialPort as IoSerialPort;
 
         /// Runs `f` with CPU interrupts disabled, restoring the previous interrupt state afterward.
+        ///
+        /// If interrupts were already disabled on entry, this is a no-op around `f`: interrupts
+        /// are neither disabled nor re-enabled.
         fn without_interrupts<F, R>(f: F) -> R
         where
             F: FnOnce() -> R,
         {
             let flags: u64;
-            // SAFETY: Reading RFLAGS and disabling interrupts around the closure is safe because we restore
-            // interrupts afterwards, but only if they were previously enabled.
+            // SAFETY: Reading RFLAGS has no side effects.
             unsafe {
-                core::arch::asm!("pushfq; pop {0}; cli", out(reg) flags, options(nomem));
+                core::arch::asm!("pushfq; pop {0}", out(reg) flags, options(nomem));
+            }
+            let interrupts_enabled = flags & (1 << 9) != 0;
+            if interrupts_enabled {
+                // SAFETY: Disabling interrupts is safe; we restore them after the closure.
+                unsafe { core::arch::asm!("cli", options(nostack, nomem)); }
             }
             let result = f();
-            // Restore interrupts only if they were previously enabled (IF bit).
-            if flags & (1 << 9) != 0 {
+            if interrupts_enabled {
                 // SAFETY: Re-enabling interrupts that were enabled before.
                 unsafe { core::arch::asm!("sti", options(nostack, nomem)); }
             }
