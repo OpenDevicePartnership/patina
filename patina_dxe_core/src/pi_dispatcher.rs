@@ -17,6 +17,7 @@ mod section_decompress;
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
+    string::{String, ToString},
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void};
@@ -105,7 +106,11 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     /// Displays drivers that were discovered but not dispatched.
     pub fn display_discovered_not_dispatched(&self) {
         for driver in &self.dispatcher_context.lock().pending_drivers {
-            log::warn!("Driver {:?} found but not dispatched.", guid_fmt!(driver.file_name));
+            log::warn!(
+                "Driver {} ({:?}) found but not dispatched.",
+                driver.name.as_deref().unwrap_or("Unnamed"),
+                guid_fmt!(driver.file_name)
+            );
         }
     }
 
@@ -231,7 +236,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
             let mut scheduled_driver_candidates = Vec::new();
             for mut candidate in driver_candidates {
-                log::debug!(target: "patina_internal_depex", "Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
+                log::debug!(target: "patina_internal_depex", "Evaluating depex for candidate: {} ({:?})", candidate.name.as_deref().unwrap_or("Unnamed"), guid_fmt!(candidate.file_name));
                 let depex_satisfied = match candidate.depex {
                     Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                     None => dispatcher.arch_protocols_available,
@@ -299,7 +304,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                     }
                     efi::Status::SECURITY_VIOLATION => {
                         log::info!(
-                            "Deferring driver: {:?} due to security status: {:x?}",
+                            "Deferring driver: {} ({:?}) due to security status: {:x?}",
+                            driver.name.as_deref().unwrap_or("Unnamed"),
                             guid_fmt!(driver.file_name),
                             efi::Status::SECURITY_VIOLATION
                         );
@@ -307,7 +313,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                     }
                     unexpected_status => {
                         log::info!(
-                            "Dropping driver: {:?} due to security status: {:x?}",
+                            "Dropping driver: {} ({:?}) due to security status: {:x?}",
+                            driver.name.as_deref().unwrap_or("Unnamed"),
                             guid_fmt!(driver.file_name),
                             unexpected_status
                         );
@@ -504,6 +511,7 @@ struct PendingDriver {
     firmware_volume_handle: efi::Handle,
     device_path: *mut efi::protocols::device_path::Protocol,
     file_name: efi::Guid,
+    name: Option<String>,
     depex: Option<Depex>,
     pe32: Section,
     image_handle: Option<efi::Handle>,
@@ -662,6 +670,16 @@ impl DispatcherContext {
                             .transpose()?
                             .map(Depex::from);
 
+                        let name = sections
+                            .iter()
+                            .find(|x| x.section_type() == Some(ffs::section::Type::UserInterface))
+                            .and_then(|x| x.try_content_as_slice().ok())
+                            .map(|data| {
+                                let chars: Vec<u16> =
+                                    data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                                String::from_utf16_lossy(&chars).trim_end_matches('\0').to_string()
+                            });
+
                         if let Some(pe32_section) =
                             sections.into_iter().find(|x| x.section_type() == Some(ffs::section::Type::Pe32))
                         {
@@ -717,6 +735,7 @@ impl DispatcherContext {
 
                             self.pending_drivers.push(PendingDriver {
                                 file_name,
+                                name,
                                 firmware_volume_handle: handle,
                                 pe32: pe32_section,
                                 device_path: full_device_path_for_file,
@@ -1728,6 +1747,97 @@ mod tests {
             // SAFETY: invalid_fv_raw was created from Box::into_raw and is dropped only once here.
             let _dropped_invalid_fv = unsafe { Box::from_raw(invalid_fv_raw) };
         });
+    }
+
+    #[test]
+    fn test_display_discovered_not_dispatched_with_named_driver() {
+        with_locked_state(|| {
+            use patina_ffs::section::SectionHeader;
+
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // Build a minimal PE32 section (content doesn't matter for this test).
+            let pe32_header = SectionHeader::Standard(ffs::section::raw_type::PE32, 4);
+            let pe32_section = Section::new_from_header_with_data(pe32_header, vec![0u8; 4]).expect("PE32 section");
+
+            let test_guid =
+                efi::Guid::from_fields(0xAABBCCDD, 0x1122, 0x3344, 0x55, 0x66, &[0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC]);
+
+            // Driver with a UI name.
+            CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.push(PendingDriver {
+                firmware_volume_handle: std::ptr::null_mut(),
+                device_path: std::ptr::null_mut(),
+                file_name: test_guid,
+                name: Some(String::from("TestDriver")),
+                depex: None,
+                pe32: pe32_section,
+                image_handle: None,
+                security_status: efi::Status::NOT_READY,
+            });
+
+            // Build another PE32 section for the unnamed driver.
+            let pe32_header2 = SectionHeader::Standard(ffs::section::raw_type::PE32, 4);
+            let pe32_section2 = Section::new_from_header_with_data(pe32_header2, vec![0u8; 4]).expect("PE32 section");
+
+            // Driver without a UI name.
+            CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.push(PendingDriver {
+                firmware_volume_handle: std::ptr::null_mut(),
+                device_path: std::ptr::null_mut(),
+                file_name: test_guid,
+                name: None,
+                depex: None,
+                pe32: pe32_section2,
+                image_handle: None,
+                security_status: efi::Status::NOT_READY,
+            });
+
+            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 2);
+            assert_eq!(
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers[0].name.as_deref(),
+                Some("TestDriver")
+            );
+            assert!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers[1].name.is_none());
+
+            // Verify display doesn't panic for both named and unnamed drivers.
+            CORE.pi_dispatcher.display_discovered_not_dispatched();
+        });
+    }
+
+    #[test]
+    fn test_display_discovered_not_dispatched_parses_ui_name_from_fv() {
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
+
+        with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw points to a valid boxed slice that outlives this closure.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            let has_named =
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.iter().any(|d| d.name.is_some());
+            // At least one driver in the test FV should have a UI name section.
+            assert!(has_named, "Expected at least one driver with a parsed UI name");
+
+            // Verify display doesn't panic with a mix of named/unnamed drivers.
+            CORE.pi_dispatcher.display_discovered_not_dispatched();
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
