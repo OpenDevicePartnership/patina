@@ -585,12 +585,6 @@ impl AllocatorMap {
     }
 }
 
-#[cfg(target_os = "uefi")]
-#[alloc_error_handler]
-fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
-    panic!("allocation error: {:?}", layout)
-}
-
 extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer: *mut *mut c_void) -> efi::Status {
     if buffer.is_null() {
         return efi::Status::INVALID_PARAMETER;

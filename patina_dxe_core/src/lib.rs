@@ -60,7 +60,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
-#![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
 #![feature(coverage_attribute)]
