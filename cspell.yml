@@ -200,6 +200,7 @@ words:
   - wbinvd
   - windbg
   - withf
+  - writelncrlf
   - wrmsr
   - xdata
   - xtask

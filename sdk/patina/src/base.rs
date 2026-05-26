@@ -383,6 +383,29 @@ macro_rules! signature {
             | (($h as u64) << 56)
     };
 }
+
+/// Writes a line to the Writer target, followed by CRLF.
+///
+/// # Examples
+///
+/// ```rust
+/// use patina::writelncrlf;
+/// use std::fmt::Write;
+/// let mut s = String::new();
+/// writelncrlf!(&mut s, "Hello, World {}!", 42).unwrap();
+/// assert_eq!(s, "Hello, World 42!\r\n");
+/// ```
+///
+/// # Note
+/// This macro is typically used to format logs messages to maintain
+/// compatibility with a wide range of terminal emulators and log viewers.
+#[macro_export]
+macro_rules! writelncrlf {
+    ($target:expr, $($arg:tt)*) => {
+        write!($target, $($arg)*).and_then(|()| write!($target, "\r\n"))
+    };
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -509,5 +532,28 @@ mod tests {
 
         let b5: u128 = bit!(50);
         assert_eq!(b5, 0x0004_0000_0000_0000u128);
+    }
+
+    #[test]
+    fn test_writelncrlf() {
+        use std::fmt::Write;
+        let mut s = String::new();
+        writelncrlf!(&mut s, "Hello, World!").unwrap();
+        assert_eq!(s, "Hello, World!\r\n");
+
+        writelncrlf!(&mut s, "Another line!").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\n");
+
+        writelncrlf!(&mut s, "A line with CRLF in it!\r\n").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\n");
+
+        writelncrlf!(&mut s, "Just LF!\n").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\nJust LF!\n\r\n");
+
+        writelncrlf!(&mut s, "A line with args: {}", 42).unwrap();
+        assert_eq!(
+            s,
+            "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\nJust LF!\n\r\nA line with args: 42\r\n"
+        );
     }
 }
