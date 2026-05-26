@@ -104,7 +104,7 @@ cfg_if::cfg_if! {
                             }
                         };
                         if current_privilege_level() == 0 {
-                            // SAFETY: CPL is 0, so cli/sti are permitted.
+                            // CPL is 0, so cli/sti are permitted.
                             without_interrupts(send);
                         } else {
                             send();
@@ -119,7 +119,7 @@ cfg_if::cfg_if! {
                             }
                         };
                         if current_privilege_level() == 0 {
-                            // SAFETY: CPL is 0, so cli/sti are permitted.
+                            // CPL is 0, so cli/sti are permitted.
                             without_interrupts(send);
                         } else {
                             send();
