@@ -1,5 +1,11 @@
 # Patina Project Instructions
 
+> **AI agents:** See [`AGENTS.md`](../AGENTS.md) in the repository root for the
+> consolidated operational guide (workspace layout, build/test commands, UEFI
+> and `no_std` conventions, commit/PR rules). This file remains the canonical
+> Copilot-specific instructions; `AGENTS.md` complements rather than replaces
+> it.
+
 Patina is a Rust-based UEFI firmware project. It currently replaces the traditional C-based EDK II
 DXE Core with a Rust implementation that introduces a component-based architecture with dependency
 injection in addition to a general-purpose UEFI Rust SDK.
