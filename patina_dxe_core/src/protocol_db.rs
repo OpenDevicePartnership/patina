@@ -101,8 +101,8 @@ impl OpenProtocolInformation {
 impl From<OpenProtocolInformation> for efi::OpenProtocolInformationEntry {
     fn from(item: OpenProtocolInformation) -> Self {
         efi::OpenProtocolInformationEntry {
-            agent_handle: item.agent_handle.unwrap_or(core::ptr::null_mut()),
-            controller_handle: item.controller_handle.unwrap_or(core::ptr::null_mut()),
+            agent_handle: item.agent_handle.unwrap_or_default(),
+            controller_handle: item.controller_handle.unwrap_or_default(),
             attributes: item.attributes,
             open_count: item.open_count,
         }

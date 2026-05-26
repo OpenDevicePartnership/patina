@@ -564,7 +564,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         match allocate_type {
             AllocateType::BottomUp(max_address) => gcd.allocate_bottom_up(
@@ -702,7 +702,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         let memory_blocks = &mut self.memory_blocks;
         let alignment = 1 << align_shift;
@@ -788,7 +788,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         let memory_blocks = &mut self.memory_blocks;
 
@@ -860,7 +860,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         // allocate_address allows allocating page 0. This is needed to let Patina DXE Core allocate it for null
         // pointer detection very early in the boot process. Any future allocate at address will fail because it is
@@ -1558,7 +1558,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   IO Type: {:?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         match allocate_type {
             AllocateType::BottomUp(max_address) => self.allocate_bottom_up(
@@ -1600,7 +1600,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
@@ -1662,7 +1662,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
@@ -1731,7 +1731,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   IO Type: {:?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or_default());
 
         if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;

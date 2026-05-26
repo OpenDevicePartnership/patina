@@ -638,8 +638,7 @@ impl DispatcherContext {
 
                 let fv_device_path =
                     PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID);
-                let fv_device_path =
-                    fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
+                let fv_device_path = fv_device_path.unwrap_or_default() as *mut efi::protocols::device_path::Protocol;
 
                 // SAFETY: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV,
                 // and that the memory backing the FVB is essentially permanent while the dispatcher is running (i.e.
