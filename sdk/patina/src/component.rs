@@ -142,6 +142,7 @@ pub mod params;
 pub mod service;
 mod storage;
 mod struct_component;
+mod type_name;
 
 use crate::error::Result;
 

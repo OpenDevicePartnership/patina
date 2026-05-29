@@ -101,8 +101,8 @@ impl OpenProtocolInformation {
 impl From<OpenProtocolInformation> for efi::OpenProtocolInformationEntry {
     fn from(item: OpenProtocolInformation) -> Self {
         efi::OpenProtocolInformationEntry {
-            agent_handle: item.agent_handle.unwrap_or(core::ptr::null_mut()),
-            controller_handle: item.controller_handle.unwrap_or(core::ptr::null_mut()),
+            agent_handle: item.agent_handle.unwrap_or_default(),
+            controller_handle: item.controller_handle.unwrap_or_default(),
             attributes: item.attributes,
             open_count: item.open_count,
         }
@@ -214,7 +214,7 @@ impl ProtocolDb {
 
     fn registered_protocols(&self) -> Vec<efi::Guid> {
         let protocols: BTreeSet<efi::Guid> =
-            self.handles.iter().flat_map(|(_, handle)| handle.keys().map(|&OrdGuid(guid)| guid)).collect();
+            self.handles.values().flat_map(|handle| handle.keys().map(|&OrdGuid(guid)| guid)).collect();
         protocols.into_iter().collect()
     }
 

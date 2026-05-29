@@ -1457,7 +1457,7 @@ mod test {
 
         assert_eq!(org_files.len(), round_trip_files.len());
 
-        for (org_file, round_trip_file) in Iterator::zip(org_files.into_iter(), round_trip_files.into_iter()) {
+        for (org_file, round_trip_file) in Iterator::zip(org_files.into_iter(), round_trip_files) {
             let org_file = org_file.map_err(stringify)?;
             let round_trip_file = round_trip_file.map_err(stringify)?;
             assert_eq!(org_file.name(), round_trip_file.name());

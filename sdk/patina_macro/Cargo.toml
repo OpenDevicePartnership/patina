@@ -33,3 +33,5 @@ default = []
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
 enable_patina_tests = []
+# All non-std features to test in CI
+ci_features = ["enable_patina_tests"]

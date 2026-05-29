@@ -24,6 +24,8 @@ patina = { workspace = true, features = ["mockall"] }
 [features]
 mockall = ["dep:mockall", "std"]
 std = []
+# All non-std features to test in CI
+ci_features = []
 
 [lints.clippy]
 undocumented_unsafe_blocks = "warn"

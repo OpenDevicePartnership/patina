@@ -80,6 +80,14 @@ See `docs/src/dev/principles/unsafe.md` for the full safety philosophy
 See `docs/src/dev/principles/error-handling.md` for error
 propagation patterns and examples.
 
+## Logging
+
+- Use the `log` crate for structured logging.
+- Log at appropriate levels: `trace`, `debug`, `info`, `warn`, `error`.
+- Include relevant context in log messages.
+- Do not log in hot paths or have entry/exit logs.
+- Prefer using `patina::writelncrlf` for formatting strings that will be logged over `writeln!`.
+
 ## Component Model
 
 Patina uses dependency injection through component entry point function signatures.

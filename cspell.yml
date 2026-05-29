@@ -43,6 +43,7 @@ words:
   - autocfg
   - bitvec
   - bootx
+  - bsdata
   - bucketize
   - bumpalo
   - cbindgen
@@ -200,6 +201,7 @@ words:
   - wbinvd
   - windbg
   - withf
+  - writelncrlf
   - wrmsr
   - xdata
   - xtask

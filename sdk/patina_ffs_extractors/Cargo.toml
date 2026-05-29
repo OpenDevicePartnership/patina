@@ -26,3 +26,5 @@ std = []
 brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
 crc32 = ["dep:crc32fast"]
 lzma = ["dep:patina_lzma_rs"]
+# All non-std features to test in CI
+ci_features = ["brotli", "crc32", "lzma"]

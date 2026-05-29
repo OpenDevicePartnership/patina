@@ -362,7 +362,7 @@ impl<T: ?Sized + 'static> Deref for Service<T> {
                 // infrastructure evolves and the number of components increases.
                 unreachable!(
                     "Service downcast failed — this indicates a type mismatch in Service<{}> construction",
-                    core::any::type_name::<T>()
+                    super::type_name::normalized::<T>()
                 )
             }
         } else {

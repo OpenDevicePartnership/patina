@@ -8,7 +8,7 @@
 default_to_workspace = false
 
 [env]
-NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings"
+NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --timings"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
@@ -113,11 +113,17 @@ clear = true
 command = "cargo"
 args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
 
-[tasks.check_code]
-description = "Checks rust code for no_std build errors with results."
+[tasks.check_code_x64]
+description = "Checks rust code for x64 build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
+
+[tasks.check_code_aarch64]
+description = "Checks rust code for aarch64 build errors with results."
+private = true
+command = "cargo"
+args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(CARGO_MAKE_TASK_ARGS, )", "@@split(NO_STD_FLAGS, )",]
 
 [tasks.check_tests]
 description = "Checks rust test code for build errors with results."
@@ -145,7 +151,7 @@ run_task = [{ name = ["check-no-default-features-code", "check-no-default-featur
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
 clear = true
-run_task = [{ name = ["check_code", "check_tests"], parallel = true }]
+run_task = [{ name = ["check_code_x64", "check_code_aarch64", "check_tests"], parallel = true }]
 
 [tasks.patina-test]
 description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
@@ -278,8 +284,25 @@ command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
 
 [tasks.clippy]
-description = "Run cargo clippy."
+description = "Run cargo clippy for the host target and both UEFI cross-compilation targets."
 clear = true
+run_task = [{ name = ["clippy-x64", "clippy-aarch64", "clippy-std"], parallel = true }]
+
+[tasks.clippy-x64]
+description = "Run cargo clippy for x86_64-unknown-uefi."
+private = true
+command = "cargo"
+args = ["clippy", "--target", "x86_64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+
+[tasks.clippy-aarch64]
+description = "Run cargo clippy for aarch64-unknown-uefi."
+private = true
+command = "cargo"
+args = ["clippy", "--target", "aarch64-unknown-uefi", "--features", "ci_features", "@@split(NO_STD_FLAGS, )", "--", "-D", "warnings"]
+
+[tasks.clippy-std]
+description = "Run cargo clippy for std."
+private = true
 command = "cargo"
 args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 
@@ -301,6 +324,19 @@ clear = true
 command = "cargo"
 args = ["test", "--doc"]
 
+[tasks.clean-mdbook-deps]
+description = """Removes the `target/mdbook/` directory to clean up old rlibs."""
+clear = true
+script_runner = "@duckscript"
+script = '''
+mdbook_target = set "target/mdbook"
+exists = is_path_exists ${mdbook_target}
+if ${exists}
+    echo Removing stale ${mdbook_target} directory...
+    rm -r ${mdbook_target}
+end
+'''
+
 [tasks.build-mdbook-deps]
 description = """Builds workspace libraries with the `mdbook` profile.
 This is a prerequisite for `cargo make test-mdbook`."""
@@ -308,7 +344,7 @@ clear = true
 env = { RUSTC_PROFILE = "mdbook" }
 command = "cargo"
 args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
-dependencies = ["individual-package-targets"]
+dependencies = ["clean-mdbook-deps", "individual-package-targets"]
 
 [tasks.test-mdbook]
 description = """Builds the mdbook and runs all of its embedded doctests with

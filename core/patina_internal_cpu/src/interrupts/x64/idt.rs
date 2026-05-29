@@ -93,7 +93,7 @@ pub fn initialize_idt() {
     }
     #[cfg(target_os = "uefi")]
     {
-        let idtr = Idtr { limit: (core::mem::size_of::<Idt>() - 1) as u16, base: IDT.0.get() as *mut Idt as u64 };
+        let idtr = Idtr { limit: (core::mem::size_of::<Idt>() - 1) as u16, base: IDT.0.get() as u64 };
         // SAFETY: Loading our fully initialized IDT.
         unsafe { core::arch::asm!("lidt [{}]", in(reg) &idtr, options(nostack)) };
     }

@@ -20,3 +20,5 @@ spin = { workspace = true }
 
 [features]
 test-runner = ["patina_macro/enable_patina_tests"]
+# All non-std features to test in CI
+ci_features = ["test-runner"]

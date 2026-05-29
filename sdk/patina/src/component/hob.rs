@@ -271,7 +271,7 @@ impl<'h, T: FromHob + 'static> Iterator for HobIter<'h, T> {
             return Some(
                 any_box
                     .downcast_ref::<T>()
-                    .unwrap_or_else(|| panic!("Hob should be of type {}", core::any::type_name::<T>())),
+                    .unwrap_or_else(|| panic!("Hob should be of type {}", super::type_name::normalized::<T>())),
             );
         }
         None

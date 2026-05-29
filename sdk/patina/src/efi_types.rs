@@ -13,6 +13,15 @@ use r_efi::efi;
 
 use crate::error::EfiError;
 
+/// The number of standard UEFI memory types defined by the UEFI specification.
+///
+/// This is the sentinel value used as the terminator in `EFI_MEMORY_TYPE_INFORMATION` arrays.
+/// It currently equals one past the last valid `efi::MemoryType` constant (`efi::UNACCEPTED_MEMORY_TYPE`).
+pub const EFI_MAX_MEMORY_TYPE: usize = efi::UNACCEPTED_MEMORY_TYPE as usize + 1;
+
+/// Sentinel value indicating a memory type with no `MemoryTypeInformation` entry.
+pub const INVALID_INFORMATION_INDEX: usize = EFI_MAX_MEMORY_TYPE;
+
 /// A wrapper for the EFI memory types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u32)]

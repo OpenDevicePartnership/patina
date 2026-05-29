@@ -301,7 +301,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             read: Self::fvb_read_efiapi,
             write: Self::fvb_write_efiapi,
             erase_blocks: Self::fvb_erase_blocks_efiapi,
-            parent_handle: parent_handle.unwrap_or(core::ptr::null_mut()),
+            parent_handle: parent_handle.unwrap_or_default(),
         })
     }
 
@@ -314,7 +314,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             write_file: Self::fv_write_file_efiapi,
             get_next_file: Self::fv_get_next_file_efiapi,
             key_size: size_of::<usize>() as u32,
-            parent_handle: parent_handle.unwrap_or(core::ptr::null_mut()),
+            parent_handle: parent_handle.unwrap_or_default(),
             get_info: Self::fv_get_info_efiapi,
             set_info: Self::fv_set_info_efiapi,
         })

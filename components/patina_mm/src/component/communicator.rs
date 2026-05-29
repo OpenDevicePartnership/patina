@@ -27,6 +27,7 @@ use patina::{
         service::{IntoService, Service},
     },
     pi::protocols::communication::EfiMmCommunicateHeader,
+    writelncrlf,
 };
 
 use alloc::vec::Vec;
@@ -255,11 +256,11 @@ impl MmCommunicator {
 
 impl<E: MmExecutor + 'static> Debug for MmCommunicator<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MM Communicator:")?;
+        writelncrlf!(f, "MM Communicator:")?;
         for buffer in self.comm_buffers.borrow().iter() {
-            writeln!(f, "Comm Buffer: {buffer:?}")?;
+            writelncrlf!(f, "Comm Buffer: {buffer:?}")?;
         }
-        writeln!(f, "MM Executor Set: {}", self.mm_executor.is_some())?;
+        writelncrlf!(f, "MM Executor Set: {}", self.mm_executor.is_some())?;
         Ok(())
     }
 }

@@ -28,5 +28,6 @@ coverage:
         only_pulls: true
 comment:
   after_n_builds: 2
-  layout: "condensed_header, condensed_files, condensed_footer"
+  layout: "condensed_files, condensed_footer"
   hide_project_coverage: true # Only show patch coverage in a PR comment
+

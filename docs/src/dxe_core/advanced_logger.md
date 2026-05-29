@@ -44,12 +44,18 @@ flowchart LR
     patina["Patina"]
     log["Log Crate"]
     logger["Advanced Logger"]
-    serial[["SerialIO"]]
-    memory_log[["Memory Log"]]
+    serial["Serial IO"]
+    memory_log["Memory Log"]
     patina -- log::info!('foo') --> log
     log --> logger
     logger -- 'foo' --> serial
     logger -- entry{'foo'} --> memory_log
+```
+
+```admonish
+ In order to maintain compatibility with a wide range of terminal emulators and log viewers, it is
+ recommended to use `patina::writelncrlf` instead of `writeln` when formatting messages that will
+ be printed via the `log` crate. This will ensure that the log line ending is CRLF. 
 ```
 
 ### Memory Log
