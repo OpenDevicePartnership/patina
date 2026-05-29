@@ -1212,7 +1212,7 @@ impl BootServices for StandardBootServices {
         protocol: &'static efi::Guid,
         interface: *mut c_void,
     ) -> Result<efi::Handle, efi::Status> {
-        let mut handle = handle.unwrap_or(ptr::null_mut());
+        let mut handle = handle.unwrap_or_default();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let install_protocol_interface =
             unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), install_protocol_interface) };
@@ -1439,8 +1439,8 @@ impl BootServices for StandardBootServices {
         let disconnect_controller = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), disconnect_controller) };
         match disconnect_controller(
             controller_handle,
-            driver_image_handle.unwrap_or(ptr::null_mut()),
-            child_handle.unwrap_or(ptr::null_mut()),
+            driver_image_handle.unwrap_or_default(),
+            child_handle.unwrap_or_default(),
         ) {
             s if s.is_error() => Err(s),
             _ => Ok(()),

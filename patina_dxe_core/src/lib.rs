@@ -83,6 +83,7 @@ mod events;
 mod filesystems;
 mod gcd;
 mod memory_attributes_protocol;
+mod memory_bin;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
@@ -427,6 +428,7 @@ impl<P: PlatformInfo> Core<P> {
 
         //make sure that well-known handles exist.
         PROTOCOL_DB.init_protocol_db();
+
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
 

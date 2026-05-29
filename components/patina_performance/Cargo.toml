@@ -24,3 +24,7 @@ zerocopy-derive = { workspace = true }
 [dev-dependencies]
 patina = { path = "../../sdk/patina", features = ["mockall"] }
 mockall = { workspace = true }
+
+[features]
+# All non-std features to test in CI
+ci_features = []

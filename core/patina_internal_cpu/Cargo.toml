@@ -37,3 +37,5 @@ serial_test = { workspace = true }
 default = []
 std = []
 doc = []
+# All non-std features to test in CI
+ci_features = []

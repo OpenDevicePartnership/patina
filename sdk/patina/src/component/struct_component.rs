@@ -87,7 +87,7 @@ where
         debug_assert!(
             self.input.is_some(),
             "{} `input` is `None` during run. Did this component already run?",
-            core::any::type_name::<Self>()
+            super::type_name::normalized::<Self>()
         );
         log::info!("Dispatching {}", self.metadata.name());
         self.func.run(&mut self.input, param_value).map(|_| true)
@@ -203,7 +203,7 @@ mod tests {
         assert!(test_struct.run(&mut storage).is_ok_and(|res| !res));
         assert_eq!(
             test_struct.metadata().error_message(),
-            Some(Cow::from("patina::component::params::ConfigMut<'_, u32>"))
+            Some(Cow::from("patina::component::params::ConfigMut<u32>"))
         );
 
         let mut test_struct = TestStructFail { x: 5 }.into_component();

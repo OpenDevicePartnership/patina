@@ -28,7 +28,7 @@ pub struct MetaData {
 impl MetaData {
     /// Creates a new metadata object for a component.
     pub fn new<S>() -> Self {
-        Self { access: Access::new(), name: Cow::from(core::any::type_name::<S>()), error_message: None }
+        Self { access: Access::new(), name: Cow::from(super::type_name::normalized::<S>()), error_message: None }
     }
 
     /// Returns the name of the component, including the module path.

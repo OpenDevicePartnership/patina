@@ -269,6 +269,7 @@ impl StackTrace {
                     // layout is as follows: [fp] [lr] are saved on the stack in
                     // that order, typically via stp x29, x30, [sp, #-16]!
                     let prev_pc = unsafe { read_pointer64(fp + 8)? }; // deref lr
+                    // SAFETY: See preceding safety comment — reading the saved fp from the same stack frame.
                     let prev_fp = unsafe { read_pointer64(fp)? };
                     log::warn!("     {i:>2} {:016X}      {:016X}       {image_name}+{pc_rva:X}", fp, prev_pc);
 

@@ -322,6 +322,25 @@ where
     Ok((aligned_base, aligned_length))
 }
 
+/// Converts a page-aligned byte granularity to the corresponding bit shift value.
+///
+/// Returns the number of trailing zero bits in `alignment`, which is the shift needed to
+/// convert between addresses and page frame numbers at that granularity.
+///
+/// # Parameters
+/// - `alignment`: The alignment in bytes. Must be a power of two and >= `UEFI_PAGE_SIZE`.
+///
+/// # Errors
+/// Returns [`EfiError::InvalidParameter`] if `alignment` is not a power of two or is smaller
+/// than `UEFI_PAGE_SIZE`.
+pub const fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiError> {
+    let shift = alignment.trailing_zeros() as usize;
+    if !alignment.is_power_of_two() || shift < UEFI_PAGE_SHIFT {
+        return Err(EfiError::InvalidParameter);
+    }
+    Ok(shift)
+}
+
 /// Generates a UEFI-style signature from between 1 to 8 bytes, packing them into a u16, u32
 /// or u64 as appropriate for the parameters passed.
 ///
@@ -383,6 +402,29 @@ macro_rules! signature {
             | (($h as u64) << 56)
     };
 }
+
+/// Writes a line to the Writer target, followed by CRLF.
+///
+/// # Examples
+///
+/// ```rust
+/// use patina::writelncrlf;
+/// use std::fmt::Write;
+/// let mut s = String::new();
+/// writelncrlf!(&mut s, "Hello, World {}!", 42).unwrap();
+/// assert_eq!(s, "Hello, World 42!\r\n");
+/// ```
+///
+/// # Note
+/// This macro is typically used to format logs messages to maintain
+/// compatibility with a wide range of terminal emulators and log viewers.
+#[macro_export]
+macro_rules! writelncrlf {
+    ($target:expr, $($arg:tt)*) => {
+        write!($target, $($arg)*).and_then(|()| write!($target, "\r\n"))
+    };
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -439,6 +481,30 @@ mod tests {
 
         assert!(align_range(100u64, 100u64, 3u64).is_err()); // not power of two
     }
+
+    #[test]
+    fn test_page_shift_from_alignment_valid() {
+        assert_eq!(page_shift_from_alignment(UEFI_PAGE_SIZE).unwrap(), 12);
+        assert_eq!(page_shift_from_alignment(UEFI_PAGE_SIZE * 2).unwrap(), 13);
+        assert_eq!(page_shift_from_alignment(SIZE_64KB).unwrap(), 16);
+        assert_eq!(page_shift_from_alignment(SIZE_2MB).unwrap(), 21);
+    }
+
+    #[test]
+    fn test_page_shift_from_alignment_below_page_size() {
+        // 1KB is a power of two but smaller than UEFI_PAGE_SIZE
+        assert!(page_shift_from_alignment(SIZE_1KB).is_err());
+        // 2KB is a power of two but smaller than UEFI_PAGE_SIZE
+        assert!(page_shift_from_alignment(SIZE_2KB).is_err());
+    }
+
+    #[test]
+    fn test_page_shift_from_alignment_not_power_of_two() {
+        assert!(page_shift_from_alignment(0).is_err());
+        assert!(page_shift_from_alignment(3).is_err());
+        assert!(page_shift_from_alignment(0x1001).is_err());
+    }
+
     #[test]
     fn test_signature() {
         const TEST0: u16 = signature!('A');
@@ -509,5 +575,28 @@ mod tests {
 
         let b5: u128 = bit!(50);
         assert_eq!(b5, 0x0004_0000_0000_0000u128);
+    }
+
+    #[test]
+    fn test_writelncrlf() {
+        use std::fmt::Write;
+        let mut s = String::new();
+        writelncrlf!(&mut s, "Hello, World!").unwrap();
+        assert_eq!(s, "Hello, World!\r\n");
+
+        writelncrlf!(&mut s, "Another line!").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\n");
+
+        writelncrlf!(&mut s, "A line with CRLF in it!\r\n").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\n");
+
+        writelncrlf!(&mut s, "Just LF!\n").unwrap();
+        assert_eq!(s, "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\nJust LF!\n\r\n");
+
+        writelncrlf!(&mut s, "A line with args: {}", 42).unwrap();
+        assert_eq!(
+            s,
+            "Hello, World!\r\nAnother line!\r\nA line with CRLF in it!\r\n\r\nJust LF!\n\r\nA line with args: 42\r\n"
+        );
     }
 }

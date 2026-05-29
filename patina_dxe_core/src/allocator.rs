@@ -30,6 +30,7 @@ use crate::{
     GCD, config_tables,
     gcd::{self, AllocateType as AllocationStrategy},
     memory_attributes_table::MemoryAttributesTable,
+    memory_bin::MemoryBinManager,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
@@ -45,8 +46,9 @@ pub use uefi_allocator::UefiAllocator;
 
 use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    efi_types::EFI_MAX_MEMORY_TYPE,
     error::EfiError,
-    guids, uefi_size_to_pages,
+    guids, uefi_size_to_pages, writelncrlf,
 };
 
 // Type alias for a UefiAllocator with a SpinLockedFixedSizeBlockAllocator
@@ -85,6 +87,9 @@ const _: () = assert!(
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
 const PRIVATE_ALLOCATOR_TRACKING_GUID: patina::BinaryGuid =
     patina::BinaryGuid::from_string("9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893");
+
+static MEMORY_BIN_MANAGER: tpl_mutex::TplMutex<MemoryBinManager> =
+    tpl_mutex::TplMutex::new(TPL_HIGH_LEVEL, MemoryBinManager::new(), "MemoryBinManagerLock");
 
 pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 
@@ -153,8 +158,12 @@ pub trait PageAllocator {
     /// Caller must ensure the address corresponds to a valid block allocated with [`Self::allocate_pages`].
     unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError>;
 
-    /// Reserves a range of memory for this allocator.
-    fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError>;
+    /// Sets the reserved memory range (bin range) for this allocator.
+    ///
+    /// ## Errors
+    ///
+    /// Returns [`EfiError::AlreadyStarted`] if a reserved range has already been set.
+    fn set_reserved_range(&self, range: Range<efi::PhysicalAddress>) -> Result<(), EfiError>;
 
     /// Returns an iterator over the memory ranges managed by this allocator.
     fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>>;
@@ -185,7 +194,7 @@ pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocatorWithFsb = UefiA
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_DATA)),
+        efi::BOOT_SERVICES_DATA,
         DEFAULT_PAGE_ALLOCATION_GRANULARITY,
         HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
     ),
@@ -199,7 +208,7 @@ pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::LOADER_CODE)),
+        efi::LOADER_CODE,
         DEFAULT_PAGE_ALLOCATION_GRANULARITY,
         HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
     ),
@@ -210,7 +219,7 @@ pub static EFI_LOADER_DATA_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::LOADER_DATA)),
+        efi::LOADER_DATA,
         DEFAULT_PAGE_ALLOCATION_GRANULARITY,
         HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
     ),
@@ -221,33 +230,29 @@ pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocato
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_CODE)),
+        efi::BOOT_SERVICES_CODE,
         DEFAULT_PAGE_ALLOCATION_GRANULARITY,
         LOW_TRAFFIC_ALLOC_MIN_EXPANSION,
     ),
     efi::BOOT_SERVICES_CODE,
 );
 
-// This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
-// passed in
 pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_CODE)),
+        efi::RUNTIME_SERVICES_CODE,
         RUNTIME_PAGE_ALLOCATION_GRANULARITY,
         LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION,
     ),
     efi::RUNTIME_SERVICES_CODE,
 );
 
-// This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
-// passed in
 pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocatorWithFsb = UefiAllocator::new(
     SpinLockedFixedSizeBlockAllocator::new(
         &GCD,
         protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-        NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_DATA)),
+        efi::RUNTIME_SERVICES_DATA,
         RUNTIME_PAGE_ALLOCATION_GRANULARITY,
         LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION,
     ),
@@ -370,13 +375,17 @@ impl Debug for MemoryDescriptorRef<'_> {
 
 impl Debug for MemoryDescriptorSlice<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        writeln!(
+        writelncrlf!(
             f,
             "{:<24} {:<20} {:<15} {:<15} {:<20}",
-            "Type", "Physical Start", "Virtual Start", "Number of Pages", "Attributes"
+            "Type",
+            "Physical Start",
+            "Virtual Start",
+            "Number of Pages",
+            "Attributes"
         )?;
         for descriptor in self.0 {
-            writeln!(f, "{:?}", MemoryDescriptorRef(descriptor))?;
+            writelncrlf!(f, "{:?}", MemoryDescriptorRef(descriptor))?;
         }
         Ok(())
     }
@@ -485,20 +494,11 @@ impl AllocatorMap {
                 _ => UEFI_PAGE_SIZE,
             };
 
-            // If this is one of the memory types tracked by the system table, we will use the memory type info struct
-            // from the GCD. Otherwise, we will just leak a new memory type info struct with the given memory type and
-            // have the allocator use it.
-            let memory_type_info = if (memory_type as usize) <= GCD.memory_type_info_table().len() {
-                NonNull::from_ref(GCD.memory_type_info(memory_type))
-            } else {
-                NonNull::from_ref(Box::leak(Box::new(EFiMemoryTypeInformation { memory_type, number_of_pages: 0 })))
-            };
-
             Box::leak(Box::new(UefiAllocator::new(
                 SpinLockedFixedSizeBlockAllocator::new(
                     &GCD,
                     handle,
-                    memory_type_info,
+                    memory_type,
                     granularity,
                     LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION,
                 ),
@@ -704,12 +704,15 @@ pub fn core_allocate_pages(
     // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
     // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
     match memory_type {
-        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
-            if res.is_ok() {
-                MemoryAttributesTable::install();
-            }
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA if res.is_ok() => {
+            MemoryAttributesTable::install();
         }
         _ => {}
+    }
+
+    // Record the allocation in the memory bin manager for bin statistics tracking.
+    if res.is_ok() {
+        MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, pages as u64);
     }
 
     res
@@ -773,12 +776,15 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
     // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
     // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
     match memory_type {
-        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
-            if res.is_ok() {
-                MemoryAttributesTable::install();
-            }
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA if res.is_ok() => {
+            MemoryAttributesTable::install();
         }
         _ => {}
+    }
+
+    // Record the free in the memory bin manager for bin statistics tracking.
+    if res.is_ok() {
+        MEMORY_BIN_MANAGER.lock().record_free(memory_type, pages as u64);
     }
 
     res
@@ -838,7 +844,11 @@ extern "efiapi" fn get_memory_map(
     // SAFETY: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
-    let required_map_size = GCD.memory_descriptor_count_for_efi_memory_map() * mem::size_of::<efi::MemoryDescriptor>();
+    // Account for additional descriptors that may be produced during bin splitting.
+    let bin_extra_descriptors = MEMORY_BIN_MANAGER.lock().max_additional_descriptors();
+    let base_descriptor_count = GCD.memory_descriptor_count_for_efi_memory_map();
+    let total_descriptor_count = base_descriptor_count + bin_extra_descriptors;
+    let required_map_size = total_descriptor_count * mem::size_of::<efi::MemoryDescriptor>();
     debug_assert!(required_map_size != 0);
     if required_map_size == 0 {
         return efi::Status::NOT_FOUND;
@@ -863,6 +873,10 @@ extern "efiapi" fn get_memory_map(
         Ok(count) => count,
         Err(err) => return err.into(),
     };
+
+    // Apply memory bin descriptors: convert free memory within bin regions to the bin's type.
+    let actual_count = MEMORY_BIN_MANAGER.lock().apply_bin_descriptors(buffer, actual_count);
+
     let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
 
     // Write back the actual map size after merging
@@ -883,7 +897,53 @@ extern "efiapi" fn get_memory_map(
 
     log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&buffer[..actual_count]));
 
+    if log::log_enabled!(target: "memory_bin", log::Level::Debug) {
+        dump_memory_bin_stats();
+    }
+
+    if log::log_enabled!(target: "allocations", log::Level::Trace) {
+        dump_allocator_details();
+    }
+
     efi::Status::SUCCESS
+}
+
+/// Dumps bin manager peak tracking data at debug level.
+#[coverage(off)]
+fn dump_memory_bin_stats() {
+    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    if bin_manager.is_initialized() {
+        log::debug!(target: "memory_bin", "Bin manager table (peak tracking for BDS):");
+        for entry in bin_manager.memory_type_information() {
+            log::debug!(
+                target: "memory_bin",
+                "  {} pages={}",
+                crate::memory_bin::memory_type_name(entry.memory_type),
+                entry.number_of_pages
+            );
+        }
+    }
+}
+
+/// Dumps per-allocator page counts at trace level.
+#[coverage(off)]
+fn dump_allocator_details() {
+    log::trace!(target: "allocations", "Allocator page counts:");
+    for (alloc, _) in STATIC_ALLOCATORS.iter() {
+        let stats = alloc.stats();
+        let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
+        let net_pages = stats.claimed_pages.saturating_sub(reserved_free);
+        if net_pages > 0 {
+            log::trace!(
+                target: "allocations",
+                "  {} net_pages={} (claimed={} reserved_free={})",
+                crate::memory_bin::memory_type_name(alloc.memory_type()),
+                net_pages,
+                stats.claimed_pages,
+                reserved_free
+            );
+        }
+    }
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
@@ -893,8 +953,16 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     }
 }
 
+#[coverage(off)]
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
-    let table_ptr = NonNull::from(GCD.memory_type_info_table()).cast::<c_void>().as_ptr();
+    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    if !bin_manager.is_initialized() || bin_manager.memory_type_information().is_empty() {
+        log::warn!(target: "memory_bin", "No bin manager data available. Memory type information config table not installed.");
+        return Ok(());
+    }
+    let table_ptr = bin_manager.memory_type_information().as_ptr() as *mut c_void;
+    drop(bin_manager);
+
     config_tables::core_install_configuration_table(
         guids::MEMORY_TYPE_INFORMATION.into_inner(),
         table_ptr,
@@ -1132,57 +1200,334 @@ pub fn init_memory_support(hob_list: &HobList) {
     // reserved.
     gcd::add_hob_resource_descriptors_to_gcd(hob_list);
 
-    // process pre-DXE allocations from the Hob list
+    // Process pre-DXE allocations from the Hob list
     process_hob_allocations(hob_list);
 
     // After this point the GCD and existing allocations are fully processed and it is safe to arbitrarily allocate.
 
-    // If memory type info HOB is available, then pre-allocate the corresponding buckets.
-    if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
-        match x {
-            patina::pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID.into_inner() => {
-                let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
-                let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
+    // Initialize memory bins from the Memory Type Information HOB if present.
+    if let Some(memory_type_info) = crate::memory_bin::extract_memory_type_info_from_hob(hob_list) {
+        log::info!(target: "memory_bin", "Memory Type Information HOB found with {} entries.", memory_type_info.len());
 
-                // SAFETY: this structure comes from the hob list, so it must be 8-byte aligned per the PI spec.
-                // A compile-time assertion above guarantees EFiMemoryTypeInformation's alignment requirement
-                // is <= 8 bytes, so alignment is always satisfied. Length is calculated above to fit within
-                // the Guid HOB data.
-                let memory_type_info = unsafe { slice::from_raw_parts(memory_type_slice_ptr, memory_type_slice_len) };
+        initialize_memory_bins(hob_list, &memory_type_info);
+        seed_bin_statistics_from_hobs(hob_list);
+    }
+}
 
-                Some(memory_type_info)
-            }
-            _ => None,
+/// Initializes memory bins from HOB data.
+///
+/// Bins are initialized from a contiguous address range and then claimed per-type via
+/// `reserve_bin_ranges`. The range is resolved in priority order:
+///
+/// 1. PEI-provided bins: A Resource Descriptor HOB with the `MemoryTypeInformation` owner GUID
+///    provides a pre-allocated range from PEI.
+/// 2. DXE-allocated bins: If no PEI range exists, a single contiguous block is allocated from the
+///    GCD, freed back, and used as the range.
+///
+/// Note: A local `MemoryBinManager` is used during initialization to avoid holding the global lock
+/// during GCD allocations (which would cause re-entrant lock panics since allocation recording also
+/// acquires the lock).
+#[coverage(off)]
+fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeInformation]) {
+    if MEMORY_BIN_MANAGER.lock().is_initialized() {
+        return;
+    }
+
+    // Resolve the overall bin block to either PEI-provided or DXE-allocated.
+    let bin_range =
+        find_pei_bin_range(hob_list, memory_type_info).or_else(|| allocate_contiguous_bin_range(memory_type_info));
+
+    let Some((start, length)) = bin_range else {
+        log::warn!(target: "memory_bin", "No bin range available. Memory bins will not be initialized.");
+        return;
+    };
+
+    let mut local_manager = MemoryBinManager::new();
+    if !local_manager.initialize_from_range(start, length, memory_type_info) {
+        log::warn!(target: "memory_bin", "Failed to initialize bins from range at {:#X}, length {:#X}.", start, length);
+        return;
+    }
+
+    *MEMORY_BIN_MANAGER.lock() = local_manager;
+    reserve_bin_ranges();
+}
+
+/// Attempts to find a PEI-provided bin range from a Resource Descriptor HOB.
+#[coverage(off)]
+fn find_pei_bin_range(
+    hob_list: &HobList,
+    memory_type_info: &[EFiMemoryTypeInformation],
+) -> Option<(efi::PhysicalAddress, u64)> {
+    let (start, length) = crate::memory_bin::find_memory_type_info_resource_hob(hob_list, memory_type_info)?;
+    log::info!(target: "memory_bin", "Found PEI bin region at {:#X}, length {:#X}.", start, length);
+    Some((start, length))
+}
+
+/// Allocates a single contiguous block from the GCD for all bin types.
+///
+/// The block is freed back to the GCD immediately so that it can be reclaimed for per-type ranges.
+#[coverage(off)]
+fn allocate_contiguous_bin_range(memory_type_info: &[EFiMemoryTypeInformation]) -> Option<(efi::PhysicalAddress, u64)> {
+    log::info!(target: "memory_bin", "No PEI bin region found. Allocating a contiguous bin range from the GCD.");
+
+    let alloc_size = MemoryBinManager::contiguous_alloc_size(memory_type_info)?;
+    let max_granularity = MemoryBinManager::max_granularity(memory_type_info);
+    let align_shift = max_granularity.trailing_zeros() as usize;
+
+    let temp_handle = memory_type_info
+        .iter()
+        .find(|e| e.number_of_pages > 0 && (e.memory_type as usize) < EFI_MAX_MEMORY_TYPE)
+        .and_then(|e| AllocatorMap::handle_for_memory_type(e.memory_type).ok())?;
+
+    let addr = GCD
+        .allocate_memory_space(
+            DEFAULT_ALLOCATION_STRATEGY,
+            GcdMemoryType::SystemMemory,
+            align_shift,
+            alloc_size,
+            temp_handle,
+            None,
+        )
+        .inspect_err(|err| {
+            log::warn!(
+                target: "memory_bin",
+                "Failed to allocate contiguous bin range ({:#X} bytes) from GCD: {:?}",
+                alloc_size,
+                err
+            );
+        })
+        .ok()?;
+
+    // Free the block so reserve_bin_ranges can re-claim per-type ownership.
+    let _ = GCD.free_memory_space(addr, alloc_size);
+
+    Some((addr as efi::PhysicalAddress, alloc_size as u64))
+}
+
+/// Seeds bin statistics from PEI Memory Allocation HOBs marked with `MEMORY_TYPE_INFO_HOB_GUID`.
+///
+/// These HOBs indicate allocations made by PEI's bin-aware allocator and need to be accounted
+/// for in the bin statistics.
+fn seed_bin_statistics_from_hobs(hob_list: &HobList) {
+    let mut bin_manager = MEMORY_BIN_MANAGER.lock();
+    let mut seeded_count = 0u32;
+
+    for hob_entry in hob_list.iter() {
+        let desc = match hob_entry {
+            Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            | Hob::MemoryAllocationModule(hob::MemoryAllocationModule {
+                header: _,
+                alloc_descriptor: desc,
+                module_name: _,
+                entry_point: _,
+            }) if desc.name == MEMORY_TYPE_INFO_HOB_GUID.into_inner() => desc,
+            _ => continue,
+        };
+
+        if desc.memory_type == efi::CONVENTIONAL_MEMORY || desc.memory_length == 0 {
+            continue;
         }
-    }) {
-        for bucket in memory_type_info {
-            if bucket.number_of_pages == 0 {
+
+        let pages = uefi_size_to_pages!(desc.memory_length as usize) as u64;
+        bin_manager.seed_statistics_from_hob(desc.memory_type, pages);
+        seeded_count += 1;
+    }
+
+    log::info!(target: "memory_bin", "Seeded bin statistics from {} PEI Memory Allocation HOBs.", seeded_count);
+}
+
+/// Claims free GCD pages within each bin range for the corresponding bin type's allocator.
+///
+/// For each active bin, walks the GCD blocks within the bin's address range and:
+/// - Free blocks are claimed with `allocate_memory_space()` at the exact address with the bin
+///   type's allocator handle, then `free_memory_space_preserving_ownership()` is used to release the
+///   pages while retaining GCD ownership. This prevents other allocators from expanding into the bin range.
+/// - Same-type allocated blocks are logged as expected (PEI allocations within the bin).
+/// - Different-type allocated blocks are logged as an error with `debug_assert` (should not happen, but
+///   the allocation is left in place).
+/// - Partial overlaps at bin boundaries are logged as an error with `debug_assert`.
+fn reserve_bin_ranges() {
+    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    let bins: Vec<(efi::MemoryType, efi::PhysicalAddress, efi::PhysicalAddress, u64)> =
+        bin_manager.active_bins().collect();
+    drop(bin_manager);
+
+    for (memory_type, bin_base, bin_max, bin_pages) in bins {
+        let bin_end = bin_max + 1; // exclusive end
+        let bin_len = (bin_end - bin_base) as usize;
+        let mut claimed_pages: usize = 0;
+        let mut same_type_pages: usize = 0;
+        let mut conflicting_pages: usize = 0;
+
+        let handle = match AllocatorMap::handle_for_memory_type(memory_type) {
+            Ok(h) => h,
+            Err(err) => {
+                log::error!(
+                    target: "memory_bin",
+                    "Failed to get handle for bin[{}] {}: {:?}",
+                    memory_type,
+                    crate::memory_bin::memory_type_name(memory_type),
+                    err
+                );
                 continue;
             }
-            log::info!(
-                "Allocating memory bucket for memory type: {:#x?}, {:#x?} pages.",
-                bucket.memory_type,
-                bucket.number_of_pages
-            );
-            let handle = match AllocatorMap::handle_for_memory_type(bucket.memory_type) {
-                Ok(handle) => handle,
-                Err(err) => {
-                    log::error!("failed to get a handle for memory type {:#x?}: {:#x?}", bucket.memory_type, err);
-                    continue;
-                }
+        };
+
+        log::info!(
+            target: "memory_bin",
+            "Reserving bin[{}] {} range=[{:#X}..{:#X}] ({} pages)",
+            memory_type,
+            crate::memory_bin::memory_type_name(memory_type),
+            bin_base,
+            bin_max,
+            bin_pages
+        );
+
+        for desc_result in GCD.iter(bin_base as usize, bin_len) {
+            let desc = match desc_result {
+                Ok(d) => d,
+                Err(_) => continue,
             };
 
-            match ALLOCATORS.lock().get_or_create_allocator(bucket.memory_type, handle) {
-                Ok(allocator) => {
-                    if let Err(err) = allocator.reserve_memory_pages(bucket.number_of_pages as usize) {
-                        log::error!("failed to reserve pages for memory type {:#x?}: {:#x?}", bucket.memory_type, err);
-                        continue;
-                    }
-                }
-                Err(err) => {
-                    log::error!("failed to get an allocator for memory type {:#x?}: {:#x?}", bucket.memory_type, err);
+            // Compute the overlap between this GCD block and the bin range.
+            let block_start = desc.base_address.max(bin_base);
+            let block_end = (desc.base_address + desc.length).min(bin_end);
+            if block_start >= block_end {
+                continue;
+            }
+            let block_len = (block_end - block_start) as usize;
+            let block_pages = uefi_size_to_pages!(block_len);
+
+            // Log partial overlaps with allocated blocks of a different type.
+            if (desc.base_address < bin_base || (desc.base_address + desc.length) > bin_end)
+                && desc.image_handle != INVALID_HANDLE
+            {
+                let allocated_type = memory_type_for_handle(desc.image_handle);
+                if let Some(alloc_type) = allocated_type
+                    && alloc_type != memory_type
+                {
+                    let desc_end = desc.base_address + desc.length;
+                    log::error!(
+                        target: "memory_bin",
+                        "Partial overlap in bin[{}] {}: GCD block [{:#X}..{:#X}) extends beyond bin [{:#X}..{:#X}), type={}",
+                        memory_type,
+                        crate::memory_bin::memory_type_name(memory_type),
+                        desc.base_address,
+                        desc_end,
+                        bin_base,
+                        bin_end,
+                        crate::memory_bin::memory_type_name(alloc_type),
+                    );
+                    debug_assert!(
+                        false,
+                        "Partial overlap in bin[{}]: GCD block [{:#X}..{:#X}) extends beyond bin [{:#X}..{:#X})",
+                        memory_type, desc.base_address, desc_end, bin_base, bin_end,
+                    );
+                    conflicting_pages += block_pages;
                     continue;
                 }
+            }
+
+            if desc.image_handle == INVALID_HANDLE && desc.memory_type == GcdMemoryType::SystemMemory {
+                // Free block within the bin range by claiming it at the exact address via GCD with
+                // ownership preservation. This allocates the pages with the bin type's allocator
+                // handle, then frees them while retaining the handle so other allocators cannot
+                // expand into these pages.
+                match GCD.allocate_memory_space(
+                    AllocationStrategy::Address(block_start as usize),
+                    GcdMemoryType::SystemMemory,
+                    0,
+                    block_len,
+                    handle,
+                    None,
+                ) {
+                    Ok(_) => {
+                        if let Err(err) = GCD.free_memory_space_preserving_ownership(block_start as usize, block_len) {
+                            log::error!(
+                                target: "memory_bin",
+                                "Failed to free-with-ownership bin pages at {:#X}: {:?}",
+                                block_start,
+                                err
+                            );
+                        }
+                        claimed_pages += block_pages;
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            target: "memory_bin",
+                            "Failed to claim bin pages at {:#X} ({} pages): {:?}",
+                            block_start,
+                            block_pages,
+                            err
+                        );
+                    }
+                }
+            } else if desc.image_handle != INVALID_HANDLE {
+                // Check if the allocated block is the correct type.
+                let allocated_type = memory_type_for_handle(desc.image_handle);
+                if let Some(alloc_type) = allocated_type {
+                    if alloc_type == memory_type {
+                        same_type_pages += block_pages;
+                    } else {
+                        conflicting_pages += block_pages;
+                        log::error!(
+                            target: "memory_bin",
+                            "Conflicting allocation in bin[{}] {} range: [{:#X}..{:#X}) is {} (expected {})",
+                            memory_type,
+                            crate::memory_bin::memory_type_name(memory_type),
+                            block_start,
+                            block_end,
+                            crate::memory_bin::memory_type_name(alloc_type),
+                            crate::memory_bin::memory_type_name(memory_type),
+                        );
+                        debug_assert!(
+                            false,
+                            "Conflicting allocation in bin[{}] range: [{:#X}..{:#X}) is {} (expected {})",
+                            memory_type,
+                            block_start,
+                            block_end,
+                            crate::memory_bin::memory_type_name(alloc_type),
+                            crate::memory_bin::memory_type_name(memory_type),
+                        );
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            target: "memory_bin",
+            "Reserved bin[{}] {}: claimed={} pages, existing={} pages, conflicting={} pages (of {} total)",
+            memory_type,
+            crate::memory_bin::memory_type_name(memory_type),
+            claimed_pages,
+            same_type_pages,
+            conflicting_pages,
+            bin_pages
+        );
+
+        // Set the reserved range so allocations prefer the bin and frees preserve ownership.
+        match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+            Ok(allocator) => {
+                if let Err(err) = allocator.set_reserved_range(bin_base..bin_end) {
+                    log::error!(
+                        target: "memory_bin",
+                        "Failed to set reserved range for bin[{}] {} [{:#X}..{:#X}): {:?}",
+                        memory_type,
+                        crate::memory_bin::memory_type_name(memory_type),
+                        bin_base,
+                        bin_end,
+                        err
+                    );
+                }
+            }
+            Err(err) => {
+                log::error!(
+                    target: "memory_bin",
+                    "Failed to get allocator for bin[{}] {}: {:?}",
+                    memory_type,
+                    crate::memory_bin::memory_type_name(memory_type),
+                    err
+                );
             }
         }
     }
@@ -1209,6 +1554,7 @@ pub(crate) unsafe fn reset_allocators() {
     // allocations are active. A lock is used to ensure exclusive access preventing
     // use while reset occurs.
     unsafe { ALLOCATORS.lock().reset() };
+    MEMORY_BIN_MANAGER.lock().reset();
 }
 
 #[cfg(test)]
@@ -1281,6 +1627,20 @@ mod tests {
         .unwrap();
     }
 
+    /// Finds a bin by memory type from a collected `active_bins()` list and returns `(base, max)`.
+    ///
+    /// Panics with a descriptive message if the bin is not found.
+    fn find_bin_range(
+        bins: &[(efi::MemoryType, efi::PhysicalAddress, efi::PhysicalAddress, u64)],
+        memory_type: efi::MemoryType,
+    ) -> (efi::PhysicalAddress, efi::PhysicalAddress) {
+        let (_, base, max, _) = bins
+            .iter()
+            .find(|(mt, _, _, _)| *mt == memory_type)
+            .unwrap_or_else(|| panic!("Expected bin for memory type {:#X} not found", memory_type));
+        (*base, *max)
+    }
+
     #[test]
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
@@ -1338,15 +1698,260 @@ mod tests {
 
             init_memory_support(&hob_list);
 
-            let pal_code_range = ALLOCATORS.lock().get_allocator(efi::PAL_CODE).unwrap().reserved_range().unwrap();
-            assert_eq!(pal_code_range.end - pal_code_range.start, 0x100 * 0x1000);
+            let bin_manager = MEMORY_BIN_MANAGER.lock();
+            assert!(bin_manager.is_initialized(), "Bin manager should be initialized");
 
-            let reclaim_range =
-                ALLOCATORS.lock().get_allocator(efi::ACPI_RECLAIM_MEMORY).unwrap().reserved_range().unwrap();
-            assert_eq!(reclaim_range.end - reclaim_range.start, 0x200 * 0x1000);
+            // Verify bin manager has the expected bin ranges.
+            let bins: Vec<_> = bin_manager.active_bins().collect();
 
-            let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().reserved_range().unwrap();
-            assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
+            let (pal_base, pal_max) = find_bin_range(&bins, efi::PAL_CODE);
+            assert_eq!((pal_max - pal_base + 1), 0x100 * 0x1000, "PAL_CODE bin size mismatch");
+
+            let (reclaim_base, reclaim_max) = find_bin_range(&bins, efi::ACPI_RECLAIM_MEMORY);
+            assert_eq!((reclaim_max - reclaim_base + 1), 0x200 * 0x1000, "ACPI_RECLAIM_MEMORY bin size mismatch");
+
+            let (nvs_base, nvs_max) = find_bin_range(&bins, efi::ACPI_MEMORY_NVS);
+            assert_eq!((nvs_max - nvs_base + 1), 0x300 * 0x1000, "ACPI_MEMORY_NVS bin size mismatch");
+        })
+    }
+
+    #[test]
+    fn seed_bin_statistics_from_hobs_should_seed_only_matching_pei_allocations() {
+        // Verifies seed_bin_statistics_from_hobs():
+        //   - skips HOBs whose `name` is not `MEMORY_TYPE_INFO_HOB_GUID`,
+        //   - skips matching HOBs with `CONVENTIONAL_MEMORY` or zero length,
+        //   - seeds bin statistics for `MemoryAllocation` HOBs with the special GUID,
+        //   - seeds bin statistics for `MemoryAllocationModule` HOBs with the special GUID.
+        with_locked_state(GcdInit::WithHobList(0x1000000), |physical_hob_list| {
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            // Bin descriptor HOB activates bins for PAL_CODE, ACPI_RECLAIM, ACPI_NVS.
+            let guid_hob = GuidHob {
+                header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
+                name: MEMORY_TYPE_INFO_HOB_GUID,
+            };
+            hob_list.push(Hob::GuidHob(
+                &guid_hob,
+                &[
+                    0x0d, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, // 0x0100 pages PAL_CODE
+                    0x09, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, // 0x0200 pages ACPI_RECLAIM
+                    0x0a, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, // 0x0300 pages ACPI_NVS
+                ],
+            ));
+
+            // Build a stack HOB to support memory init.
+            let stack_base_address = (physical_hob_list as u64).wrapping_add(0x18B000);
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: 0x2000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            init_memory_support(&hob_list);
+            assert!(MEMORY_BIN_MANAGER.lock().is_initialized(), "bin manager must be initialized");
+
+            // Build an isolated HOB list to pass to seed_bin_statistics_from_hobs().
+            let mut seed_list = HobList::default();
+
+            // Non-matching: MemoryAllocation with a different GUID. Must be ignored.
+            let other_guid_alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0,
+                    memory_length: (16 * UEFI_PAGE_SIZE) as u64,
+                    memory_type: efi::PAL_CODE,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&other_guid_alloc));
+
+            // Non-matching HOB type.
+            let unrelated_fv = patina::pi::hob::FirmwareVolume {
+                header: patina::pi::hob::header::Hob {
+                    r#type: patina::pi::hob::FV,
+                    length: core::mem::size_of::<patina::pi::hob::FirmwareVolume>() as u16,
+                    reserved: 0,
+                },
+                base_address: 0,
+                length: 0x1000,
+            };
+            seed_list.push(Hob::FirmwareVolume(&unrelated_fv));
+
+            // Matching GUID + CONVENTIONAL_MEMORY should be ignored.
+            let conv_alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: (16 * UEFI_PAGE_SIZE) as u64,
+                    memory_type: efi::CONVENTIONAL_MEMORY,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&conv_alloc));
+
+            // Matching GUID + zero length should be ignored.
+            let zero_len_alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: 0,
+                    memory_type: efi::ACPI_MEMORY_NVS,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&zero_len_alloc));
+
+            // Matching GUID + ACPI_MEMORY_NVS (bin). Should seed 16 pages.
+            let nvs_pages: u64 = 16;
+            let nvs_alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: nvs_pages * UEFI_PAGE_SIZE as u64,
+                    memory_type: efi::ACPI_MEMORY_NVS,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&nvs_alloc));
+
+            // Matching GUID via MemoryAllocationModule for PAL_CODE (bin). Should seed.
+            let pal_pages: u64 = 16;
+            let pal_alloc_module = patina::pi::hob::MemoryAllocationModule {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: pal_pages * UEFI_PAGE_SIZE as u64,
+                    memory_type: efi::PAL_CODE,
+                    reserved: Default::default(),
+                },
+                module_name: guids::DXE_CORE,
+                entry_point: 0,
+            };
+            seed_list.push(Hob::MemoryAllocationModule(&pal_alloc_module));
+
+            // Matching GUID but non-bin memory type (BOOT_SERVICES_DATA). Reaches
+            // seed_statistics_from_hob but is filtered there by the `special` check.
+            let bsdata_alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: (16 * UEFI_PAGE_SIZE) as u64,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&bsdata_alloc));
+
+            // Snapshot statistics before invoking seed_bin_statistics_from_hobs().
+            let (nvs_before, pal_before, bsdata_before, rt_data_before) = {
+                let bm = MEMORY_BIN_MANAGER.lock();
+                (
+                    bm.current_pages_for_type(efi::ACPI_MEMORY_NVS),
+                    bm.current_pages_for_type(efi::PAL_CODE),
+                    bm.current_pages_for_type(efi::BOOT_SERVICES_DATA),
+                    bm.current_pages_for_type(efi::RUNTIME_SERVICES_DATA),
+                )
+            };
+
+            seed_bin_statistics_from_hobs(&seed_list);
+
+            let bm = MEMORY_BIN_MANAGER.lock();
+            // Bin types with matching HOB entries should have their statistics seeded with the HOB values.
+            assert_eq!(
+                bm.current_pages_for_type(efi::ACPI_MEMORY_NVS),
+                nvs_before + nvs_pages,
+                "ACPI_MEMORY_NVS should be seeded by the matching MemoryAllocation HOB",
+            );
+            assert_eq!(
+                bm.current_pages_for_type(efi::PAL_CODE),
+                pal_before + pal_pages,
+                "PAL_CODE should be seeded by the matching MemoryAllocationModule HOB",
+            );
+            // Non-matching, conventional, zero-length, and non-bin entries must not
+            // alter their counters.
+            assert_eq!(
+                bm.current_pages_for_type(efi::BOOT_SERVICES_DATA),
+                bsdata_before,
+                "BOOT_SERVICES_DATA is non-bin and must not be seeded",
+            );
+            assert_eq!(
+                bm.current_pages_for_type(efi::RUNTIME_SERVICES_DATA),
+                rt_data_before,
+                "RUNTIME_SERVICES_DATA had no matching HOB and must not be seeded",
+            );
+        })
+    }
+
+    #[test]
+    fn seed_bin_statistics_from_hobs_should_be_a_noop_when_bin_manager_uninitialized() {
+        // When the bin manager is not initialized, seed_bin_statistics_from_hobs() is a no-op,
+        // so the outer function should iterate the HOB list without panicking and leave
+        // statistics at zero.
+        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
+            assert!(!MEMORY_BIN_MANAGER.lock().is_initialized());
+
+            let mut seed_list = HobList::default();
+            let alloc = patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: MEMORY_TYPE_INFO_HOB_GUID,
+                    memory_base_address: 0,
+                    memory_length: (16 * UEFI_PAGE_SIZE) as u64,
+                    memory_type: efi::ACPI_MEMORY_NVS,
+                    reserved: Default::default(),
+                },
+            };
+            seed_list.push(Hob::MemoryAllocation(&alloc));
+
+            seed_bin_statistics_from_hobs(&seed_list);
+
+            let bm = MEMORY_BIN_MANAGER.lock();
+            assert_eq!(bm.current_pages_for_type(efi::ACPI_MEMORY_NVS), 0);
         })
     }
 
@@ -1900,9 +2505,6 @@ mod tests {
     #[test]
     fn get_memory_map_should_return_a_memory_map() {
         with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
-            //reserve some pages in the runtime services data allocator.
-            ALLOCATORS.lock().get_allocator(efi::RUNTIME_SERVICES_DATA).unwrap().reserve_memory_pages(0x100).unwrap();
-
             // allocate some "custom" type pages to create something interesting to find in the map.
             let mut buffer_ptr: *mut u8 = core::ptr::null_mut();
             assert_eq!(

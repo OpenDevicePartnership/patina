@@ -990,7 +990,7 @@ pub const MEMORY_TYPE_INFO_HOB_GUID: crate::BinaryGuid =
     crate::BinaryGuid::from_string("4C19049F-4137-4DD3-9C10-8B97A83FFDFA");
 
 /// Memory Type Information GUID Extension Hob structure definition.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct EFiMemoryTypeInformation {
     /// Type of memory being described.

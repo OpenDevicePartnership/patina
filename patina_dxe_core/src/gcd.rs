@@ -21,7 +21,7 @@ use patina::{
     error::EfiError,
     pi::{
         dxe_services::{GcdIoType, GcdMemoryType, MemorySpaceDescriptor},
-        hob::{self, Hob, HobList, PhaseHandoffInformationTable},
+        hob::{self, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID, PhaseHandoffInformationTable},
     },
 };
 use patina_internal_cpu::paging::{PatinaPageTable, create_cpu_paging};
@@ -556,6 +556,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
             Some((desc, None)) => (desc, 0u64),
             None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
+
+        // Skip the PEI memory bin region to avoid a conflict. It will overlap the system
+        // memory region it was allocated from.
+        if res_desc.owner == MEMORY_TYPE_INFO_HOB_GUID {
+            continue;
+        }
 
         let mem_range = res_desc.physical_start
             ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");

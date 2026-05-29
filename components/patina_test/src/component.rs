@@ -23,7 +23,11 @@ use patina::component::{Storage, component};
 ///
 /// # Example
 ///
-/// ```rust
+/// The `patina_test::component` module is only public when the `test-runner` feature is enabled
+/// (or when building docs). Gate the doctest's code fence on the `test-runner` feature so it compiles
+/// and runs when the feature is on, and is silently skipped otherwise.
+#[cfg_attr(feature = "test-runner", doc = "```rust")]
+#[cfg_attr(not(feature = "test-runner"), doc = "```ignore")]
 /// use patina_test::component::{TestRunner, Filter};
 ///
 /// let runner = TestRunner::default()

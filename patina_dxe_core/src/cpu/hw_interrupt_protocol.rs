@@ -1,5 +1,5 @@
 use crate::tpl_mutex::TplMutex;
-use alloc::{boxed::Box, format, vec, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 use patina_internal_cpu::interrupts::{
     ExceptionContext, InterruptHandler, InterruptManager, gic_manager::AArch64InterruptInitializer,
 };
@@ -165,6 +165,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
     }
 }
 
+// SAFETY: The struct is repr(C) and the PROTOCOL_GUID correctly identifies the protocol.
 unsafe impl ProtocolInterface for EfiHardwareInterruptProtocol<'_> {
     const PROTOCOL_GUID: BinaryGuid = HARDWARE_INTERRUPT_PROTOCOL;
 }
@@ -357,6 +358,7 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
     }
 }
 
+// SAFETY: The struct is repr(C) and the PROTOCOL_GUID correctly identifies the protocol.
 unsafe impl ProtocolInterface for EfiHardwareInterruptV2Protocol<'_> {
     const PROTOCOL_GUID: BinaryGuid = HARDWARE_INTERRUPT_PROTOCOL_V2;
 }
@@ -399,7 +401,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
         if raw_value >= self.handlers.len() as u32 {
             match raw_value {
-                1021 | 1022 | 1023 => {
+                1021..=1023 => {
                     // The special interrupt do not need to be acknowledged
                 }
                 _ => {
@@ -411,7 +413,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
         let rw_handler = self.handlers[raw_value as usize]
             .try_read()
-            .expect(&format!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
+            .unwrap_or_else(|| panic!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
 
         if let Some(handler) = *rw_handler {
             handler(raw_value as u64, context);
@@ -456,14 +458,14 @@ impl HwInterruptProtocolHandler {
             }
 
             // Interrupt disabled, now remove the handler
-            if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
+            if let Some(mut rw_handler) = self.handlers[interrupt_source].try_write() {
                 *rw_handler = None;
             } else {
                 return efi::Status::DEVICE_ERROR;
             }
         } else {
             // Register the interrupt handler
-            if let Some(mut rw_handler) = self.handlers[interrupt_source as usize].try_write() {
+            if let Some(mut rw_handler) = self.handlers[interrupt_source].try_write() {
                 *rw_handler = handler;
             } else {
                 return efi::Status::DEVICE_ERROR;

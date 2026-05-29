@@ -14,3 +14,7 @@ workspace = true
 r-efi = { workspace = true }
 uuid = { workspace = true }
 log = { workspace = true }
+
+[features]
+# All non-std features to test in CI
+ci_features = []

@@ -154,7 +154,7 @@ pub unsafe trait Param {
         if Self::validate(state, storage) {
             Ok(())
         } else {
-            Err(Cow::from(alloc::format!("{} not available.", core::any::type_name::<Self>())))
+            Err(Cow::from(alloc::format!("{} not available.", super::type_name::normalized::<Self>())))
         }
     }
 
@@ -393,7 +393,9 @@ impl<T: Default + 'static> Deref for Config<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.value.downcast_ref().unwrap_or_else(|| panic!("Config should be of type {}", core::any::type_name::<T>()))
+        self.value
+            .downcast_ref()
+            .unwrap_or_else(|| panic!("Config should be of type {}", super::type_name::normalized::<T>()))
     }
 }
 
@@ -431,14 +433,14 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         if meta.access().has_writes_all_configs() {
             return Err(Cow::from(alloc::format!(
                 "Config<{}> conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
         if meta.access().has_config_write(id) {
             return Err(Cow::from(alloc::format!(
                 "Config<{0}> conflicts with a previous ConfigMut<{0}> access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
@@ -492,13 +494,17 @@ impl<T: Default + 'static> Deref for ConfigMut<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.value.downcast_ref().unwrap_or_else(|| panic!("Config should be of type {}", core::any::type_name::<T>()))
+        self.value
+            .downcast_ref()
+            .unwrap_or_else(|| panic!("Config should be of type {}", super::type_name::normalized::<T>()))
     }
 }
 
 impl<T: Default + 'static> DerefMut for ConfigMut<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        self.value.downcast_mut().unwrap_or_else(|| panic!("Config should be of type {}", core::any::type_name::<T>()))
+        self.value
+            .downcast_mut()
+            .unwrap_or_else(|| panic!("Config should be of type {}", super::type_name::normalized::<T>()))
     }
 }
 
@@ -539,28 +545,28 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         if meta.access().has_writes_all_configs() {
             return Err(Cow::from(alloc::format!(
                 "ConfigMut<{}> conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
         if meta.access().has_reads_all_configs() {
             return Err(Cow::from(alloc::format!(
                 "ConfigMut<{}> conflicts with a previous &Storage access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
         if meta.access().has_config_write(id) {
             return Err(Cow::from(alloc::format!(
                 "ConfigMut<{0}> conflicts with a previous ConfigMut<{0}> access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
         if meta.access().has_config_read(id) {
             return Err(Cow::from(alloc::format!(
                 "ConfigMut<{0}> conflicts with a previous Config<{0}> access.",
-                core::any::type_name::<T>()
+                super::type_name::normalized::<T>()
             )));
         }
 
@@ -815,7 +821,7 @@ macro_rules! impl_component_param_tuple {
                 let ($($param,)*) = state;
                 $(
                     if !$param::validate($param, _storage) {
-                        return Err(Cow::from(core::any::type_name::<$param>()));
+                        return Err(Cow::from(super::type_name::normalized::<$param>()));
                     }
                 )*
                 Ok(())
@@ -921,7 +927,7 @@ mod tests {
         // Trying to access it with config, validation should fail because it is unlocked.
         assert!(
             Config::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::Config<'_, i32> not available.")
+                .is_err_and(|err| err == "patina::component::params::Config<i32> not available.")
         );
     }
 
@@ -935,7 +941,7 @@ mod tests {
 
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32> not available.")
+                .is_err_and(|err| err == "patina::component::params::ConfigMut<i32> not available.")
         );
     }
 

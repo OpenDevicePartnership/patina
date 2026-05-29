@@ -29,3 +29,5 @@ winapi = { workspace = true, features = [
 [features]
 std = []
 doc = []
+# All non-std features to test in CI
+ci_features = []

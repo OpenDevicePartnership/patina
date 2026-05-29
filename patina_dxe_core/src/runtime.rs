@@ -122,7 +122,7 @@ pub fn add_runtime_event(
         event_type,
         notify_tpl,
         notify_function: function,
-        context: context.unwrap_or(ptr::null_mut()),
+        context: context.unwrap_or_default(),
         event,
         link: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
     });

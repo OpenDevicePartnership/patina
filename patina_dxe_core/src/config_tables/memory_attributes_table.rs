@@ -22,6 +22,7 @@ use crate::{
     gcd::MemoryProtectionPolicy,
     systemtables,
 };
+use patina::writelncrlf;
 use r_efi::efi;
 
 // create a wrapper struct so that we can create an install method on it. That way, we can have the install function
@@ -66,17 +67,17 @@ impl Debug for MemoryAttributesTable {
         // SAFETY: mat.entry points to number_of_entries descriptors in the MAT.
         let entries = unsafe { slice::from_raw_parts(mat.entry.as_ptr(), mat.number_of_entries as usize) };
 
-        writeln!(f, "MemoryAttributesTable {{")?;
-        writeln!(f, "  version: {:#X}", mat.version)?;
-        writeln!(f, "  number_of_entries: {:#X}", mat.number_of_entries)?;
-        writeln!(f, "  descriptor_size: {:#X}", mat.descriptor_size)?;
-        writeln!(f, "  reserved: {:#X}", mat.reserved)?;
-        writeln!(f, "  entries: [")?;
+        writelncrlf!(f, "MemoryAttributesTable {{")?;
+        writelncrlf!(f, "  version: {:#X}", mat.version)?;
+        writelncrlf!(f, "  number_of_entries: {:#X}", mat.number_of_entries)?;
+        writelncrlf!(f, "  descriptor_size: {:#X}", mat.descriptor_size)?;
+        writelncrlf!(f, "  reserved: {:#X}", mat.reserved)?;
+        writelncrlf!(f, "  entries: [")?;
 
-        writeln!(f, "{:?}", MemoryDescriptorSlice(entries))?;
+        writelncrlf!(f, "{:?}", MemoryDescriptorSlice(entries))?;
 
-        writeln!(f, "  ]")?;
-        writeln!(f, "}}")
+        writelncrlf!(f, "  ]")?;
+        writelncrlf!(f, "}}")
     }
 }
 

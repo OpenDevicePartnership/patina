@@ -25,6 +25,14 @@ The table below shows the comprehensive tool suite used in Patina compared to tr
 | **Test Coverage** | `cargo-llvm-cov` | gcov, OpenCppCoverage | Integrated coverage collection |
 | **Undefined Behavior Analysis** | `cargo miri` | Valgrind, UBSan | Catches memory safety issues in unsafe code |
 
+## Definitions
+
+CI Features: The set of all features in a crate that should be tested in CI against a `no_std` build. This only omits
+the features that require `std`.
+
+Default Features: The features for a given crate that are in the `default` feature, i.e. the features that are enabled
+by default when building a crate.
+
 ## The cargo Ecosystem: Central Command Hub
 
 ### Tooling Strategy
@@ -460,6 +468,38 @@ words:
 - [CSpell Configuration](https://cspell.org/docs/getting-started)
 - [Patina Configuration](https://github.com/OpenDevicePartnership/patina/blob/main/cspell.yml)
 
+### cargo-check (Fast Compilation Without Code Generation)
+
+**Purpose**: Fast build checking, use by Rust Analyzer to aid in development
+
+**Value**:
+
+- **Compiler Integration**: Leverages Rust's compiler infrastructure to do a quick build check
+- **Rust Analyzer Integration**: Allows a quick dev inner loop with Rust Analyzer reporting results in near real time
+
+**Comparison to C Development**:
+
+Code is written and later built fully to test, harder to have near real time results as code
+is being written.
+
+**Coverage in Patina**:
+
+Patina runs check against the UEFI targets and test code. `std` is not done separately from
+tests because this is a small set of Patina code and is expected to be built with the normal
+build commands. The `--all-features` parameter can only be used for `std/tests` because it pulls in
+std which conflicts with the `no_std` build. As such, the ci_features are tested for the
+`no_std` builds to test all features that do not require `std`.
+
+|                    | aarch64-unknown-uefi | x86_64-unknown-uefi | std | test |
+|:------------------:|:--------------------:|:-------------------:|:---:|:----:|
+| All Features       |                      |                     |     |  X   |
+| CI Features        |          X           |          X          |     |  X   |
+| No Default Features|                      |                     |  X  |  X   |
+
+**Further Documentation**:
+
+- [cargo-check docs](https://doc.rust-lang.org/cargo/commands/cargo-check.html)
+
 ### clippy (Static Analysis and Linting)
 
 **Purpose**: Advanced static analysis tool that catches bugs, performance issues, and style problems beyond what the
@@ -512,14 +552,17 @@ warning: this loop could be written as a `for` loop
    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#while_let_loop
 ```
 
-**Configuration in Patina**:
+**Coverage in Patina**:
 
-```toml
-# Makefile.toml clippy configuration
-[tasks.clippy]
-command = "cargo"
-args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
-```
+Patina runs clippy against the UEFI targets and std (primarily for tests).
+The `--all-features` parameter can only be used for std/tests because it pulls in
+std which conflicts with the no-std build. As such, the ci_features are tested for the
+no_std builds to test all features that do not require std.
+
+|              | aarch64-unknown-uefi | x86_64-unknown-uefi | std | test |
+|:------------:|:--------------------:|:-------------------:|:---:|:----:|
+| All Features |                      |                     |  X  |  X   |
+| CI Features  |          X           |          X          |  X  |  X   |
 
 **Further Documentation**:
 
