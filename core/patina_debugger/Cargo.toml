@@ -30,3 +30,5 @@ patina_mtrr = { workspace = true }
 [features]
 default = []
 alloc = []
+# All non-std features to test in CI
+ci_features = ["alloc"]

@@ -18,3 +18,5 @@ patina_smbios = { workspace = true }
 
 [features]
 std = []
+# All non-std features to test in CI
+ci_features = []

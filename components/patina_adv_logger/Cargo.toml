@@ -38,3 +38,5 @@ reader = []
 component = ['alloc', 'reader']
 std = ['clap', 'alloc', 'reader']
 default = ['component']
+# All non-std features to test in CI
+ci_features = ["alloc", "reader", "component"]

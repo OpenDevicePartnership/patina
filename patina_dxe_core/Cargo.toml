@@ -62,3 +62,5 @@ doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
 debugger_reload = []
+# All non-std features to test in CI
+ci_features = ["compatibility_mode_allowed", "v1_resource_descriptor_support", "debugger_reload"]
