@@ -55,7 +55,7 @@ spin = { version = "^0.9" }
 syn = { version = "2" }
 time = { version = "0.3.47" }
 uart_16550 = { version = "^0.3.2" }
-corosensei = { version = "0.3.3", default-features = false }
+corosensei = { version = "0.3.4", default-features = false }
 uuid = { version = "1.8", default-features = false }
 zerocopy = { version = "0.8" }
 zerocopy-derive = { version = "0.8" }
