@@ -327,7 +327,6 @@ impl CommunicateBuffer {
             unsafe {
                 let status = status_ptr.as_mut();
                 status.is_comm_buffer_valid = 1; // TRUE
-                status.talk_to_supervisor = 0; // FALSE - use user buffer
                 log::trace!(target: "mm_comm", "Buffer {} status mailbox: IsCommBufferValid=TRUE", self.id);
             }
             Ok(())

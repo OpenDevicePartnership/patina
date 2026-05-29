@@ -55,13 +55,9 @@ pub struct MmCommBufferStatus {
     /// Must be set to TRUE before triggering MMI, will be set to FALSE by MM after processing.
     pub is_comm_buffer_valid: u8,
 
-    /// The channel used to communicate with MM.
-    /// FALSE = user buffer, TRUE = supervisor buffer
-    pub talk_to_supervisor: u8,
-
     /// Padding to align to 8 bytes.
     /// This padding is necessary to match the structure layout defined in edk2 and mu_basecore.
-    pub _padding: [u8; 6],
+    pub _padding: [u8; 7],
 
     /// The return status when returning from MM to non-MM.
     pub return_status: u64,
@@ -82,8 +78,7 @@ impl MmCommBufferStatus {
     pub const fn new() -> Self {
         Self {
             is_comm_buffer_valid: 0,
-            talk_to_supervisor: 0,
-            _padding: [0; 6],
+            _padding: [0; 7],
             return_status: 0,
             return_buffer_size: 0,
         }
