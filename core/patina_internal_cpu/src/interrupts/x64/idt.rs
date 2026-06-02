@@ -83,8 +83,8 @@ pub fn initialize_idt() {
 
     // Point every vector at its corresponding assembly handler.
     for vector in 0..=255usize {
-        // Use IST 1 for double fault (vector 8) to ensure it has a valid stack
-        let ist_index = if vector == 8 { 1 } else { 0 };
+        // Use IST 1 for double fault (vector 8) and page fault (vector 14) to ensure they have a valid stack.
+        let ist_index = if vector == 8 || vector == 14 { 1 } else { 0 };
         idt.entries.get_mut(vector).expect("vector out of bounds").set_handler(
             get_vector_address(vector),
             cs,

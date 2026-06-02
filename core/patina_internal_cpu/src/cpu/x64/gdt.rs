@@ -119,7 +119,7 @@ const SPARE5_SEL: GdtEntry = GdtEntry {
 /// Size of the 64-bit TSS structure in bytes.
 const TSS_SIZE: usize = 104;
 
-/// Byte offset of IST1 within the TSS (DOUBLE_FAULT_IST_INDEX 0 maps to IST1).
+/// Byte offset of IST1 within the TSS.
 const TSS_IST1_OFFSET: usize = 36;
 
 const STACK_SIZE: usize = 4096 * 5;
@@ -131,7 +131,7 @@ pub(crate) const CODE_SELECTOR: u16 = 7 * 8; // LINEAR_CODE64_SEL at index 7
 const DATA_SELECTOR: u16 = 6 * 8; // LINEAR_DATA64_SEL at index 6
 const TSS_SELECTOR: u16 = 8 * 8; // TSS descriptor at index 8
 
-static mut DOUBLE_FAULT_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
+static mut SEPARATE_EXCEPTION_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 static mut TSS: [u8; TSS_SIZE] = [0; TSS_SIZE];
 
 /// Build a 128-bit (two u64) TSS system segment descriptor from base address and limit.
@@ -158,10 +158,10 @@ fn tss_descriptor(base: u64, limit: u32) -> (u64, u64) {
 
 lazy_static! {
     static ref GDT: [u64; GDT_ENTRY_COUNT] = {
-        // Initialize TSS with double-fault stack in IST1
+        // Initialize TSS with separate exception stack in IST1
         // SAFETY: Single-threaded initialization guaranteed by lazy_static.
         unsafe {
-            let ist_addr = addr_of!(DOUBLE_FAULT_STACK) as u64 + STACK_SIZE as u64;
+            let ist_addr = addr_of!(SEPARATE_EXCEPTION_STACK) as u64 + STACK_SIZE as u64;
             let ist_bytes = ist_addr.to_ne_bytes();
             core::ptr::copy_nonoverlapping(
                 ist_bytes.as_ptr(),
