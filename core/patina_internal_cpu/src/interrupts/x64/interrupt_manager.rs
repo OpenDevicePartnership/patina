@@ -125,7 +125,21 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
 
-    log::error!("EXCEPTION: PAGE FAULT");
+    let rsp_page = x64_context.rsp & !UEFI_PAGE_MASK as u64;
+    let cr2_page = x64_context.cr2 & !UEFI_PAGE_MASK as u64;
+    let same_or_below = (cr2_page == rsp_page) || (cr2_page == (rsp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
+    let data_access = (x64_context.exception_data & bit!(4)) == 0;
+
+    // Stack overflows cause page faults, let's give a hint if it looks like one.
+    // The heuristic we are using is that stack overflow will either have CR2 on the same page
+    // as RSP or directly below it. Sometimes RSP is decremented first, sometimes second. Stack overflows
+    // are always data access, so ensure that is the case as well.
+    if same_or_below && data_access {
+        log::error!("EXCEPTION: PAGE FAULT STACK OVERFLOW");
+    } else {
+        log::error!("EXCEPTION: PAGE FAULT");
+    }
+
     log::error!("Accessed Address: {:#X?}", x64_context.cr2);
     log::error!("Paging Enabled: {}", x64_context.cr0 & 0x80000000 != 0);
     log::error!("Instruction Pointer: {:#X?}", x64_context.rip);

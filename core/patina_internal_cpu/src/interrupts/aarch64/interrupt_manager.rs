@@ -168,12 +168,25 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     let ec = (aarch64_context.esr >> 26) & 0x3F;
     let iss = aarch64_context.esr & 0xFFFFFF;
     let page_fault = ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25;
+    let far_valid = (iss & bit!(10)) == 0;
+
+    let sp_page = aarch64_context.sp & !UEFI_PAGE_MASK as u64;
+    let far_page = aarch64_context.far & !UEFI_PAGE_MASK as u64;
+    let same_or_below = (far_page == sp_page) || (far_page == (sp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
+
     if ec == 0x20 || ec == 0x21 {
-        // Instruction Abort from a lower EL or same EL
+        // Instruction Abort from a lower EL or same EL.
         log::error!("Page Fault (Instruction Abort)");
     } else if ec == 0x24 || ec == 0x25 {
-        // Data Abort from a lower EL or same EL
-        log::error!("Page Fault (Data Abort)");
+        // Data Abort from a lower EL or same EL.
+        // Stack overflows cause page faults, let's give a hint if it looks like one.
+        // The heuristic we are using is that stack overflow will either have FAR on the same page
+        // as SP or directly below it. Sometimes SP is decremented first, sometimes second.
+        if far_valid && same_or_below {
+            log::error!("Page Fault (Stack Overflow)");
+        } else {
+            log::error!("Page Fault (Data Abort)");
+        }
     }
 
     log::error!("");
@@ -184,7 +197,7 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
 
     if page_fault {
         // make sure the FAR is valid before we dump the page table
-        if iss & bit!(10) == 0 {
+        if far_valid {
             dump_pte(aarch64_context.far);
         } else {
             log::error!("FAR not valid, not dumping PTE");
