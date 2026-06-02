@@ -357,13 +357,18 @@ script_runner = "@duckscript"
 script = '''
 toolchain_file = readfile rust-toolchain.toml
 channel = set "stable"
+found = set false
 lines = split ${toolchain_file} "\n"
 for line in ${lines}
     trimmed = trim ${line}
     starts = starts_with ${trimmed} "channel"
+    # Only use the first `channel` line (the one under `[toolchain]`).
     if ${starts}
-        parts = split ${trimmed} "\""
-        channel = array_get ${parts} 1
+        if not ${found}
+            parts = split ${trimmed} "\""
+            channel = array_get ${parts} 1
+            found = set true
+        end
     end
 end
 exec --fail-on-error mdbook build docs

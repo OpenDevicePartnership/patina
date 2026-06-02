@@ -1,0 +1,44 @@
+# @file msrv-check.yml
+#
+# A workflow that verifies the workspace still builds and tests cleanly on the
+# Minimum Supported Rust Version (MSRV) toolchain declared in
+# `rust-toolchain.toml` under the `[msrv]` table.
+#
+# Runs on a daily schedule and on pull requests that modify `rust-toolchain.toml`.
+#
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+
+name: MSRV Check
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust-toolchain.toml'
+
+# Allow MSRV checks to run concurrently across multiple PRs, but isolate them by branch.
+concurrency:
+  group: msrv-check-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  msrv:
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/MsrvCheck.yml@main
+    with:
+      build-tasks: build-x64,build-aarch64
+    secrets: inherit

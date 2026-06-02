@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: ✅ Checkout Repository ✅
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🛠️ Download Rust Tools 🛠️
         uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@main
@@ -44,7 +44,7 @@ jobs:
         run: mdbook build docs
 
       - name: Upload Github Pages Site Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages
           path: docs/book/html
@@ -64,7 +64,7 @@ jobs:
 
     steps:
       - name: 🚀 Deploy Github Pages Site 🚀
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
           token: ${{ github.token }}
           artifact_name: github-pages

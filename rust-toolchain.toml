@@ -21,3 +21,6 @@ mdbook = "0.4.52"
 mdbook-admonish = "1.20.0"
 mdbook-linkcheck = "0.7.7"
 mdbook-mermaid = "0.16.2"
+
+[msrv]
+channel = "nightly-2025-06-20"   # branched-from date for rust-version = "1.89"

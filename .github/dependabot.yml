@@ -29,6 +29,13 @@ updates:
     labels:
       - "type:dependencies"
       - "type:dependabot"
+    groups:
+      all-cargo-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     rebase-strategy: "disabled"
 
   - package-ecosystem: "github-actions"
