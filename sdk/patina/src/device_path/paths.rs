@@ -60,7 +60,8 @@ impl DevicePathBuf {
         // No allocation will be done here, handled by the `try_reserve`.
         self.buffer.resize(writing_start_offset + header.length, 0);
 
-        let writing_buffer = &mut self.buffer.as_mut_slice()[writing_start_offset..];
+        let writing_buffer =
+            self.buffer.as_mut_slice().get_mut(writing_start_offset..).expect("buffer was just resized to fit");
         match node.write_into(writing_buffer) {
             Ok(nb_byte_written) => debug_assert_eq!(header.length, nb_byte_written),
             Err(_) => debug_assert!(false, "Unexpected error, buffer should be large enough at that point."),
@@ -238,7 +239,7 @@ impl DevicePath {
             let header = self.buffer.pread_with::<crate::device_path::parse_node::Header>(idx, scroll::LE).unwrap();
             idx += header.length;
         }
-        let end_buffer = &self.buffer[idx..];
+        let end_buffer = self.buffer.get(idx..).expect("idx is within device path bounds");
         // SAFETY: The slice `end_buffer` is a valid trailing portion of the device path that contains
         // the last n nodes including the end node. DevicePath is repr(transparent) over [u8], so this cast is
         // considered valid.

@@ -454,8 +454,8 @@ pub(crate) fn check_param_conflicts(func: &ItemFn) -> Result<(), TokenStream> {
     // Check for conflicts
     for i in 0..params.len() {
         for j in (i + 1)..params.len() {
-            let (idx1, type1, name1, span1) = &params[i];
-            let (idx2, type2, name2, span2) = &params[j];
+            let Some((idx1, type1, name1, span1)) = params.get(i) else { continue };
+            let Some((idx2, type2, name2, span2)) = params.get(j) else { continue };
 
             if let Some(conflict_msg) = type1.conflicts_with(type2) {
                 // Build a detailed error message with parameter information

@@ -47,6 +47,8 @@ pub enum FixedSizeBlockAllocatorError {
     InvalidLayout,
     /// The memory region provided to extend the allocator was invalid.
     InvalidExpansion,
+    /// An internal error occurred.
+    InternalError,
 }
 
 const ALIGNMENT: usize = 0x1000;
@@ -232,20 +234,23 @@ impl FixedSizeBlockAllocator {
     ///
     /// Returns [`FixedSizeBlockAllocatorError::OutOfMemory`] when the allocator doesn't have enough memory.
     /// Returns [`FixedSizeBlockAllocatorError::InvalidLayout`] when the layout provided is invalid.
+    /// Returns [`FixedSizeBlockAllocatorError::InternalError`] when an internal error occurs.
     pub fn alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         self.stats.pool_allocation_calls += 1;
 
         match list_index(&layout) {
             Some(index) => {
-                match self.list_heads[index].take() {
+                let head = self.list_heads.get_mut(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+                match head.take() {
                     Some(node) => {
-                        self.list_heads[index] = node.next.take();
+                        let head = self.list_heads.get_mut(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+                        *head = node.next.take();
                         let ptr: NonNull<u8> = NonNull::from(node).cast();
                         Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
                     }
                     None => {
                         // no block exists in list => allocate new block
-                        let block_size = BLOCK_SIZES[index];
+                        let block_size = *BLOCK_SIZES.get(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
                         // only works if all block sizes are a power of 2
                         let block_align = block_size;
                         let layout = match Layout::from_size_align(block_size, block_align) {
@@ -282,9 +287,11 @@ impl FixedSizeBlockAllocator {
         self.stats.pool_free_calls += 1;
         match list_index(&layout) {
             Some(index) => {
-                let new_node = BlockListNode { next: self.list_heads[index].take() };
+                let head = self.list_heads.get_mut(index).expect("list_index guarantees valid index");
+                let new_node = BlockListNode { next: head.take() };
+                let block_size = *BLOCK_SIZES.get(index).expect("list_index guarantees valid index");
                 // verify that block has size and alignment required for storing node
-                if size_of::<BlockListNode>() > BLOCK_SIZES[index] || align_of::<BlockListNode>() > BLOCK_SIZES[index] {
+                if size_of::<BlockListNode>() > block_size || align_of::<BlockListNode>() > block_size {
                     // Should never reach this statement under normal operation since BlockListNode is a single pointer and all block sizes are >= 8 bytes,
                     // Failure indicates corruption of the allocator's internal state.
                     panic!("FSB deallocating block too small to store BlockListNode.");
@@ -293,7 +300,8 @@ impl FixedSizeBlockAllocator {
                 // SAFETY: new_node_ptr points to memory returned by alloc for this layout.
                 unsafe {
                     new_node_ptr.write(new_node);
-                    self.list_heads[index] = Some(&mut *new_node_ptr);
+                    let head = self.list_heads.get_mut(index).expect("list_index guarantees valid index");
+                    *head = Some(&mut *new_node_ptr);
                 }
             }
             None => {

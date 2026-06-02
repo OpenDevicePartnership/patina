@@ -84,8 +84,10 @@ impl<'a> RuntimeFunction<'a> {
             // values), mapping each chunk to those two integers, filtering the
             // chunks that fall within the given RVA range, and constructing
             // `RuntimeFunction` instances from the results.
-            let runtime_function = pe.bytes
-                [exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize]
+            let runtime_function = pe
+                .bytes
+                .get(exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize)
+                .ok_or(Error::Malformed { module: pe.image_name, reason: "Exception table RVA out of bounds" })?
                 .chunks(core::mem::size_of::<u32>() * 2) // 2 u32
                 .map(|ele| {
                     let func_start_rva = ele.read32(0).expect("chunk is 8 bytes, offset 0 is valid");
@@ -101,9 +103,11 @@ impl<'a> RuntimeFunction<'a> {
                         // bytes, divided by 4.
                         0 => {
                             let xdata_rva = unwind_info as usize;
-                            let xdata_header = &pe.bytes[xdata_rva..xdata_rva + 4];
-                            let xdata_header = xdata_header.read32(0).expect("xdata header slice is 4 bytes");
-                            (xdata_header & 0x3FFFF) * 4
+                            pe.bytes
+                                .get(xdata_rva..xdata_rva + 4)
+                                .and_then(|h| h.read32(0).ok())
+                                .map(|h| (h & 0x3FFFF) * 4)
+                                .expect("valid unwind_info should point to a valid .xdata record with at least 4 bytes")
                         }
                         // Packed unwind data used with a single prolog and epilog
                         // at the beginning and end of the scope. The length of the

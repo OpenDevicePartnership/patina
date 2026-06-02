@@ -68,21 +68,31 @@ impl SectionExtractor for BrotliSectionExtractor {
             && guid_header.section_definition_guid == fw_fs::guid::BROTLI_SECTION
         {
             let data = section.try_content_as_slice()?;
-            let out_size = u64::from_le_bytes(data[0..8].try_into().unwrap());
-            let _scratch_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
+            let out_size = u64::from_le_bytes(
+                data.get(0..8)
+                    .ok_or(FirmwareFileSystemError::DataCorrupt)?
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
+            );
+            let _scratch_size = u64::from_le_bytes(
+                data.get(8..16)
+                    .ok_or(FirmwareFileSystemError::DataCorrupt)?
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
+            );
 
             let mut brotli_state = BrotliState::new(
                 HeapAllocator::<u8> { default_value: 0 },
                 HeapAllocator::<u32> { default_value: 0 },
                 HeapAllocator::<HuffmanCode> { default_value: Default::default() },
             );
-            let in_data = &data[16..];
+            let in_data = data.get(16..).ok_or(FirmwareFileSystemError::DataCorrupt)?;
             let mut out_data = vec![0u8; out_size as usize];
             let mut out_data_size = 0;
             let result = BrotliDecompressStream(
                 &mut in_data.len(),
                 &mut 0,
-                &data[16..],
+                in_data,
                 &mut out_data.len(),
                 &mut 0,
                 out_data.as_mut_slice(),

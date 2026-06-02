@@ -256,7 +256,7 @@ fn fetch_mm_record_chunk(
     }
 
     let actual_size = core::cmp::min(chunk_size, data_resp.boot_record_data().len());
-    Ok(data_resp.boot_record_data()[..actual_size].to_vec())
+    Ok(data_resp.boot_record_data().get(..actual_size).ok_or(MmPerformanceError::ParseError)?.to_vec())
 }
 
 /// Fetches all MM performance record data using chunked requests
@@ -311,14 +311,14 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
         let header = match PerformanceRecordHeader::try_from(self.bytes) {
             Ok(h) => h,
             Err(err) => {
-                self.bytes = &self.bytes[1..];
+                self.bytes = self.bytes.get(1..).unwrap_or(&[]);
                 return Some(Err(MmPerformanceError::RecordError(err.into())));
             }
         };
 
         let rec_len = header.length as usize;
         if rec_len < PerformanceRecordHeader::SIZE {
-            self.bytes = &self.bytes[PerformanceRecordHeader::SIZE..];
+            self.bytes = self.bytes.get(PerformanceRecordHeader::SIZE..).unwrap_or(&[]);
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
                 "Record reports too small length {} (< {})",
                 rec_len,
@@ -327,8 +327,6 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
         }
 
         if rec_len > self.bytes.len() {
-            // Consume all remaining bytes since the record claims to be longer
-            // than what we have available (truncated data)
             self.bytes = &[];
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
                 "Truncated record (needed {}, had {})",
@@ -337,7 +335,7 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
             ))));
         }
 
-        let data = &self.bytes[PerformanceRecordHeader::SIZE..rec_len];
+        let data = self.bytes.get(PerformanceRecordHeader::SIZE..rec_len)?;
         let record = GenericPerformanceRecord {
             record_type: header.record_type,
             length: header.length,
@@ -345,7 +343,7 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
             data,
         };
 
-        self.bytes = &self.bytes[rec_len..];
+        self.bytes = self.bytes.get(rec_len..).unwrap_or(&[]);
         Some(Ok(record))
     }
 }

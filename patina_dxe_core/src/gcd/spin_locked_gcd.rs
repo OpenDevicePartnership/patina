@@ -1167,11 +1167,11 @@ impl GCD {
         let mut write_idx = 0;
 
         for read_idx in 0..descriptors.len() {
-            let current = descriptors[read_idx];
+            let current = *descriptors.get(read_idx).expect("read_idx < descriptors.len()");
 
             // Try to merge with the previous descriptor
             if write_idx > 0 {
-                let prev = &mut descriptors[write_idx - 1];
+                let prev = descriptors.get_mut(write_idx - 1).expect("write_idx <= read_idx < descriptors.len()");
                 if prev.r#type == current.r#type
                     && prev.attribute == current.attribute
                     && prev.physical_start + uefi_pages_to_size!(prev.number_of_pages as usize) as u64
@@ -1199,7 +1199,7 @@ impl GCD {
             }
 
             if write_idx != read_idx {
-                descriptors[write_idx] = current;
+                *descriptors.get_mut(write_idx).expect("write_idx <= read_idx < descriptors.len()") = current;
             }
             write_idx += 1;
         }
@@ -1315,15 +1315,14 @@ impl GCD {
                     attribute: attributes,
                 };
 
-                ensure!(write_idx < buffer.len(), EfiError::BufferTooSmall);
-                buffer[write_idx] = new_descriptor;
+                *buffer.get_mut(write_idx).ok_or(EfiError::BufferTooSmall)? = new_descriptor;
                 write_idx += 1;
             }
             current = blocks.next_idx(idx);
         }
 
         // Merge consecutive descriptors with the same type and attributes
-        Ok(Self::merge_blocks_in_place(&mut buffer[..write_idx]))
+        Ok(Self::merge_blocks_in_place(buffer.get_mut(..write_idx).ok_or(EfiError::BufferTooSmall)?))
     }
 
     //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
@@ -1361,7 +1360,7 @@ impl Display for GCD {
                     writelncrlf!(
                         f,
                         "{}  {:016x?}-{:016x?} {:016x?} {:016x?} {:016x?} {:016x?}",
-                        GCD::GCD_MEMORY_TYPE_NAMES[mem_type_str_idx],
+                        GCD::GCD_MEMORY_TYPE_NAMES.get(mem_type_str_idx).expect("mem_type_str_idx bounded by min()"),
                         descriptor.base_address,
                         descriptor.base_address + descriptor.length - 1,
                         descriptor.capabilities,
@@ -1926,7 +1925,7 @@ impl Display for IoGCD {
                     writelncrlf!(
                         f,
                         "{}  {:016x?}-{:016x?}{}",
-                        IoGCD::GCD_IO_TYPE_NAMES[io_type_str_idx],
+                        IoGCD::GCD_IO_TYPE_NAMES.get(io_type_str_idx).expect("io_type_str_idx bounded by min()"),
                         descriptor.base_address,
                         descriptor.base_address + descriptor.length - 1,
                         { if descriptor.image_handle == INVALID_HANDLE { "" } else { "*" } }

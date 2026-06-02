@@ -427,7 +427,7 @@ impl<'a> Guid<'a> {
         let mut add_hex = |value: u32, digits: usize| {
             for i in (0..digits).rev() {
                 let nibble = ((value >> (i * 4)) & 0xF) as u8;
-                result[pos] = match nibble {
+                *result.get_mut(pos).expect("GUID hex output fits in EXPECTED_HEX_CHARS") = match nibble {
                     0..=9 => (b'0' + nibble) as char,
                     10..=15 => (b'A' + nibble - 10) as char,
                     _ => unreachable!(),
@@ -561,6 +561,7 @@ impl<'a> TryFrom<&'a str> for OwnedGuid {
 }
 
 /// Macro to generate the boilerplate for parsing ASCII hex strings (as byte slices) to their numeric values.
+#[allow(clippy::indexing_slicing)] // idx = $i + j where j < $count; callers ensure $i + $count <= array length.
 macro_rules! parse_hex {
     ($chars:expr, $i:expr, $count:expr, $ty:ty) => {{
         let mut value: $ty = 0;
@@ -574,6 +575,9 @@ macro_rules! parse_hex {
     }};
 }
 
+// All byte accesses are guarded by `while i < s.len()` and `char_count < EXPECTED_HEX_CHARS`.
+// .get() cannot be used here because it is not const-stable.
+#[allow(clippy::indexing_slicing)]
 const fn guid_from_str(s: &str) -> core::result::Result<r_efi::efi::Guid, GuidError> {
     let mut chars = [' '; EXPECTED_HEX_CHARS];
     let mut char_count = 0;

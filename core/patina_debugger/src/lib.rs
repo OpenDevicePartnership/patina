@@ -331,7 +331,7 @@ pub fn add_monitor_command<F>(cmd: &'static str, _description: Option<&'static s
 where
     F: Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync + 'static,
 {
-    if let Some(_) = DEBUGGER.get() {
+    if DEBUGGER.get().is_some() {
         log::warn!("Dynamic monitor commands require the 'alloc' feature. Will not add command: {cmd}");
     }
 }

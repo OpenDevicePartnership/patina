@@ -80,7 +80,10 @@ fn uuid_from_slice(slice: Option<&[u8]>) -> Option<Uuid> {
 impl<'a> From<&'a [u8]> for Opcode {
     /// Creates an Opcode from a byte slice.
     fn from(bytes: &'a [u8]) -> Self {
-        match bytes[0] {
+        let Some(&first_byte) = bytes.first() else {
+            return Opcode::Unknown;
+        };
+        match first_byte {
             0x00 => match uuid_from_slice(bytes.get(1..GUID_SIZE + 1)) {
                 Some(uuid) => Opcode::Before(uuid),
                 None => Opcode::Malformed { opcode: 0x00, len: bytes.len() - 1 },
@@ -171,7 +174,7 @@ impl Depex {
                         return false;
                     }
 
-                    if self.expression.len() == 2 && self.expression[1] != Opcode::End {
+                    if self.expression.len() == 2 && self.expression.get(1) != Some(&Opcode::End) {
                         debug_assert!(
                             false,
                             "Invalid BEFORE or AFTER with additional opcodes {:#x?}.",
@@ -321,7 +324,7 @@ impl Iterator for DepexParser {
             return None;
         }
 
-        let opcode = Opcode::from(&self.expression[self.index..]);
+        let opcode = Opcode::from(self.expression.get(self.index..)?);
         self.index += opcode.byte_size();
         Some(opcode)
     }

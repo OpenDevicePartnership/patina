@@ -54,12 +54,18 @@ impl<'a> RuntimeFunction<'a> {
 
     /// Parses the unwind info referenced by this runtime function entry.
     pub fn get_unwind_info(&self) -> StResult<UnwindInfo<'_>> {
-        UnwindInfo::parse(&self.image_base[self.unwind_info as usize..], self.image_name).map_err(|_| {
-            Error::UnwindInfoNotFound {
+        UnwindInfo::parse(
+            self.image_base.get(self.unwind_info as usize..).ok_or(Error::UnwindInfoNotFound {
                 module: self.image_name,
                 image_base: self.image_base.as_ptr() as u64,
                 unwind_info: self.unwind_info,
-            }
+            })?,
+            self.image_name,
+        )
+        .map_err(|_| Error::UnwindInfoNotFound {
+            module: self.image_name,
+            image_base: self.image_base.as_ptr() as u64,
+            unwind_info: self.unwind_info,
         })
     }
 
@@ -85,8 +91,10 @@ impl<'a> RuntimeFunction<'a> {
         // by breaking the section into 12-byte chunks, mapping each chunk to
         // three u32 values, filtering the chunks that fall within the given RVA
         // range, and constructing `RuntimeFunction` instances from the results.
-        let runtime_function = pe.bytes
-            [exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize]
+        let runtime_function = pe
+            .bytes
+            .get(exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize)
+            .ok_or(Error::Malformed { module: pe.image_name, reason: "Exception table RVA out of bounds" })?
             .chunks(core::mem::size_of::<u32>() * 3) // 3 u32
             .map(|ele| {
                 (

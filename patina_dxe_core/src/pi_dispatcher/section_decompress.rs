@@ -42,20 +42,23 @@ impl<E: SectionExtractor> CoreExtractor<E> {
             _ => return Err(FirmwareFileSystemError::Unsupported),
         };
 
-        //sanity check the src data
-        if src.len() < 8 {
-            Err(FirmwareFileSystemError::DataCorrupt)?;
-        }
-
-        let compressed_size =
-            u32::from_le_bytes(src[0..4].try_into().map_err(|_| FirmwareFileSystemError::DataCorrupt)?) as usize;
+        let compressed_size = u32::from_le_bytes(
+            src.get(0..4)
+                .ok_or(FirmwareFileSystemError::DataCorrupt)?
+                .try_into()
+                .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
+        ) as usize;
         if compressed_size > src.len() {
             Err(FirmwareFileSystemError::DataCorrupt)?;
         }
 
         // allocate a buffer to hold the decompressed data
-        let decompressed_size =
-            u32::from_le_bytes(src[4..8].try_into().map_err(|_| FirmwareFileSystemError::DataCorrupt)?) as usize;
+        let decompressed_size = u32::from_le_bytes(
+            src.get(4..8)
+                .ok_or(FirmwareFileSystemError::DataCorrupt)?
+                .try_into()
+                .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
+        ) as usize;
         let mut decompressed_buffer = vec![0u8; decompressed_size];
 
         // execute decompress

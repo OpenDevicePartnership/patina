@@ -208,7 +208,11 @@ impl<T: FromHob + 'static> Deref for Hob<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.value[0].downcast_ref::<T>().expect("Failed to downcast Hob value")
+        self.value
+            .first()
+            .expect("Hob must have at least one value")
+            .downcast_ref::<T>()
+            .expect("Failed to downcast Hob value")
     }
 }
 

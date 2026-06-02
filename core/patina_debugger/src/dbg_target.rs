@@ -260,10 +260,10 @@ impl ext::target_description_xml_override::TargetDescriptionXmlOverride for Pati
 
         let start = offset;
         let end = (start + length).min(bytes.len());
-        let copy_bytes: &[u8] = &bytes[start..end];
+        let copy_bytes = bytes.get(start..end).ok_or(())?;
 
         let copy_len = copy_bytes.len().min(buf.len());
-        buf[..copy_len].copy_from_slice(&copy_bytes[..copy_len]);
+        buf.get_mut(..copy_len).ok_or(())?.copy_from_slice(copy_bytes.get(..copy_len).ok_or(())?);
         Ok(copy_len)
     }
 }

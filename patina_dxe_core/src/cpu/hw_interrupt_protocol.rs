@@ -411,7 +411,10 @@ impl InterruptHandler for HwInterruptProtocolHandler {
             return;
         }
 
-        let rw_handler = self.handlers[raw_value as usize]
+        let rw_handler = self
+            .handlers
+            .get(raw_value as usize)
+            .unwrap_or_else(|| panic!("Invalid interrupt source index 0x{:x}", raw_value))
             .try_read()
             .unwrap_or_else(|| panic!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
 
@@ -440,7 +443,7 @@ impl HwInterruptProtocolHandler {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        if let Some(rw_handler) = self.handlers[interrupt_source].try_read() {
+        if let Some(rw_handler) = self.handlers.get(interrupt_source).expect("bounds checked above").try_read() {
             // Use read access to test the state of the handler
             if handler.is_none() && (*rw_handler).is_none() {
                 return efi::Status::INVALID_PARAMETER;
@@ -458,14 +461,16 @@ impl HwInterruptProtocolHandler {
             }
 
             // Interrupt disabled, now remove the handler
-            if let Some(mut rw_handler) = self.handlers[interrupt_source].try_write() {
+            if let Some(mut rw_handler) = self.handlers.get(interrupt_source).expect("bounds checked above").try_write()
+            {
                 *rw_handler = None;
             } else {
                 return efi::Status::DEVICE_ERROR;
             }
         } else {
             // Register the interrupt handler
-            if let Some(mut rw_handler) = self.handlers[interrupt_source].try_write() {
+            if let Some(mut rw_handler) = self.handlers.get(interrupt_source).expect("bounds checked above").try_write()
+            {
                 *rw_handler = handler;
             } else {
                 return efi::Status::DEVICE_ERROR;

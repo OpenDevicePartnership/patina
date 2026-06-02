@@ -71,7 +71,7 @@ impl<'a> Parser<'a> {
 
             let msg = entry.get_message();
             out.write(msg).map_err(|_| "Failed to write to output.")?;
-            carry_entry = if !msg.is_empty() && msg[msg.len() - 1] == b'\n' { None } else { Some(entry) };
+            carry_entry = if !msg.is_empty() && msg.last() == Some(&b'\n') { None } else { Some(entry) };
         }
 
         Ok(())

@@ -225,7 +225,7 @@ impl AArch64InterruptInitializer {
             let redistributor = self.gic_v3.redistributor(self.cpu_r_idx).expect("Invalid redistributor");
             let mut context = GicRedistributorContext::<{ Self::MAX_REDISTRIBUTOR_PPI }>::default();
             redistributor.save(&mut context).map_err(|_| EfiError::DeviceError)?;
-            Ok(context.isenabler()[index] & bit != 0)
+            Ok(context.isenabler().get(index).ok_or(EfiError::InvalidParameter)? & bit != 0)
         } else {
             // arm-gic does not presently provide a way to directly read the interrupt state for a given interrupt.
             // so save the current distributor context and read the ISENABLER from there.
@@ -233,7 +233,7 @@ impl AArch64InterruptInitializer {
             let mut context =
                 GicDistributorContext::<{ Self::MAX_DISTRIBUTOR_SPI }, { Self::MAX_DISTRIBUTOR_ESPI }>::default();
             distributor.save(&mut context).map_err(|_| EfiError::DeviceError)?;
-            Ok(context.isenabler()[index] & bit != 0)
+            Ok(context.isenabler().get(index).ok_or(EfiError::InvalidParameter)? & bit != 0)
         }
     }
 
@@ -257,7 +257,7 @@ impl AArch64InterruptInitializer {
             let redistributor = self.gic_v3.redistributor(self.cpu_r_idx).expect("Invalid redistributor");
             let mut context = GicRedistributorContext::<{ Self::MAX_REDISTRIBUTOR_PPI }>::default();
             redistributor.save(&mut context).map_err(|_| EfiError::DeviceError)?;
-            context.icfgr()[index] & bit != 0
+            context.icfgr().get(index).ok_or(EfiError::InvalidParameter)? & bit != 0
         } else {
             // arm-gic does not presently provide a way to directly read the interrupt state for a given interrupt.
             // so save the current distributor context and read the ICFGR from there.
@@ -265,7 +265,7 @@ impl AArch64InterruptInitializer {
             let mut context =
                 GicDistributorContext::<{ Self::MAX_DISTRIBUTOR_SPI }, { Self::MAX_DISTRIBUTOR_ESPI }>::default();
             distributor.save(&mut context).map_err(|_| EfiError::DeviceError)?;
-            context.icfgr()[index] & bit != 0
+            context.icfgr().get(index).ok_or(EfiError::InvalidParameter)? & bit != 0
         };
 
         Ok(if level { Trigger::Level } else { Trigger::Edge })

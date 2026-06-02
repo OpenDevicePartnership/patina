@@ -674,8 +674,12 @@ impl DispatcherContext {
                             .find(|x| x.section_type() == Some(ffs::section::Type::UserInterface))
                             .and_then(|x| x.try_content_as_slice().ok())
                             .map(|data| {
-                                let chars: Vec<u16> =
-                                    data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                                let chars: Vec<u16> = data
+                                    .chunks_exact(2)
+                                    .map(|c| {
+                                        u16::from_le_bytes(c.try_into().expect("chunks_exact(2) guarantees length"))
+                                    })
+                                    .collect();
                                 String::from_utf16_lossy(&chars).trim_end_matches('\0').to_string()
                             });
 

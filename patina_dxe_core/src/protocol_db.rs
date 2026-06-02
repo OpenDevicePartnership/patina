@@ -510,7 +510,7 @@ impl ProtocolDb {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
-        Ok(self.handles[&key].keys().map(|&OrdGuid(guid)| guid).collect())
+        Ok(self.handles.get(&key).ok_or(EfiError::InvalidParameter)?.keys().map(|&OrdGuid(guid)| guid).collect())
     }
 
     fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
@@ -550,7 +550,8 @@ impl ProtocolDb {
     fn next_handle_for_registration(&mut self, registration: *mut c_void) -> Option<efi::Handle> {
         for (_, v) in self.notifications.iter_mut() {
             if let Some(index) = v.iter().position(|notify| notify.registration == registration)
-                && let Some(handle) = v[index].fresh_handles.pop_first()
+                && let Some(entry) = v.get_mut(index)
+                && let Some(handle) = entry.fresh_handles.pop_first()
             {
                 return Some(handle);
             }
@@ -563,7 +564,9 @@ impl ProtocolDb {
             return Vec::new();
         }
 
-        let handles = &self.handles[&(parent_handle as usize)];
+        let Some(handles) = self.handles.get(&(parent_handle as usize)) else {
+            return Vec::new();
+        };
         let mut child_handles: Vec<efi::Handle> = handles
             .iter()
             .flat_map(|(_, instance)| {

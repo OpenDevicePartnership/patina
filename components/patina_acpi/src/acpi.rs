@@ -510,7 +510,10 @@ where
             // Next entry goes after header + existing address entries.
             let entry_offset = ACPI_HEADER_LEN + xsdt_data.n_entries * ACPI_XSDT_ENTRY_SIZE;
             // Fill in the bytes of the new address entry.
-            xsdt_data.slice[entry_offset..entry_offset + ACPI_XSDT_ENTRY_SIZE]
+            xsdt_data
+                .slice
+                .get_mut(entry_offset..entry_offset + ACPI_XSDT_ENTRY_SIZE)
+                .ok_or(AcpiError::XsdtOverflow)?
                 .copy_from_slice(&new_table_addr.to_le_bytes());
 
             // Increase XSDT length by one entry.
@@ -661,6 +664,9 @@ where
                 let start_idx = ACPI_HEADER_LEN + idx * ACPI_XSDT_ENTRY_SIZE; // Find where the target entry starts.
                 let end_idx = ACPI_HEADER_LEN + xsdt_data.n_entries * ACPI_XSDT_ENTRY_SIZE; // Find where the XSDT ends.
 
+                // Validate the full range before mutating.
+                let _ = xsdt_data.slice.get(start_idx..end_idx).ok_or(AcpiError::XsdtOverflow)?;
+
                 // Shift all entries after the one being removed to the left.
                 // [.. before .. | target | <- .. after .. ]
                 // becomes [.. before .. | .. after.. ]
@@ -669,10 +675,13 @@ where
                 // Decrement entries.
                 xsdt_data.n_entries -= 1;
 
-                // Zero out the end of the XSDT.
-                // (After removing and shifting all entries, there is one extra slot at the end.)
-                // This is not technically necessary for correctness but is good practice for consistency.
-                xsdt_data.slice[end_idx - ACPI_XSDT_ENTRY_SIZE..end_idx].iter_mut().for_each(|b| *b = 0);
+                // Zero out the trailing slot freed by the shift.
+                xsdt_data
+                    .slice
+                    .get_mut(end_idx - ACPI_XSDT_ENTRY_SIZE..end_idx)
+                    .ok_or(AcpiError::XsdtOverflow)?
+                    .iter_mut()
+                    .for_each(|b| *b = 0);
 
                 // Decrease XSDT length.
                 xsdt_data.set_length(xsdt_data.get_length()? - ACPI_XSDT_ENTRY_SIZE as u32);
@@ -693,11 +702,12 @@ where
     pub(crate) fn checksum_common_tables(&self) {
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.lock() {
             // Zero the old checksum byte.
-            xsdt_data.slice[ACPI_CHECKSUM_OFFSET] = 0;
+            *xsdt_data.slice.get_mut(ACPI_CHECKSUM_OFFSET).expect("XSDT has a standard header") = 0;
             // Sum all bytes (wrapping since the checksum is a u8 between 0-255).
             let sum_of_bytes: u8 = xsdt_data.slice.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
             // Write new checksum: equivalent to -1 * `sum_of_bytes` (so the sum is zero modulo 256).
-            xsdt_data.slice[ACPI_CHECKSUM_OFFSET] = sum_of_bytes.wrapping_neg();
+            *xsdt_data.slice.get_mut(ACPI_CHECKSUM_OFFSET).expect("XSDT has a standard header") =
+                sum_of_bytes.wrapping_neg();
         }
 
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
@@ -713,16 +723,22 @@ where
         };
 
         // Zero out old checksums before recalculating.
-        rsdp_bytes[RSDP_CHECKSUM_OFFSET] = 0;
-        rsdp_bytes[RSDP_EXTENDED_CHECKSUM_OFFSET] = 0;
+        *rsdp_bytes.get_mut(RSDP_CHECKSUM_OFFSET).expect("RSDP is large enough for checksum offset") = 0;
+        *rsdp_bytes
+            .get_mut(RSDP_EXTENDED_CHECKSUM_OFFSET)
+            .expect("RSDP is large enough for extended checksum offset") = 0;
 
         // Calculate the `checksum` field (first 20 bytes).
-        let sum20: u8 = rsdp_bytes[..20].iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
-        rsdp_bytes[RSDP_CHECKSUM_OFFSET] = sum20.wrapping_neg();
+        let sum20: u8 =
+            rsdp_bytes.get(..20).expect("RSDP is at least 20 bytes").iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        *rsdp_bytes.get_mut(RSDP_CHECKSUM_OFFSET).expect("RSDP is large enough for checksum offset") =
+            sum20.wrapping_neg();
 
         // Calculate the `extended_checksum` (checksums over all bytes).
         let sum_of_bytes: u8 = rsdp_bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
-        rsdp_bytes[RSDP_EXTENDED_CHECKSUM_OFFSET] = sum_of_bytes.wrapping_neg();
+        *rsdp_bytes
+            .get_mut(RSDP_EXTENDED_CHECKSUM_OFFSET)
+            .expect("RSDP is large enough for extended checksum offset") = sum_of_bytes.wrapping_neg();
     }
 
     /// Publishes ACPI tables after installation.

@@ -139,7 +139,12 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for UnknownDevicePathNode<'a> {
         if header.length > from.len() {
             return Err(scroll::Error::TooBig { size: header.length, len: from.len() });
         }
-        let this = UnknownDevicePathNode { header, data: &from[offset..header.length] };
+        let this = UnknownDevicePathNode {
+            header,
+            data: from
+                .get(offset..header.length)
+                .ok_or(scroll::Error::TooBig { size: header.length, len: from.len() })?,
+        };
         Ok((this, header.length))
     }
 }

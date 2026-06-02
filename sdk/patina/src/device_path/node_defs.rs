@@ -318,6 +318,8 @@ impl Acpi {
 
     /// Converts and compresses the 7-character text argument into its corresponding 4-byte numeric EISA ID encoding.
     /// <https://uefi.org/specs/ACPI/6.5_A/19_ASL_Reference.html#asl-macros>
+    // bytes[] indexing is safe: EISA IDs are always exactly 7 ASCII characters.
+    #[allow(clippy::indexing_slicing)]
     pub const fn eisa_id(hid: &str) -> u32 {
         let bytes = hid.as_bytes();
 
@@ -382,11 +384,16 @@ impl TryFromCtx<'_, scroll::Endian> for Bios {
         let mut offset = 0;
         let device_type = buffer.gread_with::<u16>(&mut offset, ctx)?;
         let status_flag = buffer.gread_with::<u16>(&mut offset, ctx)?;
-        let end_str_idx = &buffer[offset..]
+        let remaining =
+            buffer.get(offset..).ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?;
+        let end_str_idx = remaining
             .iter()
             .position(|c| c == &0)
             .ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?;
-        let description_str = String::from_utf8_lossy(&buffer[offset..offset + end_str_idx]).to_string();
+        let description_str = String::from_utf8_lossy(
+            remaining.get(..end_str_idx).ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?,
+        )
+        .to_string();
         Ok((Self { device_type, status_flag, description_str }, offset))
     }
 }

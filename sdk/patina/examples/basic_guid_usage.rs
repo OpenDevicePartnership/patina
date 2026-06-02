@@ -212,9 +212,8 @@ fn demonstrate_practical_usage() {
 
     for config_line in config_guid_strings {
         let parts: Vec<&str> = config_line.split(": ").collect();
-        if parts.len() == 2 {
-            let name = parts[0];
-            match OwnedGuid::try_from_string(parts[1]) {
+        if let (Some(&name), Some(&guid_str)) = (parts.first(), parts.get(1)) {
+            match OwnedGuid::try_from_string(guid_str) {
                 Ok(guid) => println!("    [CONFIG] Parsed '{}' -> {}", name, guid),
                 Err(e) => println!("    [ERROR] Failed to parse '{}': {}", name, e),
             }

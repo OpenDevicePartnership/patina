@@ -245,8 +245,9 @@ impl AcpiXsdtMetadata {
     pub(crate) fn set_length(&mut self, new_len: u32) {
         // XSDT always starts with header.
         let length_offset = mem::offset_of!(AcpiTableHeader, length);
-        // Write the new length into the correct offset in the header.
-        self.slice[length_offset..length_offset + mem::size_of::<u32>()] // Length is a u32
+        self.slice
+            .get_mut(length_offset..length_offset + mem::size_of::<u32>())
+            .expect("slice contains a full ACPI header")
             .copy_from_slice(&new_len.to_le_bytes());
     }
 
@@ -254,21 +255,24 @@ impl AcpiXsdtMetadata {
     pub(crate) fn set_oem_id(&mut self, new_id: [u8; 6]) {
         let offset = mem::offset_of!(AcpiTableHeader, oem_id);
         let end = offset + mem::size_of::<[u8; 6]>();
-        self.slice[offset..end].copy_from_slice(&new_id);
+        self.slice.get_mut(offset..end).expect("slice contains a full ACPI header").copy_from_slice(&new_id);
     }
 
     /// Set the 8-byte OEM Table ID (bytes 16..24 of the header).
     pub(crate) fn set_oem_table_id(&mut self, new_table_id: [u8; 8]) {
         let offset = mem::offset_of!(AcpiTableHeader, oem_table_id);
         let end = offset + mem::size_of::<[u8; 8]>();
-        self.slice[offset..end].copy_from_slice(&new_table_id);
+        self.slice.get_mut(offset..end).expect("slice contains a full ACPI header").copy_from_slice(&new_table_id);
     }
 
     /// Set the 4-byte OEM Revision (bytes 24..28 of the header).
     pub(crate) fn set_oem_revision(&mut self, new_rev: u32) {
         let offset = mem::offset_of!(AcpiTableHeader, oem_revision);
         let end = offset + mem::size_of::<u32>();
-        self.slice[offset..end].copy_from_slice(&new_rev.to_le_bytes());
+        self.slice
+            .get_mut(offset..end)
+            .expect("slice contains a full ACPI header")
+            .copy_from_slice(&new_rev.to_le_bytes());
     }
 }
 
@@ -561,19 +565,16 @@ impl AcpiTable {
     pub(crate) fn update_checksum(&mut self) -> Result<(), AcpiError> {
         // SAFETY: The construction of `AcpiTable` maintains that `self.length` is the size in memory.
         let bytes = unsafe { self.as_bytes_mut() };
-        let len = bytes.len();
 
-        // Set the checksum field (byte at the specified `offset`) to zero before recalculation.
-        if len > ACPI_CHECKSUM_OFFSET {
-            bytes[ACPI_CHECKSUM_OFFSET] = 0;
+        // Set the checksum field to zero before recalculation.
+        let checksum_byte = bytes.get_mut(ACPI_CHECKSUM_OFFSET).ok_or(AcpiError::InvalidChecksumOffset)?;
+        *checksum_byte = 0;
 
-            // Recalculate checksum.
-            let sum: u8 = bytes.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));
-            bytes[ACPI_CHECKSUM_OFFSET] = (0u8).wrapping_sub(sum);
-            Ok(())
-        } else {
-            Err(AcpiError::InvalidChecksumOffset)
-        }
+        // Recalculate checksum.
+        let sum: u8 = bytes.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));
+        let checksum_byte = bytes.get_mut(ACPI_CHECKSUM_OFFSET).ok_or(AcpiError::InvalidChecksumOffset)?;
+        *checksum_byte = (0u8).wrapping_sub(sum);
+        Ok(())
     }
 
     /// Returns a reference to the entire AcpiTable.
@@ -609,7 +610,6 @@ impl AcpiTable {
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
     use patina::component::service::memory::StdMemoryManager;
 
     use super::*;

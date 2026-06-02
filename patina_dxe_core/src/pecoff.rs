@@ -204,7 +204,7 @@ impl UefiPeInfo {
     /// Parses a bytes buffer containing the filename.
     fn read_filename(bytes: &[u8]) -> error::Result<Option<String>> {
         let filename_end = bytes.iter().position(|&c| c == b'\0').unwrap_or(bytes.len());
-        let mut filename = String::from_utf8_lossy(&bytes[0..filename_end]).into_owned();
+        let mut filename = String::from_utf8_lossy(bytes.get(..filename_end).unwrap_or(bytes)).into_owned();
 
         if filename.ends_with(".pdb") || filename.ends_with(".dll") {
             filename.truncate(filename.len() - 4);
@@ -334,10 +334,14 @@ pub fn relocate_image(
                     let mut value = image.pread_with::<u64>(fixup, LE)?;
                     image.pwrite_with(value.wrapping_add(adjustment), fixup, LE)?;
 
-                    if !prev_reloc_blocks.is_empty()
-                        && prev_reloc_blocks[block_idx].relocations[reloc_idx].value != value
-                    {
-                        continue;
+                    if !prev_reloc_blocks.is_empty() {
+                        let prev_block =
+                            prev_reloc_blocks.get(block_idx).ok_or(error::Error::RelocationBlockLengthMismatch)?;
+                        let prev_reloc =
+                            prev_block.relocations.get(reloc_idx).ok_or(error::Error::RelocationBlockLengthMismatch)?;
+                        if prev_reloc.value != value {
+                            continue;
+                        }
                     }
 
                     value = value.wrapping_add(adjustment);
