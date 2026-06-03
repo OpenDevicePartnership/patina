@@ -11,7 +11,7 @@ use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 
 use crate::interrupts::InterruptManager;
 
-/// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
+/// Null implementation of the EfiSystemContextFactory and EfiExceptionInfoDump traits.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct ExceptionContextStub;
@@ -23,7 +23,7 @@ impl super::EfiSystemContextFactory for ExceptionContextStub {
     }
 }
 
-impl super::EfiExceptionStackTrace for ExceptionContextStub {
+impl super::EfiExceptionInfoDump for ExceptionContextStub {
     fn dump_stack_trace(&self) {}
     fn dump_system_context_registers(&self) {}
 }

@@ -28,7 +28,7 @@ impl super::EfiSystemContextFactory for ExceptionContextAArch64 {
     }
 }
 
-impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
+impl super::EfiExceptionInfoDump for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
         let stack_frame = StackFrame { pc: self.elr, sp: self.sp, fp: self.fp };
         // SAFETY: Called during exception handling with CPU context registers.

@@ -159,7 +159,7 @@ pub(crate) trait EfiSystemContextFactory {
 }
 
 /// Trait for dumping stack trace for architecture specific context.
-pub(crate) trait EfiExceptionStackTrace {
+pub(crate) trait EfiExceptionInfoDump {
     /// Dump the stack trace for architecture specific context.
     fn dump_stack_trace(&self);
 

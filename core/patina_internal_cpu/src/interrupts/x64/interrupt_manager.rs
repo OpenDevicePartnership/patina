@@ -18,7 +18,7 @@ use patina_mtrr::Mtrr;
 use patina_paging::PageTable;
 use patina_stacktrace::{StackFrame, StackTrace};
 
-use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x64::ExceptionContextX64};
+use crate::interrupts::{EfiExceptionInfoDump, HandlerType, InterruptManager, x64::ExceptionContextX64};
 
 /// X64 Implementation of the InterruptManager.
 ///

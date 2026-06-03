@@ -15,7 +15,7 @@ use patina::{
 use patina_paging::PageTable;
 
 use crate::interrupts::{
-    EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
+    EfiExceptionInfoDump, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
     disable_interrupts, enable_interrupts,
 };
 

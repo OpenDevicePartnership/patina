@@ -11,7 +11,7 @@
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiExceptionType};
 use spin::rwlock::RwLock;
 
-use crate::interrupts::EfiExceptionStackTrace;
+use crate::interrupts::EfiExceptionInfoDump;
 
 use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerType};
 
