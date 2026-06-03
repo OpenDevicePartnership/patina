@@ -282,6 +282,27 @@ impl Depex {
         false
     }
 
+    /// Report protocol present status in the DEPEX expression.
+    pub fn report_protocol_present(&self) {
+        for opcode in self.expression.iter() {
+            match opcode {
+                Opcode::Push(guid, present) => {
+                    log::warn!(
+                        target: "patina_dxe_core",
+                        "  {guid:?} : {present}"
+                    );
+                }
+                Opcode::End => {
+                    log::warn!(
+                        target: "patina_dxe_core",
+                        "  {opcode:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// If the depex expression is an associated dependency, it returns the associated dependency.
     pub fn is_associated(&self) -> Option<AssociatedDependency> {
         match self.expression.first() {
