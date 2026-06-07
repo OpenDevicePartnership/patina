@@ -62,7 +62,7 @@ In addition, active examples are available in the
 - [QEMU Q35](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/q35_dxe_core.rs)
   - Intel platform with serial debug over UART 16550 with I/O port access
 
-- [QEMU SBSA](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/sbsa_dxe_core.rs)
+- [QEMU ArmVirt](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/arm_virt_dxe_core.rs)
   - AArch64 platform with serial debug over UART PL011 with MMIO access
 
 ## Feature flags
