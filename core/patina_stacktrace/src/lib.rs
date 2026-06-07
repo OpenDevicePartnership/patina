@@ -125,15 +125,15 @@
 //!    ///     # Child-SP              Return Address         Call Site
 //!    ///     0 0000010078885D50      000001007AB12770       Shell+66ED0
 //!    ///     1 0000010078885E90      0000010007B98DCC       Shell+6770
-//!    ///     2 0000010078885FF0      0000010007B98E54       qemu_sbsa_dxe_core+18DCC
-//!    ///     3 0000010007FFF4C0      0000010007B98F48       qemu_sbsa_dxe_core+18E54
-//!    ///     4 0000010007FFF800      000001007AF54D08       qemu_sbsa_dxe_core+18F48
+//!    ///     2 0000010078885FF0      0000010007B98E54       qemu_armvirt_dxe_core+18DCC
+//!    ///     3 0000010007FFF4C0      0000010007B98F48       qemu_armvirt_dxe_core+18E54
+//!    ///     4 0000010007FFF800      000001007AF54D08       qemu_armvirt_dxe_core+18F48
 //!    ///     5 0000010007FFFA90      0000010007BAC388       BdsDxe+8D08
-//!    ///     6 0000010007FFFF80      0000000010008878       qemu_sbsa_dxe_core+2C388 --.
-//!    ///                                                                               |
-//!    ///     0:000> u qemu_sbsa_dxe_core!patina_dxe_core::call_bds                     |
-//!    ///     00000000`1002c1b0 f81f0ff3 str x19,[sp,#-0x10]!                           |
-//!    ///     00000000`1002c1b4 f90007fe str lr,[sp,#8]     <---------------------------'
+//!    ///     6 0000010007FFFF80      0000000010008878       qemu_armvirt_dxe_core+2C388 --.
+//!    ///                                                                                  |
+//!    ///     0:000> u qemu_armvirt_dxe_core!patina_dxe_core::call_bds                     |
+//!    ///     00000000`1002c1b0 f81f0ff3 str x19,[sp,#-0x10]!                              |
+//!    ///     00000000`1002c1b4 f90007fe str lr,[sp,#8]     <------------------------------'
 //!    ///     00000000`1002c1b8 d10183ff sub sp,sp,#0x60
 //!    ///
 //!    ///     The FP is not saved, so the return address in frame #6 is garbage.

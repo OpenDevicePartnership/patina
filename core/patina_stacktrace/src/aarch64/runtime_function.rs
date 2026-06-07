@@ -228,12 +228,12 @@ impl<'a> RuntimeFunction<'a> {
                 // and retry the lookup. This ensures that we correctly resolve
                 // unwind data even when the return address falls inside such
                 // synthetic code.
-                // qemu_sbsa_dxe_core!patina_samples::component::hello_world::func3:
+                // qemu_armvirt_dxe_core!patina_samples::component::hello_world::func3:
                 // 00000100`0006aebc f81f0ffe str         lr,[sp,#-0x10]!
                 // 00000100`0006aec0 d100c3ff sub         sp,sp,#0x30
                 // ....
-                // 00000100`0006aeec 97fffb26 bl          qemu_sbsa_dxe_core!core::panicking::panic_fmt (00000100`00069b84)
-                // qemu_sbsa_dxe_core!weak.default._ZN118_$LT$$u5b$core..mem..maybe_uninit..MaybeUninit$LT$T$GT$$u5d$$u20$as$u20$core..array..iter..iter_inner..PartialDrop$GT$12partial_drop17hc3d15e0976616072E:
+                // 00000100`0006aeec 97fffb26 bl          qemu_armvirt_dxe_core!core::panicking::panic_fmt (00000100`00069b84)
+                // qemu_armvirt_dxe_core!weak.default._ZN118_$LT$$u5b$core..mem..maybe_uninit..MaybeUninit$LT$T$GT$$u5d$$u20$as$u20$core..array..iter..iter_inner..PartialDrop$GT$12partial_drop17hc3d15e0976616072E:
                 // 00000100`0006aef0 d37cedf0 lsl         xip0,x15,#4
                 // 00000100`0006aef4 910003f1 mov         xip1,sp
                 // 00000100`0006aef8 d1400631 sub         xip1,xip1,#1,lsl #0xC
