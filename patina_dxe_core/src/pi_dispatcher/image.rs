@@ -712,8 +712,10 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
 
         if image.is_none() && file_path.is_none() {
-            log::error!("failed to load image: image is none or device path is null.");
-            return Err(EfiError::InvalidParameter.into());
+            log::error!("failed to load image: both source buffer and device path are null.");
+            // DevicePath is OPTIONAL (UEFI 2.11 §7.4). With neither a source buffer nor a
+            // device path there is nothing to load, so LoadImage returns EFI_NOT_FOUND.
+            return Err(EfiError::NotFound.into());
         }
 
         ImageData::validate_parent(parent_image_handle)?;
@@ -1679,15 +1681,17 @@ mod tests {
     }
 
     #[test]
-    fn load_image_invalid_parameter() {
+    fn load_image_should_fail_with_no_source_or_path() {
         with_locked_state(|| {
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
             PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
+            // Per the UEFI Specification (EFI_BOOT_SERVICES.LoadImage()), when both
+            // SourceBuffer and DevicePath are NULL, EFI_NOT_FOUND must be returned.
             let result = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, None);
 
-            assert!(matches!(result, Err(ImageStatus::LoadError(EfiError::InvalidParameter))));
+            assert!(matches!(result, Err(ImageStatus::LoadError(EfiError::NotFound))));
         });
     }
 

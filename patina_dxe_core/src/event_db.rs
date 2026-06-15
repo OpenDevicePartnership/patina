@@ -326,6 +326,10 @@ impl EventDb {
             return Err(EfiError::OutOfResources);
         }
 
+        // Validate the event type before the runtime/non-runtime split (only the
+        // non-runtime path validates it via Event::new).
+        EventType::try_from(event_type)?;
+
         let runtime =
             (event_type & efi::EVT_RUNTIME) != 0 || event_group == Some(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE);
 
@@ -940,6 +944,36 @@ mod tests {
             let result = SPIN_LOCKED_EVENT_DB.create_event(
                 efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
                 efi::TPL_HIGH_LEVEL + 1,
+                Some(test_notify_function),
+                None,
+                None,
+            );
+            assert_eq!(result, Err(EfiError::InvalidParameter));
+        });
+    }
+
+    #[test]
+    fn create_event_with_invalid_runtime_type_combinations_should_fail() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+
+            // Illegal EVT_RUNTIME combinations must be rejected with EFI_INVALID_PARAMETER,
+            // not routed to the runtime path.
+
+            // EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE | EVT_NOTIFY_WAIT (0x60000302)
+            let result = SPIN_LOCKED_EVENT_DB.create_event(
+                efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE | efi::EVT_NOTIFY_WAIT,
+                efi::TPL_NOTIFY,
+                Some(test_notify_function),
+                None,
+                None,
+            );
+            assert_eq!(result, Err(EfiError::InvalidParameter));
+
+            // EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE | EVT_TIMER (0xE0000202)
+            let result = SPIN_LOCKED_EVENT_DB.create_event(
+                efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE | efi::EVT_TIMER,
+                efi::TPL_NOTIFY,
                 Some(test_notify_function),
                 None,
                 None,
