@@ -23,9 +23,14 @@ use alloc::{
 use core::{cmp::Ordering, ffi::c_void};
 use mu_rust_helpers::guid::guid_fmt;
 use patina::{
+    BinaryGuid,
     device_path::walker::concat_device_path_to_boxed_slice,
     error::EfiError,
-    pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
+    pi::{
+        fw_fs::ffs,
+        hob::{Hob, HobList},
+        protocols::firmware_volume_block,
+    },
 };
 use patina_ffs::{
     section::{Section, SectionExtractor},
@@ -138,6 +143,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
             )
             .expect("Failed to create callback for runtime image memory protection fixups.");
+
+        // Get the FV2/3 HOBs before we register for FV protocol installation callbacks
+        self.dispatcher_context.lock().cache_pre_extracted_fv_hobs(hob_list);
 
         //set up call back for FV protocol installation.
         let event = EVENT_DB
@@ -581,6 +589,7 @@ struct DispatcherContext {
     pending_drivers: Vec<PendingDriver>,
     fv_section_data: Vec<Box<[u8]>>,
     pending_firmware_volume_images: Vec<PendingFirmwareVolumeImage>,
+    pre_extracted_fv_hobs: BTreeSet<(BinaryGuid, BinaryGuid)>,
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
@@ -594,6 +603,7 @@ impl DispatcherContext {
             pending_drivers: Vec::new(),
             fv_section_data: Vec::new(),
             pending_firmware_volume_images: Vec::new(),
+            pre_extracted_fv_hobs: BTreeSet::new(),
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
@@ -602,6 +612,23 @@ impl DispatcherContext {
 
     const fn new_locked() -> TplMutex<Self> {
         TplMutex::new(efi::TPL_NOTIFY, Self::new(), "Dispatcher Context")
+    }
+
+    // Find all FV2 and extracted FV3 HOBs and cache them. These will be used to determine if a child FV needs to
+    // be extracted or not during FV processing.
+    fn cache_pre_extracted_fv_hobs(&mut self, hob_list: &HobList) {
+        self.pre_extracted_fv_hobs.extend(hob_list.iter().filter_map(|hob| match hob {
+            Hob::FirmwareVolume2(fv2) => Some((fv2.file_name, fv2.fv_name)),
+            Hob::FirmwareVolume3(fv3) if fv3.extracted_fv.into() => Some((fv3.file_name, fv3.fv_name)),
+            _ => None,
+        }));
+    }
+
+    /// Check if a child FV has already been extracted. The FvNameGuid is optional per FDF spec; when it is
+    /// not provided, the HOBs will have the zero GUID.
+    fn has_pre_extracted_fv_hob(&self, file_name: efi::Guid, fv_name: Option<BinaryGuid>) -> bool {
+        self.pre_extracted_fv_hobs
+            .contains(&(file_name.into(), fv_name.unwrap_or(patina::guid_constants::ZERO_GUID.into())))
     }
 
     fn add_fv_handles(
@@ -658,6 +685,7 @@ impl DispatcherContext {
                         continue;
                     }
                 };
+                let fv_name = fv.fv_name();
 
                 for file in fv.files() {
                     let file = file?;
@@ -759,6 +787,12 @@ impl DispatcherContext {
                     if file.file_type_raw() == ffs::file::raw::r#type::FIRMWARE_VOLUME_IMAGE {
                         let file = file.clone();
                         let file_name = file.name().into_inner();
+
+                        // if we have an FV2 or extracted FV3 HOB for this FV, the producer phase already
+                        // extracted (processed) this FV image, so we don't need to extract it again.
+                        if self.has_pre_extracted_fv_hob(file_name, fv_name) {
+                            continue;
+                        }
 
                         let sections = file.sections_with_extractor(extractor)?;
 
@@ -1901,5 +1935,123 @@ mod tests {
                 "A corrupted FV should be removed after a dispatch attempt"
             );
         });
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_child_fv_with_fv2_hob() {
+        set_logger();
+        let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
+
+        with_locked_state(|| {
+            use patina::pi::hob;
+
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            // Build an FV2 HOB matching the child FV file in NESTEDFV.Fv.
+            // The child FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75 and the outer FV has no extended
+            // header, so fv_name falls back to the zero GUID.
+            let child_file_name = BinaryGuid::from_string("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75");
+            let zero_guid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+            let fv2_hob = hob::FirmwareVolume2 {
+                header: hob::header::Hob {
+                    r#type: hob::FV2,
+                    length: core::mem::size_of::<hob::FirmwareVolume2>() as u16,
+                    reserved: 0,
+                },
+                base_address: 0,
+                length: 0,
+                fv_name: zero_guid,
+                file_name: child_file_name,
+            };
+
+            let mut hob_list = HobList::new();
+            hob_list.push(Hob::FirmwareVolume2(&fv2_hob));
+
+            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // The child FV should have been skipped because the FV2 HOB matches it.
+            assert_eq!(
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                0,
+                "Child FV should be skipped when a matching FV2 HOB exists"
+            );
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_child_fv_with_extracted_fv3_hob() {
+        set_logger();
+        let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
+
+        with_locked_state(|| {
+            use patina::pi::hob;
+
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            // Build an FV3 HOB with extracted_fv=true matching the child FV file in NESTEDFV.Fv.
+            let child_file_name = BinaryGuid::from_string("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75");
+            let zero_guid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+            let fv3_hob = hob::FirmwareVolume3 {
+                header: hob::header::Hob {
+                    r#type: hob::FV3,
+                    length: core::mem::size_of::<hob::FirmwareVolume3>() as u16,
+                    reserved: 0,
+                },
+                base_address: 0,
+                length: 0,
+                authentication_status: 0,
+                extracted_fv: true.into(),
+                fv_name: zero_guid,
+                file_name: child_file_name,
+            };
+
+            let mut hob_list = HobList::new();
+            hob_list.push(Hob::FirmwareVolume3(&fv3_hob));
+
+            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // The child FV should have been skipped because the extracted FV3 HOB matches it.
+            assert_eq!(
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                0,
+                "Child FV should be skipped when a matching extracted FV3 HOB exists"
+            );
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 }
