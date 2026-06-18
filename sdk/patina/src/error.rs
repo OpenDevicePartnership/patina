@@ -181,3 +181,34 @@ impl From<efi::Status> for EfiError {
         EfiError::status_to_result(status).unwrap_err()
     }
 }
+
+impl core::fmt::Display for EfiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Delegate to the `efi::Status` `Display` impl so the textual descriptions
+        // stay in sync with the UEFI status code definitions.
+        efi::Status::from(*self).fmt(f)
+    }
+}
+
+impl core::error::Error for EfiError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    extern crate alloc;
+    use alloc::format;
+
+    #[test]
+    fn test_display_known_variant_matches_status() {
+        assert_eq!(format!("{}", EfiError::InvalidParameter), format!("{}", efi::Status::INVALID_PARAMETER));
+        assert_eq!(format!("{}", EfiError::InvalidParameter), "Invalid Parameter");
+    }
+
+    #[test]
+    fn test_display_unknown_variant_matches_status() {
+        // An unknown status delegates to the `efi::Status` `Display` impl.
+        let status = efi::Status::from_usize(0x1234);
+        let unknown = EfiError::Unknown(status);
+        assert_eq!(format!("{}", unknown), format!("{}", status));
+    }
+}

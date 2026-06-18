@@ -78,7 +78,7 @@ impl SwMmiManager {
         if let Some(ctrl) = platform_mm_control {
             log::debug!(target: "sw_mmi", "Platform MM Control is available. Calling platform-specific init...");
             ctrl.init().inspect_err(|&err| {
-                log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {:?}", err);
+                log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {}", err);
             })?;
             log::trace!(target: "sw_mmi", "Platform MM Control initialization completed successfully");
         } else {

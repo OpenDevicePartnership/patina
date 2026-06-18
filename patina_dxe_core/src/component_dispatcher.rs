@@ -226,7 +226,7 @@ impl ComponentDispatcher {
                 Ok(true) => true,
                 Ok(false) => false,
                 Err(err) => {
-                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
+                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err}]");
                     true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
                 }
             }

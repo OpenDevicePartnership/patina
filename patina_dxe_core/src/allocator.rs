@@ -1216,7 +1216,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     None)
                     .inspect_err(|err|{
                         log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err:#x?}",
+                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err}",
                         );
                     });
             }

@@ -101,31 +101,31 @@ impl SmbiosExampleComponent {
 
         // Type 0: Platform firmware/BIOS information
         if let Err(e) = Self::add_bios_information(&smbios) {
-            log::error!("Failed to add BIOS information: {:?}", e);
+            log::error!("Failed to add BIOS information: {}", e);
             return Err(e);
         }
 
         // Type 1: System information
         if let Err(e) = Self::add_system_information(&smbios) {
-            log::error!("Failed to add system information: {:?}", e);
+            log::error!("Failed to add system information: {}", e);
             return Err(e);
         }
 
         // Type 2: Baseboard/motherboard information
         if let Err(e) = Self::add_baseboard_information(&smbios) {
-            log::error!("Failed to add baseboard information: {:?}", e);
+            log::error!("Failed to add baseboard information: {}", e);
             return Err(e);
         }
 
         // Type 3: System chassis/enclosure information
         if let Err(e) = Self::add_system_enclosure(&smbios) {
-            log::error!("Failed to add system enclosure: {:?}", e);
+            log::error!("Failed to add system enclosure: {}", e);
             return Err(e);
         }
 
         // Type 0x80: Platform-specific vendor record
         if let Err(e) = Self::add_vendor_oem_record(&smbios) {
-            log::error!("Failed to add vendor OEM record: {:?}", e);
+            log::error!("Failed to add vendor OEM record: {}", e);
             return Err(e);
         }
 

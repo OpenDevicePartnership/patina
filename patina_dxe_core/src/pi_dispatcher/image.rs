@@ -117,7 +117,7 @@ impl ImageStack {
         if let Err(err) =
             dxe_services::core_set_memory_space_attributes(base_address, UEFI_PAGE_SIZE as u64, attributes)
         {
-            log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
+            log::error!("Failed to set memory space attributes for stack guard page: {err}");
             // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
             // and need to be refactored to handle the page table
             // debug_assert!(false);
@@ -368,7 +368,7 @@ impl PrivateImageData {
             self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
         ) && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
-            log::warn!("Failed to uninstall loaded image protocol for handle {handle:?}: {err:?}");
+            log::warn!("Failed to uninstall loaded image protocol for handle {handle:?}: {err}");
             result = Err(err);
         }
 
@@ -378,7 +378,7 @@ impl PrivateImageData {
             self.get_file_path(),
         ) && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
-            log::warn!("Failed to uninstall loaded image device path protocol for handle {handle:?}: {err:?}");
+            log::warn!("Failed to uninstall loaded image device path protocol for handle {handle:?}: {err}");
             result = Err(err);
         }
 
@@ -390,7 +390,7 @@ impl PrivateImageData {
             )
             && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
-            log::warn!("Failed to uninstall HII package list protocol for handle {handle:?}: {err:?}");
+            log::warn!("Failed to uninstall HII package list protocol for handle {handle:?}: {err}");
             result = Err(err);
         }
 
@@ -398,7 +398,7 @@ impl PrivateImageData {
             && let Err(err) = runtime::remove_runtime_image(handle)
             && err != EfiError::NotFound
         {
-            log::warn!("Failed to remove runtime image for handle {handle:?}: {err:?}");
+            log::warn!("Failed to remove runtime image for handle {handle:?}: {err}");
             result = Err(err);
         }
 
@@ -609,7 +609,7 @@ impl ImageData {
             efi::protocols::loaded_image::PROTOCOL_GUID,
             private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
         )
-        .unwrap_or_else(|err| panic!("Failed to install dxe core image handle: {err:?}"));
+        .unwrap_or_else(|err| panic!("Failed to install dxe core image handle: {err}"));
 
         if handle != protocol_db::DXE_CORE_HANDLE {
             panic!(
@@ -627,10 +627,10 @@ impl ImageData {
 
     /// Validates that the provided parent handle is valid and has a loaded image protocol.
     fn validate_parent(parent: efi::Handle) -> Result<(), EfiError> {
-        PROTOCOL_DB.validate_handle(parent).inspect_err(|err| log::error!("Invalid parent handle {err:?}"))?;
+        PROTOCOL_DB.validate_handle(parent).inspect_err(|err| log::error!("Invalid parent handle {err}"))?;
 
         PROTOCOL_DB.get_interface_for_handle(parent, efi::protocols::loaded_image::PROTOCOL_GUID).map_err(|err| {
-            log::error!("Failed to get loaded image interface on the parent handle: {err:?}");
+            log::error!("Failed to get loaded image interface on the parent handle: {err}");
             EfiError::InvalidParameter
         })?;
         Ok(())
@@ -1243,7 +1243,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         }
 
         if let Err(status) = EVENT_DB.close_event(event) {
-            log::error!("Failed to close image EBS event with status {status:#X?}. This should be okay.");
+            log::error!("Failed to close image EBS event with status {status}. This should be okay.");
         }
     }
 }

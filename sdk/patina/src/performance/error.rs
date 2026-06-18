@@ -60,7 +60,7 @@ impl Display for Error {
         match self {
             Error::OutOfResources => write!(f, "FBPT buffer full, can't add more performance records."),
             Error::BufferTooSmall => write!(f, "Buffer to small to allocate FBPT table"),
-            Error::Efi(efi_error) => write!(f, "{efi_error:?}"),
+            Error::Efi(efi_error) => write!(f, "{efi_error}"),
             Error::Serialization => write!(f, "Failed to serialize performance data"),
             Error::RecordTooLarge { size } => write!(f, "Performance record size {size} exceeds u8::MAX"),
             Error::DebugAssert { msg, file, line } => write!(f, "Assertion at {file}:{line}: {msg}"),
@@ -92,7 +92,7 @@ mod tests {
     fn test_efi_error_display() {
         let error = Error::Efi(EfiError::InvalidParameter);
         let display = format!("{}", error);
-        assert!(display.contains("InvalidParameter"));
+        assert_eq!(display, "Invalid Parameter");
     }
 
     #[test]

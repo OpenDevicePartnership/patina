@@ -153,10 +153,10 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
             // associated with the metronome arch guid.
             unsafe { METRONOME_ARCH_PTR.init(metronome_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for metronome_arch_available due to error {status_err:?}");
+                log::warn!("Could not close event for metronome_arch_available due to error {status_err}");
             }
         }
-        Err(err) => panic!("Unable to retrieve metronome arch: {err:?}"),
+        Err(err) => panic!("Unable to retrieve metronome arch: {err}"),
     }
 }
 // Requires excessive Mocking for the OK case.
@@ -173,10 +173,10 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
             // associated with the watchdog arch guid.
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for watchdog_arch_available due to error {status_err:?}");
+                log::warn!("Could not close event for watchdog_arch_available due to error {status_err}");
             }
         }
-        Err(err) => panic!("Unable to retrieve watchdog arch: {err:?}"),
+        Err(err) => panic!("Unable to retrieve watchdog arch: {err}"),
     }
 }
 
@@ -213,7 +213,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.set_timer_period)(timer_arch_ptr, 0);
         }
-        Err(err) => log::error!("Unable to locate timer arch: {err:?}"),
+        Err(err) => log::error!("Unable to locate timer arch: {err}"),
     };
 
     // Lock the memory space to prevent edits to the memory map after this point.
@@ -224,7 +224,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     match terminate_memory_map(map_key) {
         Ok(_) => (),
         Err(err) => {
-            log::error!("Failed to terminate memory map: {err:?}");
+            log::error!("Failed to terminate memory map: {err}");
             GCD.unlock_memory_space();
             EVENT_DB.signal_group(guids::EBS_FAILED.into_inner());
             return err.into();
@@ -249,7 +249,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
                 core::ptr::null(),
             );
         }
-        Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {err}"),
     };
 
     // Disable CPU interrupts
@@ -273,7 +273,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };
             rt_arch_protocol.at_runtime.store(true, Ordering::SeqCst);
         }
-        Err(err) => log::error!("Unable to locate runtime architectural protocol: {err:?}"),
+        Err(err) => log::error!("Unable to locate runtime architectural protocol: {err}"),
     };
 
     crate::runtime::finalize_runtime_support();

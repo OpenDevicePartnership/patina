@@ -539,7 +539,7 @@ impl EventDb {
                     current_event.trigger_time = None;
                 }
                 if let Err(e) = self.signal_event(event as *mut c_void) {
-                    log::error!("Error {e:?} signaling event {event:?}.");
+                    log::error!("Error {e} signaling event {event:?}.");
                 }
             }
         }
@@ -605,7 +605,7 @@ impl Drop for EventGuard<'_> {
                 match pending {
                     PendingSignals::Event(event) => {
                         if let Err(e) = self.signal_event(event) {
-                            log::error!("Error {e:?} signaling event {event:?} from pending.");
+                            log::error!("Error {e} signaling event {event:?} from pending.");
                         }
                     }
                     PendingSignals::Group(group) => {

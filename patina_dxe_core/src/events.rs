@@ -357,10 +357,10 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for timer_available_callback due to error {status_err:?}");
+                log::warn!("Could not close event for timer_available_callback due to error {status_err}");
             }
         }
-        Err(err) => panic!("Unable to locate timer arch: {err:?}"),
+        Err(err) => panic!("Unable to locate timer arch: {err}"),
     }
 }
 

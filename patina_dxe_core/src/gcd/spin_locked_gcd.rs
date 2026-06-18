@@ -279,7 +279,7 @@ impl PageAllocator for PagingAllocator<'_> {
                         Ok(root_page) => Ok(root_page as u64),
                         Err(e) => {
                             // okay we are good and dead now
-                            panic!("Failed to allocate root page for the page table page pool: {e:?}");
+                            panic!("Failed to allocate root page for the page table page pool: {e}");
                         }
                     }
                 }
@@ -308,7 +308,7 @@ impl PageAllocator for PagingAllocator<'_> {
                             self.page_pool.pop().ok_or(PtError::OutOfResources)
                         }
                         Err(e) => {
-                            panic!("Failed to allocate pages for the page table page pool {e:?}");
+                            panic!("Failed to allocate pages for the page table page pool {e}");
                         }
                     }
                 }
@@ -2482,7 +2482,7 @@ impl SpinLockedGcd {
         {
             // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
             // pointer dereferences.
-            log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {err:?}");
+            log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {err}");
             debug_assert!(false);
         }
 

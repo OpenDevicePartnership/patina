@@ -377,7 +377,7 @@ impl<P: PlatformInfo> Core<P> {
         let relocated_hob_list = self.init_memory(physical_hob_list);
 
         if let Err(err) = self.start_dispatcher(relocated_hob_list) {
-            log::error!("DXE Core failed to start: {err:?}");
+            log::error!("DXE Core failed to start: {err}");
         }
 
         call_bds();
@@ -494,10 +494,7 @@ impl<P: PlatformInfo> Core<P> {
 
             // UEFI driver dispatch
             let dispatched = dispatched
-                || self
-                    .pi_dispatcher
-                    .dispatch()
-                    .inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+                || self.pi_dispatcher.dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err}"))?;
 
             if !dispatched {
                 break;
@@ -652,7 +649,7 @@ fn call_bds() -> ! {
                 log::error!("status_code protocol pointer is NULL")
             }
         }
-        Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {err}"),
     }
 
     match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID.into_inner()) {
@@ -669,7 +666,7 @@ fn call_bds() -> ! {
                 log::error!("bds protocol pointer is NULL")
             }
         }
-        Err(err) => log::error!("Unable to locate BDS arch protocol: {err:?}"),
+        Err(err) => log::error!("Unable to locate BDS arch protocol: {err}"),
     };
 
     unreachable!("BDS arch protocol should be found and should never return.");
