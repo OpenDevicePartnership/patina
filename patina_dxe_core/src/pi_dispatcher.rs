@@ -120,24 +120,35 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Detail report
-        log::warn!("Begin Detail Report:");
+        self.detail_report();
+    }
+
+    fn detail_report(&self) {
+        log::debug!("Begin Report of Drivers Not Dispatched:");
         for driver in self.dispatcher_context.lock().pending_drivers.iter() {
-            log::warn!(
+            log::debug!(
                 "Driver {} ({:?}) found but not dispatched. Protocols present:",
                 driver.name.as_deref().unwrap_or("Unnamed"),
                 guid_fmt!(driver.file_name)
             );
 
-            match &driver.depex {
-                Some(depex) => {
-                    depex.report_protocol_present();
+            if let Some(depex) = &driver.depex {
+                for opcode in depex.iter() {
+                    match opcode {
+                        Opcode::Push(guid, present) => {
+                            log::debug!("  {guid:?} : {present}");
+                        }
+                        Opcode::End => {
+                            log::debug!("  {opcode:?}");
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {
-                    log::warn!("  No Depex");
-                }
+            } else {
+                log::debug!("  No Depex");
             }
         }
-        log::warn!("End Detail Report.");
+        log::debug!("End Report of Drivers Not Dispatched.");
     }
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
