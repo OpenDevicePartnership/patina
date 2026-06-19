@@ -282,6 +282,7 @@ impl Depex {
         false
     }
 
+    /// Returns an iterator over internal opcodes.
     pub fn iter(&self) -> impl Iterator<Item = &Opcode> {
         self.expression.iter()
     }
