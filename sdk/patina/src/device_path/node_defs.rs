@@ -666,6 +666,23 @@ impl HardDrive {
     /// Signature type: MBR 32-bit signature
     pub const SIGNATURE_TYPE_MBR: u8 = 0x01;
 
+    /// Try to parse a `HardDrive` from a raw device path node.
+    ///
+    /// Returns `None` if the node's type/subtype does not identify a
+    /// HardDrive node, or if the node data is shorter than
+    /// [`HardDrive::DATA_SIZE`] and so cannot be decoded.
+    ///
+    /// Useful when walking a device path with
+    /// [`crate::device_path::paths::DevicePath`] to recover the typed
+    /// `HardDrive` payload from each node without doing the
+    /// type/subtype check at the call site.
+    pub fn try_from_node(node: &parse_node::UnknownDevicePathNode<'_>) -> Option<Self> {
+        if !<Self as parse_node::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
+            return None;
+        }
+        node.data.pread_with(0, scroll::LE).ok()
+    }
+
     /// Create a new HardDrive device path node for a GPT partition.
     ///
     /// # Arguments
@@ -979,6 +996,57 @@ mod tests {
         let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
         let display = std::format!("{}", hd);
         assert!(display.contains("HD"));
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_node_success() {
+        let guid = [0x11u8; 16];
+        let hd = HardDrive::new_gpt(3, 0x1000, 0x4000, guid);
+        let mut data = [0u8; 38];
+        data.pwrite_with(hd, 0, scroll::LE).unwrap();
+        let node = parse_node::UnknownDevicePathNode {
+            header: parse_node::Header {
+                r#type: DevicePathType::Media as u8,
+                sub_type: MediaSubType::HardDrive as u8,
+                length: parse_node::Header::size_of_header() + 38,
+            },
+            data: &data,
+        };
+        let parsed = HardDrive::try_from_node(&node).expect("valid HD node should parse");
+        assert_eq!(parsed.partition_number, 3);
+        assert_eq!(parsed.partition_start, 0x1000);
+        assert_eq!(parsed.partition_size, 0x4000);
+        assert_eq!(parsed.partition_signature, guid);
+        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_node_wrong_type() {
+        let data = [0u8; 38];
+        let node = parse_node::UnknownDevicePathNode {
+            header: parse_node::Header {
+                r#type: DevicePathType::Messaging as u8, // not Media
+                sub_type: MediaSubType::HardDrive as u8,
+                length: parse_node::Header::size_of_header() + 38,
+            },
+            data: &data,
+        };
+        assert!(HardDrive::try_from_node(&node).is_none());
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_node_short_data() {
+        let data = [0u8; 16]; // shorter than HardDrive::DATA_SIZE (38)
+        let node = parse_node::UnknownDevicePathNode {
+            header: parse_node::Header {
+                r#type: DevicePathType::Media as u8,
+                sub_type: MediaSubType::HardDrive as u8,
+                length: parse_node::Header::size_of_header() + 16,
+            },
+            data: &data,
+        };
+        assert!(HardDrive::try_from_node(&node).is_none());
     }
 
     #[test]
