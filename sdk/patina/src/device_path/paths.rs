@@ -215,6 +215,11 @@ impl DevicePath {
         self.buffer.len()
     }
 
+    /// Return the raw byte representation of the device path.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer
+    }
+
     /// Return the number of nodes in the device path.
     pub fn node_count(&self) -> usize {
         self.iter().count()
@@ -381,13 +386,24 @@ mod tests {
 
     use crate::device_path::{
         node_defs::{Acpi, AcpiSubType, EndSubType, Pci},
-        paths::DevicePathBuf,
+        paths::{DevicePath, DevicePathBuf},
     };
 
     #[test]
     fn test_new_empty_device_path_buf() {
         let device_path = DevicePathBuf::new_empty();
         assert!(device_path.buffer.is_empty());
+    }
+
+    #[test]
+    fn test_device_path_as_bytes() {
+        let mut device_path_buf = DevicePathBuf::new_empty();
+        device_path_buf.append(Acpi::new_pci_root(0));
+        device_path_buf.append(EndEntire);
+
+        let device_path: &DevicePath = device_path_buf.as_ref();
+        assert_eq!(device_path.as_bytes(), device_path_buf.buffer.as_slice());
+        assert_eq!(device_path.as_bytes().len(), device_path.size());
     }
 
     #[test]
