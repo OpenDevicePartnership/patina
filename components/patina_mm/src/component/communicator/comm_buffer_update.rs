@@ -180,7 +180,7 @@ extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: 
     } {
         Ok(ptr) => ptr,
         Err(status) => {
-            log::error!(target: "mm_comm", "Failed to locate protocol: status={:?}", status);
+            log::error!(target: "mm_comm", "Failed to locate protocol: status={}", status);
             return;
         }
     };

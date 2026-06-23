@@ -94,14 +94,14 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
         while ticks > u32::MAX as u128 {
             let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
             if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {status:#x?}");
+                log::warn!("metronome.wait_for_tick returned unexpected error {status}");
             }
             ticks -= u32::MAX as u128;
         }
         if ticks != 0 {
             let status = (metronome.wait_for_tick)(metronome_ptr, ticks as u32);
             if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {status:#x?}");
+                log::warn!("metronome.wait_for_tick returned unexpected error {status}");
             }
         }
         efi::Status::SUCCESS
@@ -384,7 +384,7 @@ mod tests {
                     log::warn!("CRC32 mismatch: got {data_crc:#x}, expected {expected_crc:#x}");
                 }
             } else {
-                log::warn!("CRC32 calculation failed with status: {status:#x?}");
+                log::warn!("CRC32 calculation failed with status: {status}");
             }
 
             // Test case 2: Zero data size - should return INVALID_PARAMETER
@@ -395,7 +395,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Zero data size correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Zero data size returned unexpected status: {status:#x?}");
+                log::warn!("Zero data size returned unexpected status: {status}");
             }
 
             // Test case 3: Null data pointer - should return INVALID_PARAMETER
@@ -410,7 +410,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Null data pointer correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Null data pointer returned unexpected status: {status:#x?}");
+                log::warn!("Null data pointer returned unexpected status: {status}");
             }
 
             // Test case 4: Null output pointer - should return INVALID_PARAMETER
@@ -425,7 +425,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Null output pointer correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Null output pointer returned unexpected status: {status:#x?}");
+                log::warn!("Null output pointer returned unexpected status: {status}");
             }
         });
     }
@@ -441,7 +441,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer correctly returned NOT_READY (no watchdog protocol)");
             } else {
-                log::warn!("Set watchdog timer returned unexpected status: {status:#x?}");
+                log::warn!("Set watchdog timer returned unexpected status: {status}");
             }
 
             // Test case 2: Disable watchdog timer with null data - should return NOT_READY
@@ -451,7 +451,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer correctly returned NOT_READY");
             } else {
-                log::warn!("Disable watchdog timer returned unexpected status: {status:#x?}");
+                log::warn!("Disable watchdog timer returned unexpected status: {status}");
             }
 
             let data: [efi::Char16; 6] = [b'H' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0];
@@ -464,7 +464,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer with data correctly returned NOT_READY");
             } else {
-                log::warn!("Set watchdog timer with data returned unexpected status: {status:#x?}");
+                log::warn!("Set watchdog timer with data returned unexpected status: {status}");
             }
 
             // Test case 4: Disable the watchdog timer with non-null data - should return NOT_READY
@@ -474,7 +474,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer with data correctly returned NOT_READY");
             } else {
-                log::warn!("Disable watchdog timer with data returned unexpected status: {status:#x?}");
+                log::warn!("Disable watchdog timer with data returned unexpected status: {status}");
             }
 
             //Mock a watchdog protocol
@@ -513,7 +513,7 @@ mod tests {
                 log::debug!("Set watchdog timer correctly returned SUCCESS (watchdog protocol available)");
                 assert!(SET_PERIOD_CALLED.is_completed(), "set_timer_period was not called during set_watchdog_timer.");
             } else {
-                log::warn!("Set watchdog timer returned unexpected status: {status:#x?}");
+                log::warn!("Set watchdog timer returned unexpected status: {status}");
             }
         });
     }
@@ -529,7 +529,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Stall function correctly returned NOT_READY (no metronome protocol)");
             } else {
-                log::warn!("Stall function returned unexpected status: {status:#x?}");
+                log::warn!("Stall function returned unexpected status: {status}");
             }
 
             // Test case 2: Zero microseconds stall - should return NOT_READY
@@ -539,7 +539,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Zero stall correctly returned NOT_READY");
             } else {
-                log::warn!("Zero stall returned unexpected status: {status:#x?}");
+                log::warn!("Zero stall returned unexpected status: {status}");
             }
 
             // Test case 3: Maximum stall duration - should return NOT_READY
@@ -549,7 +549,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Maximum stall correctly returned NOT_READY");
             } else {
-                log::warn!("Maximum stall returned unexpected status: {status:#x?}");
+                log::warn!("Maximum stall returned unexpected status: {status}");
             }
 
             //Mock a metronome protocol
@@ -582,7 +582,7 @@ mod tests {
                 log::debug!("Stall function correctly returned SUCCESS (metronome protocol available)");
                 assert!(WAIT_FOR_TICK_CALLED.is_completed(), "wait_for_tick was not called during stall.");
             } else {
-                log::warn!("Stall function returned unexpected status: {status:#x?}");
+                log::warn!("Stall function returned unexpected status: {status}");
             }
         });
     }

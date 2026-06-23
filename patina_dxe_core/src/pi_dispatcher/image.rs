@@ -930,7 +930,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
             CoroutineResult::Return(status) => status,
         };
 
-        log::info!("start_image entrypoint exit with status: {status:x?}");
+        log::info!("start_image entrypoint exit with status: {status}");
 
         // because we used exit() to return from the coroutine (as opposed to
         // returning naturally from it), the coroutine is marked as suspended rather

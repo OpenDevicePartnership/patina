@@ -80,7 +80,7 @@ pub fn install_smbios_protocol(
             unsafe {
                 drop(Box::from_raw(interface));
             }
-            log::error!("Failed to install SMBIOS protocol: {:?}", status);
+            log::error!("Failed to install SMBIOS protocol: {}", status);
             Err(SmbiosError::AllocationFailed)
         }
     }

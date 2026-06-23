@@ -343,7 +343,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                     }
                     efi::Status::SECURITY_VIOLATION => {
                         log::info!(
-                            "Deferring driver: {} ({:?}) due to security status: {:x?}",
+                            "Deferring driver: {} ({:?}) due to security status: {}",
                             driver.name.as_deref().unwrap_or("Unnamed"),
                             OwnedGuid::from(driver.file_name),
                             efi::Status::SECURITY_VIOLATION
@@ -352,7 +352,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                     }
                     unexpected_status => {
                         log::info!(
-                            "Dropping driver: {} ({:?}) due to security status: {:x?}",
+                            "Dropping driver: {} ({:?}) due to security status: {}",
                             driver.name.as_deref().unwrap_or("Unnamed"),
                             OwnedGuid::from(driver.file_name),
                             unexpected_status
