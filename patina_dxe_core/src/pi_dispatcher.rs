@@ -39,7 +39,6 @@ use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use r_efi::efi;
 use spin::RwLock;
 
-use debug_image_info_table::EfiSystemTablePointer;
 use image::ImageStatus;
 use section_decompress::CoreExtractor;
 
@@ -190,7 +189,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         // Perform image related initialization for the debugger.
         // This includes installing the debug image info table and the system table pointer structure.
         if core_install_configuration_table(
-            debug_image_info_table::EFI_DEBUG_IMAGE_INFO_TABLE_GUID,
+            efi::DEBUG_IMAGE_INFO_TABLE_GUID,
             self.debug_image_data.read().header() as *const _ as *mut c_void,
             system_table,
         )
@@ -214,14 +213,14 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             return;
         };
 
-        let ptr = address as *mut EfiSystemTablePointer;
+        let ptr = address as *mut efi::SystemTablePointer;
 
         // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
         // pointer, an external debugger does
         unsafe {
             core::ptr::write_volatile(
                 ptr,
-                EfiSystemTablePointer {
+                efi::SystemTablePointer {
                     signature: efi::SYSTEM_TABLE_SIGNATURE,
                     efi_system_table_base: system_table_pointer,
                     crc32: 0,
@@ -229,7 +228,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             );
 
             let crc32 =
-                crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
+                crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<efi::SystemTablePointer>()));
 
             core::ptr::write_volatile(&mut (*ptr).crc32, crc32);
         }
