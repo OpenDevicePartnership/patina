@@ -71,7 +71,7 @@ impl Debug for MemoryAttributesTable {
         writelncrlf!(f, "  version: {:#X}", mat.version)?;
         writelncrlf!(f, "  number_of_entries: {:#X}", mat.number_of_entries)?;
         writelncrlf!(f, "  descriptor_size: {:#X}", mat.descriptor_size)?;
-        writelncrlf!(f, "  reserved: {:#X}", mat.reserved)?;
+        writelncrlf!(f, "  flags: {:#X}", mat.flags)?;
         writelncrlf!(f, "  entries: [")?;
 
         writelncrlf!(f, "{:?}", MemoryDescriptorSlice(entries))?;
@@ -120,7 +120,7 @@ pub fn core_install_memory_attributes_table() {
                             version: 0,
                             number_of_entries: 0,
                             descriptor_size: 0,
-                            reserved: 0,
+                            flags: 0,
                             entry: [],
                         };
                         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
@@ -213,7 +213,7 @@ pub fn core_install_memory_attributes_table() {
                 mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
                 mat.number_of_entries = mat_desc_list.len() as u32;
                 mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
-                mat.reserved = 0;
+                mat.flags = 0;
 
                 let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
 
