@@ -16,7 +16,7 @@ features = ["doc", "std"]
 [dependencies]
 log = { workspace = true }
 r-efi = { workspace = true }
-patina = { workspace = true }
+patina = { version = "22.0.1", path = "../../sdk/patina", default-features = false }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 cfg-if = { workspace = true }
@@ -36,5 +36,7 @@ serial_test = { workspace = true }
 default = []
 std = []
 doc = []
+save_state_intel = []
+save_state_amd = []
 # All non-std features to test in CI
 ci_features = []
