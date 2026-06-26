@@ -18,7 +18,8 @@
 //!    Format::Standard,
 //!    &[("crate1::module", log::LevelFilter::Off)],
 //!    log::LevelFilter::Trace,
-//!    Uart16550::new(Interface::Io(0x3F8)),
+//!    // SAFETY: The platform owns the UART I/O port for serial logging.
+//!    unsafe { Uart16550::new_port(0x3F8) },
 //! );
 //!
 //! let uart_pl011_logger = SerialLogger::new(

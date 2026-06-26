@@ -29,8 +29,10 @@ impl super::SerialIO for UartNull {
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
 
-        use uart_16550::MmioSerialPort;
-        use uart_16550::SerialPort as IoSerialPort;
+        use core::ptr::{NonNull as PtrNonNull, with_exposed_provenance_mut};
+        use spin::Mutex;
+        use uart_16550::backend::{MmioBackend, PioBackend};
+        use uart_16550::{Config, Uart16550 as Uart16550Device};
 
         /// Returns the Current Privilege Level (CPL) from the CS selector.
         fn current_privilege_level() -> u16 {
@@ -64,44 +66,81 @@ cfg_if::cfg_if! {
         #[derive(Debug)]
         pub enum Uart16550 {
             /// The I/O interface for the Uart16550 serial port.
-            Io {
-                /// The base address of the UART control registers.
-                base: u16
-            },
+            Io(Mutex<Uart16550Device<PioBackend>>),
             /// The Memory Mapped I/O interface for the Uart16550 serial port.
-            Mmio {
-                /// The base address of the UART control registers.
-                base: usize,
-                /// The number of bytes between consecutive registers.
-                reg_stride: usize
-            },
+            Mmio(Mutex<Uart16550Device<MmioBackend>>),
+        }
+
+        impl Uart16550 {
+            /// Constructs a UART backed by x86 port I/O.
+            ///
+            /// # Safety
+            ///
+            /// The base port must be valid and safe to access for the lifetime
+            /// of the returned wrapper.
+            pub unsafe fn new_port(base: u16) -> Self {
+                // SAFETY: The caller guarantees that `base` is valid for UART port I/O.
+                let uart = unsafe { Uart16550Device::new_port(base) }
+                    .expect("UART 16550 I/O base address must allow access to all registers");
+                Self::Io(Mutex::new(uart))
+            }
+
+            /// Constructs a UART backed by memory-mapped I/O.
+            ///
+            /// # Safety
+            ///
+            /// The base address must be valid and safe to access for the
+            /// lifetime of the returned wrapper.
+            pub unsafe fn new_mmio(base: usize, reg_stride: u8) -> Self {
+                let base = PtrNonNull::new(with_exposed_provenance_mut::<u8>(base))
+                    .expect("UART 16550 MMIO base address must be non-null");
+                // SAFETY: The caller guarantees that `base` is valid for UART MMIO access.
+                let uart = unsafe { Uart16550Device::new_mmio(base, reg_stride) }
+                    .expect("UART 16550 MMIO base address and register stride must be valid");
+                Self::Mmio(Mutex::new(uart))
+            }
         }
 
         impl super::SerialIO for Uart16550 {
             fn init(&self) {
-                match self {
-                    Uart16550::Io { base } => {
-                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
-                        let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        serial_port.init();
+                let init = || match self {
+                    Uart16550::Io(uart) => {
+                        let mut uart = uart
+                            .try_lock()
+                            .expect("UART 16550 I/O device lock must not be re-entered");
+                        uart.init(Config::default())
+                            .expect("UART 16550 I/O device initialization must succeed");
                     }
-                    Uart16550::Mmio { base, reg_stride } => {
-                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
-                        let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        serial_port.init();
+                    Uart16550::Mmio(uart) => {
+                        let mut uart = uart
+                            .try_lock()
+                            .expect("UART 16550 MMIO device lock must not be re-entered");
+                        uart.init(Config::default())
+                            .expect("UART 16550 MMIO device initialization must succeed");
                     }
+                };
+
+                if current_privilege_level() == 0 {
+                    // CPL is 0, so cli/sti are permitted.
+                    without_interrupts(init);
+                } else {
+                    init();
                 }
             }
 
             fn write(&self, buffer: &[u8]) {
                 match self {
-                    Uart16550::Io { base } => {
-                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
-                        let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        let mut send = || {
-                            for b in buffer {
-                                serial_port.send(*b);
-                            }
+                    Uart16550::Io(uart) => {
+                        let send = || {
+                            let Some(mut uart) = uart.try_lock() else {
+                                debug_assert!(
+                                    false,
+                                    "UART 16550 I/O device lock must not be re-entered",
+                                );
+                                return;
+                            };
+
+                            uart.send_bytes_exact(buffer);
                         };
                         if current_privilege_level() == 0 {
                             // CPL is 0, so cli/sti are permitted.
@@ -110,13 +149,17 @@ cfg_if::cfg_if! {
                             send();
                         }
                     }
-                    Uart16550::Mmio { base, reg_stride } => {
-                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
-                        let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        let mut send = || {
-                            for b in buffer {
-                                serial_port.send(*b);
-                            }
+                    Uart16550::Mmio(uart) => {
+                        let send = || {
+                            let Some(mut uart) = uart.try_lock() else {
+                                debug_assert!(
+                                    false,
+                                    "UART 16550 MMIO device lock must not be re-entered",
+                                );
+                                return;
+                            };
+
+                            uart.send_bytes_exact(buffer);
                         };
                         if current_privilege_level() == 0 {
                             // CPL is 0, so cli/sti are permitted.
@@ -130,30 +173,42 @@ cfg_if::cfg_if! {
 
             fn read(&self) -> u8 {
                 match self {
-                    Uart16550::Io { base } => {
-                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
-                        let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        serial_port.receive()
+                    Uart16550::Io(uart) => {
+                        let Some(mut uart) = uart.try_lock() else {
+                            debug_assert!(
+                                false,
+                                "UART 16550 I/O device lock must not be re-entered",
+                            );
+                            return 0;
+                        };
+
+                        let mut byte = [0];
+                        uart.receive_bytes_exact(&mut byte);
+                        byte[0]
                     }
-                    Uart16550::Mmio { base, reg_stride } => {
-                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
-                        let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        serial_port.receive()
+                    Uart16550::Mmio(uart) => {
+                        let Some(mut uart) = uart.try_lock() else {
+                            debug_assert!(
+                                false,
+                                "UART 16550 MMIO device lock must not be re-entered",
+                            );
+                            return 0;
+                        };
+
+                        let mut byte = [0];
+                        uart.receive_bytes_exact(&mut byte);
+                        byte[0]
                     }
                 }
             }
 
             fn try_read(&self) -> Option<u8> {
                 match self {
-                    Uart16550::Io { base } => {
-                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
-                        let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        serial_port.try_receive().ok()
+                    Uart16550::Io(uart) => {
+                        uart.try_lock().and_then(|mut uart| uart.try_receive_byte().ok())
                     }
-                    Uart16550::Mmio { base, reg_stride } => {
-                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
-                        let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        serial_port.try_receive().ok()
+                    Uart16550::Mmio(uart) => {
+                        uart.try_lock().and_then(|mut uart| uart.try_receive_byte().ok())
                     }
                 }
             }
@@ -219,7 +274,10 @@ cfg_if::cfg_if! {
                 // SAFETY: The base address is required by the safety contract of new() to point
                 // to a PL011 register block that is mapped as device memory.
                 unsafe {
-                    UniqueMmioPointer::new(NonNull::new(self.base_address as *mut Pl011Registers).unwrap())
+                    UniqueMmioPointer::new(
+                        NonNull::new(self.base_address as *mut Pl011Registers)
+                            .expect("PL011 base address must be non-null"),
+                    )
                 }
             }
 

@@ -60,9 +60,11 @@ a simple stdio writer.
 ``` rust
 # extern crate log;
 # extern crate core;
+# extern crate spin;
 # extern crate uart_16550;
 // The starting abstraction point, the `Log` trait
 use log::Log;
+use spin::Mutex;
 use std::io::{Read, Write};
 
 /// Our Abstraction point for implementing different ways to perform a serial write
@@ -75,23 +77,23 @@ pub trait SerialIO {
 
 pub struct SerialLogger<S>
 where
-    S: SerialIO + Send + Sync,
+    S: SerialIO + Send,
 {
     /// An implementation of the abstraction point
-    serial: S,
+    serial: Mutex<S>,
     /// Will not log messages above this level
     max_level: log::LevelFilter,
 }
 
 impl<S> SerialLogger<S>
 where
-    S: SerialIO + Send + Sync,
+    S: SerialIO + Send,
 {
     pub const fn new(
         serial: S,
         max_level: log::LevelFilter,
     ) -> Self {
-        Self { serial, max_level }
+        Self { serial: Mutex::new(serial), max_level }
     }
 }
 
@@ -99,7 +101,7 @@ where
 // be implemented to complete the interface implementation
 impl<S> Log for SerialLogger<S>
 where
-    S: SerialIO + Send + Sync,
+    S: SerialIO + Send,
 {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         return metadata.level().to_level_filter() <= self.max_level
@@ -109,7 +111,7 @@ where
         let formatted = format!("{} - {}\n", record.level(), record.args());
         // We know our "serial" object must have the "write" function, we just don't know the
         // implementation details, which is fine.
-        self.serial.write(&formatted.into_bytes());
+        self.serial.lock().write(&formatted.into_bytes());
     }
 
     fn flush(&self) {}
@@ -142,40 +144,32 @@ impl SerialIO for Terminal {
     }
 }
 
-use uart_16550::MmioSerialPort;
-struct Uart16550(usize);
+use core::ptr::{NonNull, with_exposed_provenance_mut};
+use uart_16550::backend::MmioBackend;
+use uart_16550::{Config, Uart16550};
 
-impl Uart16550 {
-    fn new(addr: usize) -> Self {
-        Self(addr)
-    }
-}
+struct MmioUart(Mutex<Uart16550<MmioBackend>>);
 
-impl SerialIO for Uart16550 {
+impl SerialIO for MmioUart {
     fn init(&self) {
-        unsafe { MmioSerialPort::new(self.0).init() };
+        self.0
+            .lock()
+            .init(Config::default())
+            .expect("UART 16550 MMIO device initialization must succeed");
     }
 
     fn write(&self, buffer: &[u8]) {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-
-        for b in buffer {
-            port.send(*b);
-        }
+        self.0.lock().send_bytes_exact(buffer);
     }
 
     fn read(&self) -> u8 {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-        port.receive()
+        let mut byte = [0];
+        self.0.lock().receive_bytes_exact(&mut byte);
+        byte[0]
     }
 
     fn try_read(&self) -> Option<u8> {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-        if let Ok(value) = port.try_receive() {
-            Some(value)
-        } else {
-            None
-        }
+        self.0.lock().try_receive_byte().ok()
     }
 }
 
@@ -183,6 +177,14 @@ impl SerialIO for Uart16550 {
 fn main() {
     let terminal_logger = SerialLogger::new(Terminal, log::LevelFilter::Trace);
 
-    let uart16550_logger = SerialLogger::new(Uart16550::new(0x4000), log::LevelFilter::Trace);
+    let uart16550_logger = SerialLogger::new(
+        MmioUart(Mutex::new(unsafe {
+            let base = NonNull::new(with_exposed_provenance_mut::<u8>(0x4000))
+                .expect("UART 16550 MMIO base address must be non-null");
+            Uart16550::new_mmio(base, 1)
+                .expect("UART 16550 MMIO base address and register stride must be valid")
+        })),
+        log::LevelFilter::Trace,
+    );
 }
 ```
