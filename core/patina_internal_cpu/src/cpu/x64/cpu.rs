@@ -105,6 +105,7 @@ impl EfiCpuX64 {
         // unimplemented!();
     }
 
+    #[coverage(off)]
     fn initialize_fpu(&self) {
         #[cfg(not(test))]
         // SAFETY: This assembly writes only hard coded values to CR4 register, and MMX and FPU control words. No
@@ -115,21 +116,23 @@ impl EfiCpuX64 {
 
             // sdm vol. 1, MMX Control Status Register configuration
             static MMX_CONTROL_WORD: u32 = 0x1F80;
+            let fpu_cw = &raw const FPU_CONTROL_WORD;
+            let mmx_cw = &raw const MMX_CONTROL_WORD;
             asm!(
                 "finit",
-                "fldcw [{FPU_CONTROL_WORD}]",
+                "fldcw [{fpu_cw}]",
 
                 // Set OSFXSR (bit 9) in CR4 to enable SSE instructions
                 "mov {temp}, cr4",
                 "or {temp}, {BIT9}",
                 "mov cr4, {temp}",
 
-                "ldmxcsr [{MMX_CONTROL_WORD}]",
+                "ldmxcsr [{mmx_cw}]",
                 temp = out(reg) _,
-                FPU_CONTROL_WORD = sym FPU_CONTROL_WORD,
-                MMX_CONTROL_WORD = sym MMX_CONTROL_WORD,
+                fpu_cw = in(reg) fpu_cw,
+                mmx_cw = in(reg) mmx_cw,
                 BIT9 = const patina::bit!(9),
-                options(nostack, preserves_flags)
+                options(nostack)
             );
         }
     }
