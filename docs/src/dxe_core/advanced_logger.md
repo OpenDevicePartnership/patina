@@ -70,14 +70,16 @@ parsing the logs, see the [tools](#tools) section.
 
 #### Memory Log Initialization
 
-The memory log will typically be allocated and initialized by an earlier phase of
-boot such as PEI or SEC. In this case, Patina will inherit the memory log from this earlier
+The memory log is currently expected to be allocated and initialized by an earlier phase of
+boot such as SEC, PEI, or ARM64 Standalone MM. Patina will inherit the memory log from this earlier
 phase to provide a continuous log of the entire boot sequence. The location of the
 memory log provided by a previous phase will be provided through the Advanced Logger
 HOB, which simply consists of the physical address of the log. From there, the header,
-which is validated by signature, will describe the size and other state of the memory log.
+which is validated by signature, will describe the size and other state of the memory log. All configuration
+will be used from the inherited log; Advanced Logger expects that the creator of the log defines the state
+for the entire system, such as what the hardware port logging level is.
 
-The memory log may also be initialized within Patina. This has some limitations,
+Support will be added to initialize the log in Patina. This has some limitations,
 as logging is normally initialized prior to memory allocations being available,
 and relying on such allocations would mean losing early log events from the memory
 log.
@@ -116,6 +118,9 @@ in its memory log header. This can be used to filter serial usage while still
 capturing messages in the memory log. This will affect all log messages, both from
 the Log crate and the protocol. This will often be used to prevent serial logging
 on systems in production while still allowing for memory logs.
+
+This is always set by the creator of the memory log to maintain consistency between
+concurrent boot phases.
 
 ## Component
 
