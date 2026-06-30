@@ -22,8 +22,7 @@ use crate::interrupts::{
 cfg_if::cfg_if! {
     if #[cfg(not(test))] {
         use core::arch::global_asm;
-        use patina::{read_sysreg, write_sysreg};
-        use crate::interrupts::aarch64::gic_manager::get_current_el;
+        use patina::{read_sysreg, write_sysreg, arch::aarch64::{AArch64El, get_current_el}};
 
         global_asm!(include_str!("exception_handler.asm"));
 
@@ -131,9 +130,8 @@ fn initialize_exception() -> Result<(), EfiError> {
         let vec_base = unsafe { &exception_handlers_start as *const _ as u64 };
         let current_el = get_current_el();
         match current_el {
-            0xC => write_sysreg!(reg vbar_el1, vec_base, "isb sy"),
-            0x08 => write_sysreg!(reg vbar_el2, vec_base, "isb sy"),
-            _ => panic!("Invalid current EL {}", current_el),
+            AArch64El::EL2 => write_sysreg!(reg vbar_el2, vec_base, "isb sy"),
+            AArch64El::EL1 => write_sysreg!(reg vbar_el1, vec_base, "isb sy"),
         };
     }
 

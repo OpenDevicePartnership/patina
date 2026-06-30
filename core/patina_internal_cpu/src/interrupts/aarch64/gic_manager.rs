@@ -5,7 +5,10 @@ use arm_gic::{
 use core::ptr::NonNull;
 use patina::error::EfiError;
 
-use patina::{read_sysreg, write_sysreg};
+use patina::{
+    arch::aarch64::{AArch64El, get_current_el},
+    read_sysreg, write_sysreg,
+};
 
 // This masks out bits in MPIDR_EL1 that are not part of the affinity fields used to identify a core.
 // See definition of MPIDR_EL1 in the ARM Architecture Reference Manual for details.
@@ -19,18 +22,12 @@ pub enum GicVersion {
     ArmGicV3 = 3,
 }
 
-// Determine the current exception level
-pub fn get_current_el() -> u64 {
-    read_sysreg!(CurrentEL)
-}
-
 #[allow(dead_code)]
 fn get_control_system_reg_enable() -> u64 {
     let current_el = get_current_el();
     match current_el {
-        0x08 => read_sysreg!(ICC_SRE_EL2),
-        0x04 => read_sysreg!(ICC_SRE_EL1),
-        _ => panic!("Invalid current EL {}", current_el),
+        AArch64El::EL2 => read_sysreg!(ICC_SRE_EL2),
+        AArch64El::EL1 => read_sysreg!(ICC_SRE_EL1),
     }
 }
 
@@ -38,13 +35,12 @@ fn get_control_system_reg_enable() -> u64 {
 fn set_control_system_reg_enable(icc_sre: u64) -> u64 {
     let current_el = get_current_el();
     match current_el {
-        0x08 => {
+        AArch64El::EL2 => {
             write_sysreg!(reg ICC_SRE_EL2, icc_sre);
         }
-        0x04 => {
+        AArch64El::EL1 => {
             write_sysreg!(reg ICC_SRE_EL1, icc_sre);
         }
-        _ => panic!("Invalid current EL {}", current_el),
     }
 
     get_control_system_reg_enable()

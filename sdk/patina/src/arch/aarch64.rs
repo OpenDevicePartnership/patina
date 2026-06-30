@@ -146,3 +146,21 @@ impl super::Interrupts for AArch64 {
         daif & 0x80 == 0
     }
 }
+
+/// Supported AARCH64 Exception Levels
+#[derive(Debug, PartialEq, Eq)]
+pub enum AArch64El {
+    EL1,
+    EL2,
+}
+
+// Determine the current exception level
+pub fn get_current_el() -> AArch64El {
+    match read_sysreg!(CurrentEL) & 0xC {
+        0xC => panic!("EL3 is not supported"),
+        0x8 => AArch64El::EL2,
+        0x4 => AArch64El::EL1,
+        0x0 => panic!("EL0 is not supported"),
+        _ => unreachable!(),
+    }
+}
