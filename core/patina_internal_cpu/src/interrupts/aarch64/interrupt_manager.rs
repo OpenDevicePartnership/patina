@@ -118,17 +118,16 @@ fn initialize_exception() -> Result<(), EfiError> {
         sp_el0_reg &= !0x0F;
         write_sysreg!(reg sp_el0, sp_el0_reg);
 
-        let mut hcr = read_sysreg!(hcr_el2);
-        hcr |= 1 << 27; // Enable TGE
-        write_sysreg!(reg hcr_el2, hcr);
-    }
+        let current_el = get_current_el();
+        if current_el == AArch64El::EL2 {
+            let mut hcr = read_sysreg!(hcr_el2);
+            hcr |= 1 << 27; // Enable TGE
+            write_sysreg!(reg hcr_el2, hcr);
+        }
 
-    // Program VBar
-    #[cfg(not(test))]
-    {
+        // Program VBar
         // SAFETY: We are using the address of the exception handlers as the vector base address.
         let vec_base = unsafe { &exception_handlers_start as *const _ as u64 };
-        let current_el = get_current_el();
         match current_el {
             AArch64El::EL2 => write_sysreg!(reg vbar_el2, vec_base, "isb sy"),
             AArch64El::EL1 => write_sysreg!(reg vbar_el1, vec_base, "isb sy"),
