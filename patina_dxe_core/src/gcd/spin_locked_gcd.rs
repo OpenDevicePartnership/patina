@@ -16,7 +16,7 @@ use patina::{
     function,
     guids::{self, CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP},
     pi::{
-        dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
+        dxe_services::{self, MemorySpaceDescriptor},
         hob,
     },
     uefi_pages_to_size, uefi_size_to_pages, writelncrlf,
@@ -2314,8 +2314,10 @@ impl SpinLockedGcd {
             .expect("Failed to parse PE info for DXE Core")
         };
 
-        let dxe_core_desc =
-            match self.get_existent_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
+        let dxe_core_desc = match self
+            .get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            }) {
             Ok(desc) => desc,
             Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
         };
@@ -2423,7 +2425,9 @@ impl SpinLockedGcd {
                 "Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}"
             );
 
-            if let Ok(gcd_desc) = self.get_existent_memory_descriptor_for_address(stack_address) {
+            if let Ok(gcd_desc) = self.get_memory_descriptor_for_address(stack_address, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            }) {
                 // Set Stack region to execute protect. We use the allocated memory protection policy here because
                 // that matches our standard policy
                 let attributes =
@@ -2469,7 +2473,8 @@ impl SpinLockedGcd {
 
         // make sure we didn't map page 0 if it was reserved or MMIO, we are using this for null pointer detection
         // only do this if page 0 actually exists
-        if let Ok(descriptor) = self.get_existent_memory_descriptor_for_address(0)
+        if let Ok(descriptor) =
+            self.get_memory_descriptor_for_address(0, |d, _| d.memory_type != dxe_services::GcdMemoryType::NonExistent)
             && let Err(err) = self.set_memory_space_attributes(
                 0,
                 UEFI_PAGE_SIZE,
@@ -2566,11 +2571,13 @@ impl SpinLockedGcd {
             // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
             // same holds true for other required attributes.
             if let Ok(base_address) = result.as_ref() {
-                let mut attributes =
-                    match self.get_existent_memory_descriptor_for_address(*base_address as efi::PhysicalAddress) {
-                        Ok(descriptor) => descriptor.attributes,
-                        Err(_) => DEFAULT_CACHE_ATTR,
-                    };
+                let mut attributes = match self
+                    .get_memory_descriptor_for_address(*base_address as efi::PhysicalAddress, |d, _| {
+                        d.memory_type != dxe_services::GcdMemoryType::NonExistent
+                    }) {
+                    Ok(descriptor) => descriptor.attributes,
+                    Err(_) => DEFAULT_CACHE_ATTR,
+                };
                 // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
@@ -2853,18 +2860,6 @@ impl SpinLockedGcd {
         filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
         self.memory.lock().get_memory_descriptor_for_address(address, filter)
-    }
-
-    // Returns the descriptor for the given address if that memory range is not NonExistent
-    pub fn get_existent_memory_descriptor_for_address(
-        &self,
-        address: efi::PhysicalAddress,
-    ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-        match self.memory.lock().get_memory_descriptor_for_address(address, |_, _| true) {
-            Ok(desc) if desc.memory_type != GcdMemoryType::NonExistent => Ok(desc),
-            Ok(_) => Err(EfiError::NotFound),
-            Err(e) => Err(e),
-        }
     }
 
     /// returns the current count of blocks in the list.
@@ -6835,7 +6830,9 @@ mod tests {
             }
 
             // Test: Address at the start of a SystemMemory block
-            let result = GCD.get_existent_memory_descriptor_for_address(0x1000);
+            let result = GCD.get_memory_descriptor_for_address(0x1000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert!(result.is_ok());
             let desc = result.unwrap();
             assert_eq!(desc.base_address, 0x1000);
@@ -6843,14 +6840,18 @@ mod tests {
             assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
 
             // Test: Address in the middle of a SystemMemory block
-            let result = GCD.get_existent_memory_descriptor_for_address(0x2000);
+            let result = GCD.get_memory_descriptor_for_address(0x2000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert!(result.is_ok());
             let desc = result.unwrap();
             assert_eq!(desc.base_address, 0x1000);
             assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
 
             // Test: Address at the start of MMIO block
-            let result = GCD.get_existent_memory_descriptor_for_address(0x5000);
+            let result = GCD.get_memory_descriptor_for_address(0x5000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert!(result.is_ok());
             let desc = result.unwrap();
             assert_eq!(desc.base_address, 0x5000);
@@ -6858,22 +6859,30 @@ mod tests {
             assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
 
             // Test: Address at the start of Reserved block
-            let result = GCD.get_existent_memory_descriptor_for_address(0x8000);
+            let result = GCD.get_memory_descriptor_for_address(0x8000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert!(result.is_ok());
             let desc = result.unwrap();
             assert_eq!(desc.base_address, 0x8000);
             assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::Reserved);
 
             // Test: Address in a NonExistent region (between added blocks)
-            let result = GCD.get_existent_memory_descriptor_for_address(0x4000);
+            let result = GCD.get_memory_descriptor_for_address(0x4000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert_eq!(result, Err(EfiError::NotFound));
 
             // Test: Address before any added memory space (in NonExistent region)
-            let result = GCD.get_existent_memory_descriptor_for_address(0x500);
+            let result = GCD.get_memory_descriptor_for_address(0x500, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert_eq!(result, Err(EfiError::NotFound));
 
             // Test: Address way outside any added memory space
-            let result = GCD.get_existent_memory_descriptor_for_address(0xFFFF0000);
+            let result = GCD.get_memory_descriptor_for_address(0xFFFF0000, |d, _| {
+                d.memory_type != dxe_services::GcdMemoryType::NonExistent
+            });
             assert_eq!(result, Err(EfiError::NotFound));
         });
     }

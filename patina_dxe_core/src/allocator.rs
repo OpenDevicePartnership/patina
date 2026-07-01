@@ -38,7 +38,7 @@ use crate::{
 };
 pub use fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
 use patina::pi::{
-    dxe_services::{self, GcdMemoryType},
+    dxe_services::GcdMemoryType,
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
@@ -1094,7 +1094,8 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let address = desc.memory_base_address;
-                match GCD.get_existent_memory_descriptor_for_address(address) {
+                match GCD.get_memory_descriptor_for_address(address, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                {
                     // we found the region in the GCD, so we can allocate it
                     Ok(gcd_desc) => {
                         if gcd_desc.base_address == desc.memory_base_address
@@ -1229,7 +1230,7 @@ fn process_hob_allocations(hob_list: &HobList) {
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
     // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
     // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
-    match GCD.get_existent_memory_descriptor_for_address(0) {
+    match GCD.get_memory_descriptor_for_address(0, |d, _| d.memory_type != GcdMemoryType::NonExistent) {
         Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
             let address: efi::PhysicalAddress = 0;
 
@@ -1639,7 +1640,10 @@ mod tests {
     };
 
     use super::*;
-    use patina::pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
+    use patina::pi::{
+        dxe_services,
+        hob::{GUID_EXTENSION, GuidHob, Hob, header},
+    };
     use r_efi::efi;
 
     enum GcdInit {
@@ -2108,7 +2112,9 @@ mod tests {
             ]
             .iter()
             {
-                let allocator = allocators.get_allocator(*memory_type).unwrap();
+                let allocator = allocators
+                    .get_allocator(*memory_type)
+                    .unwrap_or_else(|| panic!("no allocator for type {:#x}", memory_type));
 
                 let granularity = match *memory_type {
                     efi::RESERVED_MEMORY_TYPE
@@ -2132,14 +2138,18 @@ mod tests {
             }
 
             // confirm the MMIO memory allocation occurred in the GCD
-            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10000000).unwrap();
+            let mmio_desc = GCD
+                .get_memory_descriptor_for_address(0x10000000, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                .unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10000000);
             assert_eq!(mmio_desc.length, 0x2000);
             assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
 
             // confirm the rest of the MMIO region is not allocated
-            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10002000).unwrap();
+            let mmio_desc = GCD
+                .get_memory_descriptor_for_address(0x10002000, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                .unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10002000);
             assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
