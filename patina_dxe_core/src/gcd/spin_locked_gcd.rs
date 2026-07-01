@@ -94,19 +94,6 @@ pub enum AllocateType {
     Address(usize),
 }
 
-/// Filter for selecting which memory descriptors to retrieve.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DescriptorFilter {
-    /// Return all memory descriptors (both allocated and unallocated).
-    All,
-    /// Return only allocated memory descriptors.
-    Allocated,
-    /// Return only free (unallocated) system memory descriptors.
-    Free,
-    /// Return only MMIO and Reserved memory descriptors.
-    MmioAndReserved,
-}
-
 #[derive(Clone, Copy)]
 struct GcdAttributeConversionEntry {
     attribute: u32,
@@ -997,7 +984,8 @@ impl GCD {
     ///
     /// # Arguments
     /// * `buffer` - A mutable reference to a vector to hold the descriptors.
-    /// * `filter` - The filter to apply when selecting descriptors.
+    /// * `filter` - A closure invoked with each descriptor and a boolean indicating whether the
+    ///   descriptor's block is allocated. Returns `true` if the descriptor should be included.
     ///
     /// # Returns
     /// * `Ok(())` if successful.
@@ -1006,38 +994,25 @@ impl GCD {
     pub fn get_memory_descriptors(
         &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-        filter: DescriptorFilter,
+        filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
-        log::trace!(target: "allocations", "[{}] Enter with filter {:?}\n", function!(), filter);
+        log::trace!(target: "allocations", "[{}] Enter\n", function!());
 
         let blocks = &self.memory_blocks;
 
         let mut current = blocks.first_idx();
         while let Some(idx) = current {
             let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-            match (filter, mb) {
-                (DescriptorFilter::All, MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor)) => {
-                    buffer.push(*descriptor);
-                }
-                (DescriptorFilter::Allocated, MemoryBlock::Allocated(descriptor)) => {
-                    buffer.push(*descriptor);
-                }
-                (DescriptorFilter::Free, MemoryBlock::Unallocated(descriptor))
-                    if descriptor.memory_type == dxe_services::GcdMemoryType::SystemMemory =>
-                {
-                    buffer.push(*descriptor);
-                }
-                (DescriptorFilter::MmioAndReserved, MemoryBlock::Unallocated(descriptor))
-                    if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
-                        || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved =>
-                {
-                    buffer.push(*descriptor);
-                }
-                _ => {}
+            let (descriptor, allocated) = match mb {
+                MemoryBlock::Allocated(descriptor) => (descriptor, true),
+                MemoryBlock::Unallocated(descriptor) => (descriptor, false),
+            };
+            if filter(descriptor, allocated) {
+                buffer.push(*descriptor);
             }
             current = blocks.next_idx(idx);
         }
@@ -1045,9 +1020,15 @@ impl GCD {
     }
 
     /// This service returns the descriptor for the given physical address.
+    ///
+    /// # Arguments
+    /// * `address` - The physical address to look up.
+    /// * `filter` - A closure invoked with the descriptor and a boolean indicating whether the
+    ///   descriptor's block is allocated. Returns `true` if the descriptor should be included.
     pub fn get_memory_descriptor_for_address(
         &mut self,
         address: efi::PhysicalAddress,
+        mut filter: impl FnMut(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
 
@@ -1056,9 +1037,11 @@ impl GCD {
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(address)).ok_or(EfiError::NotFound)?;
         let mb = memory_blocks.get_with_idx(idx).expect("idx is valid from get_closest_idx");
-        match mb {
-            MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => Ok(*descriptor),
-        }
+        let (descriptor, allocated) = match mb {
+            MemoryBlock::Allocated(descriptor) => (descriptor, true),
+            MemoryBlock::Unallocated(descriptor) => (descriptor, false),
+        };
+        if filter(descriptor, allocated) { Ok(*descriptor) } else { Err(EfiError::NotFound) }
     }
 
     fn split_state_transition_at_idx(
@@ -2257,7 +2240,12 @@ impl SpinLockedGcd {
             Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
-            .get_memory_descriptors(mmio_res_descs.as_mut(), DescriptorFilter::MmioAndReserved)
+            .get_memory_descriptors(mmio_res_descs.as_mut(), |d, _| {
+                matches!(
+                    d.memory_type,
+                    dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                )
+            })
             .expect("Failed to get MMIO descriptors!");
 
         // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
@@ -2269,7 +2257,15 @@ impl SpinLockedGcd {
             Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
-            .get_memory_descriptors(&mut descriptors, DescriptorFilter::Allocated)
+            .get_memory_descriptors(&mut descriptors, |d, allocated| {
+                if d.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                    || d.memory_type == dxe_services::GcdMemoryType::Reserved
+                {
+                    // we've already handled MMIO and reserved memory, so skip these
+                    return false;
+                }
+                allocated
+            })
             .expect("Failed to get allocated memory descriptors!");
 
         // now map the memory regions, keeping any cache attributes set in the GCD descriptors
@@ -2320,9 +2316,9 @@ impl SpinLockedGcd {
 
         let dxe_core_desc =
             match self.get_existent_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
-                Ok(desc) => desc,
-                Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
-            };
+            Ok(desc) => desc,
+            Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
+        };
 
         // map the entire image as RW, as the PE headers don't live in the sections
         self.set_memory_space_attributes(
@@ -2840,11 +2836,12 @@ impl SpinLockedGcd {
     ///
     /// # Arguments
     /// * `buffer` - A mutable reference to a vector to hold the descriptors.
-    /// * `filter` - The filter to apply when selecting descriptors.
+    /// * `filter` - A closure invoked with each descriptor and a boolean indicating whether the
+    ///   descriptor's block is allocated. Returns `true` if the descriptor should be included.
     pub fn get_memory_descriptors(
         &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-        filter: DescriptorFilter,
+        filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<(), EfiError> {
         self.memory.lock().get_memory_descriptors(buffer, filter)
     }
@@ -2853,8 +2850,9 @@ impl SpinLockedGcd {
     pub fn get_memory_descriptor_for_address(
         &self,
         address: efi::PhysicalAddress,
+        filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-        self.memory.lock().get_memory_descriptor_for_address(address)
+        self.memory.lock().get_memory_descriptor_for_address(address, filter)
     }
 
     // Returns the descriptor for the given address if that memory range is not NonExistent
@@ -2862,7 +2860,7 @@ impl SpinLockedGcd {
         &self,
         address: efi::PhysicalAddress,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-        match self.memory.lock().get_memory_descriptor_for_address(address) {
+        match self.memory.lock().get_memory_descriptor_for_address(address, |_, _| true) {
             Ok(desc) if desc.memory_type != GcdMemoryType::NonExistent => Ok(desc),
             Ok(_) => Err(EfiError::NotFound),
             Err(e) => Err(e),
@@ -3013,10 +3011,11 @@ impl<'a> Iterator for DescRangeIterator<'a> {
             return None;
         }
 
-        let descriptor = match self.gcd.get_memory_descriptor_for_address(self.current_base as efi::PhysicalAddress) {
-            Ok(desc) => desc,
-            Err(e) => return Some(Err(e)),
-        };
+        let descriptor =
+            match self.gcd.get_memory_descriptor_for_address(self.current_base as efi::PhysicalAddress, |_, _| true) {
+                Ok(desc) => desc,
+                Err(e) => return Some(Err(e)),
+            };
 
         let descriptor_end = descriptor.base_address + descriptor.length;
         let next_base = u64::min(descriptor_end, self.range_end);
@@ -3058,6 +3057,7 @@ mod tests {
 
     use super::*;
     use alloc::vec::Vec;
+    use patina::pi::dxe_services::GcdMemoryType;
     use r_efi::efi;
     use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
@@ -5303,7 +5303,7 @@ mod tests {
             .unwrap();
 
             let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
-            gcd.get_memory_descriptors(&mut buffer, DescriptorFilter::Allocated).unwrap();
+            gcd.get_memory_descriptors(&mut buffer, |_, allocated| allocated).unwrap();
             assert_eq!(buffer.len(), 3); // one extra allocated space for memory_block region
             assert!(
                 buffer
@@ -5337,7 +5337,13 @@ mod tests {
             }
 
             let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
-            gcd.get_memory_descriptors(&mut buffer, DescriptorFilter::MmioAndReserved).unwrap();
+            gcd.get_memory_descriptors(&mut buffer, |d, _| {
+                matches!(
+                    d.memory_type,
+                    dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                )
+            })
+            .unwrap();
             assert!(buffer.len() == 2);
             assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
                 && desc.base_address == 0x2000
@@ -5345,6 +5351,192 @@ mod tests {
             assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::Reserved
                 && desc.base_address == 0x3000
                 && desc.length == 0x10000));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptors_all_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x3000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x14000, 0x6000, 0).unwrap();
+            }
+
+            let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
+            gcd.get_memory_descriptors(&mut buffer, |_, _| true).unwrap();
+
+            // The `All` filter returns every block, including NonExistent regions.
+            assert_eq!(buffer.len(), gcd.memory_descriptor_count());
+            assert!(
+                buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                    && desc.base_address == 0x2000)
+            );
+            assert!(
+                buffer.iter().any(
+                    |desc| desc.memory_type == dxe_services::GcdMemoryType::Reserved && desc.base_address == 0x3000
+                )
+            );
+            assert!(
+                buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::SystemMemory
+                    && desc.base_address == 0x14000)
+            );
+            assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::NonExistent));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptors_free_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x3000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x14000, 0x6000, 0).unwrap();
+            }
+            // Allocate part of the system memory so that an allocated block is present to exclude.
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x14000),
+                dxe_services::GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+
+            let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
+            gcd.get_memory_descriptors(&mut buffer, |d, allocated| {
+                !allocated && d.memory_type == dxe_services::GcdMemoryType::SystemMemory
+            })
+            .unwrap();
+
+            // Only unallocated system memory is returned.
+            assert!(!buffer.is_empty());
+            assert!(buffer.iter().all(|desc| desc.memory_type == dxe_services::GcdMemoryType::SystemMemory));
+            assert!(buffer.iter().all(|desc| desc.image_handle == INVALID_HANDLE));
+            // The remaining free portion of the added system memory is present, the allocated portion is not.
+            assert!(buffer.iter().any(|desc| desc.base_address == 0x15000 && desc.length == 0x5000));
+            assert!(!buffer.iter().any(|desc| desc.base_address == 0x14000));
+            // MMIO and Reserved are excluded.
+            assert!(!buffer.iter().any(|desc| desc.base_address == 0x2000 || desc.base_address == 0x3000));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptors_existent_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x3000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x14000, 0x6000, 0).unwrap();
+            }
+
+            let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
+            gcd.get_memory_descriptors(&mut buffer, |d, _| d.memory_type != dxe_services::GcdMemoryType::NonExistent)
+                .unwrap();
+
+            // Every existent (non-NonExistent) block is returned, regardless of allocation state or type.
+            assert!(buffer.iter().all(|desc| desc.memory_type != dxe_services::GcdMemoryType::NonExistent));
+            assert!(
+                buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                    && desc.base_address == 0x2000)
+            );
+            assert!(
+                buffer.iter().any(
+                    |desc| desc.memory_type == dxe_services::GcdMemoryType::Reserved && desc.base_address == 0x3000
+                )
+            );
+            assert!(
+                buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::SystemMemory
+                    && desc.base_address == 0x14000)
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptors_free_any_type_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x3000, 0x1000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x14000, 0x6000, 0).unwrap();
+            }
+            // Allocate part of the system memory so that an allocated block is present to exclude.
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x14000),
+                dxe_services::GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+
+            let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
+            gcd.get_memory_descriptors(&mut buffer, |_, allocated| !allocated).unwrap();
+
+            // Unallocated blocks of any type are returned; unlike `Free`, MMIO and Reserved are included.
+            assert!(buffer.iter().all(|desc| desc.image_handle == INVALID_HANDLE));
+            assert!(
+                buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                    && desc.base_address == 0x2000)
+            );
+            assert!(
+                buffer.iter().any(
+                    |desc| desc.memory_type == dxe_services::GcdMemoryType::Reserved && desc.base_address == 0x3000
+                )
+            );
+            assert!(buffer.iter().any(|desc| desc.base_address == 0x15000 && desc.length == 0x5000));
+            // The allocated portion is excluded.
+            assert!(!buffer.iter().any(|desc| desc.base_address == 0x14000 && desc.length == 0x1000));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptors_mmio_and_reserved_includes_allocated() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x2000, 0x2000, 0).unwrap();
+            }
+            // Allocate part of the MMIO region so both an allocated and unallocated MMIO block exist.
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x2000),
+                dxe_services::GcdMemoryType::MemoryMappedIo,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+
+            let mut buffer = Vec::with_capacity(gcd.memory_descriptor_count());
+            gcd.get_memory_descriptors(&mut buffer, |d, _| {
+                matches!(
+                    d.memory_type,
+                    dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                )
+            })
+            .unwrap();
+
+            // The `MmioAndReserved` filter returns both allocated and unallocated MMIO/Reserved blocks.
+            assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                && desc.base_address == 0x2000
+                && desc.length == 0x1000
+                && desc.image_handle == 1 as _));
+            assert!(buffer.iter().any(|desc| desc.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                && desc.base_address == 0x3000
+                && desc.length == 0x1000
+                && desc.image_handle == INVALID_HANDLE));
         });
     }
 
@@ -5500,13 +5692,15 @@ mod tests {
             assert!(stack_hob.memory_length != 0);
 
             // Check Guard Page.
-            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            let mut stack_desc =
+                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address, |_, _| true).unwrap();
             assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
             assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
 
             // Check rest of the stack.
-            stack_desc =
-                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            stack_desc = GCD
+                .get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64, |_, _| true)
+                .unwrap();
             assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
             assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
         });
@@ -6680,6 +6874,197 @@ mod tests {
 
             // Test: Address way outside any added memory space
             let result = GCD.get_existent_memory_descriptor_for_address(0xFFFF0000);
+            assert_eq!(result, Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptor_for_address_all_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, 0).unwrap();
+            }
+
+            // An existent address returns its descriptor.
+            let desc = gcd.get_memory_descriptor_for_address(0x1000, |_, _| true).unwrap();
+            assert_eq!(desc.base_address, 0x1000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+
+            // The `All` filter also returns NonExistent regions rather than failing.
+            let desc = gcd.get_memory_descriptor_for_address(0x500, |_, _| true).unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::NonExistent);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptor_for_address_allocated_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, 0).unwrap();
+            }
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x1000),
+                dxe_services::GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+
+            // The allocated block is returned.
+            let desc = gcd.get_memory_descriptor_for_address(0x1000, |_, allocated| allocated).unwrap();
+            assert_eq!(desc.base_address, 0x1000);
+            assert_eq!(desc.length, 0x1000);
+            assert_eq!(desc.image_handle, 1 as _);
+
+            // The remaining unallocated portion is not matched by the `Allocated` filter.
+            let result = gcd.get_memory_descriptor_for_address(0x2000, |_, allocated| allocated);
+            assert_eq!(result, Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptor_for_address_free_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x5000, 0x1000, 0).unwrap();
+            }
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x1000),
+                dxe_services::GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+
+            // Free system memory is returned.
+            let desc = gcd
+                .get_memory_descriptor_for_address(0x2000, |d, allocated| {
+                    !allocated && d.memory_type == dxe_services::GcdMemoryType::SystemMemory
+                })
+                .unwrap();
+            assert_eq!(desc.base_address, 0x2000);
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!(desc.image_handle, INVALID_HANDLE);
+
+            // Allocated system memory is not free.
+            let result = gcd.get_memory_descriptor_for_address(0x1000, |d, allocated| {
+                !allocated && d.memory_type == dxe_services::GcdMemoryType::SystemMemory
+            });
+            assert_eq!(result, Err(EfiError::NotFound));
+
+            // Unallocated MMIO is not system memory, so it is not matched by the `Free` filter.
+            let result = gcd.get_memory_descriptor_for_address(0x5000, |d, allocated| {
+                !allocated && d.memory_type == dxe_services::GcdMemoryType::SystemMemory
+            });
+            assert_eq!(result, Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptor_for_address_mmio_and_reserved_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x5000, 0x2000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 0x8000, 0x1000, 0).unwrap();
+            }
+
+            // Unallocated MMIO and Reserved are returned.
+            let desc = gcd
+                .get_memory_descriptor_for_address(0x5000, |d, allocated| {
+                    !allocated
+                        && matches!(
+                            d.memory_type,
+                            dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                        )
+                })
+                .unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            let desc = gcd
+                .get_memory_descriptor_for_address(0x8000, |d, allocated| {
+                    !allocated
+                        && matches!(
+                            d.memory_type,
+                            dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                        )
+                })
+                .unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::Reserved);
+
+            // System memory is not matched.
+            let result = gcd.get_memory_descriptor_for_address(0x1000, |d, allocated| {
+                !allocated
+                    && matches!(
+                        d.memory_type,
+                        dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                    )
+            });
+            assert_eq!(result, Err(EfiError::NotFound));
+
+            // Allocated MMIO is not matched (this filter only returns unallocated MMIO/Reserved for a single address).
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x5000),
+                dxe_services::GcdMemoryType::MemoryMappedIo,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+            let result = gcd.get_memory_descriptor_for_address(0x5000, |d, allocated| {
+                !allocated
+                    && matches!(
+                        d.memory_type,
+                        dxe_services::GcdMemoryType::MemoryMappedIo | dxe_services::GcdMemoryType::Reserved
+                    )
+            });
+            assert_eq!(result, Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_get_memory_descriptor_for_address_free_any_type_filter() {
+        with_locked_state(|| {
+            let (mut gcd, _address) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd.
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x2000, 0).unwrap();
+                gcd.add_memory_space(dxe_services::GcdMemoryType::MemoryMappedIo, 0x5000, 0x1000, 0).unwrap();
+            }
+
+            // Unlike `Free`, unallocated MMIO is matched by `FreeAnyType`.
+            let desc = gcd.get_memory_descriptor_for_address(0x5000, |_, allocated| !allocated).unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(desc.image_handle, INVALID_HANDLE);
+
+            // Unallocated system memory is also matched.
+            let desc = gcd.get_memory_descriptor_for_address(0x1000, |_, allocated| !allocated).unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+
+            // Allocated regions are not matched.
+            gcd.allocate_memory_space(
+                AllocateType::Address(0x5000),
+                dxe_services::GcdMemoryType::MemoryMappedIo,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                1 as _,
+                None,
+            )
+            .unwrap();
+            let result = gcd.get_memory_descriptor_for_address(0x5000, |_, allocated| !allocated);
             assert_eq!(result, Err(EfiError::NotFound));
         });
     }

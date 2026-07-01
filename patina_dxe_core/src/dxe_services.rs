@@ -128,7 +128,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-    GCD.get_memory_descriptor_for_address(base_address)
+    GCD.get_memory_descriptor_for_address(base_address, |_, _| true)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -195,7 +195,7 @@ extern "efiapi" fn get_memory_space_map(
     //that extra descriptors come into being after creation but before usage.
     let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
         Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-    let result = GCD.get_memory_descriptors(&mut descriptors, crate::gcd::DescriptorFilter::All);
+    let result = GCD.get_memory_descriptors(&mut descriptors, |_, _| true);
 
     if let Err(err) = result {
         return efi::Status::from(err);
@@ -1457,8 +1457,7 @@ mod tests {
 
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
-                .expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(!expected.is_empty());
 
             let mut out_count: usize = 0;
@@ -1493,8 +1492,7 @@ mod tests {
             // Fetch expected
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
-                .expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(expected.len() >= 3);
 
             // Call API

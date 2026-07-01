@@ -25,7 +25,10 @@ use r_efi::efi;
 fn gcd_free_memory_merged_test() -> patina_test::error::Result {
     let mut last_desc: Option<patina::pi::dxe_services::MemorySpaceDescriptor> = None;
     let mut descs = Vec::with_capacity(GCD.memory_descriptor_count() * 2);
-    GCD.get_memory_descriptors(&mut descs, crate::gcd::DescriptorFilter::Free).map_err(|_| "Can't get descriptors")?;
+    GCD.get_memory_descriptors(&mut descs, |d, allocated| {
+        !allocated && d.memory_type == patina::pi::dxe_services::GcdMemoryType::SystemMemory
+    })
+    .map_err(|_| "Can't get descriptors")?;
     for desc in descs {
         // check if the last descriptor and the current descriptor are both free memory descriptors and not part of
         // a memory bin (image_handle != null)
