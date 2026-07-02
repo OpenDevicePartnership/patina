@@ -1236,11 +1236,11 @@ impl GCD {
         // Validate page alignment and size
         let number_of_pages = ((descriptor.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
         if number_of_pages == 0 {
-            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
+            log::warn!("GCD returned a memory descriptor smaller than a page.");
             return None; // skip entries for things smaller than a page
         }
         if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
+            log::warn!("GCD returned a non-page-aligned memory descriptor.");
             return None; // skip entries not page aligned
         }
 
