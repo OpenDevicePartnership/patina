@@ -18,13 +18,16 @@ r-efi = {workspace = true}
 brotli-decompressor = { workspace = true, optional = true }
 alloc-no-stdlib = { workspace = true, optional = true }
 crc32fast = { workspace = true, optional = true }
-patina_lzma_rs = { workspace = true, optional = true, default-features = false }
+lzma-rust2 = { workspace = true, optional = true, default-features = false }
 
 [features]
 default = ["brotli", "crc32", "lzma"]
 std = []
 brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
 crc32 = ["dep:crc32fast"]
-lzma = ["dep:patina_lzma_rs"]
+lzma = ["dep:lzma-rust2"]
 # All non-std features to test in CI
 ci_features = ["brotli", "crc32", "lzma"]
+
+[dev-dependencies]
+lzma-rust2 = { workspace = true }

@@ -774,7 +774,7 @@ impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
 mod test {
     use core::{mem, sync::atomic::AtomicBool};
     use log::{self, Level, LevelFilter, Metadata, Record};
-    use lzma_rs::lzma_decompress;
+    use lzma_rust2::{LzmaOptions, LzmaReader, LzmaWriter, Read, Write};
     use patina::pi::fw_fs::{self, ffs, fv};
     use r_efi::efi;
     use serde::Deserialize;
@@ -783,7 +783,6 @@ mod test {
         env,
         error::Error,
         fs::{self, File},
-        io::Cursor,
         path::Path,
     };
     use uuid::Uuid;
@@ -1289,9 +1288,17 @@ mod test {
                     && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decompressed: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+                    let mut reader = LzmaReader::new_mem_limit(data, patina::base::SIZE_512MB as u32, None)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        if n == 0 {
+                            break;
+                        }
+                        decompressed.extend_from_slice(chunk.get(..n).ok_or(FirmwareFileSystemError::DataCorrupt)?);
+                    }
                     return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
@@ -1348,9 +1355,17 @@ mod test {
                     && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decompressed: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+                    let mut reader = LzmaReader::new_mem_limit(data, patina::base::SIZE_512MB as u32, None)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        if n == 0 {
+                            break;
+                        }
+                        decompressed.extend_from_slice(chunk.get(..n).ok_or(FirmwareFileSystemError::DataCorrupt)?);
+                    }
                     return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
@@ -1377,11 +1392,11 @@ mod test {
                         }
                     }
                     let mut compressed: Vec<u8> = Vec::new();
-                    let options = lzma_rs::compress::Options {
-                        unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
-                    };
-                    lzma_rs::lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
+                    let options = LzmaOptions::with_preset(6);
+                    let mut writer = LzmaWriter::new_use_header(&mut compressed, &options, Some(content.len() as u64))
                         .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+                    writer.write_all(&content).map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+                    writer.finish().map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
 
                     let mut header = section.header().clone();
                     header.set_content_size(compressed.len()).map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
@@ -1453,8 +1468,8 @@ mod test {
         //re-serialize the FV with the original logo file.
         let serialized_fv_bytes = serialized_fv.serialize().map_err(stringify)?;
 
-        //unfortunately, the lzma-rs encoder isn't robust enough to encode with the expected lzma parameters,
-        //otherwise we could just just compare the original fv bytes to the serialized fv bytes directly.
+        //unfortunately, the lzma-rust2 encoder doesn't encode with the exact lzma parameters used to build the
+        //original FV, otherwise we could just just compare the original fv bytes to the serialized fv bytes directly.
         //instead, we'll compare the contents.
         let serialized_fv_ref = VolumeRef::new(&serialized_fv_bytes).map_err(stringify)?;
 
@@ -1478,8 +1493,8 @@ mod test {
             for (org_section, round_trip_section) in Iterator::zip(org_sections.iter(), round_trip_sections.iter()) {
                 assert_eq!(org_section.section_type(), round_trip_section.section_type());
                 if org_section.section_type() == Some(ffs::section::Type::GuidDefined) {
-                    // the GUID-defined section content is LZMA compressed, but lzma-rs encoder doesn't support the UEFI
-                    // parameter set, so the content won't match because the compression parameters are different.
+                    // the GUID-defined section content is LZMA compressed, but the lzma-rust2 encoder doesn't use the
+                    // exact UEFI parameter set, so the content won't match because the compression parameters differ.
                     // however, the sub-sections will be produced as part of the section iterator, so those will be compared.
                     continue;
                 }

@@ -38,7 +38,7 @@ patina_ffs_extractors = { version = "22.1.0", path = "sdk/patina_ffs_extractors"
 patina_internal_collections = { version = "22.1.0", path = "core/patina_internal_collections", default-features = false }
 patina_internal_cpu = { version = "22.1.0", path = "core/patina_internal_cpu" }
 patina_internal_depex = { version = "22.1.0", path = "core/patina_internal_depex" }
-patina_lzma_rs = { version = "0.3.2", default-features = false }
+lzma-rust2 = { version = "0.16", default-features = false }
 patina_macro = { version = "22.1.0", path = "sdk/patina_macro" }
 patina_mm = { version = "22.1.0", path = "components/patina_mm" }
 patina_mtrr = { version = "1.1.6" }
@@ -73,7 +73,6 @@ winapi = { version = "0.3" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
-lzma-rs = { version = "0.3" }
 
 [workspace.lints.clippy]
 indexing_slicing = "deny"

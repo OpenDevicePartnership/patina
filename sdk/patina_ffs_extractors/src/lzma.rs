@@ -8,15 +8,19 @@
 //!
 use alloc::vec::Vec;
 use core::result::Result;
+use lzma_rust2::{LzmaReader, Read};
 use patina::pi::fw_fs::guid::LZMA_SECTION;
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{Section, SectionExtractor, SectionHeader},
 };
 
-use patina_lzma_rs::io::Cursor;
+/// Sentinel uncompressed-size value in the `.lzma` (FORMAT_ALONE) header that indicates
+/// the uncompressed size is unknown.
+const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+/// Maximum memory limit for LZMA decompression. This is set to 512MB as a reasonable upper limit.
+const LZMA_MAX_MEMORY_LIMIT: u32 = patina::base::SIZE_512MB as u32;
 
 /// Provides decompression for LZMA GUIDed sections.
 #[derive(Default, Clone, Copy)]
@@ -37,7 +41,7 @@ impl SectionExtractor for LzmaSectionExtractor {
         {
             let data = section.try_content_as_slice()?;
 
-            // Get unpacked size to pre-allocate vector, if available
+            // Get unpacked size to pre-allocate the output vector, if available.
             // See https://github.com/tukaani-project/xz/blob/dd4a1b259936880e04669b43e778828b60619860/doc/lzma-file-format.txt#L131
             let unpacked_size =
                 u64::from_le_bytes(data.get(5..13).ok_or(FirmwareFileSystemError::DataCorrupt)?.try_into().unwrap());
@@ -47,8 +51,21 @@ impl SectionExtractor for LzmaSectionExtractor {
                 Vec::<u8>::with_capacity(unpacked_size as usize)
             };
 
-            patina_lzma_rs::lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+            // The section payload is a `.lzma` (FORMAT_ALONE) stream: a 13-byte header
+            // (properties byte, dictionary size, uncompressed size) followed by the
+            // range-coded payload. `LzmaReader::new_mem_limit` parses that header.
+            let mut reader = LzmaReader::new_mem_limit(data, LZMA_MAX_MEMORY_LIMIT, None)
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+
+            let mut chunk = [0u8; 4096];
+            loop {
+                let read = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                if read == 0 {
+                    break;
+                }
+                let decoded = chunk.get(..read).ok_or(FirmwareFileSystemError::DataCorrupt)?;
+                decompressed.extend_from_slice(decoded);
+            }
 
             return Ok(decompressed);
         }
