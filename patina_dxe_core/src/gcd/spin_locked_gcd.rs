@@ -16,7 +16,7 @@ use patina::{
     function,
     guids::{self, CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP},
     pi::{
-        dxe_services::{self, MemorySpaceDescriptor},
+        dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
         hob,
     },
     uefi_pages_to_size, uefi_size_to_pages, writelncrlf,
@@ -1224,6 +1224,70 @@ impl GCD {
         }
     }
 
+    /// Determines if this memory descriptor should be included in the EFI memory map.
+    ///
+    /// Only descriptors that meet UEFI requirements and represent allocatable or special memory
+    /// types are included in the EFI memory map.
+    ///
+    /// # Returns
+    /// * `Some(memory_type)` if the descriptor should be included in the EFI memory map
+    /// * `None` if the descriptor should be excluded
+    fn is_efi_memory_map_descriptor(descriptor: &MemorySpaceDescriptor) -> Option<efi::MemoryType> {
+        // Validate page alignment and size
+        let number_of_pages = ((descriptor.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
+        if number_of_pages == 0 {
+            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
+            return None; // skip entries for things smaller than a page
+        }
+        if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
+            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
+            return None; // skip entries not page aligned
+        }
+
+        // first check if an allocator owns this memory, if so, we can use the allocator's memory type for
+        // the EFI memory map
+        if let Some(memory_type) = memory_type_for_handle(descriptor.image_handle) {
+            return Some(memory_type);
+        }
+
+        match descriptor.memory_type {
+            GcdMemoryType::SystemMemory => {
+                if descriptor.image_handle.is_null() {
+                    // Free memory not tracked by any allocator or directly allocated in the GCD
+                    Some(efi::CONVENTIONAL_MEMORY)
+                } else if descriptor.attributes & efi::MEMORY_RUNTIME == efi::MEMORY_RUNTIME {
+                    // Directly allocated in the GCD and has the runtime attribute set. Mark it as reserved so it is
+                    // preserved into runtime but doesn't have expectations about being in the MAT
+                    Some(efi::RESERVED_MEMORY_TYPE)
+                } else {
+                    // Directly allocated in the GCD and does not have the runtime attribute set. Mark it as boot
+                    // services data so it is reflected correctly but doesn't get preserved to runtime
+                    Some(efi::BOOT_SERVICES_DATA)
+                }
+            }
+
+            // Note: there could also be MMIO tracked by the allocators which would not hit this case.
+            GcdMemoryType::MemoryMappedIo => {
+                // we should only be returning runtime MMIO here
+                if descriptor.attributes & efi::MEMORY_RUNTIME == 0 { None } else { Some(efi::MEMORY_MAPPED_IO) }
+            }
+
+            // Persistent. Note: this type is not allocatable, but might be created by agents other than the core directly
+            // in the GCD.
+            GcdMemoryType::Persistent => Some(efi::PERSISTENT_MEMORY),
+
+            // Unaccepted. Note: this type is not allocatable, but might be created by agents other than the core directly
+            // in the GCD.
+            GcdMemoryType::Unaccepted => Some(efi::UNACCEPTED_MEMORY_TYPE),
+
+            // Reserved.
+            GcdMemoryType::Reserved => Some(efi::RESERVED_MEMORY_TYPE),
+
+            // Other memory types are ignored for purposes of the memory map
+            _ => None,
+        }
+    }
+
     /// Counts the number of EFI memory map descriptors needed.
     ///
     /// Returns
@@ -1239,10 +1303,7 @@ impl GCD {
                 MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => descriptor,
             };
 
-            if memory_type_for_handle(descriptor.image_handle)
-                .or_else(|| descriptor.is_efi_memory_map_descriptor())
-                .is_some()
-            {
+            if Self::is_efi_memory_map_descriptor(descriptor).is_some() {
                 count += 1;
             }
             current = blocks.next_idx(idx);
@@ -1284,9 +1345,7 @@ impl GCD {
                 MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => descriptor,
             };
 
-            if let Some(memory_type) =
-                memory_type_for_handle(descriptor.image_handle).or_else(|| descriptor.is_efi_memory_map_descriptor())
-            {
+            if let Some(memory_type) = Self::is_efi_memory_map_descriptor(descriptor) {
                 let number_of_pages = uefi_size_to_pages!(descriptor.length as usize) as u64;
                 let attributes = Self::adjust_efi_memory_map_descriptor(descriptor, memory_type, active_attributes);
 
@@ -6606,6 +6665,185 @@ mod tests {
                 );
                 assert_eq!(result_capabilities, expected, "Failed for capabilities={:#x}", capabilities);
             }
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_system_memory_free() {
+        with_locked_state(|| {
+            // Free system memory not tracked by any allocator (null handle) is reported as conventional memory.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::CONVENTIONAL_MEMORY));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_system_memory_gcd_allocated_boot_services() {
+        with_locked_state(|| {
+            // System memory directly allocated in the GCD (non-null, non-allocator handle) without the runtime
+            // attribute is reported as boot services data.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: crate::protocol_db::DXE_CORE_HANDLE,
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::BOOT_SERVICES_DATA));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_system_memory_gcd_allocated_runtime() {
+        with_locked_state(|| {
+            // System memory directly allocated in the GCD (non-null, non-allocator handle) with the runtime attribute
+            // is reported as reserved so it is preserved into runtime without being expected in the MAT.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB | efi::MEMORY_RUNTIME,
+                attributes: efi::MEMORY_WB | efi::MEMORY_RUNTIME,
+                image_handle: crate::protocol_db::DXE_CORE_HANDLE,
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::RESERVED_MEMORY_TYPE));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_mmio_non_runtime() {
+        with_locked_state(|| {
+            // Non-runtime MMIO is excluded from the EFI memory map.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::MemoryMappedIo,
+                base_address: 0xF0000000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_UC,
+                attributes: efi::MEMORY_UC,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_mmio_runtime() {
+        with_locked_state(|| {
+            // Runtime MMIO is included in the EFI memory map.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::MemoryMappedIo,
+                base_address: 0xF0000000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+                attributes: efi::MEMORY_UC | efi::MEMORY_RUNTIME,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::MEMORY_MAPPED_IO));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_persistent() {
+        with_locked_state(|| {
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::Persistent,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB | efi::MEMORY_NV,
+                attributes: efi::MEMORY_WB | efi::MEMORY_NV,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::PERSISTENT_MEMORY));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_unaccepted() {
+        with_locked_state(|| {
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::Unaccepted,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::UNACCEPTED_MEMORY_TYPE));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_reserved() {
+        with_locked_state(|| {
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::Reserved,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_UC,
+                attributes: efi::MEMORY_UC,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::RESERVED_MEMORY_TYPE));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_nonexistent_excluded() {
+        with_locked_state(|| {
+            // NonExistent memory is not represented in the EFI memory map.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::NonExistent,
+                base_address: 0x1000,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: 0,
+                attributes: 0,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_multi_page_length() {
+        with_locked_state(|| {
+            // A descriptor spanning multiple pages is still classified by its memory type.
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x2000,
+                length: (UEFI_PAGE_SIZE * 4) as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::CONVENTIONAL_MEMORY));
         });
     }
 
