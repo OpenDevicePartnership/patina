@@ -15,12 +15,11 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
+use crate::DECOMPRESSION_MAX_MEMORY_LIMIT;
+
 /// Sentinel uncompressed-size value in the `.lzma` (FORMAT_ALONE) header that indicates
 /// the uncompressed size is unknown.
 const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
-
-/// Maximum memory limit for LZMA decompression. This is set to 512MB as a reasonable upper limit.
-const LZMA_MAX_MEMORY_LIMIT: u32 = patina::base::SIZE_512MB as u32;
 
 /// Provides decompression for LZMA GUIDed sections.
 #[derive(Default, Clone, Copy)]
@@ -48,13 +47,16 @@ impl SectionExtractor for LzmaSectionExtractor {
             let mut decompressed = if unpacked_size == LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE {
                 Vec::<u8>::new()
             } else {
+                if unpacked_size > DECOMPRESSION_MAX_MEMORY_LIMIT as u64 {
+                    return Err(FirmwareFileSystemError::DataCorrupt);
+                }
                 Vec::<u8>::with_capacity(unpacked_size as usize)
             };
 
             // The section payload is a `.lzma` (FORMAT_ALONE) stream: a 13-byte header
             // (properties byte, dictionary size, uncompressed size) followed by the
             // range-coded payload. `LzmaReader::new_mem_limit` parses that header.
-            let mut reader = LzmaReader::new_mem_limit(data, LZMA_MAX_MEMORY_LIMIT, None)
+            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT, None)
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
 
             let mut chunk = [0u8; 4096];
@@ -114,6 +116,22 @@ mod tests {
 
         // Result depends on whether the compressed data is valid
         assert!(result.is_ok() || matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
+    }
+
+    #[test]
+    fn test_lzma_extractor_unpacked_size_exceeds_limit() {
+        // Declare an unpacked size larger than the 512MB decompression limit (but not the
+        // "unknown size" sentinel); the extractor must reject it before decompressing.
+        let unpacked_size = DECOMPRESSION_MAX_MEMORY_LIMIT as u64 + 1;
+        let mut lzma_data = vec![0x5D, 0x00, 0x00, 0x80, 0x00]; // LZMA properties
+        lzma_data.extend_from_slice(&unpacked_size.to_le_bytes()); // Oversized unpacked size
+        lzma_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Placeholder payload
+
+        let section = create_lzma_section(&lzma_data);
+        let extractor = LzmaSectionExtractor;
+        let result = extractor.extract(&section);
+
+        assert!(matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
     }
 
     #[test]

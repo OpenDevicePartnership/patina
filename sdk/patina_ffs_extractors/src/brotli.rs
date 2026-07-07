@@ -15,6 +15,8 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
+use crate::DECOMPRESSION_MAX_MEMORY_LIMIT;
+
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.
 struct Rebox<T>(Box<[T]>);
@@ -74,6 +76,10 @@ impl SectionExtractor for BrotliSectionExtractor {
                     .try_into()
                     .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
             );
+            if out_size > DECOMPRESSION_MAX_MEMORY_LIMIT as u64 {
+                return Err(FirmwareFileSystemError::DataCorrupt);
+            }
+
             let _scratch_size = u64::from_le_bytes(
                 data.get(8..16)
                     .ok_or(FirmwareFileSystemError::DataCorrupt)?
@@ -129,5 +135,16 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result, b"Hello, World!");
+    }
+
+    #[test]
+    fn test_brotli_extractor_out_size_exceeds_limit() {
+        // Declare an uncompressed size larger than the 512MB decompression limit; the
+        // extractor must reject it before attempting to allocate the output buffer.
+        let out_size = DECOMPRESSION_MAX_MEMORY_LIMIT as u64 + 1;
+        let section = create_brotli_section(&[0u8; 4], out_size);
+        let extractor = BrotliSectionExtractor;
+        let result = extractor.extract(&section);
+        assert!(matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
     }
 }
