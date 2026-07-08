@@ -283,10 +283,32 @@ SErrorA32:
 
 common_exception_routine:
 
+  # Check EL
+  mrs      x1, CurrentEL
+  cmp      x1, #0x8
+  # EL3, shouldn't occur
+  b.gt     .
+  # EL2
+  b.eq     el2_reg_dump
+  # EL1
+  cbnz     x1, el1_reg_dump
+  # EL0, shouldn't occur
+  b        .
+
+el1_reg_dump:
+  mrs      x2, elr_el1
+  mrs      x3, spsr_el1
+  mrs      x5, esr_el1
+  mrs      x6, far_el1
+  b        set_fp
+
+el2_reg_dump:
   mrs      x2, elr_el2
   mrs      x3, spsr_el2
   mrs      x5, esr_el2
   mrs      x6, far_el2
+
+set_fp:
   mrs      x4, fpsr
 
   # Save the SYS regs
@@ -366,9 +388,28 @@ common_exception_routine:
   msr   daifset, #3
   isb
 
+  # Get Current EL again, we lost it above
+  mrs      x28, CurrentEL
+  cmp      x28, #0x8
+  # EL3, shouldn't occur
+  b.gt     .
+  # EL2
+  b.eq     el2_reg_restore
+  # EL1
+  cbnz     x28, el1_reg_restore
+  # EL0, shouldn't occur
+  b        .
+
+el1_reg_restore:
+  msr      elr_el1, x29
+  msr      spsr_el1, x30
+  b        exception_return
+
+el2_reg_restore:
   msr      elr_el2, x29
   msr      spsr_el2, x30
 
+exception_return:
   # pop remaining GP regs and return from exception.
   ldr      x30, [sp, #0xf0 - 0xe0]
   ldp      x28, x29, [sp], #GP_CONTEXT_SIZE - 0xe0
