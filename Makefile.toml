@@ -169,31 +169,6 @@ command = "cargo"
 args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
 dependencies = ["individual-package-targets"]
 
-[tasks.run-bin]
-description = """Runs the standard library DXE core.
-
-Example:
-    `cargo make run-bin`
-    `cargo make -p release run-bin`
-"""
-clear = true
-command = "cargo"
-args = ["run", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
-
-[tasks.build-bin]
-description = """Builds the standard library DXE core.
-
-Customizations:
-    -p [development|release]: Builds in debug or release. Default: development
-
-Example:
-    `cargo make build-bin`
-    `cargo make -p release build-bin`
-"""
-clear = true
-command = "cargo"
-args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
-
 [tasks.check_code_x64]
 description = "Checks rust code for x64 build errors with results."
 private = true

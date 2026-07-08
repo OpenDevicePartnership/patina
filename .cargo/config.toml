@@ -9,8 +9,15 @@ PATINA_CONFIG_VERSION = "1"
 RUSTC_BOOTSTRAP = "1"
 
 # Restrict the unstable features RUSTC_BOOTSTRAP makes available to only those Patina has accepted
-# through the unstable feature process. This applies to host builds (tests, proc-macros).
-# The UEFI targets below repeat the flag because Cargo does not merge rustflags sources.
+# through the unstable feature process. This [build] entry applies to host builds (tests,
+# proc-macros). The UEFI targets below repeat the flag because Cargo does not merge rustflags
+# sources. A `--target` build uses `[target.<triple>].rustflags`.
+#
+# This flag does not work with `-Zbuild-std`. Building std from source rebuilds core, alloc, and
+# compiler_builtins, which have their own `#![feature(...)]` gates outside the Patina accepted set, so
+# they fail with E0725. If you must run `-Zbuild-std`, override rustflags for that invocation with
+# the RUSTFLAGS env var (which replaces these config rustflags), keeping everything else but dropping
+# `-Z allow-features`.
 [build]
 rustflags = [
     "-Z", "allow-features=c_variadic,allocator_api,coverage_attribute",

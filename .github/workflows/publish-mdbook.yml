@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: ✅ Checkout Repository ✅
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 🛠️ Download Rust Tools 🛠️
         uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@main
