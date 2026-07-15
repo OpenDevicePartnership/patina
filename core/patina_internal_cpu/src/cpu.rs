@@ -1,8 +1,7 @@
 //! UEFI CPU Module
 //!
-//! This module provides implementation for Cpu. The [EfiCpu] struct is the only accessible struct when using this
-//! module. The other structs are architecture specific implementations and replace the [EfiCpu] struct at compile time
-//! based on the target architecture.
+//! This module provides the [EfiCpu] type used for boot-time CPU initialization. The [EfiCpu]
+//! struct is architecture specific and selected at compile time based on the target architecture.
 //!
 //! ## License
 //!
@@ -10,12 +9,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-
-use patina::{
-    error::EfiError,
-    pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
-};
-use r_efi::efi;
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
@@ -34,59 +27,4 @@ cfg_if::cfg_if! {
     } else if #[cfg(target_arch = "aarch64")] {
         pub type EfiCpu = aarch64::EfiCpuAarch64;
     }
-}
-
-/// A trait to facilitate architecture-specific implementations.
-/// TODO: This trait will be further broken down in future.
-pub trait Cpu {
-    /// Flush CPU data cache. If the instruction cache is fully coherent
-    /// with all DMA operations then function can just return Success.
-    ///
-    /// start             Physical address to start flushing from.
-    /// length            Number of bytes to flush. Round up to chipset granularity.
-    /// flush_type        Specifies the type of flush operation to perform.
-    ///
-    /// ## Errors
-    ///
-    /// Success       If cache was flushed
-    /// Unsupported   If flush type is not supported.
-    /// DeviceError   If requested range could not be flushed.
-    fn flush_data_cache(
-        &self,
-        start: efi::PhysicalAddress,
-        length: u64,
-        flush_type: CpuFlushType,
-    ) -> Result<(), EfiError>;
-
-    /// Generates an INIT to the CPU.
-    ///
-    /// init_type          Type of CPU INIT to perform
-    ///
-    /// ## Errors
-    ///
-    /// Success       If CPU INIT occurred. This value should never be seen.
-    /// DeviceError   If CPU INIT failed.
-    /// Unsupported   Requested type of CPU INIT not supported.
-    fn init(&self, init_type: CpuInitType) -> Result<(), EfiError>;
-
-    /// Returns a timer value from one of the CPU's internal timers. There is no
-    /// inherent time interval between ticks but is a function of the CPU frequency.
-    ///
-    /// timer_index          - Specifies which CPU timer is requested.
-    ///
-    /// ## Errors
-    ///
-    /// Success          - If the CPU timer count was returned.
-    /// Unsupported      - If the CPU does not have any readable timers.
-    /// DeviceError      - If an error occurred while reading the timer.
-    /// InvalidParameter - timer_index is not valid or TimerValue is NULL.
-    fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64), EfiError>;
-
-    /// Returns the cache writeback granule size in bytes.
-    ///
-    /// This value is used to populate the `dma_buffer_alignment` field in the
-    /// `EFI_CPU_ARCH_PROTOCOL`. DMA buffer allocations must be aligned to this
-    /// boundary to prevent cache coherency issues where a writeback of an
-    /// adjacent dirty cache line could corrupt DMA data.
-    fn cache_writeback_granule(&self) -> u32;
 }

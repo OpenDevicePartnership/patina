@@ -10,10 +10,7 @@
 //!
 use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, aarch64::AArch64PageTable};
 
-use crate::{
-    cpu::aarch64::flush_data_cache_range,
-    paging::{CacheAttributeValue, PatinaPageTable},
-};
+use crate::paging::{CacheAttributeValue, PatinaPageTable};
 use patina::pi::protocols::cpu_arch::CpuFlushType;
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
@@ -72,7 +69,7 @@ where
         // clean and invalidate the data cache for the range so that any dirty lines
         // are written back to memory before subsequent accesses bypass the cache.
         if old_cache_attributes.intersects(CACHED_ATTRS) && new_cache_attributes.intersects(UNCACHED_ATTRS) {
-            flush_data_cache_range(address, size, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+            let _ = patina::arch::flush_data_cache(address, size, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
         }
     }
 }

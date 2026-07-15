@@ -7,11 +7,16 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
 use core::arch::asm;
+use r_efi::efi;
 
 pub(crate) struct X64;
 
 impl super::ArchSupport for X64 {}
+
+/// Cache writeback granule for x86_64, using 4 bytes following precedence set by Tianocore.
+const CACHE_WRITEBACK_GRANULE: u32 = 4;
 
 /// Writes a byte to an x64 I/O port.
 ///
@@ -65,4 +70,72 @@ impl super::Interrupts for X64 {
         }
         eflags & IF != 0
     }
+
+    fn sleep() {
+        // SAFETY: This halts the CPU until the next interrupt, which has no memory safety implications.
+        unsafe {
+            asm!("hlt");
+        }
+    }
+}
+
+impl super::CacheMgmt for X64 {
+    fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
+        match flush_type {
+            CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => {
+                asm_wbinvd();
+                Ok(())
+            }
+            CpuFlushType::EfiCpuFlushTypeInvalidate => {
+                asm_invd();
+                Ok(())
+            }
+            _ => Err(EfiError::Unsupported),
+        }
+    }
+
+    fn cache_writeback_granule() -> u32 {
+        CACHE_WRITEBACK_GRANULE
+    }
+}
+
+impl super::Timer for X64 {
+    fn get_timer_value(timer_index: u32) -> Result<u64, EfiError> {
+        if timer_index != 0 {
+            return Err(EfiError::InvalidParameter);
+        }
+        Ok(read_tsc())
+    }
+
+    fn get_timer_period(timer_index: u32) -> Result<u64, EfiError> {
+        if timer_index != 0 {
+            return Err(EfiError::InvalidParameter);
+        }
+        Ok(timer_period())
+    }
+}
+
+fn asm_wbinvd() {
+    // SAFETY: Writing back and invalidating the cache has no memory safety implications.
+    unsafe {
+        asm!("wbinvd");
+    }
+}
+
+fn asm_invd() {
+    // SAFETY: Invalidating the cache has no memory safety implications.
+    unsafe {
+        asm!("invd");
+    }
+}
+
+/// Reads the timestamp counter used for the CPU timer value. Currently returns 0 until a real
+/// implementation is provided.
+fn read_tsc() -> u64 {
+    0
+}
+
+/// Computes the CPU timer period. Currently returns 0 until a real implementation is provided.
+fn timer_period() -> u64 {
+    0
 }

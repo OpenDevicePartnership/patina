@@ -9,6 +9,9 @@
 //! Portions Copyright 2023 The arm-gic Authors.
 //! arm-gic is dual-licensed under Apache 2.0 and MIT terms.
 
+use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
+use r_efi::efi;
+
 pub(super) struct AArch64;
 
 impl super::ArchSupport for AArch64 {}
@@ -145,6 +148,13 @@ impl super::Interrupts for AArch64 {
         let daif = read_sysreg!(daif);
         daif & 0x80 == 0
     }
+
+    fn sleep() {
+        // SAFETY: This waits for an interrupt, which has no memory safety implications.
+        unsafe {
+            core::arch::asm!("wfi", options(nostack));
+        }
+    }
 }
 
 /// Supported AARCH64 Exception Levels
@@ -162,5 +172,103 @@ pub fn get_current_el() -> AArch64El {
         0x4 => AArch64El::EL1,
         0x0 => panic!("EL0 is not supported"),
         _ => unreachable!(),
+    }
+}
+
+impl super::CacheMgmt for AArch64 {
+    fn flush_data_cache(start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
+        flush_data_cache_range(start, length, flush_type);
+        Ok(())
+    }
+
+    fn cache_writeback_granule() -> u32 {
+        let ctr_el0 = read_sysreg!(ctr_el0);
+
+        // CWG (Cache Writeback Granule): CTR_EL0 bits [27:24]
+        let cwg = ((ctr_el0 >> 24) & 0xF) as u32;
+
+        // CWG is Log2 of the max size in words
+        if cwg > 0 {
+            4 << cwg
+        } else {
+            crate::base::SIZE_2KB as u32 // Default to 2K if register contains 0 per Armv8-A spec
+        }
+    }
+}
+
+impl super::Timer for AArch64 {
+    fn get_timer_value(_timer_index: u32) -> Result<u64, EfiError> {
+        Err(EfiError::Unsupported)
+    }
+
+    fn get_timer_period(_timer_index: u32) -> Result<u64, EfiError> {
+        Err(EfiError::Unsupported)
+    }
+}
+
+fn clean_data_entry_by_mva(mva: efi::PhysicalAddress) {
+    // SAFETY: Cleaning the data cache has no impact on safety invariants.
+    unsafe {
+        core::arch::asm!("dc cvac, {}", in(reg) mva, options(nostack, preserves_flags));
+    }
+}
+
+fn invalidate_data_cache_entry_by_mva(mva: efi::PhysicalAddress) {
+    // SAFETY: Invalidating the data cache does not impact safety checks. It does have the potential
+    // to corrupt memory if used incorrectly, but the caller is expected to ensure that they are
+    // using this function correctly.
+    unsafe {
+        core::arch::asm!("dc ivac, {}", in(reg) mva, options(nostack, preserves_flags));
+    }
+}
+
+fn clean_and_invalidate_data_entry_by_mva(mva: efi::PhysicalAddress) {
+    // SAFETY: Cleaning and invalidating the data cache does not impact safety invariants.
+    unsafe {
+        core::arch::asm!("dc civac, {}", in(reg) mva, options(nostack, preserves_flags));
+    }
+}
+
+fn data_cache_line_len() -> u64 {
+    let ctr_el0 = read_sysreg!(ctr_el0);
+    4 << ((ctr_el0 >> 16) & 0xf)
+}
+
+/// Performs a data cache maintenance operation over the virtual address range
+/// `[start, start + length)` according to `op`, followed by a single `dsb sy`
+/// barrier. A no-op if `length` is zero.
+fn flush_data_cache_range(start: efi::PhysicalAddress, length: u64, op: CpuFlushType) {
+    if length == 0 {
+        return;
+    }
+
+    let cacheline_size = data_cache_line_len();
+    let cacheline_mask = cacheline_size - 1;
+    let mut aligned_addr = start & !cacheline_mask;
+    let end_addr = match start.checked_add(length) {
+        Some(end_addr) => end_addr,
+        None => {
+            debug_assert!(false, "Cache range overflow");
+            return;
+        }
+    };
+
+    while aligned_addr < end_addr {
+        match op {
+            CpuFlushType::EfiCpuFlushTypeWriteBack => clean_data_entry_by_mva(aligned_addr),
+            CpuFlushType::EfiCpuFlushTypeInvalidate => invalidate_data_cache_entry_by_mva(aligned_addr),
+            CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => clean_and_invalidate_data_entry_by_mva(aligned_addr),
+        }
+
+        match aligned_addr.checked_add(cacheline_size) {
+            Some(next) => aligned_addr = next,
+            None => break,
+        }
+    }
+
+    // we have a data barrier after all cache lines have had the operation performed on them as an optimization
+    // SAFETY: a data barrier has no impact on safety invariants.
+    unsafe {
+        core::arch::asm!("dsb sy", options(nostack));
     }
 }

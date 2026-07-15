@@ -116,7 +116,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
-use cpu::{DxeCpu, DxeInterruptManager};
+use cpu::DxeInterruptManager;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use patina::{
@@ -408,8 +408,7 @@ impl<P: PlatformInfo> Core<P> {
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
 
-        let (cpu, mut interrupt_manager) =
-            cpu::initialize_cpu_subsystem().expect("Failed to initialize CPU subsystem!");
+        let mut interrupt_manager = cpu::initialize_cpu_subsystem().expect("Failed to initialize CPU subsystem!");
 
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
         // patina_debugger::initialize(&mut interrupt_manager);
@@ -470,7 +469,6 @@ impl<P: PlatformInfo> Core<P> {
         log::info!("GCD - After memory init:\n{GCD}");
 
         let mut component_dispatcher = self.component_dispatcher.lock();
-        component_dispatcher.add_service(DxeCpu(cpu));
         component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
         component_dispatcher.add_service(CoreMemoryManager);
         component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));

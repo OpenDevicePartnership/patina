@@ -13,7 +13,7 @@ mod cpu_arch_protocol;
 mod hw_interrupt_protocol;
 mod perf_timer;
 
-pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeCpu, DxeInterruptManager};
+pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeInterruptManager};
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use perf_timer::PerfTimer;
@@ -114,7 +114,7 @@ pub trait CpuInfo {
 }
 
 #[cfg_attr(coverage, coverage(off))]
-pub fn initialize_cpu_subsystem() -> crate::error::Result<(EfiCpu, Interrupts)> {
+pub fn initialize_cpu_subsystem() -> crate::error::Result<Interrupts> {
     let mut cpu = EfiCpu::default();
     cpu.initialize().inspect_err(|err| {
         log::error!("Failed to initialize CPU subsystem: {}", err);
@@ -125,7 +125,7 @@ pub fn initialize_cpu_subsystem() -> crate::error::Result<(EfiCpu, Interrupts)> 
         log::error!("Failed to initialize Interrupt Manager: {}", err);
     })?;
 
-    Ok((cpu, interrupt_manager))
+    Ok(interrupt_manager)
 }
 
 #[cfg(test)]

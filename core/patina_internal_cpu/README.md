@@ -22,13 +22,14 @@ As an "internal" Patina crate, it is not intended for direct use by code outside
 
 ### `cpu`
 
-`cpu::Cpu` defines the cache flush, INIT broadcast, and timer query hooks required by the UEFI CPU Architecture
-Protocol.
+The architecture-specific CPU operations (cache flush, INIT broadcast, and timer queries) required by the UEFI CPU
+Architecture Protocol are implemented in the SDK's `patina::arch` module and dispatched via free functions. This module
+provides thin wrappers over those free functions, including a cached timer period, along with the `EfiCpu` type used for
+boot-time CPU initialization.
 
-- `EfiCpuX64` performs tasks like initializing the floating-point unit, installing a GDT, and routing cache maintenance
-  operations to instructions such as `wbinvd`/`invd`.
-- `EfiCpuAarch64` performs cache maintenance operations for Arm.
-- `EfiCpuNull` is available for documentation and host-based unit tests that do not require actual CPU services.
+- `EfiCpuX64` performs boot-time tasks like initializing the floating-point unit and installing a GDT.
+- `EfiCpuAarch64` performs AArch64 boot-time CPU initialization.
+- `EfiCpuStub` is available for documentation and host-based unit tests that do not require actual CPU services.
 
 ### `interrupts`
 
