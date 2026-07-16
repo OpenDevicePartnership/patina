@@ -31,6 +31,11 @@ cfg_if::cfg_if! {
 
         use uart_16550::MmioSerialPort;
         use uart_16550::SerialPort as IoSerialPort;
+        use spin::Mutex;
+
+        /// Global lock serializing writes to `Uart16550` devices so concurrent callers
+        /// do not interleave bytes on the serial port.
+        static UART16550_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
         /// Returns the Current Privilege Level (CPL) from the CS selector.
         fn current_privilege_level() -> u16 {
@@ -94,6 +99,8 @@ cfg_if::cfg_if! {
             }
 
             fn write(&self, buffer: &[u8]) {
+                // Serialize writes across all `Uart16550` instances to prevent interleaved output.
+                let _guard = UART16550_WRITE_LOCK.lock();
                 match self {
                     Uart16550::Io { base } => {
                         // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.

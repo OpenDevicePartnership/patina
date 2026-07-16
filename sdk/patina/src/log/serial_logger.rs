@@ -8,8 +8,13 @@
 //!
 use crate::serial::SerialIO;
 use core::marker::Send;
+use spin::Mutex;
 
 use super::Format;
+
+/// Global lock serializing whole log records so concurrent callers do not
+/// interleave formatted output on the serial port.
+static LOG_LOCK: Mutex<()> = Mutex::new(());
 
 /// A Base implementation for a logger.
 ///
@@ -58,6 +63,8 @@ where
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
+            // Hold the lock for the whole record so formatted output is not interleaved.
+            let _guard = LOG_LOCK.lock();
             let mut writer = LogWriter { serial_port: &self.serial_port };
             self.format.write(&mut writer, record);
         }
