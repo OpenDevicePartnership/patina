@@ -48,14 +48,18 @@ pub fn rdtsc() -> u64 {
 impl super::Interrupts for X64 {
     fn enable_interrupts() {
         // SAFETY: Enabling interrupts via `sti` does not violate memory safety; the caller is
-        // responsible for ensuring the system is ready to service interrupts.
+        // responsible for ensuring the system is ready to service interrupts. This operation
+        // preserves flags even though it sets the IF flag, because preserves_flags is only about
+        // status flags, not control flags.
         unsafe {
             asm!("sti", options(nostack, nomem, preserves_flags));
         }
     }
 
     fn disable_interrupts() {
-        // SAFETY: Disabling interrupts via `cli` does not violate memory safety.
+        // SAFETY: Disabling interrupts via `cli` does not violate memory safety. This operation
+        // preserves flags even though it sets the IF flag, because preserves_flags is only about
+        // status flags, not control flags.
         unsafe {
             asm!("cli", options(nostack, nomem, preserves_flags));
         }

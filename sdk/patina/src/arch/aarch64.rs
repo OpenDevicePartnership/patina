@@ -16,6 +16,8 @@ pub(super) struct AArch64;
 
 impl super::ArchSupport for AArch64 {}
 
+const DAIF_WR_IRQ_BIT: u64 = 0x2;
+
 /// Reads and returns the value of the given aarch64 system register.
 #[macro_export]
 macro_rules! read_sysreg {
@@ -46,7 +48,7 @@ macro_rules! read_sysreg {
 /// - `write_sysreg!(reg register_name, value, "barrier1", "barrier2", ...)` - Write literal value with barriers
 #[macro_export]
 macro_rules! write_sysreg {
-    (reg $dest:ident, imm $imm:literal) => {
+    (reg $dest:ident, imm $imm:expr) => {
         {
             // immediate-to-register copy, no barrier required case
             // SAFETY: The caller must provide valid system register names
@@ -60,7 +62,7 @@ macro_rules! write_sysreg {
             }
         }
     };
-    (reg $dest:ident, imm $imm:literal, $($barrier:literal),+) => {
+    (reg $dest:ident, imm $imm:expr, $($barrier:literal),+) => {
         {
             // immediate-to-register copy, barrier required case
             // SAFETY: The caller must provide valid system register names
@@ -137,11 +139,11 @@ macro_rules! write_sysreg {
 
 impl super::Interrupts for AArch64 {
     fn enable_interrupts() {
-        write_sysreg!(reg daifclr, imm 0x02, "isb sy");
+        write_sysreg!(reg daifclr, imm DAIF_WR_IRQ_BIT, "isb sy");
     }
 
     fn disable_interrupts() {
-        write_sysreg!(reg daifset, imm 0x02, "isb sy");
+        write_sysreg!(reg daifset, imm DAIF_WR_IRQ_BIT, "isb sy");
     }
 
     fn interrupts_enabled() -> bool {
