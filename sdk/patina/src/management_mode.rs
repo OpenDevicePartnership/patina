@@ -11,6 +11,7 @@
 
 pub mod comm_buffer_hob;
 pub mod protocol;
+pub mod supervisor;
 
 // Re-export commonly used items for easier access
 pub use comm_buffer_hob::MmCommBufferStatus;
