@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
+members = ["components/*", "core/*", "sdk/*", "patina_dxe_core", "patina_mm_supervisor", "patina_mm_user_core"]
 
 [workspace.package]
 version = "22.2.1"
@@ -41,6 +41,8 @@ patina_internal_mm_common = { version = "22.2.1", path = "core/patina_internal_m
 lzma-rust2 = { version = "0.16", default-features = false }
 patina_macro = { version = "22.2.1", path = "sdk/patina_macro" }
 patina_mm = { version = "22.2.1", path = "components/patina_mm" }
+patina_mm_cpu = { version = "22.2.1", path = "components/patina_mm_cpu" }
+patina_mm_supervisor = { version = "22.2.1", path = "patina_mm_supervisor" }
 patina_mtrr = { version = "1.1.6" }
 patina_paging = { version = "11.0.4" }
 patina_performance = { version = "22.2.1", path = "components/patina_performance" }
