@@ -44,7 +44,7 @@ trait Interrupts {
     fn interrupts_enabled() -> bool;
 
     /// Causes the CPU to enter a low power state until the next interrupt.
-    fn sleep();
+    fn enable_interrupts_and_sleep();
 }
 
 /// Enables CPU interrupts on the current architecture.
@@ -58,13 +58,13 @@ fn disable_interrupts() {
 }
 
 /// Returns whether CPU interrupts are currently enabled on the current architecture.
-fn interrupts_enabled() -> bool {
+pub fn interrupts_enabled() -> bool {
     <Arch as Interrupts>::interrupts_enabled()
 }
 
 /// Causes the current architecture's CPU to enter a low power state until the next interrupt.
-pub fn sleep() {
-    <Arch as Interrupts>::sleep()
+pub fn enable_interrupts_and_sleep() {
+    <Arch as Interrupts>::enable_interrupts_and_sleep()
 }
 
 /// Executes a closure with CPU interrupts disabled, interrupts will be restored to their

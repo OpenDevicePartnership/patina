@@ -148,7 +148,12 @@ unsafe extern "efiapi" fn wait_for_event(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION {
+    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION || !patina::arch::interrupts_enabled() {
+        debug_assert!(
+            CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION,
+            "wait_for_event called at TPL_APPLICATION"
+        );
+        debug_assert!(!patina::arch::interrupts_enabled(), "wait_for_event called with interrupts disabled");
         return efi::Status::UNSUPPORTED;
     }
 
@@ -177,10 +182,11 @@ unsafe extern "efiapi" fn wait_for_event(
 
         // EDK2 core signals an idle event here to notify an event group of the "idle" state. The only consumers of that
         // event are the CPU architectural drivers which use it to enter a low power state until the next interrupt.
-        // Patina implements CPU architectural support in the SDK, so directly call the sleep() function to avoid
-        // exposing the idle event to outside consumers (this event group is not specified in UEFI or PI specs). In the
-        // event that a need arises to expose the idle event to consumers outside of Patina, it can be signaled here.
-        patina::arch::sleep();
+        // Patina implements CPU architectural support in the SDK, so directly call the enable_interrupts_and_sleep()
+        // function to avoid exposing the idle event to outside consumers (this event group is not specified in UEFI or
+        // PI specs). In the event that a need arises to expose the idle event to consumers outside of Patina, it can be
+        // signaled here.
+        patina::arch::enable_interrupts_and_sleep();
     }
 }
 

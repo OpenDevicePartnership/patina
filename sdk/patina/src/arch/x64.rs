@@ -75,10 +75,12 @@ impl super::Interrupts for X64 {
         eflags & IF != 0
     }
 
-    fn sleep() {
-        // SAFETY: This halts the CPU until the next interrupt, which has no memory safety implications.
+    fn enable_interrupts_and_sleep() {
+        // SAFETY: This halts the CPU until the next interrupt, which has no memory safety implications. This operation
+        // preserves flags even though it sets the IF flag, because preserves_flags is only about status flags, not
+        // control flags.
         unsafe {
-            asm!("hlt");
+            asm!("sti; hlt", options(nostack, nomem, preserves_flags));
         }
     }
 }

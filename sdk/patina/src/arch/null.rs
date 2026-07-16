@@ -24,7 +24,7 @@ impl super::Interrupts for NullArch {
         false
     }
 
-    fn sleep() {}
+    fn enable_interrupts_and_sleep() {}
 }
 
 impl super::CacheMgmt for NullArch {

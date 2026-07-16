@@ -151,10 +151,10 @@ impl super::Interrupts for AArch64 {
         daif & 0x80 == 0
     }
 
-    fn sleep() {
-        // SAFETY: This waits for an interrupt, which has no memory safety implications.
+    fn enable_interrupts_and_sleep() {
+        // SAFETY: Enabling interrupts and then waiting for an interrupt has no memory safety implications.
         unsafe {
-            core::arch::asm!("wfi", options(nostack));
+            core::arch::asm!("msr daifclr, {}; wfi", const DAIF_WR_IRQ_BIT, options(nostack, nomem, preserves_flags));
         }
     }
 }
