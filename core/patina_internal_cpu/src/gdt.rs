@@ -192,6 +192,7 @@ struct GdtPointer {
 }
 
 #[cfg_attr(coverage, coverage(off))]
+/// Initializes the GDT from a fixed descriptor set and loads it.
 pub fn init() {
     let gdt_ptr = GDT.as_ptr() as usize;
     if gdt_ptr >= SIZE_4GB {

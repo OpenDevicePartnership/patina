@@ -77,7 +77,7 @@ fn get_vector_address(index: usize) -> u64 {
 static IDT: StaticIdt = StaticIdt(UnsafeCell::new(Idt { entries: [IdtEntry::empty(); 256] }));
 
 pub fn initialize_idt() {
-    let cs = crate::cpu::x64::gdt::CODE_SELECTOR;
+    let cs = crate::gdt::CODE_SELECTOR;
     // SAFETY: There is only path to access the IDT and it is not possible to have concurrent access.
     let idt = unsafe { &mut *IDT.0.get() };
 

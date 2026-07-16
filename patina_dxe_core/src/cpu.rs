@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 mod cpu_arch_protocol;
+mod efi_cpu;
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 mod hw_interrupt_protocol;
 mod perf_timer;
@@ -18,7 +19,8 @@ pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeInterruptManager
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use perf_timer::PerfTimer;
 
-use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
+use efi_cpu::EfiCpu;
+use patina_internal_cpu::interrupts::Interrupts;
 
 /// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
 ///

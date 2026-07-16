@@ -7,11 +7,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #[cfg(not(test))]
-use super::gdt;
-use crate::interrupts;
-#[cfg(not(test))]
 use core::arch::asm;
 use patina::error::EfiError;
+use patina_internal_cpu::interrupts;
 
 /// Struct to implement X64 Cpu Init.
 ///
@@ -39,7 +37,7 @@ impl EfiCpuX64 {
 
     fn initialize_gdt(&self) {
         #[cfg(not(test))]
-        gdt::init();
+        patina_internal_cpu::gdt::init();
     }
 
     #[cfg_attr(coverage, coverage(off))]
