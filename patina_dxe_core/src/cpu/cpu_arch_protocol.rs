@@ -83,7 +83,7 @@ fn get_impl_ref_mut<'a>(this: *mut Protocol) -> Option<&'a mut EfiCpuArchProtoco
 }
 
 // EfiCpuArchProtocolImpl function pointers implementations.
-
+#[cfg_attr(coverage, coverage(off))]
 extern "efiapi" fn flush_data_cache(
     this: *const Protocol,
     start: efi::PhysicalAddress,
@@ -158,13 +158,17 @@ extern "efiapi" fn register_interrupt_handler(
     }
 }
 
-/// Returns the current CPU timer value along with its period.
+/// Returns the current CPU timer counter value along with its period.
 ///
-/// The timer period is cached after it is first queried. The architecture (SDK) layer is only
-/// consulted for the period while the cache remains unfilled; once populated, the cached value is
-/// reused.
+/// The timer period, in units of 100 nanoseconds per tick, is derived from the counter frequency
+/// and cached after it is first computed. The architecture (SDK) layer is only consulted for the
+/// frequency while the cache remains unfilled; once populated, the cached value is reused.
 fn get_cpu_timer_value(timer_index: u32) -> Result<(u64, u64)> {
-    let value = patina::arch::get_timer_value(timer_index)?;
+    if timer_index != 0 {
+        return Err(EfiError::InvalidParameter);
+    }
+
+    let value = patina::arch::get_timer_value();
 
     let cached = TIMER_PERIOD.load(Ordering::Relaxed);
     if cached != 0 {
@@ -172,7 +176,13 @@ fn get_cpu_timer_value(timer_index: u32) -> Result<(u64, u64)> {
         return Ok((value, cached));
     }
 
-    let period = patina::arch::get_timer_period(timer_index)?;
+    // The timer period is the number of 100 ns units that elapse per counter tick, computed from
+    // the counter frequency in Hz (100 ns units per tick = 10^7 / frequency). If the frequency
+    // cannot be determined, the period is reported as zero.
+    let period = match patina::arch::get_timer_frequency() {
+        Some(frequency) => 10_000_000 / frequency.get(),
+        None => 0,
+    };
     TIMER_PERIOD.store(period, Ordering::Relaxed);
     Ok((value, period))
 }
@@ -368,6 +378,29 @@ mod tests {
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
             let status = get_timer_value(&protocol.protocol, 0, &mut timer_value as *mut _, core::ptr::null_mut());
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_get_cpu_timer_value() {
+        with_locked_state(|| {
+            // Start from a clean cache so the frequency-derived path is exercised first.
+            TIMER_PERIOD.store(0, Ordering::Relaxed);
+
+            // A non-zero timer index is rejected.
+            assert!(matches!(get_cpu_timer_value(1), Err(EfiError::InvalidParameter)));
+
+            // With no cached period and the host stub arch reporting no frequency, the period is 0
+            // and the counter value is the stub's 0.
+            assert_eq!(get_cpu_timer_value(0).unwrap(), (0, 0));
+
+            // Once a non-zero period is cached, it is returned as-is without recomputing from the
+            // frequency.
+            TIMER_PERIOD.store(1234, Ordering::Relaxed);
+            assert_eq!(get_cpu_timer_value(0).unwrap(), (0, 1234));
+
+            // Reset the shared cache so the value does not leak into other tests.
+            TIMER_PERIOD.store(0, Ordering::Relaxed);
         });
     }
 

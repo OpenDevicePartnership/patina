@@ -10,6 +10,7 @@
 //! arm-gic is dual-licensed under Apache 2.0 and MIT terms.
 
 use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
+use core::num::NonZeroU64;
 use r_efi::efi;
 
 pub(super) struct AArch64;
@@ -199,12 +200,15 @@ impl super::CacheMgmt for AArch64 {
 }
 
 impl super::Timer for AArch64 {
-    fn get_timer_value(_timer_index: u32) -> Result<u64, EfiError> {
-        Err(EfiError::Unsupported)
+    fn get_timer_value() -> u64 {
+        read_sysreg!(CNTPCT_EL0)
     }
 
-    fn get_timer_period(_timer_index: u32) -> Result<u64, EfiError> {
-        Err(EfiError::Unsupported)
+    fn get_timer_frequency() -> Option<NonZeroU64> {
+        match read_sysreg!(CNTFRQ_EL0) {
+            0 => None,
+            freq => NonZeroU64::new(freq),
+        }
     }
 }
 

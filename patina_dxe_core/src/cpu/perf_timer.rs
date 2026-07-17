@@ -22,7 +22,7 @@ impl ArchTimerFunctionality for PerfTimer {
     /// Value of the counter (ticks).
     #[cfg_attr(coverage, coverage(off))]
     fn cpu_count(&self) -> u64 {
-        arch_cpu_count()
+        patina::arch::get_timer_value()
     }
 
     /// Frequency of `cpu_count` increments (in Hz).
@@ -30,7 +30,8 @@ impl ArchTimerFunctionality for PerfTimer {
     /// Otherwise, an architecture-specific method is attempted to determine the frequency.
     fn perf_frequency(&self) -> u64 {
         if self.frequency.load(Ordering::Relaxed) == 0 {
-            self.frequency.store(arch_perf_frequency(), Ordering::Relaxed);
+            let frequency = patina::arch::get_timer_frequency().map_or(0, |f| f.get());
+            self.frequency.store(frequency, Ordering::Relaxed);
         }
         self.frequency.load(Ordering::Relaxed)
     }
@@ -54,75 +55,6 @@ impl Default for PerfTimer {
     }
 }
 
-/// Returns the current CPU count using architecture-specific methods.
-///
-/// Skip coverage as any value could be valid, including 0.
-#[cfg_attr(coverage, coverage(off))]
-fn arch_cpu_count() -> u64 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        patina::arch::x64::rdtsc()
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        patina::read_sysreg!(CNTPCT_EL0)
-    }
-}
-
-/// Returns the performance frequency using architecture-specific methods.
-/// In general, the performance frequency is a configurable value that may be
-/// provided by the platform. This function is a fallback when no
-/// platform-specific configuration is provided.
-///
-/// Skip coverage as any value could be valid, including 0.
-#[cfg_attr(coverage, coverage(off))]
-pub(crate) fn arch_perf_frequency() -> u64 {
-    // Try to get TSC frequency from CPUID (most Intel and AMD platforms).
-    #[cfg(target_arch = "x86_64")]
-    {
-        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
-        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
-        // consider __cpuid safe.
-        #[allow(unused_unsafe)]
-        // SAFETY: Calling cpuid does not violate memory safety
-        let core::arch::x86_64::CpuidResult { eax, ebx, ecx, .. } = unsafe { core::arch::x86_64::__cpuid(0x15) };
-        if eax != 0 && ebx != 0 && ecx != 0 {
-            // CPUID 0x15 gives TSC_frequency = (ECX * EBX) / EAX.
-            // Most modern x86 platforms support this leaf.
-            return (ecx as u64 * ebx as u64) / eax as u64;
-        }
-
-        // CPUID 0x16 gives base frequency in MHz in EAX.
-        // This is supported on some older x86 platforms.
-        // This is a nominal frequency and is less accurate for reflecting actual operating conditions.
-        //
-        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
-        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
-        // consider __cpuid safe.
-        #[allow(unused_unsafe)]
-        // SAFETY: Calling cpuid does not violate memory safety
-        let core::arch::x86_64::CpuidResult { eax, .. } = unsafe { core::arch::x86_64::__cpuid(0x16) };
-        if eax != 0 {
-            // CPUID 0x16 gives base frequency in MHz in EAX.
-            // This is supported on some older x86 platforms.
-            // This is a nominal frequency and is less accurate for reflecting actual operating conditions.
-            return (eax * 1_000_000) as u64;
-        }
-
-        0
-    }
-
-    // Use CNTFRQ_EL0 for aarch64 platforms.
-    #[cfg(target_arch = "aarch64")]
-    {
-        use patina::read_sysreg;
-        read_sysreg!(CNTFRQ_EL0)
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    0
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
@@ -137,13 +69,15 @@ mod tests {
 
     #[test]
     fn test_zero_frequency_forces_arch_perf_frequency() {
+        let expected = patina::arch::get_timer_frequency().map_or(0, |f| f.get());
+
         let timer = PerfTimer::default();
-        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+        assert_eq!(timer.perf_frequency(), expected);
 
         let timer = PerfTimer::new();
-        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+        assert_eq!(timer.perf_frequency(), expected);
 
         let timer = PerfTimer::with_frequency(0);
-        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+        assert_eq!(timer.perf_frequency(), expected);
     }
 }

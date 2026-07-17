@@ -8,6 +8,7 @@
 //!
 
 use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
+use core::num::NonZeroU64;
 use r_efi::efi;
 
 /// No-op architecture used in unit tests.
@@ -38,11 +39,11 @@ impl super::CacheMgmt for NullArch {
 }
 
 impl super::Timer for NullArch {
-    fn get_timer_value(_timer_index: u32) -> Result<u64, EfiError> {
-        Ok(0)
+    fn get_timer_value() -> u64 {
+        0
     }
 
-    fn get_timer_period(_timer_index: u32) -> Result<u64, EfiError> {
-        Ok(0)
+    fn get_timer_frequency() -> Option<NonZeroU64> {
+        None
     }
 }

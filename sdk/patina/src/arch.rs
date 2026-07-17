@@ -8,6 +8,7 @@
 //!
 
 use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
+use core::num::NonZeroU64;
 use r_efi::efi;
 
 cfg_if::cfg_if! {
@@ -122,31 +123,12 @@ trait CacheMgmt {
 /// This trait is implemented by the per-architecture zero-sized `Arch` type. Callers should use
 /// the free functions in this module rather than referencing the trait directly.
 trait Timer {
-    /// Returns a timer value from one of the CPU's internal timers. There is no inherent time
-    /// interval between ticks but is a function of the CPU frequency.
-    ///
-    /// timer_index          - Specifies which CPU timer is requested.
-    ///
-    /// ## Errors
-    ///
-    /// Success          - If the CPU timer count was returned.
-    /// Unsupported      - If the CPU does not have any readable timers.
-    /// DeviceError      - If an error occurred while reading the timer.
-    /// InvalidParameter - timer_index is not valid.
-    fn get_timer_value(timer_index: u32) -> Result<u64, EfiError>;
+    /// Returns the current value of the CPU's timer counter, in ticks. There is no
+    /// inherent time interval between ticks; it is a function of the CPU frequency.
+    fn get_timer_value() -> u64;
 
-    /// Returns the period of one of the CPU's internal timers. There is no inherent time interval
-    /// between ticks but is a function of the CPU frequency.
-    ///
-    /// timer_index          - Specifies which CPU timer is requested.
-    ///
-    /// ## Errors
-    ///
-    /// Success          - If the CPU timer period was returned.
-    /// Unsupported      - If the CPU does not have any readable timers.
-    /// DeviceError      - If an error occurred while reading the timer.
-    /// InvalidParameter - timer_index is not valid.
-    fn get_timer_period(timer_index: u32) -> Result<u64, EfiError>;
+    /// Returns the frequency of the CPU's counter, in Hz, or `None` if it cannot be determined.
+    fn get_timer_frequency() -> Option<NonZeroU64>;
 }
 
 /// Flushes a range of the current architecture's CPU data cache.
@@ -154,14 +136,15 @@ pub fn flush_data_cache(start: efi::PhysicalAddress, length: u64, flush_type: Cp
     <Arch as CacheMgmt>::flush_data_cache(start, length, flush_type)
 }
 
-/// Returns a timer value from the current architecture's CPU.
-pub fn get_timer_value(timer_index: u32) -> Result<u64, EfiError> {
-    <Arch as Timer>::get_timer_value(timer_index)
+/// Returns the current value of the current architecture's timer counter, in ticks.
+pub fn get_timer_value() -> u64 {
+    <Arch as Timer>::get_timer_value()
 }
 
-/// Returns a timer period from the current architecture's CPU.
-pub fn get_timer_period(timer_index: u32) -> Result<u64, EfiError> {
-    <Arch as Timer>::get_timer_period(timer_index)
+/// Returns the frequency of the current architecture's timer counter, in Hz, or `None` if it
+/// cannot be determined. On some platforms, this is expected to fail and the Timer Service should be queried instead.
+pub fn get_timer_frequency() -> Option<NonZeroU64> {
+    <Arch as Timer>::get_timer_frequency()
 }
 
 /// Returns the cache writeback granule size in bytes for the current architecture.

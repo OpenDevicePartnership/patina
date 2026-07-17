@@ -9,6 +9,7 @@
 
 use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
 use core::arch::asm;
+use core::num::NonZeroU64;
 use r_efi::efi;
 
 pub(crate) struct X64;
@@ -106,18 +107,44 @@ impl super::CacheMgmt for X64 {
 }
 
 impl super::Timer for X64 {
-    fn get_timer_value(timer_index: u32) -> Result<u64, EfiError> {
-        if timer_index != 0 {
-            return Err(EfiError::InvalidParameter);
-        }
-        Ok(read_tsc())
+    fn get_timer_value() -> u64 {
+        rdtsc()
     }
 
-    fn get_timer_period(timer_index: u32) -> Result<u64, EfiError> {
-        if timer_index != 0 {
-            return Err(EfiError::InvalidParameter);
+    fn get_timer_frequency() -> Option<NonZeroU64> {
+        // The maximum supported standard CPUID leaf is reported in EAX of leaf 0. A leaf must not
+        // be queried unless it falls within this supported range.
+        //
+        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
+        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
+        // consider __cpuid safe.
+        #[allow(unused_unsafe)]
+        // SAFETY: Calling cpuid does not violate memory safety
+        let max_leaf = unsafe { core::arch::x86_64::__cpuid(0) }.eax;
+
+        // CPUID 0x15 gives TSC_frequency = (ECX * EBX) / EAX. Most modern x86 platforms support it.
+        if max_leaf >= 0x15 {
+            #[allow(unused_unsafe)]
+            // SAFETY: Calling cpuid does not violate memory safety
+            let core::arch::x86_64::CpuidResult { eax, ebx, ecx, .. } = unsafe { core::arch::x86_64::__cpuid(0x15) };
+            if eax != 0 && ebx != 0 && ecx != 0 {
+                return NonZeroU64::new((ecx as u64 * ebx as u64) / eax as u64);
+            }
         }
-        Ok(timer_period())
+
+        // CPUID 0x16 gives base frequency in MHz in EAX. This is supported on some older x86
+        // platforms. It is a nominal frequency and is less accurate for reflecting actual operating
+        // conditions.
+        if max_leaf >= 0x16 {
+            #[allow(unused_unsafe)]
+            // SAFETY: Calling cpuid does not violate memory safety
+            let core::arch::x86_64::CpuidResult { eax, .. } = unsafe { core::arch::x86_64::__cpuid(0x16) };
+            if eax != 0 {
+                return NonZeroU64::new((eax * 1_000_000) as u64);
+            }
+        }
+
+        None
     }
 }
 
@@ -133,15 +160,4 @@ fn asm_invd() {
     unsafe {
         asm!("invd");
     }
-}
-
-/// Reads the timestamp counter used for the CPU timer value. Currently returns 0 until a real
-/// implementation is provided.
-fn read_tsc() -> u64 {
-    0
-}
-
-/// Computes the CPU timer period. Currently returns 0 until a real implementation is provided.
-fn timer_period() -> u64 {
-    0
 }
