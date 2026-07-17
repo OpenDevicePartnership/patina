@@ -72,7 +72,7 @@ doc = ['alloc']
 alloc = ["dep:goblin", "dep:fixedbitset"]
 mockall = ["dep:mockall", "std"]
 global_allocator = []
-default = ['alloc']
+default = []
 serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 serde-with-yaml = ["serde", "dep:serde_yaml"]
 
