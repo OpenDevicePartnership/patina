@@ -48,13 +48,17 @@ trait Interrupts {
     fn enable_interrupts_and_sleep();
 }
 
-/// Enables CPU interrupts on the current architecture.
-fn enable_interrupts() {
+#[cfg(feature = "core")]
+/// Enables CPU interrupts on the current architecture. This is only exposed to core modules
+/// due to its inherent risk of misuse. Most components should use TPLs to manage execution priority.
+pub fn enable_interrupts() {
     <Arch as Interrupts>::enable_interrupts();
 }
 
-/// Disables CPU interrupts on the current architecture.
-fn disable_interrupts() {
+#[cfg(feature = "core")]
+/// Disables CPU interrupts on the current architecture. This is only exposed to core modules
+/// due to its inherent risk of misuse. Most components should use TPLs to manage execution priority.
+pub fn disable_interrupts() {
     <Arch as Interrupts>::disable_interrupts();
 }
 
@@ -79,13 +83,16 @@ pub(crate) fn with_interrupts_disabled<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let enabled = interrupts_enabled();
+    // Call the arch trait methods directly rather than the public `enable_interrupts`/
+    // `disable_interrupts` free functions, since those are gated behind the `core` feature but this
+    // internal helper must be available regardless of it.
+    let enabled = <Arch as Interrupts>::interrupts_enabled();
     if enabled {
-        disable_interrupts();
+        <Arch as Interrupts>::disable_interrupts();
     }
     let result = f();
     if enabled {
-        enable_interrupts();
+        <Arch as Interrupts>::enable_interrupts();
     }
     result
 }

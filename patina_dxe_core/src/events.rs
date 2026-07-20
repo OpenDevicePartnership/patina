@@ -13,9 +13,7 @@ use core::{
 
 use r_efi::efi;
 
-use patina::pi::protocols::timer;
-
-use patina_internal_cpu::interrupts;
+use patina::{arch, pi::protocols::timer};
 
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
@@ -148,12 +146,12 @@ unsafe extern "efiapi" fn wait_for_event(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION || !patina::arch::interrupts_enabled() {
+    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION || !arch::interrupts_enabled() {
         debug_assert!(
             CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION,
             "wait_for_event called at TPL_APPLICATION"
         );
-        debug_assert!(!patina::arch::interrupts_enabled(), "wait_for_event called with interrupts disabled");
+        debug_assert!(!arch::interrupts_enabled(), "wait_for_event called with interrupts disabled");
         return efi::Status::UNSUPPORTED;
     }
 
@@ -186,7 +184,7 @@ unsafe extern "efiapi" fn wait_for_event(
         // function to avoid exposing the idle event to outside consumers (this event group is not specified in UEFI or
         // PI specs). In the event that a need arises to expose the idle event to consumers outside of Patina, it can be
         // signaled here.
-        patina::arch::enable_interrupts_and_sleep();
+        arch::enable_interrupts_and_sleep();
     }
 }
 
@@ -278,7 +276,7 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     }
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        interrupts::disable_interrupts();
+        arch::disable_interrupts();
     }
     prev_tpl
 }
@@ -321,9 +319,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
                 break; /* no pending events */
             };
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                interrupts::enable_interrupts();
+                arch::enable_interrupts();
             } else {
-                interrupts::disable_interrupts();
+                arch::disable_interrupts();
             }
             CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = event.notify_context.unwrap_or(core::ptr::null_mut());
@@ -343,7 +341,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        interrupts::enable_interrupts();
+        arch::enable_interrupts();
     }
 }
 
@@ -1020,7 +1018,7 @@ mod tests {
             // Restore original TPL
             CURRENT_TPL.store(original_tpl, Ordering::SeqCst);
             // Re-enable interrupts if we left them disabled
-            interrupts::enable_interrupts();
+            arch::enable_interrupts();
         });
     }
 
@@ -1094,7 +1092,7 @@ mod tests {
 
             // Set known starting TPL
             CURRENT_TPL.store(efi::TPL_HIGH_LEVEL, Ordering::SeqCst);
-            interrupts::disable_interrupts();
+            arch::disable_interrupts();
 
             // Test restoring from HIGH_LEVEL to NOTIFY
             restore_tpl(efi::TPL_NOTIFY);

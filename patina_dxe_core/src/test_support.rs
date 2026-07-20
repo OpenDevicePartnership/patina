@@ -263,9 +263,18 @@ impl PatinaPageTable for MockPageTableWrapper {
 /// All tests should run from inside this.
 pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
-    std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(|| {
         f();
-    })
+    });
+
+    // Some tests exercise code paths that disable CPU interrupts (e.g. the CPU arch protocol or
+    // TPL handling). On host test builds the SDK arch tracks interrupt state in a process-global
+    // static shared by every test in this binary, so a test that leaves interrupts disabled would
+    // pollute later tests. Restore interrupts to enabled here (runs even if `f` panicked, since the
+    // panic was caught above) so the state never leaks across tests.
+    patina::arch::enable_interrupts();
+
+    result
 }
 
 /// Like [`with_global_lock`], but additionally resets the shared global state via

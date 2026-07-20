@@ -28,20 +28,6 @@ impl super::EfiExceptionInfoDump for ExceptionContextStub {
     fn dump_system_context_registers(&self) {}
 }
 
-/// A function that does nothing as this is a null implementation.
-#[allow(unused)]
-pub fn enable_interrupts() {}
-
-/// A function that does nothing as this is a null implementation.
-#[allow(unused)]
-pub fn disable_interrupts() {}
-
-/// A function that always returns `false` as this is a null implementation.
-#[allow(unused)]
-pub fn get_interrupt_state() -> Result<bool, EfiError> {
-    Ok(false)
-}
-
 /// Null Implementation of the InterruptManager.
 #[derive(Default, Copy, Clone)]
 pub struct InterruptsStub {}

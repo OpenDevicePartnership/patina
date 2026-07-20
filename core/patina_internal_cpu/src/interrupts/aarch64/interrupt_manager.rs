@@ -8,6 +8,7 @@
 //!
 
 use patina::{
+    arch::{disable_interrupts, enable_interrupts},
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     bit,
     error::EfiError,
@@ -16,7 +17,6 @@ use patina_paging::PageTable;
 
 use crate::interrupts::{
     EfiExceptionInfoDump, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
-    disable_interrupts, enable_interrupts,
 };
 
 cfg_if::cfg_if! {

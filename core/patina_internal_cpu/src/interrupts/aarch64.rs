@@ -8,14 +8,12 @@
 //!
 
 use crate::log_registers;
-use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+use patina::pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::{StackFrame, StackTrace, error::Error};
 
 #[cfg(target_arch = "aarch64")]
 pub mod gic_manager;
 mod interrupt_manager;
-#[cfg(not(test))]
-use patina::{read_sysreg, write_sysreg};
 
 #[allow(unused)]
 pub use interrupt_manager::InterruptsAarch64;
@@ -71,42 +69,5 @@ impl super::EfiExceptionInfoDump for ExceptionContextAArch64 {
         );
 
         log::debug!("Full Context: {self:#X?}");
-    }
-}
-
-#[cfg_attr(coverage, coverage(off))]
-#[allow(unused)]
-pub fn enable_interrupts() {
-    cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
-            write_sysreg!(reg daifclr, imm 0x02, "isb sy");
-        } else {
-            unimplemented!()
-        }
-    }
-}
-
-#[cfg_attr(coverage, coverage(off))]
-#[allow(unused)]
-pub fn disable_interrupts() {
-    cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
-            write_sysreg!(reg daifset, imm 0x02, "isb sy");
-        } else {
-            unimplemented!()
-        }
-    }
-}
-
-#[cfg_attr(coverage, coverage(off))]
-#[allow(unused)]
-pub fn get_interrupt_state() -> Result<bool, EfiError> {
-    cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
-            let daif = read_sysreg!(daif);
-            Ok(daif & 0x80 == 0)
-        } else {
-            Err(EfiError::Unsupported)
-        }
     }
 }

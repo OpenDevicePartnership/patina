@@ -8,8 +8,7 @@
 //!
 
 use crate::{interrupts::ExceptionContextX64, log_registers};
-use core::arch::asm;
-use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+use patina::pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::{StackFrame, StackTrace};
 
 #[cfg(target_os = "uefi")]
@@ -71,31 +70,4 @@ impl super::EfiExceptionInfoDump for ExceptionContextX64 {
 
         log::debug!("Full Context: {self:#X?}");
     }
-}
-
-#[allow(unused)]
-pub fn enable_interrupts() {
-    // SAFETY: The caller must ensure the system is ready to handle interrupts at this point
-    unsafe {
-        asm!("sti", options(nostack));
-    }
-}
-
-#[allow(unused)]
-pub fn disable_interrupts() {
-    // SAFETY: The caller must ensure the system is ready to disable interrupts at this point
-    unsafe {
-        asm!("cli", options(nostack));
-    }
-}
-
-#[allow(unused)]
-pub fn get_interrupt_state() -> Result<bool, EfiError> {
-    let eflags: u64;
-    const IF: u64 = 0x200;
-    // SAFETY: The ASM below simply reads the interrupt flag to determine state, it is a safe operation
-    unsafe {
-        asm!("pushfq; pop {}", out(reg)eflags);
-    }
-    Ok(eflags & IF != 0)
 }

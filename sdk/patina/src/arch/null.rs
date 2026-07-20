@@ -9,6 +9,7 @@
 
 use crate::{error::EfiError, pi::protocols::cpu_arch::CpuFlushType};
 use core::num::NonZeroU64;
+use core::sync::atomic::{AtomicBool, Ordering};
 use r_efi::efi;
 
 /// No-op architecture used in unit tests.
@@ -16,16 +17,24 @@ pub(crate) struct NullArch;
 
 impl super::ArchSupport for NullArch {}
 
+static INTERRUPTS_ENABLED: AtomicBool = AtomicBool::new(true);
+
 impl super::Interrupts for NullArch {
-    fn enable_interrupts() {}
-
-    fn disable_interrupts() {}
-
-    fn interrupts_enabled() -> bool {
-        false
+    fn enable_interrupts() {
+        INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
     }
 
-    fn enable_interrupts_and_sleep() {}
+    fn disable_interrupts() {
+        INTERRUPTS_ENABLED.store(false, Ordering::SeqCst);
+    }
+
+    fn interrupts_enabled() -> bool {
+        INTERRUPTS_ENABLED.load(Ordering::SeqCst)
+    }
+
+    fn enable_interrupts_and_sleep() {
+        INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
+    }
 }
 
 impl super::CacheMgmt for NullArch {

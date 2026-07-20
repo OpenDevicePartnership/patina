@@ -7,11 +7,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use core::{ffi::c_void, slice::from_raw_parts, sync::atomic::Ordering};
+use patina::arch as interrupts;
 use patina::{
     guids, log_debug_assert,
     pi::{protocols, status_code},
 };
-use patina_internal_cpu::interrupts;
 use r_efi::efi;
 use spin::Once;
 

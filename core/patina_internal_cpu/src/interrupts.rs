@@ -39,31 +39,10 @@ cfg_if::cfg_if! {
         /// A stand in implementation of the Interrupts struct. This will be architecture structure defined by the platform
         /// compilation.
         pub type Interrupts = stub::InterruptsStub;
-
-        /// Enables CPU interrupts.
-        #[cfg_attr(coverage, coverage(off))]
-        pub fn enable_interrupts() {}
-
-        /// Disables CPU interrupts.
-        #[cfg_attr(coverage, coverage(off))]
-        pub fn disable_interrupts() {}
-
-        /// Gets the current state of CPU interrupts.
-        #[cfg_attr(coverage, coverage(off))]
-        pub fn get_interrupt_state() -> Result<bool, EfiError> {
-            Ok(false)
-        }
-
     } else if #[cfg(target_arch = "x86_64")] {
         pub type Interrupts = x64::InterruptsX64;
-        pub use x64::enable_interrupts;
-        pub use x64::disable_interrupts;
-        pub use x64::get_interrupt_state;
     } else if #[cfg(target_arch = "aarch64")] {
         pub type Interrupts = aarch64::InterruptsAarch64;
-        pub use aarch64::enable_interrupts;
-        pub use aarch64::disable_interrupts;
-        pub use aarch64::get_interrupt_state;
     }
 }
 
