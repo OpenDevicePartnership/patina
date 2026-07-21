@@ -1,0 +1,5 @@
+error: unmatched opening parenthesis in node `Pci` at character 0
+ --> tests/ui/devpath_malformed.rs:5:29
+  |
+5 | const _: [u8; 0] = devpath!("Pci(1,0");
+  |                             ^^^^^^^^^

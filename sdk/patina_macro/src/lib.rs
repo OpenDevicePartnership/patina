@@ -9,11 +9,58 @@
 
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
+mod device_path_encoder;
+mod device_path_macro;
+mod device_path_nodes;
+mod device_path_parser;
 mod hob_macro;
 mod service_macro;
 mod smbios_record_macro;
 mod test_macro;
 mod validate_params_macro;
+
+/// Encodes a UEFI text device path as an owned byte array at compile time.
+///
+/// The input must be exactly one string literal using the UEFI 2.11 Device Path
+/// From Text syntax. Nodes are separated by `/` or `\`. A top-level comma
+/// separates device path instances. The macro inserts an End Instance node
+/// between instances and an End Entire node after the final instance.
+///
+/// The expanded expression has type `[u8; N]` and requires no runtime parser,
+/// allocation, or device-path feature.
+///
+/// Compilation fails when the input is not one string literal or when the
+/// device path contains invalid syntax, an unknown node, an invalid field, or
+/// a value that cannot be represented by the UEFI binary format.
+///
+/// ## Examples
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
+/// assert_eq!(
+///     path,
+///     [
+///         0x02, 0x01, 0x0c, 0x00, 0xd0, 0x41, 0x03, 0x0a, 0x00, 0x00, 0x00,
+///         0x00, 0x01, 0x01, 0x06, 0x00, 0x00, 0x11, 0x7f, 0xff, 0x04, 0x00,
+///     ],
+/// );
+/// ```
+///
+/// A top-level comma creates multiple device path instances:
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
+/// assert_eq!(&path[6..10], &[0x7f, 0x01, 0x04, 0x00]);
+/// assert_eq!(&path[16..20], &[0x7f, 0xff, 0x04, 0x00]);
+/// ```
+#[proc_macro]
+pub fn devpath(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    device_path_macro::devpath2(input.into()).into()
+}
 
 /// Derive Macro for implementing the `IntoService` trait for a type.
 ///

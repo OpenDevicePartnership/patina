@@ -1,0 +1,5 @@
+error: Controller exceeds the 32-bit range in node `Ctrl`, argument 1 at character 5
+ --> tests/ui/devpath_overflow.rs:5:29
+  |
+5 | const _: [u8; 0] = devpath!("Ctrl(0x100000000)");
+  |                             ^^^^^^^^^^^^^^^^^^^

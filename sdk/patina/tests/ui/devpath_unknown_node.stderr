@@ -1,0 +1,5 @@
+error: unknown device path node `Unknown` in node `Unknown` at character 0
+ --> tests/ui/devpath_unknown_node.rs:5:29
+  |
+5 | const _: [u8; 0] = devpath!("Unknown(1)");
+  |                             ^^^^^^^^^^^^

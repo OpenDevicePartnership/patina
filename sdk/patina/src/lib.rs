@@ -22,6 +22,8 @@ mod base;
 pub use base::*;
 pub use guid::{BinaryGuid, Guid, GuidError, OwnedGuid};
 pub use string::{Char8Array, Char8Str, Char16Array, Char16Str, StringError};
+#[doc(inline)]
+pub use patina_macro::devpath;
 
 #[cfg(any(test, feature = "alloc"))]
 pub use base::string::{Char8String, Char16String};

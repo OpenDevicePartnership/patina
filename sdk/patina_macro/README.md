@@ -96,3 +96,23 @@ fn watchdog_negative_path() -> Result {
     Ok(())
 }
 ```
+
+### `devpath!`
+
+- Converts a UEFI 2.11 Device Path From Text string literal into an owned `[u8; N]` at compile time.
+- Supports standard device path nodes, aliases, decimal and hexadecimal integers, named parameters, and multiple
+  device path instances.
+- Inserts End Instance nodes between top-level comma-separated instances and an End Entire node after the final
+  instance.
+- Requires no runtime parser, allocation, or Patina device-path feature in the consuming crate.
+- Reports malformed syntax, invalid fields, unknown nodes, and unrepresentable values as compile-time errors.
+
+```rust
+use patina::devpath;
+
+const PCI_DEVICE_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
+const MULTI_INSTANCE_PATH: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
+```
+
+The input must be exactly one string literal. Separate nodes with `/` or `\`; use a top-level comma to separate
+device path instances.
