@@ -12,10 +12,15 @@ use core::num::NonZeroU64;
 use r_efi::efi;
 
 cfg_if::cfg_if! {
-    if #[cfg(test)] {
+    if #[cfg(not(target_os = "uefi"))] {
         #[cfg_attr(coverage, coverage(off))]
-        mod null;
-        type Arch = null::NullArch;
+        pub mod stub;
+        type Arch = stub::StubArch;
+
+        // Republish the compiled architecture stub module so that `patina::arch::aarch64` /
+        // `patina::arch::x64` paths resolve on host builds.
+        #[doc(hidden)]
+        pub use stub::*;
     } else if #[cfg(target_arch = "aarch64")] {
         #[cfg_attr(coverage, coverage(off))] // Architecture code cannot be unit tested.
         pub mod aarch64;
@@ -83,9 +88,6 @@ pub(crate) fn with_interrupts_disabled<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    // Call the arch trait methods directly rather than the public `enable_interrupts`/
-    // `disable_interrupts` free functions, since those are gated behind the `core` feature but this
-    // internal helper must be available regardless of it.
     let enabled = <Arch as Interrupts>::interrupts_enabled();
     if enabled {
         <Arch as Interrupts>::disable_interrupts();

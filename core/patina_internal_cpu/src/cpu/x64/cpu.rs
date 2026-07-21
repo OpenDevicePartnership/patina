@@ -8,6 +8,7 @@
 //!
 #[cfg(not(test))]
 use super::gdt;
+use crate::interrupts;
 #[cfg(not(test))]
 use core::arch::asm;
 use patina::arch as interrupts;
