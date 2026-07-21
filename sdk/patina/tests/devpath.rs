@@ -9,6 +9,15 @@
 use patina::devpath;
 
 const REQUESTED_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
+const CUSTOM_VENDOR_PATH: [u8; 39] = devpath!(
+    vendors {
+        AcmeController {
+            guid: "00112233-4455-6677-8899-aabbccddeeff",
+            fields: [port: u8, flags: u16le],
+        },
+    };
+    "PciRoot(0)/AcmeController(flags=0x1234,port=3)"
+);
 
 #[test]
 fn test_devpath_public_macro_returns_owned_array() {
@@ -32,19 +41,24 @@ fn test_devpath_public_macro_encodes_multiple_instances() {
     );
 }
 
+#[test]
+fn test_devpath_public_macro_encodes_vendor_hardware_schema() {
+    assert_eq!(CUSTOM_VENDOR_PATH, devpath!("PciRoot(0)/VenHw(00112233-4455-6677-8899-aabbccddeeff,033412)"));
+}
+
 #[cfg(feature = "unstable-device-path")]
 mod runtime_cross_checks {
     use patina::{
-        device_path::{
+        devpath,
+        uefi::device_path::{
             node_defs::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
             paths::DevicePathBuf,
         },
-        devpath,
     };
 
     fn runtime_path<T>(node: T) -> DevicePathBuf
     where
-        T: patina::device_path::parse_node::DevicePathNode,
+        T: patina::uefi::device_path::parse_node::DevicePathNode,
     {
         DevicePathBuf::from_device_path_node_iter(core::iter::once(node))
     }

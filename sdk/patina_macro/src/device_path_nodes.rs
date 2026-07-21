@@ -15,6 +15,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+// cspell:ignore UIDSTR SASSATA nvmexpress nguid
+
 use crate::{
     device_path_encoder::{
         NodeWriter, parse_efi_guid, parse_eisa_id, parse_fixed_hex, parse_hex_bytes, parse_ipv4, parse_ipv6, parse_u8,
@@ -35,15 +37,164 @@ const VIRTUAL_CD_GUID: &str = "3d5abd30-4175-87ce-6d64-d2ade523c4bb";
 const PERSISTENT_VIRTUAL_DISK_GUID: &str = "5cea02c9-4d07-69d3-269f-4496fbe096f9";
 const PERSISTENT_VIRTUAL_CD_GUID: &str = "08018188-42cd-bb48-100f-5387d53ded3d";
 
-/// Encode one parsed node.
-pub(crate) fn encode_node(node: &ParsedNode) -> Result<Vec<u8>, DevicePathError> {
-    match &node.kind {
-        ParsedNodeKind::FilePath(path) => encode_file_path(node, path),
-        ParsedNodeKind::Canonical { name, arguments } => encode_canonical(node, name, arguments),
+/// Encoding of one custom vendor hardware payload field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VendorHardwareFieldType {
+    U8,
+    U16Le,
+    U32Le,
+    U64Le,
+    Guid,
+    Uuid,
+    Bytes,
+}
+
+impl VendorHardwareFieldType {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "u8" => Some(Self::U8),
+            "u16le" => Some(Self::U16Le),
+            "u32le" => Some(Self::U32Le),
+            "u64le" => Some(Self::U64Le),
+            "guid" => Some(Self::Guid),
+            "uuid" => Some(Self::Uuid),
+            "bytes" => Some(Self::Bytes),
+            _ => None,
+        }
     }
 }
 
-fn encode_canonical(node: &ParsedNode, name: &str, arguments: &[ParsedArgument]) -> Result<Vec<u8>, DevicePathError> {
+/// One named field in a custom vendor hardware payload.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct VendorHardwareField {
+    pub(crate) name: String,
+    pub(crate) field_type: VendorHardwareFieldType,
+}
+
+/// A user-declared shortcut for a vendor hardware device path node.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct VendorHardwareSchema {
+    pub(crate) name: String,
+    pub(crate) guid: [u8; 16],
+    pub(crate) fields: Vec<VendorHardwareField>,
+}
+
+/// Return whether a name is reserved by a built-in UEFI node or shortcut.
+pub(crate) fn is_builtin_node_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Path"
+            | "HardwarePath"
+            | "Pci"
+            | "PcCard"
+            | "MemoryMapped"
+            | "VenHw"
+            | "Ctrl"
+            | "BMC"
+            | "AcpiPath"
+            | "Acpi"
+            | "PciRoot"
+            | "PcieRoot"
+            | "Floppy"
+            | "Keyboard"
+            | "Serial"
+            | "ParallelPort"
+            | "AcpiEx"
+            | "AcpiExp"
+            | "AcpiAdr"
+            | "NvdimmAcpiAdr"
+            | "Msg"
+            | "Ata"
+            | "Scsi"
+            | "Fibre"
+            | "FibreEx"
+            | "I1394"
+            | "USB"
+            | "I2O"
+            | "Infiniband"
+            | "VenMsg"
+            | "VenPcAnsi"
+            | "VenVt100"
+            | "VenVt100Plus"
+            | "VenUtf8"
+            | "UartFlowCtrl"
+            | "SAS"
+            | "DebugPort"
+            | "MAC"
+            | "IPv4"
+            | "IPv6"
+            | "Uart"
+            | "UsbClass"
+            | "UsbAudio"
+            | "UsbCDCControl"
+            | "UsbHID"
+            | "UsbImage"
+            | "UsbPrinter"
+            | "UsbMassStorage"
+            | "UsbHub"
+            | "UsbCDCData"
+            | "UsbSmartCard"
+            | "UsbVideo"
+            | "UsbDiagnostic"
+            | "UsbWireless"
+            | "UsbDeviceFirmwareUpdate"
+            | "UsbIrdaBridge"
+            | "UsbTestAndMeasurement"
+            | "UsbWwid"
+            | "Unit"
+            | "Sata"
+            | "iSCSI"
+            | "Vlan"
+            | "SasEx"
+            | "NVMe"
+            | "Uri"
+            | "UFS"
+            | "SD"
+            | "Bluetooth"
+            | "Wi-Fi"
+            | "eMMC"
+            | "BluetoothLE"
+            | "Dns"
+            | "NVDIMM"
+            | "RestService"
+            | "NVMEoF"
+            | "MediaPath"
+            | "HD"
+            | "CDROM"
+            | "VenMedia"
+            | "Media"
+            | "FvFile"
+            | "Fv"
+            | "Offset"
+            | "RamDisk"
+            | "VirtualDisk"
+            | "VirtualCD"
+            | "PersistentVirtualDisk"
+            | "PersistentVirtualCD"
+            | "BbsPath"
+            | "BBS"
+    )
+}
+
+/// Encode one parsed node.
+pub(crate) fn encode_node(
+    node: &ParsedNode,
+    vendor_hardware_schemas: &[VendorHardwareSchema],
+) -> Result<Vec<u8>, DevicePathError> {
+    match &node.kind {
+        ParsedNodeKind::FilePath(path) => encode_file_path(node, path),
+        ParsedNodeKind::Canonical { name, arguments } => {
+            encode_canonical(node, name, arguments, vendor_hardware_schemas)
+        }
+    }
+}
+
+fn encode_canonical(
+    node: &ParsedNode,
+    name: &str,
+    arguments: &[ParsedArgument],
+    vendor_hardware_schemas: &[VendorHardwareSchema],
+) -> Result<Vec<u8>, DevicePathError> {
     match name {
         "Path" => encode_generic(node, arguments, None),
         "HardwarePath" => encode_generic(node, arguments, Some(1)),
@@ -135,22 +286,21 @@ fn encode_canonical(node: &ParsedNode, name: &str, arguments: &[ParsedArgument])
         "PersistentVirtualCD" => encode_ram_disk(node, arguments, Some(PERSISTENT_VIRTUAL_CD_GUID)),
         "BbsPath" => encode_generic(node, arguments, Some(5)),
         "BBS" => encode_bbs(node, arguments),
-        _ => Err(DevicePathError::new(node.offset, format!("unknown device path node `{name}`"))),
+        _ => vendor_hardware_schemas.iter().find(|schema| schema.name == name).map_or_else(
+            || Err(DevicePathError::new(node.offset, format!("unknown device path node `{name}`"))),
+            |schema| encode_vendor_hardware(node, arguments, schema),
+        ),
     }
 }
 
-struct ResolvedArgs<'a> {
+struct ResolvedArgs<'a, 'n> {
     node_offset: usize,
-    names: &'static [&'static str],
+    names: &'n [&'n str],
     values: Vec<Option<&'a ParsedArgument>>,
 }
 
-impl<'a> ResolvedArgs<'a> {
-    fn new(
-        node: &ParsedNode,
-        arguments: &'a [ParsedArgument],
-        names: &'static [&'static str],
-    ) -> Result<Self, DevicePathError> {
+impl<'a, 'n> ResolvedArgs<'a, 'n> {
+    fn new(node: &ParsedNode, arguments: &'a [ParsedArgument], names: &'n [&'n str]) -> Result<Self, DevicePathError> {
         let mut values = vec![None; names.len()];
         let mut positional_index = 0;
 
@@ -296,6 +446,46 @@ fn encode_vendor(
     let mut writer = NodeWriter::new(node, r#type, subtype);
     writer.bytes(&parse_efi_guid(&guid.value, guid.offset, "Guid")?);
     writer.bytes(&data);
+    writer.finish()
+}
+
+fn encode_vendor_hardware(
+    node: &ParsedNode,
+    arguments: &[ParsedArgument],
+    schema: &VendorHardwareSchema,
+) -> Result<Vec<u8>, DevicePathError> {
+    let names: Vec<&str> = schema.fields.iter().map(|field| field.name.as_str()).collect();
+    let args = ResolvedArgs::new(node, arguments, &names)?;
+    let mut writer = NodeWriter::new(node, 1, 4);
+    writer.bytes(&schema.guid);
+
+    for (index, field) in schema.fields.iter().enumerate() {
+        let argument = args.required(index)?;
+        match field.field_type {
+            VendorHardwareFieldType::U8 => {
+                writer.byte(parse_u8(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::U16Le => {
+                writer.u16(parse_u16(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::U32Le => {
+                writer.u32(parse_u32(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::U64Le => {
+                writer.u64(parse_u64(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::Guid => {
+                writer.bytes(&parse_efi_guid(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::Uuid => {
+                writer.bytes(&parse_uuid_bytes(&argument.value, argument.offset, &field.name)?);
+            }
+            VendorHardwareFieldType::Bytes => {
+                writer.bytes(&parse_hex_bytes(&argument.value, argument.offset, &field.name)?);
+            }
+        }
+    }
+
     writer.finish()
 }
 
@@ -1167,7 +1357,7 @@ fn parse_network_protocol(argument: Option<&ParsedArgument>, field: &str) -> Res
 }
 
 fn encode_sas_topology(
-    args: &ResolvedArgs<'_>,
+    args: &ResolvedArgs<'_, '_>,
     sassata_index: usize,
     location_index: usize,
     connect_index: usize,
@@ -1214,7 +1404,7 @@ fn encode_sas_topology(
         | (u16::from(drive_bay.transpose()?.unwrap_or(0)) << 8))
 }
 
-fn reject_present(args: &ResolvedArgs<'_>, indices: &[usize], description: &str) -> Result<(), DevicePathError> {
+fn reject_present(args: &ResolvedArgs<'_, '_>, indices: &[usize], description: &str) -> Result<(), DevicePathError> {
     if let Some(index) = indices.iter().copied().find(|index| args.optional(*index).is_some()) {
         return Err(DevicePathError::new(
             args.offset(index),

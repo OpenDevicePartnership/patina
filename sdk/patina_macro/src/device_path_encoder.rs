@@ -9,7 +9,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{
-    device_path_nodes::encode_node,
+    device_path_nodes::{VendorHardwareSchema, encode_node},
     device_path_parser::{DevicePathError, ParsedDevicePath, ParsedNode, parse_device_path},
 };
 
@@ -18,15 +18,26 @@ const END_ENTIRE: [u8; 4] = [0x7f, 0xff, 0x04, 0x00];
 
 /// Parse and encode a complete UEFI text device path.
 pub(crate) fn encode_device_path(input: &str) -> Result<Vec<u8>, DevicePathError> {
-    let path = parse_device_path(input)?;
-    encode_parsed_device_path(&path)
+    encode_device_path_with_vendors(input, &[])
 }
 
-fn encode_parsed_device_path(path: &ParsedDevicePath) -> Result<Vec<u8>, DevicePathError> {
+/// Parse and encode a complete UEFI text device path with custom vendor nodes.
+pub(crate) fn encode_device_path_with_vendors(
+    input: &str,
+    vendor_hardware_schemas: &[VendorHardwareSchema],
+) -> Result<Vec<u8>, DevicePathError> {
+    let path = parse_device_path(input)?;
+    encode_parsed_device_path(&path, vendor_hardware_schemas)
+}
+
+fn encode_parsed_device_path(
+    path: &ParsedDevicePath,
+    vendor_hardware_schemas: &[VendorHardwareSchema],
+) -> Result<Vec<u8>, DevicePathError> {
     let mut bytes = Vec::new();
     for (instance_index, instance) in path.instances.iter().enumerate() {
         for node in instance {
-            bytes.extend_from_slice(&encode_node(node)?);
+            bytes.extend_from_slice(&encode_node(node, vendor_hardware_schemas)?);
         }
         if instance_index + 1 == path.instances.len() {
             bytes.extend_from_slice(&END_ENTIRE);
@@ -164,9 +175,8 @@ pub(crate) fn parse_fixed_hex<const N: usize>(
     })
 }
 
-pub(crate) fn parse_efi_guid(value: &str, offset: usize, field: &str) -> Result<[u8; 16], DevicePathError> {
-    let guid = uuid::Uuid::parse_str(value)
-        .map_err(|_| DevicePathError::new(offset, format!("{field} is not a valid GUID")))?;
+pub(crate) fn efi_guid_bytes(value: &str) -> Result<[u8; 16], uuid::Error> {
+    let guid = uuid::Uuid::parse_str(value)?;
     let (data1, data2, data3, data4) = guid.as_fields();
     let mut bytes = [0u8; 16];
     bytes[0..4].copy_from_slice(&data1.to_le_bytes());
@@ -174,6 +184,10 @@ pub(crate) fn parse_efi_guid(value: &str, offset: usize, field: &str) -> Result<
     bytes[6..8].copy_from_slice(&data3.to_le_bytes());
     bytes[8..16].copy_from_slice(data4);
     Ok(bytes)
+}
+
+pub(crate) fn parse_efi_guid(value: &str, offset: usize, field: &str) -> Result<[u8; 16], DevicePathError> {
+    efi_guid_bytes(value).map_err(|_| DevicePathError::new(offset, format!("{field} is not a valid GUID")))
 }
 
 pub(crate) fn parse_uuid_bytes(value: &str, offset: usize, field: &str) -> Result<[u8; 16], DevicePathError> {

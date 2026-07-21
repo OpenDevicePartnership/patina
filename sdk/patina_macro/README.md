@@ -114,5 +114,23 @@ const PCI_DEVICE_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
 const MULTI_INSTANCE_PATH: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
 ```
 
-The input must be exactly one string literal. Separate nodes with `/` or `\`; use a top-level comma to separate
-device path instances.
+Without a vendor registry, the input must be exactly one string literal. Separate nodes with `/` or `\`; use a
+top-level comma to separate device path instances.
+
+Invocation-local vendor hardware shortcuts can be declared before the device path:
+
+```rust
+const VENDOR_PATH: &[u8] = &devpath!(
+    vendors {
+        AcmeController {
+            guid: "00112233-4455-6677-8899-aabbccddeeff",
+            fields: [port: u8, flags: u16le],
+        },
+    };
+    "PciRoot(0)/AcmeController(port=3,flags=0x1234)"
+);
+```
+
+Each shortcut expands to a UEFI vendor hardware (`VenHw`) node. Fields are required and may be supplied positionally or
+by name. Supported field types are `u8`, `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid` (RFC byte order),
+and `bytes` (hexadecimal byte data). Built-in node names cannot be redefined.

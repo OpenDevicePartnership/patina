@@ -1,0 +1,5 @@
+error: `Pci` is a built-in device path node and cannot be redefined
+ --> tests/ui/devpath_vendor_schema.rs:7:9
+  |
+7 |         Pci {
+  |         ^^^

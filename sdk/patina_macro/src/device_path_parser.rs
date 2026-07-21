@@ -6,6 +6,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+// cspell:ignore UIDSTR
+
 use core::fmt;
 
 /// A device path parsing or encoding error.

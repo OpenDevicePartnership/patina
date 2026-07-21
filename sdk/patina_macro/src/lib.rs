@@ -21,17 +21,26 @@ mod validate_params_macro;
 
 /// Encodes a UEFI text device path as an owned byte array at compile time.
 ///
-/// The input must be exactly one string literal using the UEFI 2.11 Device Path
+/// The input is normally one string literal using the UEFI 2.11 Device Path
 /// From Text syntax. Nodes are separated by `/` or `\`. A top-level comma
 /// separates device path instances. The macro inserts an End Instance node
 /// between instances and an End Entire node after the final instance.
 ///
+/// An optional `vendors { ... };` registry may precede the literal to define
+/// invocation-local vendor hardware shortcuts. Each schema supplies an
+/// [`VenHw`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-device-path)
+/// GUID and a list of required payload fields. Supported field types are `u8`,
+/// `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid` (RFC byte
+/// order), and `bytes` (hexadecimal byte data). Schema and field names are
+/// case-sensitive and must contain only alphanumeric characters. Built-in node
+/// names cannot be redefined.
+///
 /// The expanded expression has type `[u8; N]` and requires no runtime parser,
 /// allocation, or device-path feature.
 ///
-/// Compilation fails when the input is not one string literal or when the
-/// device path contains invalid syntax, an unknown node, an invalid field, or
-/// a value that cannot be represented by the UEFI binary format.
+/// Compilation fails when the input shape or vendor schema is invalid, or when
+/// the device path contains invalid syntax, an unknown node, an invalid field,
+/// or a value that cannot be represented by the UEFI binary format.
 ///
 /// ## Examples
 ///
@@ -56,6 +65,26 @@ mod validate_params_macro;
 /// let path: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
 /// assert_eq!(&path[6..10], &[0x7f, 0x01, 0x04, 0x00]);
 /// assert_eq!(&path[16..20], &[0x7f, 0xff, 0x04, 0x00]);
+/// ```
+///
+/// Vendor hardware shortcuts encode their fields after the vendor GUID:
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path = devpath!(
+///     vendors {
+///         AcmeController {
+///             guid: "00112233-4455-6677-8899-aabbccddeeff",
+///             fields: [port: u8, flags: u16le],
+///         },
+///     };
+///     "AcmeController(port=3,flags=0x1234)"
+/// );
+/// assert_eq!(
+///     path,
+///     devpath!("VenHw(00112233-4455-6677-8899-aabbccddeeff,033412)")
+/// );
 /// ```
 #[proc_macro]
 pub fn devpath(input: proc_macro::TokenStream) -> proc_macro::TokenStream {

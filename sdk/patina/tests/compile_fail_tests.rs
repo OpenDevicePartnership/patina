@@ -30,5 +30,6 @@ fn compile_fail_tests() {
     t.compile_fail("tests/ui/devpath_invalid_symbol.rs");
     t.compile_fail("tests/ui/devpath_overflow.rs");
     t.compile_fail("tests/ui/devpath_invalid_fields.rs");
+    t.compile_fail("tests/ui/devpath_vendor_schema.rs");
     t.pass("tests/ui/multiple_storage_allowed.rs");
 }
