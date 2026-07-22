@@ -298,7 +298,8 @@ auditability and ensuring consistency.
 > **Note:** This section primarily deals with access attributes. Caching attributes are platform and driver driven and
 > outside the scope of this document. The core gets the initial platform specified caching attributes via the Resource
 > Descriptor HOB v2 and persists whatever the GCD entry has on every other call. After this point, drivers (such as
-> the PCI Host Bridge driver) may update memory regions with different caching attributes.
+> the PCI Host Bridge driver) may update memory regions with different caching attributes. The one place Patina
+> is opinionated in caching is that the default caching attribute for system memory is write back.
 
 ### General Flow
 
@@ -344,6 +345,17 @@ update the attributes.
 
 When pages are freed, Patina will unmap the pages in the page table so that any further accesses to them cause page
 faults. This helps to catch use-after-free bugs as well as meeting the cleanliness requirements of Patina.
+
+System memory page allocations will also have the write back caching attribute applied to maintain a consistent state.
+Patina expects that consumers may update system memory attributes and as such it will reset the memory attributes of
+system memory to writeback on free.
+
+### Added Memory
+
+The DXE_SERVICES.ADD_MEMORY_SPACE() PI spec defined API allows for adding new memory to Patina's GCD. Callers are
+expected to call DXE_SERVICES.SET_MEMORY_SPACE_ATTRIBUTES() to set caching and/or protection attributes.
+
+Patina will default system memory to writeback cached upon addition, but it will not be mapped until allocated.
 
 ### Image Memory Protections
 

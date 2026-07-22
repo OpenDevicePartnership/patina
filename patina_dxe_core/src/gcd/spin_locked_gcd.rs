@@ -396,7 +396,8 @@ impl GCD {
         match self.set_memory_space_attributes(
             base_address,
             len,
-            GCD.memory_protection_policy.apply_allocated_memory_protection_policy(attributes),
+            GCD.memory_protection_policy
+                .apply_allocated_memory_protection_policy(attributes, GcdMemoryType::SystemMemory),
         ) {
             Ok(_) | Err(EfiError::NotReady) => Ok(()),
             Err(err) => Err(err),
@@ -417,7 +418,7 @@ impl GCD {
             match self.set_memory_space_attributes(
                 base_address + MEMORY_BLOCK_SLICE_SIZE,
                 len - MEMORY_BLOCK_SLICE_SIZE,
-                MemoryProtectionPolicy::apply_free_memory_policy(attributes),
+                MemoryProtectionPolicy::apply_free_memory_policy(attributes, GcdMemoryType::SystemMemory),
             ) {
                 Ok(_) | Err(EfiError::NotReady) => Ok(()),
                 Err(err) => Err(err),
@@ -453,7 +454,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
 
         // All software capabilities are supported for system memory
-        let (capabilities, attributes) = MemoryProtectionPolicy::apply_add_memory_policy(capabilities);
+        let (capabilities, attributes) = MemoryProtectionPolicy::apply_add_memory_policy(capabilities, memory_type);
 
         let memory_blocks = &mut self.memory_blocks;
 
@@ -1022,7 +1023,7 @@ impl GCD {
     /// * `filter` - A closure invoked with the descriptor and a boolean indicating whether the
     ///   descriptor's block is allocated. Returns `true` if the descriptor should be included.
     pub fn get_memory_descriptor_for_address(
-        &mut self,
+        &self,
         address: efi::PhysicalAddress,
         mut filter: impl FnMut(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
@@ -1138,7 +1139,7 @@ impl GCD {
     ///
     /// Returns
     /// * `usize` - The new count of descriptors after merging.
-    fn merge_blocks_in_place(descriptors: &mut [efi::MemoryDescriptor]) -> usize {
+    fn merge_blocks_in_place(&self, descriptors: &mut [efi::MemoryDescriptor]) -> usize {
         if descriptors.is_empty() {
             return 0;
         }
@@ -1160,14 +1161,14 @@ impl GCD {
                     // If this fails to be true it can cause odd behavior if applications try to allocate blocks of free
                     // memory by address, which is a common pattern for OS loaders.
                     if prev.r#type == efi::CONVENTIONAL_MEMORY {
+                        let prev_gcd = self.get_memory_descriptor_for_address(prev.physical_start, |_, _| true);
+                        let curr_gcd = self.get_memory_descriptor_for_address(current.physical_start, |_, _| true);
                         log::error!(
-                            "Free memory is fragmented in memory descriptors! prev: {:#x}-{:#x} (attr: {:#x}), current: {:#x}-{:#x} (attr: {:#x})",
-                            prev.physical_start,
-                            prev.physical_start + uefi_pages_to_size!(prev.number_of_pages as usize) as u64,
-                            prev.attribute,
-                            current.physical_start,
-                            current.physical_start + uefi_pages_to_size!(current.number_of_pages as usize) as u64,
-                            current.attribute,
+                            "Free memory is fragmented in memory descriptors!\r\nprev: {:?}\r\ncurr: {:?}\r\nprev_gcd: {:?}\r\ncurr_gcd: {:?}",
+                            crate::allocator::MemoryDescriptorRef(prev),
+                            crate::allocator::MemoryDescriptorRef(&current),
+                            prev_gcd.unwrap_or_default(),
+                            curr_gcd.unwrap_or_default()
                         );
                         debug_assert!(false);
                     }
@@ -1360,7 +1361,7 @@ impl GCD {
         }
 
         // Merge consecutive descriptors with the same type and attributes
-        Ok(Self::merge_blocks_in_place(buffer.get_mut(..write_idx).ok_or(EfiError::BufferTooSmall)?))
+        Ok(self.merge_blocks_in_place(buffer.get_mut(..write_idx).ok_or(EfiError::BufferTooSmall)?))
     }
 
     //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
@@ -2306,7 +2307,8 @@ impl SpinLockedGcd {
             if let Err(err) = self.set_memory_space_attributes(
                 desc.base_address as usize,
                 desc.length as usize,
-                GCD.memory_protection_policy.apply_allocated_memory_protection_policy(desc.attributes),
+                GCD.memory_protection_policy
+                    .apply_allocated_memory_protection_policy(desc.attributes, desc.memory_type),
             ) {
                 // if we fail to set these attributes (which should just be XP at this point), we should try to
                 // continue
@@ -2351,7 +2353,8 @@ impl SpinLockedGcd {
         self.set_memory_space_attributes(
             dxe_core_hob.alloc_descriptor.memory_base_address as usize,
             dxe_core_hob.alloc_descriptor.memory_length as usize,
-            GCD.memory_protection_policy.apply_allocated_memory_protection_policy(dxe_core_desc.attributes),
+            GCD.memory_protection_policy
+                .apply_allocated_memory_protection_policy(dxe_core_desc.attributes, dxe_core_desc.memory_type),
         )
         .unwrap_or_else(|_| {
             panic!(
@@ -2402,7 +2405,9 @@ impl SpinLockedGcd {
             // table
             let base_address = desc.base_address as usize & !UEFI_PAGE_MASK;
             let len = (desc.length as usize + UEFI_PAGE_MASK) & !UEFI_PAGE_MASK;
-            let new_attributes = GCD.memory_protection_policy.apply_allocated_memory_protection_policy(desc.attributes);
+            let new_attributes = GCD
+                .memory_protection_policy
+                .apply_allocated_memory_protection_policy(desc.attributes, desc.memory_type);
 
             log::trace!(
                 target: "paging",
@@ -2455,8 +2460,9 @@ impl SpinLockedGcd {
             {
                 // Set Stack region to execute protect. We use the allocated memory protection policy here because
                 // that matches our standard policy
-                let attributes =
-                    self.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                let attributes = self
+                    .memory_protection_policy
+                    .apply_allocated_memory_protection_policy(gcd_desc.attributes, gcd_desc.memory_type);
                 match self.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
                     Ok(_) | Err(EfiError::NotReady) => (),
                     Err(e) => {
@@ -2607,7 +2613,8 @@ impl SpinLockedGcd {
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
                 // be caught and fixed.
-                attributes = self.memory_protection_policy.apply_allocated_memory_protection_policy(attributes);
+                attributes =
+                    self.memory_protection_policy.apply_allocated_memory_protection_policy(attributes, memory_type);
                 match self.set_memory_space_attributes(*base_address, len, attributes) {
                     Ok(_) => (),
                     Err(EfiError::NotReady) => {
@@ -2667,7 +2674,7 @@ impl SpinLockedGcd {
             if let Err(e) = self.set_memory_space_attributes_worker(
                 current_range.start as usize,
                 (current_range.end - current_range.start) as usize,
-                MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes),
+                MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes, desc.memory_type),
                 desc.attributes,
             ) && e != EfiError::NotReady
             {
@@ -4323,8 +4330,13 @@ mod tests {
             .unwrap();
             // Trying to set capabilities where the range falls outside a block should return unsupported
             assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0x1000, 0x3000, 0b1111));
-            gcd.set_memory_space_capabilities(0x1000, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP)
-                .unwrap();
+            // System memory is added with a default WB attribute, so the new capabilities must continue to support it.
+            gcd.set_memory_space_capabilities(
+                0x1000,
+                0x2000,
+                efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB,
+            )
+            .unwrap();
             gcd.set_gcd_memory_attributes(0x1000, 0x2000, efi::MEMORY_RO).unwrap();
         });
     }
@@ -6129,7 +6141,8 @@ mod tests {
     fn test_merge_blocks_in_place_empty() {
         with_locked_state(|| {
             let mut descriptors: [efi::MemoryDescriptor; 0] = [];
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 0);
         });
     }
@@ -6145,7 +6158,8 @@ mod tests {
                 attribute: efi::MEMORY_WB,
             }];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 1);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[0].number_of_pages, 4);
@@ -6172,7 +6186,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 1);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[0].number_of_pages, 6);
@@ -6201,7 +6216,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 2);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[0].number_of_pages, 4);
@@ -6232,7 +6248,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 2);
             assert_eq!(descriptors[0].attribute, efi::MEMORY_WB);
             assert_eq!(descriptors[1].attribute, efi::MEMORY_WT);
@@ -6259,7 +6276,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 2);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[0].number_of_pages, 4);
@@ -6295,7 +6313,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 1);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[0].number_of_pages, 6);
@@ -6343,7 +6362,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 3);
             // First two should merge
             assert_eq!(descriptors[0].physical_start, 0x1000);
@@ -6387,7 +6407,8 @@ mod tests {
                 },
             ];
 
-            let result = GCD::merge_blocks_in_place(&mut descriptors);
+            let gcd = GCD::new(48);
+            let result = gcd.merge_blocks_in_place(&mut descriptors);
             assert_eq!(result, 3);
             assert_eq!(descriptors[0].physical_start, 0x1000);
             assert_eq!(descriptors[1].physical_start, 0x3000);

@@ -362,7 +362,7 @@ fn memory_type_to_str(f: &mut core::fmt::Formatter<'_>, memory_type: efi::Memory
 
 pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
 
-pub struct MemoryDescriptorRef<'a>(&'a efi::MemoryDescriptor);
+pub struct MemoryDescriptorRef<'a>(pub &'a efi::MemoryDescriptor);
 
 impl Debug for MemoryDescriptorRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {

@@ -15,7 +15,7 @@ use goblin::pe::section_table;
 use alloc::boxed::Box;
 use core::{cell::Cell, ffi::c_void, ops::Range};
 use patina::{
-    base::{align_down, align_up},
+    base::{DEFAULT_CACHE_ATTR, align_down, align_up},
     error::EfiError,
     pi::{
         dxe_services::{GcdIoType, GcdMemoryType, MemorySpaceDescriptor},
@@ -51,16 +51,26 @@ impl MemoryProtectionPolicy {
         Self { memory_allocation_default_attributes: Cell::new(efi::MEMORY_XP) }
     }
 
-    /// Rule: All memory allocations will be marked as the set cache type with NX applied. If compatibility mode
+    /// Rule: All memory allocations will have EFI_MEMORY_NX applied. If compatibility mode
     /// has been activated, no protections will be applied.
+    /// System memory allocations will have EFI_MEMORY_WB applied. All other memory types
+    /// will preserve the cache attributes.
     ///
     /// Arguments
     /// * `attributes` - The cache attributes to apply to the allocated memory
+    /// * `gcd_memory_type` - The GCD memory type being allocated
     ///
     /// Use Case: This is called whenever memory is allocated via the GCD to ensure
     /// allocated memory is NX by default.
-    pub(crate) const fn apply_allocated_memory_protection_policy(&self, attributes: u64) -> u64 {
-        (attributes & efi::CACHE_ATTRIBUTE_MASK) | self.memory_allocation_default_attributes.get()
+    pub(crate) const fn apply_allocated_memory_protection_policy(
+        &self,
+        attributes: u64,
+        gcd_memory_type: GcdMemoryType,
+    ) -> u64 {
+        match gcd_memory_type {
+            GcdMemoryType::SystemMemory => DEFAULT_CACHE_ATTR | self.memory_allocation_default_attributes.get(),
+            _ => (attributes & efi::CACHE_ATTRIBUTE_MASK) | self.memory_allocation_default_attributes.get(),
+        }
     }
 
     /// Rule: All resource descriptor HOBs are initially mapped as the supplied cache attribute
@@ -212,28 +222,44 @@ impl MemoryProtectionPolicy {
     /// Rule: All new memory should support all access capabilities and runtime. These are generally applicable, not
     /// specific to any memory. All new memory is marked as EFI_MEMORY_RP to start with and will not be mapped until
     /// SetMemorySpaceAttributes() is called to set the attributes. EFI_MEMORY_XP is also set to allow merging with
-    /// other free memory blocks.
+    /// other free memory blocks. System memory is marked as EFI_MEMORY_WB by default. Other memory types are expected
+    /// to have their cache attributes set by set_memory_space_attributes().
     ///
     /// Arguments
     /// - * `capabilities` - The existing capabilities for the memory region
+    /// - * `memory_type` - The GCD memory type being added
     ///
     /// Returns the updated capabilities and the attributes to set
     ///
     /// Use Case: This is called whenever new memory is added to the GCD
-    pub(crate) const fn apply_add_memory_policy(capabilities: u64) -> (u64, u64) {
-        (capabilities | efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME, efi::MEMORY_RP | efi::MEMORY_XP)
+    pub(crate) const fn apply_add_memory_policy(capabilities: u64, memory_type: GcdMemoryType) -> (u64, u64) {
+        let new_capabilities = efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME | capabilities;
+
+        match memory_type {
+            // System memory defaults to EFI_MEMORY_WB, so it must also advertise WB as a capability; otherwise the
+            // WB attribute cannot be applied to the block.
+            GcdMemoryType::SystemMemory => {
+                (new_capabilities | DEFAULT_CACHE_ATTR, efi::MEMORY_RP | efi::MEMORY_XP | DEFAULT_CACHE_ATTR)
+            }
+            _ => (new_capabilities, efi::MEMORY_RP | efi::MEMORY_XP),
+        }
     }
 
-    /// Rule: All free memory should be marked as EFI_MEMORY_RP, EFI_MEMORY_XP, and the preserved cache attributes.
+    /// Rule: All free memory should be marked as EFI_MEMORY_RP and EFI_MEMORY_XP. System memory should be reset back
+    /// to EFI_MEMORY_WB as the default. Other memory types should preserve the existing cache attributes.
     /// EFI_MEMORY_RP will cause the memory to be unmapped in the page table, but we still set EFI_MEMORY_XP to align
     /// with the originally added memory so that free memory can be coalesced into fewer blocks.
     ///
     /// Arguments
     /// - * `attributes` - The existing attributes for the memory region
+    /// - * `gcd_memory_type` - The GCD memory type being freed
     ///
     /// Use Case: This is called whenever memory is freed in the GCD
-    pub(crate) const fn apply_free_memory_policy(attributes: u64) -> u64 {
-        (attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_RP | efi::MEMORY_XP
+    pub(crate) const fn apply_free_memory_policy(attributes: u64, gcd_memory_type: GcdMemoryType) -> u64 {
+        match gcd_memory_type {
+            GcdMemoryType::SystemMemory => DEFAULT_CACHE_ATTR | efi::MEMORY_RP | efi::MEMORY_XP,
+            _ => (attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_RP | efi::MEMORY_XP,
+        }
     }
 
     /// Rule: Page 0 should be unmapped to catch null pointer dereferences. Cache attributes should be preserved.
@@ -465,7 +491,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
                     && res_desc.physical_start.saturating_add(res_desc.resource_length)
                         >= free_memory_start.saturating_add(free_memory_size)
                 {
-                    free_memory_attributes = cache_attributes.unwrap_or(0);
+                    free_memory_attributes = cache_attributes.unwrap_or(DEFAULT_CACHE_ATTR);
                     free_memory_capabilities = spin_locked_gcd::get_capabilities(
                         GcdMemoryType::SystemMemory,
                         res_desc.resource_attribute as u64,
@@ -553,8 +579,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
 
         let mut resource_attributes: u32 = 0;
         // Only process Resource Descriptor HOBs according to the selected version
+        // If we have resc desc HOB v2s, we will take the cache attributes from there. If we don't,
+        // we will default to EFI_MEMORY_WB for system memory and 0 for all other types.
         let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
             Some((desc, Some(attrs))) => (desc, attrs),
+            Some((desc, None)) if desc.resource_type == hob::EFI_RESOURCE_SYSTEM_MEMORY => (desc, DEFAULT_CACHE_ATTR),
             Some((desc, None)) => (desc, 0u64),
             None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
@@ -860,9 +889,13 @@ mod tests {
     #[test]
     fn test_memory_protection_policy_apply_allocated_memory_protection_policy() {
         let policy = MemoryProtectionPolicy::new();
-        let attributes = efi::MEMORY_WB;
-        let result = policy.apply_allocated_memory_protection_policy(attributes);
+        let attributes = efi::MEMORY_UC;
+        let result = policy.apply_allocated_memory_protection_policy(attributes, GcdMemoryType::Reserved);
         // Should preserve cache attributes and add default XP
+        assert_eq!(result, efi::MEMORY_UC | efi::MEMORY_XP);
+
+        let result = policy.apply_allocated_memory_protection_policy(attributes, GcdMemoryType::SystemMemory);
+        // Should default to WB and XP
         assert_eq!(result, efi::MEMORY_WB | efi::MEMORY_XP);
     }
 
@@ -991,15 +1024,25 @@ mod tests {
     #[test]
     fn test_memory_protection_policy_apply_add_memory_policy() {
         let capabilities = efi::MEMORY_WB | efi::MEMORY_UC;
-        let (new_capabilities, attributes) = MemoryProtectionPolicy::apply_add_memory_policy(capabilities);
+        let (new_capabilities, attributes) =
+            MemoryProtectionPolicy::apply_add_memory_policy(capabilities, GcdMemoryType::Reserved);
         assert_eq!(new_capabilities, efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME | efi::MEMORY_WB | efi::MEMORY_UC);
         assert_eq!(attributes, efi::MEMORY_RP | efi::MEMORY_XP);
+
+        let (new_capabilities, attributes) =
+            MemoryProtectionPolicy::apply_add_memory_policy(capabilities, GcdMemoryType::SystemMemory);
+        assert_eq!(new_capabilities, efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME | efi::MEMORY_WB | efi::MEMORY_UC);
+        assert_eq!(attributes, efi::MEMORY_RP | efi::MEMORY_XP | efi::MEMORY_WB);
     }
 
     #[test]
     fn test_memory_protection_policy_apply_free_memory_policy() {
-        let attributes = efi::MEMORY_WB | efi::MEMORY_RO | efi::MEMORY_RUNTIME;
-        let result = MemoryProtectionPolicy::apply_free_memory_policy(attributes);
+        let attributes = efi::MEMORY_UC | efi::MEMORY_RO | efi::MEMORY_RUNTIME;
+        let result = MemoryProtectionPolicy::apply_free_memory_policy(attributes, GcdMemoryType::Reserved);
+        assert_eq!(result, efi::MEMORY_RP | efi::MEMORY_XP | efi::MEMORY_UC);
+
+        let attributes = efi::MEMORY_UC | efi::MEMORY_RO | efi::MEMORY_RUNTIME;
+        let result = MemoryProtectionPolicy::apply_free_memory_policy(attributes, GcdMemoryType::SystemMemory);
         assert_eq!(result, efi::MEMORY_RP | efi::MEMORY_XP | efi::MEMORY_WB);
     }
 

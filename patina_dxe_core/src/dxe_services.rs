@@ -1612,8 +1612,9 @@ mod tests {
                 efi::Status::SUCCESS
             );
 
-            // Set a combination of reasonable capabilities
-            let caps = efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP;
+            // Set a combination of reasonable capabilities. SystemMemory blocks carry a WB attribute by default, so
+            // the new capabilities must continue to support WB.
+            let caps = efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB;
             let s = set_memory_space_capabilities(base, length, caps);
             assert_eq!(s, efi::Status::SUCCESS);
 
