@@ -8,12 +8,14 @@
 //!
 pub(crate) mod memory_attributes_table;
 
-use alloc::{boxed::Box, vec};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec};
 use core::{
+    any::TypeId,
     ffi::c_void,
     ptr::{NonNull, slice_from_raw_parts_mut},
     slice::{from_raw_parts, from_raw_parts_mut},
 };
+use patina::BinaryGuid;
 use patina::error::EfiError;
 use patina::standard::efi;
 
@@ -21,7 +23,19 @@ use crate::{
     allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
     events::EVENT_DB,
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
+    tpl_mutex::TplMutex,
 };
+
+/// Records the Rust type installed under each GUID by [`core_install_typed_configuration_table`], so
+/// a typed lookup (`crate::uefi_services::config_table`) can verify a type before a caller casts the
+/// pointer.
+///
+/// [`core_install_configuration_table`] and [`core_install_typed_configuration_table`] are the only
+/// two functions that mutate the system table's configuration table list, all other callers like
+/// the `extern "efiapi"` boot service, internal core callers, and typed Rust APIs funnel through one
+/// or the other.
+pub(crate) static CONFIG_TABLE_TYPES: TplMutex<BTreeMap<BinaryGuid, TypeId>> =
+    TplMutex::new(efi::TPL_NOTIFY, BTreeMap::new(), "ConfigTableTypeLock");
 
 /// Installs a configuration table entry identified by `table_guid` into the system table.
 ///
@@ -51,11 +65,11 @@ unsafe extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid
     }
 }
 
-/// Install a configuration table in the system table, replacing any existing table with the same
-/// GUID. If a table is replaced or deleted, a pointer to the old table is returned. This function
-/// is not marked as unsafe because the `vendor_table` parameter is not dereferenced inside the
-/// function.
-pub fn core_install_configuration_table(
+/// Shared low-level mutation of the system table's configuration table list. Does not touch
+/// [`CONFIG_TABLE_TYPES`]. Callers decide how (if at all) the type-tracking map should be reconciled
+/// with the result. This function is not marked as unsafe because the `vendor_table` parameter is not
+/// dereferenced inside the function.
+fn install_configuration_table_entry(
     vendor_guid: efi::Guid,
     vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
@@ -132,6 +146,57 @@ pub fn core_install_configuration_table(
     //signal the table guid as an event group
     EVENT_DB.signal_group(vendor_guid);
 
+    Ok(old_vendor_table_ptr)
+}
+
+/// Install a configuration table in the system table, replacing any existing table with the same
+/// GUID. If a table is replaced or deleted, a pointer to the old table is returned.
+///
+/// This call does not assert a Rust type for `vendor_table`, so it clears any type previously
+/// recorded for `vendor_guid` by [`core_install_typed_configuration_table`]. Whatever ends up
+/// under `vendor_guid` after this call is no longer vouched for by the type-tracking map, since
+/// neither the raw `extern "efiapi"` boot service nor this untyped API knows what Rust type (if any)
+/// backs it.
+pub fn core_install_configuration_table(
+    vendor_guid: efi::Guid,
+    vendor_table: *mut c_void,
+    efi_system_table: &mut EfiSystemTable,
+) -> Result<Option<NonNull<c_void>>, EfiError> {
+    let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
+    CONFIG_TABLE_TYPES.lock().remove(&BinaryGuid::from(vendor_guid));
+    Ok(old_vendor_table_ptr)
+}
+
+/// Returns whether `efi_system_table`'s configuration table list currently has an active entry for
+/// `vendor_guid`. Reads the system table directly instead of going through [`get_configuration_table`],
+/// which independently locks [`SYSTEM_TABLE`]. This allows the caller to this function to already
+/// hold the lock.
+fn configuration_table_has_entry(efi_system_table: &mut EfiSystemTable, vendor_guid: efi::Guid) -> bool {
+    let system_table = efi_system_table.get();
+    if system_table.configuration_table.is_null() {
+        return false;
+    }
+    // SAFETY: configuration_table is non-null, and number_of_table_entries describes its length.
+    let ct_slice = unsafe { from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
+    ct_slice.iter().any(|entry| entry.vendor_guid == vendor_guid)
+}
+
+/// Same as [`core_install_configuration_table`], but records `type_id` as the Rust type backing
+/// `vendor_guid`'s table, atomically with the install, so a later typed lookup can verify it before
+/// casting the pointer. If `fail_if_exists` is set, fails with `EfiError::AlreadyStarted` rather than
+/// replacing a table (typed or not) that exists under `vendor_guid`.
+pub(crate) fn core_install_typed_configuration_table(
+    vendor_guid: efi::Guid,
+    vendor_table: *mut c_void,
+    type_id: TypeId,
+    fail_if_exists: bool,
+    efi_system_table: &mut EfiSystemTable,
+) -> Result<Option<NonNull<c_void>>, EfiError> {
+    if fail_if_exists && configuration_table_has_entry(efi_system_table, vendor_guid) {
+        return Err(EfiError::AlreadyStarted);
+    }
+    let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
+    CONFIG_TABLE_TYPES.lock().insert(BinaryGuid::from(vendor_guid), type_id);
     Ok(old_vendor_table_ptr)
 }
 
@@ -226,6 +291,75 @@ mod tests {
             );
 
             assert!(get_configuration_table(&guid).is_none());
+        });
+    }
+
+    #[test]
+    fn core_install_typed_configuration_table_records_type() {
+        with_locked_state(|| {
+            let guid: efi::Guid = guid::Guid::from_string("11111111-1111-1111-1111-111111111111").to_efi_guid();
+            let table = 0x1000u32 as *mut c_void;
+
+            assert_eq!(
+                core_install_typed_configuration_table(
+                    guid,
+                    table,
+                    TypeId::of::<u32>(),
+                    true,
+                    &mut *SYSTEM_TABLE.lock().as_mut().unwrap()
+                ),
+                Ok(None)
+            );
+            assert_eq!(CONFIG_TABLE_TYPES.lock().get(&BinaryGuid::from(guid)), Some(&TypeId::of::<u32>()));
+        });
+    }
+
+    #[test]
+    fn core_install_typed_configuration_table_rejects_existing_untyped_entry() {
+        with_locked_state(|| {
+            let guid: efi::Guid = guid::Guid::from_string("22222222-2222-2222-2222-222222222222").to_efi_guid();
+            let table = 0x2000u32 as *mut c_void;
+
+            // Installed with the untyped path first, so a type is not recorded but the entry is active.
+            core_install_configuration_table(guid, table, &mut *SYSTEM_TABLE.lock().as_mut().unwrap()).unwrap();
+
+            // A typed install should not clobber it.
+            assert_eq!(
+                core_install_typed_configuration_table(
+                    guid,
+                    table,
+                    TypeId::of::<u32>(),
+                    true,
+                    &mut *SYSTEM_TABLE.lock().as_mut().unwrap()
+                ),
+                Err(EfiError::AlreadyStarted)
+            );
+        });
+    }
+
+    #[test]
+    fn core_install_configuration_table_clears_recorded_type_when_replacing_typed_entry() {
+        with_locked_state(|| {
+            let guid: efi::Guid = guid::Guid::from_string("33333333-3333-3333-3333-333333333333").to_efi_guid();
+            let typed_table = 0x3000u32 as *mut c_void;
+            let raw_table = 0x4000u32 as *mut c_void;
+
+            core_install_typed_configuration_table(
+                guid,
+                typed_table,
+                TypeId::of::<u32>(),
+                true,
+                &mut *SYSTEM_TABLE.lock().as_mut().unwrap(),
+            )
+            .unwrap();
+
+            // Something bypasses the typed API entirely (e.g. the raw `extern "efiapi"` boot service
+            // and replaces the entry directly, without removing it first.
+            core_install_configuration_table(guid, raw_table, &mut *SYSTEM_TABLE.lock().as_mut().unwrap()).unwrap();
+
+            // The stale type record must not be allowed to vouch for the replacement pointer.
+            assert_eq!(CONFIG_TABLE_TYPES.lock().get(&BinaryGuid::from(guid)), None);
+            assert_eq!(get_configuration_table(&guid).unwrap().as_ptr(), raw_table);
         });
     }
 }
