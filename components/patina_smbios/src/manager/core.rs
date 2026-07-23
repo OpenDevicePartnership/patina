@@ -30,14 +30,6 @@ use crate::{
 
 use super::record::SmbiosRecord;
 
-/// SMBIOS 3.x Configuration Table GUID: F2FD1544-9794-4A2C-992E-E5BBCF20E394
-///
-/// This GUID identifies the SMBIOS 3.0+ entry point structure in the UEFI Configuration Table.
-/// Used for SMBIOS 3.0 and later versions which support 64-bit table addresses and remove
-/// the 4GB table size limitation of SMBIOS 2.x.
-pub const SMBIOS_3_X_TABLE_GUID: patina::BinaryGuid =
-    patina::BinaryGuid::from_string("F2FD1544-9794-4A2C-992E-E5BBCF20E394");
-
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
 #[repr(C, packed)]

@@ -14,7 +14,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
 use patina::boot_services::{BootServices, StandardBootServices};
-use r_efi::efi::Handle;
+use r_efi::{efi::Handle, system::SMBIOS3_TABLE_GUID};
 use zerocopy_derive::*;
 
 #[cfg(any(test, feature = "mockall"))]
@@ -244,10 +244,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         // SAFETY: We pass a valid GUID and a pointer to ACPI_RECLAIM_MEMORY that remains valid
         unsafe {
             self.boot_services
-                .install_configuration_table(
-                    &crate::manager::SMBIOS_3_X_TABLE_GUID.into_inner(),
-                    ep_addr as *mut core::ffi::c_void,
-                )
+                .install_configuration_table(&SMBIOS3_TABLE_GUID, ep_addr as *mut core::ffi::c_void)
                 .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
         }
 

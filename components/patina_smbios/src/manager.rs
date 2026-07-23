@@ -21,7 +21,7 @@ mod protocol;
 mod record;
 
 // Re-export main types and functions
-pub use core::{SMBIOS_3_X_TABLE_GUID, SmbiosManager};
+pub use core::SmbiosManager;
 pub(crate) use record::SmbiosRecord;
 
 use alloc::boxed::Box;
