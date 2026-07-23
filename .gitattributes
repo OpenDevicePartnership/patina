@@ -1,1 +1,2 @@
 * -text
+*.stderr text=auto eol=lf
