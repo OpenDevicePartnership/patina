@@ -94,6 +94,7 @@ mod protocols;
 mod runtime;
 mod systemtables;
 mod tpl_mutex;
+mod uefi_services;
 
 #[cfg(test)]
 pub use {component_dispatcher::MockComponentInfo, cpu::MockCpuInfo};
@@ -477,6 +478,12 @@ impl<P: PlatformInfo> Core<P> {
         component_dispatcher.add_service(CoreMemoryManager);
         component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
         component_dispatcher.add_service(cpu::PerfTimer::with_frequency(perf_frequency));
+        component_dispatcher.add_service(uefi_services::CoreEventServices);
+        component_dispatcher.add_service(uefi_services::CoreProtocolServices);
+        component_dispatcher.add_service(uefi_services::CoreConfigurationTableServices);
+        component_dispatcher.add_service(uefi_services::CoreDriverServices);
+        component_dispatcher.add_service(uefi_services::CoreImageServices::new::<P>());
+        component_dispatcher.add_service(uefi_services::CoreTplServices);
         self.initialize_performance(perf_frequency, &mut component_dispatcher);
 
         relocated_hob_list
@@ -514,6 +521,27 @@ impl<P: PlatformInfo> Core<P> {
         }
     }
 
+    /// Registers the `TimingServices` component service once the Metronome and Watchdog Timer Architectural
+    /// Protocols are both available.
+    fn try_register_timing_service(&self) {
+        static REGISTERED: Once<()> = Once::new();
+        if !REGISTERED.is_completed() && misc_boot_services::timing_arch_protocols_ready() {
+            REGISTERED.call_once(|| {
+                self.component_dispatcher.lock().add_service(uefi_services::CoreTimingServices);
+            });
+        }
+    }
+
+    /// Registers the `TimerEventServices` component service once the Timer Architectural Protocol is available.
+    fn try_register_timer_event_service(&self) {
+        static REGISTERED: Once<()> = Once::new();
+        if !REGISTERED.is_completed() && events::timer_arch_protocol_ready() {
+            REGISTERED.call_once(|| {
+                self.component_dispatcher.lock().add_service(uefi_services::CoreTimerEventServices);
+            });
+        }
+    }
+
     /// Performs a combined dispatch of Patina components and UEFI drivers.
     ///
     /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
@@ -523,6 +551,9 @@ impl<P: PlatformInfo> Core<P> {
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&'static self) -> Result<()> {
         loop {
+            self.try_register_timing_service();
+            self.try_register_timer_event_service();
+
             // Patina component dispatch
             let dispatched = self.component_dispatcher.lock().dispatch();
 
