@@ -27,7 +27,6 @@ The crate is `no_std` unless `std` is selected. Tests or host utilities can enab
 | `core` | Expose dispatcher-facing types such as `Storage` (enables `alloc`). |
 | `alloc` | Allow allocation APIs when targeting `no_std` firmware environments with a custom allocator. |
 | `std` | Link the standard library. For example, when building host utilities. |
-| `doc` | Pull in items needed to build documentation. |
 | `mockall` | Provide mock implementations for Boot Services and other traits (implies `std`). |
 | `global_allocator` | Install the global allocator support used by Patina firmware images. |
 | `serde` | Enable serialization support for configuration and PI data structures. |

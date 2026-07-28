@@ -16,6 +16,5 @@ log = { workspace = true }
 
 [features]
 std = []
-doc = []
 # All non-std features to test in CI
 ci_features = []

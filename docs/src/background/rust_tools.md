@@ -355,11 +355,11 @@ pub fn process_buffer(buffer: &mut [u8]) {
 # Makefile.toml - Documentation generation
 [tasks.doc]
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )"]
 
 [tasks.doc-open]
 command = "cargo"
-args = ["doc", "--features", "doc", "--open"]
+args = ["doc", "--open"]
 
 # Environment variables for strict documentation
 [env]

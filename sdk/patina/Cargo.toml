@@ -67,7 +67,6 @@ trybuild = { version = "1.0", features = ["diff"] }
 [features]
 core = ['alloc']
 std = ['alloc']
-doc = ['alloc']
 alloc = ["dep:goblin", "dep:fixedbitset"]
 mockall = ["dep:mockall", "std"]
 global_allocator = []

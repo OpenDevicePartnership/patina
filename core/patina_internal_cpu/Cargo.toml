@@ -11,7 +11,7 @@ description = "CPU support."
 workspace = true
 
 [package.metadata.docs.rs]
-features = ["doc", "std"]
+features = ["std"]
 
 [dependencies]
 log = { workspace = true }
@@ -35,6 +35,5 @@ serial_test = { workspace = true }
 [features]
 default = []
 std = []
-doc = []
 # All non-std features to test in CI
 ci_features = []

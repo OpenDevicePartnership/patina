@@ -27,7 +27,7 @@ impl super::SerialIO for UartNull {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
+    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", doc)))] {
 
         use uart_16550::MmioSerialPort;
         use uart_16550::SerialPort as IoSerialPort;
@@ -163,7 +163,7 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "aarch64")))] {
+    if #[cfg(any(doc, all(target_os = "uefi", target_arch = "aarch64")))] {
         use core::ptr::NonNull;
         use crate::mmio::{field, fields::{ReadPure, ReadWrite}, UniqueMmioPointer};
 

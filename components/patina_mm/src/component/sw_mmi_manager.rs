@@ -110,7 +110,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
             MmiPort::Smi(_port) => {
                 log::trace!(target: "sw_mmi", "Using SMI command port: 0x{:04X}", _port);
                 cfg_if::cfg_if! {
-                    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
+                    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", doc)))] {
                         log::trace!(target: "sw_mmi", "Writing SMI command port: {_port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.cmd_port)
@@ -136,7 +136,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
             MmiPort::Smi(_port) => {
                 log::trace!(target: "sw_mmi", "Using SMI data port: 0x{:04X}", _port);
                 cfg_if::cfg_if! {
-                    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", feature = "doc")))] {
+                    if #[cfg(all(target_arch = "x86_64", any(target_os = "uefi", doc)))] {
                         log::trace!(target: "sw_mmi", "Writing SMI data port: {_port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.data_port)

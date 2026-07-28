@@ -7,10 +7,6 @@ edition.workspace = true
 readme = "README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
 
-# Metadata to tell docs.rs how to build the documentation when uploading
-[package.metadata.docs.rs]
-features = ["doc"]
-
 [lints]
 workspace = true
 
@@ -54,7 +50,6 @@ arm-gic = { workspace = true }
 [features]
 default = []
 std = ["patina/std"]
-doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
 debugger_reload = []

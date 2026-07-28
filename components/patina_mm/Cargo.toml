@@ -26,7 +26,6 @@ patina = { workspace = true, features = ["mockall"] }
 patina_dxe_core = { path = "../../patina_dxe_core"}
 
 [features]
-doc = []
 mockall = ["dep:mockall", "std"]
 std = []
 # All non-std features to test in CI
