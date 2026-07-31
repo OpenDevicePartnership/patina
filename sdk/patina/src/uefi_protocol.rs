@@ -87,3 +87,4 @@ impl_r_efi_protocol!(tcp6);
 impl_r_efi_protocol!(timestamp);
 impl_r_efi_protocol!(udp4);
 impl_r_efi_protocol!(udp6);
+impl_r_efi_protocol!(usb_io);

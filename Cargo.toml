@@ -70,6 +70,9 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
+[patch.crates-io]
+r-efi = { git = "https://github.com/joschock/r-efi.git", branch = "add_usb_io" }
+
 [workspace.lints.clippy]
 indexing_slicing = "deny"
 undocumented_unsafe_blocks = "warn"

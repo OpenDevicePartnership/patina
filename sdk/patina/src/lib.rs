@@ -65,6 +65,8 @@ pub mod tpl_mutex;
 pub mod uefi_decompress;
 #[cfg(any(test, feature = "alloc"))]
 pub mod uefi_protocol;
+#[cfg(any(test, feature = "alloc"))]
+pub mod vendor_protocols;
 
 /// Re-export of the [`safe-mmio`](https://crates.io/crates/safe-mmio) crate.
 ///
