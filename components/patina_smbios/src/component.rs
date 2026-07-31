@@ -16,7 +16,13 @@ use crate::{
 };
 use alloc::boxed::Box;
 use patina::{
-    component::{Storage, component, service::memory::MemoryManager},
+    component::{
+        Storage, component,
+        service::{
+            memory::MemoryManager,
+            uefi_services::{config_table::ConfigurationTableServices, protocol::ProtocolServices, tpl::TplServices},
+        },
+    },
     error::Result,
     uefi::boot_services::tpl::Tpl,
     uefi::tpl_mutex::TplMutex,
@@ -107,14 +113,16 @@ impl SmbiosProvider {
         // This must be done before protocol installation to avoid allocate_pages during Add()
         manager.allocate_buffers(*memory_manager)?;
 
-        // TplMutex and SmbiosImpl own their BootServices instances.
-        let boot_services = storage.boot_services();
+        let tpl = storage.get_service::<dyn TplServices>().ok_or(patina::error::EfiError::Unsupported)?;
+        let config_table =
+            storage.get_service::<dyn ConfigurationTableServices>().ok_or(patina::error::EfiError::Unsupported)?;
+        let protocols = storage.get_service::<dyn ProtocolServices>().ok_or(patina::error::EfiError::Unsupported)?;
 
         // Create TplMutex at TPL_NOTIFY for thread safety against timer interrupts
-        let manager_mutex = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, manager);
+        let manager_mutex = TplMutex::new(tpl, Tpl::NOTIFY, manager);
         let smbios_service = SmbiosImpl {
             manager: manager_mutex,
-            boot_services: boot_services.clone(),
+            config_table,
             major_version: cfg.major_version,
             minor_version: cfg.minor_version,
         };
@@ -125,12 +133,8 @@ impl SmbiosProvider {
         storage.add_service(smbios_static);
 
         // Install SMBIOS protocol for C/EDKII driver compatibility
-        crate::manager::install_smbios_protocol(
-            cfg.major_version,
-            cfg.minor_version,
-            &smbios_static.manager,
-            &smbios_static.boot_services,
-        )?;
+        let smbios_service = storage.get_service::<dyn Smbios>().expect("Smbios service was just registered above");
+        crate::manager::install_smbios_protocol(cfg.major_version, cfg.minor_version, smbios_service, &protocols)?;
 
         // Publish initial table (Type 127 only) to register buffer with UEFI configuration table
         // Subsequent Add() calls will update this buffer in-place
