@@ -13,11 +13,17 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
+use patina::component::service::{
+    Service,
+    uefi_services::{
+        config_table::{ConfigurationTableServices, ConfigurationTableServicesExt},
+        tpl::TplServices,
+    },
+};
 pub use patina::standard::efi::industry::smbios::{
     HANDLE_PI_RESERVED as SMBIOS_HANDLE_PI_RESERVED, STRING_MAX_LENGTH as SMBIOS_STRING_MAX_LENGTH,
 };
-use patina::standard::efi::{self, Handle, SMBIOS3_TABLE_GUID};
-use patina::uefi::boot_services::{BootServices, StandardBootServices};
+use patina::standard::efi::{self, Handle};
 use zerocopy_derive::*;
 
 #[cfg(any(test, feature = "mockall"))]
@@ -221,17 +227,19 @@ pub trait Smbios {
 /// ```
 #[derive(patina::component::service::IntoService)]
 #[service(dyn Smbios)]
-pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
-    pub(crate) manager: patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B>,
-    pub(crate) boot_services: B,
+pub struct SmbiosImpl {
+    pub(crate) manager: patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, Service<dyn TplServices>>,
+    pub(crate) config_table: Service<dyn ConfigurationTableServices>,
     pub(crate) major_version: u8,
     pub(crate) minor_version: u8,
 }
 
-impl<B: BootServices> SmbiosImpl<B> {
+impl SmbiosImpl {
     /// Get a reference to the manager for unit tests
     #[allow(dead_code)] // Only used in tests
-    pub(crate) fn manager(&self) -> &patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B> {
+    pub(crate) fn manager(
+        &self,
+    ) -> &patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, Service<dyn TplServices>> {
         &self.manager
     }
 
@@ -240,12 +248,12 @@ impl<B: BootServices> SmbiosImpl<B> {
     /// This updates the pre-allocated buffer with the latest records.
     /// Verifies table integrity before republishing to detect direct modifications.
     fn republish_table(&self) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.lock();
+        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
         manager.republish_table()
     }
 }
 
-impl<B: BootServices> Smbios for SmbiosImpl<B> {
+impl Smbios for SmbiosImpl {
     fn version(&self) -> (u8, u8) {
         (self.major_version, self.minor_version)
     }
@@ -253,29 +261,29 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
     fn publish_table(
         &self,
     ) -> core::result::Result<(efi::PhysicalAddress, efi::PhysicalAddress), crate::error::SmbiosError> {
-        // Table addresses are stored before calling install_configuration_table.
-        // install_configuration_table triggers EVENT_DB.signal_group, which may invoke
+        // Table addresses are stored before installing the configuration table entry.
+        // Installing the configuration table triggers EVENT_DB.signal_group, which may invoke
         // event handlers that call SMBIOS Add/Update/Remove, triggering republish_table.
         // Storing addresses first ensures that if republish_table runs during installation,
         // it overwrites these addresses with correct newer data rather than storing stale
         // addresses after the race completes.
         let (table_addr, ep_addr) = {
-            let manager = self.manager.lock();
+            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
             let (table_addr, ep_addr, entry_point) = manager.build_table_data()?;
             manager.store_table_addresses(table_addr, entry_point);
             (table_addr, ep_addr)
         };
 
-        // Lock is not held during install_configuration_table to prevent deadlock.
-        // EVENT_DB.signal_group runs while install_configuration_table executes, and event
-        // handlers may call SMBIOS Add/Update/Remove which require the manager lock.
-        //
-        // SAFETY: We pass a valid GUID and a pointer to ACPI_RECLAIM_MEMORY that remains valid
-        unsafe {
-            self.boot_services
-                .install_configuration_table(&SMBIOS3_TABLE_GUID, ep_addr as *mut core::ffi::c_void)
-                .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
-        }
+        // Lock is not held while installing the configuration table entry, to prevent deadlock.
+        // EVENT_DB.signal_group runs while the table is installed, and event handlers may call
+        // SMBIOS Add/Update/Remove which require the manager lock.
+        // SAFETY: `build_table_data` just wrote a valid, checksummed `Smbios30EntryPoint`'s bytes
+        // into the pre-allocated buffer at `ep_addr`, and the buffer is never freed.
+        let entry_point_ref: &'static crate::manager::Smbios30EntryPoint =
+            unsafe { &*(ep_addr as *const crate::manager::Smbios30EntryPoint) };
+        self.config_table
+            .install_or_replace(entry_point_ref)
+            .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
 
         Ok((table_addr, ep_addr))
     }
@@ -287,7 +295,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         string: &str,
     ) -> core::result::Result<(), crate::error::SmbiosError> {
         {
-            let manager = self.manager.lock();
+            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
             manager.update_string(smbios_handle, string_number, string)?;
         }
 
@@ -296,7 +304,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), crate::error::SmbiosError> {
         {
-            let manager = self.manager.lock();
+            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
             manager.remove(smbios_handle)?;
         }
 
@@ -309,7 +317,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
         let handle = {
-            let manager = self.manager.lock();
+            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
             manager.add_from_bytes(producer_handle, bytes)?
         };
 
@@ -322,7 +330,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         after: SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> core::result::Result<Option<(SmbiosTableHeader, Option<Handle>)>, crate::error::SmbiosError> {
-        let manager = self.manager.lock();
+        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
         let mut iter = manager.iter(record_type);
 
         let next = if after == SMBIOS_HANDLE_PI_RESERVED {
@@ -338,7 +346,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         &self,
         handle: SmbiosHandle,
     ) -> core::result::Result<Option<(efi::PhysicalAddress, Option<Handle>)>, crate::error::SmbiosError> {
-        let manager = self.manager.lock();
+        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
         Ok(manager.get_record_pointer(handle))
     }
 }
@@ -412,9 +420,15 @@ mod tests {
     };
     use mockall::predicate::*;
     use patina::{
-        component::service::{Service, memory::StdMemoryManager},
-        uefi::boot_services::{MockBootServices, tpl::Tpl},
-        uefi::tpl_mutex::TplMutex,
+        component::service::{
+            Service,
+            memory::StdMemoryManager,
+            uefi_services::{
+                config_table::{ConfigurationTableServices, MockConfigurationTableServices},
+                tpl::{MockTplServices, PreviousTpl, Tpl, TplServices},
+            },
+        },
+        uefi::{boot_services::tpl::Tpl as BootServicesTpl, tpl_mutex::TplMutex},
     };
 
     #[test]
@@ -838,24 +852,27 @@ mod tests {
         assert_eq!(handle, 0x1337);
     }
 
-    // Unit tests for SmbiosImpl using MockBootServices
+    // Unit tests for SmbiosImpl using MockTplServices and MockConfigurationTableServices
 
-    /// Creates a `MockBootServices` configured for `TplMutex` usage
-    fn mock_boot_services() -> MockBootServices {
-        let mut boot_services = MockBootServices::new();
-        boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
-        boot_services.expect_restore_tpl().with(eq(Tpl::APPLICATION)).return_const(());
-        boot_services
+    /// Creates a `MockTplServices` configured for `TplMutex` usage
+    fn mock_boot_services() -> MockTplServices {
+        let mut tpl = MockTplServices::new();
+        tpl.expect_raise_tpl().with(eq(Tpl::Notify)).returning(|_| PreviousTpl::from_raw(efi::TPL_APPLICATION));
+        tpl.expect_restore_tpl().with(eq(PreviousTpl::from_raw(efi::TPL_APPLICATION))).returning(|_| ());
+        tpl
     }
 
-    /// Creates a test `SmbiosImpl` with `MockBootServices`
-    fn create_test_smbios_impl(boot_services: MockBootServices) -> SmbiosImpl<MockBootServices> {
+    /// Creates a test `SmbiosImpl` with a mocked `TplServices` and a bare `ConfigurationTableServices` mock
+    fn create_test_smbios_impl(tpl_services: MockTplServices) -> SmbiosImpl {
         let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
         manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
 
-        let manager_mutex = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, manager);
+        let tpl: Service<dyn TplServices> = Service::mock(Box::new(tpl_services));
+        let manager_mutex = TplMutex::new(tpl, BootServicesTpl::NOTIFY, manager);
+        let config_table: Service<dyn ConfigurationTableServices> =
+            Service::mock(Box::new(MockConfigurationTableServices::new()));
 
-        SmbiosImpl { manager: manager_mutex, boot_services, major_version: 3, minor_version: 7 }
+        SmbiosImpl { manager: manager_mutex, config_table, major_version: 3, minor_version: 7 }
     }
 
     #[test]
@@ -996,21 +1013,25 @@ mod tests {
         // We verified it compiles and can be called
     }
 
-    /// Creates a `MockBootServices` configured for `publish_table` (includes `install_configuration_table`)
-    fn mock_boot_services_with_config_table() -> MockBootServices {
-        let mut boot_services = MockBootServices::new();
-        boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
-        boot_services.expect_restore_tpl().with(eq(Tpl::APPLICATION)).return_const(());
-        // Mock install_configuration_table to return success
-        boot_services.expect_install_configuration_table::<*mut core::ffi::c_void>().returning(|_, _| Ok(()));
-        boot_services
+    /// Creates a test `SmbiosImpl` whose `ConfigurationTableServices` mock accepts `publish_table`'s install call
+    fn create_test_smbios_impl_with_publish() -> SmbiosImpl {
+        let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
+        manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
+
+        let tpl: Service<dyn TplServices> = Service::mock(Box::new(mock_boot_services()));
+        let manager_mutex = TplMutex::new(tpl, BootServicesTpl::NOTIFY, manager);
+        let mut config_table_mock = MockConfigurationTableServices::new();
+        config_table_mock.expect_replace_typed_table().returning(|_, _, _| Ok(()));
+        let config_table: Service<dyn ConfigurationTableServices> = Service::mock(Box::new(config_table_mock));
+
+        SmbiosImpl { manager: manager_mutex, config_table, major_version: 3, minor_version: 7 }
     }
 
     #[test]
     fn test_smbios_impl_publish_table() {
-        let smbios = create_test_smbios_impl(mock_boot_services_with_config_table());
+        let smbios = create_test_smbios_impl_with_publish();
 
-        // publish_table should succeed with mocked install_configuration_table
+        // publish_table should succeed with mocked install_or_replace
         let result = smbios.publish_table();
         assert!(result.is_ok());
 
@@ -1097,7 +1118,7 @@ mod tests {
 
     #[test]
     fn test_smbios_impl_record_pointer_after_publish_returns_address() {
-        let smbios = create_test_smbios_impl(mock_boot_services_with_config_table());
+        let smbios = create_test_smbios_impl_with_publish();
         let handle = smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
         smbios.publish_table().unwrap();
 

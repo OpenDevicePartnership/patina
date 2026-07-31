@@ -365,7 +365,7 @@ impl SmbiosManager {
     /// This allows safe republishing during Add/Update/Remove operations.
     ///
     /// Returns (`table_address`, `ep_address`, `entry_point`) but does NOT install the configuration table.
-    /// The caller must call `install_configuration_table` separately without holding locks.
+    /// The caller must call `install_or_replace` separately without holding locks.
     ///
     pub fn build_table_data(&self) -> Result<(PhysicalAddress, PhysicalAddress, Smbios30EntryPoint), SmbiosError> {
         // Get pre-allocated buffer addresses
