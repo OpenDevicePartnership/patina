@@ -18,11 +18,9 @@ extern crate alloc;
 use core::ffi::c_char;
 
 use alloc::string::ToString;
-use patina::{Char8Str, protocol::ProtocolInterface, standard::efi, uefi::tpl_mutex::TplMutex};
+use patina::{Char8Str, component::service::Service, protocol::ProtocolInterface, standard::efi};
 
-use crate::service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType};
-
-use super::core::SmbiosManager;
+use crate::service::{Smbios, SmbiosHandle, SmbiosTableHeader, SmbiosType};
 
 #[repr(C)]
 pub(super) struct SmbiosProtocol {
@@ -34,23 +32,26 @@ pub(super) struct SmbiosProtocol {
     minor_version: u8,
 }
 
-/// Internal protocol struct that packs the manager behind the protocol
+/// Internal protocol struct that packs the SMBIOS service behind the protocol
 #[repr(C)]
 pub(super) struct SmbiosProtocolInternal {
     // The public protocol that external callers will depend on
     pub(super) protocol: SmbiosProtocol,
 
     // Internal component access only! Does not exist in C definition
-    pub(super) manager: &'static TplMutex<SmbiosManager, patina::uefi::boot_services::StandardBootServices>,
-
-    // Boot services needed for table republishing after Add/Update/Remove
-    pub(super) boot_services: &'static patina::uefi::boot_services::StandardBootServices,
+    pub(super) service: Service<dyn Smbios>,
 }
 
 // SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
 // must match the SMBIOS protocol interface with function pointers in the correct order.
 unsafe impl ProtocolInterface for SmbiosProtocol {
     const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid(efi::protocols::smbios::PROTOCOL_GUID);
+}
+
+// SAFETY: `protocol` is the first field of `SmbiosProtocolInternal` (repr(C)), so a pointer to
+// `SmbiosProtocolInternal` is also a valid pointer to `SmbiosProtocol`.
+unsafe impl ProtocolInterface for SmbiosProtocolInternal {
+    const PROTOCOL_GUID: patina::BinaryGuid = SmbiosProtocol::PROTOCOL_GUID;
 }
 
 type SmbiosAdd =
@@ -86,15 +87,10 @@ impl SmbiosProtocolInternal {
     /// Creates a new SMBIOS protocol internal structure
     ///
     /// This constructor is tested via integration (Q35 platform component)
-    /// as it requires 'static boot services which cannot be mocked in unit tests.
+    /// as it requires a 'static service which cannot be mocked in unit tests.
     #[cfg_attr(coverage, coverage(off))]
-    pub(super) fn new(
-        major_version: u8,
-        minor_version: u8,
-        manager: &'static TplMutex<SmbiosManager, patina::uefi::boot_services::StandardBootServices>,
-        boot_services: &'static patina::uefi::boot_services::StandardBootServices,
-    ) -> Self {
-        Self { protocol: SmbiosProtocol::new(major_version, minor_version), manager, boot_services }
+    pub(super) fn new(major_version: u8, minor_version: u8, service: Service<dyn Smbios>) -> Self {
+        Self { protocol: SmbiosProtocol::new(major_version, minor_version), service }
     }
 }
 
@@ -128,14 +124,6 @@ impl SmbiosProtocol {
         // SmbiosProtocolInternal has SmbiosProtocol as its first field, so a pointer to
         // SmbiosProtocol is also a valid pointer to the containing SmbiosProtocolInternal.
         let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
-
-        let manager = match internal.manager.try_lock() {
-            Ok(guard) => guard,
-            Err(()) => {
-                debug_assert!(false, "[SMBIOS Add] ERROR: try_lock FAILED - mutex already locked!");
-                return efi::Status::DEVICE_ERROR;
-            }
-        };
 
         // SAFETY: The C UEFI protocol caller guarantees that `record` points to a valid,
         // complete SMBIOS record. We read the length field and scan for string pool terminator.
@@ -180,19 +168,13 @@ impl SmbiosProtocol {
         // Convert handle
         let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
 
-        // Add the record
-        let result = manager.add_from_bytes(producer_opt, full_record_bytes);
-
-        match result {
+        // Add the record. `Smbios::add_from_bytes` already republishes the table on success, so there is
+        // nothing further to do on either path.
+        match internal.service.add_from_bytes(producer_opt, full_record_bytes) {
             Ok(handle) => {
                 // SAFETY: smbios_handle pointer is guaranteed valid by caller
                 unsafe {
                     smbios_handle.write_unaligned(handle);
-                }
-
-                if manager.republish_table().is_err() {
-                    log::error!("[SMBIOS Add] Failed to rebuild table");
-                    return efi::Status::DEVICE_ERROR;
                 }
 
                 efi::Status::SUCCESS
@@ -221,7 +203,6 @@ impl SmbiosProtocol {
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
         let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
-        let manager = internal.manager.lock();
 
         // SAFETY: The pointers are checked for being null above and guaranteed valid by caller
         let (handle, str_num, rust_str) = unsafe {
@@ -234,15 +215,8 @@ impl SmbiosProtocol {
             (handle, str_num, rust_str)
         };
 
-        match manager.update_string(handle, str_num, &rust_str) {
-            Ok(()) => {
-                if manager.republish_table().is_err() {
-                    log::error!("[SMBIOS UpdateString] Failed to rebuild table");
-                    return efi::Status::DEVICE_ERROR;
-                }
-
-                efi::Status::SUCCESS
-            }
+        match internal.service.update_string(handle, str_num, &rust_str) {
+            Ok(()) => efi::Status::SUCCESS,
             Err(e) => e.into(),
         }
     }
@@ -262,17 +236,9 @@ impl SmbiosProtocol {
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
         let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
-        let manager = internal.manager.lock();
 
-        match manager.remove(smbios_handle) {
-            Ok(()) => {
-                if manager.republish_table().is_err() {
-                    log::error!("[SMBIOS Remove] Failed to rebuild table");
-                    return efi::Status::DEVICE_ERROR;
-                }
-
-                efi::Status::SUCCESS
-            }
+        match internal.service.remove(smbios_handle) {
+            Ok(()) => efi::Status::SUCCESS,
             Err(e) => e.into(),
         }
     }
@@ -299,34 +265,18 @@ impl SmbiosProtocol {
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
         let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
 
-        let found_handle = {
-            let manager = internal.manager.lock();
+        // SAFETY: C UEFI protocol caller guarantees pointers are valid
+        let (handle, type_filter) = unsafe {
+            (
+                smbios_handle.read_unaligned(),
+                if record_type.is_null() { None } else { Some(record_type.read_unaligned()) },
+            )
+        };
 
-            // SAFETY: C UEFI protocol caller guarantees pointers are valid
-            let (handle, type_filter) = unsafe {
-                (
-                    smbios_handle.read_unaligned(),
-                    if record_type.is_null() { None } else { Some(record_type.read_unaligned()) },
-                )
-            };
-
-            // Use the iterator to find the next record
-            let mut iter = manager.iter(type_filter);
-
-            // Skip records until we find the one after the current handle
-            let next_record = if handle == SMBIOS_HANDLE_PI_RESERVED {
-                // Starting iteration - get first record
-                iter.next()
-            } else {
-                // Find the record after the current handle
-                iter.skip_while(|(hdr, _)| hdr.handle != handle).nth(1)
-            };
-
-            next_record.map(|(header, _)| header.handle)
-        }; // manager borrow drops here
-
-        let Some(found_handle) = found_handle else {
-            return efi::Status::NOT_FOUND;
+        let found_handle = match internal.service.next_record(handle, type_filter) {
+            Ok(Some((header, _))) => header.handle,
+            Ok(None) => return efi::Status::NOT_FOUND,
+            Err(e) => return e.into(),
         };
 
         // SAFETY: smbios_handle pointer is guaranteed valid by caller
@@ -334,24 +284,27 @@ impl SmbiosProtocol {
             smbios_handle.write_unaligned(found_handle);
         }
 
-        // Get pointer to record in published table
-        let manager = internal.manager.lock();
-        if let Some((record_addr, prod)) = manager.get_record_pointer(found_handle) {
-            // SAFETY: record pointer is guaranteed valid by caller
-            unsafe {
-                record.write_unaligned(record_addr as *mut SmbiosTableHeader);
-            }
-
-            if !producer_handle.is_null() {
-                // SAFETY: producer_handle pointer is guaranteed valid by caller (checked for null)
+        // Get pointer to record in the published table
+        match internal.service.record_pointer(found_handle) {
+            Ok(Some((record_addr, prod))) => {
+                // SAFETY: record pointer is guaranteed valid by caller
                 unsafe {
-                    producer_handle.write_unaligned(prod.unwrap_or(core::ptr::null_mut()));
+                    record.write_unaligned(record_addr as *mut SmbiosTableHeader);
                 }
+
+                if !producer_handle.is_null() {
+                    // SAFETY: producer_handle pointer is guaranteed valid by caller (checked for null)
+                    unsafe {
+                        producer_handle.write_unaligned(prod.unwrap_or(core::ptr::null_mut()));
+                    }
+                }
+                efi::Status::SUCCESS
             }
-            efi::Status::SUCCESS
-        } else {
-            debug_assert!(false, "[SMBIOS GetNext] Record handle {found_handle:04X} not found in second lookup");
-            efi::Status::NOT_FOUND
+            Ok(None) => {
+                debug_assert!(false, "[SMBIOS GetNext] Record handle {found_handle:04X} not found in second lookup");
+                efi::Status::NOT_FOUND
+            }
+            Err(e) => e.into(),
         }
     }
 }
