@@ -165,6 +165,39 @@ pub trait Smbios {
         producer_handle: Option<efi::Handle>,
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError>;
+
+    /// Finds the record after `after`, optionally filtered by `record_type`.
+    ///
+    /// Primarily intended for the protocol shim's `GetNext` implementation. Most platform components
+    /// should not need this.
+    ///
+    /// # Arguments
+    ///
+    /// * `after` - Handle to search after, or `SMBIOS_HANDLE_PI_RESERVED` to start from the first record
+    /// * `record_type` - Optional filter, only records of this type are considered if provided
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(None)` if there is no matching record after `after`.
+    fn next_record(
+        &self,
+        after: SmbiosHandle,
+        record_type: Option<SmbiosType>,
+    ) -> core::result::Result<Option<(SmbiosTableHeader, Option<Handle>)>, crate::error::SmbiosError>;
+
+    /// Returns the address of a published record and its producer handle.
+    ///
+    /// Primarily intended for the protocol shim's `GetNext` implementation. Most platform components
+    /// should not need this.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(None)` if `handle` does not exist, or if no record has been added yet (the table has never
+    /// been built into the publishing buffer).
+    fn record_pointer(
+        &self,
+        handle: SmbiosHandle,
+    ) -> core::result::Result<Option<(efi::PhysicalAddress, Option<Handle>)>, crate::error::SmbiosError>;
 }
 
 /// SMBIOS service implementation
@@ -282,6 +315,31 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
 
         self.republish_table()?;
         Ok(handle)
+    }
+
+    fn next_record(
+        &self,
+        after: SmbiosHandle,
+        record_type: Option<SmbiosType>,
+    ) -> core::result::Result<Option<(SmbiosTableHeader, Option<Handle>)>, crate::error::SmbiosError> {
+        let manager = self.manager.lock();
+        let mut iter = manager.iter(record_type);
+
+        let next = if after == SMBIOS_HANDLE_PI_RESERVED {
+            iter.next()
+        } else {
+            iter.skip_while(|(header, _)| header.handle != after).nth(1)
+        };
+
+        Ok(next)
+    }
+
+    fn record_pointer(
+        &self,
+        handle: SmbiosHandle,
+    ) -> core::result::Result<Option<(efi::PhysicalAddress, Option<Handle>)>, crate::error::SmbiosError> {
+        let manager = self.manager.lock();
+        Ok(manager.get_record_pointer(handle))
     }
 }
 
@@ -542,6 +600,21 @@ mod tests {
                 assert_eq!(bytes, expected.as_slice(), "add_from_bytes received unexpected bytes");
             }
             self.add_from_bytes_result.clone()
+        }
+
+        fn next_record(
+            &self,
+            _after: SmbiosHandle,
+            _record_type: Option<SmbiosType>,
+        ) -> core::result::Result<Option<(SmbiosTableHeader, Option<Handle>)>, crate::error::SmbiosError> {
+            Ok(None)
+        }
+
+        fn record_pointer(
+            &self,
+            _handle: SmbiosHandle,
+        ) -> core::result::Result<Option<(efi::PhysicalAddress, Option<Handle>)>, crate::error::SmbiosError> {
+            Ok(None)
         }
     }
 
@@ -945,6 +1018,98 @@ mod tests {
         // Addresses should be non-zero (allocated by StdMemoryManager)
         assert_ne!(table_addr, 0);
         assert_ne!(ep_addr, 0);
+    }
+
+    /// Bytes for a minimal Type 0 (BIOS Information) record, used by the `next_record`/`record_pointer` tests.
+    fn test_type0_record_bytes() -> Vec<u8> {
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 24, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: smbios_types::BiosCharacteristics::new().with_pci_supported(true),
+            characteristics_ext1: smbios_types::BiosCharacteristicsExt1::new()
+                .with_acpi_supported(true)
+                .with_usb_legacy_supported(true),
+            characteristics_ext2: smbios_types::BiosCharacteristicsExt2::new()
+                .with_bios_boot_specification_supported(true)
+                .with_fn_network_service_boot_supported(true),
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: smbios_types::ExtendedBiosRomSize::new(),
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("01/01/2025")],
+        };
+        type0.to_bytes()
+    }
+
+    #[test]
+    fn test_smbios_impl_next_record_from_start_returns_first_record() {
+        let smbios = create_test_smbios_impl(mock_boot_services());
+        let handle = smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
+
+        let next = smbios.next_record(SMBIOS_HANDLE_PI_RESERVED, None).unwrap();
+
+        let (header, _) = next.expect("expected the first record");
+        assert_eq!(header.record_type, 0);
+        let found_handle = header.handle;
+        assert_eq!(found_handle, handle);
+    }
+
+    #[test]
+    fn test_smbios_impl_next_record_after_handle_returns_next() {
+        let smbios = create_test_smbios_impl(mock_boot_services());
+        let handle = smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
+
+        // The Type 127 end-of-table marker always follows the last added record.
+        let next = smbios.next_record(handle, None).unwrap();
+
+        let (header, _) = next.expect("expected the end-of-table marker to follow");
+        assert_eq!(header.record_type, 127);
+    }
+
+    #[test]
+    fn test_smbios_impl_next_record_with_type_filter_skips_other_types() {
+        let smbios = create_test_smbios_impl(mock_boot_services());
+        smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
+
+        // Filtering for type 127 should skip the type 0 record and find the end-of-table marker directly.
+        let next = smbios.next_record(SMBIOS_HANDLE_PI_RESERVED, Some(127)).unwrap();
+
+        let (header, _) = next.expect("expected the end-of-table marker");
+        assert_eq!(header.record_type, 127);
+    }
+
+    #[test]
+    fn test_smbios_impl_next_record_returns_none_past_last_record() {
+        let smbios = create_test_smbios_impl(mock_boot_services());
+        smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
+
+        let (last_header, _) = smbios.next_record(SMBIOS_HANDLE_PI_RESERVED, Some(127)).unwrap().unwrap();
+        let last_handle = last_header.handle;
+
+        let past_last = smbios.next_record(last_handle, None).unwrap();
+        assert!(past_last.is_none());
+    }
+
+    #[test]
+    fn test_smbios_impl_record_pointer_after_publish_returns_address() {
+        let smbios = create_test_smbios_impl(mock_boot_services_with_config_table());
+        let handle = smbios.add_from_bytes(None, &test_type0_record_bytes()).unwrap();
+        smbios.publish_table().unwrap();
+
+        let (_, producer) = smbios.record_pointer(handle).unwrap().expect("record should be published");
+        assert_eq!(producer, None);
+    }
+
+    #[test]
+    fn test_smbios_impl_record_pointer_unknown_handle_returns_none() {
+        let smbios = create_test_smbios_impl(mock_boot_services());
+
+        assert_eq!(smbios.record_pointer(0x1234).unwrap(), None);
     }
 
     #[test]
