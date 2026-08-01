@@ -444,7 +444,7 @@ mod tests {
             with_global_lock(|| {
                 let dispatcher = ComponentDispatcher::new_locked();
                 let _lock = dispatcher.lock();
-                dispatcher.lock();
+                let _reentrant_lock = dispatcher.lock();
             })
             .is_err_and(|e| {
                 e.downcast::<String>().unwrap().contains("Re-entrant locks for \"ComponentDispatcher\" not permitted.")
