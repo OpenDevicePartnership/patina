@@ -88,6 +88,7 @@ mod runtime_cross_checks {
                 runtime_path(HardDrive::new_gpt(1, 0x800, 0x1000, guid)),
             ),
             (&devpath!("EFI"), runtime_path(FilePath::new("EFI"))),
+            (&devpath!(r"\EFI\BOOT\BOOTX64.EFI"), runtime_path(FilePath::new(r"\EFI\BOOT\BOOTX64.EFI"))),
         ];
 
         for (macro_path, runtime_path) in cases {

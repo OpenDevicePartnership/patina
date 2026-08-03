@@ -22,9 +22,10 @@ mod validate_params_macro;
 /// Encodes a UEFI text device path as an owned byte array at compile time.
 ///
 /// The input is normally one string literal using the UEFI 2.11 Device Path
-/// From Text syntax. Nodes are separated by `/` or `\`. A top-level comma
-/// separates device path instances. The macro inserts an End Instance node
-/// between instances and an End Entire node after the final instance.
+/// From Text syntax. Nodes are separated by `/`; backslashes are preserved in
+/// file path nodes. A top-level comma separates device path instances. The
+/// macro inserts an End Instance node between instances and an End Entire node
+/// after the final instance.
 ///
 /// An optional `vendors { ... };` registry may precede the literal to define
 /// invocation-local vendor hardware shortcuts. Each schema supplies an

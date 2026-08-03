@@ -68,7 +68,7 @@ pub(crate) fn parse_device_path(input: &str) -> Result<ParsedDevicePath, DeviceP
     let mut offset = 0;
     let mut instances = vec![Vec::new()];
 
-    if matches!(byte_at(input, offset), Some(b'/' | b'\\')) {
+    if byte_at(input, offset) == Some(b'/') {
         offset += 1;
         if offset == input.len() {
             return Err(DevicePathError::new(offset - 1, "device path cannot end with a separator"));
@@ -91,7 +91,7 @@ pub(crate) fn parse_device_path(input: &str) -> Result<ParsedDevicePath, DeviceP
         offset = node_end;
         match separator {
             None => break,
-            Some(b'/') | Some(b'\\') => {
+            Some(b'/') => {
                 offset += 1;
                 if offset == input.len() {
                     return Err(DevicePathError::new(offset - 1, "device path cannot end with a separator"));
@@ -141,7 +141,7 @@ fn find_node_end(input: &str, start: usize) -> Result<(usize, Option<u8>), Devic
                     }
                     depth -= 1;
                 }
-                b'/' | b'\\' | b',' if depth == 0 => return Ok((offset, Some(byte))),
+                b'/' | b',' if depth == 0 => return Ok((offset, Some(byte))),
                 b'|' | b'<' | b'>' => {
                     return Err(DevicePathError::new(offset, "shell-reserved character is not allowed"));
                 }
@@ -329,6 +329,16 @@ mod tests {
 
         assert_eq!(arguments[0].name.as_deref(), Some("Device"));
         assert_eq!(arguments[1].name, None);
+    }
+
+    #[test]
+    fn test_parse_preserves_backslashes_in_file_path() {
+        let parsed = parse_device_path(r"\EFI\BOOT\BOOTX64.EFI").expect("path should parse");
+        let ParsedNodeKind::FilePath(path) = &parsed.instances[0][0].kind else {
+            panic!("expected file path node");
+        };
+
+        assert_eq!(path, r"\EFI\BOOT\BOOTX64.EFI");
     }
 
     #[test]

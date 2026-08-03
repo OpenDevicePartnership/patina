@@ -114,8 +114,8 @@ const PCI_DEVICE_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
 const MULTI_INSTANCE_PATH: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
 ```
 
-Without a vendor registry, the input must be exactly one string literal. Separate nodes with `/` or `\`; use a
-top-level comma to separate device path instances.
+Without a vendor registry, the input must be exactly one string literal. Separate nodes with `/`; backslashes are
+preserved in file path nodes. Use a top-level comma to separate device path instances.
 
 Invocation-local vendor hardware shortcuts can be declared before the device path:
 
