@@ -13,12 +13,22 @@
 //! Raising to a level below the current TPL, or restoring to a level above the current TPL, is a
 //! programming error.
 //!
+//! [`Service<dyn TplServices>`](crate::component::service::Service) also implements [`TplController`],
+//! so it can be used directly as the controller for a [`TplMutex`](crate::uefi::tpl_mutex::TplMutex) in
+//! place of a [`BootServices`](crate::uefi::boot_services::BootServices) implementation.
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+
+use crate::{
+    component::service::Service,
+    standard::efi,
+    uefi::{boot_services::tpl::Tpl as BootServicesTpl, tpl_mutex::TplController},
+};
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -150,15 +160,104 @@ pub trait TplServicesExt: TplServices {
 
 impl<T: TplServices + ?Sized> TplServicesExt for T {}
 
+impl TryFrom<BootServicesTpl> for Tpl {
+    type Error = BootServicesTpl;
+
+    /// Converts a raw TPL value to the [`Tpl`] enum used by [`TplServices`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(tpl)` if `tpl` does not match one of the TPL levels defined by the UEFI
+    /// specification.
+    fn try_from(tpl: BootServicesTpl) -> Result<Self, Self::Error> {
+        let raw: usize = tpl.into();
+        match raw {
+            efi::TPL_APPLICATION => Ok(Self::Application),
+            efi::TPL_CALLBACK => Ok(Self::Callback),
+            efi::TPL_NOTIFY => Ok(Self::Notify),
+            efi::TPL_HIGH_LEVEL => Ok(Self::HighLevel),
+            _ => Err(tpl),
+        }
+    }
+}
+
+/// Lets [`Service<dyn TplServices>`] back a [`TplMutex`](crate::uefi::tpl_mutex::TplMutex) directly, so
+/// `TplMutex` state does not need a [`BootServices`](crate::uefi::boot_services::BootServices) implementation.
+/// `PreviousTpl` and the boot services `Tpl` both just wrap the raw TPL value, so the conversion is straightforward.
+///
+/// If both this trait and [`TplServices`] are in scope, call through fully-qualified syntax (for example
+/// `TplController::raise_tpl(&service, tpl)`), since both traits define a method named `raise_tpl`.
+impl TplController for Service<dyn TplServices> {
+    fn raise_tpl(&self, tpl: BootServicesTpl) -> BootServicesTpl {
+        // `Service<T>` derefs to `&'static T`, so a double deref gets to the underlying `dyn TplServices`,
+        // avoiding ambiguity with the `raise_tpl` implemented here on `Service<dyn TplServices>` itself.
+        let services: &dyn TplServices = **self;
+        let previous = services.raise_tpl(tpl.try_into().expect("unsupported TPL value"));
+        BootServicesTpl::from(previous.as_raw())
+    }
+
+    fn restore_tpl(&self, tpl: BootServicesTpl) {
+        let services: &dyn TplServices = **self;
+        services.restore_tpl(PreviousTpl::from_raw(tpl.into()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
     use core::cell::Cell;
 
     #[test]
     fn test_tpl_services_previous_previous_raw_is_correct() {
         let previous = PreviousTpl::from_raw(16);
         assert_eq!(previous.as_raw(), 16);
+    }
+
+    #[test]
+    fn test_tpl_controller_bridge_try_from_converts_all_levels() {
+        assert_eq!(Tpl::try_from(BootServicesTpl::APPLICATION), Ok(Tpl::Application));
+        assert_eq!(Tpl::try_from(BootServicesTpl::CALLBACK), Ok(Tpl::Callback));
+        assert_eq!(Tpl::try_from(BootServicesTpl::NOTIFY), Ok(Tpl::Notify));
+        assert_eq!(Tpl::try_from(BootServicesTpl(efi::TPL_HIGH_LEVEL)), Ok(Tpl::HighLevel));
+    }
+
+    #[test]
+    fn test_tpl_controller_bridge_try_from_rejects_unknown_value() {
+        let invalid = BootServicesTpl(usize::MAX);
+        assert_eq!(Tpl::try_from(invalid), Err(invalid));
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported TPL value")]
+    fn test_tpl_controller_bridge_raise_tpl_panics_on_unknown_value() {
+        let service: Service<dyn TplServices> = Service::mock(Box::new(MockTplServices::new()));
+        let _ = TplController::raise_tpl(&service, BootServicesTpl(usize::MAX));
+    }
+
+    #[test]
+    fn test_tpl_controller_bridge_raise_tpl_converts_and_delegates() {
+        let mut mock = MockTplServices::new();
+        mock.expect_raise_tpl().times(1).returning(|tpl| {
+            assert_eq!(tpl, Tpl::Notify);
+            PreviousTpl::from_raw(efi::TPL_APPLICATION)
+        });
+        let service: Service<dyn TplServices> = Service::mock(Box::new(mock));
+
+        let previous = TplController::raise_tpl(&service, BootServicesTpl::NOTIFY);
+
+        assert_eq!(previous, BootServicesTpl::APPLICATION);
+    }
+
+    #[test]
+    fn test_tpl_controller_bridge_restore_tpl_converts_and_delegates() {
+        let mut mock = MockTplServices::new();
+        mock.expect_restore_tpl().times(1).returning(|previous| {
+            assert_eq!(previous.as_raw(), efi::TPL_NOTIFY);
+        });
+        let service: Service<dyn TplServices> = Service::mock(Box::new(mock));
+
+        TplController::restore_tpl(&service, BootServicesTpl::NOTIFY);
     }
 
     #[test]
