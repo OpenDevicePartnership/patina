@@ -26,11 +26,10 @@ proc-macro2 = { workspace = true }
 # cargo-release, however they are still used when verifying the package is compileable. Any dev-dependency that is
 # local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
 # compile due to the dev-dependency not being published yet.
-patina = { path="../../sdk/patina" }
+patina = { path="../../sdk/patina", features = ["alloc"] }
 
 
 [features]
-default = []
 # Opting in to the `enable_patina_tests` feature requires registering at least one test
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
