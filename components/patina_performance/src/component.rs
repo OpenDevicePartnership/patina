@@ -8,6 +8,7 @@
 //!
 
 pub mod fbpt;
+pub mod mm_records;
 mod performance;
 pub mod property;
 pub mod protocol;
