@@ -11,10 +11,10 @@
 //!
 use crate::{
     component::{
+        fbpt::find_previous_table_address,
         protocol::{
             EdkiiPerformanceMeasurementProtocol, create_performance_measurement_efiapi, set_performance_service,
         },
-        table::find_previous_table_address,
     },
     mm,
 };
@@ -773,7 +773,7 @@ mod tests {
 
         let mut runtime_services = MockRuntimeServices::new();
         runtime_services
-            .expect_get_variable::<crate::component::table::FirmwarePerformanceVariable>()
+            .expect_get_variable::<crate::component::fbpt::FirmwarePerformanceVariable>()
             .once()
             .returning(|_, _, _| Err(efi::Status::NOT_FOUND));
 
