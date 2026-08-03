@@ -3,8 +3,9 @@
 use patina::devpath;
 
 const _: [u8; 0] = devpath!(
-    vendors {
+    vendor-defined {
         Pci {
+            type: hardware,
             guid: "00112233-4455-6677-8899-aabbccddeeff",
             fields: [],
         },

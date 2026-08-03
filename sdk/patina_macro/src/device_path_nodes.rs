@@ -37,9 +37,9 @@ const VIRTUAL_CD_GUID: &str = "3d5abd30-4175-87ce-6d64-d2ade523c4bb";
 const PERSISTENT_VIRTUAL_DISK_GUID: &str = "5cea02c9-4d07-69d3-269f-4496fbe096f9";
 const PERSISTENT_VIRTUAL_CD_GUID: &str = "08018188-42cd-bb48-100f-5387d53ded3d";
 
-/// Encoding of one custom vendor hardware payload field.
+/// Encoding of one custom vendor-defined payload field.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum VendorHardwareFieldType {
+pub(crate) enum VendorDefinedFieldType {
     U8,
     U16Le,
     U32Le,
@@ -49,7 +49,7 @@ pub(crate) enum VendorHardwareFieldType {
     Bytes,
 }
 
-impl VendorHardwareFieldType {
+impl VendorDefinedFieldType {
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "u8" => Some(Self::U8),
@@ -64,19 +64,38 @@ impl VendorHardwareFieldType {
     }
 }
 
-/// One named field in a custom vendor hardware payload.
+/// One named field in a custom vendor-defined payload.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct VendorHardwareField {
+pub(crate) struct VendorDefinedField {
     pub(crate) name: String,
-    pub(crate) field_type: VendorHardwareFieldType,
+    pub(crate) field_type: VendorDefinedFieldType,
 }
 
-/// A user-declared shortcut for a vendor hardware device path node.
+/// Device path node type for a user-declared vendor-defined shortcut.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VendorDefinedType {
+    Hardware,
+    Messaging,
+    Media,
+}
+
+impl VendorDefinedType {
+    fn node_type_and_subtype(self) -> (u8, u8) {
+        match self {
+            Self::Hardware => (1, 4),
+            Self::Messaging => (3, 10),
+            Self::Media => (4, 3),
+        }
+    }
+}
+
+/// A user-declared shortcut for a vendor-defined device path node.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct VendorHardwareSchema {
+pub(crate) struct VendorDefinedSchema {
     pub(crate) name: String,
+    pub(crate) vendor_type: VendorDefinedType,
     pub(crate) guid: [u8; 16],
-    pub(crate) fields: Vec<VendorHardwareField>,
+    pub(crate) fields: Vec<VendorDefinedField>,
 }
 
 /// Return whether a name is reserved by a built-in UEFI node or shortcut.
@@ -179,12 +198,12 @@ pub(crate) fn is_builtin_node_name(name: &str) -> bool {
 /// Encode one parsed node.
 pub(crate) fn encode_node(
     node: &ParsedNode,
-    vendor_hardware_schemas: &[VendorHardwareSchema],
+    vendor_defined_schemas: &[VendorDefinedSchema],
 ) -> Result<Vec<u8>, DevicePathError> {
     match &node.kind {
         ParsedNodeKind::FilePath(path) => encode_file_path(node, path),
         ParsedNodeKind::Canonical { name, arguments } => {
-            encode_canonical(node, name, arguments, vendor_hardware_schemas)
+            encode_canonical(node, name, arguments, vendor_defined_schemas)
         }
     }
 }
@@ -193,7 +212,7 @@ fn encode_canonical(
     node: &ParsedNode,
     name: &str,
     arguments: &[ParsedArgument],
-    vendor_hardware_schemas: &[VendorHardwareSchema],
+    vendor_defined_schemas: &[VendorDefinedSchema],
 ) -> Result<Vec<u8>, DevicePathError> {
     match name {
         "Path" => encode_generic(node, arguments, None),
@@ -286,9 +305,9 @@ fn encode_canonical(
         "PersistentVirtualCD" => encode_ram_disk(node, arguments, Some(PERSISTENT_VIRTUAL_CD_GUID)),
         "BbsPath" => encode_generic(node, arguments, Some(5)),
         "BBS" => encode_bbs(node, arguments),
-        _ => vendor_hardware_schemas.iter().find(|schema| schema.name == name).map_or_else(
+        _ => vendor_defined_schemas.iter().find(|schema| schema.name == name).map_or_else(
             || Err(DevicePathError::new(node.offset, format!("unknown device path node `{name}`"))),
-            |schema| encode_vendor_hardware(node, arguments, schema),
+            |schema| encode_vendor_defined(node, arguments, schema),
         ),
     }
 }
@@ -449,38 +468,39 @@ fn encode_vendor(
     writer.finish()
 }
 
-fn encode_vendor_hardware(
+fn encode_vendor_defined(
     node: &ParsedNode,
     arguments: &[ParsedArgument],
-    schema: &VendorHardwareSchema,
+    schema: &VendorDefinedSchema,
 ) -> Result<Vec<u8>, DevicePathError> {
     let names: Vec<&str> = schema.fields.iter().map(|field| field.name.as_str()).collect();
     let args = ResolvedArgs::new(node, arguments, &names)?;
-    let mut writer = NodeWriter::new(node, 1, 4);
+    let (node_type, subtype) = schema.vendor_type.node_type_and_subtype();
+    let mut writer = NodeWriter::new(node, node_type, subtype);
     writer.bytes(&schema.guid);
 
     for (index, field) in schema.fields.iter().enumerate() {
         let argument = args.required(index)?;
         match field.field_type {
-            VendorHardwareFieldType::U8 => {
+            VendorDefinedFieldType::U8 => {
                 writer.byte(parse_u8(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::U16Le => {
+            VendorDefinedFieldType::U16Le => {
                 writer.u16(parse_u16(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::U32Le => {
+            VendorDefinedFieldType::U32Le => {
                 writer.u32(parse_u32(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::U64Le => {
+            VendorDefinedFieldType::U64Le => {
                 writer.u64(parse_u64(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::Guid => {
+            VendorDefinedFieldType::Guid => {
                 writer.bytes(&parse_efi_guid(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::Uuid => {
+            VendorDefinedFieldType::Uuid => {
                 writer.bytes(&parse_uuid_bytes(&argument.value, argument.offset, &field.name)?);
             }
-            VendorHardwareFieldType::Bytes => {
+            VendorDefinedFieldType::Bytes => {
                 writer.bytes(&parse_hex_bytes(&argument.value, argument.offset, &field.name)?);
             }
         }

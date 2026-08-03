@@ -9,7 +9,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{
-    device_path_nodes::{VendorHardwareSchema, encode_node},
+    device_path_nodes::{VendorDefinedSchema, encode_node},
     device_path_parser::{DevicePathError, ParsedDevicePath, ParsedNode, parse_device_path},
 };
 
@@ -18,26 +18,26 @@ const END_ENTIRE: [u8; 4] = [0x7f, 0xff, 0x04, 0x00];
 
 /// Parse and encode a complete UEFI text device path.
 pub(crate) fn encode_device_path(input: &str) -> Result<Vec<u8>, DevicePathError> {
-    encode_device_path_with_vendors(input, &[])
+    encode_device_path_with_vendor_defined(input, &[])
 }
 
 /// Parse and encode a complete UEFI text device path with custom vendor nodes.
-pub(crate) fn encode_device_path_with_vendors(
+pub(crate) fn encode_device_path_with_vendor_defined(
     input: &str,
-    vendor_hardware_schemas: &[VendorHardwareSchema],
+    vendor_defined_schemas: &[VendorDefinedSchema],
 ) -> Result<Vec<u8>, DevicePathError> {
     let path = parse_device_path(input)?;
-    encode_parsed_device_path(&path, vendor_hardware_schemas)
+    encode_parsed_device_path(&path, vendor_defined_schemas)
 }
 
 fn encode_parsed_device_path(
     path: &ParsedDevicePath,
-    vendor_hardware_schemas: &[VendorHardwareSchema],
+    vendor_defined_schemas: &[VendorDefinedSchema],
 ) -> Result<Vec<u8>, DevicePathError> {
     let mut bytes = Vec::new();
     for (instance_index, instance) in path.instances.iter().enumerate() {
         for node in instance {
-            bytes.extend_from_slice(&encode_node(node, vendor_hardware_schemas)?);
+            bytes.extend_from_slice(&encode_node(node, vendor_defined_schemas)?);
         }
         if instance_index + 1 == path.instances.len() {
             bytes.extend_from_slice(&END_ENTIRE);

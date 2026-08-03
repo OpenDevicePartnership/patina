@@ -27,10 +27,12 @@ mod validate_params_macro;
 /// macro inserts an End Instance node between instances and an End Entire node
 /// after the final instance.
 ///
-/// An optional `vendors { ... };` registry may precede the literal to define
-/// invocation-local vendor hardware shortcuts. Each schema supplies an
-/// [`VenHw`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-device-path)
-/// GUID and a list of required payload fields. Supported field types are `u8`,
+/// An optional `vendor-defined { ... };` registry may precede the literal to
+/// define invocation-local vendor hardware, messaging, or media shortcuts. Each schema
+/// selects `type: hardware` ([`VenHw`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-device-path))
+/// or `type: messaging` ([`VenMsg`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path))
+/// or `type: media` ([`VenMedia`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path))
+/// and supplies a GUID and a list of required payload fields. Supported field types are `u8`,
 /// `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid` (RFC byte
 /// order), and `bytes` (hexadecimal byte data). Schema and field names are
 /// case-sensitive and must contain only alphanumeric characters. Built-in node
@@ -68,14 +70,15 @@ mod validate_params_macro;
 /// assert_eq!(&path[16..20], &[0x7f, 0xff, 0x04, 0x00]);
 /// ```
 ///
-/// Vendor hardware shortcuts encode their fields after the vendor GUID:
+/// Vendor-defined shortcuts encode their fields after the vendor GUID:
 ///
 /// ```
 /// use patina::devpath;
 ///
 /// let path = devpath!(
-///     vendors {
+///     vendor-defined {
 ///         AcmeController {
+///             type: hardware,
 ///             guid: "00112233-4455-6677-8899-aabbccddeeff",
 ///             fields: [port: u8, flags: u16le],
 ///         },

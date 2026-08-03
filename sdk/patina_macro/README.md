@@ -99,13 +99,14 @@ fn watchdog_negative_path() -> Result {
 
 ### `devpath!`
 
-- Converts a UEFI 2.11 Device Path From Text string literal into an owned `[u8; N]` at compile time.
+- Converts a Device Path from a text string literal into an owned `[u8; N]` at compile time.
 - Supports standard device path nodes, aliases, decimal and hexadecimal integers, named parameters, and multiple
   device path instances.
 - Inserts End Instance nodes between top-level comma-separated instances and an End Entire node after the final
   instance.
 - Requires no runtime parser, allocation, or Patina device-path feature in the consuming crate.
 - Reports malformed syntax, invalid fields, unknown nodes, and unrepresentable values as compile-time errors.
+- Supports syntax for specifying vendor-defined hardware, messaging and media device path nodes.
 
 ```rust
 use patina::devpath;
@@ -114,15 +115,16 @@ const PCI_DEVICE_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
 const MULTI_INSTANCE_PATH: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
 ```
 
-Without a vendor registry, the input must be exactly one string literal. Separate nodes with `/`; backslashes are
-preserved in file path nodes. Use a top-level comma to separate device path instances.
+The macro accepts one device path string, optionally preceded by a `vendor-defined` registry. Within the string,
+separate nodes with `/` and device path instances with a top-level comma. Backslashes are preserved in file path nodes.
 
-Invocation-local vendor hardware shortcuts can be declared before the device path:
+The registry defines invocation-local shortcuts for vendor hardware, messaging, and media nodes:
 
 ```rust
 const VENDOR_PATH: &[u8] = &devpath!(
-    vendors {
+    vendor-defined {
         AcmeController {
+            type: hardware,
             guid: "00112233-4455-6677-8899-aabbccddeeff",
             fields: [port: u8, flags: u16le],
         },
@@ -131,6 +133,7 @@ const VENDOR_PATH: &[u8] = &devpath!(
 );
 ```
 
-Each shortcut expands to a UEFI vendor hardware (`VenHw`) node. Fields are required and may be supplied positionally or
-by name. Supported field types are `u8`, `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid` (RFC byte order),
-and `bytes` (hexadecimal byte data). Built-in node names cannot be redefined.
+The required `type` property selects a UEFI vendor hardware (`VenHw`), vendor messaging (`VenMsg`), or vendor media
+(`VenMedia`) node using `hardware`, `messaging`, or `media`, respectively. Fields are required and may be supplied
+positionally or by name. Supported field types are `u8`, `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid`
+(RFC byte order), and `bytes` (hexadecimal byte data). Built-in node names cannot be redefined.

@@ -10,13 +10,34 @@ use patina::devpath;
 
 const REQUESTED_PATH: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
 const CUSTOM_VENDOR_PATH: [u8; 39] = devpath!(
-    vendors {
+    vendor-defined {
         AcmeController {
+            type: hardware,
             guid: "00112233-4455-6677-8899-aabbccddeeff",
             fields: [port: u8, flags: u16le],
         },
     };
     "PciRoot(0)/AcmeController(flags=0x1234,port=3)"
+);
+const CUSTOM_VENDOR_MESSAGING_PATH: [u8; 27] = devpath!(
+    vendor-defined {
+        AcmeTransport {
+            type: messaging,
+            guid: "00112233-4455-6677-8899-aabbccddeeff",
+            fields: [channel: u8, flags: u16le],
+        },
+    };
+    "AcmeTransport(flags=0x1234,channel=3)"
+);
+const CUSTOM_VENDOR_MEDIA_PATH: [u8; 27] = devpath!(
+    vendor-defined {
+        AcmeMedia {
+            type: media,
+            guid: "00112233-4455-6677-8899-aabbccddeeff",
+            fields: [instance: u8, flags: u16le],
+        },
+    };
+    "AcmeMedia(flags=0x1234,instance=3)"
 );
 
 #[test]
@@ -44,6 +65,16 @@ fn test_devpath_public_macro_encodes_multiple_instances() {
 #[test]
 fn test_devpath_public_macro_encodes_vendor_hardware_schema() {
     assert_eq!(CUSTOM_VENDOR_PATH, devpath!("PciRoot(0)/VenHw(00112233-4455-6677-8899-aabbccddeeff,033412)"));
+}
+
+#[test]
+fn test_devpath_public_macro_encodes_vendor_messaging_schema() {
+    assert_eq!(CUSTOM_VENDOR_MESSAGING_PATH, devpath!("VenMsg(00112233-4455-6677-8899-aabbccddeeff,033412)"));
+}
+
+#[test]
+fn test_devpath_public_macro_encodes_vendor_media_schema() {
+    assert_eq!(CUSTOM_VENDOR_MEDIA_PATH, devpath!("VenMedia(00112233-4455-6677-8899-aabbccddeeff,033412)"));
 }
 
 #[cfg(feature = "unstable-device-path")]

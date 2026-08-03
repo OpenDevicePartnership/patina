@@ -16,45 +16,53 @@ use syn::{
 };
 
 use crate::{
-    device_path_encoder::{efi_guid_bytes, encode_device_path, encode_device_path_with_vendors},
-    device_path_nodes::{VendorHardwareField, VendorHardwareFieldType, VendorHardwareSchema, is_builtin_node_name},
+    device_path_encoder::{efi_guid_bytes, encode_device_path, encode_device_path_with_vendor_defined},
+    device_path_nodes::{
+        VendorDefinedField, VendorDefinedFieldType, VendorDefinedSchema, VendorDefinedType, is_builtin_node_name,
+    },
     device_path_parser::DevicePathError,
 };
 
 mod keyword {
-    syn::custom_keyword!(vendors);
+    syn::custom_keyword!(vendor);
+    syn::custom_keyword!(defined);
     syn::custom_keyword!(guid);
     syn::custom_keyword!(fields);
+    syn::custom_keyword!(hardware);
+    syn::custom_keyword!(messaging);
+    syn::custom_keyword!(media);
 }
 
 struct DevicePathInput {
-    vendor_hardware_schemas: Vec<VendorHardwareSchema>,
+    vendor_defined_schemas: Vec<VendorDefinedSchema>,
     literal: LitStr,
 }
 
 impl Parse for DevicePathInput {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let vendor_hardware_schemas =
-            if input.peek(keyword::vendors) { parse_vendor_hardware_schemas(input)? } else { Vec::new() };
+        let vendor_defined_schemas =
+            if input.peek(keyword::vendor) { parse_vendor_defined_schemas(input)? } else { Vec::new() };
         let literal = input
             .parse::<LitStr>()
             .map_err(|_| syn::Error::new(input.span(), "`devpath!` expects exactly one string literal"))?;
         if !input.is_empty() {
             return Err(syn::Error::new(input.span(), "`devpath!` accepts exactly one string literal"));
         }
-        Ok(Self { vendor_hardware_schemas, literal })
+        Ok(Self { vendor_defined_schemas, literal })
     }
 }
 
-fn parse_vendor_hardware_schemas(input: ParseStream<'_>) -> syn::Result<Vec<VendorHardwareSchema>> {
-    input.parse::<keyword::vendors>()?;
+fn parse_vendor_defined_schemas(input: ParseStream<'_>) -> syn::Result<Vec<VendorDefinedSchema>> {
+    input.parse::<keyword::vendor>()?;
+    input.parse::<Token![-]>()?;
+    input.parse::<keyword::defined>()?;
     let content;
     braced!(content in input);
-    let schemas = content.parse_terminated(VendorHardwareSchemaInput::parse, Token![,])?;
+    let schemas = content.parse_terminated(VendorDefinedSchemaInput::parse, Token![,])?;
     input.parse::<Token![;]>()?;
 
     if schemas.is_empty() {
-        return Err(syn::Error::new(content.span(), "`vendors` must declare at least one vendor hardware schema"));
+        return Err(syn::Error::new(content.span(), "`vendor-defined` must declare at least one schema"));
     }
 
     let mut names = HashSet::new();
@@ -69,7 +77,7 @@ fn parse_vendor_hardware_schemas(input: ParseStream<'_>) -> syn::Result<Vec<Vend
         if !names.insert(schema.schema.name.clone()) {
             return Err(syn::Error::new(
                 schema.name_span,
-                format!("vendor hardware schema `{}` was declared more than once", schema.schema.name),
+                format!("vendor-defined schema `{}` was declared more than once", schema.schema.name),
             ));
         }
         parsed.push(schema.schema);
@@ -77,19 +85,34 @@ fn parse_vendor_hardware_schemas(input: ParseStream<'_>) -> syn::Result<Vec<Vend
     Ok(parsed)
 }
 
-struct VendorHardwareSchemaInput {
+struct VendorDefinedSchemaInput {
     name_span: proc_macro2::Span,
-    schema: VendorHardwareSchema,
+    schema: VendorDefinedSchema,
 }
 
-impl Parse for VendorHardwareSchemaInput {
+impl Parse for VendorDefinedSchemaInput {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let name = input.parse::<Ident>()?;
-        validate_schema_identifier(&name, "vendor hardware schema name")?;
+        validate_schema_identifier(&name, "vendor-defined schema name")?;
         let name_span = name.span();
         let content;
         braced!(content in input);
 
+        content.parse::<Token![type]>()?;
+        content.parse::<Token![:]>()?;
+        let vendor_type = if content.peek(keyword::hardware) {
+            content.parse::<keyword::hardware>()?;
+            VendorDefinedType::Hardware
+        } else if content.peek(keyword::messaging) {
+            content.parse::<keyword::messaging>()?;
+            VendorDefinedType::Messaging
+        } else if content.peek(keyword::media) {
+            content.parse::<keyword::media>()?;
+            VendorDefinedType::Media
+        } else {
+            return Err(content.error("vendor-defined `type` must be `hardware`, `messaging`, or `media`"));
+        };
+        content.parse::<Token![,]>()?;
         content.parse::<keyword::guid>()?;
         content.parse::<Token![:]>()?;
         let guid = content.parse::<LitStr>()?;
@@ -98,23 +121,23 @@ impl Parse for VendorHardwareSchemaInput {
         content.parse::<Token![:]>()?;
         let fields_content;
         bracketed!(fields_content in content);
-        let fields = fields_content.parse_terminated(VendorHardwareFieldInput::parse, Token![,])?;
+        let fields = fields_content.parse_terminated(VendorDefinedFieldInput::parse, Token![,])?;
         if content.peek(Token![,]) {
             content.parse::<Token![,]>()?;
         }
         if !content.is_empty() {
-            return Err(content.error("expected only `guid` and `fields` in a vendor hardware schema"));
+            return Err(content.error("expected only `type`, `guid`, and `fields` in a vendor-defined schema"));
         }
 
         let guid_bytes = efi_guid_bytes(&guid.value())
-            .map_err(|_| syn::Error::new(guid.span(), "vendor hardware `guid` is not a valid GUID"))?;
+            .map_err(|_| syn::Error::new(guid.span(), "vendor-defined `guid` is not a valid GUID"))?;
         let mut field_names = HashSet::new();
         let mut parsed_fields = Vec::with_capacity(fields.len());
         for field in fields {
             if !field_names.insert(field.field.name.clone()) {
                 return Err(syn::Error::new(
                     field.name_span,
-                    format!("vendor hardware field `{}` was declared more than once", field.field.name),
+                    format!("vendor-defined field `{}` was declared more than once", field.field.name),
                 ));
             }
             parsed_fields.push(field.field);
@@ -122,30 +145,35 @@ impl Parse for VendorHardwareSchemaInput {
 
         Ok(Self {
             name_span,
-            schema: VendorHardwareSchema { name: name.to_string(), guid: guid_bytes, fields: parsed_fields },
+            schema: VendorDefinedSchema {
+                name: name.to_string(),
+                vendor_type,
+                guid: guid_bytes,
+                fields: parsed_fields,
+            },
         })
     }
 }
 
-struct VendorHardwareFieldInput {
+struct VendorDefinedFieldInput {
     name_span: proc_macro2::Span,
-    field: VendorHardwareField,
+    field: VendorDefinedField,
 }
 
-impl Parse for VendorHardwareFieldInput {
+impl Parse for VendorDefinedFieldInput {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let name = input.parse::<Ident>()?;
-        validate_schema_identifier(&name, "vendor hardware field name")?;
+        validate_schema_identifier(&name, "vendor-defined field name")?;
         let name_span = name.span();
         input.parse::<Token![:]>()?;
         let field_type = input.parse::<Ident>()?;
-        let field_type = VendorHardwareFieldType::from_name(&field_type.to_string()).ok_or_else(|| {
+        let field_type = VendorDefinedFieldType::from_name(&field_type.to_string()).ok_or_else(|| {
             syn::Error::new(
                 field_type.span(),
-                "unsupported vendor hardware field type; expected `u8`, `u16le`, `u32le`, `u64le`, `guid`, `uuid`, or `bytes`",
+                "unsupported vendor-defined field type; expected `u8`, `u16le`, `u32le`, `u64le`, `guid`, `uuid`, or `bytes`",
             )
         })?;
-        Ok(Self { name_span, field: VendorHardwareField { name: name.to_string(), field_type } })
+        Ok(Self { name_span, field: VendorDefinedField { name: name.to_string(), field_type } })
     }
 }
 
@@ -171,10 +199,10 @@ pub(crate) fn devpath2(input: TokenStream) -> TokenStream {
 fn expand_devpath(input: TokenStream) -> syn::Result<TokenStream> {
     let input = syn::parse2::<DevicePathInput>(input)?;
     let value = input.literal.value();
-    let bytes = if input.vendor_hardware_schemas.is_empty() {
+    let bytes = if input.vendor_defined_schemas.is_empty() {
         encode_device_path(&value)
     } else {
-        encode_device_path_with_vendors(&value, &input.vendor_hardware_schemas)
+        encode_device_path_with_vendor_defined(&value, &input.vendor_defined_schemas)
     }
     .map_err(|error| syn::Error::new(input.literal.span(), format_device_path_error(&value, &error)))?;
     let bytes = bytes.into_iter().map(Literal::u8_suffixed);
@@ -300,8 +328,9 @@ mod tests {
     #[test]
     fn test_devpath_encodes_vendor_hardware_schema() {
         let custom = devpath2(quote!(
-            vendors {
+            vendor-defined {
                 AcmeController {
+                    type: hardware,
                     guid: "00112233-4455-6677-8899-aabbccddeeff",
                     fields: [port: u8, flags: u16le],
                 },
@@ -314,10 +343,45 @@ mod tests {
     }
 
     #[test]
-    fn test_devpath_encodes_all_vendor_hardware_field_types() {
+    fn test_devpath_encodes_vendor_messaging_schema() {
+        let custom = devpath2(quote!(
+            vendor-defined {
+                AcmeTransport {
+                    type: messaging,
+                    guid: "00112233-4455-6677-8899-aabbccddeeff",
+                    fields: [channel: u8, flags: u16le],
+                },
+            };
+            "AcmeTransport(3,0x1234)"
+        ));
+        let canonical = devpath2(quote!("VenMsg(00112233-4455-6677-8899-aabbccddeeff,033412)"));
+
+        assert_eq!(custom.to_string(), canonical.to_string());
+    }
+
+    #[test]
+    fn test_devpath_encodes_vendor_media_schema() {
+        let custom = devpath2(quote!(
+            vendor-defined {
+                AcmeMedia {
+                    type: media,
+                    guid: "00112233-4455-6677-8899-aabbccddeeff",
+                    fields: [instance: u8, flags: u16le],
+                },
+            };
+            "AcmeMedia(3,0x1234)"
+        ));
+        let canonical = devpath2(quote!("VenMedia(00112233-4455-6677-8899-aabbccddeeff,033412)"));
+
+        assert_eq!(custom.to_string(), canonical.to_string());
+    }
+
+    #[test]
+    fn test_devpath_encodes_all_vendor_defined_field_types() {
         let input = syn::parse2::<DevicePathInput>(quote!(
-            vendors {
+            vendor-defined {
                 VendorData {
+                    type: hardware,
                     guid: "00112233-4455-6677-8899-aabbccddeeff",
                     fields: [
                         byte: u8,
@@ -333,7 +397,7 @@ mod tests {
             "VendorData(1,0x0203,0x04050607,0x08090a0b0c0d0e0f,00112233-4455-6677-8899-aabbccddeeff,00112233-4455-6677-8899-aabbccddeeff,aabb)"
         ))
         .expect("schema should parse");
-        let bytes = encode_device_path_with_vendors(&input.literal.value(), &input.vendor_hardware_schemas)
+        let bytes = encode_device_path_with_vendor_defined(&input.literal.value(), &input.vendor_defined_schemas)
             .expect("vendor node should encode");
 
         assert_eq!(
@@ -348,12 +412,13 @@ mod tests {
     }
 
     #[test]
-    fn test_devpath_rejects_invalid_vendor_hardware_schemas() {
+    fn test_devpath_rejects_invalid_vendor_defined_schemas() {
         for (input, expected) in [
             (
                 quote!(
-                    vendors {
+                    vendor-defined {
                         Pci {
+                            type: hardware,
                             guid: "00112233-4455-6677-8899-aabbccddeeff",
                             fields: [],
                         },
@@ -364,8 +429,9 @@ mod tests {
             ),
             (
                 quote!(
-                    vendors {
+                    vendor-defined {
                         Acme {
+                            type: hardware,
                             guid: "not-a-guid",
                             fields: [],
                         },
@@ -376,27 +442,29 @@ mod tests {
             ),
             (
                 quote!(
-                    vendors {
+                    vendor-defined {
                         Acme {
+                            type: hardware,
                             guid: "00112233-4455-6677-8899-aabbccddeeff",
                             fields: [port: u24le],
                         },
                     };
                     "Acme(1)"
                 ),
-                "unsupported vendor hardware field type",
+                "unsupported vendor-defined field type",
             ),
             (
                 quote!(
-                    vendors {};
+                    vendor-defined {};
                     "Pci(1,0)"
                 ),
-                "must declare at least one vendor hardware schema",
+                "must declare at least one schema",
             ),
             (
                 quote!(
-                    vendors {
+                    vendor-defined {
                         Acme {
+                            type: hardware,
                             guid: "00112233-4455-6677-8899-aabbccddeeff",
                             fields: [port: u8, port: u16le],
                         },
@@ -407,12 +475,14 @@ mod tests {
             ),
             (
                 quote!(
-                    vendors {
+                    vendor-defined {
                         Acme {
+                            type: hardware,
                             guid: "00112233-4455-6677-8899-aabbccddeeff",
                             fields: [],
                         },
                         Acme {
+                            type: messaging,
                             guid: "11223344-5566-7788-99aa-bbccddeeff00",
                             fields: [],
                         },
@@ -420,6 +490,19 @@ mod tests {
                     "Acme()"
                 ),
                 "schema `Acme` was declared more than once",
+            ),
+            (
+                quote!(
+                    vendor-defined {
+                        Acme {
+                            type: bios,
+                            guid: "00112233-4455-6677-8899-aabbccddeeff",
+                            fields: [],
+                        },
+                    };
+                    "Acme()"
+                ),
+                "`type` must be `hardware`, `messaging`, or `media`",
             ),
         ] {
             assert!(devpath2(input).to_string().contains(expected));

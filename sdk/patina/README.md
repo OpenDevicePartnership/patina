@@ -38,9 +38,6 @@ The SDK is organized into the following root-level modules.
 | **standard** | Strict definitions of industry standards. |
 | **uefi** | UEFI specification definitions and wrappers. |
 
-An optional invocation-local `vendors { ... };` registry can define named vendor hardware nodes with fixed GUIDs and
-typed payload fields. See the `devpath!` API documentation for the schema syntax and supported field encodings.
-
 ## Feature Overview
 
 | Feature | Purpose |
