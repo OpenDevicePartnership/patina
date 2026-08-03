@@ -13,7 +13,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-patina = {workspace = true}
+patina = {workspace = true, features = ["alloc"]}
 log = {workspace = true}
 
 [dev-dependencies]

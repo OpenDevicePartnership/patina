@@ -15,7 +15,7 @@ workspace = true
 [dependencies]
 linkme = { workspace = true }
 log = { workspace = true }
-patina = { workspace = true }
+patina = { workspace = true, features = ["alloc"] }
 patina_macro = { workspace = true }
 spin = { workspace = true }
 

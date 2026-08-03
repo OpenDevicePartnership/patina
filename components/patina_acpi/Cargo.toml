@@ -23,7 +23,7 @@ patina_test = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-patina = { workspace = true, features = ["mockall"] }
+patina = { workspace = true, features = ["alloc", "mockall"] }
 
 [features]
 mockall = ["dep:mockall", "std"]

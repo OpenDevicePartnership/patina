@@ -15,14 +15,13 @@ workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["alloc"]
 alloc = []
 # All non-std features to test in CI
 ci_features = ["alloc"]
 
 [dependencies]
 log = { workspace=true }
-patina = { workspace = true }
+patina = { workspace = true, features = ["alloc"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
