@@ -81,6 +81,17 @@ without blocking; this can be used for scenarios where a lock might be held by
 another agent in a lower TPL but the caller can handle not acquiring the lock,
 or in scenarios where a call is re-entrant at the same TPL.
 
+### TplMutex - Abstracting Access to TPL via TplController
+
+`TplMutex` is used by both the DXE Core and SDK consumers for general
+synchronization. The shared SDK implementation is parameterized by the
+`TplController` trait, which abstracts access to the TPL primitives. SDK
+consumers normally supply a `BootServices` implementation, which automatically
+implements `TplController`, but other environments may implement
+`TplController` directly. The DXE Core uses `CoreTplController` to provide its
+direct internal TPL operations, allowing the shared `TplMutex` implementation
+to be instantiated independently of Boot Services availability.
+
 ## TplGuard
 
 When `lock()` is called on `TplMutex` a `TplGuard` structure is returned that

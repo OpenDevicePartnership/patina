@@ -6,6 +6,73 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+//! ## Examples
+//!
+//! SDK consumers normally construct a [`TplMutex`] with an owned or cloned Boot
+//! Services implementation and access the protected data through the guard
+//! returned by [`TplMutex::lock`].
+//!
+//! ```
+//! use patina::uefi::{
+//!     boot_services::{StandardBootServices, tpl::Tpl},
+//!     tpl_mutex::TplMutex,
+//! };
+//!
+//! struct SharedState {
+//!     value: usize,
+//! }
+//!
+//! struct Consumer {
+//!     state: TplMutex<SharedState>,
+//!     boot_services: StandardBootServices,
+//! }
+//!
+//! impl Consumer {
+//!     fn new(boot_services: StandardBootServices) -> Self {
+//!         Self {
+//!             state: TplMutex::new(
+//!                 boot_services.clone(),
+//!                 Tpl::NOTIFY,
+//!                 SharedState { value: 0 },
+//!             ),
+//!             boot_services,
+//!         }
+//!     }
+//!
+//!     fn increment(&self) {
+//!         self.state.lock().value += 1;
+//!     }
+//! }
+//! ```
+//!
+//! ### Delayed initialization
+//!
+//! A static mutex can be constructed before Boot Services are available and
+//! initialized later. [`TplMutex::init`] must be called exactly once before the
+//! mutex is locked.
+//!
+//! ```
+//! use patina::uefi::{
+//!     boot_services::{StandardBootServices, tpl::Tpl},
+//!     tpl_mutex::TplMutex,
+//! };
+//!
+//! struct SharedState {
+//!     value: usize,
+//! }
+//!
+//! static STATE: TplMutex<SharedState> =
+//!     TplMutex::new_uninit(Tpl::NOTIFY, SharedState { value: 0 });
+//!
+//! fn initialize(boot_services: StandardBootServices) {
+//!     STATE.init(boot_services);
+//! }
+//!
+//! fn increment() {
+//!     STATE.lock().value += 1;
+//! }
+//! ```
+//!
 use core::{
     cell::{OnceCell, UnsafeCell},
     fmt::{self, Debug, Display},
@@ -17,8 +84,12 @@ use crate::uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 
 /// Provides the TPL operations required by [`TplMutex`].
 ///
-/// Boot services implementations automatically implement this trait. Other
-/// environments, such as the DXE Core, can provide TPL operations directly.
+/// [`BootServices`] implementations automatically implement this trait. Other
+/// execution environments, such as the DXE Core, may implement this trait to
+/// provide TPL operations without depending on Boot Services. This abstraction
+/// is intended to support execution environments with different requirements
+/// for accessing TPL primitives; SDK consumers should normally use the blanket
+/// implementation provided for [`BootServices`].
 pub trait TplController {
     /// Raises the current TPL and returns the previous TPL.
     fn raise_tpl(&self, tpl: Tpl) -> Tpl;
