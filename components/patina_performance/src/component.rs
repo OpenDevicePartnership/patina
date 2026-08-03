@@ -7,10 +7,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+pub mod fbpt;
 mod performance;
 pub mod property;
 pub mod protocol;
-mod table;
 
 // Re-export the Performance component for easier access.
 pub use performance::Performance;
