@@ -171,6 +171,7 @@ unsafe impl<'a, T> CMutRef<'a> for &'a mut T {}
 // Box<T>
 #[cfg(any(test, feature = "alloc"))]
 // SAFETY: Memory layout and mutability are respected for these types.
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl<T> CPtr<'_> for Box<T> {
     type Type = T;
 
@@ -180,12 +181,15 @@ unsafe impl<T> CPtr<'_> for Box<T> {
 }
 #[cfg(any(test, feature = "alloc"))]
 // SAFETY: Memory layout and mutability are respected for these types.
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl<T> CRef<'_> for Box<T> {}
 #[cfg(any(test, feature = "alloc"))]
 // SAFETY: Memory layout and mutability are respected for these types.
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl<T> CMutPtr<'_> for Box<T> {}
 #[cfg(any(test, feature = "alloc"))]
 // SAFETY: Memory layout and mutability are respected for these types.
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl<T> CMutRef<'_> for Box<T> {}
 
 // ()
