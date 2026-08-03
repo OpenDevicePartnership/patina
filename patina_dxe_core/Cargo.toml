@@ -23,9 +23,9 @@ scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 corosensei = { workspace = true  }
 uuid = { workspace = true  }
-patina = { workspace = true, features = ["core"] }
+patina = { workspace = true, features = ["alloc", "core"] }
 patina_ffs = { workspace = true }
-patina_internal_core = { workspace = true }
+patina_internal_core = { workspace = true, features = ["alloc"] }
 patina_internal_cpu = { workspace = true }
 patina_debugger = { workspace = true, features = ["alloc"] }
 patina_test = { workspace = true }
@@ -36,9 +36,9 @@ patina_test = { workspace = true }
 # local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
 # compile due to the dev-dependency not being published yet.
 patina_samples = { path = "../components/patina_samples" }
-patina = { path = "../sdk/patina", features = ["core", "mockall"] }
+patina = { path = "../sdk/patina", features = ["alloc", "core", "mockall"] }
 patina_ffs_extractors = { path = "../sdk/patina_ffs_extractors" }
-patina_internal_core = { path = "../core/patina_internal_core" }
+patina_internal_core = { path = "../core/patina_internal_core", features = ["alloc"] }
 env_logger = { workspace = true }
 mockall = { workspace = true }
 serial_test = { workspace = true }
@@ -49,7 +49,6 @@ zerocopy-derive = { workspace = true }
 arm-gic = { workspace = true }
 
 [features]
-default = []
 std = ["patina/std"]
 compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
