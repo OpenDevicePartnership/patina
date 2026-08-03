@@ -441,7 +441,7 @@ impl CpuInfo for ExamplePlatform {
 
 The DXE core will provide the base implementation for detailed performance measurement, and the
 [`patina_performance`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_performance)
-component provides the UEFI protocol, coordinates with MM for measurements, and publishes the ACPI table.
+crate's components provide the UEFI protocol, coordinate with MM for measurements, and publish the ACPI table.
 To enable core support, the platform must either publish the
 [performance configuration hob](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/Include/Guid/PatinaPerformanceConfig.h),
 or override the `DEFAULT_PERFORMANCE_CONFIG` implementation in the `PlatformInfo` implementation.
@@ -463,9 +463,13 @@ impl PlatformInfo for ExamplePlatform {
 
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // Each component dispatches only when the DXE Core enables performance measurement, via a performance
         // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
-        add.component(patina_performance::component::Performance::new());
+        add.component(patina_performance::component::protocol::MeasurementProtocolPublisher::new());
+        add.component(patina_performance::component::property::PropertyPublisher::new());
+        add.component(patina_performance::component::fbpt::FbptPublisher::new());
+        // Only needed on platforms with an MM communication region.
+        add.component(patina_performance::component::mm_records::MmRecordCollector::new());
     }
 }
 ```
@@ -551,9 +555,13 @@ impl ComponentInfo for ExamplePlatform {
         add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
         // Platform Mm Init hook
         // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
-        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // Each component dispatches only when the DXE Core enables performance measurement, via a performance
         // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
-        add.component(patina_performance::component::Performance::new());
+        add.component(patina_performance::component::protocol::MeasurementProtocolPublisher::new());
+        add.component(patina_performance::component::property::PropertyPublisher::new());
+        add.component(patina_performance::component::fbpt::FbptPublisher::new());
+        // Only needed on platforms with an MM communication region.
+        add.component(patina_performance::component::mm_records::MmRecordCollector::new());
     }
 }
 
