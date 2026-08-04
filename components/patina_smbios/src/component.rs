@@ -1,6 +1,18 @@
-//! SMBIOS Service Implementation
+//! SMBIOS components.
 //!
-//! Defines the SMBIOS provider for use as a service
+//! SMBIOS support is split into two components:
+//!
+//! - [`provider::SmbiosProvider`] creates the SMBIOS manager and registers the `Service<dyn Smbios>` that platform
+//!   components use to add and publish SMBIOS records.
+//! - [`protocol_publisher::SmbiosProtocolPublisher`] installs the SMBIOS protocol for C driver
+//!   compatibility. It depends on the `Service<dyn Smbios>` that `SmbiosProvider` registers.
+//!
+//! A platform registers both:
+//!
+//! ```ignore
+//! commands.add_component(SmbiosProvider::new(3, 9));
+//! commands.add_component(SmbiosProtocolPublisher::new());
+//! ```
 //!
 //! ## License
 //!
@@ -8,173 +20,5 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
-use crate::{
-    error::SmbiosError,
-    manager::SmbiosManager,
-    service::{Smbios, SmbiosImpl},
-};
-use alloc::boxed::Box;
-use patina::{
-    component::{
-        Storage, component,
-        service::{
-            memory::MemoryManager,
-            uefi_services::{config_table::ConfigurationTableServices, protocol::ProtocolServices, tpl::TplServices},
-        },
-    },
-    error::Result,
-    uefi::boot_services::tpl::Tpl,
-    uefi::tpl_mutex::TplMutex,
-};
-
-/// Internal configuration for SMBIOS service
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SmbiosConfiguration {
-    /// SMBIOS major version (e.g., 3 for SMBIOS 3.x)
-    major_version: u8,
-    /// SMBIOS minor version (e.g., 0 for SMBIOS 3.0)
-    minor_version: u8,
-}
-
-impl SmbiosConfiguration {
-    /// Create a new SMBIOS configuration with the specified version
-    ///
-    /// # Errors
-    ///
-    /// Returns `SmbiosError::UnsupportedVersion` if `major_version` != 3
-    fn new(major_version: u8, minor_version: u8) -> core::result::Result<Self, SmbiosError> {
-        // Only SMBIOS 3.x is supported
-        if major_version != 3 {
-            return Err(SmbiosError::UnsupportedVersion);
-        }
-
-        // Accept any minor version for 3.x (forward compatible)
-        Ok(Self { major_version, minor_version })
-    }
-}
-
-/// Initializes and exposes SMBIOS provider service.
-///
-/// This component provides the `Service<Smbios>` which includes:
-/// - Type-safe record operations: `add_record<T>()`
-/// - Record management: `update_string()`, `remove()`
-/// - Table management: `version()`, `publish_table()`
-///
-/// The provider creates an SMBIOS manager instance protected by a `TplMutex`
-/// and installs the SMBIOS protocol for C/EDKII driver compatibility.
-///
-/// # Example
-///
-/// ```ignore
-/// commands.add_component(SmbiosProvider::new(3, 9));
-/// ```
-pub struct SmbiosProvider {
-    config: SmbiosConfiguration,
-}
-
-#[component]
-impl SmbiosProvider {
-    /// Create a new SMBIOS provider with the specified SMBIOS version.
-    ///
-    /// # Arguments
-    ///
-    /// * `major_version` - SMBIOS major version (must be 3)
-    /// * `minor_version` - SMBIOS minor version (any value for version 3.x)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the version is invalid (major version != 3).
-    /// This is intentional to enforce correct version at compile/initialization time.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // For SMBIOS 3.9 specification
-    /// commands.add_component(SmbiosProvider::new(3, 9));
-    /// ```
-    pub fn new(major_version: u8, minor_version: u8) -> Self {
-        let config = SmbiosConfiguration::new(major_version, minor_version)
-            .expect("Invalid SMBIOS version: only SMBIOS 3.x is supported");
-        Self { config }
-    }
-
-    /// Initialize the SMBIOS provider and register it as a service
-    #[cfg_attr(coverage, coverage(off))] // Component integration - tested via integration tests
-    pub fn entry_point(self, storage: &mut Storage) -> Result<()> {
-        let cfg = self.config;
-
-        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version)?;
-
-        // Get the MemoryManager service for memory allocations
-        let memory_manager = storage.get_service::<dyn MemoryManager>().ok_or(patina::error::EfiError::Unsupported)?;
-
-        // Allocate buffers and add Type 127 End-of-Table marker
-        // This must be done before protocol installation to avoid allocate_pages during Add()
-        manager.allocate_buffers(*memory_manager)?;
-
-        let tpl = storage.get_service::<dyn TplServices>().ok_or(patina::error::EfiError::Unsupported)?;
-        let config_table =
-            storage.get_service::<dyn ConfigurationTableServices>().ok_or(patina::error::EfiError::Unsupported)?;
-        let protocols = storage.get_service::<dyn ProtocolServices>().ok_or(patina::error::EfiError::Unsupported)?;
-
-        // Create TplMutex at TPL_NOTIFY for thread safety against timer interrupts
-        let manager_mutex = TplMutex::new(tpl, Tpl::NOTIFY, manager);
-        let smbios_service = SmbiosImpl {
-            manager: manager_mutex,
-            config_table,
-            major_version: cfg.major_version,
-            minor_version: cfg.minor_version,
-        };
-
-        // Leak the service to get a 'static reference for both Rust service and C protocol
-        let smbios_static: &'static SmbiosImpl = Box::leak(Box::new(smbios_service));
-
-        storage.add_service(smbios_static);
-
-        // Install SMBIOS protocol for C/EDKII driver compatibility
-        let smbios_service = storage.get_service::<dyn Smbios>().expect("Smbios service was just registered above");
-        crate::manager::install_smbios_protocol(cfg.major_version, cfg.minor_version, smbios_service, &protocols)?;
-
-        // Publish initial table (Type 127 only) to register buffer with UEFI configuration table
-        // Subsequent Add() calls will update this buffer in-place
-        smbios_static.publish_table()?;
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    extern crate std;
-
-    #[test]
-    fn test_smbios_provider_new() {
-        let provider = SmbiosProvider::new(3, 9);
-        assert_eq!(provider.config.major_version, 3);
-        assert_eq!(provider.config.minor_version, 9);
-    }
-
-    #[test]
-    fn test_smbios_configuration_custom() {
-        let provider = SmbiosProvider::new(3, 7);
-        assert_eq!(provider.config.major_version, 3);
-        assert_eq!(provider.config.minor_version, 7);
-    }
-
-    #[test]
-    #[should_panic(expected = "Invalid SMBIOS version")]
-    fn test_smbios_provider_invalid_version() {
-        // Should panic with invalid major version
-        let _provider = SmbiosProvider::new(2, 0);
-    }
-
-    // Test that we can create the component - this tests the primary constructor path
-    #[test]
-    fn test_component_creation() {
-        let provider = SmbiosProvider::new(3, 9);
-        assert_eq!(provider.config.major_version, 3);
-        assert_eq!(provider.config.minor_version, 9);
-    }
-}
+pub mod protocol_publisher;
+pub mod provider;
