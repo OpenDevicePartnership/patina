@@ -56,6 +56,9 @@ pub(crate) struct InitState {
     per_core_init_count: AtomicU32,
     /// User module entry point discovered from the HOB list.
     user_entry_point: Once<u64>,
+    /// MSEG base address discovered from the MSEG SMRAM HOB, if the platform
+    /// publishes one. Programmed into `IA32_SMM_MONITOR_CTL` during per-core init.
+    mseg_base: Once<u64>,
     /// Type-erased AP startup dispatch function (conformed for the platform).
     ap_startup_fn: Once<fn(u64, u64, u64) -> u64>,
     /// Set once ExitBootServices has been signaled.
@@ -73,6 +76,7 @@ impl InitState {
             mm_initialized_buffer: Once::new(),
             per_core_init_count: AtomicU32::new(0),
             user_entry_point: Once::new(),
+            mseg_base: Once::new(),
             ap_startup_fn: Once::new(),
             at_runtime: Once::new(),
             smrr_range: Once::new(),
@@ -130,6 +134,16 @@ impl InitState {
     /// Returns the user module entry point, if set.
     pub(crate) fn user_entry_point(&self) -> Option<u64> {
         self.user_entry_point.get().copied()
+    }
+
+    /// Stores the MSEG base address discovered from the MSEG SMRAM HOB (one-time).
+    pub(crate) fn set_mseg_base(&self, base: u64) {
+        self.mseg_base.call_once(|| base);
+    }
+
+    /// Returns the MSEG base address, if the platform published an MSEG SMRAM HOB.
+    pub(crate) fn mseg_base(&self) -> Option<u64> {
+        self.mseg_base.get().copied()
     }
 
     /// Stores the type-erased AP startup function (one-time).
