@@ -11,12 +11,14 @@
 //! In your platform's DXE core initialization:
 //!
 //! ```ignore
-//! use patina_smbios::component::SmbiosProvider;
+//! use patina_smbios::component::{protocol_publisher::SmbiosProtocolPublisher, provider::SmbiosProvider};
 //! use patina_samples::SmbiosExampleComponent;
 //!
 //! Core::default()
 //!     // Add SMBIOS provider component with version
 //!     .with_component(SmbiosProvider::new(3, 9))
+//!     // Add protocol compatibility for C drivers
+//!     .with_component(SmbiosProtocolPublisher::new())
 //!     // Add your platform SMBIOS component
 //!     .with_component(SmbiosExampleComponent::new())
 //!     // ... rest of your components
