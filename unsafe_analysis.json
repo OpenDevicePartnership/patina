@@ -5,19 +5,19 @@
       "unsafe": 43
     },
     "exprs": {
-      "safe": 31502,
-      "unsafe": 4774
+      "safe": 31499,
+      "unsafe": 4764
     },
     "item_impls": {
-      "safe": 729,
-      "unsafe": 98
+      "safe": 727,
+      "unsafe": 94
     },
     "item_traits": {
-      "safe": 49,
+      "safe": 50,
       "unsafe": 7
     },
     "methods": {
-      "safe": 1953,
+      "safe": 1954,
       "unsafe": 126
     }
   },
@@ -27,19 +27,19 @@
       "unsafe": 43
     },
     "exprs": {
-      "safe": 31502,
-      "unsafe": 4774
+      "safe": 31499,
+      "unsafe": 4764
     },
     "item_impls": {
-      "safe": 729,
-      "unsafe": 98
+      "safe": 727,
+      "unsafe": 94
     },
     "item_traits": {
-      "safe": 49,
+      "safe": 50,
       "unsafe": 7
     },
     "methods": {
-      "safe": 1953,
+      "safe": 1954,
       "unsafe": 126
     }
   }
