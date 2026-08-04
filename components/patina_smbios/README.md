@@ -22,9 +22,13 @@ boot process.
 
 ## Components and Services
 
-- **SmbiosProvider component**: Creates the SMBIOS manager, registers the
-  `Service<dyn Smbios>`, and installs the C/EDKII protocol. Both interfaces
-  share the same underlying manager for consistency.
+- **SmbiosProvider component**: Creates the SMBIOS manager and registers the
+  `Service<dyn Smbios>` that platform components use to add and publish
+  records.
+- **SmbiosProtocolPublisher component**: Installs the protocol for C driver
+  compatibility. Depends on the `Service<dyn Smbios>` that `SmbiosProvider`
+  registers, so both components must be added together if C driver compatibility
+  is needed.
 - **Smbios trait**: Defines core operations (`version`, `publish_table`,
   `update_string`, `remove`, `add_from_bytes`) accessible through trait
   object dynamic dispatch.
@@ -37,6 +41,7 @@ The SMBIOS component requires version configuration during instantiation:
 
 ```rust
 commands.add_component(SmbiosProvider::new(3, 9));  // SMBIOS 3.9
+commands.add_component(SmbiosProtocolPublisher::new());
 ```
 
 > Only SMBIOS 3.x versions are supported. The component will panic at
@@ -49,8 +54,9 @@ commands.add_component(SmbiosProvider::new(3, 9));  // SMBIOS 3.9
 ## Platform Integration
 
 To integrate the `patina_smbios` component into your platform, remove the
-`SmbiosDxe` driver and add the `SmbiosProvider` component. This replaces
-`SmbiosDxe` as the producer of the `EFI_SMBIOS_PROTOCOL`.
+`SmbiosDxe` driver and add the `SmbiosProvider` and `SmbiosProtocolPublisher`
+components. Together they replace `SmbiosDxe` as the producer of the
+`EFI_SMBIOS_PROTOCOL`.
 
 ### Step 1: Remove the SmbiosDxe Driver
 
@@ -77,22 +83,24 @@ Remove the corresponding entry from your platform's FDF file (e.g.,
 Existing C drivers can locate and use the `EFI_SMBIOS_PROTOCOL` produced by the
 Patina SMBIOS component to add their records.
 
-### Step 2: Add the Patina SMBIOS Component
+### Step 2: Add the Patina SMBIOS Components
 
 In your Patina DXE core configuration (e.g., `your_platform_dxe_core.rs`), add
-the `SmbiosProvider` component:
+the `SmbiosProvider` and `SmbiosProtocolPublisher` components:
 
 ```rust
-use patina_smbios::SmbiosProvider;
+use patina_smbios::component::{protocol_publisher::SmbiosProtocolPublisher, provider::SmbiosProvider};
 
 // In your DXE core builder
 PatinaCore::new()
     .with_component(SmbiosProvider::new(3, 9))  // SMBIOS version 3.9
+    .with_component(SmbiosProtocolPublisher::new())
     // ... other components
 ```
 
 The version parameters represent the SMBIOS specification version (major, minor).
-Only SMBIOS 3.x versions are supported.
+Only SMBIOS 3.x versions are supported. Omit `SmbiosProtocolPublisher` if your
+platform has no C drivers that need `EFI_SMBIOS_PROTOCOL`.
 
 ### Step 3 (Optional): Create a Platform SMBIOS Component
 
@@ -131,6 +139,7 @@ Then add the platform component to your DXE core:
 ```rust
 PatinaCore::new()
     .with_component(SmbiosProvider::new(3, 9))
+    .with_component(SmbiosProtocolPublisher::new())
     .with_component(YourPlatformSmbios::new())
     // ... other components
 ```
@@ -222,7 +231,7 @@ smbios.update_string(handle, 1, "New Vendor Name")?;
 
 ### C/EDKII Protocol Compatibility
 
-The component automatically installs the `EFI_SMBIOS_PROTOCOL` with functions:
+The `SmbiosProtocolPublisher` component installs the `EFI_SMBIOS_PROTOCOL` with functions:
 
 - `Add`: Add SMBIOS records from raw bytes
 - `UpdateString`: Update strings in existing records
