@@ -23,10 +23,9 @@ use patina::{
     Guid,
     component::{
         Storage, component,
-        service::{IntoService, Service},
+        service::{IntoService, Service, uefi_services::protocol::ProtocolServices},
     },
     pi::protocol::communication::EfiMmCommunicateHeader,
-    uefi::boot_services::StandardBootServices,
     writelncrlf,
 };
 
@@ -191,14 +190,14 @@ impl MmCommunicator {
     ///
     /// # Coverage
     ///
-    /// This function is marked with `#[coverage(off)]` because it requires `StandardBootServices`
-    /// which is not available in unit tests. It is tested through integration tests.
+    /// This function is marked with `#[coverage(off)]` because it requires a
+    /// `Service<dyn ProtocolServices>` produced by the DXE Core. It is tested through integration tests.
     #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
         mut self,
         storage: &mut Storage,
         sw_mmi_trigger: Service<dyn SwMmiTrigger>,
-        boot_services: StandardBootServices,
+        protocols: Service<dyn ProtocolServices>,
     ) -> patina::error::Result<()> {
         log::info!(target: "mm_comm", "MM Communicator entry...");
 
@@ -233,7 +232,7 @@ impl MmCommunicator {
                     "MM comm buffer updates enabled for buffer ID {buffer_id}"
                 );
 
-                let context = comm_buffer_update::register_buffer_update_notify(boot_services, buffer_id)?;
+                let context = comm_buffer_update::register_buffer_update_notify(protocols, buffer_id)?;
 
                 // Store context reference for checking pending updates in communicate()
                 self.notify_context = Some(context);
@@ -479,8 +478,8 @@ mod tests {
         let mut communicator = MmCommunicator::new().into_component();
 
         communicator.initialize(&mut storage);
-        // Component requires StandardBootServices which is not available in unit tests,
-        // so it should return Ok(false) indicating it cannot run yet
+        // Component requires a Service<dyn ProtocolServices> which is not registered in this
+        // test's storage, so it should return Ok(false) indicating it cannot run yet
         assert_eq!(communicator.run(&mut storage), Ok(false));
     }
 

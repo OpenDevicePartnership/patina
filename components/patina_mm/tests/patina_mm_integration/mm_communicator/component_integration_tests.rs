@@ -46,10 +46,10 @@ fn test_mm_communicator_component_initialization() {
     // Add required SW MMI manager service
     storage.add_service(SwMmiManager::new());
 
-    // Test that the component can be initialized but won't run without StandardBootServices
+    // Test that the component can be initialized but won't run without a registered Service<dyn ProtocolServices>
     let mut communicator = MmCommunicator::new().into_component();
     communicator.initialize(&mut storage);
-    // Component requires StandardBootServices which is not available in this test,
+    // Component requires a Service<dyn ProtocolServices> which is not registered in this test,
     // so it should return Ok(false) indicating it cannot run yet
     assert_eq!(communicator.run(&mut storage), Ok(false));
 }
@@ -64,7 +64,7 @@ fn test_mm_communicator_with_empty_config() {
 
     let mut communicator = MmCommunicator::new().into_component();
     communicator.initialize(&mut storage);
-    // Component requires StandardBootServices which is not available in this test,
+    // Component requires a Service<dyn ProtocolServices> which is not registered in this test,
     // so it should return Ok(false) indicating it cannot run yet
     assert_eq!(communicator.run(&mut storage), Ok(false));
 }
@@ -103,7 +103,7 @@ fn test_mm_communicator_dependency_injection() {
     communicator1.initialize(&mut storage);
     communicator2.initialize(&mut storage);
 
-    // Components require StandardBootServices which is not available in unit tests,
+    // Components require a Service<dyn ProtocolServices> which is not registered in this test,
     // so they should return Ok(false) indicating they cannot run yet
     assert_eq!(communicator1.run(&mut storage), Ok(false));
 
@@ -111,7 +111,7 @@ fn test_mm_communicator_dependency_injection() {
     assert_eq!(communicator2.run(&mut storage), Ok(false));
 
     // Note: The MmCommunication service won't be available because the components
-    // require StandardBootServices to actually run and register the service
+    // require a registered Service<dyn ProtocolServices> to actually run and register the service
 }
 
 // Integration tests using the common framework
