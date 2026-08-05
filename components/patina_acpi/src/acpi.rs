@@ -105,7 +105,7 @@ where
     {
         // Check if already initialized before doing anything
         if self.boot_services.get().is_some() {
-            return Err(AcpiError::BootServicesAlreadyInitialized);
+            return Err(AcpiError::ConfigTableServicesAlreadyInitialized);
         }
 
         self.acpi_tables.init(bs.clone());
@@ -115,7 +115,7 @@ where
 
         // Store the original boot_services (not a clone) so mock expectations are preserved
         if self.boot_services.set(bs).is_err() {
-            return Err(AcpiError::BootServicesAlreadyInitialized);
+            return Err(AcpiError::ConfigTableServicesAlreadyInitialized);
         }
 
         if self.memory_manager.set(memory_manager).is_err() {
@@ -1384,7 +1384,7 @@ mod tests {
 
         // Second initialization with boot services should fail
         let err = provider.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
-        assert_eq!(err, AcpiError::BootServicesAlreadyInitialized);
+        assert_eq!(err, AcpiError::ConfigTableServicesAlreadyInitialized);
 
         // Try initializing again with a new provider, but memory manager already set
         let provider2 = StandardAcpiProvider::new_uninit();
@@ -1394,7 +1394,10 @@ mod tests {
         assert!(provider2.memory_manager.set(mock_memory_manager).is_ok());
         // Now initialize should fail for both fields
         let err = provider2.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
-        assert!(matches!(err, AcpiError::BootServicesAlreadyInitialized | AcpiError::MemoryManagerAlreadyInitialized));
+        assert!(matches!(
+            err,
+            AcpiError::ConfigTableServicesAlreadyInitialized | AcpiError::MemoryManagerAlreadyInitialized
+        ));
     }
 
     #[test]
