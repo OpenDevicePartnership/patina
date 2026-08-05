@@ -8,7 +8,6 @@
 
 use crate::{
     acpi_table::{AcpiTableHeader, AcpiXsdtMetadata},
-    alloc::boxed::Box,
     hob::AcpiMemoryHob,
     service::{AcpiProvider, AcpiTableManager},
 };
@@ -18,14 +17,21 @@ use core::mem;
 
 use patina::{
     component::{Storage, component},
-    uefi::boot_services::{BootServices, StandardBootServices},
     uefi_size_to_pages,
 };
 
 use patina::{
     component::{
         hob::Hob,
-        service::{Service, memory::MemoryManager},
+        service::{
+            Service,
+            memory::MemoryManager,
+            uefi_services::{
+                config_table::ConfigurationTableServices,
+                protocol::{ProtocolServices, ProtocolServicesExt},
+                tpl::TplServices,
+            },
+        },
     },
     error::EfiError,
     uefi::memory::EfiMemoryType,
@@ -33,7 +39,7 @@ use patina::{
 
 use crate::{
     acpi::STANDARD_ACPI_PROVIDER,
-    acpi_protocol::{AcpiGetProtocol, AcpiTableProtocol},
+    acpi_protocol::{ACPI_GET_PROTOCOL, ACPI_TABLE_PROTOCOL, AcpiGetProtocol, AcpiTableProtocol},
     acpi_table::{AcpiRsdp, AcpiXsdt},
     signature::{
         self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
@@ -69,21 +75,25 @@ impl AcpiComponent {
     }
 
     /// Initializes the ACPI system.
-    /// Ignore coverage due to the use of `StandardBootServices`.
+    /// TODO: Coverage was previously disabled because the entry point relied on `StandardBootServices`. Now that
+    /// the dependency on `StandardBootServices` has been removed, revisit to determine if the entry point can be
+    /// refactored and to enable coverage of various code paths.
     #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
         self,
         storage: &mut Storage,
-        boot_services: StandardBootServices,
+        services: (Service<dyn ProtocolServices>, Service<dyn TplServices>, Service<dyn ConfigurationTableServices>),
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina::error::Result<()> {
+        let (protocols, tpl, config_table) = services;
+
         // Produce the EDKII ACPI protocol interfaces.
-        boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
-        boot_services.install_protocol_interface(None, Box::new(AcpiGetProtocol::new()))?;
+        protocols.install_protocol::<AcpiTableProtocol>(None, &ACPI_TABLE_PROTOCOL)?;
+        protocols.install_protocol::<AcpiGetProtocol>(None, &ACPI_GET_PROTOCOL)?;
 
         // Initialize the ACPI table info singleton (used for the protocol).
-        STANDARD_ACPI_PROVIDER.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
+        STANDARD_ACPI_PROVIDER.initialize(tpl, config_table, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Create and set the XSDT with an initial number of entries.
         let xsdt_size = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();

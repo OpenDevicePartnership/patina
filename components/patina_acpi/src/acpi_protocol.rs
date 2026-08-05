@@ -34,6 +34,9 @@ unsafe impl ProtocolInterface for AcpiTableProtocol {
     const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("FFE06BDD-6107-46A6-7BB2-5A9C7EC5275C");
 }
 
+/// The single published instance of the ACPI Table Protocol.
+pub(crate) static ACPI_TABLE_PROTOCOL: AcpiTableProtocol = AcpiTableProtocol::new();
+
 // C function interfaces for ACPI Table Protocol and ACPI Get Protocol.
 type AcpiTableInstall = extern "efiapi" fn(*const AcpiTableProtocol, *const c_void, usize, *mut usize) -> efi::Status;
 type AcpiTableUninstall = extern "efiapi" fn(*const AcpiTableProtocol, usize) -> efi::Status;
@@ -41,7 +44,7 @@ type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiTableHeader, *mut u3
 type AcpiTableRegisterNotify = extern "efiapi" fn(bool, *const AcpiNotifyFnExt) -> efi::Status;
 
 impl AcpiTableProtocol {
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { install_table: Self::install_acpi_table_ext, uninstall_table: Self::uninstall_acpi_table_ext }
     }
 
@@ -167,7 +170,7 @@ unsafe impl ProtocolInterface for AcpiGetProtocol {
 }
 
 impl AcpiGetProtocol {
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             version: ACPI_VERSIONS_GTE_2,
             get_table: Self::get_acpi_table_ext,
@@ -175,6 +178,9 @@ impl AcpiGetProtocol {
         }
     }
 }
+
+/// The single published instance of the ACPI Get Protocol.
+pub(crate) static ACPI_GET_PROTOCOL: AcpiGetProtocol = AcpiGetProtocol::new();
 
 impl AcpiGetProtocol {
     /// Returns a requested ACPI table.
