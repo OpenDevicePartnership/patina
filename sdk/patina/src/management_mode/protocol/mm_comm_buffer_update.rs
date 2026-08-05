@@ -11,6 +11,7 @@
 //!
 
 use crate::BinaryGuid;
+use crate::base::protocol::ProtocolInterface;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// GUID for the MM Communication Buffer Update Protocol
@@ -46,4 +47,10 @@ pub struct MmCommBufferUpdateProtocol {
     pub version: u64,
     /// MM communication buffer information
     pub updated_comm_buffer: MmCommBuffer,
+}
+
+// SAFETY: `MmCommBufferUpdateProtocol` is `#[repr(C, packed)]` and `PROTOCOL_GUID` is the GUID that
+// identifies its layout.
+unsafe impl ProtocolInterface for MmCommBufferUpdateProtocol {
+    const PROTOCOL_GUID: BinaryGuid = PROTOCOL_GUID;
 }
