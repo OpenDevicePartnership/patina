@@ -17,7 +17,13 @@ use crate::{
     service::{Recorder, TestRecord},
 };
 
-use patina::component::{Storage, component};
+use patina::component::{
+    Storage, component,
+    service::{
+        Service,
+        uefi_services::{event::EventServices, timer_event::TimerEventServices},
+    },
+};
 
 /// A filter to include or exclude test cases whose name contains the pattern.
 ///
@@ -102,9 +108,14 @@ impl TestRunner {
 
     /// The entry point for the test runner component.
     #[cfg_attr(coverage, coverage(off))]
-    fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
+    fn entry_point(
+        self,
+        storage: &mut Storage,
+        events: Service<dyn EventServices>,
+        timer_events: Service<dyn TimerEventServices>,
+    ) -> patina::error::Result<()> {
         let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
-        self.register_tests(test_list, storage)
+        self.register_tests(test_list, storage, &events, &timer_events)
     }
 
     /// Registers the tests to be executed by the test runner.
@@ -112,12 +123,14 @@ impl TestRunner {
         &self,
         test_list: &'static [__private_api::TestCase],
         storage: &mut Storage,
+        events: &Service<dyn EventServices>,
+        timer_events: &Service<dyn TimerEventServices>,
     ) -> patina::error::Result<()> {
-        let recorder = if let Some(recorder) = storage.get_service::<Recorder>() {
+        let recorder = if let Some(recorder) =  storage.get_service::<Recorder>() {
             recorder
         } else {
             let recorder = Recorder::default();
-            recorder.initialize(storage)?;
+            recorder.initialize(storage, events)?;
             storage.add_service(recorder);
             storage.get_service::<Recorder>().expect("Recorder service should be registered.")
         };
@@ -130,7 +143,7 @@ impl TestRunner {
         for record in records {
             // Only schedule a run if we have not already scheduled for this test.
             if !recorder.test_registered(record.name()) {
-                record.schedule_run(storage)?;
+                record.schedule_run(storage, events, timer_events)?;
             }
 
             recorder.update_record(record);
@@ -146,14 +159,35 @@ pub(crate) mod tests {
     extern crate std;
 
     use super::*;
-
-    use crate::alloc::{boxed::Box, format};
-    use core::mem::MaybeUninit;
+    use crate::{
+        __private_api::TestCase,
+        alloc::{boxed::Box, format},
+    };
+    use core::{ffi::c_void, ptr::NonNull};
     use patina::{
         BinaryGuid,
-        component::{IntoComponent, Storage, params::Config},
-        uefi::boot_services::StandardBootServices,
+        component::{
+            IntoComponent, Storage,
+            params::Config,
+            service::uefi_services::{
+                event::{Event, MockEventServices},
+                timer_event::MockTimerEventServices,
+            },
+        },
     };
+
+    /// A dangling, but non-null, [Event] suitable for a mock's `Ok(...)` return value.
+    fn dangling_event() -> Event {
+        Event::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()
+    }
+
+    /// A [`MockEventServices`] that expects exactly `registrations` group-event registrations, never invoking any of
+    /// the passed callbacks.
+    fn mock_event_services(registrations: usize) -> MockEventServices {
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().times(registrations).returning(|_, _, _| Ok(dangling_event()));
+        events
+    }
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     fn test_function(config: Config<i32>) -> crate::error::Result {
@@ -230,6 +264,54 @@ pub(crate) mod tests {
     };
 
     #[test]
+    fn test_we_can_initialize_the_component() {
+        let mut storage = Storage::new();
+
+        let mut component = super::TestRunner::default().into_component();
+        component.initialize(&mut storage);
+    }
+
+    #[test]
+    fn test_we_can_collect_and_execute_tests() {
+        assert_eq!(TEST_TESTS.len(), 2);
+        let mut storage = Storage::new();
+        storage.add_config(1_i32);
+
+        let events: Service<dyn EventServices> = Service::mock(Box::new(mock_event_services(2)));
+        let timer_events: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        let component = super::TestRunner::default();
+        let result = component.register_tests(&TEST_TESTS, &mut storage, &events, &timer_events);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_different_test_counts() {
+        let mut storage = Storage::new();
+        storage.add_config(1_i32);
+
+        let events: Service<dyn EventServices> = Service::mock(Box::new(mock_event_services(2)));
+        let timer_events: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([]));
+        let component = super::TestRunner::default();
+        let result = component.register_tests(test_cases, &mut storage, &events, &timer_events);
+        assert!(result.is_ok());
+
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1]));
+        let result = component.register_tests(test_cases, &mut storage, &events, &timer_events);
+        assert!(result.is_ok());
+
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1, TEST_CASE2]));
+        let result = component.register_tests(test_cases, &mut storage, &events, &timer_events);
+        assert!(result.is_ok());
+
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1, TEST_CASE2, TEST_CASE3]));
+        let result = component.register_tests(test_cases, &mut storage, &events, &timer_events);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_func_implements_into_component() {
         let _ = TestRunner::default().into_component();
     }
@@ -261,39 +343,13 @@ pub(crate) mod tests {
 
         let mut storage = Storage::new();
         storage.add_service(Recorder::default());
-        let bs: MaybeUninit<patina::standard::efi::BootServices> = MaybeUninit::uninit();
 
-        // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
-        // and create_event_ex, which we will fill in with no-op functions.
-        let mut bs = unsafe { bs.assume_init() };
-        extern "efiapi" fn noop_create_event(
-            _type: u32,
-            _tpl: patina::standard::efi::Tpl,
-            _notify_function: Option<unsafe extern "efiapi" fn(patina::standard::efi::Event, *mut core::ffi::c_void)>,
-            _notify_context: *mut core::ffi::c_void,
-            _event: *mut patina::standard::efi::Event,
-        ) -> patina::standard::efi::Status {
-            patina::standard::efi::Status::SUCCESS
-        }
-
-        extern "efiapi" fn noop_create_event_ex(
-            _type: u32,
-            _tpl: patina::standard::efi::Tpl,
-            _notify_function: Option<unsafe extern "efiapi" fn(patina::standard::efi::Event, *mut core::ffi::c_void)>,
-            _notify_context: *const core::ffi::c_void,
-            _guid: *const patina::standard::efi::Guid,
-            _event: *mut patina::standard::efi::Event,
-        ) -> patina::standard::efi::Status {
-            patina::standard::efi::Status::SUCCESS
-        }
-
-        bs.create_event = noop_create_event;
-        bs.create_event_ex = noop_create_event_ex;
-
-        storage.set_boot_services(StandardBootServices::new(Box::leak(Box::new(bs))));
+        // The Recorder is already registered and TEST_CASE3 is Manual-only, so no UEFI service calls occur.
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer_events: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
         // TEST_CASE3 is designed to fail.
-        let _ = test_runner.register_tests(Box::leak(Box::new([TEST_CASE3])), &mut storage);
+        let _ = test_runner.register_tests(Box::leak(Box::new([TEST_CASE3])), &mut storage, &events, &timer_events);
         storage.get_service::<Recorder>().unwrap().run_manual_tests(&mut storage);
     }
 
@@ -302,49 +358,27 @@ pub(crate) mod tests {
         let test_runner = TestRunner::default().with_filter(Filter::include("triggered_test"));
 
         let mut storage = Storage::new();
-        let bs: MaybeUninit<patina::standard::efi::BootServices> = MaybeUninit::uninit();
 
-        // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
-        // create_event_ex, and set_timer which we will fill in with no-op functions.
-        let mut bs = unsafe { bs.assume_init() };
-        extern "efiapi" fn noop_create_event(
-            _type: u32,
-            _tpl: patina::standard::efi::Tpl,
-            _notify_function: Option<unsafe extern "efiapi" fn(patina::standard::efi::Event, *mut core::ffi::c_void)>,
-            _notify_context: *mut core::ffi::c_void,
-            _event: *mut patina::standard::efi::Event,
-        ) -> patina::standard::efi::Status {
-            patina::standard::efi::Status::SUCCESS
-        }
+        // Two registrations from Recorder::initialize (Ready to Boot + Exit Boot Services):
+        //   - 1 for event_triggered_test's own event
+        //   - 1 for timer_triggered_test's Ready to Boot timer-cancel registration
+        let events: Service<dyn EventServices> = Service::mock(Box::new(mock_event_services(4)));
 
-        extern "efiapi" fn noop_create_event_ex(
-            _type: u32,
-            _tpl: patina::standard::efi::Tpl,
-            _notify_function: Option<unsafe extern "efiapi" fn(patina::standard::efi::Event, *mut core::ffi::c_void)>,
-            _notify_context: *const core::ffi::c_void,
-            _guid: *const patina::standard::efi::Guid,
-            _event: *mut patina::standard::efi::Event,
-        ) -> patina::standard::efi::Status {
-            patina::standard::efi::Status::SUCCESS
-        }
-
-        extern "efiapi" fn noop_set_timer(
-            _event: patina::standard::efi::Event,
-            _type: patina::standard::efi::TimerDelay,
-            _trigger_time: u64,
-        ) -> patina::standard::efi::Status {
-            patina::standard::efi::Status::SUCCESS
-        }
-
-        bs.create_event = noop_create_event;
-        bs.create_event_ex = noop_create_event_ex;
-        bs.set_timer = noop_set_timer;
-
-        storage.set_boot_services(StandardBootServices::new(Box::leak(Box::new(bs))));
+        let mut timer_events_mock = MockTimerEventServices::new();
+        timer_events_mock.expect_create_timer_event().once().returning(|_, _| Ok(dangling_event()));
+        timer_events_mock.expect_set_timer().once().returning(|_, _| Ok(()));
+        let timer_events: Service<dyn TimerEventServices> = Service::mock(Box::new(timer_events_mock));
 
         // Failure tests
         assert!(
-            test_runner.register_tests(Box::leak(Box::new([TEST_CASE3, TEST_CASE4, TEST_CASE5])), &mut storage).is_ok()
+            test_runner
+                .register_tests(
+                    Box::leak(Box::new([TEST_CASE3, TEST_CASE4, TEST_CASE5])),
+                    &mut storage,
+                    &events,
+                    &timer_events
+                )
+                .is_ok()
         );
         let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
         recorder.run_manual_tests(&mut storage);
