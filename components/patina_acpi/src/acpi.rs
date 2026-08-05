@@ -13,7 +13,6 @@ use alloc::collections::btree_map::BTreeMap;
 use core::{
     any::TypeId,
     cell::OnceCell,
-    ffi::c_void,
     mem::{self},
     slice,
     sync::atomic::{AtomicUsize, Ordering},
@@ -23,9 +22,16 @@ use patina::{
     SIZE_4GB,
     component::{
         hob::Hob,
-        service::{IntoService, Service, memory::MemoryManager},
+        service::{
+            IntoService, Service,
+            memory::MemoryManager,
+            uefi_services::{
+                config_table::{ConfigurationTableServices, ConfigurationTableServicesExt},
+                tpl::TplServices,
+            },
+        },
     },
-    uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl},
+    uefi::boot_services::tpl::Tpl,
     uefi::memory::EfiMemoryType,
     uefi::tpl_mutex::TplMutex,
     uefi_size_to_pages,
@@ -40,40 +46,37 @@ use crate::{
     signature::{self, ACPI_CHECKSUM_OFFSET, ACPI_HEADER_LEN, ACPI_VERSIONS_GTE_2, ACPI_XSDT_ENTRY_SIZE},
 };
 
-pub static STANDARD_ACPI_PROVIDER: StandardAcpiProvider<StandardBootServices> = StandardAcpiProvider::new_uninit();
+pub static STANDARD_ACPI_PROVIDER: StandardAcpiProvider = StandardAcpiProvider::new_uninit();
 
 /// Standard implementation of ACPI services. The service interface can be found in `service.rs`
 #[derive(IntoService)]
 #[service(dyn AcpiProvider)]
-pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
+pub(crate) struct StandardAcpiProvider {
     /// Platform-installed ACPI tables.
     /// If installing a non-standard ACPI table, the platform is responsible for writing its own handler and parser.
-    pub(crate) acpi_tables: TplMutex<BTreeMap<TableKey, AcpiTable>, B>,
+    pub(crate) acpi_tables: TplMutex<BTreeMap<TableKey, AcpiTable>, Service<dyn TplServices>>,
     /// Stores a monotonically increasing unique table key for installation.
     next_table_key: AtomicUsize,
     /// Stores notify callbacks, which are called upon table installation.
-    notify_list: TplMutex<Vec<AcpiNotifyFn>, B>,
-    /// Provides boot services.
-    pub(crate) boot_services: OnceCell<B>,
+    notify_list: TplMutex<Vec<AcpiNotifyFn>, Service<dyn TplServices>>,
+    /// Provides configuration table services.
+    pub(crate) config_table: OnceCell<Service<dyn ConfigurationTableServices>>,
     /// Provides memory services.
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
     /// Stores data about the XSDT and its entries.
-    xsdt_metadata: TplMutex<Option<AcpiXsdtMetadata>, B>,
+    xsdt_metadata: TplMutex<Option<AcpiXsdtMetadata>, Service<dyn TplServices>>,
     /// Stores data about the RSDP.
-    rsdp: TplMutex<Option<&'static mut AcpiRsdp>, B>,
+    rsdp: TplMutex<Option<&'static mut AcpiRsdp>, Service<dyn TplServices>>,
 }
 
 // SAFETY: `StandardAcpiProvider` does not share any internal references or non-Send types across threads.
 // All fields are `Send` or properly synchronized.
-unsafe impl<B> Sync for StandardAcpiProvider<B> where B: BootServices + Sync {}
+unsafe impl Sync for StandardAcpiProvider {}
 
 // SAFETY: Access to shared state within `StandardAcpiProvider` is synchronized (via mutexes and atomics)
-unsafe impl<B> Send for StandardAcpiProvider<B> where B: BootServices + Send {}
+unsafe impl Send for StandardAcpiProvider {}
 
-impl<B> StandardAcpiProvider<B>
-where
-    B: BootServices,
-{
+impl StandardAcpiProvider {
     /// Known table keys for system tables.
     const FACS_KEY: TableKey = TableKey(1);
     const DSDT_KEY: TableKey = TableKey(2);
@@ -89,7 +92,7 @@ where
             acpi_tables: TplMutex::new_uninit(Tpl::NOTIFY, BTreeMap::new()),
             next_table_key: AtomicUsize::new(Self::FIRST_FREE_KEY),
             notify_list: TplMutex::new_uninit(Tpl::NOTIFY, vec![]),
-            boot_services: OnceCell::new(),
+            config_table: OnceCell::new(),
             memory_manager: OnceCell::new(),
             xsdt_metadata: TplMutex::new_uninit(Tpl::NOTIFY, None),
             rsdp: TplMutex::new_uninit(Tpl::NOTIFY, None),
@@ -99,22 +102,23 @@ where
     /// Fills in `StandardAcpiProvider` fields at runtime.
     /// This function must be called before any attempts to use `StandardAcpiProvider`, or any usages will fail.
     /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a failure.
-    pub fn initialize(&self, bs: B, memory_manager: Service<dyn MemoryManager>) -> Result<(), AcpiError>
-    where
-        B: BootServices + Clone,
-    {
+    pub fn initialize(
+        &self,
+        tpl: Service<dyn TplServices>,
+        config_table: Service<dyn ConfigurationTableServices>,
+        memory_manager: Service<dyn MemoryManager>,
+    ) -> Result<(), AcpiError> {
         // Check if already initialized before doing anything
-        if self.boot_services.get().is_some() {
+        if self.config_table.get().is_some() {
             return Err(AcpiError::ConfigTableServicesAlreadyInitialized);
         }
 
-        self.acpi_tables.init(bs.clone());
-        self.notify_list.init(bs.clone());
-        self.xsdt_metadata.init(bs.clone());
-        self.rsdp.init(bs.clone());
+        self.acpi_tables.init(tpl);
+        self.notify_list.init(tpl);
+        self.xsdt_metadata.init(tpl);
+        self.rsdp.init(tpl);
 
-        // Store the original boot_services (not a clone) so mock expectations are preserved
-        if self.boot_services.set(bs).is_err() {
+        if self.config_table.set(config_table).is_err() {
             return Err(AcpiError::ConfigTableServicesAlreadyInitialized);
         }
 
@@ -141,10 +145,7 @@ where
 /// The following functions are called on the Rust side by the `AcpiTableManager` service.
 /// They also provide implementations for the C ACPI protocols.
 /// For more information on operation and interfaces, see `service.rs`.
-impl<B> AcpiProvider for StandardAcpiProvider<B>
-where
-    B: BootServices,
-{
+impl AcpiProvider for StandardAcpiProvider {
     fn install_acpi_table(&self, table: AcpiTable) -> Result<TableKey, AcpiError> {
         // Based on the ACPI spec, implementations can choose to disallow duplicates or incorporate them into existing installed tables.
         // For simplicity, this implementation rejects attempts to install a new XSDT when one already exists.
@@ -206,10 +207,7 @@ where
     }
 }
 
-impl<B> StandardAcpiProvider<B>
-where
-    B: BootServices,
-{
+impl StandardAcpiProvider {
     /// Installs the FACS.
     /// SAFETY: The caller must ensure that the table is valid and correctly formatted.
     pub(crate) unsafe fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
@@ -745,16 +743,16 @@ where
     /// Publishes ACPI tables after installation.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
         if let Some(rsdp) = self.rsdp.lock().as_mut() {
-            // Cast RSDP to raw pointer for boot services.
-            // SAFETY: ACPI_TABLE_GUID is the correct spec-defined GUID for the RSDP.
-            unsafe {
-                let rsdp_ptr = core::ptr::from_mut::<AcpiRsdp>(*rsdp).cast::<c_void>();
-                self.boot_services
-                    .get()
-                    .ok_or(AcpiError::ProviderNotInitialized)?
-                    .install_configuration_table(&signature::ACPI_TABLE_GUID, rsdp_ptr)
-                    .map_err(|_| AcpiError::InstallConfigurationTableFailed)?;
-            }
+            let rsdp_ptr: *const AcpiRsdp = core::ptr::from_mut::<AcpiRsdp>(*rsdp).cast_const();
+            // SAFETY: `rsdp` is a `&'static mut AcpiRsdp` backed by a HOB-provided allocation that
+            // is never freed, so a `'static` shared reference to the same memory is valid. This
+            // reference is only used for the duration of `install_or_replace`, below.
+            let rsdp_ref: &'static AcpiRsdp = unsafe { &*rsdp_ptr };
+            self.config_table
+                .get()
+                .ok_or(AcpiError::ProviderNotInitialized)?
+                .install_or_replace(rsdp_ref)
+                .map_err(|_| AcpiError::InstallConfigurationTableFailed)?;
         }
 
         Ok(())
@@ -818,16 +816,35 @@ mod tests {
     use crate::signature::MAX_INITIAL_ENTRIES;
 
     use super::*;
-    use mockall::predicate::always;
-    use patina::standard::efi;
-    use patina::{
-        component::service::memory::{MockMemoryManager, StdMemoryManager},
-        uefi::boot_services::MockBootServices,
+    use patina::component::service::{
+        memory::{MockMemoryManager, StdMemoryManager},
+        uefi_services::{
+            config_table::MockConfigurationTableServices,
+            tpl::{MockTplServices, PreviousTpl},
+        },
     };
+    use patina::standard::efi;
     use std::{
         boxed::Box,
         sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
     };
+
+    /// Builds a `TplServices` mock permissive enough for any test that exercises a `TplMutex` lock
+    /// without asserting on TPL behavior directly.
+    fn mock_tpl_service() -> Service<dyn TplServices> {
+        let mut tpl = MockTplServices::new();
+        tpl.expect_raise_tpl().returning(|_| PreviousTpl::from_raw(0));
+        tpl.expect_restore_tpl().returning(|_| ());
+        Service::mock(Box::new(tpl))
+    }
+
+    /// Builds a `ConfigurationTableServices` mock permissive enough for any test that calls
+    /// `publish_tables()` without asserting on the installed table directly.
+    fn mock_config_table_service() -> Service<dyn ConfigurationTableServices> {
+        let mut config_table = MockConfigurationTableServices::new();
+        config_table.expect_replace_typed_table().returning(|_, _, _| Ok(()));
+        Service::mock(Box::new(config_table))
+    }
 
     #[repr(C, packed)]
     struct MockAcpiTable {
@@ -851,7 +868,13 @@ mod tests {
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // SAFETY: The constructed table is a valid ACPI table.
@@ -880,7 +903,13 @@ mod tests {
         let notify_fn: AcpiNotifyFn = dummy_notify;
 
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(MockMemoryManager::new())),
+            )
+            .unwrap();
 
         provider.register_notify(true, notify_fn).expect("should register notify");
         {
@@ -904,7 +933,13 @@ mod tests {
     #[test]
     fn test_iter() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         let header1 = AcpiTableHeader { signature: 0x1, length: ACPI_HEADER_LEN as u32, ..Default::default() };
@@ -928,7 +963,13 @@ mod tests {
     #[test]
     fn test_install_fadt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Initialize a mock XSDT.
@@ -955,7 +996,13 @@ mod tests {
     #[test]
     fn test_install_facs() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy data for FACS and FADT.
@@ -989,7 +1036,13 @@ mod tests {
     #[test]
     fn test_add_dsdt_to_list() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy data for DSDT and FADT.
@@ -1025,7 +1078,7 @@ mod tests {
     }
 
     // Helper to create a dummy RSDP in tests.
-    fn create_dummy_rsdp(provider: &StandardAcpiProvider<MockBootServices>) {
+    fn create_dummy_rsdp(provider: &StandardAcpiProvider) {
         let rsdp_allocation = provider
             .memory_manager
             .get()
@@ -1043,7 +1096,7 @@ mod tests {
     }
 
     // Helper function to create a dummy XSDT in tests.
-    fn create_dummy_xsdt(starting_capacity: usize, provider: &StandardAcpiProvider<MockBootServices>) {
+    fn create_dummy_xsdt(starting_capacity: usize, provider: &StandardAcpiProvider) {
         // Calculate current size of the XSDT.
         let num_bytes = ACPI_HEADER_LEN + starting_capacity * ACPI_XSDT_ENTRY_SIZE;
 
@@ -1079,7 +1132,13 @@ mod tests {
     #[test]
     fn test_add_and_remove_xsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
 
         create_dummy_rsdp(&provider);
         create_dummy_xsdt(MAX_INITIAL_ENTRIES, &provider);
@@ -1113,7 +1172,13 @@ mod tests {
     #[test]
     fn test_reallocate_xsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
 
         let initial_capacity = 2;
         create_dummy_rsdp(&provider);
@@ -1151,7 +1216,13 @@ mod tests {
     #[test]
     fn test_delete_table_facs() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Create a dummy XSDT.
@@ -1187,7 +1258,13 @@ mod tests {
     #[test]
     fn test_delete_table_dsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         create_dummy_xsdt(MAX_INITIAL_ENTRIES, &provider);
@@ -1266,33 +1343,24 @@ mod tests {
     #[test]
     fn test_get_xsdt_address() {
         // RSDP is null
-        assert_eq!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(0).unwrap_err(),
-            AcpiError::NullRsdpFromHob
-        );
+        assert_eq!(StandardAcpiProvider::get_xsdt_address_from_rsdp(0).unwrap_err(), AcpiError::NullRsdpFromHob);
 
         // The RSDP has signature 0 (invalid)
         assert_eq!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(0, false, 0, 0))
-                .unwrap_err(),
+            StandardAcpiProvider::get_xsdt_address_from_rsdp(mock_rsdp(0, false, 0, 0)).unwrap_err(),
             AcpiError::InvalidSignature
         );
 
         // The RSDP has a valid signature, but the XSDT is null
         assert_eq!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
-                signature::ACPI_RSDP_TABLE,
-                false,
-                0,
-                0,
-            ))
-            .unwrap_err(),
+            StandardAcpiProvider::get_xsdt_address_from_rsdp(mock_rsdp(signature::ACPI_RSDP_TABLE, false, 0, 0,))
+                .unwrap_err(),
             AcpiError::NullXsdt
         );
 
         // The RSDP is valid, but the XSDT has an invalid signature
         assert_eq!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+            StandardAcpiProvider::get_xsdt_address_from_rsdp(mock_rsdp(
                 signature::ACPI_RSDP_TABLE,
                 true,
                 ACPI_HEADER_LEN,
@@ -1304,7 +1372,7 @@ mod tests {
 
         // The RSDP is valid, but the XSDT has an invalid length
         assert_eq!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+            StandardAcpiProvider::get_xsdt_address_from_rsdp(mock_rsdp(
                 signature::ACPI_RSDP_TABLE,
                 true,
                 ACPI_HEADER_LEN - 1,
@@ -1316,7 +1384,7 @@ mod tests {
 
         // Both the RSDP and XSDT are valid
         assert!(
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+            StandardAcpiProvider::get_xsdt_address_from_rsdp(mock_rsdp(
                 signature::ACPI_RSDP_TABLE,
                 true,
                 ACPI_HEADER_LEN,
@@ -1329,12 +1397,13 @@ mod tests {
     #[test]
     fn test_install_tables_from_hob_normal_table() {
         let provider = StandardAcpiProvider::new_uninit();
-        let mut mbs = MockBootServices::new();
-        mbs.expect_install_configuration_table::<*mut core::ffi::c_void>()
-            .with(always(), always())
-            .times(..)
-            .returning(|_, _| Ok(()));
-        provider.initialize(mbs, Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
 
         // Create a dummy normal ACPI table (not FADT, FACS, DSDT)
         let normal_header =
@@ -1376,24 +1445,25 @@ mod tests {
     #[test]
     fn test_initialize_error_cases() {
         let provider = StandardAcpiProvider::new_uninit();
-        let mock_boot_services = MockBootServices::new();
         let mock_memory_manager: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
 
         // First initialization should succeed
-        assert!(provider.initialize(mock_boot_services, mock_memory_manager).is_ok());
+        assert!(provider.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).is_ok());
 
-        // Second initialization with boot services should fail
-        let err = provider.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
+        // Second initialization with configuration table services should fail
+        let err =
+            provider.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).unwrap_err();
         assert_eq!(err, AcpiError::ConfigTableServicesAlreadyInitialized);
 
         // Try initializing again with a new provider, but memory manager already set
         let provider2 = StandardAcpiProvider::new_uninit();
-        // Set boot services first
-        assert!(provider2.boot_services.set(MockBootServices::new()).is_ok());
+        // Set configuration table services first
+        assert!(provider2.config_table.set(mock_config_table_service()).is_ok());
         // Set memory manager first
         assert!(provider2.memory_manager.set(mock_memory_manager).is_ok());
         // Now initialize should fail for both fields
-        let err = provider2.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
+        let err =
+            provider2.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).unwrap_err();
         assert!(matches!(
             err,
             AcpiError::ConfigTableServicesAlreadyInitialized | AcpiError::MemoryManagerAlreadyInitialized
@@ -1403,7 +1473,13 @@ mod tests {
     #[test]
     fn test_install_fadt_tables_from_hob() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Create dummy FACS and DSDT tables
@@ -1435,11 +1511,11 @@ mod tests {
         assert!(result.is_ok());
 
         // FACS and DSDT should be installed
-        let facs_table = provider.get_acpi_table(StandardAcpiProvider::<MockBootServices>::FACS_KEY);
+        let facs_table = provider.get_acpi_table(StandardAcpiProvider::FACS_KEY);
         assert!(facs_table.is_ok());
         assert_eq!(facs_table.unwrap().signature(), signature::FACS);
 
-        let dsdt_table = provider.get_acpi_table(StandardAcpiProvider::<MockBootServices>::DSDT_KEY);
+        let dsdt_table = provider.get_acpi_table(StandardAcpiProvider::DSDT_KEY);
         assert!(dsdt_table.is_ok());
         assert_eq!(dsdt_table.unwrap().signature(), signature::DSDT);
     }
@@ -1447,7 +1523,13 @@ mod tests {
     #[test]
     fn test_remove_table_from_xsdt_removes_correct_entry() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
 
         create_dummy_rsdp(&provider);
         create_dummy_xsdt(3, &provider);
@@ -1495,11 +1577,13 @@ mod tests {
         }
 
         let provider = StandardAcpiProvider::new_uninit();
-        let mut mbs = MockBootServices::new();
-        mbs.expect_install_configuration_table::<*mut core::ffi::c_void>()
-            .with(always(), always())
-            .returning(|_, _| Ok(()));
-        provider.initialize(mbs, Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Register notify function.
@@ -1518,7 +1602,13 @@ mod tests {
     #[test]
     fn test_notify_acpi_list_error_on_invalid_key() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
 
         // Try to notify with an invalid key
         let result = provider.notify_acpi_list(TableKey(99999));
@@ -1528,7 +1618,13 @@ mod tests {
     #[test]
     fn test_get_table_at_idx_basic() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
+        provider
+            .initialize(
+                mock_tpl_service(),
+                mock_config_table_service(),
+                Service::mock(Box::new(StdMemoryManager::new())),
+            )
+            .unwrap();
         create_dummy_rsdp(&provider);
 
         // Install two standard tables

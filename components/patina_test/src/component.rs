@@ -126,7 +126,7 @@ impl TestRunner {
         events: &Service<dyn EventServices>,
         timer_events: &Service<dyn TimerEventServices>,
     ) -> patina::error::Result<()> {
-        let recorder = if let Some(recorder) =  storage.get_service::<Recorder>() {
+        let recorder = if let Some(recorder) = storage.get_service::<Recorder>() {
             recorder
         } else {
             let recorder = Recorder::default();
