@@ -16,7 +16,6 @@ use patina::{
     component::{IntoComponent, Storage, service::IntoService},
     log_debug_assert,
     pi::hob::HobList,
-    uefi::boot_services::StandardBootServices,
     uefi::runtime_services::StandardRuntimeServices,
 };
 
@@ -171,13 +170,6 @@ impl ComponentDispatcher {
     #[inline(always)]
     pub(crate) fn lock_configs(&mut self) {
         self.storage.lock_configs();
-    }
-
-    /// Sets the Boot Services table in storage.
-    #[cfg_attr(coverage, coverage(off))]
-    #[inline(always)]
-    pub(crate) fn set_boot_services(&mut self, bs: StandardBootServices) {
-        self.storage.set_boot_services(bs);
     }
 
     /// Sets the Runtime Services table in storage.

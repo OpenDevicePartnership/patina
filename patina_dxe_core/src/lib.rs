@@ -131,7 +131,6 @@ use patina::{
         protocol::{bds, status_code},
         status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
     },
-    uefi::boot_services::StandardBootServices,
     uefi::runtime_services::StandardRuntimeServices,
 };
 use patina_ffs::section::SectionExtractor;
@@ -607,11 +606,9 @@ impl<P: PlatformInfo> Core<P> {
 
         // The component dispatcher has a TPL_APPLICATION TPLMutex, so we need to drop the TPL_NOTIFY st_guard before
         // attempting to unlock the component dispatcher to prevent TPL inversion
-        let boot_services = StandardBootServices::new(st.boot_services().as_mut_ptr());
         let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
         drop(st_guard);
 
-        self.component_dispatcher.lock().set_boot_services(boot_services);
         self.component_dispatcher.lock().set_runtime_services(runtime_services);
         self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
