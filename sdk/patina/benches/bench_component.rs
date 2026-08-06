@@ -30,14 +30,13 @@ use criterion::{Bencher, Criterion, criterion_group, criterion_main};
 use patina::{
     component::{Component, IntoComponent, Storage, component, params::Config},
     error::Result,
-    uefi::boot_services::StandardBootServices,
 };
 
 struct TestComponent;
 
 #[component]
 impl TestComponent {
-    fn entry_point(self, _bs: StandardBootServices, _config: Config<i32>) -> Result<()> {
+    fn entry_point(self, _config: Config<i32>) -> Result<()> {
         Ok(())
     }
 }
@@ -88,12 +87,8 @@ fn add_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 }
 
 fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mut mock_bs = core::mem::MaybeUninit::<patina::standard::efi::BootServices>::zeroed();
-
-    let mut init = |count: usize| -> Scheduler {
+    let init = |count: usize| -> Scheduler {
         let mut core = Scheduler::new();
-        // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
-        core.storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
         for _ in 0..count {
             core = core.with_component(TestComponent);
         }
@@ -110,14 +105,7 @@ fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 }
 
 fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mut mock_bs = core::mem::MaybeUninit::<patina::standard::efi::BootServices>::zeroed();
-
-    let init = || -> Scheduler {
-        let mut core = Scheduler::new();
-        // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
-        core.storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
-        core
-    };
+    let init = Scheduler::new;
 
     b.iter_batched(
         init,
