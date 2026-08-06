@@ -9,10 +9,16 @@ use crate::dxe_services;
 use alloc::boxed::Box;
 use patina::{
     BinaryGuid,
+    component::service::{
+        Service,
+        uefi_services::{
+            driver::Handle,
+            protocol::{ProtocolServices, ProtocolServicesExt},
+        },
+    },
     error::Result,
     protocol::ProtocolInterface,
     standard::efi,
-    uefi::boot_services::{BootServices, StandardBootServices},
 };
 
 const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("CD7B3711-3CE3-456D-B6E9-74364F0BA344");
@@ -82,10 +88,11 @@ impl AliasedMemoryMappingProtocolImpl {
     }
 }
 
-pub(super) fn install(bs: &StandardBootServices, handle: efi::Handle) -> Result<()> {
-    let interface = Box::leak(Box::new(AliasedMemoryMappingProtocolImpl::new()));
-
-    bs.install_protocol_interface(Some(handle), interface)
+// Code coverage is disabled since this function just makes a call to install a protocol.
+#[cfg_attr(coverage, coverage(off))]
+pub(super) fn install(protocols: &Service<dyn ProtocolServices>, handle: Handle) -> Result<()> {
+    protocols
+        .install_protocol(Some(handle), Box::new(AliasedMemoryMappingProtocolImpl::new()))
         .inspect_err(|_| log::error!("Failed to install aliased memory mapping protocol"))?;
 
     Ok(())

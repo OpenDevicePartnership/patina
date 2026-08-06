@@ -9,9 +9,14 @@ use spin::rwlock::RwLock;
 use arm_gic::{InterruptGroup, Trigger, gicv3::GicCpuInterface};
 use patina::{
     BinaryGuid,
-    component::{component, service::Service},
+    component::{
+        component,
+        service::{
+            Service,
+            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+        },
+    },
     protocol::ProtocolInterface,
-    uefi::boot_services::{BootServices, StandardBootServices},
 };
 
 use super::GicBases;
@@ -516,7 +521,7 @@ impl HwInterruptProtocolInstaller {
     fn entry_point(
         self,
         interrupt_manager: Service<dyn InterruptManager>,
-        boot_services: StandardBootServices,
+        protocols: Service<dyn ProtocolServices>,
     ) -> patina::error::Result<()> {
         log::info!("GIC initializing {:x?}", (self.gic_bases.gicd, self.gic_bases.gicr));
         // SAFETY: The invariants of the `GicBases` struct upholds the safety requirements for this function.
@@ -534,15 +539,15 @@ impl HwInterruptProtocolInstaller {
         // Produce Interrupt Protocol with the initialized GIC
         let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
 
-        boot_services
-            .install_protocol_interface(None, interrupt_protocol)
+        protocols
+            .install_protocol(None, interrupt_protocol)
             .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
 
         // Produce Interrupt Protocol with the initialized GIC
         let interrupt_protocol_v2 = Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
 
-        boot_services
-            .install_protocol_interface(None, interrupt_protocol_v2)
+        protocols
+            .install_protocol(None, interrupt_protocol_v2)
             .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;
         log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
 
