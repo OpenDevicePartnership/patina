@@ -10,11 +10,11 @@
 
 use core::{ffi::c_void, mem};
 
-use patina::standard::efi;
-use patina::{
-    component::service::Service,
-    uefi::boot_services::{BootServices, StandardBootServices},
+use patina::component::service::{
+    Service,
+    uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
 };
+use patina::standard::efi;
 use patina_test::{patina_test, u_assert, u_assert_eq};
 
 use crate::{
@@ -97,13 +97,9 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Re
 
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
-fn acpi_protocol_test(bs: StandardBootServices) -> patina_test::error::Result {
-    // SAFETY: there is only one reference to the `AcpiTableProtocol` during this test.
-    let table_protocol =
-        unsafe { bs.locate_protocol::<AcpiTableProtocol>(None) }.expect("Locate protocol should succeed.");
-    // SAFETY: there is only one reference to the `AcpiGetProtocol` during this test.
-    let acpi_get_protocol =
-        unsafe { bs.locate_protocol::<AcpiGetProtocol>(None) }.expect("Locate protocol should succeed.");
+fn acpi_protocol_test(protocols: Service<dyn ProtocolServices>) -> patina_test::error::Result {
+    let table_protocol = protocols.locate_protocol::<AcpiTableProtocol>().expect("Locate protocol should succeed.");
+    let acpi_get_protocol = protocols.locate_protocol::<AcpiGetProtocol>().expect("Locate protocol should succeed.");
 
     let mut table_key_buf: usize = 0;
 
