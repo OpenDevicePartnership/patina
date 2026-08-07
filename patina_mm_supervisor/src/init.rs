@@ -29,7 +29,7 @@ use patina_paging::{
 
 use crate::{
     AllocationType, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo, SharedPagingAllocator,
-    intrinsics::read_cr3,
+    intrinsics::{read_cr3, write_msr},
     is_buffer_inside_mmram,
     mem::page_allocator::SmramDescriptor,
     mem::{self, page_allocator::coalesced_smrr_range},
@@ -540,7 +540,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // reported by CPUID.01H:ECX.VMX. Only the architecturally defined Valid and MsegBase
         // fields are set; reserved bits are masked off above, so the write cannot #GP on a
         // reserved-bit violation. The write affects only this logical processor's MSR.
-        unsafe { crate::cpu::write_msr(IA32_SMM_MONITOR_CTL, value) };
+        unsafe { write_msr(IA32_SMM_MONITOR_CTL, value) };
         log::debug!("CPU {} programmed IA32_SMM_MONITOR_CTL = 0x{:x}", cpu_id, value);
     }
 
