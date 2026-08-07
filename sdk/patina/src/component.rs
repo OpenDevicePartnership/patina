@@ -79,7 +79,6 @@
 //! | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked. See The [params] module for more info.                                |
 //! | `ConfigMut`\<T\>               | A mutable config value that will only be available while the underlying data is unlocked. See the [params] module for more info.                                      |
 //! | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. See [service] module for more info. |
-//! | `StandardBootServices`         | Rust implementation of Boot Services                                                                                                                                  |
 //!
 //! ### Examples
 //!
