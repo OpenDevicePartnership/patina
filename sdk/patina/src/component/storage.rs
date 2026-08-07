@@ -11,7 +11,7 @@ use crate::{
     uefi::runtime_services::StandardRuntimeServices,
 };
 
-use crate::{BinaryGuid, uefi::boot_services::StandardBootServices};
+use crate::BinaryGuid;
 use alloc::{borrow::Cow, boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
     any::{Any, TypeId},
@@ -210,8 +210,6 @@ pub struct Storage {
     hobs: SparseVec<Vec<Box<dyn Any>>>,
     /// a map to convert from `TypeId` to a hob index.
     hob_indices: BTreeMap<TypeId, usize>,
-    // Standard Boot Services.
-    boot_services: StandardBootServices,
     // Standard Runtime Services.
     runtime_services: StandardRuntimeServices,
     // Image handle for the DXE Core (used as parent for LoadImage calls).
@@ -236,7 +234,6 @@ impl Storage {
             hob_parsers: BTreeMap::new(),
             hobs: SparseVec::new(),
             hob_indices: BTreeMap::new(),
-            boot_services: StandardBootServices::new_uninit(),
             runtime_services: StandardRuntimeServices::new_uninit(),
             image_handle: None,
         }
@@ -260,19 +257,9 @@ impl Storage {
         self.deferred.as_mut().unwrap()
     }
 
-    /// Stores a pointer to the UEFI Boot Services Table.
-    pub fn set_boot_services(&mut self, bs: StandardBootServices) {
-        self.boot_services = bs;
-    }
-
     /// Stores a pointer to the UEFI Runtime Services Table.
     pub fn set_runtime_services(&mut self, rs: StandardRuntimeServices) {
         self.runtime_services = rs;
-    }
-
-    /// Returns the UEFI Boot Services Table reference.
-    pub fn boot_services(&self) -> &StandardBootServices {
-        &self.boot_services
     }
 
     /// Returns the UEFI Runtime Services Table reference.
