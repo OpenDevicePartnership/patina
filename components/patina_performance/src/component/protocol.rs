@@ -1,8 +1,9 @@
 //! Patina Performance Protocol
 //!
-//! Defines the interface for the performance measurement UEFI protocol. The protocol is produced by this component;
-//! the actual record building and state tracking is delegated to the [`PerformanceManager`] service owned by the
-//! DXE Core.
+//! Defines the interface for the performance measurement UEFI protocol, and the [`MeasurementProtocolPublisher`]
+//! component that installs it. The actual record building and state tracking is delegated to the
+//! [`PerformanceManager`] service owned by the DXE Core. This component only bridges that service to the C ABI
+//! required by the protocol.
 //!
 //! ## License
 //!
@@ -11,17 +12,23 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::{
-    cell::OnceCell,
-    ffi::{c_char, c_void},
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::ffi::{c_char, c_void};
 
 use alloc::string::ToString;
 use patina::standard::efi;
 use patina::{
     BinaryGuid, Char8Str,
-    component::service::{Service, performance::PerformanceManager},
+    component::{
+        component,
+        service::{
+            Service,
+            cell::ServiceCell,
+            performance::PerformanceManager,
+            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+        },
+    },
+    error::EfiError,
+    function,
     performance::{
         error::Error,
         measurement::{CallerIdentifier, PerfAttribute},
@@ -59,40 +66,16 @@ unsafe impl ProtocolInterface for EdkiiPerformanceMeasurementProtocol {
     const PROTOCOL_GUID: BinaryGuid = EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
 }
 
-/// Global holder for the performance service so the C-ABI protocol function can reach it.
-///
-/// The EDK II Performance Measurement protocol exposes a bare `extern "efiapi"` function pointer that cannot capture
-/// the injected [`Service`]. The service is therefore stashed here once during component initialization and read back
-/// by [`create_performance_measurement_efiapi`].
-struct ServiceHolder {
-    service: OnceCell<Service<dyn PerformanceManager>>,
-    initializing: AtomicBool,
-}
+/// The protocol instance installed for C drivers. Its single function has no context parameter, so the
+/// struct carries no state of its own, see [`PERF_SERVICE`] for how [`create_performance_measurement_efiapi`]
+/// uses the injected [`PerformanceManager`] service.
+static PROTOCOL: EdkiiPerformanceMeasurementProtocol =
+    EdkiiPerformanceMeasurementProtocol { create_performance_measurement: create_performance_measurement_efiapi };
 
-// SAFETY: All writes go through `set`, which is serialized by the `initializing` flag. Reads via `get` only observe a
-// fully-initialized value. `Service` is itself `Send + Sync`.
-unsafe impl Sync for ServiceHolder {}
-
-impl ServiceHolder {
-    const fn new() -> Self {
-        Self { service: OnceCell::new(), initializing: AtomicBool::new(false) }
-    }
-
-    fn set(&self, service: Service<dyn PerformanceManager>) -> Result<(), &'static str> {
-        if self.initializing.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-            let result = self.service.set(service).map_err(|_| "Performance service already set");
-            self.initializing.store(false, Ordering::Release);
-            return result;
-        }
-        Err("Performance service is currently being set elsewhere")
-    }
-
-    fn get(&self) -> Option<&Service<dyn PerformanceManager>> {
-        if self.initializing.load(Ordering::Acquire) { None } else { self.service.get() }
-    }
-}
-
-static PERF_SERVICE: ServiceHolder = ServiceHolder::new();
+/// Bridges the [`PerformanceManager`] service injected into [`MeasurementProtocolPublisher`] to
+/// [`create_performance_measurement_efiapi`], whose signature is fixed by the EDK II protocol definition and has no
+/// context parameter to carry the service through directly.
+static PERF_SERVICE: ServiceCell<dyn PerformanceManager> = ServiceCell::new();
 
 /// Registers the performance service used by the EDK II Performance Measurement protocol function.
 ///
@@ -100,7 +83,45 @@ static PERF_SERVICE: ServiceHolder = ServiceHolder::new();
 ///
 /// Returns an error string if the service was already registered.
 pub(crate) fn set_performance_service(service: Service<dyn PerformanceManager>) -> Result<(), &'static str> {
-    PERF_SERVICE.set(service)
+    PERF_SERVICE.publish(service).map_err(|_| "Performance service already set")
+}
+
+/// Installs the EDK II Performance Measurement protocol so C drivers can create performance measurements, and
+/// registers the injected [`PerformanceManager`] service so the protocol's context-free callback can use it.
+///
+/// ## Example Usage
+///
+/// ```rust
+/// use patina_performance::component::protocol::*;
+///
+/// let component = MeasurementProtocolPublisher::new();
+/// ```
+#[derive(Default)]
+pub struct MeasurementProtocolPublisher;
+
+#[component]
+impl MeasurementProtocolPublisher {
+    /// Creates a new instance of the component.
+    pub const fn new() -> Self {
+        Self
+    }
+
+    fn entry_point(
+        self,
+        performance: Service<dyn PerformanceManager>,
+        protocols: Service<dyn ProtocolServices>,
+    ) -> Result<(), EfiError> {
+        set_performance_service(performance).unwrap_or_else(|e| {
+            log::error!(
+                "[{}]: Performance service was already registered. It should only be registered here! ({e})",
+                function!()
+            );
+        });
+
+        protocols.install_protocol::<EdkiiPerformanceMeasurementProtocol>(None, &PROTOCOL)?;
+
+        Ok(())
+    }
 }
 
 #[cfg_attr(coverage, coverage(off))]
@@ -176,29 +197,31 @@ pub(crate) unsafe extern "efiapi" fn create_performance_measurement_efiapi(
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use patina::component::service::performance::MockPerformanceManager;
+    use patina::component::service::{
+        performance::MockPerformanceManager,
+        uefi_services::protocol::{Handle, MockProtocolServices},
+    };
 
     fn mock_service() -> Service<dyn PerformanceManager> {
         Service::mock(Box::new(MockPerformanceManager::new()))
     }
 
     #[test]
-    fn test_service_holder_set_get_lifecycle() {
-        let holder = ServiceHolder::new();
+    fn test_protocol_measurement_publisher_entry_point_installs_protocol() {
+        let mut protocols = MockProtocolServices::new();
+        protocols
+            .expect_install_interface()
+            .once()
+            .withf(|handle, guid, _interface| {
+                assert_eq!(&None, handle);
+                assert_eq!(guid, &EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID);
+                true
+            })
+            .returning(|_, _, _| Ok(Handle::from_raw(1_usize as efi::Handle).unwrap()));
 
-        // Nothing is registered yet.
-        assert!(holder.get().is_none());
+        let result =
+            MeasurementProtocolPublisher::new().entry_point(mock_service(), Service::mock(Box::new(protocols)));
 
-        // First registration succeeds and is observable.
-        assert!(holder.set(mock_service()).is_ok());
-        assert!(holder.get().is_some());
-
-        // A second registration is rejected.
-        assert_eq!(holder.set(mock_service()), Err("Performance service already set"));
-
-        // While a registration is in flight, `set` is rejected and `get` reports nothing.
-        holder.initializing.store(true, Ordering::Release);
-        assert_eq!(holder.set(mock_service()), Err("Performance service is currently being set elsewhere"));
-        assert!(holder.get().is_none());
+        assert!(result.is_ok());
     }
 }
