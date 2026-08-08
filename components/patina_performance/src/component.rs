@@ -8,6 +8,7 @@
 //!
 
 mod performance;
+pub mod property;
 pub mod protocol;
 mod table;
 
