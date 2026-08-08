@@ -8,7 +8,7 @@
 //!
 
 mod performance;
-mod protocol;
+pub mod protocol;
 mod table;
 
 // Re-export the Performance component for easier access.
