@@ -26,6 +26,11 @@
 //! component interactions should be done through the [Service] [Param] type. Please review the [`IntoService`] trait on
 //! how to register a service as an EDKII protocol.
 //!
+//! The protocol function backing an EDKII-compatible service is a bare `extern "efiapi"` function pointer with no
+//! context parameter, so it cannot capture a [Service] the way a closure-based callback can. [`cell::ServiceCell`]
+//! provides a way to bridge a component's injected [Service] into that context-free function. See its documentation
+//! for details and an example.
+//!
 //! ## Example
 //!
 //! ### Implementing a Service
@@ -124,6 +129,7 @@ use crate::component::{
     storage::{Storage, UnsafeStorageCell},
 };
 
+pub mod cell;
 pub mod dxe_dispatch;
 pub mod memory;
 pub mod perf_timer;
