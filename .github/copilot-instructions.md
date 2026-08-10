@@ -97,7 +97,7 @@ A component only executes when all its declared dependencies are available.
   The impl must contain `fn entry_point(self, ...) -> Result<()>`.
 - Register service implementations with `#[derive(IntoService)]` and `#[service(dyn Trait)]`.
 - Param types: `Config<T>`, `ConfigMut<T>`, `Service<T>`, `Hob<T>`, `Commands`,
-  `Handle`, `StandardBootServices`, `StandardRuntimeServices`, `&Storage`/`&mut Storage`,
+  `Handle`, `StandardRuntimeServices`, `&Storage`/`&mut Storage`,
   `Option<P>`, tuples.
 - `ConfigMut<T>` components run first (config is unlocked); calling `lock()` makes the
   value immutable and enables `Config<T>` components to execute.
