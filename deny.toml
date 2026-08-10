@@ -141,6 +141,7 @@ deny = [
     # Wrapper crates can optionally be specified to allow the crate when it
     # is a direct dependency of the otherwise banned crate
     #{ crate = "ansi_term@0.11.0", wrappers = ["this-crate-directly-depends-on-ansi_term"] },
+    { crate = "indoc", reason = "Does not support CRLF, producing hard to read logs." },
     { crate = "tiny-keccak", reason = "Not updated in 5 years. Use alternative." }
 ]
 

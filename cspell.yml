@@ -114,7 +114,6 @@ words:
   - htons
   - icfgr
   - impls
-  - indoc
   - inmodule
   - intid
   - irouter

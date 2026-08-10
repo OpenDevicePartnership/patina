@@ -27,7 +27,6 @@ fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "0.5", default-features = false }
 gdbstub = { version = "0.7.10", default-features = false }
 goblin = { version = "0.10.7", default-features = false }
-indoc = { version = "2.0" }
 linked_list_allocator = { version = "0.10" }
 linkme = { version = "0.3.36" }
 log = { version = "0.4", default-features = false }

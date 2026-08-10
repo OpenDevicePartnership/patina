@@ -91,13 +91,6 @@ when = "2026-02-12"
 user-id = 4103
 user-login = "m4b"
 
-[[publisher.indoc]]
-version = "2.0.7"
-when = "2025-10-21"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.is-terminal]]
 version = "0.4.17"
 when = "2025-10-23"
