@@ -19,17 +19,44 @@ use crate::{arch::with_interrupts_disabled, base::error::EfiError, peripheral::s
 /// reentrant. Otherwise, spurious errors may be observed.
 pub struct SharedSerial<T: SerialIO> {
     serial: Mutex<T>,
+    /// When `true`, acquisition blocks (spins) until the port is free instead of failing
+    /// fast on contention. See [`SharedSerial::with_blocking`].
+    blocking: bool,
 }
 
 impl<T: SerialIO> SharedSerial<T> {
     /// Creates a new shared serial port wrapper.
+    ///
+    /// Acquisition is non-blocking: if the port is already held, the operation returns
+    /// [`EfiError::DeviceError`] rather than waiting. Use [`SharedSerial::with_blocking`] for
+    /// lossless output under contention.
     pub const fn new(serial: T) -> Self {
-        SharedSerial { serial: Mutex::new(serial) }
+        SharedSerial { serial: Mutex::new(serial), blocking: false }
+    }
+
+    /// Enables blocking (spinning) acquisition, consuming and returning `self`.
+    ///
+    /// When blocking is enabled, operations spin until the port is available rather than
+    /// returning [`EfiError::DeviceError`] on contention. This guarantees no output is dropped
+    /// under multi-core contention, at the cost of reintroducing a self-deadlock hazard if the
+    /// same core re-enters the port while already holding it (e.g. logging from a panic handler
+    /// mid-write). Prefer [`SharedSerial::new`] unless you specifically need lossless output.
+    pub fn with_blocking(mut self) -> Self {
+        self.blocking = true;
+        self
+    }
+
+    /// Acquire the underlying serial port, honoring the configured blocking behavior.
+    ///
+    /// In blocking mode this spins until the port is free; otherwise it fails fast with
+    /// [`EfiError::DeviceError`] when the port is already held.
+    fn acquire(&self) -> Result<spin::MutexGuard<'_, T, spin::Spin>, EfiError> {
+        if self.blocking { Ok(self.serial.lock()) } else { self.serial.try_lock().ok_or(EfiError::DeviceError) }
     }
     /// Initialize the serial port.
     pub fn init(&self) -> Result<(), EfiError> {
         with_interrupts_disabled(|| {
-            let mut serial = self.serial.try_lock().ok_or(EfiError::DeviceError)?;
+            let mut serial = self.acquire()?;
             serial.init();
             Ok(())
         })
@@ -38,7 +65,7 @@ impl<T: SerialIO> SharedSerial<T> {
     /// Write a buffer to the serial port.
     pub fn write(&self, buffer: &[u8]) -> Result<(), EfiError> {
         with_interrupts_disabled(|| {
-            let mut serial = self.serial.try_lock().ok_or(EfiError::DeviceError)?;
+            let mut serial = self.acquire()?;
             serial.write(buffer);
             Ok(())
         })
@@ -50,7 +77,7 @@ impl<T: SerialIO> SharedSerial<T> {
     /// interrupts. [`SharedSerial::try_read`] should be used in most scenarios.
     pub fn read(&self) -> Result<u8, EfiError> {
         with_interrupts_disabled(|| {
-            let mut serial = self.serial.try_lock().ok_or(EfiError::DeviceError)?;
+            let mut serial = self.acquire()?;
             Ok(serial.read())
         })
     }
@@ -58,7 +85,7 @@ impl<T: SerialIO> SharedSerial<T> {
     /// Try to read a byte from the serial port, returning `None` if no byte is available.
     pub fn try_read(&self) -> Result<Option<u8>, EfiError> {
         with_interrupts_disabled(|| {
-            let mut serial = self.serial.try_lock().ok_or(EfiError::DeviceError)?;
+            let mut serial = self.acquire()?;
             Ok(serial.try_read())
         })
     }
