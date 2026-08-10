@@ -91,7 +91,6 @@ in the function interface of a component.
 | Service\<T\>                 | After service is registered      | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
 | Commands                     | Always                           | A deferred command queue for registering services and configs without conflicting with other params. See [Commands](#commands) section. |
 | Handle                       | After image handle is set        | The DXE Core's image handle. See [Handle](#handle) section.                                                       |
-| StandardBootServices         | After boot services init         | UEFI Boot Services access. See [StandardBootServices](#standardbootservices) section.                             |
 | StandardRuntimeServices      | After runtime services init      | UEFI Runtime Services access. See [StandardRuntimeServices](#standardruntimeservices) section.                    |
 | &Storage / &mut Storage      | Always                           | Direct storage access. Conflicts with `Config`/`ConfigMut` params. See [Storage Access](#storage-access) section. |
 | (P1, P2, ...)                | When all inner params available  | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit. |
@@ -106,7 +105,7 @@ enforces parameter validation for pre-defined parameter types, detecting conflic
 - Both `Config<T>` and `ConfigMut<T>` for the same type T
 - `&mut Storage` combined with `Config<T>` or `ConfigMut<T>`
 - `&Storage` combined with `ConfigMut<T>`
-- Multiple `Commands`, `StandardBootServices`, or `StandardRuntimeServices` parameters
+- Multiple `Commands` or `StandardRuntimeServices` parameters
 ```
 
 ### Config\<T\> / ConfigMut\<T\>
@@ -243,25 +242,28 @@ conflict with protocol open/close tracking in the UEFI driver model.
 
 This type comes with a `mock(...)` method to make unit testing simple.
 
-### StandardBootServices
+### UEFI Services
 
-`StandardBootServices` provides immutable access to UEFI Boot Services functions. It is available once boot services
-have been initialized. Each component receives its own cloned instance.
+Components access UEFI Boot Services functionality through the granular services defined in the
+[`uefi_services`](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina/src/component/service/uefi_services)
+module, such as `ProtocolServices`, `EventServices`, `TplServices`, `ImageServices`, `ConfigurationTableServices`,
+`DriverServices`, and `TimerEventServices`. Each service is consumed the same way as any other
+`Service<T>` parameter, so a component only depends on the specific functionality it uses instead of the entire
+Boot Services table.
 
 ```rust
 # extern crate patina;
 use patina::{
     error::Result,
-    component::component,
-    uefi::boot_services::StandardBootServices,
+    component::{component, service::{Service, uefi_services::protocol::{ProtocolServices, ProtocolServicesExt}}},
 };
 
 pub struct MyComponent;
 
 #[component]
 impl MyComponent {
-    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
-        // Use boot services functions...
+    fn entry_point(self, protocols: Service<dyn ProtocolServices>) -> Result<()> {
+        // Use protocol services functions...
         Ok(())
     }
 }
@@ -321,7 +323,6 @@ use patina::{
         component,
         params::{Config, ConfigMut},
     },
-    uefi::boot_services::StandardBootServices,
 };
 
 // Basic component with configuration
