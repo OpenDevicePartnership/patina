@@ -50,7 +50,7 @@ patina_stacktrace = { version = "23.0.1", path = "core/patina_stacktrace" }
 patina_test = { version = "23.0.1", path = "components/patina_test" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
-r-efi = { version = "7", default-features = false }
+r-efi = { version = "7.1", default-features = false }
 scroll = { version = "0.13", default-features = false, features = ["derive"]}
 spin = { version = "0.12" }
 syn = { version = "3" }

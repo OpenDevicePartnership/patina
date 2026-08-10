@@ -13,6 +13,9 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
+pub use patina::standard::efi::industry::smbios::{
+    HANDLE_PI_RESERVED as SMBIOS_HANDLE_PI_RESERVED, STRING_MAX_LENGTH as SMBIOS_STRING_MAX_LENGTH,
+};
 use patina::standard::efi::{self, Handle, SMBIOS3_TABLE_GUID};
 use patina::uefi::boot_services::{BootServices, StandardBootServices};
 use zerocopy_derive::*;
@@ -25,12 +28,6 @@ pub type SmbiosHandle = u16;
 
 /// SMBIOS record type
 pub type SmbiosType = u8;
-
-/// Special handle value for automatic assignment
-pub const SMBIOS_HANDLE_PI_RESERVED: SmbiosHandle = 0xFFFE;
-
-/// SMBIOS string maximum length per specification
-pub const SMBIOS_STRING_MAX_LENGTH: usize = 64;
 
 /// SMBIOS table header structure
 ///
