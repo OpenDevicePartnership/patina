@@ -36,12 +36,12 @@ This example shows how to use the `skip` attribute paired with `cfg_attr` to ski
 ```rust
 # extern crate patina_test;
 # extern crate patina;
-use patina::uefi::boot_services::StandardBootServices;
+use patina::component::service::{Service, uefi_services::protocol::ProtocolServices};
 use patina_test::{error::Result, patina_test};
 
 #[patina_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
-fn my_test(bs: StandardBootServices) -> Result { todo!() }
+fn my_test(protocols: Service<dyn ProtocolServices>) -> Result { todo!() }
 ```
 
 Next is the `should_fail` attribute, which allows you to specify that a test should fail. It can also specify the
