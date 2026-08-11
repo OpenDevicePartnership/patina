@@ -73,7 +73,7 @@ const SMM_HANDLER_OFFSET: u64 = 0x8000;
 
 /// MSR index for `IA32_SMM_MONITOR_CTL`, which holds the MSEG base used to
 /// activate the dual-monitor treatment (Intel SDM Vol. 4).
-const IA32_SMM_MONITOR_CTL: u32 = 0x9b;
+const IA32_SMM_MONITOR_CTL_MSR: u32 = 0x9b;
 
 /// `IA32_SMM_MONITOR_CTL.Valid` (bit 0). An STM may only be invoked when set.
 const SMM_MONITOR_CTL_VALID: u64 = 1;
@@ -540,7 +540,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // reported by CPUID.01H:ECX.VMX. Only the architecturally defined Valid and MsegBase
         // fields are set; reserved bits are masked off above, so the write cannot #GP on a
         // reserved-bit violation. The write affects only this logical processor's MSR.
-        unsafe { write_msr(IA32_SMM_MONITOR_CTL, value) };
+        unsafe { write_msr(IA32_SMM_MONITOR_CTL_MSR, value) };
         log::debug!("CPU {} programmed IA32_SMM_MONITOR_CTL = 0x{:x}", cpu_id, value);
     }
 
