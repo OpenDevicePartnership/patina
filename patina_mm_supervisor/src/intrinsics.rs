@@ -85,14 +85,12 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 // Depends on the running processor's `cpuid` state, which cannot be exercised
 // deterministically in a host-based unit test.
 #[cfg_attr(coverage, coverage(off))]
-pub fn get_current_cpu_id() -> u32 {
+pub fn get_current_cpu_id() -> CpuidResult {
     // Use CPUID to get the initial APIC ID
-    // CPUID function 0x01, EBX[31:24] contains the initial APIC ID
+    // CPUID function 0x01
 
     // CPUID is always available on x86_64 and `__cpuid` is a safe intrinsic.
-    let CpuidResult { ebx, .. } = __cpuid(CPUID_VERSION_INFO);
-
-    (ebx >> 24) & 0xff
+    __cpuid(CPUID_VERSION_INFO)
 }
 
 /// Checks if the current processor is the Bootstrap Processor (BSP).

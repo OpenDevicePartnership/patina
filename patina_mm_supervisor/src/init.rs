@@ -12,7 +12,6 @@
 //!
 
 use core::ffi::c_void;
-use core::arch::x86_64::{__cpuid, CpuidResult};
 
 use patina::{
     UEFI_PAGE_SIZE, align_range,
@@ -30,7 +29,7 @@ use patina_paging::{
 
 use crate::{
     AllocationType, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo, SharedPagingAllocator,
-    intrinsics::{CPUID_VERSION_INFO, read_cr3, write_msr},
+    intrinsics::{get_current_cpu_id, read_cr3, write_msr},
     is_buffer_inside_mmram,
     mem::page_allocator::SmramDescriptor,
     mem::{self, page_allocator::coalesced_smrr_range},
@@ -537,8 +536,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
         let value = (mseg_base & SMM_MONITOR_CTL_MSEG_BASE_MASK) | SMM_MONITOR_CTL_VALID;
 
-        let CpuidResult { ecx, .. } = __cpuid(CPUID_VERSION_INFO);
-        if (ecx & (1 << 5)) == 0 {
+        if (get_current_cpu_id().ecx & (1 << 5)) == 0 {
             log::warn!(
                 "CPU {} does not support VMX (CPUID.01H:ECX.VMX=0), cannot program IA32_SMM_MONITOR_CTL",
                 cpu_id
