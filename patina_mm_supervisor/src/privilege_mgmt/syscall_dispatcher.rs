@@ -241,7 +241,7 @@ impl SyscallDispatcher {
 
         match result {
             Err(err) if index == SyscallIndex::SaveStateRead2 => {
-                log::error!("Syscall SaveStateRead2: {:?} returned value=0x{:x}", index, err.as_usize());
+                log::trace!("Syscall SaveStateRead2: {:?} returned value=0x{:x}", index, err.as_usize());
                 Ok(err.as_usize() as u64) // Return error code to caller for SaveStateRead2
             }
             Err(err) => {

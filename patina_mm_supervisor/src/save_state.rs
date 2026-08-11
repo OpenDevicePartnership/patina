@@ -216,7 +216,7 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
     // An IO read needs the trap condition; if it can't be determined the CPU did
     // not trap an I/O instruction, which is NOT_FOUND rather than a policy denial.
     if register == MmSaveStateRegister::Io && condition.is_none() {
-        log::error!("SAVE_STATE_READ2: Unable to determine I/O condition from save state");
+        log::trace!("SAVE_STATE_READ2: Unable to determine I/O condition from save state");
         return Err(Status::NOT_FOUND);
     }
 
