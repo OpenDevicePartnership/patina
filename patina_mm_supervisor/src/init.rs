@@ -12,6 +12,7 @@
 //!
 
 use core::ffi::c_void;
+use core::arch::x86_64::{__cpuid, CpuidResult};
 
 use patina::{
     UEFI_PAGE_SIZE, align_range,
@@ -29,7 +30,7 @@ use patina_paging::{
 
 use crate::{
     AllocationType, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo, SharedPagingAllocator,
-    intrinsics::{read_cr3, write_msr},
+    intrinsics::{CPUID_VERSION_INFO, read_cr3, write_msr},
     is_buffer_inside_mmram,
     mem::page_allocator::SmramDescriptor,
     mem::{self, page_allocator::coalesced_smrr_range},
@@ -536,10 +537,20 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
         let value = (mseg_base & SMM_MONITOR_CTL_MSEG_BASE_MASK) | SMM_MONITOR_CTL_VALID;
 
+        let CpuidResult { ecx, .. } = __cpuid(CPUID_VERSION_INFO);
+        if (ecx & (1 << 5)) == 0 {
+            log::warn!(
+                "CPU {} does not support VMX (CPUID.01H:ECX.VMX=0), cannot program IA32_SMM_MONITOR_CTL",
+                cpu_id
+            );
+            return;
+        }
+
         // SAFETY: IA32_SMM_MONITOR_CTL is an architectural MSR available whenever VMX is
-        // reported by CPUID.01H:ECX.VMX. Only the architecturally defined Valid and MsegBase
-        // fields are set; reserved bits are masked off above, so the write cannot #GP on a
-        // reserved-bit violation. The write affects only this logical processor's MSR.
+        // reported by CPUID.01H:ECX.VMX. After the check above, only the architecturally
+        // defined Valid and MsegBase fields are set; reserved bits are masked off above,
+        // so the write cannot #GP on a reserved-bit violation. The write affects only this
+        // logical processor's MSR.
         unsafe { write_msr(IA32_SMM_MONITOR_CTL_MSR, value) };
         log::debug!("CPU {} programmed IA32_SMM_MONITOR_CTL = 0x{:x}", cpu_id, value);
     }
@@ -642,7 +653,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                 init_state().set_mseg_base(mseg_base);
                 log::info!("MSEG base 0x{:x} discovered from MSEG SMRAM HOB", mseg_base);
             }
-            _ => panic!("No usable MSEG SMRAM HOB; IA32_SMM_MONITOR_CTL will not be programmed"),
+            _ => log::warn!("No usable MSEG SMRAM HOB; IA32_SMM_MONITOR_CTL will not be programmed"),
         }
 
         // 1c. Patch every core's SMI-handler IDT descriptor to the Rust IDT now that the
