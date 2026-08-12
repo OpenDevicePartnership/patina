@@ -39,7 +39,10 @@ use patina_internal_cpu::save_state::{
     MmSaveStateRegister, PROCESSOR_INFO_ENTRY_SIZE,
 };
 
-use crate::{PageOwnership, privilege_mgmt::SyscallResult, query_address_ownership, state::security_state};
+use crate::{
+    PageOwnership, privilege_mgmt::SyscallResult, query_address_ownership, runtime::with_user_access,
+    state::security_state,
+};
 
 /// Size in bytes of one `SMRAM_SAVE_STATE_MAP` region.
 ///
@@ -188,17 +191,18 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         }
     }
 
-    // Create a single mutable slice over the validated user output buffer so the
-    // individual read handlers write through safe slice operations.
-    //
-    // SAFETY: `buffer` was validated above as a user-owned, writable region of
-    // at least `write_size` bytes.  User code is not executing concurrently
-    // while the supervisor services this syscall, so there is no aliasing.
-    let out = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, write_size) };
+    let mut out = [0u8; IO_INFO_SIZE];
+    let out = &mut out[..write_size];
 
     // Special case: PROCESSOR_ID — always allowed, no policy check
     if register == MmSaveStateRegister::ProcessorId {
-        return read_processor_id(cpu_index, out);
+        read_processor_id(cpu_index, out)?;
+        with_user_access(|| {
+            // SAFETY: `buffer` was validated above as a user-owned.
+            // `out` is an equally sized, non-overlapping supervisor stack buffer, and SMAP is masked here.
+            unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), buffer as *mut u8, out.len()) };
+        });
+        return Ok(0);
     }
 
     // Build a safe view over this CPU's save state region.
@@ -244,7 +248,15 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         MmSaveStateRegister::Io => read_io_register(&view, out),
         MmSaveStateRegister::Lma => read_lma_register(&view, width, out),
         _ => read_architectural_register(&view, register, width, out),
-    }
+    }?;
+
+    with_user_access(|| {
+        // SAFETY: `buffer` was validated above as a user-owned.
+        // `out` is an equally sized, non-overlapping supervisor stack buffer, and SMAP is masked here.
+        unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), buffer as *mut u8, out.len()) };
+    });
+
+    Ok(0)
 }
 
 /// Returns the per-CPU save-state metadata captured at initialization.
@@ -535,17 +547,18 @@ fn read_io_register(view: &SaveStateView, out: &mut [u8]) -> SyscallResult {
         }
     };
 
-    // 4. Serialize the EFI_MM_SAVE_STATE_IO_INFO structure into the output
-    //    buffer by writing the whole #[repr(C)] struct at once.
+    // 4. Serialize the EFI_MM_SAVE_STATE_IO_INFO structure into the output buffer.
     let io_info =
         MmSaveStateIoInfo { io_data, io_port: parsed.io_port, io_width: parsed.io_width, io_type: parsed.io_type };
-
-    // SAFETY: `out` was validated as a user owned, writable region of at least
-    // `IO_INFO_SIZE` bytes, which equals `size_of::<MmSaveStateIoInfo>()`.
-    // `write_unaligned` accounts for the buffer's unknown alignment.
-    unsafe {
-        core::ptr::write_unaligned(out.as_mut_ptr() as *mut MmSaveStateIoInfo, io_info);
-    }
+    let out = out.get_mut(..IO_INFO_SIZE).ok_or(Status::BUFFER_TOO_SMALL)?;
+    out.fill(0);
+    let io_port = core::mem::offset_of!(MmSaveStateIoInfo, io_port);
+    let io_width = core::mem::offset_of!(MmSaveStateIoInfo, io_width);
+    let io_type = core::mem::offset_of!(MmSaveStateIoInfo, io_type);
+    out[..8].copy_from_slice(&io_info.io_data.to_le_bytes());
+    out[io_port..io_port + 2].copy_from_slice(&io_info.io_port.to_le_bytes());
+    out[io_width..io_width + 4].copy_from_slice(&io_info.io_width.to_le_bytes());
+    out[io_type..io_type + 4].copy_from_slice(&io_info.io_type.to_le_bytes());
 
     Ok(0)
 }

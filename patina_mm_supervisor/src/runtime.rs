@@ -72,7 +72,7 @@ unsafe fn enable_smap() {
 
 /// Runs `access` with SMAP temporarily disabled so the supervisor can read or
 /// write user-owned memory, restoring SMAP protection when it returns.
-fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
+pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
     // SAFETY: `disable_smap`/`enable_smap` are called as a balanced pair around `access`,
     // upholding the invariant that SMAP protection is always restored before returning. The
     // caller of `with_user_access` is responsible for ensuring `access` only touches valid,
