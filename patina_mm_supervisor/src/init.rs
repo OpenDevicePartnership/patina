@@ -29,8 +29,9 @@ use patina_paging::{
 
 use crate::{
     AllocationType, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo, SharedPagingAllocator,
-    intrinsics::read_cr3,
+    intrinsics::{get_current_cpu_id, read_cr3, write_msr},
     is_buffer_inside_mmram,
+    mem::page_allocator::SmramDescriptor,
     mem::{self, page_allocator::coalesced_smrr_range},
     mm_policy::{self, MemDescriptorV1_0, dump_policy, gate::PolicyGate, walk_page_table},
     query_address_ownership,
@@ -69,6 +70,16 @@ pub enum PolicyInitError {
 
 /// Offset from SMBASE where the SMI handler code is located.
 const SMM_HANDLER_OFFSET: u64 = 0x8000;
+
+/// MSR index for `IA32_SMM_MONITOR_CTL`, which holds the MSEG base used to
+/// activate the dual-monitor treatment (Intel SDM Vol. 4).
+const IA32_SMM_MONITOR_CTL_MSR: u32 = 0x9b;
+
+/// `IA32_SMM_MONITOR_CTL.Valid` (bit 0). An STM may only be invoked when set.
+const SMM_MONITOR_CTL_VALID: u64 = 1;
+
+/// `IA32_SMM_MONITOR_CTL.MsegBase` (bits 31:12).
+const SMM_MONITOR_CTL_MSEG_BASE_MASK: u64 = 0xffff_f000;
 
 /// Index into the Fixup64 array for the SMI handler IDTR pointer.
 const FIXUP64_SMI_HANDLER_IDTR: usize = 5;
@@ -501,12 +512,45 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let core_type = if is_bsp { "BSP" } else { "AP" };
         log::trace!("{} (CPU {}) performing per-core initialization...", core_type, cpu_id);
 
+        // IA32_SMM_MONITOR_CTL is per-logical-processor, so every core programs it.
+        Self::program_mseg_base(cpu_id);
+
         let range =
             init_state().smrr_range().expect("SMRR range must be determined during BSP init before per-core init");
         smrr_initialize(range);
         configure_smm_code_access();
 
         log::trace!("{} (CPU {}) per-core initialization complete.", core_type, cpu_id);
+    }
+
+    /// Programs this logical processor's `IA32_SMM_MONITOR_CTL` with the MSEG base.
+    ///
+    /// The MSEG base discovered from the MSEG SMRAM HOB is written along with the
+    /// Valid bit so an STM can later be activated, and so software can read the region back.
+    ///
+    /// No-op when the platform publishes no MSEG SMRAM HOB.
+    fn program_mseg_base(cpu_id: u32) {
+        let Some(mseg_base) = init_state().mseg_base() else {
+            return;
+        };
+
+        let value = (mseg_base & SMM_MONITOR_CTL_MSEG_BASE_MASK) | SMM_MONITOR_CTL_VALID;
+
+        if (get_current_cpu_id().ecx & (1 << 5)) == 0 {
+            log::warn!(
+                "CPU {} does not support VMX (CPUID.01H:ECX.VMX=0), cannot program IA32_SMM_MONITOR_CTL",
+                cpu_id
+            );
+            return;
+        }
+
+        // SAFETY: IA32_SMM_MONITOR_CTL is an architectural MSR available whenever VMX is
+        // reported by CPUID.01H:ECX.VMX. After the check above, only the architecturally
+        // defined Valid and MsegBase fields are set; reserved bits are masked off above,
+        // so the write cannot #GP on a reserved-bit violation. The write affects only this
+        // logical processor's MSR.
+        unsafe { write_msr(IA32_SMM_MONITOR_CTL_MSR, value) };
+        log::debug!("CPU {} programmed IA32_SMM_MONITOR_CTL = 0x{:x}", cpu_id, value);
     }
 
     /// Discovers the MM Supervisor User module entry point from the HOB list.
@@ -597,6 +641,18 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             .ok_or(PolicyInitError::HobNotFound)?;
         security_state().set_save_state_info(SaveStateInfo { number_of_cpus, processor_info, sm_base });
         log::info!("Save-state metadata initialized for {} CPU(s)", number_of_cpus);
+
+        // 1b-ii. Process the MSEG SMRAM HOB (`gMsegSmramGuid`), if published. It carries the
+        //        MSEG region reserved for an STM. Each core programs the base into
+        //        IA32_SMM_MONITOR_CTL during per-core init. Platforms without STM/SEA
+        //        integration do not publish this HOB, so its absence is not an error.
+        match find_guid_hob(hob_list_info, crate::MSEG_SMRAM_HOB_GUID).and_then(parse_mseg_smram_hob) {
+            Some(mseg_base) => {
+                init_state().set_mseg_base(mseg_base);
+                log::info!("MSEG base 0x{:x} discovered from MSEG SMRAM HOB", mseg_base);
+            }
+            _ => log::warn!("No usable MSEG SMRAM HOB; IA32_SMM_MONITOR_CTL will not be programmed"),
+        }
 
         // 1c. Patch every core's SMI-handler IDT descriptor to the Rust IDT now that the
         //     CPU count is known (the SMI entry blocks were already copied per SMBASE, so
@@ -820,6 +876,33 @@ fn find_guid_hob(hob_list_info: &PhaseHandoffInformationTable, target_guid: pati
     None
 }
 
+/// Parses the MSEG SMRAM HOB payload (`gMsegSmramGuid`), a single
+/// [`SmramDescriptor`] describing the MSEG region carved out of SMRAM.
+///
+/// Returns the MSEG base address, or `None` if the region is empty.
+fn parse_mseg_smram_hob(data: &[u8]) -> Option<u64> {
+    // `read_from_prefix` validates the length and copies the bytes out, so it imposes no
+    // alignment or validity precondition on the HOB buffer and needs no `unsafe`.
+    let (descriptor, _) = SmramDescriptor::read_from_prefix(data)
+        .inspect_err(|_| {
+            log::error!("MSEG SMRAM HOB too small: {} < {}", data.len(), core::mem::size_of::<SmramDescriptor>())
+        })
+        .ok()?;
+
+    if descriptor.physical_size == 0 {
+        log::warn!("MSEG SMRAM HOB describes an empty region");
+        return None;
+    }
+
+    let base = descriptor.cpu_start;
+    if base & !SMM_MONITOR_CTL_MSEG_BASE_MASK != 0 {
+        log::error!("MSEG base 0x{:x} is not 4 KiB aligned or lies above 4 GiB", base);
+        return None;
+    }
+
+    Some(base)
+}
+
 /// Parses an `MP_INFORMATION_HOB_DATA` payload (`gMpInformationHobGuid`).
 ///
 /// Returns `(number_of_cpus, processor_info_ptr)` where `processor_info_ptr`
@@ -986,4 +1069,52 @@ unsafe fn init_user_comm_buffer(data: &[u8]) -> Result<(u64, u64, u64, u64), Pol
     }
 
     Ok((user_comm_buffer, user_comm_buffer_size, user_comm_buffer_internal, status_buffer))
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn mseg_smram_hob_data(
+        physical_start: u64,
+        cpu_start: u64,
+        physical_size: u64,
+    ) -> [u8; core::mem::size_of::<SmramDescriptor>()] {
+        let mut data = [0; core::mem::size_of::<SmramDescriptor>()];
+        data[0..8].copy_from_slice(&physical_start.to_ne_bytes());
+        data[8..16].copy_from_slice(&cpu_start.to_ne_bytes());
+        data[16..24].copy_from_slice(&physical_size.to_ne_bytes());
+        data
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_returns_cpu_start() {
+        let data = mseg_smram_hob_data(0x0080_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data), Some(0x0040_0000));
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_truncated_descriptor() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data[..data.len() - 1]), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_empty_region() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0);
+
+        assert_eq!(parse_mseg_smram_hob(&data), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_invalid_base() {
+        for invalid_base in [0x0040_0001, 0x1_0000_0000] {
+            let data = mseg_smram_hob_data(invalid_base, invalid_base, 0x0002_0000);
+
+            assert_eq!(parse_mseg_smram_hob(&data), None);
+        }
+    }
 }

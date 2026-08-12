@@ -96,7 +96,7 @@ pub enum AllocationType {
 
 /// SMRAM descriptor structure matching EFI_SMRAM_DESCRIPTOR.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, zerocopy_derive::FromBytes, zerocopy_derive::Immutable)]
 pub struct SmramDescriptor {
     /// Physical start address of the SMRAM region.
     pub physical_start: efi::PhysicalAddress,

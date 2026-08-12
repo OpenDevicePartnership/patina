@@ -116,6 +116,14 @@ pub const MM_SUPV_PASS_DOWN_HOB_GUID: patina::BinaryGuid =
 pub const MP_INFORMATION_HOB_GUID: patina::BinaryGuid =
     patina::BinaryGuid::from_string("ba33f15d-4000-45c1-8e88-f91692d457e3");
 
+// GUID for gMsegSmramGuid (UefiCpuPkg/UefiCpuPkg.dec)
+// { 0x5802bce4, 0xeeee, 0x4e33, { 0xa1, 0x30, 0xeb, 0xad, 0x27, 0xf0, 0xe4, 0x39 } }
+/// GUID for the MSEG SMRAM HOB, which carries the `EFI_SMRAM_DESCRIPTOR` for the
+/// MSEG region carved out of SMRAM for an STM. Only published by platforms that
+/// integrate STM/SEA support.
+pub const MSEG_SMRAM_HOB_GUID: patina::BinaryGuid =
+    patina::BinaryGuid::from_string("5802bce4-eeee-4e33-a130-ebad27f0e439");
+
 /// MM Supervisor PassDown HOB Revision
 pub const MM_SUPV_PASS_DOWN_HOB_REVISION: u32 = 2;
 
@@ -313,8 +321,8 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// is properly set up. The function will perform basic sanity checks against the incoming parameters
     /// but does not validate the entire system state.
     pub unsafe fn entry_point(&'static self, cpu_index: usize, hob_list: *const c_void) {
-        // Get the current CPU's APIC ID
-        let cpu_id = get_current_cpu_id();
+        // Get the current CPU's APIC ID, EBX[31:24] contains the initial APIC ID
+        let cpu_id = (get_current_cpu_id().ebx >> 24) & 0xff;
 
         // Determine if we're BSP by checking IA32_APIC_BASE MSR
         let is_bsp = is_bsp();
