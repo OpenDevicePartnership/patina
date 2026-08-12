@@ -1070,3 +1070,51 @@ unsafe fn init_user_comm_buffer(data: &[u8]) -> Result<(u64, u64, u64, u64), Pol
 
     Ok((user_comm_buffer, user_comm_buffer_size, user_comm_buffer_internal, status_buffer))
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn mseg_smram_hob_data(
+        physical_start: u64,
+        cpu_start: u64,
+        physical_size: u64,
+    ) -> [u8; core::mem::size_of::<SmramDescriptor>()] {
+        let mut data = [0; core::mem::size_of::<SmramDescriptor>()];
+        data[0..8].copy_from_slice(&physical_start.to_ne_bytes());
+        data[8..16].copy_from_slice(&cpu_start.to_ne_bytes());
+        data[16..24].copy_from_slice(&physical_size.to_ne_bytes());
+        data
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_returns_cpu_start() {
+        let data = mseg_smram_hob_data(0x0080_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data), Some(0x0040_0000));
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_truncated_descriptor() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data[..data.len() - 1]), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_empty_region() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0);
+
+        assert_eq!(parse_mseg_smram_hob(&data), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_invalid_base() {
+        for invalid_base in [0x0040_0001, 0x1_0000_0000] {
+            let data = mseg_smram_hob_data(invalid_base, invalid_base, 0x0002_0000);
+
+            assert_eq!(parse_mseg_smram_hob(&data), None);
+        }
+    }
+}
