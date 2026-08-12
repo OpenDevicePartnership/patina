@@ -16,7 +16,9 @@ use patina::{
     BinaryGuid,
     component::{
         hob::FromHob,
-        service::{IntoService, Service, perf_timer::ArchTimerFunctionality, performance::PerformanceManager},
+        service::{
+            IntoService, cell::ServiceCell, perf_timer::ArchTimerFunctionality, performance::PerformanceManager,
+        },
     },
     error::EfiError,
     performance::{
@@ -51,7 +53,7 @@ use table::Fbpt;
 
 /// This is a temporary global reference for code that has not yet been converted to use the instanced
 /// core mechanisms. This should be removed once `driver_services.rs` is converted.
-pub(crate) static CORE_PERFORMANCE: Service<CorePerformance> = Service::new_uninit();
+pub(crate) static CORE_PERFORMANCE: ServiceCell<CorePerformance> = ServiceCell::new();
 
 /// Performance measurement service owned by the DXE Core.
 ///
