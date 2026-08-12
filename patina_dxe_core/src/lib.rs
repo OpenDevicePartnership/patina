@@ -517,7 +517,7 @@ impl<P: PlatformInfo> Core<P> {
             self.pi_dispatcher.set_performance(&service);
 
             // This should be removed once more code is converted to use platform generic.
-            performance::CORE_PERFORMANCE.replace(&service);
+            performance::CORE_PERFORMANCE.publish(service).expect("CORE_PERFORMANCE was already published");
         }
     }
 
