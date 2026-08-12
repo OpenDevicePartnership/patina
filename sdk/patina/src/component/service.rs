@@ -121,7 +121,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{borrow::Cow, boxed::Box};
-use core::{any::Any, cell::OnceCell, marker::PhantomData, ops::Deref};
+use core::{any::Any, cell::OnceCell, fmt::Debug, marker::PhantomData, ops::Deref};
 
 use crate::component::{
     metadata::MetaData,
@@ -387,6 +387,13 @@ impl<T: ?Sized + 'static> Clone for Service<T> {
     }
 }
 
+impl<T: ?Sized + 'static> Debug for Service<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Note: The wrapped value is type-erased, so only the type name can be shown, not its contents.
+        f.debug_struct("Service").field("type", &super::type_name::normalized::<T>()).finish()
+    }
+}
+
 // SAFETY: Service<T> wraps a static reference with PhantomData.
 // All access is through immutable Deref. Static lifetime and immutable access make it Send+Sync safe.
 unsafe impl<T: ?Sized + 'static> Send for Service<T> {}
@@ -582,6 +589,20 @@ mod tests {
         let service: Service<dyn MyService> = Service::mock(Box::new(MockService));
         consume_service(service.clone());
         consume_service(service); // This should work as well, since Service is Copy
+    }
+
+    #[test]
+    fn test_service_debug_shows_type_name_not_value() {
+        trait MyService {}
+
+        struct MockService;
+
+        impl MyService for MockService {}
+
+        let service: Service<dyn MyService> = Service::mock(Box::new(MockService));
+        let debug_str = alloc::format!("{service:?}");
+        assert!(debug_str.contains("Service"));
+        assert!(debug_str.contains("MyService"));
     }
 
     #[test]
