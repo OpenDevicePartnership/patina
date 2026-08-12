@@ -24,7 +24,7 @@ use core::{cmp::Ordering, ffi::c_void};
 use patina::standard::efi;
 use patina::{
     BinaryGuid, Char16Str, OwnedGuid,
-    component::service::Service,
+    component::service::{Service, cell::ServiceCell},
     crc32,
     error::EfiError,
     pi::{
@@ -97,7 +97,7 @@ pub(crate) struct PiDispatcher<P: PlatformInfo> {
     /// Section extractor used when working with firmware volumes.
     section_extractor: CoreExtractor<P::Extractor>,
     /// Optional performance service reference.
-    performance: Service<CorePerformance>,
+    performance: ServiceCell<CorePerformance>,
 }
 
 impl<P: PlatformInfo> PiDispatcher<P> {
@@ -109,12 +109,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             debug_image_data: debug_image_info_table::DebugImageInfoData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
             section_extractor: CoreExtractor::new(section_extractor),
-            performance: Service::new_uninit(),
+            performance: ServiceCell::new(),
         }
     }
 
     pub(crate) fn set_performance(&self, performance: &Service<performance::CorePerformance>) {
-        self.performance.replace(performance);
+        self.performance.publish(*performance).expect("Performance service was already set on the PI dispatcher!");
     }
 
     fn instance<'a>() -> &'a Self {
