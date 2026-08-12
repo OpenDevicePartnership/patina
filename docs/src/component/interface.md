@@ -193,6 +193,10 @@ component receives their own service instance (all of which point back to the sa
 allows them stash it for their own needs post component execution.
 ```
 
+See [Storing State for Later Use](storing_state.md) for the full set of patterns for making a value resolved in
+`entry_point` available to code that runs later, including event/protocol notifications and raw `extern "efiapi"`
+callbacks, without resorting to global statics.
+
 This type comes with a `mock(...)` method to make unit testing simple.
 
 ### Commands
