@@ -192,7 +192,7 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
     }
 
     let mut out = [0u8; IO_INFO_SIZE];
-    let out = &mut out[..write_size];
+    let out = out.get_mut(..write_size).ok_or(Status::BUFFER_TOO_SMALL)?;
 
     // Special case: PROCESSOR_ID — always allowed, no policy check
     if register == MmSaveStateRegister::ProcessorId {
@@ -555,10 +555,12 @@ fn read_io_register(view: &SaveStateView, out: &mut [u8]) -> SyscallResult {
     let io_port = core::mem::offset_of!(MmSaveStateIoInfo, io_port);
     let io_width = core::mem::offset_of!(MmSaveStateIoInfo, io_width);
     let io_type = core::mem::offset_of!(MmSaveStateIoInfo, io_type);
-    out[..8].copy_from_slice(&io_info.io_data.to_le_bytes());
-    out[io_port..io_port + 2].copy_from_slice(&io_info.io_port.to_le_bytes());
-    out[io_width..io_width + 4].copy_from_slice(&io_info.io_width.to_le_bytes());
-    out[io_type..io_type + 4].copy_from_slice(&io_info.io_type.to_le_bytes());
+    out.get_mut(..8).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_data.to_le_bytes());
+    out.get_mut(io_port..io_port + 2).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_port.to_le_bytes());
+    out.get_mut(io_width..io_width + 4)
+        .ok_or(Status::BUFFER_TOO_SMALL)?
+        .copy_from_slice(&io_info.io_width.to_le_bytes());
+    out.get_mut(io_type..io_type + 4).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_type.to_le_bytes());
 
     Ok(0)
 }
