@@ -55,6 +55,7 @@
 - [Component Crate Requirements](component/requirements.md)
 - [Component Interface](component/interface.md)
 - [Getting Started with Components](component/getting_started.md)
+- [Patina UEFI Services](component/uefi_services.md)
 - [Storing State for Later Use](component/storing_state.md)
 
 # Patina DXE Core Platform Integration
