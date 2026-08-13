@@ -251,9 +251,9 @@ This type comes with a `mock(...)` method to make unit testing simple.
 Components access UEFI Boot Services functionality through the granular services defined in the
 [`uefi_services`](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina/src/component/service/uefi_services)
 module, such as `ProtocolServices`, `EventServices`, `TplServices`, `ImageServices`, `ConfigurationTableServices`,
-`DriverServices`, and `TimerEventServices`. Each service is consumed the same way as any other
+`DriverServices`, `TimerEventServices`, and `TimingServices`. Each service is consumed the same way as any other
 `Service<T>` parameter, so a component only depends on the specific functionality it uses instead of the entire
-Boot Services table.
+Boot Services table. See [Patina UEFI Services](uefi_services.md) for more information.
 
 ```rust
 # extern crate patina;
