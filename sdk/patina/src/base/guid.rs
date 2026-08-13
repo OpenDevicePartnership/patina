@@ -202,7 +202,7 @@ pub type OwnedGuid = Guid<'static>;
 /// println!("Header GUID: {}", header.guid.as_guid());
 /// ```
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinaryGuid(pub efi::Guid);
 
 impl BinaryGuid {
@@ -369,6 +369,13 @@ impl<'a> PartialEq<BinaryGuid> for Guid<'a> {
 
 // Display using Guid's implementation
 impl core::fmt::Display for BinaryGuid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_guid().fmt(f)
+    }
+}
+
+// Debug using Guid's implementation
+impl core::fmt::Debug for BinaryGuid {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.as_guid().fmt(f)
     }
@@ -1528,8 +1535,8 @@ mod tests {
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
         let debug_string = format!("{:?}", binary_guid);
 
-        // Debug should show the full type and inner value
-        assert!(debug_string.contains("BinaryGuid"));
+        // Defers to Guid's Debug impl
+        assert_eq!(debug_string, TEST_GUID_STRING_UPPER);
     }
 
     #[test]
