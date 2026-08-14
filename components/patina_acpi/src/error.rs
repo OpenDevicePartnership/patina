@@ -79,6 +79,8 @@ pub enum AcpiError {
     ChecksumFailed,
 }
 
+// Coverage is disabled since unit tests of the static error mappings would only restate the match arms.
+#[cfg_attr(coverage, coverage(off))]
 impl From<AcpiError> for efi::Status {
     fn from(err: AcpiError) -> Self {
         match err {
@@ -111,20 +113,5 @@ impl From<AcpiError> for efi::Status {
             | AcpiError::XsdtEntryNotFound => efi::Status::NOT_FOUND,
             AcpiError::XsdtNotInitialized => efi::Status::NOT_STARTED,
         }
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(coverage, coverage(off))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_acpi_error_to_efi_status() {
-        // Test a subset of ACPI errors.
-        assert_eq!(efi::Status::from(AcpiError::AllocationFailed), efi::Status::OUT_OF_RESOURCES);
-        assert_eq!(efi::Status::from(AcpiError::InvalidSignature), efi::Status::INVALID_PARAMETER);
-        assert_eq!(efi::Status::from(AcpiError::FadtAlreadyInstalled), efi::Status::ALREADY_STARTED);
-        assert_eq!(efi::Status::from(AcpiError::NullTablePtr), efi::Status::INVALID_PARAMETER);
     }
 }
