@@ -70,19 +70,40 @@ unsafe fn enable_smap() {
     }
 }
 
-/// Runs `access` with SMAP temporarily disabled so the supervisor can read or
-/// write user-owned memory, restoring SMAP protection when it returns.
-pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
-    // SAFETY: `disable_smap`/`enable_smap` are called as a balanced pair around `access`,
-    // upholding the invariant that SMAP protection is always restored before returning. The
-    // caller of `with_user_access` is responsible for ensuring `access` only touches valid,
-    // correctly-owned user memory while SMAP is lifted.
-    unsafe {
-        disable_smap();
-        let result = access();
-        enable_smap();
-        result
+/// Keeps SMAP disabled while the guard is alive and restores it when dropped.
+#[must_use = "SMAP is re-enabled when the guard is dropped"]
+struct UserAccessGuard {
+    _private: (),
+}
+
+impl UserAccessGuard {
+    /// Disables SMAP until the returned guard is dropped.
+    ///
+    /// ## Safety
+    ///
+    /// The guarded scope must only access valid, correctly-owned user memory. Guards must
+    /// not be nested, and the guard must remain on the CPU where it was created.
+    unsafe fn new() -> Self {
+        // SAFETY: the caller upholds the user-memory access requirements for the guard's lifetime.
+        unsafe { disable_smap() };
+        Self { _private: () }
     }
+}
+
+impl Drop for UserAccessGuard {
+    fn drop(&mut self) {
+        // SAFETY: this guard can only be constructed by `new`, which disables SMAP once.
+        unsafe { enable_smap() };
+    }
+}
+
+/// Runs `access` with SMAP temporarily disabled so the supervisor can read or
+/// write user-owned memory, restoring SMAP protection when the guard is dropped.
+pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
+    // SAFETY: the closure is scoped to the guard's lifetime, and callers are responsible
+    // for ensuring it only accesses valid, correctly-owned user memory.
+    let _user_access = unsafe { UserAccessGuard::new() };
+    access()
 }
 
 impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
