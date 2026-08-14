@@ -72,9 +72,7 @@ unsafe fn enable_smap() {
 
 /// Keeps SMAP disabled while the guard is alive and restores it when dropped.
 #[must_use = "SMAP is re-enabled when the guard is dropped"]
-struct UserAccessGuard {
-    _private: (),
-}
+struct UserAccessGuard;
 
 impl UserAccessGuard {
     /// Disables SMAP until the returned guard is dropped.
@@ -86,7 +84,7 @@ impl UserAccessGuard {
     unsafe fn new() -> Self {
         // SAFETY: the caller upholds the user-memory access requirements for the guard's lifetime.
         unsafe { disable_smap() };
-        Self { _private: () }
+        Self
     }
 }
 
