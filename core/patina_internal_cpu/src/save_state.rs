@@ -42,6 +42,8 @@ pub mod intel;
 
 pub mod amd;
 
+use zerocopy_derive::{Immutable, IntoBytes};
+
 /// `EFI_MM_SAVE_STATE_REGISTER` values from the PI Specification.
 ///
 /// These correspond to the registers that can be read from the SMRAM save
@@ -281,16 +283,20 @@ pub struct ParsedIoInfo {
 /// `EFI_MM_SAVE_STATE_IO_INFO` — written to the user buffer when reading
 /// the IO pseudo-register.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, IntoBytes, Immutable)]
 pub struct MmSaveStateIoInfo {
     /// I/O data value (from RAX, zero-extended).
     pub io_data: u64,
     /// I/O port address.
     pub io_port: u16,
+    /// Explicit padding required by the C ABI.
+    pub _pad0: [u8; 2],
     /// I/O width enum (`EFI_MM_SAVE_STATE_IO_WIDTH`).
     pub io_width: u32,
     /// I/O type enum (`EFI_MM_SAVE_STATE_IO_TYPE`).
     pub io_type: u32,
+    /// Explicit trailing padding required by the C ABI.
+    pub _pad1: [u8; 4],
 }
 
 const _: () = assert!(core::mem::size_of::<MmSaveStateIoInfo>() == IO_INFO_SIZE);
@@ -392,8 +398,15 @@ mod tests {
         assert_eq!(core::mem::size_of::<MmSaveStateIoInfo>(), 24);
         assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, io_data), 0);
         assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, io_port), 8);
+        assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, _pad0), 10);
         assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, io_width), 12);
         assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, io_type), 16);
+        assert_eq!(core::mem::offset_of!(MmSaveStateIoInfo, _pad1), 20);
+
+        let info = MmSaveStateIoInfo { io_data: 0, io_port: 0, _pad0: [0; 2], io_width: 0, io_type: 0, _pad1: [0; 4] };
+        let bytes = zerocopy::IntoBytes::as_bytes(&info);
+        assert_eq!(&bytes[10..12], &[0; 2]);
+        assert_eq!(&bytes[20..24], &[0; 4]);
     }
 
     /// Verifies the active-vendor dispatch resolves to AMD only when

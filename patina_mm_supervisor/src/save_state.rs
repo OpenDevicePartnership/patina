@@ -38,6 +38,7 @@ use patina_internal_cpu::save_state::{
     self, IA32_EFER_LMA, IO_INFO_SIZE, IO_TYPE_INPUT, IO_TYPE_OUTPUT, LMA_32BIT, LMA_64BIT, MmSaveStateIoInfo,
     MmSaveStateRegister, PROCESSOR_INFO_ENTRY_SIZE,
 };
+use zerocopy::IntoBytes;
 
 use crate::{
     PageOwnership, privilege_mgmt::SyscallResult, query_address_ownership, runtime::with_user_access,
@@ -555,19 +556,16 @@ fn read_io_register(view: &SaveStateView, out: &mut [u8]) -> SyscallResult {
     };
 
     // 4. Serialize the EFI_MM_SAVE_STATE_IO_INFO structure into the output buffer.
-    let io_info =
-        MmSaveStateIoInfo { io_data, io_port: parsed.io_port, io_width: parsed.io_width, io_type: parsed.io_type };
+    let io_info = MmSaveStateIoInfo {
+        io_data,
+        io_port: parsed.io_port,
+        _pad0: [0; 2],
+        io_width: parsed.io_width,
+        io_type: parsed.io_type,
+        _pad1: [0; 4],
+    };
     let out = out.get_mut(..IO_INFO_SIZE).ok_or(Status::BUFFER_TOO_SMALL)?;
-    out.fill(0);
-    let io_port = core::mem::offset_of!(MmSaveStateIoInfo, io_port);
-    let io_width = core::mem::offset_of!(MmSaveStateIoInfo, io_width);
-    let io_type = core::mem::offset_of!(MmSaveStateIoInfo, io_type);
-    out.get_mut(..8).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_data.to_le_bytes());
-    out.get_mut(io_port..io_port + 2).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_port.to_le_bytes());
-    out.get_mut(io_width..io_width + 4)
-        .ok_or(Status::BUFFER_TOO_SMALL)?
-        .copy_from_slice(&io_info.io_width.to_le_bytes());
-    out.get_mut(io_type..io_type + 4).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&io_info.io_type.to_le_bytes());
+    out.copy_from_slice(io_info.as_bytes());
 
     Ok(0)
 }
@@ -679,15 +677,15 @@ mod tests {
         assert_eq!(read_io_register(&view, &mut out), Ok(0));
 
         let parsed = save_state::parse_io_field(io_field).unwrap();
-        let io_port = core::mem::offset_of!(MmSaveStateIoInfo, io_port);
-        let io_width = core::mem::offset_of!(MmSaveStateIoInfo, io_width);
-        let io_type = core::mem::offset_of!(MmSaveStateIoInfo, io_type);
-        assert_eq!(u64::from_le_bytes(out[..8].try_into().unwrap()), IO_DATA as u64);
-        assert_eq!(u16::from_le_bytes(out[io_port..io_port + 2].try_into().unwrap()), IO_PORT);
-        assert_eq!(u32::from_le_bytes(out[io_width..io_width + 4].try_into().unwrap()), parsed.io_width);
-        assert_eq!(u32::from_le_bytes(out[io_type..io_type + 4].try_into().unwrap()), parsed.io_type);
-        assert!(out[io_port + 2..io_width].iter().all(|byte| *byte == 0));
-        assert!(out[io_type + 4..].iter().all(|byte| *byte == 0));
+        let expected = MmSaveStateIoInfo {
+            io_data: IO_DATA as u64,
+            io_port: IO_PORT,
+            _pad0: [0; 2],
+            io_width: parsed.io_width,
+            io_type: parsed.io_type,
+            _pad1: [0; 4],
+        };
+        assert_eq!(out, expected.as_bytes());
     }
 
     #[test]

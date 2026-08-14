@@ -20,6 +20,8 @@ spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
 patina_mtrr = { workspace = true }
