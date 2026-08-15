@@ -8,7 +8,7 @@
 //!
 use core::{ffi::c_void, mem::size_of, num::NonZeroUsize, ptr::NonNull, slice};
 
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use patina::{
     pi::{
         self,
@@ -749,9 +749,23 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok(section) => section,
         };
 
-        let section_data = match section.try_content_as_slice() {
+        let section_content = match section.try_content_as_slice() {
             Ok(data) => data,
             Err(err) => return err.into(),
+        };
+        let owned_section_data: Vec<u8>;
+        let section_data = match section.header() {
+            patina_ffs::section::SectionHeader::FreeFormSubtypeGuid(header, _) => {
+                // EFI_SECTION_FREEFORM_SUBTYPE_GUID data returned by ReadSection includes the
+                // subtype GUID header followed by the payload, not just the payload bytes.
+                let header_bytes =
+                    // SAFETY: header is a valid reference to a SectionHeader::FreeFormSubtypeGuid,
+                    // and we are creating a slice of its bytes.
+                    unsafe { slice::from_raw_parts(core::ptr::from_ref(header).cast::<u8>(), core::mem::size_of_val(header)) };
+                owned_section_data = header_bytes.iter().chain(section_content.iter()).copied().collect();
+                owned_section_data.as_slice()
+            }
+            _ => section_content,
         };
 
         // get the buffer_size and buffer parameters from caller.
@@ -902,8 +916,10 @@ mod tests {
     use crate::{MockComponentInfo, MockCpuInfo, MockMemoryInfo, test_support};
     use patina::pi::{
         BootMode,
+        fw_fs::{fv::BlockMapEntry, fvb, ffs::section::header::FreeformSubtypeGuid},
         hob::{self, Hob, HobList},
     };
+    use patina_ffs::{file::File as FfsFile, section::{Section, SectionHeader}, volume::Volume};
     use patina_ffs_extractors::CompositeSectionExtractor;
     extern crate alloc;
     use crate::test_collateral;
@@ -1886,6 +1902,113 @@ mod tests {
                 let all_ff_remaining = remaining_data.iter().all(|&b| b == 0xFE);
                 assert!(all_ff_remaining, "Remaining buffer beyond section size should remain unchanged (all 0xFE)");
             }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_fv_read_section_freeform_subtype_returns_guid_plus_payload() {
+        fn enable_read_status(fv_bytes: &mut [u8]) {
+            // SAFETY: The serialized FV buffer starts with a valid FV header.
+            let mut header = unsafe { ptr::read_unaligned(fv_bytes.as_ptr() as *const patina::pi::fw_fs::fv::Header) };
+            header.attributes |= fvb::attributes::raw::fvb2::READ_STATUS;
+            header.checksum = 0;
+
+            // SAFETY: The serialized FV buffer is large enough to hold the header.
+            unsafe {
+                ptr::write_unaligned(
+                    fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header,
+                    header,
+                );
+            }
+
+            let header_len = header.header_length as usize;
+            let checksum = fv_bytes[..header_len]
+                .chunks_exact(2)
+                .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
+            header.checksum = 0u16.wrapping_sub(checksum);
+
+            // SAFETY: The serialized FV buffer is large enough to hold the header.
+            unsafe {
+                ptr::write_unaligned(
+                    fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header,
+                    header,
+                );
+            }
+        }
+
+        let file_guid = patina::BinaryGuid::from_fields(
+            0x12345678,
+            0x9abc,
+            0xdef0,
+            0x12,
+            0x34,
+            &[0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0],
+        );
+        let subtype_guid = patina::BinaryGuid::from_fields(
+            0x9bec7109,
+            0x6d7a,
+            0x413a,
+            0x8e,
+            0x4b,
+            &[0x01, 0x9c, 0xed, 0x05, 0x03, 0xe1],
+        );
+        let payload = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee];
+
+        let section = Section::new_from_header_with_data(
+            SectionHeader::FreeFormSubtypeGuid(
+                FreeformSubtypeGuid { sub_type_guid: subtype_guid },
+                payload.len() as u32,
+            ),
+            payload.clone(),
+        )
+        .expect("freeform subtype section should be created");
+
+        let mut file = FfsFile::new(file_guid, ffs::file::raw::r#type::FREEFORM);
+        file.sections_mut().push(section);
+
+        let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
+        fv.files_mut().push(file);
+
+        let mut fv_bytes = fv.serialize().expect("synthetic FV should serialize");
+        enable_read_status(&mut fv_bytes);
+
+        let leaked_fv = fv_bytes.leak();
+        let base_address = leaked_fv.as_ptr() as u64;
+
+        test_support::with_global_lock(|| {
+            static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
+            CORE.override_instance();
+            // SAFETY: Initializes the test GCD state for this test scope only.
+            unsafe { test_support::init_test_gcd(None) };
+
+            let fv_interface = MockProtocolData::new_fv_protocol(None);
+            let fv_ptr = NonNull::from(&*fv_interface);
+            let metadata = Metadata::new_fv(fv_interface, base_address);
+            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+
+            let fv_ptr_raw = fv_ptr.as_ptr();
+            let mut name_guid = file_guid.into_inner();
+            let mut auth_status = 0u32;
+            let expected_size = core::mem::size_of::<FreeformSubtypeGuid>() + payload.len();
+            let mut returned = vec![0u8; expected_size + 8];
+            let mut returned_ptr = returned.as_mut_ptr() as *mut c_void;
+            let mut returned_size = returned.len();
+
+            let status = MockProtocolData::fv_read_section_efiapi(
+                fv_ptr_raw,
+                &raw const name_guid,
+                ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
+                0,
+                &raw mut returned_ptr,
+                &raw mut returned_size,
+                &raw mut auth_status,
+            );
+
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(returned_size, expected_size);
+            assert_eq!(&returned[..16], subtype_guid.into_inner().as_bytes());
+            assert_eq!(&returned[16..returned_size], payload.as_slice());
         })
         .unwrap();
     }
