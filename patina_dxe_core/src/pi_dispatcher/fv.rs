@@ -753,19 +753,17 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok(data) => data,
             Err(err) => return err.into(),
         };
+
+        // Certain section types (Compression, GuidDefined, Version, FreeFormSubtypeGuid) have
+        // type-specific headers that the PI spec requires ReadSection to include in the returned
+        // data. For these types, we need to prepend the type-specific header bytes to the content.
+        let type_specific_header = section.header().type_specific_header_bytes();
         let owned_section_data: Vec<u8>;
-        let section_data = match section.header() {
-            patina_ffs::section::SectionHeader::FreeFormSubtypeGuid(header, _) => {
-                // EFI_SECTION_FREEFORM_SUBTYPE_GUID data returned by ReadSection includes the
-                // subtype GUID header followed by the payload, not just the payload bytes.
-                let header_bytes =
-                    // SAFETY: header is a valid reference to a SectionHeader::FreeFormSubtypeGuid,
-                    // and we are creating a slice of its bytes.
-                    unsafe { slice::from_raw_parts(core::ptr::from_ref(header).cast::<u8>(), core::mem::size_of_val(header)) };
-                owned_section_data = header_bytes.iter().chain(section_content.iter()).copied().collect();
-                owned_section_data.as_slice()
-            }
-            _ => section_content,
+        let section_data = if type_specific_header.is_empty() {
+            section_content
+        } else {
+            owned_section_data = type_specific_header.iter().chain(section_content.iter()).copied().collect();
+            owned_section_data.as_slice()
         };
 
         // get the buffer_size and buffer parameters from caller.
@@ -916,10 +914,15 @@ mod tests {
     use crate::{MockComponentInfo, MockCpuInfo, MockMemoryInfo, test_support};
     use patina::pi::{
         BootMode,
-        fw_fs::{fv::BlockMapEntry, fvb, ffs::section::header::FreeformSubtypeGuid},
+        fw_fs::{ffs::section::header::FreeformSubtypeGuid, fv::BlockMapEntry, fvb},
         hob::{self, Hob, HobList},
     };
-    use patina_ffs::{file::File as FfsFile, section::{Section, SectionHeader}, volume::Volume};
+    use patina_ffs::{
+        file::File as FfsFile,
+        section::{Section, SectionHeader},
+        volume::Volume,
+    };
+
     use patina_ffs_extractors::CompositeSectionExtractor;
     extern crate alloc;
     use crate::test_collateral;
@@ -1916,10 +1919,7 @@ mod tests {
 
             // SAFETY: The serialized FV buffer is large enough to hold the header.
             unsafe {
-                ptr::write_unaligned(
-                    fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header,
-                    header,
-                );
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
             }
 
             let header_len = header.header_length as usize;
@@ -1930,10 +1930,7 @@ mod tests {
 
             // SAFETY: The serialized FV buffer is large enough to hold the header.
             unsafe {
-                ptr::write_unaligned(
-                    fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header,
-                    header,
-                );
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
             }
         }
 
@@ -1988,7 +1985,7 @@ mod tests {
             CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
 
             let fv_ptr_raw = fv_ptr.as_ptr();
-            let mut name_guid = file_guid.into_inner();
+            let name_guid = file_guid.into_inner();
             let mut auth_status = 0u32;
             let expected_size = core::mem::size_of::<FreeformSubtypeGuid>() + payload.len();
             let mut returned = vec![0u8; expected_size + 8];
@@ -2007,8 +2004,8 @@ mod tests {
 
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(returned_size, expected_size);
-            assert_eq!(&returned[..16], subtype_guid.into_inner().as_bytes());
-            assert_eq!(&returned[16..returned_size], payload.as_slice());
+            assert_eq!(&returned[..size_of::<efi::Guid>()], subtype_guid.into_inner().as_bytes());
+            assert_eq!(&returned[size_of::<efi::Guid>()..returned_size], payload.as_slice());
         })
         .unwrap();
     }

@@ -149,45 +149,61 @@ impl SectionHeader {
         }
     }
 
+    /// Returns the bytes of the type-specific header for sections that have one.
+    ///
+    /// Section types like `Compression`, `GuidDefined`, `Version`, and `FreeFormSubtypeGuid`
+    /// have type-specific headers that appear after the common section header but before the
+    /// content. This method returns those header bytes.
+    ///
+    /// Returns an empty `Vec<u8>` for section types that do not have type-specific headers
+    /// (`Pad` and `Standard` sections).
+    ///
+    /// For `GuidDefined` sections, this includes both the `GuidDefined` header struct and the
+    /// GUID-specific data bytes.
+    pub fn type_specific_header_bytes(&self) -> Vec<u8> {
+        match self {
+            SectionHeader::Pad(_) | SectionHeader::Standard(_, _) => vec![],
+            SectionHeader::Compression(compression, _) => {
+                // SAFETY: compression is repr(C) and we are creating a byte slice of its contents.
+                unsafe { from_raw_parts(compression.as_ptr().cast::<u8>(), mem::size_of_val(compression)).to_vec() }
+            }
+            SectionHeader::GuidDefined(guid_defined, items, _) => {
+                // SAFETY: guid_defined is repr(C) and we are creating a byte slice of its contents.
+                let mut guid_defined_vec = unsafe {
+                    from_raw_parts(guid_defined.as_ptr().cast::<u8>(), mem::size_of_val(guid_defined)).to_vec()
+                };
+                guid_defined_vec.extend(items);
+                guid_defined_vec
+            }
+            SectionHeader::Version(version, _) => {
+                // SAFETY: version is repr(C) and we are creating a byte slice of its contents.
+                unsafe { from_raw_parts(version.as_ptr().cast::<u8>(), mem::size_of_val(version)).to_vec() }
+            }
+            SectionHeader::FreeFormSubtypeGuid(freeform_subtype_guid, _) => {
+                // SAFETY: freeform_subtype_guid is repr(C) and we are creating a byte slice of its contents.
+                unsafe {
+                    from_raw_parts(freeform_subtype_guid.as_ptr().cast::<u8>(), mem::size_of_val(freeform_subtype_guid))
+                        .to_vec()
+                }
+            }
+        }
+    }
+
     /// Serialize the header into bytes suitable for prefixing the section content.
     ///
     /// If the total section size exceeds `0xFFFFFF`, an extended-size header is emitted as per
     /// the PI spec.
     pub fn serialize(&self) -> Vec<u8> {
-        let (header_data, content_size) = match self {
-            SectionHeader::Pad(_content_size) => return Vec::new(),
-            SectionHeader::Standard(_, content_size) => (vec![0u8; 0], *content_size),
-            SectionHeader::Compression(compression, content_size) => {
-                //safety: compression is repr(C)
-                let compression_slice =
-                    unsafe { from_raw_parts(compression.as_ptr().cast::<u8>(), mem::size_of_val(compression)) };
-                (compression_slice.to_vec(), *content_size)
-            }
-            SectionHeader::GuidDefined(guid_defined, items, context_size) => {
-                //safety: guid_defined is repr(C)
-                let mut guid_defined_vec = unsafe {
-                    from_raw_parts(guid_defined.as_ptr().cast::<u8>(), mem::size_of_val(guid_defined)).to_vec()
-                };
-                guid_defined_vec.extend(items);
-                (guid_defined_vec, *context_size)
-            }
-            SectionHeader::Version(version, content_size) => {
-                //safety: version is repr(C)
-                let version_slice = unsafe { from_raw_parts(version.as_ptr().cast::<u8>(), mem::size_of_val(version)) };
-                (version_slice.to_vec(), *content_size)
-            }
-            SectionHeader::FreeFormSubtypeGuid(freeform_subtype_guid, content_size) => {
-                //safety: freeform_subtype_guid is repr(C)
-                let freeform_slice = unsafe {
-                    from_raw_parts(freeform_subtype_guid.as_ptr().cast::<u8>(), mem::size_of_val(freeform_subtype_guid))
-                };
-                (freeform_slice.to_vec(), *content_size)
-            }
-        };
+        if let SectionHeader::Pad(_) = self {
+            return Vec::new();
+        }
+
+        let header_data = self.type_specific_header_bytes();
+        let content_size = self.content_size();
 
         let mut section_header = ffs::section::Header { section_type: self.section_type_raw(), size: [0xffu8; 3] };
 
-        let section_size = mem::size_of_val(&section_header) + header_data.len() + (content_size as usize);
+        let section_size = mem::size_of_val(&section_header) + header_data.len() + content_size;
 
         if section_size < MAX_STANDARD_SECTION_SIZE {
             section_header.size = (section_size as u32).to_le_bytes()[0..3].try_into().unwrap();
