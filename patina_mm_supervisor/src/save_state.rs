@@ -36,13 +36,16 @@ use crate::mm_policy::{SaveStateCondition, SaveStateField};
 use patina::standard::efi::Status;
 use patina_internal_cpu::save_state::{
     self, IA32_EFER_LMA, IO_INFO_SIZE, IO_TYPE_INPUT, IO_TYPE_OUTPUT, LMA_32BIT, LMA_64BIT, MmSaveStateIoInfo,
-    MmSaveStateRegister, PROCESSOR_INFO_ENTRY_SIZE,
+    MmSaveStateRegister,
 };
 use zerocopy::IntoBytes;
 
 use crate::{
-    PageOwnership, privilege_mgmt::SyscallResult, query_address_ownership, runtime::with_user_access,
-    state::security_state,
+    PageOwnership,
+    privilege_mgmt::SyscallResult,
+    query_address_ownership,
+    runtime::with_user_access,
+    state::{init_state, security_state},
 };
 
 /// Size in bytes of one `SMRAM_SAVE_STATE_MAP` region.
@@ -67,8 +70,7 @@ const SMRAM_SAVE_STATE_MAP_OFFSET: u64 = 0xfc00;
 /// Assembled at initialization from two public sources instead of the private
 /// `SMM_CPU_PRIVATE_DATA` layout:
 ///
-/// - `number_of_cpus` and `processor_info` come from the MP Information HOB
-///   (`gMpInformationHobGuid`).
+/// - `number_of_cpus` comes from the MP Information HOB (`gMpInformationHobGuid`).
 /// - `sm_base` (the per-CPU SMBASE array) is passed through the MM Supervisor
 ///   PassDown HOB. The save-state region base is derived as
 ///   `sm_base[i] + SMRAM_SAVE_STATE_MAP_OFFSET` with the fixed
@@ -77,8 +79,6 @@ const SMRAM_SAVE_STATE_MAP_OFFSET: u64 = 0xfc00;
 pub(crate) struct SaveStateInfo {
     /// Number of CPUs (from `MP_INFORMATION_HOB_DATA.NumberOfProcessors`).
     pub(crate) number_of_cpus: u64,
-    /// Pointer to the `EFI_PROCESSOR_INFORMATION[]` array (from the MP Information HOB).
-    pub(crate) processor_info: u64,
     /// Pointer to the per-CPU SMBASE array (`u64[number_of_cpus]`).
     pub(crate) sm_base: u64,
 }
@@ -401,35 +401,10 @@ unsafe fn copy_to_user(buffer: *mut u8, out: &[u8]) {
 
 /// Reads the PROCESSOR_ID for a given CPU and writes it to the user buffer.
 ///
-/// The ProcessorId (APIC ID) is read from the `EFI_PROCESSOR_INFORMATION` array
-/// carried by the MP Information HOB (`gMpInformationHobGuid`).
+/// The ProcessorId (APIC ID) is read from the supervisor-owned [`CpuManager`](crate::cpu::CpuManager).
 fn read_processor_id(cpu_index: u64, out: &mut [u8]) -> SyscallResult {
-    let info = save_state_info()?;
-
-    if info.processor_info == 0 {
-        log::error!("PROCESSOR_ID: ProcessorInfo array is null");
-        return Err(Status::NOT_READY);
-    }
-
-    let num_cpus = info.number_of_cpus;
-
-    // View the processor information array as bytes so the per-CPU entry can be
-    // read through safe slice operations.
-    //
-    // SAFETY: `processor_info` points to a valid array of `num_cpus`
-    // `EFI_PROCESSOR_INFORMATION` entries (PROCESSOR_INFO_ENTRY_SIZE bytes
-    // each) in firmware memory, and `cpu_index` is < `num_cpus`.
-    let entries = unsafe {
-        core::slice::from_raw_parts(info.processor_info as *const u8, num_cpus as usize * PROCESSOR_INFO_ENTRY_SIZE)
-    };
-
-    // ProcessorId is the first field (u64) of EFI_PROCESSOR_INFORMATION.
-    let offset = cpu_index as usize * PROCESSOR_INFO_ENTRY_SIZE;
-    let processor_id = entries
-        .get(offset..offset + 8)
-        .and_then(|b| b.try_into().ok())
-        .map(u64::from_le_bytes)
-        .ok_or(Status::INVALID_PARAMETER)?;
+    let lookup = init_state().processor_id_lookup_fn().ok_or(Status::NOT_READY)?;
+    let processor_id = lookup(cpu_index as usize).ok_or(Status::NOT_FOUND)?;
 
     // Write the 8-byte ProcessorId to the user buffer.
     out.get_mut(..8).ok_or(Status::BUFFER_TOO_SMALL)?.copy_from_slice(&processor_id.to_le_bytes());

@@ -44,7 +44,7 @@ use crate::{
     state::{init_state, security_state},
 };
 
-use patina_internal_cpu::interrupts::Interrupts;
+use patina_internal_cpu::{interrupts::Interrupts, save_state::PROCESSOR_INFO_ENTRY_SIZE};
 use zerocopy::FromBytes;
 use zerocopy_derive::Immutable;
 
@@ -658,12 +658,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // it carries reference live memory as `init_from_pass_down_hob` requires.
         let (sm_base, mmi_entry_size) = unsafe { self.init_from_pass_down_hob(pass_down_data)? };
 
-        // 1b. Process the MP Information HOB (`gMpInformationHobGuid`) for the CPU
-        //     count and the `EFI_PROCESSOR_INFORMATION` array (APIC IDs).
-        let (number_of_cpus, processor_info) = find_guid_hob(hob_list_info, crate::MP_INFORMATION_HOB_GUID)
-            .and_then(parse_mp_information_hob)
-            .ok_or(PolicyInitError::HobNotFound)?;
-        security_state().set_save_state_info(SaveStateInfo { number_of_cpus, processor_info, sm_base });
+        // 1b. Process the MP Information HOB (`gMpInformationHobGuid`) for the CPU count.
+        let mp_information =
+            find_guid_hob(hob_list_info, crate::MP_INFORMATION_HOB_GUID).ok_or(PolicyInitError::HobNotFound)?;
+        let number_of_cpus = self.cache_processor_ids(mp_information).ok_or(PolicyInitError::InvalidPolicyData)?;
+        security_state().set_save_state_info(SaveStateInfo { number_of_cpus, sm_base });
         log::info!("Save-state metadata initialized for {} CPU(s)", number_of_cpus);
 
         // 1b-ii. Process the MSEG SMRAM HOB (`gMsegSmramGuid`), if published. It carries the
@@ -747,6 +746,37 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         );
 
         Ok(())
+    }
+
+    /// Copies ProcessorId values from the MP Information HOB into the CPU manager.
+    fn cache_processor_ids(&self, data: &[u8]) -> Option<u64> {
+        /// Offset of `ProcessorInfoBuffer[]` within `MP_INFORMATION_HOB_DATA`.
+        const PROCESSOR_INFO_BUFFER_OFFSET: usize = 16;
+
+        if data.len() < PROCESSOR_INFO_BUFFER_OFFSET {
+            log::error!("MP Information HOB too small: {} < {}", data.len(), PROCESSOR_INFO_BUFFER_OFFSET);
+            return None;
+        }
+
+        let number_of_cpus = u64::from_le_bytes(data.get(0..8)?.try_into().ok()?);
+        let cpu_count: usize = number_of_cpus.try_into().ok()?;
+        if cpu_count > MAX_CPUS {
+            log::error!("MP Information HOB CPU count {} exceeds supervisor maximum {}", cpu_count, MAX_CPUS);
+            return None;
+        }
+
+        let processor_info_size = cpu_count.checked_mul(PROCESSOR_INFO_ENTRY_SIZE)?;
+        let processor_info =
+            data.get(PROCESSOR_INFO_BUFFER_OFFSET..PROCESSOR_INFO_BUFFER_OFFSET.checked_add(processor_info_size)?)?;
+
+        for (cpu_index, entry) in processor_info.chunks_exact(PROCESSOR_INFO_ENTRY_SIZE).enumerate() {
+            let processor_id = u64::from_le_bytes(entry.get(..8)?.try_into().ok()?);
+            if !self.cpu_manager.set_processor_id_by_index(cpu_index, processor_id) {
+                return None;
+            }
+        }
+
+        Some(number_of_cpus)
     }
 
     /// Processes the MM Supervisor PassDown HOB.
@@ -930,24 +960,6 @@ fn parse_mseg_smram_hob(data: &[u8]) -> Option<u64> {
     Some(base)
 }
 
-/// Parses an `MP_INFORMATION_HOB_DATA` payload (`gMpInformationHobGuid`).
-///
-/// Returns `(number_of_cpus, processor_info_ptr)` where `processor_info_ptr`
-/// points at the first `EFI_PROCESSOR_INFORMATION` entry.
-fn parse_mp_information_hob(data: &[u8]) -> Option<(u64, u64)> {
-    /// Offset of `ProcessorInfoBuffer[]` within `MP_INFORMATION_HOB_DATA`.
-    const PROCESSOR_INFO_BUFFER_OFFSET: usize = 16;
-
-    if data.len() < PROCESSOR_INFO_BUFFER_OFFSET {
-        log::error!("MP Information HOB too small: {} < {}", data.len(), PROCESSOR_INFO_BUFFER_OFFSET);
-        return None;
-    }
-
-    let number_of_cpus = u64::from_le_bytes(data.get(0..8)?.try_into().ok()?);
-    let processor_info = data.get(PROCESSOR_INFO_BUFFER_OFFSET..)?.as_ptr() as u64;
-    Some((number_of_cpus, processor_info))
-}
-
 /// Processes the supervisor communication buffer HOB (`MM_COMMON_REGION_HOB_GUID`).
 ///
 /// Returns `(buffer_addr, buffer_size, internal_copy_addr, status_buffer_addr)`.
@@ -1102,6 +1114,33 @@ unsafe fn init_user_comm_buffer(data: &[u8]) -> Result<(u64, u64, u64, u64), Pol
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+
+    struct TestPlatform;
+
+    impl PlatformInfo for TestPlatform {}
+
+    #[test]
+    fn test_cache_processor_ids_into_cpu_manager() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let processor_ids = [0x00_u64, 0x10, 0x20];
+        let mut data = [0_u8; 16 + 3 * PROCESSOR_INFO_ENTRY_SIZE];
+        data[..8].copy_from_slice(&(processor_ids.len() as u64).to_le_bytes());
+        for (cpu_index, processor_id) in processor_ids.iter().enumerate() {
+            let offset = 16 + cpu_index * PROCESSOR_INFO_ENTRY_SIZE;
+            data[offset..offset + 8].copy_from_slice(&processor_id.to_le_bytes());
+        }
+
+        assert_eq!(supervisor.cache_processor_ids(&data), Some(3));
+        assert_eq!(supervisor.cpu_manager().get_processor_id_by_index(1), None);
+
+        for (cpu_index, processor_id) in processor_ids.iter().enumerate() {
+            assert_eq!(
+                supervisor.cpu_manager().register_cpu(*processor_id as u32, cpu_index, cpu_index == 0),
+                Some(cpu_index)
+            );
+            assert_eq!(supervisor.cpu_manager().get_processor_id_by_index(cpu_index), Some(*processor_id));
+        }
+    }
 
     fn mseg_smram_hob_data(
         physical_start: u64,

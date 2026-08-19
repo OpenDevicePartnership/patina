@@ -48,6 +48,8 @@ type SupervisorPageTable = X64PageTable<SharedPagingAllocator>;
 pub(crate) struct InitState {
     /// Physical address of the global `MmSupervisorCore` instance.
     supervisor: Once<NonZeroUsize>,
+    /// Type-erased lookup for the processor ID at a dense CPU index.
+    processor_id_lookup_fn: Once<fn(usize) -> Option<u64>>,
     /// Set once BSP one-time initialization has completed.
     bsp_init_complete: AtomicBool,
     /// Pointer to the per-core initialized buffer from the PassDown HOB.
@@ -72,6 +74,7 @@ impl InitState {
     pub(crate) const fn new() -> Self {
         Self {
             supervisor: Once::new(),
+            processor_id_lookup_fn: Once::new(),
             bsp_init_complete: AtomicBool::new(false),
             mm_initialized_buffer: Once::new(),
             per_core_init_count: AtomicU32::new(0),
@@ -94,6 +97,16 @@ impl InitState {
     /// Returns the stored supervisor instance address, if set.
     pub(crate) fn supervisor(&self) -> Option<NonZeroUsize> {
         self.supervisor.get().copied()
+    }
+
+    /// Stores the type-erased processor-ID lookup (one-time).
+    pub(crate) fn set_processor_id_lookup_fn(&self, func: fn(usize) -> Option<u64>) {
+        self.processor_id_lookup_fn.call_once(|| func);
+    }
+
+    /// Returns the type-erased processor-ID lookup, if initialized.
+    pub(crate) fn processor_id_lookup_fn(&self) -> Option<fn(usize) -> Option<u64>> {
+        self.processor_id_lookup_fn.get().copied()
     }
 
     /// Marks BSP one-time initialization as complete (Release ordering).

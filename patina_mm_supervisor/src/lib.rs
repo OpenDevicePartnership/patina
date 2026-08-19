@@ -283,6 +283,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let physical_address = NonNull::from_ref(self).expose_provenance();
         let stored = init_state().set_supervisor(physical_address);
         if stored {
+            init_state().set_processor_id_lookup_fn(Self::processor_id_by_index);
             // Register the conformed AP startup function for this platform
             init_state().set_ap_startup_fn(Self::start_ap_procedure_trampoline);
         }
@@ -438,6 +439,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// Get the CPU manager.
     pub fn cpu_manager(&self) -> &CpuManager<MAX_CPUS> {
         &self.cpu_manager
+    }
+
+    /// Returns the UEFI processor ID registered at a dense CPU index.
+    fn processor_id_by_index(cpu_index: usize) -> Option<u64> {
+        Self::instance().cpu_manager.get_processor_id_by_index(cpu_index)
     }
 
     /// Get the mailbox manager.
