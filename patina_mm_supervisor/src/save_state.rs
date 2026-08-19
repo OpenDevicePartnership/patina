@@ -576,6 +576,27 @@ fn read_lma_register(view: &SaveStateView, width: u64, out: &mut [u8]) -> Syscal
 mod tests {
     use super::*;
 
+    struct TestPlatform;
+
+    impl crate::PlatformInfo for TestPlatform {}
+
+    #[test]
+    fn test_save_state_processor_id_from_cpu_manager() {
+        static SUPERVISOR: crate::MmSupervisorCore<TestPlatform, 4> = crate::MmSupervisorCore::new();
+
+        assert_eq!(SUPERVISOR.cpu_manager().register_cpu(0x20, 2, false), Some(2));
+
+        let mut out = [0u8; 8];
+        assert_eq!(read_processor_id(2, &mut out), Err(Status::NOT_READY));
+
+        assert!(SUPERVISOR.set_instance());
+
+        assert_eq!(read_processor_id(2, &mut out), Ok(0));
+        assert_eq!(u64::from_le_bytes(out), 0x20);
+        assert_eq!(read_processor_id(1, &mut out), Err(Status::NOT_FOUND));
+        assert_eq!(read_processor_id(2, &mut out[..4]), Err(Status::BUFFER_TOO_SMALL));
+    }
+
     #[test]
     fn test_register_from_u64() {
         assert_eq!(MmSaveStateRegister::from_u64(38), Some(MmSaveStateRegister::Rax));

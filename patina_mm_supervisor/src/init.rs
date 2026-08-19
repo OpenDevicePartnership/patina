@@ -1125,6 +1125,17 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mp_information_hob_rejects_invalid_size() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let mut data = [0_u8; 16 + PROCESSOR_INFO_ENTRY_SIZE];
+
+        assert_eq!(supervisor.parse_mp_information_hob(&data[..15]), None);
+
+        data[..8].copy_from_slice(&2_u64.to_le_bytes());
+        assert_eq!(supervisor.parse_mp_information_hob(&data), None);
+    }
+
+    #[test]
     #[should_panic(expected = "MP Information HOB CPU count 5 exceeds supervisor maximum 4")]
     fn test_parse_mp_information_hob_panics_when_cpu_count_exceeds_maximum() {
         let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
