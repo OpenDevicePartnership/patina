@@ -273,7 +273,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             self.remap_hob_list_to_user(hob_list);
         }
 
-        log::trace!("BSP one-time initialization complete.");
+        log::info!("BSP one-time initialization complete.");
     }
 
     /// Initializes the page and paging allocators from the HOB list.
