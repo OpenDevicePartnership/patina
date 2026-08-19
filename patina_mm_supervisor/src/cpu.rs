@@ -131,9 +131,13 @@ impl<const MAX_CPUS: usize> CpuManager<MAX_CPUS> {
             return None;
         }
 
+        // Each physical CPU owns a distinct, stable `cpu_index`, so this slot is only
+        // ever written by this CPU. That makes the load-check-then-store below safe
+        // without a compare-exchange.
         let slot = self.slots.get(cpu_index)?;
         match slot.get_cpu_id() {
             Some(existing) if existing == cpu_id => {
+                // Idempotent re-registration.
                 log::trace!("CPU {} already registered at index {}", cpu_id, cpu_index);
                 return Some(cpu_index);
             }
