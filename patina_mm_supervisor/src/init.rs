@@ -661,7 +661,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // 1b. Process the MP Information HOB (`gMpInformationHobGuid`) for the CPU count.
         let mp_information =
             find_guid_hob(hob_list_info, crate::MP_INFORMATION_HOB_GUID).ok_or(PolicyInitError::HobNotFound)?;
-        let number_of_cpus = self.cache_processor_ids(mp_information).ok_or(PolicyInitError::InvalidPolicyData)?;
+        let number_of_cpus = self.parse_mp_information_hob(mp_information).ok_or(PolicyInitError::InvalidPolicyData)?;
         security_state().set_save_state_info(SaveStateInfo { number_of_cpus, sm_base });
         log::info!("Save-state metadata initialized for {} CPU(s)", number_of_cpus);
 
@@ -748,8 +748,8 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         Ok(())
     }
 
-    /// Copies ProcessorId values from the MP Information HOB into the CPU manager.
-    fn cache_processor_ids(&self, data: &[u8]) -> Option<u64> {
+    /// Returns the CPU count from the MP Information HOB.
+    fn parse_mp_information_hob(&self, data: &[u8]) -> Option<u64> {
         /// Offset of `ProcessorInfoBuffer[]` within `MP_INFORMATION_HOB_DATA`.
         const PROCESSOR_INFO_BUFFER_OFFSET: usize = 16;
 
@@ -761,23 +761,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let number_of_cpus = u64::from_le_bytes(data.get(0..8)?.try_into().ok()?);
         let cpu_count: usize = number_of_cpus.try_into().ok()?;
         if cpu_count > MAX_CPUS {
-            panic!(
-                "MP Information HOB CPU count {} exceeds supervisor maximum {}",
-                cpu_count,
-                MAX_CPUS
-            );
+            panic!("MP Information HOB CPU count {} exceeds supervisor maximum {}", cpu_count, MAX_CPUS);
         }
 
         let processor_info_size = cpu_count.checked_mul(PROCESSOR_INFO_ENTRY_SIZE)?;
-        let processor_info =
-            data.get(PROCESSOR_INFO_BUFFER_OFFSET..PROCESSOR_INFO_BUFFER_OFFSET.checked_add(processor_info_size)?)?;
-
-        for (cpu_index, entry) in processor_info.chunks_exact(PROCESSOR_INFO_ENTRY_SIZE).enumerate() {
-            let processor_id = u64::from_le_bytes(entry.get(..8)?.try_into().ok()?);
-            if !self.cpu_manager.set_processor_id_by_index(cpu_index, processor_id) {
-                return None;
-            }
-        }
+        data.get(PROCESSOR_INFO_BUFFER_OFFSET..PROCESSOR_INFO_BUFFER_OFFSET.checked_add(processor_info_size)?)?;
 
         Some(number_of_cpus)
     }
@@ -1123,7 +1111,7 @@ mod tests {
     impl PlatformInfo for TestPlatform {}
 
     #[test]
-    fn test_cache_processor_ids_into_cpu_manager() {
+    fn test_parse_mp_information_hob() {
         let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
         let processor_ids = [0x00_u64, 0x10, 0x20];
         let mut data = [0_u8; 16 + 3 * PROCESSOR_INFO_ENTRY_SIZE];
@@ -1133,26 +1121,17 @@ mod tests {
             data[offset..offset + 8].copy_from_slice(&processor_id.to_le_bytes());
         }
 
-        assert_eq!(supervisor.cache_processor_ids(&data), Some(3));
-        assert_eq!(supervisor.cpu_manager().get_processor_id_by_index(1), None);
-
-        for (cpu_index, processor_id) in processor_ids.iter().enumerate() {
-            assert_eq!(
-                supervisor.cpu_manager().register_cpu(*processor_id as u32, cpu_index, cpu_index == 0),
-                Some(cpu_index)
-            );
-            assert_eq!(supervisor.cpu_manager().get_processor_id_by_index(cpu_index), Some(*processor_id));
-        }
+        assert_eq!(supervisor.parse_mp_information_hob(&data), Some(3));
     }
 
     #[test]
     #[should_panic(expected = "MP Information HOB CPU count 5 exceeds supervisor maximum 4")]
-    fn test_cache_processor_ids_panics_when_cpu_count_exceeds_maximum() {
+    fn test_parse_mp_information_hob_panics_when_cpu_count_exceeds_maximum() {
         let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
         let mut data = [0_u8; 16];
         data[..8].copy_from_slice(&5_u64.to_le_bytes());
 
-        let _ = supervisor.cache_processor_ids(&data);
+        let _ = supervisor.parse_mp_information_hob(&data);
     }
 
     fn mseg_smram_hob_data(

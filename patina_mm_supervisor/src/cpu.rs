@@ -15,7 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use crate::semaphore::{sem_signal, sem_try_take, sem_wait};
 
@@ -48,16 +48,14 @@ impl From<u8> for ApState {
 /// Information about a registered CPU stored in a fixed-size slot.
 #[repr(C)]
 struct CpuSlot {
-    /// The CPU's UEFI ProcessorId (Local APIC ID on x64).
-    processor_id: AtomicU64,
-    /// Whether this CPU has registered in MM (0 = absent, 1 = registered).
-    registered: AtomicU8,
+    /// The CPU's APIC ID. u32::MAX means slot is unused.
+    cpu_id: AtomicU32,
     /// Whether this CPU is the BSP (0 = AP, 1 = BSP).
     is_bsp: AtomicU8,
     /// Current state (for APs only).
     state: AtomicU8,
     /// Padding for alignment.
-    _padding: [u8; 1],
+    _padding: [u8; 2],
     /// Rendezvous semaphore for the SMI exit barrier.
     run: AtomicU32,
 }
@@ -66,28 +64,23 @@ impl CpuSlot {
     /// Creates a new empty CPU slot.
     const fn new() -> Self {
         Self {
-            processor_id: AtomicU64::new(u64::MAX),
-            registered: AtomicU8::new(0),
+            cpu_id: AtomicU32::new(u32::MAX),
             is_bsp: AtomicU8::new(0),
             state: AtomicU8::new(ApState::NotPresent as u8),
-            _padding: [0; 1],
+            _padding: [0; 2],
             run: AtomicU32::new(0),
         }
     }
 
     /// Checks if this slot is in use.
     fn is_used(&self) -> bool {
-        self.registered.load(Ordering::Acquire) != 0
+        self.cpu_id.load(Ordering::Acquire) != u32::MAX
     }
 
     /// Gets the CPU ID if the slot is used.
     fn get_cpu_id(&self) -> Option<u32> {
-        self.get_processor_id()?.try_into().ok()
-    }
-
-    /// Gets the UEFI ProcessorId if the slot is used.
-    fn get_processor_id(&self) -> Option<u64> {
-        if self.is_used() { Some(self.processor_id.load(Ordering::Acquire)) } else { None }
+        let id = self.cpu_id.load(Ordering::Acquire);
+        if id == u32::MAX { None } else { Some(id) }
     }
 }
 
@@ -139,35 +132,27 @@ impl<const MAX_CPUS: usize> CpuManager<MAX_CPUS> {
         }
 
         let slot = self.slots.get(cpu_index)?;
-        let processor_id = u64::from(cpu_id);
-        let expected_processor_id = slot.processor_id.load(Ordering::Acquire);
-        if expected_processor_id == u64::MAX {
-            slot.processor_id.store(processor_id, Ordering::Relaxed);
-        } else if expected_processor_id != processor_id {
-            log::error!(
-                "cpu_index {} expects ProcessorId {}, cannot register APIC {}",
-                cpu_index,
-                expected_processor_id,
-                cpu_id
-            );
-            return None;
-        }
-
-        if slot.is_used() {
-            match slot.get_cpu_id() {
-                Some(existing) if existing == cpu_id => {
-                    // Idempotent re-registration.
-                    log::trace!("CPU {} already registered at index {}", cpu_id, cpu_index);
-                    return Some(cpu_index);
-                }
-                _ => return None,
+        match slot.get_cpu_id() {
+            Some(existing) if existing == cpu_id => {
+                log::trace!("CPU {} already registered at index {}", cpu_id, cpu_index);
+                return Some(cpu_index);
             }
+            Some(existing) => {
+                log::error!(
+                    "cpu_index {} already occupied by APIC {}, cannot register APIC {}",
+                    cpu_index,
+                    existing,
+                    cpu_id
+                );
+                return None;
+            }
+            None => {}
         }
 
         slot.is_bsp.store(if is_bsp { 1 } else { 0 }, Ordering::Release);
         slot.state.store(if is_bsp { ApState::Busy as u8 } else { ApState::NotPresent as u8 }, Ordering::Release);
-        // Publish registration last so readers that observe it also see the fields above.
-        slot.registered.store(1, Ordering::Release);
+        // Publish the CPU ID last so readers that observe it also see the fields above.
+        slot.cpu_id.store(cpu_id, Ordering::Release);
 
         self.registered_count.fetch_add(1, Ordering::SeqCst);
 
@@ -179,27 +164,6 @@ impl<const MAX_CPUS: usize> CpuManager<MAX_CPUS> {
         }
 
         Some(cpu_index)
-    }
-
-    /// Caches a UEFI ProcessorId in its dense CPU-index slot before runtime.
-    pub(crate) fn set_processor_id_by_index(&self, cpu_index: usize, processor_id: u64) -> bool {
-        let Some(slot) = self.slots.get(cpu_index) else {
-            return false;
-        };
-
-        match slot.processor_id.compare_exchange(u64::MAX, processor_id, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => true,
-            Err(existing) if existing == processor_id => true,
-            Err(existing) => {
-                log::error!(
-                    "cpu_index {} already has ProcessorId {}, cannot cache {}",
-                    cpu_index,
-                    existing,
-                    processor_id
-                );
-                false
-            }
-        }
     }
 
     /// Gets the number of registered CPUs.
@@ -243,11 +207,6 @@ impl<const MAX_CPUS: usize> CpuManager<MAX_CPUS> {
     /// Returns `None` if the index is out of range or the slot is unused.
     pub fn get_cpu_id_by_index(&self, index: usize) -> Option<u32> {
         self.slots.get(index)?.get_cpu_id()
-    }
-
-    /// Gets the UEFI ProcessorId of the registered CPU at a slot index.
-    pub fn get_processor_id_by_index(&self, index: usize) -> Option<u64> {
-        self.slots.get(index)?.get_processor_id()
     }
 
     /// Gets the AP state by slot index.
@@ -443,17 +402,6 @@ mod tests {
 
         // A different APIC ID cannot take an already-occupied cpu_index.
         assert_eq!(manager.register_cpu(0x30, 1, false), None);
-    }
-
-    #[test]
-    fn test_processor_id_is_owned_by_registered_slot() {
-        let manager: CpuManager<4> = CpuManager::new();
-
-        assert!(manager.set_processor_id_by_index(2, 0x20));
-        assert_eq!(manager.get_processor_id_by_index(2), None);
-        assert_eq!(manager.register_cpu(0x20, 2, false), Some(2));
-        assert_eq!(manager.get_processor_id_by_index(2), Some(0x20));
-        assert_eq!(manager.register_cpu(0x21, 2, false), None);
     }
 
     #[test]

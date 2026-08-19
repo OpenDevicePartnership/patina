@@ -355,10 +355,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             log::info!("MM Supervisor Core v{}", env!("CARGO_PKG_VERSION"));
             log::info!("BSP (CPU {}, index {}) starting one-time initialization...", cpu_id, cpu_index);
 
-            // Register BSP with CPU manager
             self.cpu_manager.register_cpu(cpu_id, cpu_index, true);
 
-            // Perform BSP-only one-time initialization (this sets up MM_INITIALIZED_BUFFER)
+            // Perform BSP-only one-time initialization.
             self.bsp_init(hob_list);
 
             // Dispatch to the user level entry point discovered from the HOB list (if found)
@@ -408,7 +407,6 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                 core::hint::spin_loop();
             }
 
-            // Register this AP with the CPU manager
             self.cpu_manager.register_cpu(cpu_id, cpu_index, false);
         }
 
@@ -443,7 +441,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
     /// Returns the UEFI processor ID registered at a dense CPU index.
     fn processor_id_by_index(cpu_index: usize) -> Option<u64> {
-        Self::instance().cpu_manager.get_processor_id_by_index(cpu_index)
+        Self::instance().cpu_manager.get_cpu_id_by_index(cpu_index).map(u64::from)
     }
 
     /// Get the mailbox manager.
