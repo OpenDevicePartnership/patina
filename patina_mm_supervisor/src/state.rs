@@ -330,3 +330,58 @@ pub(crate) static DEFAULT_SUPERVISOR_MMI_HANDLERS: &[SupervisorMmiHandler] = &[
         handle: mm_exit_boot_services_handler,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn processor_id_lookup(cpu_index: usize) -> Option<u64> {
+        Some(cpu_index as u64 + 0x10)
+    }
+
+    fn replacement_processor_id_lookup(_: usize) -> Option<u64> {
+        None
+    }
+
+    #[test]
+    fn test_init_state_defaults() {
+        let state = InitState::new();
+
+        assert!(state.supervisor().is_none());
+        assert!(state.processor_id_lookup_fn().is_none());
+        assert!(!state.is_bsp_init_complete());
+        assert_eq!(state.per_core_init_count(), 0);
+        assert!(state.user_entry_point().is_none());
+        assert!(state.mseg_base().is_none());
+        assert!(state.ap_startup_fn().is_none());
+        assert!(!state.is_at_runtime());
+        assert!(state.smrr_range().is_none());
+    }
+
+    #[test]
+    fn test_init_state_processor_id_lookup_is_initialized_once() {
+        let state = InitState::new();
+
+        state.set_processor_id_lookup_fn(processor_id_lookup);
+        assert_eq!(state.processor_id_lookup_fn().unwrap()(3), Some(0x13));
+
+        state.set_processor_id_lookup_fn(replacement_processor_id_lookup);
+        assert_eq!(state.processor_id_lookup_fn().unwrap()(3), Some(0x13));
+    }
+
+    #[test]
+    fn test_init_state_synchronization_updates() {
+        let state = InitState::new();
+
+        state.mark_bsp_init_complete();
+        assert!(state.is_bsp_init_complete());
+
+        assert_eq!(state.inc_per_core_init_count(), 1);
+        assert_eq!(state.inc_per_core_init_count(), 2);
+        assert_eq!(state.per_core_init_count(), 2);
+
+        assert!(state.mark_at_runtime());
+        assert!(!state.mark_at_runtime());
+        assert!(state.is_at_runtime());
+    }
+}
