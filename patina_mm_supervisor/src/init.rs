@@ -761,8 +761,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let number_of_cpus = u64::from_le_bytes(data.get(0..8)?.try_into().ok()?);
         let cpu_count: usize = number_of_cpus.try_into().ok()?;
         if cpu_count > MAX_CPUS {
-            log::error!("MP Information HOB CPU count {} exceeds supervisor maximum {}", cpu_count, MAX_CPUS);
-            return None;
+            panic!(
+                "MP Information HOB CPU count {} exceeds supervisor maximum {}",
+                cpu_count,
+                MAX_CPUS
+            );
         }
 
         let processor_info_size = cpu_count.checked_mul(PROCESSOR_INFO_ENTRY_SIZE)?;
@@ -1140,6 +1143,16 @@ mod tests {
             );
             assert_eq!(supervisor.cpu_manager().get_processor_id_by_index(cpu_index), Some(*processor_id));
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "MP Information HOB CPU count 5 exceeds supervisor maximum 4")]
+    fn test_cache_processor_ids_panics_when_cpu_count_exceeds_maximum() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let mut data = [0_u8; 16];
+        data[..8].copy_from_slice(&5_u64.to_le_bytes());
+
+        let _ = supervisor.cache_processor_ids(&data);
     }
 
     fn mseg_smram_hob_data(
