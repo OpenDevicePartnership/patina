@@ -8,8 +8,10 @@
 //!
 use core::{ffi::c_void, mem, ops::BitOr};
 
+use crate::component::service::uefi_services::config_table::ConfigTable;
+use crate::performance::guid::PERFORMANCE_PROTOCOL_GUID;
 use crate::standard::efi;
-use crate::{bit, performance::record::known::KnownPerfId};
+use crate::{BinaryGuid, bit, performance::record::known::KnownPerfId};
 
 /// The attribute of the measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -179,6 +181,10 @@ impl PerformanceProperty {
     pub fn new(frequency: u64, timer_start_value: u64, timer_end_value: u64) -> Self {
         Self { revision: 0x1, reserved: 0, frequency, timer_start_value, timer_end_value }
     }
+}
+
+impl ConfigTable for PerformanceProperty {
+    const TABLE_GUID: BinaryGuid = PERFORMANCE_PROTOCOL_GUID;
 }
 
 #[cfg(test)]
