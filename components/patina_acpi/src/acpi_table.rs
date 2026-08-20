@@ -20,6 +20,7 @@ use patina::{
     component::service::{
         Service,
         memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
+        uefi_services::config_table::ConfigTable,
     },
     uefi::memory::EfiMemoryType,
     uefi_size_to_pages,
@@ -210,6 +211,10 @@ pub struct AcpiRsdp {
     pub(crate) xsdt_address: u64,
     pub(crate) extended_checksum: u8,
     pub(crate) reserved: [u8; 3],
+}
+
+impl ConfigTable for AcpiRsdp {
+    const TABLE_GUID: patina::BinaryGuid = signature::ACPI_TABLE_GUID;
 }
 
 /// Represents the XSDT for ACPI 2.0+.
