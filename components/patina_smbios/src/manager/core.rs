@@ -14,8 +14,9 @@ extern crate alloc;
 
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
-use patina::standard::efi::{Handle, PhysicalAddress};
-use patina::{SIZE_64KB, uefi_size_to_pages};
+use patina::component::service::uefi_services::config_table::ConfigTable;
+use patina::standard::efi::{Handle, PhysicalAddress, SMBIOS3_TABLE_GUID};
+use patina::{BinaryGuid, SIZE_64KB, uefi_size_to_pages};
 use zerocopy::{IntoBytes, Ref};
 use zerocopy_derive::*;
 
@@ -55,6 +56,10 @@ pub struct Smbios30EntryPoint {
     pub table_max_size: u32,
     /// Structure Table Address - 64-bit (0x10)
     pub table_address: u64,
+}
+
+impl ConfigTable for Smbios30EntryPoint {
+    const TABLE_GUID: BinaryGuid = BinaryGuid(SMBIOS3_TABLE_GUID);
 }
 
 /// SMBIOS table manager
