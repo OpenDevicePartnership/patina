@@ -1380,10 +1380,10 @@ mod tests {
         let mock_memory_manager: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
 
         // First initialization should succeed
-        assert!(provider.initialize(mock_boot_services, mock_memory_manager.clone()).is_ok());
+        assert!(provider.initialize(mock_boot_services, mock_memory_manager).is_ok());
 
         // Second initialization with boot services should fail
-        let err = provider.initialize(MockBootServices::new(), mock_memory_manager.clone()).unwrap_err();
+        let err = provider.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
         assert_eq!(err, AcpiError::BootServicesAlreadyInitialized);
 
         // Try initializing again with a new provider, but memory manager already set
@@ -1391,9 +1391,9 @@ mod tests {
         // Set boot services first
         assert!(provider2.boot_services.set(MockBootServices::new()).is_ok());
         // Set memory manager first
-        assert!(provider2.memory_manager.set(mock_memory_manager.clone()).is_ok());
+        assert!(provider2.memory_manager.set(mock_memory_manager).is_ok());
         // Now initialize should fail for both fields
-        let err = provider2.initialize(MockBootServices::new(), mock_memory_manager.clone()).unwrap_err();
+        let err = provider2.initialize(MockBootServices::new(), mock_memory_manager).unwrap_err();
         assert!(matches!(err, AcpiError::BootServicesAlreadyInitialized | AcpiError::MemoryManagerAlreadyInitialized));
     }
 

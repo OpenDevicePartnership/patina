@@ -83,9 +83,7 @@ impl AcpiComponent {
         boot_services.install_protocol_interface(None, Box::new(AcpiGetProtocol::new()))?;
 
         // Initialize the ACPI table info singleton (used for the protocol).
-        STANDARD_ACPI_PROVIDER
-            .initialize(boot_services, memory_manager.clone())
-            .map_err(|_e| EfiError::AlreadyStarted)?;
+        STANDARD_ACPI_PROVIDER.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Create and set the XSDT with an initial number of entries.
         let xsdt_size = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();

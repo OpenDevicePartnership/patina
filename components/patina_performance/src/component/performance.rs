@@ -91,7 +91,7 @@ impl Performance {
         mm_comm_service: Option<Service<dyn MmCommunication>>,
     ) -> Result<(), EfiError> {
         // Register the service so the EDK II Performance Measurement protocol function can reach it.
-        set_performance_service(performance.clone()).unwrap_or_else(|e| {
+        set_performance_service(performance).unwrap_or_else(|e| {
             log::error!(
                 "[{}]: Performance service was already registered. It should only be registered here! ({e})",
                 function!()
@@ -118,7 +118,7 @@ impl Performance {
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
             Some(report_fbpt_event::<B, R>),
-            Box::new((boot_services.clone(), runtime_services.clone(), performance.clone())),
+            Box::new((boot_services.clone(), runtime_services.clone(), performance)),
             &END_OF_DXE_EVENT_GROUP_GUID,
         )?;
 
@@ -139,7 +139,7 @@ impl Performance {
                 EventType::NOTIFY_SIGNAL,
                 Tpl::CALLBACK,
                 Some(fetch_and_add_mm_performance_records::<B>),
-                Box::new((boot_services.clone(), performance.clone(), mm_comm_service)),
+                Box::new((boot_services.clone(), performance, mm_comm_service)),
                 &EVENT_GROUP_READY_TO_BOOT,
             )?;
         } else {
