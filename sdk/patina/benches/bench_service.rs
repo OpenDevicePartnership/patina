@@ -50,14 +50,14 @@ impl TestService for MockService {
 fn execute_dyn_service(b: &mut Bencher<'_>) {
     const VAL: u32 = 42;
     let service: Service<dyn TestService> = Service::mock(Box::new(MockService(VAL)));
-    b.iter_batched(|| service.clone(), |s| assert_eq!(s.do_something(), VAL), criterion::BatchSize::SmallInput);
+    b.iter_batched(|| service, |s| assert_eq!(s.do_something(), VAL), criterion::BatchSize::SmallInput);
 }
 
 /// Benchmark the cost of indirection that comes with using a concrete service (no v-table).
 fn execute_concrete_service(b: &mut Bencher<'_>) {
     const VAL: u32 = 42;
     let service: Service<MockService> = Service::mock(Box::new(MockService(VAL)));
-    b.iter_batched(|| service.clone(), |s| assert_eq!(s.do_something(), VAL), criterion::BatchSize::SmallInput);
+    b.iter_batched(|| service, |s| assert_eq!(s.do_something(), VAL), criterion::BatchSize::SmallInput);
 }
 
 pub fn benchmark_service_indirection(c: &mut Criterion) {
