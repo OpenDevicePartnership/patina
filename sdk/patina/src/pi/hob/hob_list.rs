@@ -16,9 +16,9 @@
 
 use crate::pi::hob::{
     CPU, Capsule, Cpu, END_OF_HOB_LIST, FV, FV2, FV3, FirmwareVolume, FirmwareVolume2, FirmwareVolume3, GUID_EXTENSION,
-    GuidHob, HANDOFF, Hob, HobHeader, HobTrait, MEMORY_ALLOCATION, MemoryAllocation, MemoryAllocationModule,
-    PhaseHandoffInformationTable, RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2, ResourceDescriptor, ResourceDescriptorV2,
-    UEFI_CAPSULE,
+    GuidHob, HANDOFF, Hob, HobHeader, HobTrait, LOAD_PEIM_UNUSED, MEMORY_ALLOCATION, MEMORY_POOL, MemoryAllocation,
+    MemoryAllocationModule, PhaseHandoffInformationTable, RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2,
+    ResourceDescriptor, ResourceDescriptorV2, UEFI_CAPSULE, UNUSED,
 };
 use core::{ffi::c_void, mem, slice};
 
@@ -199,6 +199,8 @@ impl<'a> HobList<'a> {
 
     /// Discovers hobs from a C style void* and adds them to a rust structure.
     ///
+    /// Note: This is not a complete copy of the original HOB list. Unused HOBs are filtered out.
+    ///
     /// # Example(s)
     ///
     /// ```no_run
@@ -325,16 +327,30 @@ impl<'a> HobList<'a> {
                     }
                 }
                 END_OF_HOB_LIST => {
+                    // NOTE: The END_OF_HOB_LIST HOB is not added to the list
                     break;
                 }
+                MEMORY_POOL | LOAD_PEIM_UNUSED | UNUSED => {
+                    // NOTE: Intentionally filtered out.
+                    // Do nothing
+                }
                 _ => {
-                    self.0.push(Hob::Misc(current_header.r#type));
+                    // NOTE: Unexpected.
+                    // unreachable!("Unknown HOB type: {}", current_header.r#type);
+                    debug_assert!(false, "Unknown HOB type: {}", current_header.r#type);
                 }
             }
             let next_hob = hob_header as usize + current_header.length as usize;
             // Guard against malformed HOBs: length must advance past the header to avoid infinite
             // loops, and the addition must not overflow the address space.
             if (current_header.length as usize) < mem::size_of::<HobHeader>() || next_hob < hob_header as usize {
+                debug_assert!(
+                    false,
+                    "Malformed HOB: type {:?} has length {} which is smaller than the header size {} or causes overflow.",
+                    current_header.r#type,
+                    current_header.length,
+                    mem::size_of::<HobHeader>()
+                );
                 break;
             }
             hob_header = next_hob as *const HobHeader;
@@ -377,7 +393,12 @@ impl<'a> HobList<'a> {
                 Hob::FirmwareVolume3(hob) => *hob = Box::leak(Box::new(FirmwareVolume3::clone(hob))),
                 Hob::Cpu(hob) => *hob = Box::leak(Box::new(Cpu::clone(hob))),
                 Hob::ResourceDescriptorV2(hob) => *hob = Box::leak(Box::new(ResourceDescriptorV2::clone(hob))),
-                Hob::Misc(_) => (), // Data is owned in Misc (nothing to move),
+                Hob::EndOfHobList(_) => {
+                    unreachable!("EndOfHobList Shoul not in list.")
+                }
+                Hob::Misc(_) => {
+                    unreachable!("Unused HOB shoul not in list. Unused HOB type: {}", hob.header().r#type)
+                }
             }
         }
     }
@@ -508,17 +529,17 @@ impl fmt::Debug for HobList<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::pi::{
-        hob,
-        hob::{
-            Capsule, Cpu, FirmwareVolume, Hob, HobTrait, MemoryAllocation, PhaseHandoffInformationTable,
-            ResourceDescriptor, get_pi_hob_list_size,
+    use crate::{
+        component::service::memory,
+        pi::hob::{
+            self, Capsule, Cpu, EndOfHobList, FirmwareVolume, Hob, HobTrait, MemoryAllocation,
+            PhaseHandoffInformationTable, ResourceDescriptor, get_pi_hob_list_size,
             hob_list::HobList,
             tests::{
                 gen_capsule, gen_cpu, gen_end_of_hoblist, gen_firmware_volume, gen_firmware_volume2,
                 gen_firmware_volume3, gen_guid_hob, gen_memory_allocation, gen_memory_allocation_module,
-                gen_phase_handoff_information_table, gen_resource_descriptor, gen_resource_descriptor_v2,
-                guid_hob_refs,
+                gen_memory_pool, gen_phase_handoff_information_table, gen_resource_descriptor,
+                gen_resource_descriptor_v2, gen_unused, guid_hob_refs,
             },
         },
     };
@@ -609,6 +630,7 @@ mod tests {
         let firmware_volume = gen_firmware_volume();
         let firmware_volume2 = gen_firmware_volume2();
         let firmware_volume3 = gen_firmware_volume3();
+        let phit_hob = gen_phase_handoff_information_table();
         let end_of_hob_list = gen_end_of_hoblist();
         let capsule = gen_capsule();
         let guid_hob_buf = gen_guid_hob();
@@ -616,6 +638,7 @@ mod tests {
         let memory_allocation = gen_memory_allocation();
         let memory_allocation_module = gen_memory_allocation_module();
 
+        hoblist.push(Hob::Handoff(&phit_hob));
         hoblist.push(Hob::ResourceDescriptor(&resource));
         hoblist.push(Hob::FirmwareVolume(&firmware_volume));
         hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
@@ -624,7 +647,7 @@ mod tests {
         hoblist.push(Hob::GuidHob(guid_hob, guid_hob_data));
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
-        hoblist.push(Hob::Handoff(&end_of_hob_list));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
 
         let mut count = 0;
         hoblist.iter().for_each(|hob| {
@@ -660,13 +683,17 @@ mod tests {
                 Hob::Handoff(handoff) => {
                     assert_eq!(handoff.memory_top, 0xdeadbeef);
                 }
+                Hob::EndOfHobList(end) => {
+                    assert_eq!(end.header.r#type, hob::END_OF_HOB_LIST);
+                    assert_eq!(end.header.length, size_of::<hob::HobHeader>() as u16);
+                }
                 _ => {
                     panic!("Unexpected hob type");
                 }
             }
             count += 1;
         });
-        assert_eq!(count, 9);
+        assert_eq!(count, 10);
     }
 
     #[test]
@@ -710,6 +737,58 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_filter_out_unused_hobs() {
+        let phit_hob = gen_phase_handoff_information_table();
+        let end_of_hob_list = gen_end_of_hoblist();
+        let resource = gen_resource_descriptor();
+        let memory_allocation = gen_memory_allocation();
+        let unused = gen_unused();
+        let memory_pool = gen_memory_pool();
+
+        // Create a PI spec HOB list with multiple HOBs in contiguous memory
+        let mut buffer = Vec::new();
+
+        // HANDOFF
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&raw const phit_hob as *const u8, size_of_val(&phit_hob))
+        });
+
+        // RESOURCE_DESCRIPTOR
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&raw const resource as *const u8, size_of_val(&resource))
+        });
+
+        // MEMORY_POOL (filtered out)
+        buffer.extend_from_slice(&memory_pool);
+
+        // UNUSED  (filtered out)
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&raw const unused as *const u8, unused.header.length as usize)
+        });
+
+        // MEMORY_ALLOCATION
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&raw const memory_allocation as *const u8, size_of_val(&memory_allocation))
+        });
+
+        // END_OF_HOB_LIST (filtered out)
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&raw const end_of_hob_list as *const u8, end_of_hob_list.header.length as usize)
+        });
+
+        let mut hoblist = HobList::new();
+
+        hoblist.discover_hobs(buffer.as_ptr() as *const c_void);
+
+        match hoblist.iter().next().unwrap() {
+            Hob::Handoff(handoff) => assert_eq!(handoff.memory_top, 0xdeadbeef),
+            other => panic!("expected HANDOFF HOB, got {other:?}"),
+        }
+        // Assert that Misc HOBs and END_OF_HOB_LIST were filtered out
+        assert_eq!(hoblist.len(), 3);
+    }
+
+    #[test]
     fn test_hoblist_discover() {
         // generate some test hobs
         let resource = gen_resource_descriptor();
@@ -741,9 +820,9 @@ mod tests {
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
         hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
-        hoblist.push(Hob::Handoff(&end_of_hob_list));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
 
-        // assert that the hoblist has 3 hobs and they are of the correct type
+        // assert that the hoblist has 12 hobs and they are of the correct type
 
         let mut count = 0;
         hoblist.iter().for_each(|hob| {
@@ -779,6 +858,10 @@ mod tests {
                 Hob::Handoff(handoff) => {
                     assert_eq!(handoff.memory_top, 0xdeadbeef);
                 }
+                Hob::EndOfHobList(end) => {
+                    assert_eq!(end.header.r#type, hob::END_OF_HOB_LIST);
+                    assert_eq!(end.header.length, size_of::<hob::HobHeader>() as u16);
+                }
                 Hob::Cpu(cpu) => {
                     assert_eq!(cpu.size_of_memory_space, 0);
                 }
@@ -802,11 +885,12 @@ mod tests {
         let mut cloned_hoblist = HobList::new();
         cloned_hoblist.discover_hobs(c_array_hoblist);
 
-        // assert that the hoblist has 2 hobs and they are of the correct type
+        // assert that the hoblist has 11 hobs and they are of the correct type
+        //
         // we don't need to check the end of hoblist hob as it will not be 'discovered'
         // by the discover_hobs function and simply end the iteration
         count = 0;
-        hoblist.into_iter().for_each(|hob| {
+        cloned_hoblist.into_iter().for_each(|hob| {
             match hob {
                 Hob::ResourceDescriptor(resource) => {
                     assert_eq!(resource.resource_type, hob::EFI_RESOURCE_SYSTEM_MEMORY);
@@ -839,6 +923,9 @@ mod tests {
                 Hob::Handoff(handoff) => {
                     assert_eq!(handoff.memory_top, 0xdeadbeef);
                 }
+                Hob::EndOfHobList(_) => {
+                    panic!("Unexpected EndOfHobList");
+                }
                 Hob::ResourceDescriptorV2(resource) => {
                     assert_eq!(resource.v1.header.r#type, hob::RESOURCE_DESCRIPTOR2);
                     assert_eq!(resource.v1.resource_type, hob::EFI_RESOURCE_SYSTEM_MEMORY);
@@ -853,7 +940,7 @@ mod tests {
             count += 1;
         });
 
-        assert_eq!(count, 12);
+        assert_eq!(count, 11);
 
         // free the c array
         manually_free_c_array(c_array_hoblist, length);
@@ -889,7 +976,7 @@ mod tests {
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
-        hoblist.push(Hob::Handoff(&end_of_hob_list));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
 
         let (c_array_hoblist, length) = to_c_array(&hoblist);
 
@@ -935,7 +1022,7 @@ mod tests {
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
         hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
-        hoblist.push(Hob::Handoff(&end_of_hob_list));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
 
         // Make sure we can iterate over a reference to a HobList without
         // consuming it.
@@ -946,6 +1033,46 @@ mod tests {
         for hob in hoblist {
             println!("{:?}", hob.header());
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "Unused HOB shoul not in list. Unused HOB type: ")]
+    fn test_relocate_hobs_has_unused() {
+        // generate some test hobs
+        let cpu = gen_cpu();
+        let resource_v2 = gen_resource_descriptor_v2();
+        let end_of_hob_list = gen_end_of_hoblist();
+        let unused = gen_unused();
+
+        // create a new hoblist
+        let mut hoblist = HobList::new();
+
+        // Push the resource descriptor to the hoblist
+        hoblist.push(Hob::Cpu(&cpu));
+        hoblist.push(Hob::Misc(&unused));
+        hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
+
+        hoblist.relocate_hobs();
+    }
+
+    #[test]
+    #[should_panic(expected = "EndOfHobList Shoul not in list.")]
+    fn test_relocate_hobs_has_end() {
+        // generate some test hobs
+        let cpu = gen_cpu();
+        let resource_v2 = gen_resource_descriptor_v2();
+        let end_of_hob_list = gen_end_of_hoblist();
+
+        // create a new hoblist
+        let mut hoblist = HobList::new();
+
+        // Push the resource descriptor to the hoblist
+        hoblist.push(Hob::Cpu(&cpu));
+        hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
+
+        hoblist.relocate_hobs();
     }
 
     #[test]
@@ -963,7 +1090,6 @@ mod tests {
         let memory_allocation_module = gen_memory_allocation_module();
         let cpu = gen_cpu();
         let resource_v2 = gen_resource_descriptor_v2();
-        let end_of_hob_list = gen_end_of_hoblist();
 
         // create a new hoblist
         let mut hoblist = HobList::new();
@@ -979,9 +1105,7 @@ mod tests {
         hoblist.push(Hob::MemoryAllocation(&memory_allocation));
         hoblist.push(Hob::MemoryAllocationModule(&memory_allocation_module));
         hoblist.push(Hob::Cpu(&cpu));
-        hoblist.push(Hob::Misc(12345));
         hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
-        hoblist.push(Hob::Handoff(&end_of_hob_list));
 
         let hoblist_address = hoblist.as_mut_ptr::<()>() as usize;
         let hoblist_len = hoblist.len();
@@ -1039,16 +1163,10 @@ mod tests {
                     assert_ne!(ptr::addr_of!(cpu), hob);
                     assert_eq!(cpu, *hob);
                 }
-                Hob::Misc(hob) if i == 10 => {
-                    assert_eq!(12345, hob);
-                }
-                Hob::ResourceDescriptorV2(hob) if i == 11 => {
+
+                Hob::ResourceDescriptorV2(hob) if i == 10 => {
                     assert_ne!(ptr::addr_of!(resource_v2), hob);
                     assert_eq!(resource_v2, *hob);
-                }
-                Hob::Handoff(hob) if i == 12 => {
-                    assert_ne!(ptr::addr_of!(end_of_hob_list), hob);
-                    assert_eq!(end_of_hob_list, *hob);
                 }
                 _ => panic!("Hob at index: {i}."),
             }
@@ -1085,7 +1203,7 @@ mod tests {
         // SAFETY: The list is created in this test with a valid end-of-list marker
         let size = unsafe { get_pi_hob_list_size(&raw const end_of_list as *const c_void) };
 
-        assert_eq!(size, size_of::<PhaseHandoffInformationTable>());
+        assert_eq!(size, size_of::<EndOfHobList>());
     }
 
     #[test]
@@ -1097,8 +1215,7 @@ mod tests {
         let firmware_volume = gen_firmware_volume();
         let end_of_list = gen_end_of_hoblist();
 
-        let expected_size =
-            size_of::<Capsule>() + size_of::<FirmwareVolume>() + size_of::<PhaseHandoffInformationTable>();
+        let expected_size = size_of::<Capsule>() + size_of::<FirmwareVolume>() + size_of::<EndOfHobList>();
 
         // This buffer will hold the contiguous HOBs
         let mut buffer = Vec::new();
@@ -1118,9 +1235,8 @@ mod tests {
 
         // Add an end-of-list HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
-        let end_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
-        };
+        let end_bytes =
+            unsafe { core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()) };
         buffer.extend_from_slice(end_bytes);
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
@@ -1142,7 +1258,7 @@ mod tests {
         let expected_size = size_of::<Cpu>()
             + size_of::<ResourceDescriptor>()
             + size_of::<MemoryAllocation>()
-            + size_of::<PhaseHandoffInformationTable>();
+            + size_of::<EndOfHobList>();
 
         // This buffer will hold the contiguous HOBs
         let mut buffer = Vec::new();
@@ -1162,7 +1278,7 @@ mod tests {
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>())
         });
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
