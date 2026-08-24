@@ -140,9 +140,14 @@ use crate::standard::efi::MemoryType;
 /// Note:
 ///  - All HOBs must start with a HOB generic header.
 ///  - All HOBs must be multiples of 8 bytes in length.
-///  - All HOBs will begin on an 8-byte boundry.
+///  - All HOBs will begin on an 8-byte boundary.
 ///
-/// See [PI spec 1.8A III - 4.5.2. HOB Construction Rules](https://uefi.org/specs/PI/1.8A/V3_HOB_Design_Discussion.html#hob-construction-rules)
+/// See [PI spec 1.10 III - 4.5.2. HOB Construction Rules](https://uefi.org/specs/PI/1.10/V3_HOB_Design_Discussion.html#hob-construction-rules)  
+/// Since [PI spec 1.2B](https://uefi.org/sites/default/files/resources/PI_Spec_1.2_B.zip)
+///
+/// Note:
+///  The align(8) makes the Rust object conform to the PI alignment requirement.
+///  However, this does not bring obvious benefits to the parser or compiler, though it may help code analysis tools.
 ///
 #[repr(C, align(8))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -207,36 +212,17 @@ pub struct MemoryAllocationHeader {
     pub reserved: [u8; 4],
 }
 
-/// Describes pool memory allocations.
-///
-/// The memory pool HOB is produced by the HOB producer phase and describes pool
-/// memory allocations. The HOB consumer phase should be able to ignore these HOBs.
-/// The purpose of this HOB is to allow for the HOB producer phase to have a simple
-/// memory allocation mechanism within the HOB list. The size of the memory allocation
-/// is stipulated by the `HobLength` field in the generic HOB header.
-///
-/// The allocated memory is stored inline and immediately follows the header.
-///
-// pub type MemoryPool = HobHeader;
-
-/// Indicates that the contents of the HOB can be ignored.
-///
-/// This HOB type means that the contents of the HOB can be ignored. This type is necessary to
-/// support the simple, allocate-only architecture of HOBs that have no delete service. The consumer of
-/// the HOB list should ignore HOB entries with this type field.
-///
-// pub type Unused = HobHeader;
-
-/// Generic HOB structure for HOBs that do not have a specific type.
-///
-/// NOTE: the `clone()` is shallow clone.
+/// Generic HOB structure for HOBs that are defined by the PI spec but unused by Patina now.
+/// - MEMORY_POOL
+/// - UNUSED
+/// - LOAD_PEIM_UNUSED
+/// - (etc.)
 ///
 #[repr(C)]
 #[derive(Debug)]
 pub struct GenericHob {
     pub header: HobHeader,
 }
-const _: () = assert!(core::mem::align_of::<GenericHob>() == 8);
 
 /// Indicates the end of the HOB list. This HOB must be the last one in the HOB list.
 ///
@@ -958,6 +944,10 @@ impl Hob<'_> {
 
 /// A HOB iterator.
 ///
+/// - HOBs of interest are returned as their corresponding `Hob` enum variant, bound to the corresponding HOB type
+/// - Other HOBs are returned as `Hob::Misc`, bound to `hob::GenericHob`
+/// - `END_OF_HOB_LIST` stops the iterator and returns `None`
+///
 pub struct HobIter<'a> {
     hob_ptr: *const HobHeader,
     _a: PhantomData<&'a ()>,
@@ -1142,7 +1132,7 @@ pub(crate) mod tests {
         hob::ResourceDescriptorV2 { v1, attributes: 8 }
     }
 
-    // Generate a test memoy allocation hob
+    // Generate a test memory allocation hob
     // # Returns
     // A MemoryAllocation hob
     pub(crate) fn gen_memory_allocation() -> hob::MemoryAllocation {
@@ -1273,8 +1263,9 @@ pub(crate) mod tests {
         let mut buffer = [0u8; 0x18];
 
         unsafe {
-            let header = buffer.as_mut_ptr().cast::<hob::GenericHob>();
-            header.write_unaligned(hob::GenericHob {
+            // Write GenericHob bytes to buffer
+            let hob = buffer.as_mut_ptr().cast::<hob::GenericHob>();
+            hob.write_unaligned(hob::GenericHob {
                 header: hob::HobHeader { r#type: hob::MEMORY_POOL, length, reserved: 0 },
             });
         }
@@ -1291,9 +1282,13 @@ pub(crate) mod tests {
     fn test_gen_memory_pool() {
         let buffer = gen_memory_pool();
         assert_eq!(buffer.len(), 0x18);
-        let header = unsafe { &*(buffer.as_ptr() as *const hob::GenericHob) };
-        assert_eq!(header.header.r#type, hob::MEMORY_POOL);
-        assert_eq!(header.header.length, 0x18);
+        // SAFETY: The hob alignment is ensured by `read_unaligned()`
+        let hob = unsafe {
+            // Decode GenericHob from buffer
+            core::ptr::read_unaligned(buffer.as_ptr().cast::<hob::GenericHob>())
+        };
+        assert_eq!(hob.header.r#type, hob::MEMORY_POOL);
+        assert_eq!(hob.header.length, 0x18);
     }
 
     #[test]
@@ -1307,6 +1302,28 @@ pub(crate) mod tests {
 
         assert_eq!(size, size_of::<EndOfHobList>());
     }
+
+    /// Declare a 8-byte aligned buffer pointer.
+    ///
+    /// Use a macro because we need a lifetime helper variable `_aligned_storage`
+    ///
+    macro_rules! declare_aligned_buffer {
+        ($ptr:ident, $buffer:expr) => {
+            let mut _aligned_storage: Option<Vec<u64>> = None;
+
+            let $ptr: *const c_void = if ($buffer.as_ptr() as usize) % 8 == 0 {
+                $buffer.as_ptr() as *const c_void
+            } else {
+                let mut aligned = vec![0u64; $buffer.len().div_ceil(8)];
+                unsafe {
+                    core::ptr::copy_nonoverlapping($buffer.as_ptr(), aligned.as_mut_ptr() as *mut u8, $buffer.len());
+                }
+                _aligned_storage = Some(aligned);
+                _aligned_storage.as_ref().unwrap().as_ptr() as *const c_void
+            };
+        };
+    }
+    pub(super) use declare_aligned_buffer;
 
     #[test]
     fn test_get_pi_hob_list_size_multiple_hobs() {
@@ -1341,8 +1358,11 @@ pub(crate) mod tests {
             unsafe { core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()) };
         buffer.extend_from_slice(end_bytes);
 
+        // assert_eq!((buffer.as_ptr() as usize) % 8, 0); // if allocator already provides 8-byte alignment
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
     }
@@ -1383,8 +1403,10 @@ pub(crate) mod tests {
             core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>())
         });
 
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
     }

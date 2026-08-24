@@ -336,7 +336,6 @@ impl<'a> HobList<'a> {
                 }
                 _ => {
                     // NOTE: Unexpected.
-                    // unreachable!("Unknown HOB type: {}", current_header.r#type);
                     debug_assert!(false, "Unknown HOB type: {}", current_header.r#type);
                 }
             }
@@ -394,10 +393,12 @@ impl<'a> HobList<'a> {
                 Hob::Cpu(hob) => *hob = Box::leak(Box::new(Cpu::clone(hob))),
                 Hob::ResourceDescriptorV2(hob) => *hob = Box::leak(Box::new(ResourceDescriptorV2::clone(hob))),
                 Hob::EndOfHobList(_) => {
-                    unreachable!("EndOfHobList Shoul not in list.")
+                    debug_assert!(false, "EndOfHobList should not be in list.");
+                    // It will not be relocated.
                 }
-                Hob::Misc(_) => {
-                    unreachable!("Unused HOB shoul not in list. Unused HOB type: {}", hob.header().r#type)
+                Hob::Misc(hob) => {
+                    debug_assert!(false, "Unused HOB should not be in list. Unused HOB type: {}", hob.header.r#type);
+                    // It will not be relocated.
                 }
             }
         }
@@ -529,18 +530,15 @@ impl fmt::Debug for HobList<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        component::service::memory,
-        pi::hob::{
-            self, Capsule, Cpu, EndOfHobList, FirmwareVolume, Hob, HobTrait, MemoryAllocation,
-            PhaseHandoffInformationTable, ResourceDescriptor, get_pi_hob_list_size,
-            hob_list::HobList,
-            tests::{
-                gen_capsule, gen_cpu, gen_end_of_hoblist, gen_firmware_volume, gen_firmware_volume2,
-                gen_firmware_volume3, gen_guid_hob, gen_memory_allocation, gen_memory_allocation_module,
-                gen_memory_pool, gen_phase_handoff_information_table, gen_resource_descriptor,
-                gen_resource_descriptor_v2, gen_unused, guid_hob_refs,
-            },
+    use crate::pi::hob::{
+        self, Capsule, Cpu, EndOfHobList, FirmwareVolume, Hob, HobTrait, MemoryAllocation, ResourceDescriptor,
+        get_pi_hob_list_size,
+        hob_list::HobList,
+        tests::{
+            declare_aligned_buffer, gen_capsule, gen_cpu, gen_end_of_hoblist, gen_firmware_volume,
+            gen_firmware_volume2, gen_firmware_volume3, gen_guid_hob, gen_memory_allocation,
+            gen_memory_allocation_module, gen_memory_pool, gen_phase_handoff_information_table,
+            gen_resource_descriptor, gen_resource_descriptor_v2, gen_unused, guid_hob_refs,
         },
     };
 
@@ -776,9 +774,11 @@ mod tests {
             core::slice::from_raw_parts(&raw const end_of_hob_list as *const u8, end_of_hob_list.header.length as usize)
         });
 
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         let mut hoblist = HobList::new();
 
-        hoblist.discover_hobs(buffer.as_ptr() as *const c_void);
+        hoblist.discover_hobs(aligned_buffer);
 
         match hoblist.iter().next().unwrap() {
             Hob::Handoff(handoff) => assert_eq!(handoff.memory_top, 0xdeadbeef),
@@ -1035,9 +1035,12 @@ mod tests {
         }
     }
 
+    // cargo make test test_relocate_hobs_has_unused_dev -p patina --profile dev
+    //
     #[test]
-    #[should_panic(expected = "Unused HOB shoul not in list. Unused HOB type: ")]
-    fn test_relocate_hobs_has_unused() {
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Unused HOB should not be in list. Unused HOB type: ")]
+    fn test_relocate_hobs_has_unused_dev() {
         // generate some test hobs
         let cpu = gen_cpu();
         let resource_v2 = gen_resource_descriptor_v2();
@@ -1057,8 +1060,51 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "EndOfHobList Shoul not in list.")]
-    fn test_relocate_hobs_has_end() {
+    #[cfg(not(debug_assertions))]
+    fn test_relocate_hobs_has_unused_release() {
+        // generate some test hobs
+        let cpu = gen_cpu();
+        let resource_v2 = gen_resource_descriptor_v2();
+        let end_of_hob_list = gen_end_of_hoblist();
+        let unused = gen_unused();
+
+        // create a new hoblist
+        let mut hoblist = HobList::new();
+
+        // Push the resource descriptor to the hoblist
+        hoblist.push(Hob::Cpu(&cpu));
+        hoblist.push(Hob::Misc(&unused));
+        hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
+
+        hoblist.relocate_hobs();
+    }
+
+    // cargo make test test_relocate_hobs_has_end_dev -p patina --profile dev
+    //
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "EndOfHobList should not be in list.")]
+    fn test_relocate_hobs_has_end_dev() {
+        // generate some test hobs
+        let cpu = gen_cpu();
+        let resource_v2 = gen_resource_descriptor_v2();
+        let end_of_hob_list = gen_end_of_hoblist();
+
+        // create a new hoblist
+        let mut hoblist = HobList::new();
+
+        // Push the resource descriptor to the hoblist
+        hoblist.push(Hob::Cpu(&cpu));
+        hoblist.push(Hob::ResourceDescriptorV2(&resource_v2));
+        hoblist.push(Hob::EndOfHobList(&end_of_hob_list));
+
+        hoblist.relocate_hobs();
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_relocate_hobs_has_end_release() {
         // generate some test hobs
         let cpu = gen_cpu();
         let resource_v2 = gen_resource_descriptor_v2();
@@ -1239,8 +1285,10 @@ mod tests {
             unsafe { core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()) };
         buffer.extend_from_slice(end_bytes);
 
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
     }
@@ -1281,8 +1329,10 @@ mod tests {
             core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>())
         });
 
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
     }
