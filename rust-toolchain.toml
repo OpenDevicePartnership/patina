@@ -7,7 +7,7 @@
 [toolchain]
 channel = "1.95.0"
 targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
-components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
+components = ["rust-src", "clippy", "rustfmt"]
 
 # A custom section for CI pipelines to install tools
 [tools]
