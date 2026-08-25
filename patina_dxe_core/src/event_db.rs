@@ -255,11 +255,14 @@ impl Event {
         let notifiable = (event_type & (efi::EVT_NOTIFY_SIGNAL | efi::EVT_NOTIFY_WAIT)) != 0;
         let event_type: EventType = event_type.try_into()?;
 
-        if notifiable {
-            if notify_function.is_none() {
-                return Err(EfiError::InvalidParameter);
-            }
+        // For notifiable events without event groups, notify_function is required
+        // For events with event groups, notify_function is optional per UEFI spec 2.10 Section 7.1.2
+        if notifiable && event_group.is_none() && notify_function.is_none() {
+            return Err(EfiError::InvalidParameter);
+        }
 
+        // Validate notify_tpl if notify_function is provided
+        if notify_function.is_some() {
             // Pedantic check; this will probably not work with "real firmware", so
             // loosen up a bit.
             // match notify_tpl {
@@ -947,6 +950,49 @@ mod tests {
                 None,
             );
             assert_eq!(result, Err(EfiError::InvalidParameter));
+        });
+    }
+
+    #[test]
+    fn create_event_group_members_with_optional_notify_functions() {
+        // Regression test for UEFI spec 2.10 Section 7.1.2 event group support.
+        // Event group members can have optional notify functions (NULL or non-NULL).
+        // Previously, Patina incorrectly rejected event group members with notify functions.
+        with_locked_state(|| {
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+            let uuid = Uuid::from_str("7081e22f-cac6-4053-9468-675782cf88e5").unwrap();
+            let event_group = efi::Guid::from_bytes(uuid.as_bytes());
+
+            // Event group member WITH notify function should succeed (this was the bug)
+            let result = SPIN_LOCKED_EVENT_DB.create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                Some(test_notify_function),
+                None,
+                Some(event_group),
+            );
+            assert!(
+                result.is_ok(),
+                "Event group member with notify function should be allowed per UEFI spec 2.10 Section 7.1.2"
+            );
+
+            // Event group member WITHOUT notify function should also succeed
+            let result = SPIN_LOCKED_EVENT_DB.create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                None,
+                None,
+                Some(event_group),
+            );
+            assert!(result.is_ok(), "Event group member without notify function should be allowed");
+
+            // Non-grouped notifiable events still require notify_function
+            let result = SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, None, None, None);
+            assert_eq!(
+                result,
+                Err(EfiError::InvalidParameter),
+                "Non-grouped notifiable events must have notify_function"
+            );
         });
     }
 
