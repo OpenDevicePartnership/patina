@@ -16,7 +16,7 @@
 //!
 //! impl ComponentInfo for Intel {
 //! fn components(mut add: Add<Component>) {
-//!         add.component(AdvancedLoggerComponent::<Uart16550>::new(&LOGGER));
+//!         add.component(AdvancedLoggerComponent::<SerialHardwarePort<Uart16550>>::new(&LOGGER));
 //!         // Other platform components...
 //!         add.component(patina_acpi::component::AcpiProviderManager::new(oem_id, ... /* Other platform init. */));
 //!         add.component(patina_acpi::component::AcpiSystemProtocolManager::default());

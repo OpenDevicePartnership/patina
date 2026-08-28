@@ -14,6 +14,7 @@ extern crate alloc;
 mod memory_log;
 mod writer;
 
+pub mod hardware_port;
 pub mod logger;
 
 #[cfg(any(doc, feature = "reader"))]

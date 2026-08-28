@@ -46,18 +46,22 @@ This code which `unwrap`s on logger initialization panics unnecessarily:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use patina_adv_logger::{
+    component::AdvancedLoggerComponent,
+    hardware_port::SerialHardwarePort,
+    logger::AdvancedLogger,
+};
 use log::LevelFilter;
 use patina::{
     debug::log::Format,
     peripheral::serial::uart::UartNull,
 };
 
-static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+static LOGGER: AdvancedLogger<SerialHardwarePort<UartNull>> = AdvancedLogger::new(
     Format::Standard,
     &[],
     LevelFilter::Debug,
-    UartNull {}
+    SerialHardwarePort::new(UartNull {})
 );
 
 unsafe { LOGGER.init(hob_list).unwrap() };
@@ -71,17 +75,21 @@ Consider replacing it with `match` and returning a `Result`:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-# use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+# use patina_adv_logger::{
+#     component::AdvancedLoggerComponent,
+#     hardware_port::SerialHardwarePort,
+#     logger::AdvancedLogger,
+# };
 # use log::LevelFilter;
 # use patina::{
 #     debug::log::Format,
 #     peripheral::serial::uart::UartNull,
 # };
-# static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+# static LOGGER: AdvancedLogger<SerialHardwarePort<UartNull>> = AdvancedLogger::new(
 #     Format::Standard,
 #     &[],
 #     LevelFilter::Debug,
-#     UartNull {}
+#     SerialHardwarePort::new(UartNull {})
 # );
 match unsafe { LOGGER.init(hob_list) } {
     Ok(()) => {},

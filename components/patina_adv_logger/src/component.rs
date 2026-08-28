@@ -17,40 +17,39 @@ use patina::{
         service::{Service, perf_timer::ArchTimerFunctionality},
     },
     error::{EfiError, Result},
-    peripheral::serial::SerialIO,
     uefi::boot_services::{BootServices, StandardBootServices},
 };
 
-use crate::{logger::AdvancedLogger, protocol::AdvancedLoggerProtocol};
+use crate::{hardware_port::AdvancedLoggerHardwarePort, logger::AdvancedLogger, protocol::AdvancedLoggerProtocol};
 
 /// C struct for the internal Advanced Logger protocol for the component.
 #[repr(C)]
-struct AdvancedLoggerProtocolInternal<S>
+struct AdvancedLoggerProtocolInternal<P>
 where
-    S: SerialIO + Send + 'static,
+    P: AdvancedLoggerHardwarePort + 'static,
 {
     // The public protocol that external callers will depend on.
     protocol: AdvancedLoggerProtocol,
 
     // Internal component access only! Does not exist in C definition.
-    adv_logger: &'static AdvancedLogger<'static, S>,
+    adv_logger: &'static AdvancedLogger<'static, P>,
 }
 
 /// The component that will install the Advanced Logger protocol.
-pub struct AdvancedLoggerComponent<S>
+pub struct AdvancedLoggerComponent<P>
 where
-    S: SerialIO + Send + 'static,
+    P: AdvancedLoggerHardwarePort + 'static,
 {
-    adv_logger: &'static AdvancedLogger<'static, S>,
+    adv_logger: &'static AdvancedLogger<'static, P>,
 }
 
 #[component]
-impl<S> AdvancedLoggerComponent<S>
+impl<P> AdvancedLoggerComponent<P>
 where
-    S: SerialIO + Send + 'static,
+    P: AdvancedLoggerHardwarePort + 'static,
 {
     /// Creates a new `AdvancedLoggerComponent`.
-    pub const fn new(adv_logger: &'static AdvancedLogger<S>) -> Self {
+    pub const fn new(adv_logger: &'static AdvancedLogger<P>) -> Self {
         Self { adv_logger }
     }
 
@@ -72,7 +71,7 @@ where
 
         // SAFETY: `this` is null-checked above. The protocol struct is installed by Patina with
         //         `Box::leak`, so its alignment and validity are guaranteed.
-        let internal = unsafe { &*this.cast::<AdvancedLoggerProtocolInternal<S>>() };
+        let internal = unsafe { &*this.cast::<AdvancedLoggerProtocolInternal<P>>() };
 
         internal.adv_logger.log_write(error_level, None, data);
         efi::Status::SUCCESS
@@ -111,6 +110,7 @@ where
 mod tests {
     use super::*;
     use crate::{
+        hardware_port::SerialHardwarePort,
         logger::{AdvancedLogger, TargetFilter},
         writer::AdvancedLogWriter,
     };
@@ -134,11 +134,11 @@ mod tests {
         }
     }
 
-    static TEST_LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+    static TEST_LOGGER: AdvancedLogger<SerialHardwarePort<UartNull>> = AdvancedLogger::new(
         Format::Standard,
         &[TargetFilter { target: "", log_level: log::LevelFilter::Trace, hw_filter_override: None }],
         log::LevelFilter::Trace,
-        UartNull {},
+        SerialHardwarePort::new(UartNull {}),
     );
 
     /// Initializes `TEST_LOGGER` with a newly allocated memory log and a mock timer.
@@ -155,9 +155,9 @@ mod tests {
     /// Builds a leaked `AdvancedLoggerProtocolInternal` structure and returns a `*const AdvancedLoggerProtocol`
     /// that can be passed as `this` to `adv_log_write`.
     fn leak_protocol_this() -> *const AdvancedLoggerProtocol {
-        let internal = Box::leak(Box::new(AdvancedLoggerProtocolInternal::<UartNull> {
+        let internal = Box::leak(Box::new(AdvancedLoggerProtocolInternal::<SerialHardwarePort<UartNull>> {
             protocol: AdvancedLoggerProtocol::new(
-                AdvancedLoggerComponent::<UartNull>::adv_log_write,
+                AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::adv_log_write,
                 TEST_LOGGER.get_log_address().unwrap_or(0),
             ),
             adv_logger: &TEST_LOGGER,
@@ -168,8 +168,12 @@ mod tests {
     #[test]
     fn adv_log_write_null_this_returns_invalid_parameter() {
         let data = b"hello";
-        let status =
-            AdvancedLoggerComponent::<UartNull>::adv_log_write(core::ptr::null(), 0, data.as_ptr(), data.len());
+        let status = AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::adv_log_write(
+            core::ptr::null(),
+            0,
+            data.as_ptr(),
+            data.len(),
+        );
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 
@@ -179,11 +183,13 @@ mod tests {
         // because the buffer null check is tripped first.
         let this = core::ptr::dangling::<AdvancedLoggerProtocol>();
         // Non-zero length.
-        let status = AdvancedLoggerComponent::<UartNull>::adv_log_write(this, 0, core::ptr::null(), 4);
+        let status =
+            AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::adv_log_write(this, 0, core::ptr::null(), 4);
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
         // Zero length still invalid because `slice::from_raw_parts` requires a non-null pointer
         // even for zero-length slices.
-        let status = AdvancedLoggerComponent::<UartNull>::adv_log_write(this, 0, core::ptr::null(), 0);
+        let status =
+            AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::adv_log_write(this, 0, core::ptr::null(), 0);
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 
@@ -195,7 +201,8 @@ mod tests {
         let this = leak_protocol_this();
 
         let data = b"hello, advanced logger";
-        let status = AdvancedLoggerComponent::<UartNull>::adv_log_write(this, 0, data.as_ptr(), data.len());
+        let status =
+            AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::adv_log_write(this, 0, data.as_ptr(), data.len());
         assert_eq!(status, efi::Status::SUCCESS);
     }
 }

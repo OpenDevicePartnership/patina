@@ -13,6 +13,21 @@ The crate stores records in a shared memory buffer that begins with an `ADVANCED
 - Aligned entries follow in the memory buffer after the header.
 - Each entry records the boot phase identifier, EFI debug level mask, timestamp counter, and message bytes.
 
+## Hardware Port Behavior
+
+In addition to the memory log, records may be emitted to a hardware port. The port is abstracted behind the
+`patina_adv_logger::hardware_port::AdvancedLoggerHardwarePort` trait. This allows a platform to control the
+serial port and any filtering logic required.
+
+- `SerialHardwarePort<S>` is the default implementation and writes every message it receives to the provided
+  `SerialIO` instance.
+- The logger applies the memory log's `HwPrintLevel` / `HwPortDisabled` filtering (including any per-target
+  `hw_filter_override`) before calling the port, so a port implementation only sees records that already passed
+  the standard filtering. The record's debug level is still passed to the port so platforms can apply
+  additional, platform specific gating.
+- Platforms that need to gate output (for example, on a debug jumper or GPIO) or emit to something other than a
+  serial port can supply their own implementation of the trait instead of using `SerialHardwarePort`.
+
 ## Parser Support
 
 This crate includes a bare-bones log parser executable for parsing the logs produced via the logger, and a public log
@@ -31,7 +46,7 @@ Below are the instructions for setting up and configuring the patina component a
 your platform's Patina DXE Core binary. Additional setup will be required for your Platform, which is discussed further
 below.
 
-1. Instantiate `AdvancedLogger` with the desired format, filters, level, and serial implementation.
+1. Instantiate `AdvancedLogger` with the desired format, filters, level, and hardware port implementation.
    Register it with `log::set_logger` as early as possible.
 2. Call `AdvancedLogger::init` with the physical HOB list pointer.
    This allows the logger to adopt the buffer and record its address for later protocol publication.
@@ -45,23 +60,27 @@ below.
 # {
 use patina_dxe_core::*;
 use patina::{debug::log::Format, peripheral::serial::uart::UartNull};
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::{AdvancedLogger, TargetFilter}};
+use patina_adv_logger::{
+   component::AdvancedLoggerComponent,
+   hardware_port::SerialHardwarePort,
+   logger::{AdvancedLogger, TargetFilter},
+};
 
 use log::LevelFilter;
 use core::ffi::c_void;
 
-static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+static LOGGER: AdvancedLogger<SerialHardwarePort<UartNull>> = AdvancedLogger::new(
    Format::Standard, // How logs are formatted
    &[TargetFilter { target: "allocations", log_level: LevelFilter::Off, hw_filter_override: None }], // set custom log levels per module
    log::LevelFilter::Info, // Default log level
-   UartNull { }, // Serial writer instance
+   SerialHardwarePort::new(UartNull { }), // Hardware port instance
 );
 
 struct ExamplePlatform;
 
 impl ComponentInfo for ExamplePlatform {
    fn components(mut add: Add<Component>) {
-      add.component(AdvancedLoggerComponent::<UartNull>::new(&LOGGER));
+      add.component(AdvancedLoggerComponent::<SerialHardwarePort<UartNull>>::new(&LOGGER));
    }
 }
 
