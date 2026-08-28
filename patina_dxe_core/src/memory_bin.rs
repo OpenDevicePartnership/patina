@@ -131,7 +131,7 @@ impl MemoryBinStatistics {
 /// Default `MemoryBinStatistics` initialization for all memory types.
 ///
 /// Indexed by `efi::MemoryType` value. Matches edk2's `mMemoryTypeStatistics` initialization.
-const DEFAULT_STATISTICS: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE + 1] = [
+const DEFAULT_STATISTICS: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE] = [
     MemoryBinStatistics::new(true, false),  // EfiReservedMemoryType (0)
     MemoryBinStatistics::new(false, false), // EfiLoaderCode (1)
     MemoryBinStatistics::new(false, false), // EfiLoaderData (2)
@@ -148,7 +148,6 @@ const DEFAULT_STATISTICS: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE + 1] = [
     MemoryBinStatistics::new(true, true),   // EfiPalCode (13)
     MemoryBinStatistics::new(false, false), // EfiPersistentMemory (14)
     MemoryBinStatistics::new(true, false),  // EfiUnacceptedMemoryType (15)
-    MemoryBinStatistics::new(false, false), // EfiMaxMemoryType sentinel (16)
 ];
 
 /// Manages memory bins for hibernate resume stability.
@@ -156,25 +155,33 @@ const DEFAULT_STATISTICS: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE + 1] = [
 /// The `MemoryBinManager` tracks per-memory-type bin regions and allocation statistics.
 pub(crate) struct MemoryBinManager {
     /// Per-memory-type bin statistics, indexed by `efi::MemoryType`.
-    statistics: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE + 1],
+    statistics: [MemoryBinStatistics; EFI_MAX_MEMORY_TYPE],
     /// Current memory type information with peak usage tracking for the BDS config table.
     /// This is a fixed-size array so that raw pointers to it remain valid for the
     /// lifetime of the static `MEMORY_BIN_MANAGER`.
     memory_type_information: [EFiMemoryTypeInformation; MAX_MEMORY_TYPE_INFO_ENTRIES],
-    /// Number of valid entries in `memory_type_information`.
-    memory_type_information_count: usize,
     /// Whether bins have been initialized.
     initialized: bool,
 }
 
 impl MemoryBinManager {
+    // get_mut is not const, so it can't be used here. This is safe because we are
+    // initializing the array and only traversing the length it returns.
+    #[allow(clippy::indexing_slicing)]
     /// Creates a new uninitialized `MemoryBinManager`.
     pub(crate) const fn new() -> Self {
         Self {
             statistics: DEFAULT_STATISTICS,
-            memory_type_information: [EFiMemoryTypeInformation { memory_type: 0, number_of_pages: 0 };
-                MAX_MEMORY_TYPE_INFO_ENTRIES],
-            memory_type_information_count: 0,
+            memory_type_information: {
+                let mut entries =
+                    [EFiMemoryTypeInformation { memory_type: 0, number_of_pages: 0 }; MAX_MEMORY_TYPE_INFO_ENTRIES];
+                let mut index = 0;
+                while index < entries.len() {
+                    entries[index].memory_type = index as efi::MemoryType;
+                    index += 1;
+                }
+                entries
+            },
             initialized: false,
         }
     }
@@ -309,7 +316,7 @@ impl MemoryBinManager {
 
         let mut top = end;
 
-        for (index, entry) in memory_type_info.iter().enumerate() {
+        for entry in memory_type_info {
             let mem_type = entry.memory_type;
             if mem_type as usize >= EFI_MAX_MEMORY_TYPE {
                 break;
@@ -330,7 +337,6 @@ impl MemoryBinManager {
 
             stats.base_address = top;
             stats.number_of_pages = u64::from(entry.number_of_pages);
-            stats.information_index = index;
 
             log::info!(
                 target: LOG_TARGET,
@@ -345,7 +351,6 @@ impl MemoryBinManager {
         }
 
         self.finalize_information_index(memory_type_info);
-        self.copy_memory_type_info(memory_type_info);
         self.initialized = true;
 
         log::info!(
@@ -358,43 +363,13 @@ impl MemoryBinManager {
     /// Sets the `information_index` for each memory type that has a corresponding entry
     /// in the memory type information array.
     fn finalize_information_index(&mut self, memory_type_info: &[EFiMemoryTypeInformation]) {
-        for mem_type in 0..EFI_MAX_MEMORY_TYPE {
+        for info in
+            memory_type_info.iter().filter(|e| (e.memory_type as usize) < EFI_MAX_MEMORY_TYPE && e.number_of_pages > 0)
+        {
+            let mem_type = info.memory_type as usize;
             let stats = self.statistics.get_mut(mem_type).expect("All defined memory types should be in statistics");
-            for (index, entry) in memory_type_info.iter().enumerate() {
-                if mem_type == entry.memory_type as usize {
-                    stats.information_index = index;
-                }
-            }
-            stats.current_number_of_pages = 0;
-        }
-        log::trace!(target: LOG_TARGET, "Bin stats: finalized information indices, reset current_number_of_pages to 0 for all types");
-    }
 
-    /// Copies memory type information entries into the fixed-size array.
-    fn copy_memory_type_info(&mut self, memory_type_info: &[EFiMemoryTypeInformation]) {
-        let count = memory_type_info.len().min(self.memory_type_information.len());
-        let src = memory_type_info.get(..count).expect("Failed to get source slice");
-        let dest = self.memory_type_information.get_mut(..count).expect("Failed to get destination slice");
-
-        dest.copy_from_slice(src);
-        self.memory_type_information_count = count;
-
-        if log::log_enabled!(target: LOG_TARGET, log::Level::Trace) {
-            log::trace!(
-                target: LOG_TARGET,
-                "Bin table: initialized with {count} entries from HOB"
-            );
-
-            if let Some(entries) = self.memory_type_information.get(..count) {
-                for entry in entries {
-                    log::trace!(
-                        target: LOG_TARGET,
-                        "  Bin table: {} pages={}",
-                        memory_type_name(entry.memory_type),
-                        entry.number_of_pages
-                    );
-                }
-            }
+            stats.information_index = mem_type;
         }
     }
 
@@ -415,6 +390,15 @@ impl MemoryBinManager {
 
         let aligned_pages = align_pages_to_granularity(pages, Self::granularity_for_type(memory_type));
         stats.current_number_of_pages += aligned_pages;
+
+        // The peak usage tracking must be updated now because the original allocation calls for these ranges were
+        // before bins were initialized. We always take the stats number because these are persisted PEI allocations,
+        // which are the base set of allocations that DXE will start with.
+        self.memory_type_information
+            .get_mut(memory_type as usize)
+            .expect("All memory types should be covered")
+            .number_of_pages = stats.current_number_of_pages as u32;
+
         log::debug!(
             target: LOG_TARGET,
             "PEI seed: {} +{} pages. total={}",
@@ -439,7 +423,7 @@ impl MemoryBinManager {
         &self,
     ) -> impl Iterator<Item = (efi::MemoryType, efi::PhysicalAddress, efi::PhysicalAddress, u64)> + '_ {
         self.statistics.iter().enumerate().filter_map(|(idx, stats)| {
-            if stats.number_of_pages > 0 && idx < EFI_MAX_MEMORY_TYPE {
+            if stats.number_of_pages > 0 {
                 Some((idx as efi::MemoryType, stats.base_address, stats.maximum_address, stats.number_of_pages))
             } else {
                 None
@@ -688,9 +672,7 @@ impl MemoryBinManager {
     ///
     /// Contains peak usage data that BDS can use to recommend next-boot bin sizes.
     pub(crate) fn memory_type_information(&self) -> &[EFiMemoryTypeInformation] {
-        self.memory_type_information
-            .get(..self.memory_type_information_count)
-            .expect("Memory Type Info count should be correct")
+        &self.memory_type_information
     }
 
     /// Returns the maximum number of additional descriptors that bin splitting could add.
@@ -767,11 +749,7 @@ impl MemoryBinManager {
     /// Resets the bin manager to its initial uninitialized state.
     #[cfg(test)]
     pub(crate) fn reset(&mut self) {
-        self.statistics = DEFAULT_STATISTICS;
-        self.memory_type_information =
-            [EFiMemoryTypeInformation { memory_type: 0, number_of_pages: 0 }; MAX_MEMORY_TYPE_INFO_ENTRIES];
-        self.memory_type_information_count = 0;
-        self.initialized = false;
+        *self = Self::new();
     }
 }
 
@@ -1067,11 +1045,19 @@ mod tests {
 
         manager.record_free(efi::RUNTIME_SERVICES_DATA, RT_GRAN_PAGES);
         assert_eq!(manager.statistics[efi::RUNTIME_SERVICES_DATA as usize].current_number_of_pages, 0);
+        assert_eq!(
+            manager.memory_type_information()[efi::RUNTIME_SERVICES_DATA as usize].number_of_pages,
+            RT_GRAN_PAGES as u32
+        );
 
         // Free more than allocated. It should stop at 0.
         manager.record_allocation(efi::RUNTIME_SERVICES_DATA, RT_GRAN_PAGES);
         manager.record_free(efi::RUNTIME_SERVICES_DATA, 100);
         assert_eq!(manager.statistics[efi::RUNTIME_SERVICES_DATA as usize].current_number_of_pages, 0);
+        assert_eq!(
+            manager.memory_type_information()[efi::RUNTIME_SERVICES_DATA as usize].number_of_pages,
+            RT_GRAN_PAGES as u32
+        );
     }
 
     #[test]
@@ -1095,7 +1081,10 @@ mod tests {
         // Peak should be updated in memory_type_information
         let expected =
             align_pages_to_granularity(alloc_pages, MemoryBinManager::granularity_for_type(efi::RUNTIME_SERVICES_DATA));
-        assert_eq!(manager.memory_type_information()[0].number_of_pages, expected as u32);
+        assert_eq!(
+            manager.memory_type_information()[efi::RUNTIME_SERVICES_DATA as usize].number_of_pages,
+            expected as u32
+        );
     }
 
     #[test]
@@ -1320,9 +1309,12 @@ mod tests {
         manager.initialize_from_range(range_start, range_size, &info);
 
         manager.seed_statistics_from_hob(efi::RUNTIME_SERVICES_DATA, 3);
+        let expected_pages =
+            align_pages_to_granularity(3, MemoryBinManager::granularity_for_type(efi::RUNTIME_SERVICES_DATA));
+        assert_eq!(manager.statistics[efi::RUNTIME_SERVICES_DATA as usize].current_number_of_pages, expected_pages);
         assert_eq!(
-            manager.statistics[efi::RUNTIME_SERVICES_DATA as usize].current_number_of_pages,
-            align_pages_to_granularity(3, MemoryBinManager::granularity_for_type(efi::RUNTIME_SERVICES_DATA))
+            manager.memory_type_information()[efi::RUNTIME_SERVICES_DATA as usize].number_of_pages,
+            expected_pages as u32
         );
     }
 
@@ -1548,11 +1540,11 @@ mod tests {
         init_bins(&mut manager, 0x1000_0000, &info);
 
         let mti = manager.memory_type_information();
-        assert_eq!(mti.len(), 3);
-        assert_eq!(mti[0].memory_type, efi::RUNTIME_SERVICES_CODE);
-        assert_eq!(mti[0].number_of_pages, 4);
-        assert_eq!(mti[1].memory_type, efi::RUNTIME_SERVICES_DATA);
-        assert_eq!(mti[1].number_of_pages, 8);
+        assert_eq!(mti.len(), MAX_MEMORY_TYPE_INFO_ENTRIES);
+        assert_eq!(mti[efi::RUNTIME_SERVICES_CODE as usize].memory_type, efi::RUNTIME_SERVICES_CODE);
+        assert_eq!(mti[efi::RUNTIME_SERVICES_DATA as usize].memory_type, efi::RUNTIME_SERVICES_DATA);
+        assert_eq!(mti[efi::RUNTIME_SERVICES_CODE as usize].number_of_pages, 0);
+        assert_eq!(mti[efi::RUNTIME_SERVICES_DATA as usize].number_of_pages, 0);
     }
 
     #[test]
