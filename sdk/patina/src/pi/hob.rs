@@ -942,11 +942,38 @@ impl Hob<'_> {
     }
 }
 
-/// A HOB iterator.
+/// A HOB iterator over the `PI spec HOB list`
 ///
+/// ## Start
+///
+///  The `PI spec HOB list` is a contiguous region of memory. The first node is PHIT, and the last node is END_OF_HOB_LIST.
+///
+///  To start iteration from any HOB (beginning or middle) in the `PI spec HOB list`:
+///
+///   1. Cast the pointer to a `GenericHob` reference
+///   2. Create a `Hob::Misc` from the reference
+///   3. Use `.iter()` to start iteration.
+///  
+///  To start iteration from the beginning of the `PI spec HOB list`:
+///
+///   1. Cast the pointer to a `PhaseHandoffInformationTable` reference
+///   2. Create a `Hob::Handoff` from the reference
+///   3. Use `.iter()` to start iteration.
+///
+/// ## Iteration
+///
+///  During iteration:
+///   
 /// - HOBs of interest are returned as their corresponding `Hob` enum variant, bound to the corresponding HOB type
 /// - Other HOBs are returned as `Hob::Misc`, bound to `hob::GenericHob`
 /// - `END_OF_HOB_LIST` stops the iterator and returns `None`
+///
+/// ## See Also
+///
+/// See [PI spec 1.10 III - 4.2. HOB Overview](https://uefi.org/specs/PI/1.10/V3_HOB_Design_Discussion.html#hob-overview)
+///
+///  HOBs are allocated sequentially in memory ...
+///  The sequential list of HOBs in memory will be referred to as the HOB list.
 ///
 pub struct HobIter<'a> {
     hob_ptr: *const HobHeader,
@@ -1052,8 +1079,11 @@ pub struct EFiMemoryTypeInformation {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::pi::{
-        BootMode, hob,
-        hob::{Capsule, Cpu, EndOfHobList, FirmwareVolume, MemoryAllocation, ResourceDescriptor, get_pi_hob_list_size},
+        BootMode,
+        hob::{
+            self, Capsule, Cpu, EndOfHobList, FirmwareVolume, GenericHob, Hob, MemoryAllocation,
+            PhaseHandoffInformationTable, ResourceDescriptor, get_pi_hob_list_size,
+        },
     };
 
     use core::{mem::size_of, slice::from_raw_parts};
@@ -1311,15 +1341,15 @@ pub(crate) mod tests {
         ($ptr:ident, $buffer:expr) => {
             let mut _aligned_storage: Option<Vec<u64>> = None;
 
-            let $ptr: *const c_void = if ($buffer.as_ptr() as usize) % 8 == 0 {
-                $buffer.as_ptr() as *const c_void
+            let $ptr: *const core::ffi::c_void = if ($buffer.as_ptr() as usize) % 8 == 0 {
+                $buffer.as_ptr() as *const core::ffi::c_void
             } else {
                 let mut aligned = vec![0u64; $buffer.len().div_ceil(8)];
                 unsafe {
                     core::ptr::copy_nonoverlapping($buffer.as_ptr(), aligned.as_mut_ptr() as *mut u8, $buffer.len());
                 }
                 _aligned_storage = Some(aligned);
-                _aligned_storage.as_ref().unwrap().as_ptr() as *const c_void
+                _aligned_storage.as_ref().unwrap().as_ptr() as *const core::ffi::c_void
             };
         };
     }
@@ -1327,8 +1357,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_pi_hob_list_size_multiple_hobs() {
-        use core::ffi::c_void;
-
         // Create a HOB list with multiple HOBs in contiguous memory
         let capsule = gen_capsule();
         let firmware_volume = gen_firmware_volume();
@@ -1369,8 +1397,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_pi_hob_list_size_varied_hob_types() {
-        use core::ffi::c_void;
-
         // Create a HOB list with various HOB types
         let cpu = gen_cpu();
         let resource = gen_resource_descriptor();
@@ -1409,5 +1435,70 @@ pub(crate) mod tests {
         let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
+    }
+
+    #[test]
+    fn test_pi_hob_list_iter() {
+        // generate some test hobs
+        let handoff = gen_phase_handoff_information_table();
+        let cpu = gen_cpu();
+        let resource = gen_resource_descriptor();
+        let memory_alloc = gen_memory_allocation();
+        let end_of_list = gen_end_of_hoblist();
+
+        let expected_size = size_of::<PhaseHandoffInformationTable>()
+            + size_of::<Cpu>()
+            + size_of::<ResourceDescriptor>()
+            + size_of::<MemoryAllocation>()
+            + size_of::<EndOfHobList>();
+
+        // SAFETY: Creating a contiguous memory from structs for test purposes.
+        let buffer = unsafe {
+            [
+                core::slice::from_raw_parts(&raw const handoff as *const u8, size_of::<PhaseHandoffInformationTable>()),
+                core::slice::from_raw_parts(&raw const cpu as *const u8, size_of::<Cpu>()),
+                core::slice::from_raw_parts(&raw const resource as *const u8, size_of::<ResourceDescriptor>()),
+                core::slice::from_raw_parts(&raw const memory_alloc as *const u8, size_of::<MemoryAllocation>()),
+                core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()),
+            ]
+        }
+        .concat();
+
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
+        // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
+        assert_eq!(size, expected_size);
+
+        //
+        // Test iteration from the beginning.
+        //
+
+        let hob_list_begin = aligned_buffer.cast::<PhaseHandoffInformationTable>();
+        let hob_list_begin = unsafe { hob_list_begin.as_ref() }.unwrap();
+
+        let hob_list = Hob::Handoff(hob_list_begin);
+
+        let mut count: u32 = 0;
+        for _hob in hob_list.iter() {
+            count += 1;
+        }
+        assert_eq!(count, 4); // found all HOBs except END_OF_HOB_LIST
+
+        //
+        // Test iteration from the middle.
+        //
+        let shift = size_of::<PhaseHandoffInformationTable>() + size_of::<Cpu>();
+        let middle = unsafe { aligned_buffer.byte_add(shift) };
+        let middle = middle.cast::<GenericHob>();
+        let middle = unsafe { middle.as_ref() }.unwrap();
+
+        let middle_list = Hob::Misc(middle);
+
+        let mut count_from_middle: u32 = 0;
+        for _hob in middle_list.iter() {
+            count_from_middle += 1;
+        }
+        assert_eq!(count_from_middle, 2); // from middle to END_OF_HOB_LIST (exclusive)
     }
 }

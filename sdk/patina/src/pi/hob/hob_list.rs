@@ -1254,8 +1254,6 @@ mod tests {
 
     #[test]
     fn test_get_pi_hob_list_size_multiple_hobs() {
-        use core::ffi::c_void;
-
         // Create a HOB list with multiple HOBs in contiguous memory
         let capsule = gen_capsule();
         let firmware_volume = gen_firmware_volume();
@@ -1295,8 +1293,6 @@ mod tests {
 
     #[test]
     fn test_get_pi_hob_list_size_varied_hob_types() {
-        use core::ffi::c_void;
-
         // Create a HOB list with various HOB types
         let cpu = gen_cpu();
         let resource = gen_resource_descriptor();
