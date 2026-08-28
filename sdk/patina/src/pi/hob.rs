@@ -1049,7 +1049,6 @@ impl<'a> Iterator for HobIter<'a> {
                     Hob::Misc((self.hob_ptr as *const GenericHob).as_ref().expect(NOT_NULL))
                 }
                 _ => {
-                    // unreachable!("Unknown HOB type: {}", hob_header.r#type);
                     debug_assert!(false, "Unknown HOB type: {}", hob_header.r#type);
                     Hob::Misc((self.hob_ptr as *const GenericHob).as_ref().expect(NOT_NULL))
                 }
