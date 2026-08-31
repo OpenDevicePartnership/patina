@@ -156,6 +156,7 @@ impl<'a> Iterator for AdvLogIterator<'a> {
 mod tests {
     extern crate std;
     use core::{mem::size_of, sync::atomic::Ordering};
+    use patina::debug::log::DEBUG_INFO;
 
     use super::*;
     use crate::memory_log::*;
@@ -165,7 +166,7 @@ mod tests {
         let buffer_v5 = create_buffer_v5(123, false);
         let log_v5 = AdvancedLogReader::open_log(&buffer_v5).unwrap();
         assert_eq!(log_v5.get_frequency(), 123);
-        assert!(log_v5.hardware_write_enabled(DEBUG_LEVEL_INFO));
+        assert!(log_v5.hardware_write_enabled(DEBUG_INFO));
         assert!(log_v5.get_new_logger_info_address().is_none());
 
         let buffer_v6 = create_buffer_v6(456, 0x1122334455667788);

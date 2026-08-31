@@ -116,13 +116,13 @@ fn phase_name(phase: u16) -> &'static str {
 }
 
 fn level_name(level: u32) -> &'static str {
-    if level & crate::memory_log::DEBUG_LEVEL_ERROR != 0 {
+    if level & patina::debug::log::DEBUG_ERROR != 0 {
         "ERR"
-    } else if level & crate::memory_log::DEBUG_LEVEL_WARNING != 0 {
+    } else if level & patina::debug::log::DEBUG_WARN != 0 {
         "WARN"
-    } else if level & crate::memory_log::DEBUG_LEVEL_INFO != 0 {
+    } else if level & patina::debug::log::DEBUG_INFO != 0 {
         "INFO"
-    } else if level & crate::memory_log::DEBUG_LEVEL_VERBOSE != 0 {
+    } else if level & patina::debug::log::DEBUG_VERBOSE != 0 {
         "VERB"
     } else {
         "UNKN"

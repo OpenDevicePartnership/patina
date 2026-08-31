@@ -18,7 +18,7 @@ use log::Level;
 use patina::standard::efi;
 use patina::{
     component::service::{Service, perf_timer::ArchTimerFunctionality},
-    debug::log::Format,
+    debug::log::{DEBUG_ERROR, DEBUG_INFO, DEBUG_VERBOSE, DEBUG_WARN, Format},
     error::EfiError,
     peripheral::serial::{SerialIO, shared::SharedSerial},
     pi::hob::{Hob, PhaseHandoffInformationTable},
@@ -256,27 +256,20 @@ where
 /// Converts a `log::Level` to a EFI Debug Level.
 const fn log_level_to_debug_level(level: Level) -> u32 {
     match level {
-        Level::Error => memory_log::DEBUG_LEVEL_ERROR,
-        Level::Info | Level::Debug => memory_log::DEBUG_LEVEL_INFO,
-        Level::Trace => memory_log::DEBUG_LEVEL_VERBOSE,
-        Level::Warn => memory_log::DEBUG_LEVEL_WARNING,
+        Level::Error => DEBUG_ERROR,
+        Level::Info | Level::Debug => DEBUG_INFO,
+        Level::Trace => DEBUG_VERBOSE,
+        Level::Warn => DEBUG_WARN,
     }
 }
 
 /// Converts a `log::LevelFilter` to a hardware print mask.
 const fn log_level_filter_to_debug_mask(level_filter: log::LevelFilter) -> u32 {
     match level_filter {
-        log::LevelFilter::Error => memory_log::DEBUG_LEVEL_ERROR,
-        log::LevelFilter::Warn => memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING,
-        log::LevelFilter::Info => {
-            memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING | memory_log::DEBUG_LEVEL_INFO
-        }
-        log::LevelFilter::Debug | log::LevelFilter::Trace => {
-            memory_log::DEBUG_LEVEL_ERROR
-                | memory_log::DEBUG_LEVEL_WARNING
-                | memory_log::DEBUG_LEVEL_INFO
-                | memory_log::DEBUG_LEVEL_VERBOSE
-        }
+        log::LevelFilter::Error => DEBUG_ERROR,
+        log::LevelFilter::Warn => DEBUG_ERROR | DEBUG_WARN,
+        log::LevelFilter::Info => DEBUG_ERROR | DEBUG_WARN | DEBUG_INFO,
+        log::LevelFilter::Debug | log::LevelFilter::Trace => DEBUG_ERROR | DEBUG_WARN | DEBUG_INFO | DEBUG_VERBOSE,
         log::LevelFilter::Off => 0,
     }
 }
@@ -356,7 +349,7 @@ mod tests {
     use patina::standard::efi;
     use patina::{
         component::service::{IntoService, perf_timer::ArchTimerFunctionality},
-        debug::log::Format,
+        debug::log::{DEBUG_ERROR, Format},
         peripheral::serial::uart::UartNull,
         pi::hob::{GUID_EXTENSION, GuidHob, HobHeader},
     };

@@ -17,6 +17,8 @@ use core::{
     mem::size_of,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
+#[cfg(test)]
+use patina::debug::log::DEBUG_INFO;
 use patina::standard::efi;
 use patina::{
     align_up,
@@ -30,16 +32,6 @@ pub const ADV_LOGGER_HOB_GUID: patina::BinaryGuid =
 
 pub const ADV_LOGGER_INFO_VERSION_V5: u16 = 5;
 pub const ADV_LOGGER_INFO_VERSION_V6: u16 = 6;
-
-// UEFI Debug Levels
-/// Error
-pub const DEBUG_LEVEL_ERROR: u32 = 0x80000000;
-/// Warnings
-pub const DEBUG_LEVEL_WARNING: u32 = 0x00000002;
-/// Informational debug messages
-pub const DEBUG_LEVEL_INFO: u32 = 0x00000040;
-/// Detailed debug messages that may significantly impact boot performance
-pub const DEBUG_LEVEL_VERBOSE: u32 = 0x00400000;
 
 // Phase definitions.
 pub const ADVANCED_LOGGER_PHASE_DXE: u16 = 4;
@@ -444,7 +436,7 @@ pub(crate) fn create_buffer_v5(timer_frequency: u64, hw_port_disabled: bool) -> 
         timer_frequency: AtomicU64::new(timer_frequency),
         ticks_at_time: 0,
         time: efi::Time::default(),
-        hw_print_level: DEBUG_LEVEL_INFO,
+        hw_print_level: DEBUG_INFO,
         reserved4: 0,
     };
 
@@ -479,7 +471,7 @@ pub(crate) fn create_buffer_v6(timer_frequency: u64, new_address: u64) -> alloc:
             timer_frequency: AtomicU64::new(timer_frequency),
             ticks_at_time: 0,
             time: efi::Time::default(),
-            hw_print_level: DEBUG_LEVEL_INFO,
+            hw_print_level: DEBUG_INFO,
             reserved4: 0,
         },
         new_logger_info_address: new_address,
