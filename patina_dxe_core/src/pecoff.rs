@@ -159,19 +159,24 @@ impl UefiPeInfo {
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
     fn from_pe(bytes: &[u8], opts: &goblin::pe::options::ParseOptions) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
+        let parsed_header = goblin::pe::header::Header::parse(bytes)?;
+        let optional_header = parsed_header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
 
-        // Parse the PE header and verify the optional header exists
-        let parsed_pe = goblin::pe::PE::parse_with_opts(bytes, opts)?;
-        let optional_header = parsed_pe.header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
+        let mut section_table_offset = parsed_header.dos_header.pe_pointer as usize
+            + SIZEOF_PE32_SIGNATURE
+            + SIZEOF_COFF_HEADER
+            + parsed_header.coff_header.size_of_optional_header as usize;
+
+        let sections = parsed_header.coff_header.sections(bytes, &mut section_table_offset)?;
 
         // Set the simple fields
         pe.header_type = HeaderType::Pe;
         pe.entry_point_offset = optional_header.standard_fields.address_of_entry_point as usize;
         pe.image_type = optional_header.windows_fields.subsystem;
-        pe.machine = parsed_pe.header.coff_header.machine;
+        pe.machine = parsed_header.coff_header.machine;
         pe.section_alignment = optional_header.windows_fields.section_alignment;
         pe.size_of_image = optional_header.windows_fields.size_of_image;
-        pe.sections = parsed_pe.sections.into_iter().collect();
+        pe.sections = sections;
         pe.size_of_headers = optional_header.windows_fields.size_of_headers as usize;
         pe.nx_compat = optional_header.windows_fields.dll_characteristics
             & goblin::pe::dll_characteristic::IMAGE_DLLCHARACTERISTICS_NX_COMPAT
@@ -184,18 +189,32 @@ impl UefiPeInfo {
 
         // Calculate the image base offset by finding the offset of the windows fields
         // image_base is the first entry in the windows_fields
-        let mut windows_fields_offset = parsed_pe.header.dos_header.pe_pointer;
+        let mut windows_fields_offset = parsed_header.dos_header.pe_pointer;
         windows_fields_offset += SIZEOF_COFF_HEADER as u32;
         windows_fields_offset += SIZEOF_PE32_SIGNATURE as u32;
         windows_fields_offset += SIZEOF_STANDARD_FIELDS_64 as u32;
         pe.image_base_header_field_offset = windows_fields_offset as usize;
 
-        // Get the filename if the data exists
-        if let Some(debug_data) = parsed_pe.debug_data {
-            if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
-                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-            } else if let Some(codeview_data) = debug_data.codeview_pdb20_debug_info {
-                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+        // Debug data is optional metadata. Use it when valid, but do not reject an otherwise
+        // loadable image when its debug directory cannot be resolved or parsed.
+        if let Some(&debug_table) = optional_header.data_directories.get_debug_table() {
+            match goblin::pe::debug::DebugData::parse_with_opts(
+                bytes,
+                debug_table,
+                &pe.sections,
+                optional_header.windows_fields.file_alignment,
+                opts,
+            ) {
+                Ok(debug_data) => {
+                    if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
+                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+                    } else if let Some(codeview_data) = debug_data.codeview_pdb20_debug_info {
+                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to parse optional PE/COFF debug metadata: {err:?}");
+                }
             }
         }
         Ok(pe)
@@ -1079,5 +1098,24 @@ mod tests {
         let image_info = UefiPeInfo::parse(image).unwrap();
 
         assert!(get_section(".fake", &image_info, image).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_pe_image_with_unmapped_debug_directory_loads_without_filename() {
+        test_support::init_test_logger();
+        let image = include_bytes!("../resources/test/invalid_debug_directory.efi");
+
+        let parsed_header = goblin::pe::header::Header::parse(image).unwrap();
+        let optional_header = parsed_header.optional_header.unwrap();
+        let debug_table = optional_header.data_directories.get_debug_table().unwrap();
+        let debug_table_end = debug_table.virtual_address.checked_add(debug_table.size).unwrap();
+        assert!(debug_table_end <= optional_header.windows_fields.size_of_headers);
+
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        assert!(image_info.filename.is_none());
+
+        let mut loaded_image = vec![0; image_info.size_of_image as usize];
+        load_image(&image_info, image, &mut loaded_image).unwrap();
     }
 }
