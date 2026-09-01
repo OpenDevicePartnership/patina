@@ -20,7 +20,9 @@
 //! - [`with_protocol`](ProtocolServicesExt::with_protocol) - Run a closure with the interface.
 //!   Useful for a single, immediate use. The reference cannot escape the closure.
 //! - [`open_protocol`](ProtocolServicesExt::open_protocol) - A [`ProtocolGuard`] that dereferences
-//!   to the interface for a block scope. Useful when several statements need the interface.
+//!   to the interface for a block scope. Useful when several statements need the interface. Acts
+//!   on a specific handle, obtained with [`locate_first_handle`](ProtocolServicesExt::locate_first_handle)
+//!   or [`locate_handles_for`](ProtocolServicesExt::locate_handles_for).
 //! - [`locate_token`](ProtocolServicesExt::locate_token) - A [`ProtocolToken`] that stores
 //!   only a handle and never dangles. Useful for keeping a reference for the rest of boot.
 //!   Re-validate each use with [`resolve`](ProtocolServicesExt::resolve).
@@ -423,6 +425,19 @@ pub trait ProtocolServicesExt: ProtocolServices {
         self.locate_handles(P::PROTOCOL_GUID)
     }
 
+    /// Locates the first handle with protocol `P` installed.
+    ///
+    /// Useful for obtaining a [`Handle`] to pass to [`Self::open_protocol`] or
+    /// [`Self::with_protocol_on`], which act on a specific handle rather than any installed
+    /// interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if no handle has `P` installed.
+    fn locate_first_handle<P: ProtocolInterface>(&self) -> Result<Handle, ProtocolError> {
+        self.locate_handles(P::PROTOCOL_GUID)?.into_iter().next().ok_or(ProtocolError::NotFound)
+    }
+
     /// Runs `f` with the first installed interface for protocol `P`.
     ///
     /// Use this for a single, immediate use of a protocol. The reference passed to `f` cannot
@@ -479,8 +494,7 @@ pub trait ProtocolServicesExt: ProtocolServices {
     ///
     /// Returns [`ProtocolError::NotFound`] if no handle has `P` installed.
     fn locate_token<P: ProtocolInterface>(&self) -> Result<ProtocolToken<P>, ProtocolError> {
-        let handle = self.locate_handles(P::PROTOCOL_GUID)?.into_iter().next().ok_or(ProtocolError::NotFound)?;
-        Ok(ProtocolToken::new(handle))
+        Ok(ProtocolToken::new(self.locate_first_handle::<P>()?))
     }
 
     /// Resolves `token`, returning the interface if `P` is still installed on the token's handle.
@@ -581,6 +595,25 @@ mod tests {
         });
 
         assert!(mock.locate_handles_for::<FakeProtocol>().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_locate_first_handle() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_locate_handles().times(1).returning(|guid| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            Ok(alloc::vec![fake_handle(), fake_controller()])
+        });
+
+        assert_eq!(mock.locate_first_handle::<FakeProtocol>().unwrap(), fake_handle());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_locate_first_handle_not_found() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_locate_handles().times(1).returning(|_| Ok(Vec::new()));
+
+        assert_eq!(mock.locate_first_handle::<FakeProtocol>().unwrap_err(), ProtocolError::NotFound);
     }
 
     fn fake_handle() -> Handle {

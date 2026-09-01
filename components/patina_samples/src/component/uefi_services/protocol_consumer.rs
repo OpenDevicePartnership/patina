@@ -57,7 +57,7 @@ impl ProtocolConsumerSample {
         }
 
         // Option 2 and 3 act on a specific handle, so first find one that has the protocol.
-        if let Some(handle) = protocols.locate_handles_for::<SampleVendorProtocol>()?.into_iter().next() {
+        if let Ok(handle) = protocols.locate_first_handle::<SampleVendorProtocol>() {
             // Option 2: open_protocol. Best when a block needs the interface across several
             // statements. The guard dereferences to the interface and releases access at the end
             // of the block.
