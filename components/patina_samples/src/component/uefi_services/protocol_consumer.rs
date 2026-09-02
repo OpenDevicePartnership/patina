@@ -28,7 +28,7 @@ use patina::{
         component,
         service::{
             Service,
-            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt, Tpl},
+            uefi_services::protocol::{OpenAttributes, ProtocolServices, ProtocolServicesExt, Tpl},
         },
     },
     error::Result,
@@ -58,13 +58,28 @@ impl ProtocolConsumerSample {
 
         // Option 2 and 3 act on a specific handle, so first find one that has the protocol.
         if let Ok(handle) = protocols.locate_first_handle::<SampleVendorProtocol>() {
+            // An agent handle identifies this component to the protocol database. An agent handle is created once
+            // with register_agent and can be reused for every open_protocol call below.
+            let agent = protocols.register_agent()?;
+
             // Option 2: open_protocol. Best when a block needs the interface across several
             // statements. The guard dereferences to the interface and releases access at the end
-            // of the block.
+            // of the block. `Shared` records the access but does not stop the protocol from being
+            // uninstalled while the guard is held.
             {
-                let protocol = protocols.open_protocol::<SampleVendorProtocol>(handle)?;
+                let protocol =
+                    protocols.open_protocol::<SampleVendorProtocol>(handle, agent, OpenAttributes::Shared)?;
                 log::info!("open_protocol() revision is {:#x}", protocol.revision);
                 log::info!("open_protocol() status is {:#x}", (protocol.get_status)());
+            }
+
+            // `Exclusive` blocks the protocol from being uninstalled while the guard is held, and
+            // first attempts to disconnect any existing `ByDriver` holder so the open can succeed.
+            // Use it when a component cannot tolerate the protocol disappearing partway through a
+            // critical section.
+            match protocols.open_protocol::<SampleVendorProtocol>(handle, agent, OpenAttributes::Exclusive) {
+                Ok(protocol) => log::info!("Exclusive open() status is {:#x}", (protocol.get_status)()),
+                Err(err) => log::debug!("Exclusive open failed: {err:?}"),
             }
 
             // Option 3: locate_token then resolve. Best for using a protocol instance over time. The

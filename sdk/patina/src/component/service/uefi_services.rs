@@ -25,6 +25,7 @@
 //!
 //! - [`config_table::ConfigurationTableServices`] - Configuration table installation and lookup.
 //! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
+//! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
 //! - [`event::EventServices`] - Events, using Rust closures for notifications.
 //! - [`image::ImageServices`] - Loading, starting, and unloading UEFI images.
 //! - [`protocol::ProtocolServices`] - Typed protocol installation and discovery.
@@ -44,6 +45,7 @@
 
 pub mod config_table;
 pub mod driver;
+pub mod driver_binding;
 pub mod event;
 pub mod handle;
 pub mod image;
