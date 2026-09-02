@@ -1354,7 +1354,7 @@ pub(crate) mod tests {
         // // Wrong!! Decode GenericHob from buffer
         // let hob = unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast::<hob::GenericHob>()) };
 
-        // Must be cast to keep tailing data.
+        // Must be cast to preserve trailing data.
         declare_aligned_buffer!(aligned_buffer, buffer);
         let hob = aligned_buffer.cast::<hob::GenericHob>();
         // SAFETY: The hob alignment is ensured by `declare_aligned_buffer!`
