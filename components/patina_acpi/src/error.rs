@@ -24,7 +24,7 @@ pub enum AcpiError {
     /// There was an attempt to install the FADT more than once.
     /// While most ACPI tables are allowed to be duplicated, the FADT is not.
     FadtAlreadyInstalled,
-    /// Boot services was unable to install the ACPI table using `install_configuration_table`,
+    /// Configuration table services were unable to install the RSDP using `install_or_replace`,
     InstallConfigurationTableFailed,
     /// An invalid table key was passed into `uninstall_acpi_table`,
     /// A table key is invalid when it is not a known value returned by `install_acpi_table`,
@@ -54,8 +54,8 @@ pub enum AcpiError {
     NullTablePtr,
     /// `get_acpi_table<T>` was provided a type that does not match the type of the table at the given index.
     InvalidTableType,
-    /// There was an attempt to initialize the boot services pointer after it has already been set.
-    BootServicesAlreadyInitialized,
+    /// There was an attempt to initialize the configuration table services after it has already been set.
+    ConfigTableServicesAlreadyInitialized,
     /// There was an attempt to initialize the memory manager after it has already been set.
     MemoryManagerAlreadyInitialized,
     /// The provider instance was not initialized.
@@ -83,7 +83,7 @@ impl From<AcpiError> for efi::Status {
     fn from(err: AcpiError) -> Self {
         match err {
             AcpiError::AllocationFailed | AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
-            AcpiError::BootServicesAlreadyInitialized
+            AcpiError::ConfigTableServicesAlreadyInitialized
             | AcpiError::FadtAlreadyInstalled
             | AcpiError::MemoryManagerAlreadyInitialized
             | AcpiError::XsdtAlreadyInstalled => efi::Status::ALREADY_STARTED,
@@ -119,12 +119,62 @@ impl From<AcpiError> for efi::Status {
 mod tests {
     use super::*;
 
+    // One test per `efi::Status` outcome group, matching the arms in `impl From<AcpiError> for efi::Status`.
+
     #[test]
-    fn test_acpi_error_to_efi_status() {
-        // Test a subset of ACPI errors.
+    fn test_acpi_error_to_efi_status_out_of_resources() {
         assert_eq!(efi::Status::from(AcpiError::AllocationFailed), efi::Status::OUT_OF_RESOURCES);
-        assert_eq!(efi::Status::from(AcpiError::InvalidSignature), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::FreeFailed), efi::Status::OUT_OF_RESOURCES);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_already_started() {
         assert_eq!(efi::Status::from(AcpiError::FadtAlreadyInstalled), efi::Status::ALREADY_STARTED);
+        assert_eq!(efi::Status::from(AcpiError::ConfigTableServicesAlreadyInitialized), efi::Status::ALREADY_STARTED);
+        assert_eq!(efi::Status::from(AcpiError::MemoryManagerAlreadyInitialized), efi::Status::ALREADY_STARTED);
+        assert_eq!(efi::Status::from(AcpiError::XsdtAlreadyInstalled), efi::Status::ALREADY_STARTED);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_compromised_data() {
+        assert_eq!(efi::Status::from(AcpiError::ChecksumFailed), efi::Status::COMPROMISED_DATA);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_unsupported() {
+        assert_eq!(efi::Status::from(AcpiError::FacsAddressExceeds32BitLimit), efi::Status::UNSUPPORTED);
+        assert_eq!(efi::Status::from(AcpiError::FacsUefiNot64BAligned), efi::Status::UNSUPPORTED);
+        assert_eq!(efi::Status::from(AcpiError::HobTableNotInstalled), efi::Status::UNSUPPORTED);
+        assert_eq!(efi::Status::from(AcpiError::InstallConfigurationTableFailed), efi::Status::UNSUPPORTED);
+        assert_eq!(efi::Status::from(AcpiError::XsdtInvalidLengthFromHob), efi::Status::UNSUPPORTED);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_invalid_parameter() {
+        assert_eq!(efi::Status::from(AcpiError::InvalidSignature), efi::Status::INVALID_PARAMETER);
         assert_eq!(efi::Status::from(AcpiError::NullTablePtr), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidChecksumOffset), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidNotifyUnregister), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidTableFormat), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidTableIndex), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidTableType), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::InvalidXsdtEntry), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::TableNotifyFailed), efi::Status::INVALID_PARAMETER);
+        assert_eq!(efi::Status::from(AcpiError::XsdtOverflow), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_not_found() {
+        assert_eq!(efi::Status::from(AcpiError::InvalidTableKey), efi::Status::NOT_FOUND);
+        assert_eq!(efi::Status::from(AcpiError::NullRsdpFromHob), efi::Status::NOT_FOUND);
+        assert_eq!(efi::Status::from(AcpiError::NullXsdt), efi::Status::NOT_FOUND);
+        assert_eq!(efi::Status::from(AcpiError::ProviderNotInitialized), efi::Status::NOT_FOUND);
+        assert_eq!(efi::Status::from(AcpiError::TableNotPresentInMemory), efi::Status::NOT_FOUND);
+        assert_eq!(efi::Status::from(AcpiError::XsdtEntryNotFound), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_acpi_error_to_efi_status_not_started() {
+        assert_eq!(efi::Status::from(AcpiError::XsdtNotInitialized), efi::Status::NOT_STARTED);
     }
 }

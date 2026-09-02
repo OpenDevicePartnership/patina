@@ -1,23 +1,22 @@
 # Patina Performance Component
 
 The Patina performance component acts as the translation layer between the core's performance implementation, and the
-UEFI and ACPI implementations.
+UEFI and ACPI implementations. It is split into four single-purpose components:
 
-## Responsibilities
-
-- Publish the FBPT at End of DXE so the operating system can consume it later.
-- Expose the EDK II measurement protocol (`EdkiiPerformanceMeasurement`) for C drivers that need to log performance
-  data.
-- Publish performance properties through a configuration table.
-- Optionally merge Management Mode (MM) performance records when an MM communication region is available.
+- `MeasurementProtocolPublisher` produces the EDK II measurement protocol (`EdkiiPerformanceMeasurement`) for C
+  drivers that need to log performance data.
+- `PropertyPublisher` publishes performance properties through a configuration table.
+- `FbptPublisher` publishes the FBPT at End of DXE so the operating system can consume it later.
+- `MmRecordCollector` merges Management Mode (MM) performance records when an MM communication region is
+  available.
 
 ## Configuration
 
-Whether performance measurement is enabled is decided by the DXE Core, not by this component. The core resolves the
-performance configuration from a `PerformanceConfigHob`, falling back to the platform-provided
+Whether performance measurement is enabled is decided by the DXE Core, not by these components. The core resolves
+the performance configuration from a `PerformanceConfigHob`, falling back to the platform-provided
 `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` when no such HOB is present. When performance is enabled the core
-publishes the [`PerformanceManager`] service; when it is disabled that service is absent, so this component's
-service dependency is unsatisfied and it does not dispatch.
+publishes the `PerformanceManager` service; when it is disabled that service is absent, so every component in this
+crate depends on it (directly or purely for dispatch gating) and none of them dispatch.
 
 A platform therefore enables performance in one of two ways:
 
@@ -41,16 +40,20 @@ impl PlatformInfo for ExamplePlatform {
 
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // Each component dispatches only when the DXE Core enables performance measurement, via a performance
         // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
-        add.component(patina_performance::component::Performance::new());
+        add.component(patina_performance::component::protocol::MeasurementProtocolPublisher::new());
+        add.component(patina_performance::component::property::PropertyPublisher::new());
+        add.component(patina_performance::component::fbpt::FbptPublisher::new());
+        // Only needed on platforms with an MM communication region.
+        add.component(patina_performance::component::mm_records::MmRecordCollector::new());
     }
 }
 ```
 
 ## API
 
-The functions below are provided by the [`PerformanceManager`] service (produced by the DXE Core) and the core
+The functions below are provided by the `PerformanceManager` service (produced by the DXE Core) and the core
 internals; this component makes them reachable from external C modules through the `EdkiiPerformanceMeasurement`
 protocol.
 
@@ -71,7 +74,7 @@ protocol.
 
 ### Logging Performance Measurements
 
-Performance measurements are recorded through the [`PerformanceManager`] service, which is produced by the DXE
+Performance measurements are recorded through the `PerformanceManager` service, which is produced by the DXE
 Core and consumed both internally by the core and by components via dependency injection.
 
 *Example of recording a measurement through the service:*
@@ -86,17 +89,18 @@ fn record(perf: Service<dyn PerformanceManager>) {
 }
 ```
 
-[`PerformanceManager`]: patina::component::service::performance::PerformanceManager
+`PerformanceManager`: `patina::component::service::performance::PerformanceManager`
 
 ## Performance Component Overview
 
-The performance measurement API is provided by the [`PerformanceManager`] service, which is produced by the DXE
-Core. This component contributes the UEFI-facing pieces on top of it:
+The performance measurement API is provided by the `PerformanceManager` service, which is produced by the DXE
+Core. This crate contributes the UEFI-facing pieces on top of it:
 
-- The EDK II Performance Measurement protocol, produced by this component, for use by external (C) modules.
-- Publishing of the FBPT and performance properties.
+- The EDK II Performance Measurement protocol, produced by `MeasurementProtocolPublisher`, for use by external (C)
+  modules.
+- Publishing of the FBPT and performance properties, by `FbptPublisher` and `PropertyPublisher` respectively.
 
-Patina code (core or components) records measurements through the [`PerformanceManager`] service. External modules
+Patina code (core or components) records measurements through the `PerformanceManager` service. External modules
 use the function returned by the `EdkiiPerformanceMeasurement` protocol, which routes back into the same service.
 
 ---
@@ -104,24 +108,22 @@ use the function returned by the `EdkiiPerformanceMeasurement` protocol, which r
 ### Initialization and Setup
 
 The DXE Core initializes the FBPT, seeds it with any pre-DXE performance HOB data, and applies the measurement mask
-before this component runs. Upon initialization, the component performs the following steps:
+before these components run. Each component performs one part of the following:
 
-1. **Install the `EdkiiPerformanceMeasurement` Protocol**
-
+1. **Install the `EdkiiPerformanceMeasurement` Protocol** (`MeasurementProtocolPublisher`)
    - Enables external modules to log performance data through the measurement service.
 
-2. **Register Events**
+2. **Register Events** (`FbptPublisher`, `MmRecordCollector`)
+   - `MmRecordCollector` collects performance records logged in Management Mode (MM) at Ready-to-Boot.
+   - `FbptPublisher` publishes the FBPT to reserved memory at End of DXE.
 
-   - One event collects performance records logged in Management Mode (MM).
-   - Another event publishes the FBPT to allocate the table in reserved memory at the end of the DXE phase.
-
-3. **Install Performance Properties**
-
+3. **Install Performance Properties** (`PropertyPublisher`)
    - Exposes performance-related properties through a configuration table for use by other components.
 
 ---
 
 ### Scope and Limitations
 
-This component **only publishes the FBPT**, as it specifically manages the additional record fields within it.
-Other tables, such as the **Firmware Performance Data Table (FPDT)**, are published by separate components.
+This crate's `FbptPublisher` **only publishes the FBPT**, as it specifically manages the additional record fields
+within it. Other tables, such as the `Firmware Performance Data Table (FPDT)`, are published by separate
+components.

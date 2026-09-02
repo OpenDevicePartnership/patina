@@ -16,11 +16,13 @@ use patina::{
     arch,
     component::{
         Storage, component,
-        service::{IntoService, Service},
+        service::{
+            IntoService, Service,
+            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+        },
     },
     error::{EfiError, Result},
     protocol::ProtocolInterface,
-    uefi::boot_services::{BootServices, StandardBootServices},
 };
 use patina_internal_cpu::interrupts::{self, ExceptionType, HandlerType, InterruptManager, Interrupts};
 
@@ -251,13 +253,18 @@ pub(crate) struct CpuArchProtocolInstaller;
 
 #[component]
 impl CpuArchProtocolInstaller {
-    fn entry_point(self, interrupt_manager: Service<dyn InterruptManager>, bs: StandardBootServices) -> Result<()> {
+    fn entry_point(
+        self,
+        interrupt_manager: Service<dyn InterruptManager>,
+        protocols: Service<dyn ProtocolServices>,
+    ) -> Result<()> {
         let protocol = EfiCpuArchProtocolImpl::new(interrupt_manager);
 
         // Convert the protocol to a raw pointer and store it in to protocol DB
         let interface = Box::leak(Box::new(protocol));
 
-        bs.install_protocol_interface(None, interface)
+        protocols
+            .install_protocol(None, interface)
             .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
         log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
 

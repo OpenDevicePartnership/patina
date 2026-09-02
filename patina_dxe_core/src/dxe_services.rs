@@ -12,6 +12,7 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina::crc32;
 use patina::error::EfiError;
 use patina_ffs::volume::VolumeRef;
 
@@ -397,7 +398,7 @@ impl<P: PlatformInfo> Core<P> {
         let dxe_services_system_table_ptr = &raw const dxe_services_system_table;
         // SAFETY: dxe_services_system_table is a local value, its byte representation is valid for hashing.
         let crc32 = unsafe {
-            crc32fast::hash(from_raw_parts(
+            crc32::calculate_crc32(from_raw_parts(
                 dxe_services_system_table_ptr as *const u8,
                 mem::size_of::<dxe_services::DxeServicesTable>(),
             ))
@@ -2318,7 +2319,7 @@ mod tests {
             let mut copy = unsafe { core::ptr::read(dxe_tbl) };
             copy.header.crc32 = 0;
             // SAFETY: copy is a local value. Creating a slice from its pointer and size is valid.
-            let crc = crc32fast::hash(unsafe {
+            let crc = patina::crc32::calculate_crc32(unsafe {
                 core::slice::from_raw_parts(
                     (&raw const copy) as *const u8,
                     core::mem::size_of::<dxe_services::DxeServicesTable>(),

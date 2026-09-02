@@ -76,12 +76,14 @@
 //!
 //! ```ignore
 //! use patina::component::{Component, IntoComponent};
-//! use patina_smbios::component::SmbiosProvider;
+//! use patina_smbios::component::{protocol_publisher::SmbiosProtocolPublisher, provider::SmbiosProvider};
 //!
 //! // Register SMBIOS provider component with SMBIOS version
 //! fn my_platform_init(mut commands: Commands) -> Result<()> {
 //!     // Register SMBIOS provider with SMBIOS 3.9 specification
 //!     commands.add_component(SmbiosProvider::new(3, 9));
+//!     // Register protocol compatibility for C drivers
+//!     commands.add_component(SmbiosProtocolPublisher::new());
 //!
 //!     Ok(())
 //! }
@@ -190,13 +192,15 @@
 //!
 //! ## Step 2: Register Provider Component
 //!
-//! In your platform initialization code, register the SMBIOS provider with your SMBIOS version:
+//! In your platform initialization code, register the SMBIOS provider with your SMBIOS version,
+//! plus the protocol publisher if C driver compatibility is needed:
 //!
 //! ```ignore
-//! use patina_smbios::component::SmbiosProvider;
+//! use patina_smbios::component::{protocol_publisher::SmbiosProtocolPublisher, provider::SmbiosProvider};
 //!
 //! // Register with SMBIOS 3.9 specification
 //! commands.add_component(SmbiosProvider::new(3, 9));
+//! commands.add_component(SmbiosProtocolPublisher::new());
 //! ```
 //!
 //! ## Step 3: Add Records in Your Components
@@ -255,16 +259,15 @@
 //! - Safe for concurrent access from different components
 //! - UEFI DXE model ensures single-threaded execution at same TPL
 //!
-//! ## Global State Justification
+//! ## Bridging the C Protocol to the Smbios Service
 //!
-//! The global SMBIOS manager is necessary because:
-//!
-//! 1. **C Protocol Requirement**: EDKII SMBIOS protocol callbacks don't receive `self` pointer,
-//!    requiring global state to access the manager
-//! 2. **Single Source of Truth**: All SMBIOS data (Rust + C consumers) must share one manager
-//! 3. **Table Publication**: Final SMBIOS table must contain all records from all producers
-//!
-//! The manager is installed once during initialization and remains valid for system lifetime.
+//! EDK II SMBIOS protocol functions take a `This` pointer but no other context. The C protocol
+//! shim resolves this without any global state by leaking a protocol struct that embeds a
+//! `Service<dyn Smbios>` as an extra field after the protocol's own fields, and each protocol
+//! function recovers it by pointer-casting `This` back to the containing struct (safe because the
+//! protocol is the struct's first `repr(C)` field). Every producer and consumer, Rust callers and
+//! C drivers, goes through this same `Service<dyn Smbios>`, so there is one location for SMBIOS
+//! data and no separate global manager to keep in sync.
 //!
 //! ## Privacy and Encapsulation
 //!

@@ -71,6 +71,10 @@ pub enum SmbiosError {
     /// Published SMBIOS table was modified directly instead of using protocol APIs
     /// Use `Remove()` + `Add()` to modify records, or `UpdateString()` for string fields
     TableDirectlyModified,
+
+    // Concurrency errors
+    /// The SMBIOS manager lock is already held by another caller
+    Busy,
 }
 
 impl From<SmbiosError> for patina::standard::efi::Status {
@@ -111,6 +115,9 @@ impl From<SmbiosError> for patina::error::EfiError {
 
             // Table integrity errors map to DEVICE_ERROR (indicates corrupted/invalid state)
             SmbiosError::TableDirectlyModified => patina::error::EfiError::DeviceError,
+
+            // Concurrency errors map to DEVICE_ERROR
+            SmbiosError::Busy => patina::error::EfiError::DeviceError,
         }
     }
 }
@@ -147,6 +154,7 @@ mod tests {
             SmbiosError::HandleInUse,
             SmbiosError::HandleOutOfRange,
             SmbiosError::TableDirectlyModified,
+            SmbiosError::Busy,
         ];
 
         // Each should be cloneable and comparable
@@ -225,6 +233,10 @@ mod tests {
         // Test table integrity errors map to DEVICE_ERROR
         let efi_err: patina::error::EfiError = SmbiosError::TableDirectlyModified.into();
         assert_eq!(efi_err, patina::error::EfiError::DeviceError);
+
+        // Test concurrency errors map to DEVICE_ERROR
+        let efi_err: patina::error::EfiError = SmbiosError::Busy.into();
+        assert_eq!(efi_err, patina::error::EfiError::DeviceError);
     }
 
     #[test]
@@ -249,6 +261,9 @@ mod tests {
         assert_eq!(status, efi::Status::UNSUPPORTED);
 
         let status: efi::Status = SmbiosError::TableDirectlyModified.into();
+        assert_eq!(status, efi::Status::DEVICE_ERROR);
+
+        let status: efi::Status = SmbiosError::Busy.into();
         assert_eq!(status, efi::Status::DEVICE_ERROR);
     }
 }

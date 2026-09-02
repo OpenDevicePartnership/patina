@@ -188,7 +188,6 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// ```ignore
 /// use patina_test::{patina_test, u_assert_eq, u_assert, error::Result};
-/// use patina::boot_services::StandardBootServices;
 ///
 /// #[patina_test]
 /// fn test_case() -> Result {
@@ -217,7 +216,7 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// #[patina_test]
 /// #[cfg_attr(not(target_arch = "x86_64"), skip)]
-/// fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
+/// fn x86_64_only_test_case() -> Result {
 ///   todo!()
 /// }
 ///

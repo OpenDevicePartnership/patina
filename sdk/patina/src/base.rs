@@ -12,6 +12,7 @@ use crate::base::error::EfiError;
 use crate::standard::efi;
 
 pub mod c_ptr;
+pub mod crc32;
 pub mod error;
 pub mod guid;
 pub mod hash;

@@ -19,6 +19,7 @@ use patina::standard::efi::{self, protocols::device_path::Protocol};
 use patina::{
     Char16Str,
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
+    component::service::uefi_services::image::ImageError,
     error::EfiError,
     guid as base_guids, log_debug_assert,
     pi::{
@@ -686,6 +687,47 @@ unsafe impl Sync for ImageData {}
 unsafe impl Send for ImageData {}
 
 impl<P: super::PlatformInfo> super::PiDispatcher<P> {
+    /// Loads an image from an in-memory buffer for the [`ImageServices`] component service.
+    ///
+    /// This resolves the platform-specific dispatcher instance and erases the platform generic
+    /// `P`, so it can be stored as a plain function pointer by `CoreImageServices`.
+    ///
+    /// This is a simplified version of loading an image, which does not require a device path and
+    /// always indicates that the image load is not originating from the boot manager. In order
+    /// to change the `boot_policy` or to provide a device path from which the image is loaded,
+    /// use [`service_load_image_from_device_path`] instead.
+    ///
+    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    pub(crate) fn service_load_image(parent: efi::Handle, source: &[u8]) -> Result<efi::Handle, ImageError> {
+        Self::instance().load_image(false, parent, None, Some(source)).map_err(image_status_to_error)
+    }
+
+    /// Starts a loaded image for the [`ImageServices`] component service.
+    ///
+    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    pub(crate) fn service_start_image(image: efi::Handle) -> Result<(), ImageError> {
+        Self::instance().start_image(image).map_err(efi_status_to_image_error)
+    }
+
+    /// Unloads a loaded image for the [`ImageServices`] component service.
+    ///
+    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    pub(crate) fn service_unload_image(image: efi::Handle) -> Result<(), ImageError> {
+        Self::instance().unload_image(image, false).map_err(efi_status_to_image_error)
+    }
+
+    /// Loads an image located by a device path for the [`ImageServices`] component service.
+    ///
+    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    #[cfg(feature = "unstable-device-path")]
+    pub(crate) fn service_load_image_from_device_path(
+        parent: efi::Handle,
+        file_path: NonNull<Protocol>,
+        boot_policy: bool,
+    ) -> Result<efi::Handle, ImageError> {
+        Self::instance().load_image(boot_policy, parent, Some(file_path), None).map_err(image_status_to_error)
+    }
+
     /// Loads the image specified by the device path or slice.
     /// * `parent_image_handle` - the handle of the image that is loading this one.
     /// * `file_path` - optional device path describing where to load the image from.
@@ -1562,6 +1604,23 @@ pub enum ImageStatus {
 impl From<EfiError> for ImageStatus {
     fn from(err: EfiError) -> Self {
         ImageStatus::LoadError(err)
+    }
+}
+
+/// Maps a load-image [`ImageStatus`] to the component-facing [`ImageError`].
+fn image_status_to_error(status: ImageStatus) -> ImageError {
+    match status {
+        ImageStatus::LoadError(err) => ImageError::from(err),
+        ImageStatus::SecurityViolation(_) => ImageError::SecurityViolation,
+        ImageStatus::AccessDenied => ImageError::AccessDenied,
+    }
+}
+
+/// Maps a start/unload-image [`efi::Status`] to the component-facing [`ImageError`].
+fn efi_status_to_image_error(status: efi::Status) -> ImageError {
+    match EfiError::status_to_result(status) {
+        Ok(()) => ImageError::Internal,
+        Err(err) => ImageError::from(err),
     }
 }
 

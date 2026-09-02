@@ -108,7 +108,6 @@ use crate::{
         service::IntoService,
         storage::{Deferred, Storage, UnsafeStorageCell},
     },
-    uefi::boot_services::StandardBootServices,
     uefi::runtime_services::StandardRuntimeServices,
 };
 
@@ -662,31 +661,6 @@ unsafe impl Param for Commands<'_> {
     }
 }
 
-// SAFETY: StandardBootServices parameter provides access to boot services.
-// Access is validated and no mutation tracking needed for immutable service access.
-unsafe impl Param for StandardBootServices {
-    type State = ();
-    type Item<'storage, 'state> = Self;
-
-    unsafe fn get_param<'state>(
-        _state: &'state Self::State,
-        storage: UnsafeStorageCell<'_>,
-    ) -> Self::Item<'static, 'state> {
-        // SAFETY: Boot services are immutably borrowed from storage.
-        // Clone creates a new service handle without violating borrowing rules.
-        StandardBootServices::clone(unsafe { storage.storage().boot_services() })
-    }
-
-    fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
-        // SAFETY: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
-        unsafe { storage.storage() }.boot_services().is_init()
-    }
-
-    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
-        Ok(())
-    }
-}
-
 // SAFETY: StandardRuntimeServices parameter provides access to runtime services.
 // Access is validated and no mutation tracking needed for immutable service access.
 unsafe impl Param for StandardRuntimeServices {
@@ -727,22 +701,16 @@ unsafe impl Param for StandardRuntimeServices {
 ///
 /// ```rust,ignore
 /// use patina::component::{component, params::Handle};
-/// use patina::uefi::boot_services::BootServices;
+/// use patina::component::service::{Service, uefi_services::image::ImageServices};
 /// use patina::error::Result;
 ///
 /// struct BootLoader;
 ///
 /// #[component]
 /// impl BootLoader {
-///     fn entry_point(self, bs: StandardBootServices, image_handle: Handle) -> Result<()> {
+///     fn entry_point(self, images: Service<dyn ImageServices>, image_handle: Handle, pe_image: &[u8]) -> Result<()> {
 ///         // Use image_handle as the parent when loading a boot application
-///         let loaded_image = bs.load_image(
-///             false,
-///             *image_handle,
-///             device_path,
-///             None,
-///             0,
-///         )?;
+///         let loaded_image = images.load_image(*image_handle, pe_image)?;
 ///         Ok(())
 ///     }
 /// }
@@ -1001,35 +969,6 @@ mod tests {
     }
 
     #[test]
-    fn test_boot_services_fails_to_validate_when_null() {
-        let mut storage = Storage::default(); // boot_services is an empty pointer
-        let mut mock_metadata = MetaData::new::<i32>();
-
-        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
-        assert_eq!(
-            Err(Cow::from("patina::uefi::boot_services::StandardBootServices not available.")),
-            <StandardBootServices as Param>::try_validate(&(), (&storage).into())
-        );
-    }
-
-    #[test]
-    fn test_boot_services_can_be_retrieved() {
-        let mut storage = Storage::default();
-        let mut mock_metadata = MetaData::new::<i32>();
-
-        let mut mock_bs = core::mem::MaybeUninit::<crate::standard::efi::BootServices>::zeroed();
-        storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
-
-        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
-        assert!(<StandardBootServices as Param>::try_validate(&(), (&storage).into()).is_ok());
-
-        let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
-        // SAFETY: Test code - StandardBootServices parameter has been validated.
-        // does not panic
-        let _ = unsafe { <StandardBootServices as Param>::get_param(&(), cell_storage) };
-    }
-
-    #[test]
     fn test_runtime_services_fails_to_validate_when_null() {
         let mut storage = Storage::default(); // runtime_services is an empty pointer
         let mut mock_metadata = MetaData::new::<i32>();
@@ -1092,10 +1031,10 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
 
-        <Option<StandardBootServices> as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
-        assert!(<Option<StandardBootServices> as Param>::try_validate(&(), (&storage).into()).is_ok());
-        // SAFETY: Test code - Option<StandardBootServices> parameter has been validated.
-        assert!(unsafe { <Option<StandardBootServices> as Param>::get_param(&(), (&storage).into()).is_none() });
+        <Option<StandardRuntimeServices> as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
+        assert!(<Option<StandardRuntimeServices> as Param>::try_validate(&(), (&storage).into()).is_ok());
+        // SAFETY: Test code - Option<StandardRuntimeServices> parameter has been validated.
+        assert!(unsafe { <Option<StandardRuntimeServices> as Param>::get_param(&(), (&storage).into()).is_none() });
     }
 
     #[test]
@@ -1116,13 +1055,13 @@ mod tests {
     fn test_try_validate_on_tuple_returns_underlying_param_type_not_full_tuple_name() {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
-        <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
+        <(StandardRuntimeServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
         // This will always return true, because this function is not used with tuples. The tuple implementations
         // override the next level up, `try_validate`.
-        assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
+        assert!(<(StandardRuntimeServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
-            Err(Cow::from("patina::uefi::boot_services::StandardBootServices")),
-            <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
+            Err(Cow::from("patina::uefi::runtime_services::StandardRuntimeServices")),
+            <(StandardRuntimeServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }
 

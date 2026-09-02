@@ -46,7 +46,7 @@ use patina_test::{
     error::Result,
 };
 
-use patina::uefi::boot_services::StandardBootServices;
+use patina::component::service::{Service, uefi_services::event::EventServices};
 use patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 
 #[cfg_attr(target_arch = "aarch64", patina_test)]
@@ -83,7 +83,7 @@ fn skipped_test_case() -> Result {
 
 #[patina_test]
 #[cfg_attr(not(target_arch = "x86_64"), skip)]
-fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
+fn x86_64_only_test_case(events: Service<dyn EventServices>) -> Result {
   todo!()
 }
 

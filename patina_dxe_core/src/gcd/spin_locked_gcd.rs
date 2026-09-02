@@ -9,7 +9,7 @@
 use crate::pecoff::UefiPeInfo;
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina::{DEFAULT_CACHE_ATTR, error::EfiError, log_debug_assert};
+use patina::{DEFAULT_CACHE_ATTR, crc32, error::EfiError, log_debug_assert};
 
 use patina::standard::efi;
 use patina::{
@@ -2972,7 +2972,7 @@ impl SpinLockedGcd {
     ///
     /// * `memory_map_bytes` - The byte slice representing the EFI memory map
     pub fn set_last_efi_memory_map_key(&self, memory_map_bytes: &[u8]) {
-        let key = crc32fast::hash(memory_map_bytes) as usize;
+        let key = crc32::calculate_crc32(memory_map_bytes) as usize;
         *self.last_efi_memory_map_key.lock() = Some(key);
     }
 }

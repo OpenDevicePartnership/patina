@@ -12,6 +12,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use crate::base::protocol::ProtocolInterface;
 use crate::standard::efi;
 
 /// Timer Arch Protocol GUID.
@@ -117,4 +118,10 @@ pub struct TimerProtocol {
     pub get_timer_period: EfiTimerGetTimerPeriod,
     /// Generates a software timer interrupt.
     pub generate_soft_interrupt: EfiTimerGenerateSoftInterrupt,
+}
+
+// SAFETY: `TimerProtocol` is `#[repr(C)]` and `PROTOCOL_GUID` is the PI-spec GUID that
+// identifies its layout (EFI_TIMER_ARCH_PROTOCOL).
+unsafe impl ProtocolInterface for TimerProtocol {
+    const PROTOCOL_GUID: crate::BinaryGuid = PROTOCOL_GUID;
 }

@@ -14,11 +14,15 @@ use patina::standard::efi;
 use patina::{
     component::{
         component,
-        service::{Service, perf_timer::ArchTimerFunctionality},
+        service::{
+            Service,
+            perf_timer::ArchTimerFunctionality,
+            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+        },
     },
     error::{EfiError, Result},
     peripheral::serial::SerialIO,
-    uefi::boot_services::{BootServices, StandardBootServices},
+    protocol::ProtocolInterface,
 };
 
 use crate::{logger::AdvancedLogger, protocol::AdvancedLoggerProtocol};
@@ -34,6 +38,15 @@ where
 
     // Internal component access only! Does not exist in C definition.
     adv_logger: &'static AdvancedLogger<'static, S>,
+}
+
+// SAFETY: `protocol` is the first field of `AdvancedLoggerProtocolInternal` (repr(C)), so a
+// pointer to `AdvancedLoggerProtocolInternal` is also a valid pointer to `AdvancedLoggerProtocol`.
+unsafe impl<S> ProtocolInterface for AdvancedLoggerProtocolInternal<S>
+where
+    S: SerialIO + Send + 'static,
+{
+    const PROTOCOL_GUID: patina::BinaryGuid = AdvancedLoggerProtocol::PROTOCOL_GUID;
 }
 
 /// The component that will install the Advanced Logger protocol.
@@ -70,8 +83,9 @@ where
         let data = unsafe { core::slice::from_raw_parts(buffer, num_bytes) };
         let error_level = error_level as u32;
 
-        // SAFETY: `this` is null-checked above. The protocol struct is installed by Patina with
-        //         `Box::leak`, so its alignment and validity are guaranteed.
+        // SAFETY: `this` is null-checked above. The protocol struct is installed through
+        //         `install_protocol`, which leaks it once installation succeeds, so its
+        //         alignment and validity are guaranteed.
         let internal = unsafe { &*this.cast::<AdvancedLoggerProtocolInternal<S>>() };
 
         internal.adv_logger.log_write(error_level, None, data);
@@ -82,7 +96,11 @@ where
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(self, bs: StandardBootServices, timer: Service<dyn ArchTimerFunctionality>) -> Result<()> {
+    fn entry_point(
+        self,
+        protocols: Service<dyn ProtocolServices>,
+        timer: Service<dyn ArchTimerFunctionality>,
+    ) -> Result<()> {
         let Some(address) = self.adv_logger.get_log_address() else {
             log::error!("Advanced logger not initialized before component entry point!");
             return Err(EfiError::NotStarted);
@@ -95,9 +113,8 @@ where
             adv_logger: self.adv_logger,
         };
 
-        let protocol = Box::leak(Box::new(protocol));
-        if let Err(status) = bs.install_protocol_interface(None, &mut protocol.protocol) {
-            log::error!("Failed to install Advanced Logger protocol! Status = {status}");
+        if let Err(status) = protocols.install_protocol(None, Box::new(protocol)) {
+            log::error!("Failed to install Advanced Logger protocol! Status = {status:?}");
             Err(EfiError::ProtocolError)
         } else {
             log::info!("Advanced Logger protocol installed.");
@@ -115,7 +132,11 @@ mod tests {
         writer::AdvancedLogWriter,
     };
     use patina::{
-        component::service::{IntoService, Service, perf_timer::ArchTimerFunctionality},
+        component::service::{
+            IntoService, Service,
+            perf_timer::ArchTimerFunctionality,
+            uefi_services::protocol::{Handle, MockProtocolServices, ProtocolError},
+        },
         debug::log::Format,
         peripheral::serial::uart::UartNull,
     };
@@ -141,6 +162,30 @@ mod tests {
         UartNull {},
     );
 
+    // Not touched by `set_log_info_address`, so `get_log_address` always returns `None`.
+    static UNINITIALIZED_LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+        Format::Standard,
+        &[TargetFilter { target: "", log_level: log::LevelFilter::Trace, hw_filter_override: None }],
+        log::LevelFilter::Trace,
+        UartNull {},
+    );
+
+    // Separate from TEST_LOGGER since entry_point's own init_timer call can only publish once per logger.
+    static ENTRY_POINT_SUCCESS_LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+        Format::Standard,
+        &[TargetFilter { target: "", log_level: log::LevelFilter::Trace, hw_filter_override: None }],
+        log::LevelFilter::Trace,
+        UartNull {},
+    );
+
+    // Similar to `ENTRY_POINT_SUCCESS_LOGGER`, a failure logger is needed.
+    static ENTRY_POINT_FAILURE_LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+        Format::Standard,
+        &[TargetFilter { target: "", log_level: log::LevelFilter::Trace, hw_filter_override: None }],
+        log::LevelFilter::Trace,
+        UartNull {},
+    );
+
     /// Initializes `TEST_LOGGER` with a newly allocated memory log and a mock timer.
     fn init_test_logger() {
         const LOG_LEN: usize = 0x2000;
@@ -150,6 +195,16 @@ mod tests {
         unsafe { AdvancedLogWriter::initialize_memory_log(log_address, LOG_LEN as u32) };
         TEST_LOGGER.set_log_info_address(log_address);
         TEST_LOGGER.init_timer(Service::mock(Box::new(MockTimer {})));
+    }
+
+    /// Sets `logger`'s log address only, leaving its timer unpublished for `entry_point` to publish.
+    fn init_log_address(logger: &AdvancedLogger<UartNull>) {
+        const LOG_LEN: usize = 0x2000;
+        let log_buff = Box::into_raw(Box::new([0_u8; LOG_LEN]));
+        let log_address = log_buff as *const u8 as efi::PhysicalAddress;
+        // SAFETY: This memory was just allocated, so it is valid for LOG_LEN bytes.
+        unsafe { AdvancedLogWriter::initialize_memory_log(log_address, LOG_LEN as u32) };
+        logger.set_log_info_address(log_address);
     }
 
     /// Builds a leaked `AdvancedLoggerProtocolInternal` structure and returns a `*const AdvancedLoggerProtocol`
@@ -197,5 +252,51 @@ mod tests {
         let data = b"hello, advanced logger";
         let status = AdvancedLoggerComponent::<UartNull>::adv_log_write(this, 0, data.as_ptr(), data.len());
         assert_eq!(status, efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn entry_point_returns_not_started_when_log_address_uninitialized() {
+        let component = AdvancedLoggerComponent::new(&UNINITIALIZED_LOGGER);
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(MockProtocolServices::new()));
+        let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockTimer {}));
+
+        let result = component.entry_point(protocols, timer);
+        assert_eq!(result, Err(EfiError::NotStarted));
+    }
+
+    // Serialized like `adv_log_write_normal_path_succeeds`. Setting the log address writes the
+    // shared `DBG_ADV_LOG_BUFFER` static in `logger.rs`.
+    #[test]
+    #[serial(adv_logger_test)]
+    fn entry_point_installs_protocol_and_succeeds() {
+        init_log_address(&ENTRY_POINT_SUCCESS_LOGGER);
+        let component = AdvancedLoggerComponent::new(&ENTRY_POINT_SUCCESS_LOGGER);
+
+        let mut mock_protocols = MockProtocolServices::new();
+        mock_protocols
+            .expect_install_interface()
+            .once()
+            .returning(|_, _, _| Ok(Handle::from_raw(core::ptr::dangling_mut::<core::ffi::c_void>()).unwrap()));
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(mock_protocols));
+        let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockTimer {}));
+
+        let result = component.entry_point(protocols, timer);
+        assert_eq!(result, Ok(()));
+    }
+
+    // Serialized for the same reason as `entry_point_installs_protocol_and_succeeds`.
+    #[test]
+    #[serial(adv_logger_test)]
+    fn entry_point_returns_protocol_error_when_install_fails() {
+        init_log_address(&ENTRY_POINT_FAILURE_LOGGER);
+        let component = AdvancedLoggerComponent::new(&ENTRY_POINT_FAILURE_LOGGER);
+
+        let mut mock_protocols = MockProtocolServices::new();
+        mock_protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::InvalidParameter));
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(mock_protocols));
+        let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockTimer {}));
+
+        let result = component.entry_point(protocols, timer);
+        assert_eq!(result, Err(EfiError::ProtocolError));
     }
 }

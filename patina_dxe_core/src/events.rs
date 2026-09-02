@@ -27,6 +27,12 @@ pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
 static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
+static TIMER_ARCH_READY: AtomicBool = AtomicBool::new(false);
+
+/// Returns true once the Timer Architectural Protocol has been located and its tick handler registered.
+pub(crate) fn timer_arch_protocol_ready() -> bool {
+    TIMER_ARCH_READY.load(Ordering::SeqCst)
+}
 
 /// # Safety
 ///
@@ -361,6 +367,7 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
+            TIMER_ARCH_READY.store(true, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for timer_available_callback due to error {status_err}");
             }

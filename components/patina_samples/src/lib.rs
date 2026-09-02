@@ -7,6 +7,7 @@
 //!
 //! - [`component::hello_world::HelloStruct`]: Demonstrates a struct-based component with default entry point
 //! - [`component::hello_world::GreetingsEnum`]: Demonstrates an enum-based component with custom entry point
+//! - [`component::uefi_services`]: Demonstrates using Patina UEFI Services
 //! - [`smbios_platform`]: Demonstrates SMBIOS platform configuration and record creation
 //!
 //! ## License
@@ -19,5 +20,8 @@
 #![deny(missing_docs)]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 #![cfg_attr(coverage, coverage(off))] // Disable all coverage instrumentation for sample code
+
+extern crate alloc;
+
 pub mod component;
 pub mod smbios_platform;

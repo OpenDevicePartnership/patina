@@ -51,6 +51,7 @@ fixedbitset = { workspace = true, optional = true }
 bitvec = { workspace = true }
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
+crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
 log = { workspace = true }
 r-efi = { version = "7.1", default-features = false }

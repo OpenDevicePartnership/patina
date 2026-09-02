@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 bitfield-struct = { workspace = true }
 cfg-if = { workspace = true }
-crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 linked_list_allocator = { workspace = true }
 log = { workspace = true }
@@ -54,5 +53,7 @@ std = ["patina/std"]
 compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
 debugger_reload = []
+# Enables loading images by device using the (unstable) SDK device path API.
+unstable-device-path = ["patina/unstable-device-path"]
 # All non-std features to test in CI
-ci_features = ["compatibility_mode_allowed", "v1_resource_descriptor_support", "debugger_reload"]
+ci_features = ["compatibility_mode_allowed", "v1_resource_descriptor_support", "debugger_reload", "unstable-device-path"]

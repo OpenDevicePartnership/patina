@@ -16,7 +16,6 @@ use patina::{
     component::{IntoComponent, Storage, service::IntoService},
     log_debug_assert,
     pi::hob::HobList,
-    uefi::boot_services::StandardBootServices,
     uefi::runtime_services::StandardRuntimeServices,
 };
 
@@ -171,13 +170,6 @@ impl ComponentDispatcher {
     #[inline(always)]
     pub(crate) fn lock_configs(&mut self) {
         self.storage.lock_configs();
-    }
-
-    /// Sets the Boot Services table in storage.
-    #[cfg_attr(coverage, coverage(off))]
-    #[inline(always)]
-    pub(crate) fn set_boot_services(&mut self, bs: StandardBootServices) {
-        self.storage.set_boot_services(bs);
     }
 
     /// Sets the Runtime Services table in storage.
@@ -341,6 +333,48 @@ mod tests {
         assert!(dispatcher.storage.get_config::<u32>().is_some());
         assert!(dispatcher.storage.get_service::<dyn TestService>().is_some());
         assert_eq!(dispatcher.components.len(), 1);
+    }
+
+    #[test]
+    fn test_component_with_unregistered_service_is_deferred_until_service_added() {
+        trait TestService {
+            fn value(&self) -> u32;
+        }
+
+        #[derive(patina::component::service::IntoService)]
+        #[service(dyn TestService)]
+        struct TestServiceImpl;
+
+        impl TestService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                42
+            }
+        }
+
+        struct TestComponent;
+
+        #[component]
+        impl TestComponent {
+            fn entry_point(
+                self,
+                service: patina::component::service::Service<dyn TestService>,
+            ) -> patina::error::Result<()> {
+                assert_eq!(service.value(), 42);
+                Ok(())
+            }
+        }
+
+        let mut dispatcher = ComponentDispatcher::default();
+        dispatcher.insert_component(0, TestComponent.into_component());
+
+        // The service the component depends on hasn't been added yet, so the component must be deferred for
+        // a later retry, not permanently failed.
+        assert!(!dispatcher.dispatch());
+
+        dispatcher.add_service(TestServiceImpl);
+
+        // Now that the service is present, the previously-deferred component should dispatch successfully.
+        assert!(dispatcher.dispatch());
     }
 
     #[test]

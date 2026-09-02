@@ -12,14 +12,16 @@ use core::ffi::c_void;
 
 use alloc::boxed::Box;
 use patina::{
-    component::{Storage, component},
-    error::EfiError,
+    component::{
+        component,
+        service::{
+            Service,
+            uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+        },
+    },
     log_debug_assert,
     standard::efi::{self, protocols::decompress},
-    uefi::{
-        boot_services::BootServices,
-        decompress::{DecompressionAlgorithm, decompress_into_with_algo},
-    },
+    uefi::decompress::{DecompressionAlgorithm, decompress_into_with_algo},
 };
 
 /// Component to install the UEFI Decompress Protocol.
@@ -28,13 +30,10 @@ pub(crate) struct DecompressProtocolInstaller;
 
 #[component]
 impl DecompressProtocolInstaller {
-    fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
-        let protocol = Box::new(decompress::Protocol { get_info, decompress });
-
-        match storage.boot_services().install_protocol_interface(None, protocol) {
-            Ok(_) => Ok(()),
-            Err(err) => EfiError::status_to_result(err),
-        }
+    fn entry_point(self, protocols: Service<dyn ProtocolServices>) -> patina::error::Result<()> {
+        let protocol = Box::leak(Box::new(decompress::Protocol { get_info, decompress }));
+        protocols.install_protocol(None, protocol)?;
+        Ok(())
     }
 }
 

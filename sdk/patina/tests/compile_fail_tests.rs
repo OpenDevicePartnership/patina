@@ -19,7 +19,6 @@ fn compile_fail_tests() {
     t.compile_fail("tests/ui/storage_mut_with_config_mut.rs");
     t.compile_fail("tests/ui/storage_with_config_mut.rs");
     t.compile_fail("tests/ui/duplicate_commands.rs");
-    t.compile_fail("tests/ui/duplicate_boot_services.rs");
     t.compile_fail("tests/ui/duplicate_runtime_services.rs");
     t.compile_fail("tests/ui/duplicate_storage_mut.rs");
     t.compile_fail("tests/ui/storage_and_storage_mut_conflict.rs");

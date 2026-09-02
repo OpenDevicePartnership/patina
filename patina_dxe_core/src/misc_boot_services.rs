@@ -10,6 +10,8 @@ use core::{ffi::c_void, slice::from_raw_parts, sync::atomic::Ordering};
 use patina::arch as interrupts;
 use patina::standard::efi;
 use patina::{
+    crc32,
+    error::EfiError,
     guid as base_guids, log_debug_assert,
     pi::{protocol, status_code},
     uefi::event::EXIT_BOOT_SERVICES_FAILED_EVENT_GROUP_GUID,
@@ -53,6 +55,11 @@ unsafe impl<T> Sync for ArchProtocolPtr<T> {}
 static METRONOME_ARCH_PTR: ArchProtocolPtr<protocol::metronome::MetronomeProtocol> = ArchProtocolPtr::new();
 static WATCHDOG_ARCH_PTR: ArchProtocolPtr<protocol::watchdog::WatchdogProtocol> = ArchProtocolPtr::new();
 
+/// Returns true once both the Metronome and Watchdog Timer Architectural Protocols have been located.
+pub(crate) fn timing_arch_protocols_ready() -> bool {
+    METRONOME_ARCH_PTR.get().is_some() && WATCHDOG_ARCH_PTR.get().is_some()
+}
+
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
 // These will likely get moved to different places. DXE Core GUID is the GUID of this DXE Core instance.
@@ -78,7 +85,7 @@ unsafe extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, c
     // SAFETY: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
         let buffer = from_raw_parts(data as *mut u8, data_size);
-        crc_32.write_unaligned(crc32fast::hash(buffer));
+        crc_32.write_unaligned(crc32::calculate_crc32(buffer));
     }
 
     efi::Status::SUCCESS
@@ -86,28 +93,37 @@ unsafe extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, c
 
 // Induces a fine-grained stall. Stalls execution on the processor for at least the requested number of microseconds.
 // Execution of the processor is not yielded for the duration of the stall.
+//
+// This is the pure-Rust implementation used by the C ABI `stall` wrapper and by the `TimingServices` component
+// service.
+pub(crate) fn core_stall(microseconds: usize) -> Result<(), EfiError> {
+    let Some(metronome_ptr) = METRONOME_ARCH_PTR.get() else {
+        return Err(EfiError::NotReady); //technically this should be NOT_AVAILABLE_YET.
+    };
+    // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
+    let metronome = unsafe { metronome_ptr.as_mut().expect("Metronome pointer should not be null.") };
+    let ticks_100ns: u128 = (microseconds as u128) * 10;
+    let mut ticks = ticks_100ns / u128::from(metronome.tick_period);
+    while ticks > u128::from(u32::MAX) {
+        let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
+        if status.is_error() {
+            log::warn!("metronome.wait_for_tick returned unexpected error {status}");
+        }
+        ticks -= u128::from(u32::MAX);
+    }
+    if ticks != 0 {
+        let status = (metronome.wait_for_tick)(metronome_ptr, ticks as u32);
+        if status.is_error() {
+            log::warn!("metronome.wait_for_tick returned unexpected error {status}");
+        }
+    }
+    Ok(())
+}
+
 extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
-    if let Some(metronome_ptr) = METRONOME_ARCH_PTR.get() {
-        // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
-        let metronome = unsafe { metronome_ptr.as_mut().expect("Metronome pointer should not be null.") };
-        let ticks_100ns: u128 = (microseconds as u128) * 10;
-        let mut ticks = ticks_100ns / u128::from(metronome.tick_period);
-        while ticks > u128::from(u32::MAX) {
-            let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
-            if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {status}");
-            }
-            ticks -= u128::from(u32::MAX);
-        }
-        if ticks != 0 {
-            let status = (metronome.wait_for_tick)(metronome_ptr, ticks as u32);
-            if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {status}");
-            }
-        }
-        efi::Status::SUCCESS
-    } else {
-        efi::Status::NOT_READY //technically this should be NOT_AVAILABLE_YET.
+    match core_stall(microseconds) {
+        Ok(()) => efi::Status::SUCCESS,
+        Err(err) => err.into(),
     }
 }
 
@@ -120,24 +136,32 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
 //
 // The watchdog timer is only used during boot services. On successful completion of
 // EFI_BOOT_SERVICES.ExitBootServices() the watchdog timer is disabled.
+// Pure-Rust implementation of SetWatchdogTimer used both by the C ABI `set_watchdog_timer` wrapper
+// and by the `TimingServices` component service. `timeout` is expressed in seconds.
+pub(crate) fn core_set_watchdog_timer(timeout: usize, _watchdog_code: u64) -> Result<(), EfiError> {
+    const WATCHDOG_TIMER_CALIBRATE_PER_SECOND: u64 = 10000000;
+    let Some(watchdog_ptr) = WATCHDOG_ARCH_PTR.get() else {
+        return Err(EfiError::NotReady);
+    };
+    // SAFETY: watchdog_ptr is guaranteed to be a valid pointer to the watchdog protocol if it is Some.
+    let watchdog = unsafe { watchdog_ptr.as_mut().expect("Watchdog pointer should not be null.") };
+    let timeout = (timeout as u64).saturating_mul(WATCHDOG_TIMER_CALIBRATE_PER_SECOND);
+    let status = (watchdog.set_timer_period)(watchdog_ptr, timeout);
+    if status.is_error() {
+        return Err(EfiError::DeviceError);
+    }
+    Ok(())
+}
+
 extern "efiapi" fn set_watchdog_timer(
     timeout: usize,
-    _watchdog_code: u64,
+    watchdog_code: u64,
     _data_size: usize,
     _data: *mut efi::Char16,
 ) -> efi::Status {
-    const WATCHDOG_TIMER_CALIBRATE_PER_SECOND: u64 = 10000000;
-    if let Some(watchdog_ptr) = WATCHDOG_ARCH_PTR.get() {
-        // SAFETY: watchdog_ptr is guaranteed to be a valid pointer to the watchdog protocol if it is Some.
-        let watchdog = unsafe { watchdog_ptr.as_mut().expect("Watchdog pointer should not be null.") };
-        let timeout = (timeout as u64).saturating_mul(WATCHDOG_TIMER_CALIBRATE_PER_SECOND);
-        let status = (watchdog.set_timer_period)(watchdog_ptr, timeout);
-        if status.is_error() {
-            return efi::Status::DEVICE_ERROR;
-        }
-        efi::Status::SUCCESS
-    } else {
-        efi::Status::NOT_READY
+    match core_set_watchdog_timer(timeout, watchdog_code) {
+        Ok(()) => efi::Status::SUCCESS,
+        Err(err) => err.into(),
     }
 }
 // Requires excessive Mocking for the OK case.
@@ -366,7 +390,7 @@ mod tests {
             };
             // Verify the function succeeded and CRC32 was calculated correctly for zero buffer
             if status == efi::Status::SUCCESS {
-                let expected_crc = crc32fast::hash(&BUFFER);
+                let expected_crc = crc32::calculate_crc32(&BUFFER);
                 if data_crc == expected_crc {
                     log::debug!("CRC32 calculation successful: {data_crc:#x}");
                 } else {
@@ -489,11 +513,11 @@ mod tests {
             ) -> efi::Status {
                 unimplemented!()
             }
-            let watchdog =
+            static WATCHDOG: protocol::watchdog::WatchdogProtocol =
                 protocol::watchdog::WatchdogProtocol { register_handler, set_timer_period, get_timer_period };
-            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
+            // SAFETY: WATCHDOG is a 'static, so the pointer remains valid for the rest of the process.
             unsafe {
-                WATCHDOG_ARCH_PTR.init(&raw const watchdog as *mut c_void);
+                WATCHDOG_ARCH_PTR.init(&raw const WATCHDOG as *mut c_void);
             };
             // Test case 5: Set watchdog timer with null data - should return SUCCESS (watchdog protocol available)
             // SAFETY: The unsafe block is required because r-efi declares set_watchdog_timer as an
@@ -554,14 +578,12 @@ mod tests {
                 efi::Status::SUCCESS
             }
 
-            let metronome = protocol::metronome::MetronomeProtocol {
-                tick_period: 10000, //10 microseconds
-                wait_for_tick,
-            };
+            static METRONOME: protocol::metronome::MetronomeProtocol =
+                protocol::metronome::MetronomeProtocol { tick_period: 10000, wait_for_tick };
 
-            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
+            // SAFETY: METRONOME is a 'static, so the pointer remains valid for the rest of the process.
             unsafe {
-                METRONOME_ARCH_PTR.init(&raw const metronome as *mut c_void);
+                METRONOME_ARCH_PTR.init(&raw const METRONOME as *mut c_void);
             }
 
             // Test case 4: Normal stall duration - should return SUCCESS (metronome protocol available)

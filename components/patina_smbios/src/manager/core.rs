@@ -14,8 +14,9 @@ extern crate alloc;
 
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
-use patina::standard::efi::{Handle, PhysicalAddress};
-use patina::{SIZE_64KB, uefi_size_to_pages};
+use patina::component::service::uefi_services::config_table::ConfigTable;
+use patina::standard::efi::{Handle, PhysicalAddress, SMBIOS3_TABLE_GUID};
+use patina::{BinaryGuid, SIZE_64KB, uefi_size_to_pages};
 use zerocopy::{IntoBytes, Ref};
 use zerocopy_derive::*;
 
@@ -55,6 +56,10 @@ pub struct Smbios30EntryPoint {
     pub table_max_size: u32,
     /// Structure Table Address - 64-bit (0x10)
     pub table_address: u64,
+}
+
+impl ConfigTable for Smbios30EntryPoint {
+    const TABLE_GUID: BinaryGuid = BinaryGuid(SMBIOS3_TABLE_GUID);
 }
 
 /// SMBIOS table manager
@@ -142,15 +147,15 @@ impl SmbiosManager {
         let table_allocation = memory_manager
             .allocate_pages(table_pages, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
-        let table_slice = table_allocation.into_raw_slice::<u8>();
-        let table_addr = table_slice.cast::<u8>() as u64;
+        let table_slice: &mut [u8] = table_allocation.leak_as_slice();
+        let table_addr = table_slice.as_ptr() as u64;
 
         // Allocate entry point buffer (1 page is plenty)
         let ep_allocation = memory_manager
             .allocate_pages(1, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
-        let ep_slice = ep_allocation.into_raw_slice::<u8>();
-        let ep_addr = ep_slice.cast::<u8>() as u64;
+        let ep_slice: &mut [u8] = ep_allocation.leak_as_slice();
+        let ep_addr = ep_slice.as_ptr() as u64;
 
         *self.table_buffer_addr.borrow_mut() = Some(table_addr);
         *self.ep_buffer_addr.borrow_mut() = Some(ep_addr);
@@ -360,7 +365,7 @@ impl SmbiosManager {
     /// This allows safe republishing during Add/Update/Remove operations.
     ///
     /// Returns (`table_address`, `ep_address`, `entry_point`) but does NOT install the configuration table.
-    /// The caller must call `install_configuration_table` separately without holding locks.
+    /// The caller must call `install_or_replace` separately without holding locks.
     ///
     pub fn build_table_data(&self) -> Result<(PhysicalAddress, PhysicalAddress, Smbios30EntryPoint), SmbiosError> {
         // Get pre-allocated buffer addresses

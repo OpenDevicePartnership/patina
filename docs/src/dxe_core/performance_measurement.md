@@ -3,7 +3,7 @@
 The performance subsystem records firmware boot performance measurements and publishes them for
 consumption by the operating system through the ACPI Firmware Performance Data Table (FPDT). The
 records themselves live in the Firmware Basic Boot Performance Table (FBPT), which the DXE Core
-builds during boot and the `patina_performance` component publishes at End of DXE.
+builds during boot and the `patina_performance` crate's `FbptPublisher` component publishes at End of DXE.
 
 This document details the performance system is implemented accross it's multiple crates, modules,
 and implementations.
@@ -14,10 +14,12 @@ and implementations.
 - **DXE Core** - The measurement engine. `CorePerformance` implements `PerformanceManager` and owns all
   global state and will process new performance records. This is implemented in the core to ensure early
   availability of performance data.
-- **Component** - The DXE integration and interoperability layer. It consumes the service and, at boot,
-  publishes the FBPT for the ACPI FPDT, installs the `EdkiiPerformanceMeasurement` protocol for C drivers,
-  installs the `PerformanceProperty` configuration table, and optionally merges Management Mode (MM) performance
-  records.
+- **Component** - The DXE integration and interoperability layer, split into four single-purpose components in the
+  `patina_performance` crate:
+  - `FbptPublisher` publishes the FBPT for the ACPI FPDT
+  - `MeasurementProtocolPublisher` installs the `EdkiiPerformanceMeasurement` protocol for C drivers
+  - `PropertyPublisher` installs the `PerformanceProperty` configuration table
+  - `MmRecordCollector` optionally merges Management Mode (MM) performance records
 - **UEFI** - Traditional UEFI drivers, boot loaders, and protocols. These will consume the traditional UEFI
   or EDKII interfaces.
 
@@ -30,8 +32,8 @@ external callers reach the implementation through one of three interfaces:
 2. `EdkiiPerformanceMeasurement` protocol (used by drivers)
 3. Published ACPI tables (read by applications & OS)
 
-The core will be responsible for exposing #1, while the component will expose #2 and #3. The class diagram
-below demonstrates this.
+The core is responsible for exposing #1, while the `patina_performance` crate's components expose #2 and #3. The
+class diagram below demonstrates this.
 
 ```mermaid
 ---
@@ -59,7 +61,16 @@ classDiagram
     class RustComponent {
         <<component>>
     }
-    class PatinaPerformance {
+    class MeasurementProtocolPublisher {
+        <<component>>
+    }
+    class PropertyPublisher {
+        <<component>>
+    }
+    class FbptPublisher {
+        <<component>>
+    }
+    class MmRecordCollector {
         <<component>>
     }
     class EdkiiPerformanceMeasurement {
@@ -76,9 +87,12 @@ classDiagram
     PerformanceManager <|.. CorePerformance : implements
     CorePerformance *-- FBPT : owns
     RustComponent ..> PerformanceManager : uses service
-    PatinaPerformance ..> PerformanceManager : uses service
-    PatinaPerformance ..> EdkiiPerformanceMeasurement : installs
-    PatinaPerformance ..> PerformanceProperty : installs
+    MeasurementProtocolPublisher ..> PerformanceManager : uses service
+    MeasurementProtocolPublisher ..> EdkiiPerformanceMeasurement : installs
+    PropertyPublisher ..> PerformanceManager : uses service
+    PropertyPublisher ..> PerformanceProperty : installs
+    FbptPublisher ..> PerformanceManager : uses service
+    MmRecordCollector ..> PerformanceManager : uses service
     EdkiiPerformanceMeasurement ..> PerformanceManager : forwards to
     UefiDriver ..> EdkiiPerformanceMeasurement : calls
 ```
@@ -86,8 +100,8 @@ classDiagram
 ## Configuration
 
 Whether performance measurement is enabled is decided by the DXE Core. The Core resolves a `PerformanceConfig` and,
-when enabled, registers the `PerformanceManager` service. When disabled the service is absent, so the
-`patina_performance` component's service dependency is unsatisfied and it never dispatches.
+when enabled, registers the `PerformanceManager` service. When disabled the service is absent, so each of
+`patina_performance`'s components has an unsatisfied service dependency and none of them dispatch.
 
 ```rust
 pub struct PerformanceConfig {
