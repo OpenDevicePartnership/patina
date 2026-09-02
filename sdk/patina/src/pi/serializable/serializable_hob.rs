@@ -59,15 +59,25 @@ pub enum HobSerDe {
         entries: Vec<MemoryTypeInfoEntrySerDe>,
     },
     FirmwareVolume {
-        #[serde(with = "hex_format")]
-        base_address: u64,
-        length: u64,
+        #[serde(flatten)]
+        fv: FvHobSerDe,
     },
     Cpu {
         size_of_memory_space: u8,
         size_of_io_space: u8,
     },
     UnknownHob,
+}
+
+/// Serializable representation of a firmware volume HOB.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FvHobSerDe {
+    /// The physical memory-mapped base address of the firmware volume.
+    #[serde(with = "hex_format")]
+    pub base_address: u64,
+
+    /// The length of the firmware volume in bytes.
+    pub length: u64,
 }
 
 /// Serializable representation of one `EFI_MEMORY_TYPE_INFORMATION` entry inside a Memory
@@ -234,7 +244,15 @@ impl From<&Hob<'_>> for HobSerDe {
                     Self::GuidExtension { name: format_guid(&guid_ext.name) }
                 }
             }
-            Hob::FirmwareVolume(fv) => Self::FirmwareVolume { base_address: fv.base_address, length: fv.length },
+            Hob::FirmwareVolume(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
+            Hob::FirmwareVolume2(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
+            Hob::FirmwareVolume3(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
             Hob::Cpu(cpu) => {
                 Self::Cpu { size_of_memory_space: cpu.size_of_memory_space, size_of_io_space: cpu.size_of_io_space }
             }
@@ -369,9 +387,9 @@ mod tests {
             panic!("Fifth element is not a GuidExtension HOB");
         }
 
-        if let HobSerDe::FirmwareVolume { base_address, length } = &hob_list[5] {
-            assert_eq!(*base_address, 65536);
-            assert_eq!(*length, 987654321);
+        if let HobSerDe::FirmwareVolume { fv } = &hob_list[5] {
+            assert_eq!(fv.base_address, 65536);
+            assert_eq!(fv.length, 987654321);
         } else {
             panic!("Sixth element is not a FirmwareVolume HOB");
         }
