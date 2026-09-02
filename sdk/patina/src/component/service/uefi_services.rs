@@ -29,6 +29,8 @@
 //!   controllers.
 //! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
 //! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
+//! - [`driver_supported_efi_version`] - Publishing the UEFI Specification revision a driver
+//!   conforms to.
 //! - [`event::EventServices`] - Events, using Rust closures for notifications.
 //! - [`image::ImageServices`] - Loading, starting, and unloading UEFI images.
 //! - [`protocol::ProtocolServices`] - Typed protocol installation and discovery.
@@ -51,6 +53,7 @@ pub mod config_table;
 pub mod controller_driver;
 pub mod driver;
 pub mod driver_binding;
+pub mod driver_supported_efi_version;
 pub mod event;
 pub mod handle;
 pub mod image;
