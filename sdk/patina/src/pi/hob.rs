@@ -35,7 +35,7 @@
 //! fn gen_end_of_hoblist() -> hob::EndOfHobList {
 //!   let header = hob::HobHeader {
 //!     r#type: hob::END_OF_HOB_LIST,
-//!     length: size_of::<hob::GenericHob>() as u16,
+//!     length: size_of::<hob::HobHeader>() as u16,
 //!     reserved: 0,
 //!   };
 //!
@@ -221,7 +221,31 @@ pub struct MemoryAllocationHeader {
 #[repr(C)]
 #[derive(Debug)]
 pub struct GenericHob {
+    /// The common header shared by all HOBs.
     pub header: HobHeader,
+}
+
+impl GenericHob {
+    /// Returns the variant part as a byte slice.
+    pub fn payload(&self) -> &[u8] {
+        let struct_size: usize = core::mem::size_of::<Self>();
+        debug_assert!((self.header.length as usize) >= struct_size);
+        let data_len = (self.header.length as usize).saturating_sub(struct_size);
+
+        unsafe {
+            let data_ptr = core::ptr::from_ref(self).cast::<u8>().add(struct_size);
+            core::slice::from_raw_parts(data_ptr, data_len)
+        }
+    }
+
+    /// Returns the entire HOB as a byte slice
+    pub fn as_slice(&self) -> &[u8] {
+        let total_size = self.header.length as usize;
+        unsafe {
+            let data_ptr = core::ptr::from_ref(self).cast::<u8>();
+            core::slice::from_raw_parts(data_ptr, total_size)
+        }
+    }
 }
 
 /// Indicates the end of the HOB list. This HOB must be the last one in the HOB list.
@@ -624,6 +648,21 @@ pub struct GuidHob {
     pub name: crate::BinaryGuid,
     // Guid specific data goes here
     //
+}
+
+impl GuidHob {
+    /// Returns the data portion of the GUID HOB as a byte slice.
+    ///
+    pub fn guid_data_slice(&self) -> &[u8] {
+        let struct_size: usize = core::mem::size_of::<Self>();
+        debug_assert!((self.header.length as usize) >= struct_size);
+        let guid_data_size = (self.header.length as usize).saturating_sub(struct_size);
+
+        unsafe {
+            let guid_data_ptr = core::ptr::from_ref(self).cast::<u8>().add(struct_size);
+            core::slice::from_raw_parts(guid_data_ptr, guid_data_size)
+        }
+    }
 }
 
 /// Details the location of firmware volumes that contain firmware files.
@@ -1289,7 +1328,7 @@ pub(crate) mod tests {
     pub(crate) fn gen_memory_pool() -> [u8; 0x18] {
         let length = (size_of::<hob::GenericHob>() + 0x10) as u16;
         assert_eq!(length, 0x18);
-        let mut buffer = [0u8; 0x18];
+        let mut buffer = [0x33u8; 0x18];
 
         unsafe {
             // Write GenericHob bytes to buffer
@@ -1311,13 +1350,34 @@ pub(crate) mod tests {
     fn test_gen_memory_pool() {
         let buffer = gen_memory_pool();
         assert_eq!(buffer.len(), 0x18);
-        // SAFETY: The hob alignment is ensured by `read_unaligned()`
-        let hob = unsafe {
-            // Decode GenericHob from buffer
-            core::ptr::read_unaligned(buffer.as_ptr().cast::<hob::GenericHob>())
-        };
+
+        // // Wrong!! Decode GenericHob from buffer
+        // let hob = unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast::<hob::GenericHob>()) };
+
+        // Must be cast to keep tailing data.
+        declare_aligned_buffer!(aligned_buffer, buffer);
+        let hob = aligned_buffer.cast::<hob::GenericHob>();
+        // SAFETY: The hob alignment is ensured by `declare_aligned_buffer!`
+        let hob = unsafe { hob.as_ref() }.unwrap();
+
         assert_eq!(hob.header.r#type, hob::MEMORY_POOL);
         assert_eq!(hob.header.length, 0x18);
+        assert_eq!(hob.payload().as_ptr() as usize, hob.as_slice().as_ptr() as usize + 0x8);
+        assert_eq!(hob.payload(), [0x33u8; 0x10]);
+    }
+
+    #[test]
+    fn test_gen_guid_hob() {
+        let buffer = gen_guid_hob();
+        assert_eq!(buffer.len(), size_of::<hob::GuidHob>() + 8);
+
+        declare_aligned_buffer!(aligned_buffer, buffer);
+        let guid_hob = aligned_buffer.cast::<hob::GuidHob>();
+        // SAFETY: The hob alignment is ensured by `declare_aligned_buffer!`
+        let guid_hob = unsafe { guid_hob.as_ref() }.unwrap();
+        assert_eq!(guid_hob.header.r#type, hob::GUID_EXTENSION);
+        assert_eq!(guid_hob.header.length as usize, size_of::<hob::GuidHob>() + 8);
+        assert_eq!(guid_hob.guid_data_slice(), [1_u8, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
