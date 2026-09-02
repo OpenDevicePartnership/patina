@@ -7,6 +7,8 @@
 //! - [`overview`] - A quick tour of timer, event, and protocol usage in one component.
 //! - [`configuration_table`] - Installs a vendor configuration table and reads it back.
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
+//! - [`driver_binding_producer`] - Produces a driver binding protocol.  Allows protocols
+//!   opened `ByDriver` and `ByDriverExclusive` to be released.
 //! - [`end_of_dxe_protocol_consumer`] - Defers protocol consumption to End-of-DXE.
 //! - [`protocol_consumer`] - Shows different ways to consume a protocol.
 //! - [`protocol_publisher`] - Demonstrates one component publishing a protocol and another consuming it.
@@ -21,6 +23,7 @@
 //!
 
 pub mod configuration_table;
+pub mod driver_binding_producer;
 pub mod driver_connect;
 pub mod end_of_dxe_protocol_consumer;
 pub mod overview;
