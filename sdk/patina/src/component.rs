@@ -79,6 +79,7 @@
 //! | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked. See The [params] module for more info.                                |
 //! | `ConfigMut`\<T\>               | A mutable config value that will only be available while the underlying data is unlocked. See the [params] module for more info.                                      |
 //! | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. See [service] module for more info. |
+//! | Protocol\<P\>                | A UEFI protocol interface located through the protocol database. Not dispatched until the interface is installed. See the [protocol] module for more info.            |
 //!
 //! ### Examples
 //!
@@ -138,6 +139,7 @@
 pub mod hob;
 mod metadata;
 pub mod params;
+pub mod protocol;
 pub mod service;
 mod storage;
 mod struct_component;
@@ -205,6 +207,7 @@ pub mod prelude {
             IntoComponent,
             hob::{FromHob, Hob},
             params::{Commands, Config, ConfigMut, Handle},
+            protocol::Protocol,
             service::{IntoService, Service},
         },
     };

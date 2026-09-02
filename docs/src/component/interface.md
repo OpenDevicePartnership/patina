@@ -89,6 +89,7 @@ in the function interface of a component.
 | ConfigMut\<T\>               | While config is unlocked         | A mutable config value that will only be available while the underlying data is unlocked.                         |
 | Hob\<T\>                     | If GUID HOB exists in HOB list   | A parsed, immutable, GUID HOB (Hand-Off Block) that is automatically parsed and registered.                       |
 | Service\<T\>                 | After service is registered      | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
+| Protocol\<P\>                | After protocol is installed       | A UEFI protocol interface located through the protocol database. See [UEFI Services](#uefi-services) section. |
 | Commands                     | Always                           | A deferred command queue for registering services and configs without conflicting with other params. See [Commands](#commands) section. |
 | Handle                       | After image handle is set        | The DXE Core's image handle. See [Handle](#handle) section.                                                       |
 | StandardRuntimeServices      | After runtime services init      | UEFI Runtime Services access. See [StandardRuntimeServices](#standardruntimeservices) section.                    |
@@ -269,6 +270,30 @@ impl MyComponent {
 }
 ```
 
+### Protocol\<P\>
+
+If a component should only be dispatched when a specific protocol is installed, it can request a `Protocol<P>`
+parameter. This is independent of the ability to locate and work with protocols using `Service<dyn ProtocolServices>`.
+The key difference is that `Protocol<P>` as an entry point parameter is a natural way to express a component dispatch
+dependency on a given protocol in cases when the fundamental initialization of a component depends on the presence of
+the protocol.
+
+```rust
+# extern crate patina;
+use patina::{error::Result, component::{component, protocol::Protocol}};
+use patina::standard::efi::protocols::graphics_output::Protocol as GraphicsOutput;
+
+pub struct MyComponent;
+
+#[component]
+impl MyComponent {
+    fn entry_point(self, gop: Protocol<GraphicsOutput>) -> Result<()> {
+        let _mode = gop.mode;
+        Ok(())
+    }
+}
+```
+
 ### StandardRuntimeServices
 
 `StandardRuntimeServices` provides immutable access to UEFI Runtime Services functions. It is available once runtime
@@ -303,6 +328,7 @@ the given parameter is actually available, even if it would have been made avail
 | Option\<ConfigMut\<T\>\>     | The Option will return `None` if the Config value is currently locked. Use with caution.               |
 | Option\<Hob\<T\>\>           | The Option will return `None` if no guided HOB was passed to the Core. This is a good use of `Option`. |
 | Option\<Service\<T\>\>       | The Option will return `None` if the service has not yet been produced. Use with caution.              |
+| Option\<Protocol\<P\>\>      | The Option will return `None` if the protocol is not installed. This is a good use of `Option`.        |
 <!-- markdownlint-enable -->
 
 ## Examples
