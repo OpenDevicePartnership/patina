@@ -9,6 +9,7 @@
 //! - [`configuration_table`] - Installs a vendor configuration table and reads it back.
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
 //! - [`driver_binding_producer`] - Manages controllers through the UEFI Driver Model with a `ControllerDriver`.
+//! - [`driver_supported_efi_version_producer`] - Produces the driver supported EFI version protocol.
 //! - [`end_of_dxe_protocol_consumer`] - Defers protocol consumption to End-of-DXE.
 //! - [`media_watcher`] - Updates per-controller driver state from a timer callback.
 //! - [`protocol_consumer`] - Shows different ways to consume a protocol.
@@ -28,6 +29,7 @@ pub mod component_name_producer;
 pub mod configuration_table;
 pub mod driver_binding_producer;
 pub mod driver_connect;
+pub mod driver_supported_efi_version_producer;
 pub mod end_of_dxe_protocol_consumer;
 pub mod media_watcher;
 pub mod overview;
