@@ -10,6 +10,7 @@
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
 //! - [`driver_binding_producer`] - Produces a driver binding protocol.  Allows protocols
 //!   opened `ByDriver` and `ByDriverExclusive` to be released.
+//! - [`driver_supported_efi_version_producer`] - Produces the driver supported EFI version protocol.
 //! - [`end_of_dxe_protocol_consumer`] - Defers protocol consumption to End-of-DXE.
 //! - [`protocol_consumer`] - Shows different ways to consume a protocol.
 //! - [`protocol_publisher`] - Demonstrates one component publishing a protocol and another consuming it.
@@ -27,6 +28,7 @@ pub mod component_name_producer;
 pub mod configuration_table;
 pub mod driver_binding_producer;
 pub mod driver_connect;
+pub mod driver_supported_efi_version_producer;
 pub mod end_of_dxe_protocol_consumer;
 pub mod overview;
 pub mod protocol_consumer;
