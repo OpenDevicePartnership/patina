@@ -7,6 +7,8 @@
 //! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
 //! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
 //! - [`component_name::UefiDriverModelComponentName`] - Publishing a driver and controller name.
+//! - [`driver_supported_efi_version`] - Publishing the UEFI Specification revision a driver
+//!   conforms to.
 //!
 //! ## UEFI Driver Model Overview
 //!
@@ -39,4 +41,5 @@
 pub mod component_name;
 pub mod driver;
 pub mod driver_binding;
+pub mod driver_supported_efi_version;
 pub mod language;

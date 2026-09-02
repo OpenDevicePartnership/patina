@@ -78,6 +78,7 @@ use crate::standard::efi;
 use super::driver_model::component_name;
 use super::driver_model::driver_binding;
 pub use super::driver_model::driver_binding::DriverBinding;
+use super::driver_model::driver_supported_efi_version;
 pub use super::handle::Handle;
 pub use super::tpl::Tpl;
 
@@ -775,6 +776,26 @@ pub trait ProtocolServicesExt: ProtocolServices {
             }
         }
     }
+
+    /// Builds and installs EFI Driver Supported EFI Version protocol on a handle, creating a new
+    /// handle if `handle` is `None`.
+    ///
+    /// `firmware_version` is the latest UEFI Specification revision the caller conforms to, using
+    /// the same encoding as `EFI_TABLE_HEADER.Revision`: the upper 16 bits are the major revision
+    /// and the lower 16 bits are the minor revision, for example `(2 << 16) | 0x0B` for UEFI 2.11.
+    ///
+    /// Required on drivers that are on PCI and other plug in cards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::InvalidParameter`] if the protocol could not be installed.
+    fn install_uefi_driver_model_driver_supported_efi_version(
+        &self,
+        handle: Option<Handle>,
+        firmware_version: u32,
+    ) -> Result<Handle, ProtocolError> {
+        self.install_protocol(handle, driver_supported_efi_version::build_protocol(firmware_version))
+    }
 }
 
 impl<T: ProtocolServices + ?Sized> ProtocolServicesExt for T {}
@@ -1087,6 +1108,35 @@ mod tests {
 
         assert_eq!(
             mock.install_uefi_driver_model_component_name(None, EmptyNames).unwrap_err(),
+            ProtocolError::InvalidParameter
+        );
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_uefi_driver_model_driver_supported_efi_version() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_interface().times(1).returning(|handle, guid, ptr| {
+            assert_eq!(handle, None);
+            assert_eq!(guid, driver_supported_efi_version::Protocol::PROTOCOL_GUID);
+            // SAFETY: `ptr` was built by `build_protocol`, which always produces a valid,
+            // aligned `driver_supported_efi_version::Protocol`.
+            let protocol = unsafe { &*(ptr.as_raw() as *const driver_supported_efi_version::Protocol) };
+            assert_eq!(protocol.length, size_of::<driver_supported_efi_version::Protocol>() as u32);
+            assert_eq!(protocol.firmware_version, 0x0002_0028);
+            Ok(fake_handle())
+        });
+
+        let handle = mock.install_uefi_driver_model_driver_supported_efi_version(None, 0x0002_0028).unwrap();
+        assert_eq!(handle, fake_handle());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_uefi_driver_model_driver_supported_efi_version_propagates_error() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_interface().times(1).returning(|_, _, _| Err(ProtocolError::InvalidParameter));
+
+        assert_eq!(
+            mock.install_uefi_driver_model_driver_supported_efi_version(None, 0x0002_0028).unwrap_err(),
             ProtocolError::InvalidParameter
         );
     }
