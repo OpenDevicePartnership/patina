@@ -23,6 +23,7 @@
 //! Services are split into cohesive functional groups so that a component can declare a more
 //! granular dependency on the functionality it needs:
 //!
+//! - [`component_name::UefiDriverModelComponentName`] - Publishing a driver and controller name.
 //! - [`config_table::ConfigurationTableServices`] - Configuration table installation and lookup.
 //! - [`controller_driver::ControllerDriver`] - A simple way to write a UEFI driver model driver that manages
 //!   controllers.
@@ -45,6 +46,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+pub mod component_name;
 pub mod config_table;
 pub mod controller_driver;
 pub mod driver;

@@ -29,6 +29,10 @@ pub struct LanguageEntry {
 
 /// A table of names available in one or more languages.
 ///
+/// It is expected, a component will build one of these as a `static` and return it from a
+/// [`UefiDriverModelComponentName`](super::component_name::UefiDriverModelComponentName)
+/// implementation.
+///
 /// # Examples
 ///
 /// ```rust
