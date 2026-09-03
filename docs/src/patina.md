@@ -180,7 +180,7 @@ definition but many of the services are still implemented in C so it is orange.
 #### Notable DXE Core Features
 
 - AARCH64 and x86/64 support.
-  - Support for QEMU (Q35 and SBSA).
+  - Support for QEMU (Q35 and ArmVirt).
   - Tested and developed on physical Intel and Arm hardware.
   - Boots to Windows and Linux on these platforms.
 - Performance record (FBPT) support.

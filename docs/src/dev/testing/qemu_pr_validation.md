@@ -46,7 +46,7 @@ The workflow relies on several repositories and components:
 | Platform | Host Operating System | Architecture |
 |:---------|:----------------------|:-------------|
 | Q35      | Linux                 | x86_64       |
-| SBSA     | Linux                 | aarch64      |
+| ArmVirt  | Linux                 | aarch64      |
 | Q35      | Windows               | x86_64       |
 
 At any given time, a subset of these platforms may be disabled due to known issues or maintenance work. The PR comment
@@ -123,7 +123,7 @@ The workflow is organized into the following jobs:
 ```mermaid
 flowchart TD
     N["Post In-Progress Notification Comment"] --> P["Preflight Checks"]
-    P -->|Ready| L["Validate QEMU (Linux): Q35 + SBSA"]
+    P -->|Ready| L["Validate QEMU (Linux): Q35 + ArmVirt"]
     P -->|Ready| W["Validate QEMU (Windows): Q35"]
     L --> M["Emit PR Metadata (Transfer State)"]
     W --> M
@@ -131,7 +131,7 @@ flowchart TD
 ```
 
 The Linux and Windows jobs run in parallel. Additionally, a matrix is used within the Linux job to further parallelize
-validation across the Q35 and SBSA platforms.
+validation across the Q35 and ArmVirt platforms.
 
 While full support is available for building and running on Linux and Windows hosts, there is not a significant
 advantage for doing so from a Patina firmware validation perspective. It may be decided to focus on Linux hosts in the
