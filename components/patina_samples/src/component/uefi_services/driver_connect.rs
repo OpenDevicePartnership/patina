@@ -19,7 +19,7 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                driver::DriverServices,
+                driver_model::driver::DriverServices,
                 protocol::{ProtocolServices, ProtocolServicesExt, Tpl},
             },
         },

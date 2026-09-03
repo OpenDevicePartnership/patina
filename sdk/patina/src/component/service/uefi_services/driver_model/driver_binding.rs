@@ -1,14 +1,14 @@
 //! Driver binding protocol production for Patina components.
 //!
 //! A component can implement [`DriverBinding`] and install it with
-//! [`install_driver_binding`](super::protocol::ProtocolServicesExt::install_driver_binding). This
-//! produces a `EFI_DRIVER_BINDING_PROTOCOL` that `ConnectController()`/`DisconnectController()` can
+//! [`install_driver_binding`](crate::component::service::uefi_services::protocol::ProtocolServicesExt::install_driver_binding).
+//! This produces a `EFI_DRIVER_BINDING_PROTOCOL` that `ConnectController()`/`DisconnectController()` can
 //! call into.
 //!
 //! This allows a Patina component to participate in the UEFI Driver Model. `OpenAttributes::ByDriver`
 //! or `OpenAttributes::ByDriverExclusive` usage recorded under a
-//! [`register_agent`](super::protocol::ProtocolServices::register_agent) handle, can provide a `Stop()`
-//! function to call during controller disconnect or protocol uninstall.
+//! [`register_agent`](crate::component::service::uefi_services::protocol::ProtocolServices::register_agent)
+//! handle, can provide a `Stop()` function to call during controller disconnect or protocol uninstall.
 //!
 //! Returning `Err` from [`DriverBinding::stop`] blocks the release. Accepting the request requires that
 //! `stop` release its resources. It receives its own agent handle and must call `close_interface`/`close_protocol`.
@@ -29,14 +29,14 @@ use crate::base::protocol::ProtocolInterface;
 use crate::standard::efi;
 use crate::uefi::device_path::walker::DevicePathWalker;
 
-pub use super::handle::Handle;
-use super::protocol::ProtocolError;
+pub use crate::component::service::uefi_services::handle::Handle;
+use crate::component::service::uefi_services::protocol::ProtocolError;
 
 /// A component's UEFI driver model implementation.
 ///
 /// Implement this trait and pass it to
-/// [`install_driver_binding`](super::protocol::ProtocolServicesExt::install_driver_binding) to
-/// produce a driver binding protocol. `supported` and `start` default to a no-op implementation
+/// [`install_driver_binding`](crate::component::service::uefi_services::protocol::ProtocolServicesExt::install_driver_binding)
+/// to produce a driver binding protocol. `supported` and `start` default to a no-op implementation
 /// for components that only care about providing `Stop()`. For example a component that never
 /// expects `ConnectController()` to be called against it but wants a `Stop()` implementation so
 /// a `ByDriver` usage it holds can be released.
@@ -55,7 +55,7 @@ pub trait DriverBinding {
     /// `remaining_device_path` is the unconsumed portion of the device path passed to
     /// `ConnectController()`, if any, as an iterator over its nodes.
     ///
-    /// [`install_driver_binding`]: super::protocol::ProtocolServicesExt::install_driver_binding
+    /// [`install_driver_binding`]: crate::component::service::uefi_services::protocol::ProtocolServicesExt::install_driver_binding
     fn supported(
         &self,
         agent: Handle,
@@ -105,9 +105,9 @@ pub trait DriverBinding {
 /// `protocol` is the first field so a pointer to this struct can be safely reinterpreted as a
 /// pointer to `efi::protocols::driver_binding::Protocol`.
 #[repr(C)]
-pub(super) struct DriverBindingHolder<B: DriverBinding> {
-    pub(super) protocol: efi::protocols::driver_binding::Protocol,
-    pub(super) binding: B,
+pub(in crate::component::service::uefi_services) struct DriverBindingHolder<B: DriverBinding> {
+    pub(in crate::component::service::uefi_services) protocol: efi::protocols::driver_binding::Protocol,
+    pub(in crate::component::service::uefi_services) binding: B,
 }
 
 // SAFETY: `efi::protocols::driver_binding::Protocol` already has a `ProtocolInterface` impl
@@ -133,7 +133,7 @@ unsafe fn device_path_from_raw(ptr: *mut efi::protocols::device_path::Protocol) 
     Some(unsafe { DevicePathWalker::new(ptr) })
 }
 
-pub(super) extern "efiapi" fn supported_trampoline<B: DriverBinding>(
+pub(in crate::component::service::uefi_services) extern "efiapi" fn supported_trampoline<B: DriverBinding>(
     this: *mut efi::protocols::driver_binding::Protocol,
     controller_handle: efi::Handle,
     remaining_device_path: *mut efi::protocols::device_path::Protocol,
@@ -158,7 +158,7 @@ pub(super) extern "efiapi" fn supported_trampoline<B: DriverBinding>(
     }
 }
 
-pub(super) extern "efiapi" fn start_trampoline<B: DriverBinding>(
+pub(in crate::component::service::uefi_services) extern "efiapi" fn start_trampoline<B: DriverBinding>(
     this: *mut efi::protocols::driver_binding::Protocol,
     controller_handle: efi::Handle,
     remaining_device_path: *mut efi::protocols::device_path::Protocol,
@@ -181,7 +181,7 @@ pub(super) extern "efiapi" fn start_trampoline<B: DriverBinding>(
     }
 }
 
-pub(super) extern "efiapi" fn stop_trampoline<B: DriverBinding>(
+pub(in crate::component::service::uefi_services) extern "efiapi" fn stop_trampoline<B: DriverBinding>(
     this: *mut efi::protocols::driver_binding::Protocol,
     controller_handle: efi::Handle,
     number_of_children: usize,

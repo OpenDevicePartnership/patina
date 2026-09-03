@@ -12,7 +12,7 @@
 
 use crate::base::error::EfiError;
 
-pub use super::handle::Handle;
+pub use crate::component::service::uefi_services::handle::Handle;
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -68,7 +68,7 @@ impl From<EfiError> for DriverError {
 /// use patina::component::service::{
 ///     Service,
 ///     uefi_services::{
-///         driver::DriverServices,
+///         driver_model::driver::DriverServices,
 ///         protocol::{ProtocolServices, ProtocolServicesExt},
 ///     },
 /// };

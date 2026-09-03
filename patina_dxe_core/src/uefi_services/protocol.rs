@@ -227,7 +227,9 @@ mod tests {
     use super::*;
     use crate::{events::restore_tpl, test_support};
     use core::str::FromStr;
-    use patina::component::service::uefi_services::{driver_binding::DriverBinding, protocol::ProtocolServicesExt};
+    use patina::component::service::uefi_services::{
+        driver_model::driver_binding::DriverBinding, protocol::ProtocolServicesExt,
+    };
     use std::{cell::RefCell, rc::Rc};
     use uuid::Uuid;
 
