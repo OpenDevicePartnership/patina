@@ -17,7 +17,7 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                driver_binding::DriverBinding,
+                driver_model::driver_binding::DriverBinding,
                 protocol::{Handle, OpenAttributes, ProtocolError, ProtocolServices, ProtocolServicesExt},
             },
         },

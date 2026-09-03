@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 use patina::component::service::{
     IntoService,
-    uefi_services::driver::{DriverError, DriverServices, Handle},
+    uefi_services::driver_model::driver::{DriverError, DriverServices, Handle},
 };
 
 use crate::driver_services::{core_connect_controller, core_disconnect_controller};
