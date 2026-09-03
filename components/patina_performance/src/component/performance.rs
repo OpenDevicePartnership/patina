@@ -525,7 +525,6 @@ mod tests {
     };
     use patina::standard::efi;
 
-    use alloc::sync::Arc;
     use patina::{
         c_ptr::{CMutPtr, CPtr},
         component::service::{IntoService, Service},
@@ -537,6 +536,7 @@ mod tests {
         uefi::{boot_services::MockBootServices, runtime_services::MockRuntimeServices},
     };
     use patina_mm::component::communicator::{MmCommunication, Status};
+    use std::sync::Arc;
 
     // Some constants shared between tests
     const TEST_EVENT_HANDLE: efi::Event = 1_usize as efi::Event;
@@ -760,7 +760,7 @@ mod tests {
         boot_services.expect_close_event().once().return_const(Ok(()));
 
         // The component allocates the publishing buffer itself; hand back a real leaked page-sized buffer.
-        let leaked_buffer = Box::leak(alloc::vec![0u8; UEFI_PAGE_SIZE].into_boxed_slice());
+        let leaked_buffer = Box::leak(std::vec![0u8; UEFI_PAGE_SIZE].into_boxed_slice());
         let leaked_buffer_addr = leaked_buffer.as_mut_ptr() as usize;
         boot_services.expect_allocate_pages().once().returning(move |_, _, _| Ok(leaked_buffer_addr));
 

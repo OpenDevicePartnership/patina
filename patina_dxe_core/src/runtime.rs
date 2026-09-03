@@ -239,10 +239,7 @@ mod tests {
         with_locked_state(|| {
             let block = RelocationBlock {
                 block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
-                relocations: alloc::vec![crate::pecoff::relocation::Relocation {
-                    type_and_offset: 0x1 << 12,
-                    value: 0
-                }],
+                relocations: std::vec![crate::pecoff::relocation::Relocation { type_and_offset: 0x1 << 12, value: 0 }],
             };
             let result = add_runtime_image(ptr::null_mut(), 0, &[block], 0x1 as efi::Handle);
             assert!(matches!(result, Err(EfiError::Unsupported)), "unexpected result: {result:?}");

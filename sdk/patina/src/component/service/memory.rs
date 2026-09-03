@@ -48,7 +48,7 @@ use crate::{
 #[cfg(any(test, feature = "alloc"))]
 use core::alloc::Allocator;
 
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 
 #[cfg(any(test, feature = "mockall"))]
@@ -839,7 +839,6 @@ pub use mock::StdMemoryManager;
 #[cfg(any(test, feature = "mockall"))]
 #[cfg_attr(coverage, coverage(off))]
 mod mock {
-    extern crate std;
     use std::{
         alloc::{Layout, alloc, dealloc},
         collections::HashMap,

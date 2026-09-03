@@ -119,8 +119,6 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
-
     use patina::pi::protocol::cpu_arch::EfiSystemContext;
 
     use super::*;

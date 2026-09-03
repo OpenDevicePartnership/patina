@@ -46,12 +46,9 @@ impl From<goblin::error::Error> for Error {
 mod tests {
     use super::*;
 
-    extern crate alloc;
     extern crate scroll;
-    extern crate std;
-
-    use alloc::string::ToString;
     use std::format;
+    use std::string::ToString;
 
     #[test]
     fn test_convert_error() {

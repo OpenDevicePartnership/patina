@@ -528,7 +528,7 @@ mod tests {
 
         assert_eq!(
             entries,
-            alloc::vec![
+            std::vec![
                 MemoryTypeInfoEntrySerDe { memory_type: 6, number_of_pages: 100 },
                 MemoryTypeInfoEntrySerDe { memory_type: 9, number_of_pages: 200 },
             ]

@@ -279,8 +279,8 @@ impl<const N: usize, const B: usize> VirtQueue<N, B> {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 impl<const N: usize, const B: usize> VirtQueue<N, B> {
-    pub(super) fn test_drain_tx(&mut self) -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
-        use alloc::vec::Vec;
+    pub(super) fn test_drain_tx(&mut self) -> std::vec::Vec<std::vec::Vec<u8>> {
+        use std::vec::Vec;
         fence(Ordering::SeqCst);
         let mut out = Vec::new();
         while self.used.idx != self.avail.idx {

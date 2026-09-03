@@ -384,11 +384,10 @@ impl Iterator for DepexParser {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
-    use alloc::vec;
     use core::str::FromStr;
     use patina::standard::efi;
     use std::println;
+    use std::vec;
     use uuid::Uuid;
 
     use super::*;

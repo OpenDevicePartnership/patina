@@ -3074,9 +3074,9 @@ mod tests {
     use crate::test_support::{self, MockPageTable, MockPageTableWrapper};
 
     use super::*;
-    use alloc::vec::Vec;
     use patina::pi::dxe_services::GcdMemoryType;
     use patina::standard::efi;
+    use std::vec::Vec;
     use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
     const DXE_CORE_PE_HEADER_DATA: [u8; 1057] = [

@@ -309,12 +309,11 @@ impl Display for Recorder {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
-
     use core::mem::MaybeUninit;
 
     use super::*;
-    use crate::{alloc::format, component::tests::*};
+    use crate::component::tests::*;
+    use std::format;
 
     #[test]
     fn test_recorder_records_results() {
@@ -357,7 +356,7 @@ mod tests {
         recorder.update_record(test_data);
 
         let output = format!("{}", *recorder);
-        std::println!("{output}");
+        println!("{output}");
         assert!(output.contains("test ... ok (1 passes)"));
     }
 

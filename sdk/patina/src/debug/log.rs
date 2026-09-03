@@ -105,7 +105,7 @@ impl Format {
 #[cfg(test)]
 mod tests {
     use super::Format;
-    use alloc::string::String;
+    use std::string::String;
 
     /// Writes a log record through the given Format into a String buffer and returns it.
     fn format_record(format: &Format, level: log::Level, target: &str, message: &str) -> String {

@@ -195,8 +195,6 @@ impl core::error::Error for EfiError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    extern crate alloc;
-    use alloc::format;
 
     #[test]
     fn test_display_known_variant_matches_status() {

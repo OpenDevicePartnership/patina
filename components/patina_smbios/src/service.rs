@@ -10,7 +10,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
 pub use patina::standard::efi::industry::smbios::{
@@ -343,9 +342,6 @@ impl SmbiosExt for patina::component::service::Service<dyn Smbios> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    extern crate alloc;
-    extern crate std;
-    use alloc::string::String;
     use std::format;
 
     use crate::{
@@ -417,8 +413,8 @@ mod tests {
     #[test]
     fn test_smbios_records_iter_basic() {
         use crate::manager::SmbiosRecord;
-        use alloc::vec;
         use core::cell::RefCell;
+        use std::vec;
 
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
@@ -444,8 +440,8 @@ mod tests {
     #[test]
     fn test_smbios_records_iter_with_filter() {
         use crate::manager::SmbiosRecord;
-        use alloc::vec;
         use core::cell::RefCell;
+        use std::vec;
 
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
@@ -472,8 +468,8 @@ mod tests {
     #[test]
     fn test_smbios_records_iter_empty() {
         use crate::manager::SmbiosRecord;
-        use alloc::vec;
         use core::cell::RefCell;
+        use std::vec;
 
         let records: RefCell<Vec<SmbiosRecord>> = RefCell::new(vec![]);
         let borrowed = records.borrow();
@@ -485,8 +481,8 @@ mod tests {
     #[test]
     fn test_smbios_records_iter_no_match_filter() {
         use crate::manager::SmbiosRecord;
-        use alloc::vec;
         use core::cell::RefCell;
+        use std::vec;
 
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
@@ -588,8 +584,8 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_record_integration() {
-        use alloc::vec;
         use patina::component::service::Service;
+        use std::vec;
 
         // Create a test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };
@@ -625,8 +621,8 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_extension_trait_pattern() {
-        use alloc::vec;
         use patina::component::service::Service;
+        use std::vec;
 
         // Create a test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };
@@ -655,8 +651,8 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_with_error() {
-        use alloc::vec;
         use patina::component::service::Service;
+        use std::vec;
 
         // Mock that returns an error
         let mock = MockSmbios {
@@ -677,8 +673,8 @@ mod tests {
 
     #[test]
     fn test_mock_multiple_record_types() {
-        use alloc::{string::String, vec};
         use patina::component::service::Service;
+        use std::{string::String, vec};
 
         // Test that mock can handle different record types
         let type0 = Type0PlatformFirmwareInformation {
@@ -724,8 +720,8 @@ mod tests {
 
     #[test]
     fn test_service_mock_pattern() {
-        use alloc::vec;
         use patina::component::service::Service;
+        use std::vec;
 
         // Create a mock service using the standard Service::mock pattern
         let mock = MockSmbios { version: (3, 6), add_from_bytes_result: Ok(0xBEEF), expected_bytes: None };
@@ -746,8 +742,8 @@ mod tests {
 
     #[test]
     fn test_service_mock_with_extension_trait() {
-        use alloc::vec;
         use patina::component::service::Service;
+        use std::vec;
 
         // Create test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };

@@ -901,7 +901,6 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod fuzz_tests {
-    extern crate std;
     use crate::collections::{Bst, node_size};
     use rand::{
         RngExt,

@@ -13,7 +13,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use super::char8::Char8Array;
 
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
 
 #[cfg(any(test, feature = "alloc"))]
@@ -760,7 +760,7 @@ impl<const N: usize> From<Char16Array<N>> for String {
 mod tests {
     use super::*;
     use crate::char16;
-    use alloc::string::ToString;
+    use std::string::ToString;
 
     #[test]
     fn test_char16_from_units_with_nul_valid() {
@@ -803,9 +803,9 @@ mod tests {
     fn test_char16_chars_and_iter() {
         let units = [0x0041u16, 0x00E9, 0x20AC, 0x0000]; // "Aé€"
         let s = Char16Str::from_units_with_nul(&units).unwrap();
-        let chars: alloc::vec::Vec<char> = s.chars().collect();
+        let chars: std::vec::Vec<char> = s.chars().collect();
         assert_eq!(chars, ['A', 'é', '€']);
-        let code_units: alloc::vec::Vec<u16> = s.iter().copied().collect();
+        let code_units: std::vec::Vec<u16> = s.iter().copied().collect();
         assert_eq!(code_units, [0x0041, 0x00E9, 0x20AC]);
     }
 
@@ -816,7 +816,7 @@ mod tests {
         let units = [0x0041u16, 0xD800, 0x0000];
         // SAFETY: This deliberately bypasses validation to exercise the lossy fallback path.
         let s = unsafe { Char16Str::from_units_with_nul_unchecked(&units) };
-        let chars: alloc::vec::Vec<char> = s.chars().collect();
+        let chars: std::vec::Vec<char> = s.chars().collect();
         assert_eq!(chars, ['A', char::REPLACEMENT_CHARACTER]);
     }
 
@@ -856,7 +856,7 @@ mod tests {
         let units = [0x0045u16, 0x0046, 0x0049, 0x0000];
         let s = Char16Str::from_units_with_nul(&units).unwrap();
         assert_eq!(s.to_string(), "EFI");
-        assert_eq!(alloc::format!("{s:?}"), "\"EFI\"");
+        assert_eq!(std::format!("{s:?}"), "\"EFI\"");
     }
 
     #[test]
@@ -926,7 +926,7 @@ mod tests {
         let s = Char16String::from_le_bytes_until_nul(&bytes).unwrap();
         assert_eq!(s.to_string(), "EFI");
         // The owned buffer is trimmed to exactly "EFI\0".
-        assert_eq!(s.into_units_with_nul(), alloc::vec![0x0045, 0x0046, 0x0049, 0x0000]);
+        assert_eq!(s.into_units_with_nul(), std::vec![0x0045, 0x0046, 0x0049, 0x0000]);
     }
 
     #[test]
@@ -971,12 +971,12 @@ mod tests {
         let b = Char16String::default();
         assert!(a.is_empty());
         assert_eq!(a, b);
-        assert_eq!(a.clone().into_units_with_nul(), alloc::vec![0]);
+        assert_eq!(a.clone().into_units_with_nul(), std::vec![0]);
     }
 
     #[test]
     fn test_char16string_to_owned_roundtrip() {
-        use alloc::borrow::ToOwned;
+        use std::borrow::ToOwned;
         let owned = Char16String::try_from_str("Test").unwrap();
         let borrowed: &Char16Str = &owned;
         let reowned = borrowed.to_owned();
@@ -1025,7 +1025,7 @@ mod tests {
     fn test_char16string_debug_borrow_and_display() {
         use core::borrow::Borrow;
         let s = Char16String::try_from_str("EFI").unwrap();
-        assert_eq!(alloc::format!("{s:?}"), "\"EFI\"");
+        assert_eq!(std::format!("{s:?}"), "\"EFI\"");
         assert_eq!(s.to_string(), "EFI");
         let borrowed: &Char16Str = s.borrow();
         assert_eq!(borrowed.len(), 3);
@@ -1071,7 +1071,7 @@ mod tests {
 
     #[test]
     fn test_char16string_from_units_with_nul() {
-        let units = alloc::vec![0x0045u16, 0x0046, 0x0049, 0x0000];
+        let units = std::vec![0x0045u16, 0x0046, 0x0049, 0x0000];
         let s = Char16String::from_units_with_nul(units).unwrap();
         assert_eq!(s.len(), 3);
         assert!(*s == *"EFI");
@@ -1079,25 +1079,25 @@ mod tests {
 
     #[test]
     fn test_char16string_from_units_with_nul_missing_terminator() {
-        let units = alloc::vec![0x0045u16, 0x0046];
+        let units = std::vec![0x0045u16, 0x0046];
         assert_eq!(Char16String::from_units_with_nul(units), Err(StringError::MissingNulTerminator));
     }
 
     #[test]
     fn test_char16string_from_units_with_nul_interior_nul() {
-        let units = alloc::vec![0x0045u16, 0x0000, 0x0049, 0x0000];
+        let units = std::vec![0x0045u16, 0x0000, 0x0049, 0x0000];
         assert_eq!(Char16String::from_units_with_nul(units), Err(StringError::InteriorNul { position: 1 }));
     }
 
     #[test]
     fn test_char16string_from_units_with_nul_surrogate_rejected() {
-        let units = alloc::vec![0x0045u16, 0xD800, 0x0000];
+        let units = std::vec![0x0045u16, 0xD800, 0x0000];
         assert_eq!(Char16String::from_units_with_nul(units), Err(StringError::NotUcs2 { position: 1, value: 0xD800 }));
     }
 
     #[test]
     fn test_char16string_from_units_with_nul_unchecked() {
-        let units = alloc::vec![0x0045u16, 0x0046, 0x0049, 0x0000];
+        let units = std::vec![0x0045u16, 0x0046, 0x0049, 0x0000];
         // SAFETY: `units` is a valid NUL-terminated UCS-2 sequence.
         let s = unsafe { Char16String::from_units_with_nul_unchecked(units) };
         assert!(*s == *"EFI");
@@ -1211,7 +1211,7 @@ mod tests {
     #[test]
     fn test_char16_array_to_string() {
         let array = Char16Array::<9>::from_str("Firmware");
-        let owned: alloc::string::String = array.into();
+        let owned: std::string::String = array.into();
         assert_eq!(owned, "Firmware");
     }
 

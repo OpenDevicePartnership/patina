@@ -423,9 +423,9 @@ impl AdvLoggerMessageEntry {
 const TEST_DATA_SIZE: usize = 128;
 
 #[cfg(test)]
-pub(crate) fn create_buffer_v5(timer_frequency: u64, hw_port_disabled: bool) -> alloc::boxed::Box<[u8]> {
+pub(crate) fn create_buffer_v5(timer_frequency: u64, hw_port_disabled: bool) -> std::boxed::Box<[u8]> {
     let header_size = size_of::<AdvLoggerInfoV5>();
-    let mut buffer = alloc::vec![0_u8; header_size + TEST_DATA_SIZE].into_boxed_slice();
+    let mut buffer = std::vec![0_u8; header_size + TEST_DATA_SIZE].into_boxed_slice();
     let header = AdvLoggerInfoV5 {
         signature: AdvLoggerInfo::SIGNATURE,
         version: ADV_LOGGER_INFO_VERSION_V5,
@@ -457,9 +457,9 @@ pub(crate) fn create_buffer_v5(timer_frequency: u64, hw_port_disabled: bool) -> 
 }
 
 #[cfg(test)]
-pub(crate) fn create_buffer_v6(timer_frequency: u64, new_address: u64) -> alloc::boxed::Box<[u8]> {
+pub(crate) fn create_buffer_v6(timer_frequency: u64, new_address: u64) -> std::boxed::Box<[u8]> {
     let header_size = size_of::<AdvLoggerInfoV6>();
-    let mut buffer = alloc::vec![0_u8; header_size + TEST_DATA_SIZE].into_boxed_slice();
+    let mut buffer = std::vec![0_u8; header_size + TEST_DATA_SIZE].into_boxed_slice();
     let header = AdvLoggerInfoV6 {
         v5: AdvLoggerInfoV5 {
             signature: AdvLoggerInfo::SIGNATURE,

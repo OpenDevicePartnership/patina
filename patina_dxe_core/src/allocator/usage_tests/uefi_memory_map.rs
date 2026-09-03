@@ -145,7 +145,6 @@ mod tests {
         allocator::{get_memory_map, init_memory_support, reset_allocators},
         test_support,
     };
-    use alloc::vec::Vec;
     use patina::standard::efi;
     use patina::{
         BinaryGuid,
@@ -158,6 +157,7 @@ mod tests {
     };
     use serial_test::serial;
     use std::panic::RefUnwindSafe;
+    use std::vec::Vec;
 
     const ZERO: BinaryGuid = BinaryGuid::ZERO;
 

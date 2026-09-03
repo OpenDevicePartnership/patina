@@ -535,7 +535,7 @@ mod tests {
     fn test_grow_error_display_alloc_failed_msg() {
         with_locked_state(|| {
             let error = GrowError::AllocFailed;
-            let msg = alloc::format!("{error}");
+            let msg = std::format!("{error}");
             assert_eq!(msg, "allocation returned null");
         });
     }
@@ -546,7 +546,7 @@ mod tests {
             // Note: Zero alignment will result in a LayoutError.
             let layout_err = Layout::from_size_align(1, 0).unwrap_err();
             let error = GrowError::InvalidLayout(layout_err);
-            let msg = alloc::format!("{error}");
+            let msg = std::format!("{error}");
             assert!(msg.starts_with("invalid layout:"));
         });
     }
@@ -555,12 +555,12 @@ mod tests {
     fn test_grow_error_debug_msgs() {
         with_locked_state(|| {
             let error = GrowError::AllocFailed;
-            let msg = alloc::format!("{error:?}");
+            let msg = std::format!("{error:?}");
             assert_eq!(msg, "AllocFailed");
 
             let layout_err = Layout::from_size_align(1, 0).unwrap_err();
             let error = GrowError::from(layout_err);
-            let msg = alloc::format!("{error:?}");
+            let msg = std::format!("{error:?}");
             assert!(msg.starts_with("InvalidLayout("));
         });
     }

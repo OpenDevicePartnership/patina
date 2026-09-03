@@ -13,7 +13,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use super::char16::Char16Array;
 
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
 
 #[cfg(any(test, feature = "alloc"))]
@@ -746,7 +746,7 @@ mod tests {
     fn test_char8_high_latin1_bytes_valid() {
         let bytes = [0xE9u8, 0xFF, 0x00]; // "éÿ"
         let s = Char8Str::from_bytes_with_nul(&bytes).unwrap();
-        let chars: alloc::vec::Vec<char> = s.chars().collect();
+        let chars: std::vec::Vec<char> = s.chars().collect();
         assert_eq!(chars, ['\u{00E9}', '\u{00FF}']);
     }
 
@@ -754,7 +754,7 @@ mod tests {
     fn test_char8_iter() {
         let bytes = *b"EFI\0";
         let s = Char8Str::from_bytes_with_nul(&bytes).unwrap();
-        let collected: alloc::vec::Vec<u8> = s.iter().copied().collect();
+        let collected: std::vec::Vec<u8> = s.iter().copied().collect();
         assert_eq!(collected, b"EFI");
     }
 
@@ -787,7 +787,7 @@ mod tests {
         let bytes = *b"EFI\0";
         let s = Char8Str::from_bytes_with_nul(&bytes).unwrap();
         assert_eq!(s.to_string(), "EFI");
-        assert_eq!(alloc::format!("{s:?}"), "\"EFI\"");
+        assert_eq!(std::format!("{s:?}"), "\"EFI\"");
     }
 
     #[test]
@@ -850,12 +850,12 @@ mod tests {
         let b = Char8String::default();
         assert!(a.is_empty());
         assert_eq!(a, b);
-        assert_eq!(a.clone().into_bytes_with_nul(), alloc::vec![0]);
+        assert_eq!(a.clone().into_bytes_with_nul(), std::vec![0]);
     }
 
     #[test]
     fn test_char8string_to_owned_roundtrip() {
-        use alloc::borrow::ToOwned;
+        use std::borrow::ToOwned;
         let owned = Char8String::try_from_str("Test").unwrap();
         let borrowed: &Char8Str = &owned;
         let reowned = borrowed.to_owned();
@@ -894,7 +894,7 @@ mod tests {
     fn test_char8string_debug_borrow_and_display() {
         use core::borrow::Borrow;
         let s = Char8String::try_from_str("EFI").unwrap();
-        assert_eq!(alloc::format!("{s:?}"), "\"EFI\"");
+        assert_eq!(std::format!("{s:?}"), "\"EFI\"");
         assert_eq!(s.to_string(), "EFI");
         let borrowed: &Char8Str = s.borrow();
         assert_eq!(borrowed.len(), 3);
@@ -933,7 +933,7 @@ mod tests {
 
     #[test]
     fn test_char8string_from_bytes_with_nul() {
-        let bytes = alloc::vec![b'E', b'F', b'I', 0];
+        let bytes = std::vec![b'E', b'F', b'I', 0];
         let s = Char8String::from_bytes_with_nul(bytes).unwrap();
         assert_eq!(s.len(), 3);
         assert!(*s == *"EFI");
@@ -941,19 +941,19 @@ mod tests {
 
     #[test]
     fn test_char8string_from_bytes_with_nul_missing_terminator() {
-        let bytes = alloc::vec![b'E', b'F', b'I'];
+        let bytes = std::vec![b'E', b'F', b'I'];
         assert_eq!(Char8String::from_bytes_with_nul(bytes), Err(StringError::MissingNulTerminator));
     }
 
     #[test]
     fn test_char8string_from_bytes_with_nul_interior_nul() {
-        let bytes = alloc::vec![b'E', 0, b'I', 0];
+        let bytes = std::vec![b'E', 0, b'I', 0];
         assert_eq!(Char8String::from_bytes_with_nul(bytes), Err(StringError::InteriorNul { position: 1 }));
     }
 
     #[test]
     fn test_char8string_from_bytes_with_nul_unchecked() {
-        let bytes = alloc::vec![b'E', b'F', b'I', 0];
+        let bytes = std::vec![b'E', b'F', b'I', 0];
         // SAFETY: `bytes` is a valid NUL-terminated Latin-1 sequence.
         let s = unsafe { Char8String::from_bytes_with_nul_unchecked(bytes) };
         assert!(*s == *"EFI");
@@ -1055,7 +1055,7 @@ mod tests {
     #[test]
     fn test_char8_array_to_string() {
         let array = Char8Array::<9>::from_str("Firmware");
-        let owned: alloc::string::String = array.into();
+        let owned: std::string::String = array.into();
         assert_eq!(owned, "Firmware");
     }
 

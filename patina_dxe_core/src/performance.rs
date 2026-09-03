@@ -809,7 +809,7 @@ mod tests {
             guid: efi::Guid,
         }
 
-        let node = alloc::boxed::Box::new(FwFilePathNode {
+        let node = std::boxed::Box::new(FwFilePathNode {
             header: efi::protocols::device_path::Protocol {
                 r#type: TYPE_MEDIA,
                 sub_type: Media::SUBTYPE_PIWG_FIRMWARE_FILE,
@@ -817,9 +817,9 @@ mod tests {
             },
             guid: file_guid,
         });
-        let node_ptr = alloc::boxed::Box::into_raw(node) as *mut efi::protocols::device_path::Protocol;
+        let node_ptr = std::boxed::Box::into_raw(node) as *mut efi::protocols::device_path::Protocol;
 
-        let loaded_image = alloc::boxed::Box::new(efi::protocols::loaded_image::Protocol {
+        let loaded_image = std::boxed::Box::new(efi::protocols::loaded_image::Protocol {
             revision: efi::protocols::loaded_image::REVISION,
             parent_handle: ptr::null_mut(),
             system_table: ptr::null_mut(),
@@ -834,7 +834,7 @@ mod tests {
             image_data_type: efi::BOOT_SERVICES_DATA,
             unload: None,
         });
-        let loaded_image_ptr = alloc::boxed::Box::into_raw(loaded_image) as *mut core::ffi::c_void;
+        let loaded_image_ptr = std::boxed::Box::into_raw(loaded_image) as *mut core::ffi::c_void;
 
         let (handle, _) = PROTOCOL_DB
             .install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, loaded_image_ptr)
@@ -934,7 +934,7 @@ mod tests {
             // published_table_size reports a non-zero size, and publish_table writes into a large-enough buffer.
             let size = perf.published_table_size().unwrap();
             assert!(size > 0);
-            let buffer: &'static mut [u8] = alloc::boxed::Box::leak(alloc::vec![0u8; size].into_boxed_slice());
+            let buffer: &'static mut [u8] = std::boxed::Box::leak(std::vec![0u8; size].into_boxed_slice());
             perf.publish_table(buffer).unwrap();
         })
         .unwrap();
@@ -948,7 +948,7 @@ mod tests {
 
             assert_eq!(perf.published_table_size().unwrap_err(), Error::Efi(EfiError::AccessDenied));
 
-            let buffer: &'static mut [u8] = alloc::boxed::Box::leak(alloc::vec![0u8; 64].into_boxed_slice());
+            let buffer: &'static mut [u8] = std::boxed::Box::leak(std::vec![0u8; 64].into_boxed_slice());
             assert_eq!(perf.publish_table(buffer).unwrap_err(), Error::Efi(EfiError::AccessDenied));
 
             // A re-entrant record add cannot acquire the held table lock and drops the record.
@@ -1041,7 +1041,7 @@ mod tests {
             let image_handle = install_loaded_image_with_fw_path(node_length, file_guid);
 
             // A separate handle carries only a driver-binding protocol referencing the image handle above.
-            let driver_binding = alloc::boxed::Box::new(efi::protocols::driver_binding::Protocol {
+            let driver_binding = std::boxed::Box::new(efi::protocols::driver_binding::Protocol {
                 supported: stub_supported,
                 start: stub_start,
                 stop: stub_stop,
@@ -1049,7 +1049,7 @@ mod tests {
                 image_handle,
                 driver_binding_handle: ptr::null_mut(),
             });
-            let driver_binding_ptr = alloc::boxed::Box::into_raw(driver_binding) as *mut core::ffi::c_void;
+            let driver_binding_ptr = std::boxed::Box::into_raw(driver_binding) as *mut core::ffi::c_void;
             let (db_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(None, efi::protocols::driver_binding::PROTOCOL_GUID, driver_binding_ptr)
                 .unwrap();

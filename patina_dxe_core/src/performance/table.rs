@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_serialize_into() {
-        let buffer: &'static mut [u8] = alloc::boxed::Box::leak(alloc::vec![0u8; 1000].into_boxed_slice());
+        let buffer: &'static mut [u8] = std::boxed::Box::leak(std::vec![0u8; 1000].into_boxed_slice());
         let address = buffer.as_ptr() as usize;
 
         let mut fbpt = Fbpt::new();
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_performance_table_well_written_in_memory() {
-        let buffer: &'static mut [u8] = alloc::boxed::Box::leak(alloc::vec![0u8; 1000].into_boxed_slice());
+        let buffer: &'static mut [u8] = std::boxed::Box::leak(std::vec![0u8; 1000].into_boxed_slice());
         let address = buffer.as_ptr() as usize;
 
         let mut fbpt = Fbpt::new();

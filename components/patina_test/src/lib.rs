@@ -3,7 +3,7 @@
     "## License\n\n",
     " Copyright (c) Microsoft Corporation.\n\n",
 )]
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(missing_docs)]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 extern crate alloc;

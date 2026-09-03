@@ -351,7 +351,6 @@ where
 mod tests {
     use core::{ffi::c_void, ptr};
 
-    use alloc::boxed::Box;
     use log::Log;
     use patina::standard::efi;
     use patina::{
@@ -360,6 +359,7 @@ mod tests {
         peripheral::serial::uart::UartNull,
         pi::hob::{GUID_EXTENSION, GuidHob, HobHeader},
     };
+    use std::boxed::Box;
 
     use crate::{
         logger::{AdvancedLogger, TargetFilter},

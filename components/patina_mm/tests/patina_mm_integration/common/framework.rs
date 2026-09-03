@@ -12,9 +12,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 use crate::patina_mm_integration::common::{constants::*, handlers::*, message_parser::*};
 
-extern crate alloc;
-use alloc::{boxed::Box, string::String, vec::Vec};
 use patina::BinaryGuid;
+use std::{boxed::Box, string::String, vec::Vec};
 use std::{
     collections::HashMap,
     sync::{

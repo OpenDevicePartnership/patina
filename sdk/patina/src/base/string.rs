@@ -246,7 +246,7 @@ macro_rules! char8 {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use alloc::string::ToString;
+    use std::string::ToString;
 
     #[test]
     fn test_string_error_display() {

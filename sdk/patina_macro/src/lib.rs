@@ -9,6 +9,8 @@
 
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
+extern crate alloc;
+
 mod device_path_encoder;
 mod device_path_macro;
 mod device_path_nodes;

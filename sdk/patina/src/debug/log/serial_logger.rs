@@ -125,10 +125,10 @@ mod tests {
     use super::*;
     use crate::debug::log::Format;
     use crate::peripheral::serial::MockSerialIO;
-    use alloc::{string::String, sync::Arc, vec::Vec};
     use log::{Level, LevelFilter, Log, Metadata};
     use spin::Mutex;
     use std::thread;
+    use std::{string::String, sync::Arc, vec::Vec};
 
     fn metadata(level: Level, target: &str) -> Metadata<'_> {
         Metadata::builder().level(level).target(target).build()

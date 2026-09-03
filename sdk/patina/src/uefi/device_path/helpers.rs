@@ -120,15 +120,12 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
 
 #[cfg(test)]
 mod tests {
-    extern crate alloc;
-    extern crate std;
-
     use super::*;
     use crate::{
         uefi::boot_services::MockBootServices,
         uefi::device_path::node_defs::{Acpi, EndEntire, FilePath, HardDrive, Pci},
     };
-    use alloc::boxed::Box;
+    use std::boxed::Box;
 
     /// Helper to build a partial device path starting with HD node.
     fn build_partial_hd_path(guid: [u8; 16]) -> DevicePathBuf {
@@ -198,11 +195,8 @@ mod tests {
         // Clone the device path bytes into a Vec and leak it so we can return a pointer
         let path_ref: &DevicePath = full_handle_path.as_ref();
         // SAFETY: path_ref is a valid DevicePath reference and size() returns its exact byte length.
-        let bytes: alloc::vec::Vec<u8> = unsafe {
-            alloc::vec::Vec::from(core::slice::from_raw_parts(
-                std::ptr::from_ref(path_ref) as *const u8,
-                path_ref.size(),
-            ))
+        let bytes: std::vec::Vec<u8> = unsafe {
+            std::vec::Vec::from(core::slice::from_raw_parts(std::ptr::from_ref(path_ref) as *const u8, path_ref.size()))
         };
         let leaked_bytes = Box::leak(bytes.into_boxed_slice());
         let full_path_ptr: usize = leaked_bytes.as_ptr() as usize;

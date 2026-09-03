@@ -724,7 +724,6 @@ impl Iterator for CodeIterator<'_> {
 
 #[cfg(test)]
 mod test {
-    extern crate std;
     use std::{fs::File, io::Read, iter::zip, println, time, vec, vec::Vec};
 
     use super::decompress_into_with_algo;

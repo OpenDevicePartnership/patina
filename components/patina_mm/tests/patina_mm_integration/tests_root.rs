@@ -31,8 +31,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
-
 // Common utilities available to all test modules
 mod common;
 

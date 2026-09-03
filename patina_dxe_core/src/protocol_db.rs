@@ -8,8 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec,
@@ -880,7 +878,6 @@ unsafe impl Sync for SpinLockedProtocolDb {}
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
     use core::str::FromStr;
     use std::println;
 

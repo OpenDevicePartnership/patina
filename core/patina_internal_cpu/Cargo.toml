@@ -17,7 +17,7 @@ features = ["std"]
 
 [dependencies]
 log = { workspace = true }
-patina = { workspace = true, features = ["alloc", "core"] }
+patina = { workspace = true, features = ["core"] }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 cfg-if = { workspace = true }

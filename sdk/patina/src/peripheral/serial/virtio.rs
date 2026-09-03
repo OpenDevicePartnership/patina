@@ -132,8 +132,8 @@ mod tests {
 
     use super::*;
     use crate::peripheral::serial::SerialIO;
-    use alloc::vec::Vec;
     use mmio::VirtioMmioRegs;
+    use std::vec::Vec;
 
     fn test_instance<const N: usize, const B: usize>(regs: &VirtioMmioRegs) -> VirtioSerial<N, B> {
         // SAFETY: `regs` outlives the returned `VirtioSerial`.

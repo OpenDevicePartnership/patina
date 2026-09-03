@@ -10,9 +10,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
-#[allow(unused_imports)] // Used in test module within this file
-use alloc::vec::Vec;
 use patina::BinaryGuid;
 
 /// Error types for MM message parsing operations

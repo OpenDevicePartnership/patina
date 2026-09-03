@@ -906,8 +906,6 @@ impl TryFromCtx<'_, scroll::Endian> for FilePath {
 
 #[cfg(test)]
 mod tests {
-    extern crate std;
-
     use super::*;
     use scroll::{Pread, Pwrite};
 

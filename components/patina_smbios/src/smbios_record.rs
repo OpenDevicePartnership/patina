@@ -234,7 +234,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
 use crate::{
     error::SmbiosError,
     service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosTableHeader},
@@ -805,7 +804,7 @@ impl Default for Type127EndOfTable {
 mod tests {
     use super::*;
     use crate::{service::SMBIOS_STRING_MAX_LENGTH, smbios_types};
-    use alloc::vec;
+    use std::vec;
 
     #[test]
     fn test_type0_new() {

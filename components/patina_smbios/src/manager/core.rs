@@ -10,8 +10,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-extern crate alloc;
-
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
 use patina::standard::efi::{Handle, PhysicalAddress};
@@ -755,14 +753,13 @@ impl SmbiosManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    extern crate std;
-    use std::{vec, vec::Vec};
-
     use crate::{
         error::SmbiosError,
         service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosTableHeader},
     };
+    use patina::component::service::memory::StdMemoryManager;
     use patina::standard::efi;
+    use std::{boxed::Box, vec, vec::Vec};
     use zerocopy::IntoBytes;
 
     /// Test helper: Build a simple SMBIOS record with the given header and strings
@@ -1771,10 +1768,6 @@ mod tests {
 
     #[test]
     fn test_allocate_buffers() {
-        use patina::component::service::memory::StdMemoryManager;
-        extern crate std;
-        use std::boxed::Box;
-
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
             Box::leak(Box::new(StdMemoryManager::new()));
@@ -1798,10 +1791,6 @@ mod tests {
 
     #[test]
     fn test_allocate_buffers_idempotent() {
-        use patina::component::service::memory::StdMemoryManager;
-        extern crate std;
-        use std::boxed::Box;
-
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
             Box::leak(Box::new(StdMemoryManager::new()));
@@ -1822,10 +1811,6 @@ mod tests {
 
     #[test]
     fn test_build_table_data() {
-        use patina::component::service::memory::StdMemoryManager;
-        extern crate std;
-        use std::boxed::Box;
-
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
             Box::leak(Box::new(StdMemoryManager::new()));
@@ -1865,10 +1850,6 @@ mod tests {
 
     #[test]
     fn test_build_table_data_copies_records_correctly() {
-        use patina::component::service::memory::StdMemoryManager;
-        extern crate std;
-        use std::boxed::Box;
-
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
             Box::leak(Box::new(StdMemoryManager::new()));
@@ -1899,10 +1880,6 @@ mod tests {
 
     #[test]
     fn test_build_table_data_no_records_error() {
-        use patina::component::service::memory::StdMemoryManager;
-        extern crate std;
-        use std::boxed::Box;
-
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
             Box::leak(Box::new(StdMemoryManager::new()));

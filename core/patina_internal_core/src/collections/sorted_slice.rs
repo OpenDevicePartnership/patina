@@ -209,10 +209,8 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
     use super::*;
-    extern crate alloc;
-    use alloc::vec::Vec;
+    use std::vec::Vec;
 
     #[test]
     fn test_init_state_of_new_sorted_slice() {

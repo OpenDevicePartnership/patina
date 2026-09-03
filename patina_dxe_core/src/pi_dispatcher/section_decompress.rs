@@ -1,7 +1,5 @@
 //! A section extractor that provides UEFI decompression functionality with an additional custom extractor
 //! implementation.
-extern crate alloc;
-
 use alloc::vec;
 use patina::{
     pi::fw_fs::{self, ffs},

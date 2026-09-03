@@ -153,8 +153,6 @@ mod tests {
     use super::*;
     use proc_macro2::TokenStream;
     use quote::quote;
-    extern crate alloc;
-    use alloc::format;
 
     #[test]
     fn test_config_basic() {
@@ -229,7 +227,7 @@ mod tests {
 
         // Test that the hex string provided in the attribute matches the well known PCD Database HOB GUID
         let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = TEST_HOB_GUID.as_fields();
-        let name = alloc::format!(
+        let name = std::format!(
             "{f0:08x}-{f1:04x}-{f2:04x}-{f3:02x}{f4:02x}-{f5:02x}{f6:02x}{f7:02x}{f8:02x}{f9:02x}{f10:02x}"
         );
         assert_eq!(name, "ea296d92-0b69-423c-8c28-33b4e0a91268");

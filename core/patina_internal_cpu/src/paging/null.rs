@@ -8,7 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::boxed::Box;
 use patina_paging::{CacheAttributeValue, MemoryAttributes, PtError};
 
 use crate::paging::PatinaPageTable;
