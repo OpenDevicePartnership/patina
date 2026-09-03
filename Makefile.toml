@@ -10,7 +10,10 @@ default_to_workspace = false
 [env]
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --timings"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+# Note: `--profile test` has been set here in the past. Cargo already defaults to test builds
+# with the test profile, so it is removed. cargo-llvm-cov will forward it to `cargo nextest run`
+# where `--profile` is used to incorrectly select a nextest config profile (not a Cargo build profile).
+COV_FLAGS = { value = "--workspace --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
@@ -185,7 +188,7 @@ args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features"
 description = "Checks rust test code for build errors with results."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check-no-default-features-code]
 description = "Checks rust code compiles without default features."
@@ -197,7 +200,7 @@ args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 description = "Checks rust test code compiles without default features."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check-no-default-features]
 description = "Checks rust code and tests compile without default features to catch feature-gate regressions."
@@ -230,10 +233,10 @@ command = "cargo"
 args = ["llvm-cov", "clean", "--workspace"]
 
 [tasks.test]
-description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`"
+description = "Runs tests via cargo-nextest. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`."
 clear = true
 command = "cargo"
-args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+args = ["nextest", "run", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.test-ignored]
 description = "Runs ignored tests with native cargo test behavior. Example `cargo make test-ignored` or `cargo make test-ignored -p package_name"
@@ -251,8 +254,16 @@ clear = true
 # Note: RUSTFLAGS replaces build.rustflags.
 env = { RUSTFLAGS = "-Z allow-features=c_variadic,allocator_api,coverage_attribute" }
 command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doctests"]
-dependencies = ["individual-package-targets", "llvm-cov-clean"]
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "nextest"]
+dependencies = ["individual-package-targets", "llvm-cov-clean", "test-cov-doctests"]
+
+[tasks.test-cov-doctests]
+description = "Collect doctest coverage data. nextest cannot run doctests, so it's not used here."
+private = true
+install_crate = false
+env = { RUSTFLAGS = "-Z allow-features=c_variadic,allocator_api,coverage_attribute" }
+command = "cargo"
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doc"]
 
 [tasks.test-asan]
 description = "Run tests with AddressSanitizer enabled. Example `cargo make test-asan`. Use `cargo make test-asan --print-dll-path` to print the ASan runtime DLL directory."
@@ -303,7 +314,9 @@ end
 set_env RUSTFLAGS "-Zsanitizer=address"
 set_env RUSTDOCFLAGS "-Zsanitizer=address"
 target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
-exec --fail-on-error cargo test --target ${target} --workspace --features std
+exec --fail-on-error cargo nextest run --target ${target} --workspace --features std
+# nextest cannot run doctests, so run them separately to keep ASan coverage of doctests too.
+exec --fail-on-error cargo test --doc --target ${target} --workspace --features std
 '''
 
 [tasks.coverage-lcov]
@@ -311,14 +324,14 @@ description = "Generate an LCOV coverage report from collected data."
 install_crate = false
 clear = true
 command = "cargo"
-args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+args = ["llvm-cov", "report", "--doctests", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
 
 [tasks.coverage-html]
 description = "Generate an HTML coverage report from collected data."
 install_crate = false
 clear = true
 command = "cargo"
-args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
+args = ["llvm-cov", "report", "--doctests", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
 
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
