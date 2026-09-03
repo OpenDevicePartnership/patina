@@ -52,6 +52,7 @@ pub mod driver_binding;
 pub mod event;
 pub mod handle;
 pub mod image;
+pub mod language;
 pub mod protocol;
 pub mod timer_event;
 pub mod timing;
