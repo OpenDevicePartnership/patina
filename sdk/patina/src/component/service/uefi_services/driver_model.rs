@@ -6,6 +6,7 @@
 //!
 //! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
 //! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
+//! - [`component_name::UefiDriverModelComponentName`] - Publishing a driver and controller name.
 //!
 //! ## UEFI Driver Model Overview
 //!
@@ -35,6 +36,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+pub mod component_name;
 pub mod driver;
 pub mod driver_binding;
 pub mod language;
