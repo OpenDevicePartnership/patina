@@ -5,6 +5,7 @@
 //! component:
 //!
 //! - [`overview`] - A quick tour of timer, event, and protocol usage in one component.
+//! - [`component_name_producer`] - Produces the component name protocols for a driver.
 //! - [`configuration_table`] - Installs a vendor configuration table and reads it back.
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
 //! - [`driver_binding_producer`] - Produces a driver binding protocol.  Allows protocols
@@ -22,6 +23,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+pub mod component_name_producer;
 pub mod configuration_table;
 pub mod driver_binding_producer;
 pub mod driver_connect;
