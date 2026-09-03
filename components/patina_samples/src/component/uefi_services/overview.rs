@@ -5,6 +5,7 @@
 //!
 //! For samples of how to use individual services, see the other sibling modules:
 //!
+//! - [`super::component_name_producer`] - Producing the component name protocols for a driver.
 //! - [`super::configuration_table`] - Installing and reading a vendor configuration table.
 //! - [`super::driver_connect`] - Locating controllers and connecting drivers to them.
 //! - [`super::end_of_dxe_protocol_consumer`] - Deferring protocol consumption to the End-of-DXE event group.
