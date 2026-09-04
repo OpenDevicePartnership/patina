@@ -12,6 +12,7 @@
 
 #[cfg(any(test, feature = "alloc"))]
 pub mod boot_services;
+pub mod component_name;
 pub mod decompress;
 #[cfg(any(test, feature = "alloc"))]
 pub mod device_path;
