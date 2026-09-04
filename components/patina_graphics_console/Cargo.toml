@@ -1,0 +1,30 @@
+[package]
+name = "patina_graphics_console"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "UEFI graphics console (Simple Text Output over Graphics Output) support for Patina."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+mockall = { workspace = true, optional = true }
+patina = { workspace = true, features = ["alloc"] }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina = { workspace = true, features = ["alloc", "mockall"] }
+
+[features]
+mockall = ["dep:mockall", "std"]
+std = []
+# All non-std features to test in CI
+ci_features = []
