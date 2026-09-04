@@ -74,7 +74,8 @@ where
         //         `Box::leak`, so its alignment and validity are guaranteed.
         let internal = unsafe { &*this.cast::<AdvancedLoggerProtocolInternal<S>>() };
 
-        internal.adv_logger.log_write(error_level, None, data);
+        let hw_write = internal.adv_logger.hardware_write_enabled(error_level, None);
+        internal.adv_logger.log_write(error_level, hw_write, data);
         efi::Status::SUCCESS
     }
 

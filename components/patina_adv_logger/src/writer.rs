@@ -153,6 +153,11 @@ impl AdvancedLogWriter {
         !self.header.hw_port_disabled() && (level & self.header.hw_print_level() != 0)
     }
 
+    /// Returns the hardware print level from the memory log header.
+    pub(crate) fn hw_print_level(&self) -> u32 {
+        self.header.hw_print_level()
+    }
+
     /// Returns whether hardware port writing is enabled for the given level,
     /// using an overridden `hw_print_level` bitmask.
     pub fn hardware_write_enabled_with_mask(&self, level: u32, mask_override: u32) -> bool {
