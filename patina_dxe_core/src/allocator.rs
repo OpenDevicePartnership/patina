@@ -1173,52 +1173,6 @@ fn process_hob_allocations(hob_list: &HobList) {
                     continue;
                 }
             }
-            Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
-            | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
-                header: _,
-                base_address,
-                length,
-                fv_name: _,
-                file_name: _,
-            })
-            | Hob::FirmwareVolume3(hob::FirmwareVolume3 {
-                header: _,
-                base_address,
-                length,
-                authentication_status: _,
-                extracted_fv: _,
-                fv_name: _,
-                file_name: _,
-            }) => {
-                log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
-
-                // EDK II assumes all FVs are MMIO, however many platforms do not report the
-                // backing address space as an MMIO resource, causing the allocation to silently fail.
-                // Instead of assuming MMIO here, retrieve the backing memory type from the GCD if it
-                // exists and allocate the FV region using that type. Note: there are often multiple
-                // FV HOBs for the same FV. This will only allocate for the first HOB since
-                // get_memory_descriptor_for_address() is filtering for free descriptors.
-
-                //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
-                //This means they must be direct-allocated in the GCD, and no stats will be tracked for them.
-                match GCD.get_memory_descriptor_for_address(*base_address, |_, allocated| !allocated) {
-                    Ok(desc) => {
-                        let _ = GCD.allocate_memory_space(
-                    AllocationStrategy::Address(*base_address as usize),
-                    desc.memory_type,
-                    0,
-                    *length as usize,
-                    protocol_db::DXE_CORE_HANDLE,
-                    None)
-                    .inspect_err(|err|{
-                        log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err}",
-                        );
-                    });
-                    }
-                    Err(_) => continue,
-                }
-            }
             _ => continue,
         }
     }
