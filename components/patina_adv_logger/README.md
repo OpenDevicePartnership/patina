@@ -13,6 +13,43 @@ The crate stores records in a shared memory buffer that begins with an `ADVANCED
 - Aligned entries follow in the memory buffer after the header.
 - Each entry records the boot phase identifier, EFI debug level mask, timestamp counter, and message bytes.
 
+## Hardware Port Behavior
+
+In addition to the memory log, records may be emitted through the logger's `SerialIO` implementation. The logger
+applies the memory log's `HwPrintLevel` / `HwPortDisabled` filtering, including any per-target `hw_filter_override`,
+before writing to the serial port.
+
+Platforms that need dynamic filtering, such as gating hardware output on a debug jumper or GPIO, can configure
+`AdvancedLogger::with_hw_print_level_override_callback`. The callback receives the effective hardware print level
+selected from the memory log header or matching target filter and returns the level to use for that write. Without a
+callback, the selected hardware print level is used unchanged.
+
+For example, a platform can suppress all hardware output when its debug port is disabled:
+
+```rust
+use patina::{
+   debug::log::Format,
+   peripheral::serial::uart::UartNull,
+};
+use patina_adv_logger::logger::AdvancedLogger;
+
+fn platform_hw_print_level(hw_print_level: u32) -> u32 {
+   if platform_debug_port_enabled() {
+      hw_print_level
+   } else {
+      0
+   }
+}
+
+static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+   Format::Standard,
+   &[],
+   log::LevelFilter::Info,
+   UartNull {},
+).with_hw_print_level_override_callback(platform_hw_print_level);
+# fn platform_debug_port_enabled() -> bool { true }
+```
+
 ## Parser Support
 
 This crate includes a bare-bones log parser executable for parsing the logs produced via the logger, and a public log
@@ -45,7 +82,10 @@ below.
 # {
 use patina_dxe_core::*;
 use patina::{debug::log::Format, peripheral::serial::uart::UartNull};
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::{AdvancedLogger, TargetFilter}};
+use patina_adv_logger::{
+   component::AdvancedLoggerComponent,
+   logger::{AdvancedLogger, TargetFilter},
+};
 
 use log::LevelFilter;
 use core::ffi::c_void;

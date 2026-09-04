@@ -18,7 +18,7 @@ use log::Level;
 use patina::standard::efi;
 use patina::{
     component::service::{Service, perf_timer::ArchTimerFunctionality},
-    debug::log::Format,
+    debug::log::{DEBUG_ERROR, DEBUG_INFO, DEBUG_VERBOSE, DEBUG_WARN, Format},
     error::EfiError,
     peripheral::serial::{SerialIO, shared::SharedSerial},
     pi::hob::{Hob, PhaseHandoffInformationTable},
@@ -51,6 +51,7 @@ where
     hardware_port: SharedSerial<S>,
     target_filters: &'a [TargetFilter<'a>],
     max_level: log::LevelFilter,
+    hw_print_level_override_callback: Option<fn(u32) -> u32>,
     format: Format,
     memory_log: RwLock<Option<AdvancedLogWriter>>,
     pub(crate) timer: Service<dyn ArchTimerFunctionality>,
@@ -79,10 +80,21 @@ where
             hardware_port: SharedSerial::new(hardware_port),
             target_filters,
             max_level,
+            hw_print_level_override_callback: None,
             format,
             memory_log: RwLock::new(None),
             timer: Service::new_uninit(),
         }
+    }
+
+    /// Sets a callback that can override the effective hardware print level before each hardware port write.
+    ///
+    /// The callback receives the hardware print level selected from the memory log header or matching target filter
+    /// and returns the level to use. This can be used for dynamic platform filtering to the hw port.
+    #[must_use]
+    pub const fn with_hw_print_level_override_callback(mut self, callback: fn(u32) -> u32) -> Self {
+        self.hw_print_level_override_callback = Some(callback);
+        self
     }
 
     /// Initializes the performance timer service for timestamping log entries.
@@ -138,9 +150,13 @@ where
         let mut hw_write = true;
         let log_guard = self.memory_log.read();
         if let Some(memory_log) = log_guard.as_ref() {
-            hw_write = match hw_print_mask_override {
-                Some(mask) => memory_log.hardware_write_enabled_with_mask(error_level, mask),
-                None => memory_log.hardware_write_enabled(error_level),
+            hw_write = match (hw_print_mask_override, self.hw_print_level_override_callback) {
+                (None, None) => memory_log.hardware_write_enabled(error_level),
+                (mask_override, callback) => {
+                    let hw_print_level = mask_override.unwrap_or_else(|| memory_log.hw_print_level());
+                    let hw_print_level = callback.map_or(hw_print_level, |callback| callback(hw_print_level));
+                    memory_log.hardware_write_enabled_with_mask(error_level, hw_print_level)
+                }
             };
             let timestamp = self.timer.map_or(0, |timer| timer.cpu_count());
             let _ = memory_log.add_log_entry(LogEntry {
@@ -254,29 +270,24 @@ where
 }
 
 /// Converts a `log::Level` to a EFI Debug Level.
+#[cfg_attr(coverage, coverage(off))]
 const fn log_level_to_debug_level(level: Level) -> u32 {
     match level {
-        Level::Error => memory_log::DEBUG_LEVEL_ERROR,
-        Level::Info | Level::Debug => memory_log::DEBUG_LEVEL_INFO,
-        Level::Trace => memory_log::DEBUG_LEVEL_VERBOSE,
-        Level::Warn => memory_log::DEBUG_LEVEL_WARNING,
+        Level::Error => DEBUG_ERROR,
+        Level::Info | Level::Debug => DEBUG_INFO,
+        Level::Trace => DEBUG_VERBOSE,
+        Level::Warn => DEBUG_WARN,
     }
 }
 
 /// Converts a `log::LevelFilter` to a hardware print mask.
+#[cfg_attr(coverage, coverage(off))]
 const fn log_level_filter_to_debug_mask(level_filter: log::LevelFilter) -> u32 {
     match level_filter {
-        log::LevelFilter::Error => memory_log::DEBUG_LEVEL_ERROR,
-        log::LevelFilter::Warn => memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING,
-        log::LevelFilter::Info => {
-            memory_log::DEBUG_LEVEL_ERROR | memory_log::DEBUG_LEVEL_WARNING | memory_log::DEBUG_LEVEL_INFO
-        }
-        log::LevelFilter::Debug | log::LevelFilter::Trace => {
-            memory_log::DEBUG_LEVEL_ERROR
-                | memory_log::DEBUG_LEVEL_WARNING
-                | memory_log::DEBUG_LEVEL_INFO
-                | memory_log::DEBUG_LEVEL_VERBOSE
-        }
+        log::LevelFilter::Error => DEBUG_ERROR,
+        log::LevelFilter::Warn => DEBUG_ERROR | DEBUG_WARN,
+        log::LevelFilter::Info => DEBUG_ERROR | DEBUG_WARN | DEBUG_INFO,
+        log::LevelFilter::Debug | log::LevelFilter::Trace => DEBUG_ERROR | DEBUG_WARN | DEBUG_INFO | DEBUG_VERBOSE,
         log::LevelFilter::Off => 0,
     }
 }
@@ -356,8 +367,8 @@ mod tests {
     use patina::standard::efi;
     use patina::{
         component::service::{IntoService, perf_timer::ArchTimerFunctionality},
-        debug::log::Format,
-        peripheral::serial::uart::UartNull,
+        debug::log::{DEBUG_ERROR, Format},
+        peripheral::serial::{MockSerialIO, uart::UartNull},
         pi::hob::{GUID_EXTENSION, GuidHob, HobHeader},
     };
 
@@ -538,5 +549,117 @@ mod tests {
         assert!(logger.enabled(&metadata("my_crate", log::Level::Info)));
         // No match → falls to global Off
         assert!(!logger.enabled(&metadata("other_crate", log::Level::Error)));
+    }
+
+    // === Hardware port dispatch ===
+
+    /// Creates a memory log with the requested global hardware print level and returns its address.
+    fn create_memory_log(hw_print_level: u32) -> efi::PhysicalAddress {
+        const LOG_LEN: usize = 0x2000;
+        let log_buff = Box::into_raw(Box::new([0_u8; LOG_LEN]));
+        let log_address = log_buff as *const u8 as efi::PhysicalAddress;
+
+        // SAFETY: We just allocated this memory so it is valid for the header.
+        unsafe {
+            ptr::write(
+                log_buff.cast::<memory_log::AdvLoggerInfo>(),
+                memory_log::AdvLoggerInfo::new(LOG_LEN as u32, false, 0, 0, efi::Time::default(), hw_print_level),
+            );
+        };
+
+        log_address
+    }
+
+    fn error_record<'a>(target: &'a str, args: core::fmt::Arguments<'a>) -> log::Record<'a> {
+        log::Record::builder().level(log::Level::Error).target(target).args(args).build()
+    }
+
+    #[test]
+    fn test_advanced_logger_writes_message_to_hardware_port() {
+        let mut port = MockSerialIO::new();
+        port.expect_write()
+            .times(1)
+            .withf(|data| core::str::from_utf8(data).is_ok_and(|s| s.contains("hello port")))
+            .returning(|_| ());
+
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, port);
+        logger.set_log_info_address(create_memory_log(DEBUG_ERROR));
+
+        logger.log(&error_record("any", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_suppresses_hardware_port_below_hw_print_level() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().never();
+
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, port);
+        // The global hardware print level masks off every level, so the port must not be used.
+        logger.set_log_info_address(create_memory_log(0));
+
+        logger.log(&error_record("any", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_suppresses_hardware_port_for_target_override() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().never();
+
+        let filters = [TargetFilter {
+            target: "quiet",
+            log_level: log::LevelFilter::Trace,
+            hw_filter_override: Some(log::LevelFilter::Off),
+        }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Trace, port);
+        // The global level would allow the write, but the per-target override does not.
+        logger.set_log_info_address(create_memory_log(DEBUG_ERROR));
+
+        logger.log(&error_record("quiet", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_hw_print_level_callback_suppresses_hardware_port() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().never();
+
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, port)
+            .with_hw_print_level_override_callback(|hw_print_level| {
+                assert_eq!(hw_print_level, DEBUG_ERROR);
+                0
+            });
+        logger.set_log_info_address(create_memory_log(DEBUG_ERROR));
+
+        logger.log(&error_record("any", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_hw_print_level_callback_receives_target_override() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().times(1).returning(|_| ());
+
+        let filters = [TargetFilter {
+            target: "quiet",
+            log_level: log::LevelFilter::Trace,
+            hw_filter_override: Some(log::LevelFilter::Off),
+        }];
+        let logger = AdvancedLogger::new(Format::Standard, &filters, log::LevelFilter::Trace, port)
+            .with_hw_print_level_override_callback(|hw_print_level| {
+                assert_eq!(hw_print_level, 0);
+                DEBUG_ERROR
+            });
+        logger.set_log_info_address(create_memory_log(0));
+
+        logger.log(&error_record("quiet", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_writes_to_hardware_port_without_memory_log() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().times(1).returning(|_| ());
+
+        // Without a memory log there is no hardware print level to consult, so output is not filtered.
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Trace, port);
+
+        logger.log(&error_record("any", format_args!("hello port")));
     }
 }
