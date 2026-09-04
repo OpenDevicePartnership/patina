@@ -72,7 +72,7 @@ pub const DEBUG_BLKIO: u32 = 0x0000_1000;
 pub const DEBUG_NET: u32 = 0x0000_4000;
 /// UNDI driver messages.
 pub const DEBUG_UNDI: u32 = 0x0001_0000;
-/// LoadFile protocol messages.
+/// Load File protocol messages.
 pub const DEBUG_LOADFILE: u32 = 0x0002_0000;
 /// Event messages.
 pub const DEBUG_EVENT: u32 = 0x0008_0000;

@@ -43,6 +43,7 @@ words:
   - athlon
   - autocfg
   - bitvec
+  - blkio
   - bootx
   - bsdata
   - bucketize
