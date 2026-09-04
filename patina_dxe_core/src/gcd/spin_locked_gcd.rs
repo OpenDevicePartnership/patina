@@ -541,6 +541,17 @@ impl GCD {
             EfiError::InvalidParameter
         );
 
+        // Ensure we have a page aligned base (if alloc by address) and len
+        if let AllocateType::Address(base) = allocate_type {
+            debug_assert!(base & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
+        if len & UEFI_PAGE_MASK != 0 {
+            debug_assert!(len & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
         log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
@@ -1231,11 +1242,11 @@ impl GCD {
         // Validate page alignment and size
         let number_of_pages = ((descriptor.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
         if number_of_pages == 0 {
-            log::warn!("GCD returned a memory descriptor smaller than a page.");
+            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
             return None; // skip entries for things smaller than a page
         }
         if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            log::warn!("GCD returned a non-page-aligned memory descriptor.");
+            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
             return None; // skip entries not page aligned
         }
 
