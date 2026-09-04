@@ -1,0 +1,31 @@
+[package]
+name = "patina_pcd"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "PCD (Platform Configuration Database) service support for components."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mockall = { workspace = true, optional = true }
+patina = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+log = { workspace = true }
+mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }
+patina_dxe_core = { workspace = true }
+patina_ffs_extractors = { workspace = true }
+
+[features]
+mockall = ["dep:mockall", "std"]
+std = []
+# All non-std features to test in CI
+ci_features = []
