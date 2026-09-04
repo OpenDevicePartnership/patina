@@ -11,6 +11,7 @@
 //! - [`super::driver_supported_efi_version_producer`] - Producing the driver supported EFI version protocol.
 //! - [`super::end_of_dxe_protocol_consumer`] - Deferring protocol consumption to the End-of-DXE event group.
 //! - [`super::protocol_consumer`] - Different approaches to consume a protocol.
+//! - [`super::protocol_dependency`] - Gating component dispatch on a protocol with `Protocol<P>`.
 //! - [`super::protocol_publisher`] - Publishing a protocol for other components to consume.
 //! - [`super::timers`] - One-shot and periodic timers used with Rust closures.
 //! - [`super::tpl_critical_section`] - Guarding shared state with a raised task priority level.
