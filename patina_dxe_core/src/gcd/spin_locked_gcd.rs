@@ -541,6 +541,19 @@ impl GCD {
             EfiError::InvalidParameter
         );
 
+        // Ensure we have a page aligned base (if alloc by address) and len
+        if let AllocateType::Address(base) = allocate_type
+            && base & UEFI_PAGE_MASK != 0
+        {
+            debug_assert!(base & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
+        if len & UEFI_PAGE_MASK != 0 {
+            debug_assert!(len & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
         log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
@@ -3692,7 +3705,7 @@ mod tests {
                     AllocateType::Address(0),
                     GcdMemoryType::SystemMemory,
                     UEFI_PAGE_SHIFT,
-                    10,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 )
@@ -3749,11 +3762,10 @@ mod tests {
             assert_eq!(
                 Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(gcd.maximum_address - 100),
+                    AllocateType::Address(gcd.maximum_address - 0x1000),
                     GcdMemoryType::Reserved,
                     0,
-                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-                    1000,
+                    0x2000,
                     1 as _,
                     None
                 ),
@@ -3761,10 +3773,10 @@ mod tests {
             assert_eq!(
                 Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(gcd.maximum_address + 100),
+                    AllocateType::Address(gcd.maximum_address),
                     GcdMemoryType::Reserved,
                     0,
-                    1000,
+                    0x1000,
                     1 as _,
                     None
                 ),
@@ -3793,9 +3805,15 @@ mod tests {
             .enumerate()
             {
                 // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-                unsafe { gcd.add_memory_space(memory_type, (i + 1) * 10, 10, 0) }.unwrap();
-                let res =
-                    gcd.allocate_memory_space(AllocateType::Address((i + 1) * 10), memory_type, 0, 10, 1 as _, None);
+                unsafe { gcd.add_memory_space(memory_type, (i + 1) * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE, 0) }.unwrap();
+                let res = gcd.allocate_memory_space(
+                    AllocateType::Address((i + 1) * UEFI_PAGE_SIZE),
+                    memory_type,
+                    0,
+                    UEFI_PAGE_SIZE,
+                    1 as _,
+                    None,
+                );
                 match memory_type {
                     GcdMemoryType::Unaccepted => assert_eq!(Err(EfiError::InvalidParameter), res),
                     _ => assert!(res.is_ok()),
@@ -3824,7 +3842,14 @@ mod tests {
                 assert_eq!(
                     // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                     Err(EfiError::OutOfResources),
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1000, 1 as _, None),
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        1 as _,
+                        None,
+                    ),
                     "Assert fail with allocate type: {allocate_type:?}"
                 );
             }
@@ -3832,11 +3857,18 @@ mod tests {
             for allocate_type in [
                 AllocateType::BottomUp(Some(10_000)),
                 AllocateType::TopDown(Some(10_000)),
-                AllocateType::Address(10_000),
+                AllocateType::Address(0x3000),
             ] {
                 assert_eq!(
                     Err(EfiError::NotFound),
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1000, 1 as _, None),
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        1 as _,
+                        None,
+                    ),
                     "Assert fail with allocate type: {allocate_type:?}"
                 );
             }
@@ -3850,7 +3882,7 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x1000, 0) }.unwrap();
+            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x10000, 0) }.unwrap();
 
             assert_eq!(
                 Ok(0x1000),
@@ -3858,84 +3890,83 @@ mod tests {
                     AllocateType::BottomUp(None),
                     GcdMemoryType::SystemMemory,
                     0,
-                    0x0f,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
                 "Allocate bottom up without alignment"
             );
             assert_eq!(
-                Ok(0x1010),
+                Ok(0x2000),
                 gcd.allocate_memory_space(
                     AllocateType::BottomUp(None),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    0x10,
+                    13,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
-                "Allocate bottom up with alignment of 4 bits (find first address that is aligned)"
+                "Allocate bottom up with alignment of 13 bits (find first address that is aligned)"
             );
             assert_eq!(
-                Ok(0x1020),
+                Ok(0x4000),
                 gcd.allocate_memory_space(
                     AllocateType::BottomUp(None),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    100,
+                    13,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
-                "Allocate bottom up with alignment of 4 bits (already aligned)"
+                "Allocate bottom up with alignment of 13 bits (find next aligned address)"
             );
             assert_eq!(
-                Ok(0x1ff1),
+                Ok(0x10000),
                 gcd.allocate_memory_space(
                     AllocateType::TopDown(None),
                     GcdMemoryType::SystemMemory,
                     0,
-                    0x0f,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
                 "Allocate top down without alignment"
             );
             assert_eq!(
-                Ok(0x1fe0),
+                Ok(0xe000),
                 gcd.allocate_memory_space(
                     AllocateType::TopDown(None),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    0x0f,
+                    13,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
-                "Allocate top down with alignment of 4 bits (find first address that is aligned)"
+                "Allocate top down with alignment of 13 bits (find first address that is aligned)"
             );
             assert_eq!(
-                Ok(0x1f00),
+                Ok(0xc000),
                 gcd.allocate_memory_space(
                     AllocateType::TopDown(None),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    0xe0,
-                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
+                    13,
+                    UEFI_PAGE_SIZE * 2,
                     1 as _,
                     None
                 ),
-                "Allocate top down with alignment of 4 bits (already aligned)"
+                "Allocate top down with alignment of 13 bits (already aligned)"
             );
             assert_eq!(
-                Ok(0x1a00),
+                Ok(0xa000),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(0x1a00),
+                    AllocateType::Address(0xa000),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    100,
+                    13,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
-                "Allocate Address with alignment of 4 bits (already aligned)"
+                "Allocate Address with alignment of 13 bits (already aligned)"
             );
 
             assert!(is_gcd_memory_slice_valid(&gcd));
@@ -3944,10 +3975,10 @@ mod tests {
             assert_eq!(
                 Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(0x1a0f),
+                    AllocateType::Address(0xa000),
                     GcdMemoryType::SystemMemory,
-                    4,
-                    100,
+                    13,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
@@ -3962,29 +3993,59 @@ mod tests {
         with_locked_state(|| {
             let (mut gcd, _) = create_gcd();
             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x1000, 0) }.unwrap();
+            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x10000, 0) }.unwrap();
 
             for allocate_type in [AllocateType::BottomUp(None), AllocateType::TopDown(None)] {
                 let block_count = gcd.memory_descriptor_count();
                 assert!(
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1, 1 as _, None).is_ok(),
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        1 as _,
+                        None,
+                    )
+                    .is_ok(),
                     "{allocate_type:?}"
                 );
                 assert_eq!(block_count + 1, gcd.memory_descriptor_count());
                 assert!(
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1, 1 as _, None).is_ok(),
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        1 as _,
+                        None,
+                    )
+                    .is_ok(),
                     "{allocate_type:?}"
                 );
                 assert_eq!(block_count + 1, gcd.memory_descriptor_count());
                 assert!(
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1, 2 as _, None).is_ok(),
-                    // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        2 as _,
+                        None,
+                    )
+                    .is_ok(),
                     "{allocate_type:?}: A different image handle should not result in a merge."
                 );
                 assert_eq!(block_count + 2, gcd.memory_descriptor_count());
                 assert!(
-                    gcd.allocate_memory_space(allocate_type, GcdMemoryType::SystemMemory, 0, 1, 2 as _, Some(1 as _))
-                        .is_ok(),
+                    gcd.allocate_memory_space(
+                        allocate_type,
+                        GcdMemoryType::SystemMemory,
+                        0,
+                        UEFI_PAGE_SIZE,
+                        2 as _,
+                        Some(1 as _),
+                    )
+                    .is_ok(),
                     "{allocate_type:?}: A different device handle should not result in a merge."
                 );
                 assert_eq!(block_count + 3, gcd.memory_descriptor_count());
@@ -3992,12 +4053,12 @@ mod tests {
 
             let block_count = gcd.memory_descriptor_count();
             assert_eq!(
-                Ok(0x1000 + 4),
+                Ok(0x5000),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(0x1000 + 4),
+                    AllocateType::Address(0x5000),
                     GcdMemoryType::SystemMemory,
                     0,
-                    1,
+                    UEFI_PAGE_SIZE,
                     2 as _,
                     Some(1 as _)
                 ),
@@ -4015,17 +4076,17 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x100, 10, 0) }.unwrap();
+            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, UEFI_PAGE_SIZE, 0) }.unwrap();
 
             let snapshot = copy_memory_block(&gcd);
 
             assert_eq!(
                 Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(0x100),
+                    AllocateType::Address(0x1000),
                     GcdMemoryType::SystemMemory,
                     0,
-                    11,
+                    UEFI_PAGE_SIZE * 2,
                     1 as _,
                     None
                 ),
@@ -4033,21 +4094,35 @@ mod tests {
             assert_eq!(
                 Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
-                    AllocateType::Address(0x95),
+                    AllocateType::Address(0),
                     GcdMemoryType::SystemMemory,
                     0,
-                    10,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
             );
             assert_eq!(
                 Err(EfiError::NotFound),
-                gcd.allocate_memory_space(AllocateType::Address(110), GcdMemoryType::SystemMemory, 0, 5, 1 as _, None),
+                gcd.allocate_memory_space(
+                    AllocateType::Address(0x2000),
+                    GcdMemoryType::SystemMemory,
+                    0,
+                    UEFI_PAGE_SIZE,
+                    1 as _,
+                    None,
+                ),
             );
             assert_eq!(
                 Err(EfiError::NotFound),
-                gcd.allocate_memory_space(AllocateType::Address(0), GcdMemoryType::SystemMemory, 0, 5, 1 as _, None),
+                gcd.allocate_memory_space(
+                    AllocateType::Address(0),
+                    GcdMemoryType::SystemMemory,
+                    0,
+                    UEFI_PAGE_SIZE,
+                    1 as _,
+                    None,
+                ),
             );
 
             assert_eq!(snapshot, copy_memory_block(&gcd));
@@ -4065,7 +4140,7 @@ mod tests {
                     AllocateType::Address(address),
                     GcdMemoryType::SystemMemory,
                     0,
-                    5,
+                    UEFI_PAGE_SIZE,
                     1 as _,
                     None
                 ),
@@ -4098,12 +4173,20 @@ mod tests {
             let (mut gcd, _) = create_gcd();
 
             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
-            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, gcd.maximum_address - 100, 100, 0) }.unwrap();
+            unsafe {
+                gcd.add_memory_space(
+                    GcdMemoryType::SystemMemory,
+                    gcd.maximum_address - UEFI_PAGE_SIZE,
+                    UEFI_PAGE_SIZE,
+                    0,
+                )
+            }
+            .unwrap();
             gcd.allocate_memory_space(
-                AllocateType::Address(gcd.maximum_address - 100),
+                AllocateType::Address(gcd.maximum_address - UEFI_PAGE_SIZE),
                 GcdMemoryType::SystemMemory,
                 0,
-                100,
+                UEFI_PAGE_SIZE,
                 1 as _,
                 None,
             )
@@ -7374,6 +7457,36 @@ mod tests {
 
             // Should panic because stack base address and length are zero
             GCD.init_paging_with(&hob_list, page_table);
+        });
+    }
+
+    #[test]
+    fn test_allocate_memory_space_unaligned() {
+        with_locked_state(|| {
+            let (mut gcd, _) = create_gcd();
+            // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
+            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, UEFI_PAGE_SIZE, UEFI_PAGE_SIZE * 2, 0) }
+                .unwrap();
+
+            let res = gcd.allocate_memory_space(
+                AllocateType::Address(UEFI_PAGE_SIZE + 1),
+                GcdMemoryType::SystemMemory,
+                0,
+                UEFI_PAGE_SIZE,
+                1 as _,
+                None,
+            );
+            assert_eq!(res, Err(EfiError::InvalidParameter));
+
+            let res = gcd.allocate_memory_space(
+                AllocateType::Address(UEFI_PAGE_SIZE),
+                GcdMemoryType::SystemMemory,
+                0,
+                UEFI_PAGE_SIZE - 1,
+                1 as _,
+                None,
+            );
+            assert_eq!(res, Err(EfiError::InvalidParameter));
         });
     }
 }
