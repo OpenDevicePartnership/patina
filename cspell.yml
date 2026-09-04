@@ -170,6 +170,7 @@ words:
   - pdata
   - pdbaltpath
   - pdbhelper
+  - pointee
   - powerfmt
   - pread
   - psapi
@@ -179,6 +180,7 @@ words:
   - pyserial
   - pywin
   - qword
+  - rasterizing
   - rdmsr
   - rdram
   - rdtsc
