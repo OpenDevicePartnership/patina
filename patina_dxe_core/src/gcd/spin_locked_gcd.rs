@@ -541,6 +541,17 @@ impl GCD {
             EfiError::InvalidParameter
         );
 
+        // Ensure we have a page aligned base (if alloc by address) and len
+        if let AllocateType::Address(base) = allocate_type {
+            debug_assert!(base & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
+        if len & UEFI_PAGE_MASK != 0 {
+            debug_assert!(len & UEFI_PAGE_MASK == 0);
+            return Err(EfiError::InvalidParameter);
+        }
+
         log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
