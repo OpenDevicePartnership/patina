@@ -65,7 +65,7 @@ pub trait Interval: Clone + Ord {
     }
 
     /// Check if this interval fully contains another one.
-    fn contains(&self, other: &Self) -> bool {
+    fn contains<T: Interval>(&self, other: &T) -> bool {
         self.start() <= other.start() && self.end() >= other.end()
     }
 
@@ -78,7 +78,7 @@ pub trait Interval: Clone + Ord {
     /// - [o[]s] - overlapping
     /// - [o] [s] - non overlapping
     /// ```
-    fn overlaps(&self, other: &Self) -> bool {
+    fn overlaps<T: Interval>(&self, other: &T) -> bool {
         self.start() < other.end() && other.start() < self.end()
     }
 
@@ -87,7 +87,7 @@ pub trait Interval: Clone + Ord {
     /// ```ignore
     /// - [s][o] or [o][s] (end of one is exactly the start of the other)
     /// ```
-    fn adjacent(&self, other: &Self) -> bool {
+    fn adjacent<T: Interval>(&self, other: &T) -> bool {
         self.end() == other.start() || other.end() == self.start()
     }
 
