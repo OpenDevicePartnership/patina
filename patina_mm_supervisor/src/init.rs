@@ -651,17 +651,19 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let hob_list_info =
             unsafe { (hob_list as *const PhaseHandoffInformationTable).as_ref().ok_or(PolicyInitError::NullHobList)? };
 
-        // 1. Process the PassDown HOB (policy, syscall, memory policy)
+        // 1. Process the MP Information HOB (`gMpInformationHobGuid`) for the CPU count. It sizes
+        //    the Ring 3 stack array the PassDown HOB describes, so it is needed first.
+        let mp_information =
+            find_guid_hob(hob_list_info, crate::MP_INFORMATION_HOB_GUID).ok_or(PolicyInitError::HobNotFound)?;
+        let number_of_cpus = self.parse_mp_information_hob(mp_information).ok_or(PolicyInitError::InvalidPolicyData)?;
+
+        // 1b. Process the PassDown HOB (policy, syscall, memory policy)
         let pass_down_data =
             find_guid_hob(hob_list_info, crate::MM_SUPV_PASS_DOWN_HOB_GUID).ok_or(PolicyInitError::HobNotFound)?;
         // SAFETY: `pass_down_data` is a slice into the validated HOB list, so the buffer pointers
         // it carries reference live memory as `init_from_pass_down_hob` requires.
-        let (sm_base, mmi_entry_size) = unsafe { self.init_from_pass_down_hob(pass_down_data)? };
+        let (sm_base, mmi_entry_size) = unsafe { self.init_from_pass_down_hob(pass_down_data, number_of_cpus)? };
 
-        // 1b. Process the MP Information HOB (`gMpInformationHobGuid`) for the CPU count.
-        let mp_information =
-            find_guid_hob(hob_list_info, crate::MP_INFORMATION_HOB_GUID).ok_or(PolicyInitError::HobNotFound)?;
-        let number_of_cpus = self.parse_mp_information_hob(mp_information).ok_or(PolicyInitError::InvalidPolicyData)?;
         security_state().set_save_state_info(SaveStateInfo { number_of_cpus, sm_base });
         log::info!("Save-state metadata initialized for {} CPU(s)", number_of_cpus);
 
@@ -782,7 +784,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     ///
     /// The buffer pointers carried in `data` (e.g. the firmware policy buffer)
     /// must reference valid memory, as they are dereferenced during setup.
-    unsafe fn init_from_pass_down_hob(&self, data: &[u8]) -> Result<(u64, u64), PolicyInitError> {
+    unsafe fn init_from_pass_down_hob(&self, data: &[u8], number_of_cpus: u64) -> Result<(u64, u64), PolicyInitError> {
         // Copy the HOB bytes once into an owned, naturally-aligned struct so the rest of
         // the function uses ordinary, safe field access. `read_from_prefix` validates the
         // length and copies the bytes, imposing no alignment or validity precondition on
@@ -863,10 +865,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             }
         }
 
-        // Initialize syscall interface
+        // Initialize syscall interface. The CPU count bounds `get_cpl3_stack`, so it must be the
+        // count the MM IPL sized the stack array for, not the supervisor's `MAX_CPUS` capacity.
         self.syscall_interface
             .init(
-                self.cpu_manager.max_cpus(),
+                number_of_cpus.try_into().unwrap_or_else(|err| panic!("Invalid CPU count: {:?}", err)),
                 cpl3_stack_buffer,
                 cpl3_stack_buffer_size
                     .try_into()
