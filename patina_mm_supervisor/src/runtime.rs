@@ -107,6 +107,9 @@ pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
 impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// Enter runtime mode (called on subsequent entries after init is complete).
     ///
+    /// `cpu_id` is the APIC ID; `cpu_index` is the dense, 0-based UEFI processor index that
+    /// selects this CPU's per-core resources (Ring 3 stack, mailbox).
+    ///
     /// Implements the MP synchronization protocol:
     /// 1. APs check in by setting their state to `InHoldingPen` and entering the holding pen
     /// 2. BSP waits for all registered APs, all cores must be in MM before servicing a request
@@ -114,7 +117,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// 4. BSP releases every AP via the per-CPU rendezvous semaphore
     /// 5. BSP waits indefinitely for every released AP to acknowledge it has left
     /// 6. Each AP clears its `InHoldingPen` state and acknowledges the BSP
-    pub(crate) fn enter_runtime(&'static self, cpu_id: u32) {
+    pub(crate) fn enter_runtime(&'static self, cpu_id: u32, cpu_index: usize) {
         let is_bsp = is_bsp();
 
         if is_bsp {
@@ -126,7 +129,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
             // Every registered AP is now in MM - service the request.
             log::trace!("BSP (CPU {}) entering request serving routine...", cpu_id);
-            self.bsp_request_loop(cpu_id as usize);
+            self.bsp_request_loop(cpu_index);
 
             // Exit barrier: release every penned AP and wait for each to acknowledge it has left.
             log::trace!("BSP (CPU {}) releasing all APs from the holding pen...", cpu_id);
