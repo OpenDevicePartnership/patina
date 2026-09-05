@@ -801,6 +801,21 @@ fn verify_module_page_protections(handoff: &PhaseHandoffInformationTable) -> Res
     Ok(())
 }
 
+/// Verifies that every page of the Ring 3 stack region is usable by a demoted
+/// routine: user-accessible (SP clear), writable, and non-executable.
+///
+/// Unlike the checks above, this validates state the supervisor establishes
+/// itself, so it runs after the stacks have been mapped rather than as part of
+/// the incoming HOB validation rounds.
+pub(crate) fn verify_cpl3_stacks_user_accessible(base: u64, length: u64) -> Result<(), HobValidationError> {
+    verify_page_attributes(
+        base,
+        length,
+        MemoryAttributes::ExecuteProtect,
+        MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly,
+    )
+}
+
 /// Verifies that every page in `[base, base + length)` has all of the `required`
 /// attributes set and none of the `forbidden` attributes set in the active page
 /// table.
@@ -1093,6 +1108,13 @@ mod tests {
         // The page table is uninitialized in unit tests, so the query reports it
         // as unavailable rather than panicking.
         assert_eq!(verify_entry_point_executable(0x1000), Err(HobValidationError::PageTableUnavailable));
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_verify_cpl3_stacks_page_table_unavailable() {
+        // The page table is uninitialized in unit tests, so the query reports it
+        // as unavailable rather than panicking.
+        assert_eq!(verify_cpl3_stacks_user_accessible(0x1000, 0x2000), Err(HobValidationError::PageTableUnavailable));
     }
 
     #[test]

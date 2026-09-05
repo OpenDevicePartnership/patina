@@ -339,7 +339,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                 cpu_index
             );
             smrr_enable();
-            self.enter_runtime(cpu_id);
+            self.enter_runtime(cpu_id, cpu_index);
 
             return;
         }
