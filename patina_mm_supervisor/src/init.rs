@@ -439,6 +439,57 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         log::info!("Remapped HOB list 0x{:016x}-0x{:016x} as user read-only", aligned_base, aligned_end);
     }
 
+    /// Maps the per-CPU Ring 3 stacks as user-accessible, writable, non-executable pages.
+    ///
+    /// A demoted routine faults on its first push if its stack is supervisor-owned. The range
+    /// covers the `num_cpus` stacks the MM IPL provisioned, which is also the range
+    /// [`SyscallInterface::get_cpl3_stack`](crate::privilege_mgmt::syscall_setup::SyscallInterface::get_cpl3_stack)
+    /// hands out.
+    fn map_cpl3_stacks_to_user(&self, base: u64, per_core_size: u64, num_cpus: u64) {
+        if base == 0 || per_core_size == 0 {
+            panic!(
+                "PassDown HOB does not describe a CPL3 stack region (base 0x{:016x}, per-core size 0x{:x})",
+                base, per_core_size
+            );
+        }
+
+        let total_size = per_core_size
+            .checked_mul(num_cpus)
+            .unwrap_or_else(|| panic!("CPL3 stack size 0x{:x} for {} CPUs overflows", per_core_size, num_cpus));
+
+        let (aligned_base, aligned_size) = align_range(base, total_size, UEFI_PAGE_SIZE as u64)
+            .unwrap_or_else(|e| panic!("Failed to page-align CPL3 stack region: {:?}", e));
+        let aligned_end = aligned_base + aligned_size;
+
+        // The region is described by the untrusted producer, so nothing outside MMRAM may be
+        // handed to Ring 3.
+        if !is_buffer_inside_mmram(aligned_base, aligned_size) {
+            panic!("CPL3 stack region 0x{:016x}-0x{:016x} is not inside MMRAM", aligned_base, aligned_end);
+        }
+
+        // Scoped so the page table lock is released before the verification below retakes it.
+        {
+            let attrs = MemoryAttributes::ExecuteProtect;
+            let mut pt_guard = security_state().lock_page_table();
+            let Some(pt) = pt_guard.as_mut() else {
+                panic!("Page table not initialized, cannot map CPL3 stacks to user level");
+            };
+
+            if let Err(e) = pt.map_memory_region(aligned_base, aligned_size, attrs) {
+                panic!(
+                    "Failed to map CPL3 stacks to user level at 0x{:016x} (0x{:x} bytes): {:?}",
+                    aligned_base, aligned_size, e
+                );
+            }
+        }
+
+        if let Err(e) = hob_validation::verify_cpl3_stacks_user_accessible(aligned_base, aligned_size) {
+            panic!("CPL3 stacks at 0x{:016x} are not usable by Ring 3 after remapping: {}", aligned_base, e);
+        }
+
+        log::info!("Mapped CPL3 stacks 0x{:016x}-0x{:016x} as user read/write, NX", aligned_base, aligned_end);
+    }
+
     /// Patches every core's SMI-handler IDT descriptor to point to the Rust IDT.
     ///
     /// Each per-core MMI entry (copied to `sm_base[i] + 0x8000` during C relocation)
@@ -876,6 +927,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                     .unwrap_or_else(|err| panic!("Invalid CPL3 stack buffer size: {:?}", err)),
             )
             .unwrap_or_else(|err| panic!("Failed to initialize syscall interface: {:?}", err));
+
+        // Done before the policy walk below so the generated descriptors see the final attributes.
+        self.map_cpl3_stacks_to_user(cpl3_stack_buffer, cpl3_stack_buffer_size, number_of_cpus);
 
         // Walk page table and generate memory policy
         let cr3 = read_cr3();
