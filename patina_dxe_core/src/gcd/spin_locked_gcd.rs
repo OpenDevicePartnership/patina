@@ -1242,10 +1242,9 @@ impl GCD {
     /// * `None` if the descriptor should be excluded
     fn is_efi_memory_map_descriptor(descriptor: &MemorySpaceDescriptor) -> Option<efi::MemoryType> {
         // Validate page alignment and size
-        let number_of_pages = ((descriptor.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
-        if number_of_pages == 0 {
-            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
-            return None; // skip entries for things smaller than a page
+        if !descriptor.length.is_multiple_of(UEFI_PAGE_SIZE as u64) || descriptor.length == 0 {
+            debug_assert!(false, "GCD returned a non-page aligned memory descriptor.");
+            return None; // skip entries for non-page aligned entries
         }
         if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
             debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
@@ -6809,6 +6808,36 @@ mod tests {
             };
 
             assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), Some(efi::CONVENTIONAL_MEMORY));
+        });
+    }
+
+    #[test]
+    fn test_is_efi_memory_map_descriptor_unaligned() {
+        with_locked_state(|| {
+            // Unaligned descriptors are dropped
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x2001,
+                length: UEFI_PAGE_SIZE as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
+
+            let descriptor = dxe_services::MemorySpaceDescriptor {
+                memory_type: GcdMemoryType::SystemMemory,
+                base_address: 0x2000,
+                length: (UEFI_PAGE_SIZE - 1) as u64,
+                capabilities: efi::MEMORY_WB,
+                attributes: efi::MEMORY_WB,
+                image_handle: core::ptr::null_mut(),
+                device_handle: core::ptr::null_mut(),
+            };
+
+            assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
         });
     }
 
