@@ -53,18 +53,18 @@ these `DynamicEx` token numbers are fixed in the `.dec` file itself.
 defaults to the display's highest available resolution and largest text mode (a value of `0` for any of the four PCDs
 means the same thing).
 
-## Default font package
+## Font data
 
 `EFI_HII_FONT_PROTOCOL`'s system default font (the font every `OutputString()` call renders with) resolves glyphs from
-`EFI_HII_PACKAGE_SIMPLE_FONTS` package(s) registered in the HII database. `HiiDatabaseDxe` implements the protocol but
-doesn't include glyph data of its own.
+`EFI_HII_PACKAGE_SIMPLE_FONTS` package(s) registered in the HII database. This component only consumes
+`EFI_HII_FONT_PROTOCOL` to rasterize glyphs, it does not carry any glyph data of its own or register a font package.
 
-Since this component replaces `GraphicsConsoleDxe`, `console::font_package` ports the same registration done in the
-EDK II C driver where `console::font_data` embeds the identical glyph bitmap (printable ASCII and the box/shape
-characters the UEFI specification requires).
-
-It's registered with the HII database the first time a controller starts, so a platform only needs the HII Database
-driver in its firmware volume and is not required to carry a separate font package driver for text to render.
+A platform needs at least one font package registered in the HII database for text to actually render (glyphs are
+otherwise skipped as unknown). The
+[`patina_default_font`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_default_font)
+component independently registers the same default "simple font" package the EDK II `GraphicsConsoleDxe` driver used
+to register directly. Add it (or any other component/driver that registers an `EFI_HII_PACKAGE_SIMPLE_FONTS` package)
+alongside this one for text rendering.
 
 ## Intentional deviations from `GraphicsConsoleDxe`
 

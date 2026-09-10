@@ -1,11 +1,11 @@
 [package]
-name = "patina_graphics_console"
+name = "patina_default_font"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-description = "UEFI graphics console (Simple Text Output over Graphics Output) support for Patina."
+description = "Default UEFI HII simple font package support."
 keywords.workspace = true
 categories.workspace = true
 
@@ -16,6 +16,8 @@ workspace = true
 log = { workspace = true }
 mockall = { workspace = true, optional = true }
 patina = { workspace = true, features = ["alloc"] }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

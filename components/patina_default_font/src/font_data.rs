@@ -4,8 +4,8 @@
 //! in EDK II.
 //!
 //! This results in the same 8x19 monochrome bitmap font the EDK II `GraphicsConsoleDxe` driver
-//! registers with the HII database. See [`super::font_package`] for why this crate needs to
-//! register this data itself now that it replaces that driver.
+//! registers with the HII database. See [`crate::font_package`] for why this crate registers this
+//! data itself now that it replaces that driver's registration.
 //!
 //! ## License
 //!
@@ -19,7 +19,8 @@
 
 use zerocopy::{Immutable, IntoBytes, KnownLayout};
 
-use super::gop::GLYPH_HEIGHT;
+/// Pixel height of one narrow glyph, per the UEFI HII "narrow glyph" definition (`EFI_GLYPH_HEIGHT`).
+const GLYPH_HEIGHT: usize = 19;
 
 /// One `EFI_NARROW_GLYPH`: An 8x19 monochrome bitmap for a single narrow (non-CJK) character.
 #[repr(C)]
