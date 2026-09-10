@@ -130,6 +130,7 @@ use crate::component::{
 };
 
 pub mod cell;
+pub mod compat_memory;
 pub mod dxe_dispatch;
 pub mod memory;
 pub mod pcd;
