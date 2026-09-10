@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 pub(crate) mod font;
-pub(crate) mod font_data;
-pub(crate) mod font_package;
 pub(crate) mod gop;
 pub(crate) mod mode;
 pub(crate) mod output;

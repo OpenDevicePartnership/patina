@@ -1,8 +1,8 @@
-//! Registers the default "simple font" glyph package with `EFI_HII_DATABASE_PROTOCOL`.
+//! Registers the default "simple font" glyph package with the EFI HII Database Protocol.
 //!
 //! The EDK II `GraphicsConsoleDxe` driver registered a default font package, watching for
-//! `EFI_HII_DATABASE_PROTOCOL` to appear.  This module ports that registration into this
-//! component.
+//! HII Database Protocol to appear. This crate ports that registration so it is available
+//! independent of any particular EFI HII Font Protocol consumer.
 //!
 //! ## License
 //!
@@ -13,7 +13,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use patina::{
     BinaryGuid,
@@ -22,16 +21,12 @@ use patina::{
 };
 use zerocopy::IntoBytes;
 
-use super::font_data::NARROW_GLYPHS;
+use crate::font_data::NARROW_GLYPHS;
 
 /// Reused from the EDK II `GraphicsConsoleDxe` driver for compatibility with anything that
 /// looks up this exact package list.
 const FONT_PACKAGE_LIST_GUID: BinaryGuid =
     BinaryGuid::from_fields(0xf5f219d3, 0x7006, 0x4648, 0xac, 0x8d, &[0xd6, 0x1d, 0xfb, 0x7b, 0xc6, 0xad]);
-
-/// Ensures [`register`] only calls `NewPackageList()` once, regardless of how many GOP
-/// controllers this component's driver binding starts.
-static REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /// Appends an `EFI_HII_PACKAGE_HEADER`'s bitfield `Length:24, Type:8`.
 fn push_package_header(buffer: &mut Vec<u8>, length: u32, package_type: u8) {
@@ -71,20 +66,17 @@ fn build_package_list() -> Vec<u8> {
 }
 
 /// Registers the default narrow-glyph font package with the HII database.
-/// A no-op after the first successful call.
 pub(crate) fn register(hii_database: &hii_database::Protocol) -> Result<()> {
-    if REGISTERED.swap(true, Ordering::AcqRel) {
-        return Ok(());
-    }
-
     let buffer = build_package_list();
 
     let mut hii_handle: hii::Handle = core::ptr::null_mut();
-    // SAFETY: `hii_database` is an active `EFI_HII_DATABASE_PROTOCOL` interface found with `locate_protocol`.
-    // `buffer` was just built above to match the `PackageListHeader` + packages + `END` package format the
-    // UEFI Spec HII documentation requires, with its length matching `PackageListHeader.package_length`.
-    // `NewPackageList` copies the package list internally rather than retaining the pointer. Using `NULL` for
-    // the driver handle is done to reflect this as a system-wide package (not tied to a specific driver).
+    // SAFETY: `hii_database` is an active `EFI_HII_DATABASE_PROTOCOL` interface located through
+    // the `Protocol<hii_database::Protocol>` component parameter. `buffer` was just built above to
+    // match the `PackageListHeader` + packages + `END` package format the UEFI Spec HII
+    // documentation requires, with its length matching `PackageListHeader.package_length`.
+    // `NewPackageList` copies the package list internally rather than retaining the pointer. Using
+    // `NULL` for the driver handle is done to reflect this as a system-wide package (not tied to a
+    // specific driver).
     let status = unsafe {
         (hii_database.new_package_list)(
             hii_database,
@@ -151,19 +143,18 @@ mod tests {
     }
 
     #[test]
-    fn test_register_calls_new_package_list_once_then_is_a_no_op() {
+    fn test_register_calls_new_package_list_with_the_built_buffer() {
         let fake = FakeHiiDatabase::new();
 
         register(fake.protocol()).unwrap();
+
         assert_eq!(fake.call_count(), 1);
         assert_eq!(fake.last_buffer(), build_package_list());
-
-        register(fake.protocol()).unwrap();
-        assert_eq!(fake.call_count(), 1);
     }
 
     /// A fake `EFI_HII_DATABASE_PROTOCOL` that records `NewPackageList()` calls. Every other
     /// method is unused by [`register`] and stubbed out just to satisfy the protocol's layout.
+    #[repr(C)]
     struct FakeHiiDatabase {
         protocol: hii_database::Protocol,
         call_count: core::cell::Cell<u32>,
