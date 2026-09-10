@@ -19,6 +19,7 @@ use core::ptr::NonNull;
 use patina::{
     component::service::{
         Service,
+        compat_memory::{CompatMemoryManager, MockCompatMemoryManager},
         uefi_services::tpl::{MockTplServices, PreviousTpl, TplServices},
     },
     standard::efi::{
@@ -37,6 +38,14 @@ pub(crate) fn permissive_tpl() -> Service<dyn TplServices> {
     let mut mock = MockTplServices::new();
     mock.expect_raise_tpl().returning(|_| PreviousTpl::from_raw(0));
     mock.expect_restore_tpl().returning(|_| {});
+    Service::mock(Box::new(mock))
+}
+
+/// Builds a [`Service<dyn CompatMemoryManager>`] that frees any number of pool allocations without
+/// asserting a specific count.
+pub(crate) fn permissive_compat_memory_manager() -> Service<dyn CompatMemoryManager> {
+    let mut mock = MockCompatMemoryManager::new();
+    mock.expect_free_pool().returning(|_| Ok(()));
     Service::mock(Box::new(mock))
 }
 
@@ -148,7 +157,7 @@ impl FakeGop {
     pub(crate) fn gop_handle(&self) -> GopHandle {
         // SAFETY: `self` is leaked to `'static` in `new`/`with_unsettable_modes`, so the interface
         // stays live for as long as any `GopHandle` built from it is used, matching `GopHandle::new`.
-        unsafe { GopHandle::new(self.handle()) }
+        unsafe { GopHandle::new(self.handle(), permissive_compat_memory_manager()) }
     }
 
     /// Returns the number of times `SetMode()` has been called.
