@@ -13,6 +13,10 @@
 use core::ptr::NonNull;
 
 use patina::{
+    component::service::{
+        Service,
+        compat_memory::{CompatMemoryManager, PoolAllocation},
+    },
     error::{EfiError, Result},
     standard::efi::protocols::graphics_output,
 };
@@ -62,7 +66,7 @@ pub(crate) struct ModeResolution {
 /// GOP produced by another driver). This wrapper only borrows it for the lifetime of the component's
 /// `BY_DRIVER` open.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct GopHandle(NonNull<graphics_output::Protocol>);
+pub(crate) struct GopHandle(NonNull<graphics_output::Protocol>, Service<dyn CompatMemoryManager>);
 
 impl GopHandle {
     /// Wraps a raw, already-open Graphics Output interface pointer.
@@ -74,8 +78,11 @@ impl GopHandle {
     ///
     /// `ptr` must point to an active EFI Graphics Output Protocol instance for as long as the
     /// returned handle (and any copies of it) are used.
-    pub(crate) unsafe fn new(ptr: NonNull<graphics_output::Protocol>) -> Self {
-        Self(ptr)
+    pub(crate) unsafe fn new(
+        ptr: NonNull<graphics_output::Protocol>,
+        compat_memory_manager: Service<dyn CompatMemoryManager>,
+    ) -> Self {
+        Self(ptr, compat_memory_manager)
     }
 
     /// Returns the raw interface pointer, for handing to another protocol.
@@ -104,9 +111,7 @@ impl GopHandle {
     /// Queries the resolution of `mode_number`.
     ///
     /// Per the UEFI specification, `QueryMode()` allocates its `Info` out-parameter from pool
-    /// memory that the caller must free. Patina does not currently expose a pool-free capability
-    /// to components, so this leaks one small `ModeInformation` allocation per call. This is
-    /// considered acceptable as this is called only a handful of times per `Start()`.
+    /// memory that the caller must free, which this does before returning.
     pub(crate) fn query_mode(&self, mode_number: u32) -> Result<ModeResolution> {
         let mut size_of_info = 0usize;
         let mut info: *mut graphics_output::ModeInformation = core::ptr::null_mut();
@@ -120,9 +125,10 @@ impl GopHandle {
         let Some(info) = NonNull::new(info) else {
             return Err(EfiError::DeviceError);
         };
-        // SAFETY: `query_mode` returned SUCCESS, so per spec `info` points to a valid, initialized
-        // `ModeInformation` for the duration of this read.
-        let info = unsafe { info.as_ref() };
+        // SAFETY: `query_mode` returned SUCCESS, so per the interface, `info` is a valid pool allocation.
+        let guard = unsafe { PoolAllocation::new(info.cast::<u8>(), *self.1) };
+        // SAFETY: `read_unaligned` does not assume the pool allocation is aligned.
+        let info = unsafe { guard.as_ptr().cast::<graphics_output::ModeInformation>().read_unaligned() };
         Ok(ModeResolution { horizontal: info.horizontal_resolution, vertical: info.vertical_resolution })
     }
 
@@ -263,6 +269,10 @@ impl GopHandle {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
+    use alloc::boxed::Box;
+
+    use patina::component::service::compat_memory::MockCompatMemoryManager;
+
     use super::*;
     use crate::test_support::{FakeGop, same_pixel};
 
@@ -311,6 +321,18 @@ mod tests {
         let fake = FakeGop::with_null_mode_info(&[(800, 600)]);
         let gop = fake.gop_handle();
         assert_eq!(gop.query_mode(0).unwrap_err(), EfiError::DeviceError);
+    }
+
+    #[test]
+    fn test_gop_handle_query_mode_frees_pool_allocation() {
+        let fake = FakeGop::new(&[(800, 600)]);
+        let mut mock = MockCompatMemoryManager::new();
+        mock.expect_free_pool().times(1).returning(|_| Ok(()));
+        let compat_memory_manager: Service<dyn CompatMemoryManager> = Service::mock(Box::new(mock));
+        // SAFETY: `fake` is leaked to `'static` by `FakeGop::new`.
+        let gop = unsafe { GopHandle::new(fake.handle(), compat_memory_manager) };
+
+        gop.query_mode(0).unwrap();
     }
 
     #[test]

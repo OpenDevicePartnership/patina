@@ -22,6 +22,7 @@ use patina::{
         component,
         service::{
             Service,
+            compat_memory::CompatMemoryManager,
             pcd::PcdServices,
             uefi_services::{
                 driver_model::{
@@ -68,8 +69,9 @@ impl GraphicsConsoleProvider {
         protocols: Service<dyn ProtocolServices>,
         tpl: Service<dyn TplServices>,
         pcd: Option<Service<dyn PcdServices>>,
+        compat_memory_manager: Service<dyn CompatMemoryManager>,
     ) -> Result<()> {
-        let binding = GraphicsConsoleDriverBinding { protocols, tpl, pcd };
+        let binding = GraphicsConsoleDriverBinding { protocols, tpl, pcd, compat_memory_manager };
         protocols.install_driver_binding(binding)?;
         Ok(())
     }
@@ -81,6 +83,7 @@ struct GraphicsConsoleDriverBinding {
     protocols: Service<dyn ProtocolServices>,
     tpl: Service<dyn TplServices>,
     pcd: Option<Service<dyn PcdServices>>,
+    compat_memory_manager: Service<dyn CompatMemoryManager>,
 }
 
 impl UefiDriverModelComponentName for GraphicsConsoleDriverBinding {
@@ -135,7 +138,7 @@ impl DriverBinding for GraphicsConsoleDriverBinding {
             // SAFETY: `gop_ptr` was just returned by `open_interface` for `graphics_output::Protocol`,
             // whose `ProtocolInterface` impl guarantees the interface has that layout. It stays
             // open (and this pointer valid) until `stop()` closes it.
-            let gop = unsafe { GopHandle::new(gop) };
+            let gop = unsafe { GopHandle::new(gop, self.compat_memory_manager) };
 
             let hii_font_ptr =
                 self.protocols.locate_interface(<hii_font::Protocol as ProtocolInterface>::PROTOCOL_GUID)?;
@@ -209,7 +212,7 @@ mod tests {
         error::EfiError,
     };
 
-    use crate::test_support::{FakeGop, FakeHiiFont, permissive_tpl};
+    use crate::test_support::{FakeGop, FakeHiiFont, permissive_compat_memory_manager, permissive_tpl};
 
     static FAKE_DEVICE_PATH: device_path::Protocol = device_path::Protocol { r#type: 0, sub_type: 0, length: [4, 0] };
 
@@ -222,7 +225,12 @@ mod tests {
     }
 
     fn binding(protocols: Service<dyn ProtocolServices>) -> GraphicsConsoleDriverBinding {
-        GraphicsConsoleDriverBinding { protocols, tpl: permissive_tpl(), pcd: None }
+        GraphicsConsoleDriverBinding {
+            protocols,
+            tpl: permissive_tpl(),
+            pcd: None,
+            compat_memory_manager: permissive_compat_memory_manager(),
+        }
     }
 
     #[test]
@@ -245,7 +253,12 @@ mod tests {
         });
         let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(mock));
 
-        let result = GraphicsConsoleProvider::new().entry_point(protocols, permissive_tpl(), None);
+        let result = GraphicsConsoleProvider::new().entry_point(
+            protocols,
+            permissive_tpl(),
+            None,
+            permissive_compat_memory_manager(),
+        );
 
         assert_eq!(result, Ok(()));
     }
@@ -257,7 +270,12 @@ mod tests {
         mock.expect_install_interface().times(1).returning(|_, _, _| Err(ProtocolError::OutOfResources));
         let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(mock));
 
-        let result = GraphicsConsoleProvider::new().entry_point(protocols, permissive_tpl(), None);
+        let result = GraphicsConsoleProvider::new().entry_point(
+            protocols,
+            permissive_tpl(),
+            None,
+            permissive_compat_memory_manager(),
+        );
 
         assert_eq!(result, Err(EfiError::OutOfResources));
     }
