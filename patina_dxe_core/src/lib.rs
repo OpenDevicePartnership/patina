@@ -69,6 +69,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 mod allocator;
+mod compat_memory_manager;
 mod component_dispatcher;
 mod config_tables;
 mod cpu;
@@ -118,6 +119,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
+use compat_memory_manager::CoreCompatMemoryManager;
 use cpu::DxeInterruptManager;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
@@ -475,6 +477,7 @@ impl<P: PlatformInfo> Core<P> {
         let mut component_dispatcher = self.component_dispatcher.lock();
         component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
         component_dispatcher.add_service(CoreMemoryManager);
+        component_dispatcher.add_service(CoreCompatMemoryManager);
         component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
         component_dispatcher.add_service(cpu::PerfTimer::with_frequency(perf_frequency));
         component_dispatcher.add_service(uefi_services::CoreEventServices);
