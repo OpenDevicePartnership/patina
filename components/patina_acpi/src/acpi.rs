@@ -813,8 +813,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    extern crate std;
-
     use crate::signature::MAX_INITIAL_ENTRIES;
 
     use super::*;

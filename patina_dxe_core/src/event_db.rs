@@ -10,8 +10,6 @@
 //!
 #![warn(missing_docs)]
 
-extern crate alloc;
-
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
@@ -843,12 +841,11 @@ unsafe impl Sync for SpinLockedEventDb {}
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
     use core::{iter, str::FromStr};
 
-    use alloc::{vec, vec::Vec};
     use patina::Guid;
     use patina::standard::efi;
+    use std::{vec, vec::Vec};
     use uuid::Uuid;
 
     use crate::test_support;

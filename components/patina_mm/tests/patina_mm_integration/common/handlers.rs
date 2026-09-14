@@ -19,8 +19,7 @@
 use crate::patina_mm_integration::common::constants::*;
 use patina::standard::efi;
 
-extern crate alloc;
-use alloc::{string::String, vec::Vec};
+use std::{string::String, vec::Vec};
 pub use zerocopy::IntoBytes;
 
 pub use patina::management_mode::protocol::{

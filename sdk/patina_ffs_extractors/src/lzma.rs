@@ -81,9 +81,9 @@ mod tests {
     use crate::tests::create_lzma_section;
 
     use super::*;
-    use alloc::vec;
     use patina::pi::fw_fs::ffs::section::header::GuidDefined;
     use patina_ffs::section::Section;
+    use std::vec;
 
     #[test]
     fn test_lzma_extractor_valid() {

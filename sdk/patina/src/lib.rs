@@ -13,7 +13,7 @@
 #![cfg_attr(any(test, feature = "alloc"), feature(allocator_api))]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
-#[cfg(any(test, feature = "alloc"))]
+#[cfg(feature = "alloc")]
 extern crate alloc;
 
 // The base module gets republished from the root to flatten dependencies for common structures.

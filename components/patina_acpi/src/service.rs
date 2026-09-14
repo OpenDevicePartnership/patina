@@ -168,9 +168,9 @@ pub(crate) trait AcpiProvider {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    use alloc::boxed::Box;
     use core::mem;
     use patina::component::service::memory::StdMemoryManager;
+    use std::boxed::Box;
 
     use crate::acpi_table::AcpiFadt;
 

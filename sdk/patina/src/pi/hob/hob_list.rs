@@ -1057,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_hoblist_debug_display() {
-        use alloc::format;
+        use std::format;
 
         let mut hoblist = HobList::new();
         let handoff = gen_phase_handoff_information_table();

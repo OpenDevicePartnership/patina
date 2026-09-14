@@ -396,7 +396,6 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use alloc::boxed::Box;
     use log::Log;
     use patina::standard::efi;
     use patina::{
@@ -405,6 +404,7 @@ mod tests {
         peripheral::serial::{MockSerialIO, uart::UartNull},
         pi::hob::{GUID_EXTENSION, GuidHob, HobHeader},
     };
+    use std::boxed::Box;
 
     use crate::{
         logger::{AdvancedLogger, TargetFilter, WRITER_BUFFER_SIZE},

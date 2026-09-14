@@ -272,7 +272,6 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
     use core::cmp::max;
     use std::alloc::{GlobalAlloc, System};
 

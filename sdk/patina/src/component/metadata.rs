@@ -182,7 +182,6 @@ impl fmt::Debug for PrettyFixedBitSet<'_> {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    extern crate std;
 
     #[test]
     fn test_debug_view_calculates_config_reads_correctly() {

@@ -313,6 +313,8 @@
 #![deny(missing_docs)]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
+extern crate alloc;
+
 // SMBIOS tables require little-endian byte order. The SmbiosRecord derive macro
 // uses zerocopy::IntoBytes::as_bytes() which returns native byte order.
 #[cfg(not(target_endian = "little"))]

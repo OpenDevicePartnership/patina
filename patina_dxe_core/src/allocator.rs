@@ -22,7 +22,6 @@ use core::{
     slice::{self, from_raw_parts_mut},
 };
 
-extern crate alloc;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use patina::function;
 

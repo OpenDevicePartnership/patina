@@ -6,8 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use alloc::{
     format,
     string::{String, ToString},
@@ -593,7 +591,6 @@ mod tests {
     use crate::test_support;
 
     use super::*;
-    extern crate std;
 
     use std::vec;
 

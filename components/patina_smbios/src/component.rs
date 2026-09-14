@@ -8,7 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
 use crate::{
     error::SmbiosError,
     manager::SmbiosManager,
@@ -143,7 +142,6 @@ impl SmbiosProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    extern crate std;
 
     #[test]
     fn test_smbios_provider_new() {

@@ -10,8 +10,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 use crate::service::SmbiosTableHeader;
@@ -40,7 +38,6 @@ impl SmbiosRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    extern crate std;
     use std::vec;
 
     use patina::standard::efi;

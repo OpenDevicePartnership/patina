@@ -122,7 +122,7 @@ mod tests {
         params::{Config, ConfigMut},
     };
 
-    use alloc::borrow::Cow;
+    use std::borrow::Cow;
 
     #[allow(dead_code)]
     pub struct TestStructSuccess {

@@ -14,8 +14,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
-
 use bitfield_struct::bitfield;
 use zerocopy::{Immutable, IntoBytes, KnownLayout};
 

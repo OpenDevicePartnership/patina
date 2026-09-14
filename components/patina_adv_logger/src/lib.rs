@@ -8,7 +8,7 @@
 #![deny(missing_docs)]
 #![cfg_attr(coverage, feature(coverage_attribute))]
 
-#[cfg(any(feature = "alloc", test, doc))]
+#[cfg(any(feature = "alloc", doc))]
 extern crate alloc;
 
 mod memory_log;

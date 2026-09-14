@@ -20,7 +20,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(coverage, feature(coverage_attribute))]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 extern crate alloc;
 
 #[cfg(feature = "brotli")]
@@ -51,12 +51,12 @@ const DECOMPRESSION_MAX_MEMORY_LIMIT: u32 = patina::SIZE_512MB as u32;
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    use alloc::{vec, vec::Vec};
     use patina::pi::fw_fs::{
         ffs::section::header::GuidDefined,
         guid::{BROTLI_SECTION_GUID, CRC32_SECTION_GUID, LZMA_SECTION_GUID},
     };
     use patina_ffs::section::{Section, SectionHeader};
+    use std::{vec, vec::Vec};
 
     /// Constructs a section with the specified GUID and payload, prepending
     /// the required 16-byte header (`out_size` + `scratch_size`) for Brotli sections.

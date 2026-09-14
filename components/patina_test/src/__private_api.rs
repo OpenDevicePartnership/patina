@@ -170,8 +170,6 @@ where
 mod tests {
     use super::*;
 
-    extern crate std;
-
     #[test]
     fn test_should_run() {
         let test_case = TestCase {
@@ -183,10 +181,10 @@ mod tests {
             func: |_| Ok(true),
         };
 
-        std::assert!(test_case.should_run(&[Filter::include("test")]));
-        std::assert!(test_case.should_run(&[Filter::include("t")]));
-        std::assert!(test_case.should_run(&[]));
-        std::assert!(!test_case.should_run(&[Filter::include("not")]));
+        assert!(test_case.should_run(&[Filter::include("test")]));
+        assert!(test_case.should_run(&[Filter::include("t")]));
+        assert!(test_case.should_run(&[]));
+        assert!(!test_case.should_run(&[Filter::include("not")]));
     }
 
     #[test]
@@ -200,7 +198,7 @@ mod tests {
             func: |_| Ok(true),
         };
 
-        std::assert!(test_case.should_run(&[]));
+        assert!(test_case.should_run(&[]));
     }
 
     #[test]
@@ -215,13 +213,13 @@ mod tests {
         };
 
         // Exclude filter matches - should not run
-        std::assert!(!test_case.should_run(&[Filter::exclude("test_case")]));
+        assert!(!test_case.should_run(&[Filter::exclude("test_case")]));
         // Exclude filter does not match - should run
-        std::assert!(test_case.should_run(&[Filter::exclude("other")]));
+        assert!(test_case.should_run(&[Filter::exclude("other")]));
         // Include filter matches but exclude filter also matches - should not run
-        std::assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
+        assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
         // Include filter matches and exclude filter does not match - should run
-        std::assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
+        assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
     }
 
     #[test]
@@ -248,11 +246,11 @@ mod tests {
 
         // Test that a passing test passes
         let result = test_case_pass.run(&mut storage, true);
-        std::assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(()));
 
         // Test that a failing test fails
         let result = test_case_fail.run(&mut storage, true);
-        std::assert_eq!(result, Err("Failed to install protocol interface"));
+        assert_eq!(result, Err("Failed to install protocol interface"));
     }
 
     #[test]
@@ -278,11 +276,11 @@ mod tests {
 
         // Test that a test that passes, should fail because its expected to fail
         let result = test_case_pass.run(&mut storage, true);
-        std::assert_eq!(result, Err("Test passed when it should have failed"));
+        assert_eq!(result, Err("Test passed when it should have failed"));
 
         // Test that a test that fails, should pass because its expected to fail
         let result = test_case_fail.run(&mut storage, true);
-        std::assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
@@ -300,7 +298,7 @@ mod tests {
         };
 
         let result = test_case.run(&mut storage, false);
-        std::assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(()));
 
         // Test that a test that fails with an unexpected message, should fail
         let test_case = TestCase {
@@ -313,7 +311,7 @@ mod tests {
         };
 
         let result = test_case.run(&mut storage, false);
-        std::assert_eq!(result, Err("Failed to install protocol interface"));
+        assert_eq!(result, Err("Failed to install protocol interface"));
     }
 
     #[test]

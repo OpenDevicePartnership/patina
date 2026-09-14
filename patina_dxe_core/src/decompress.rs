@@ -6,8 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
-
 use core::ffi::c_void;
 
 use alloc::boxed::Box;

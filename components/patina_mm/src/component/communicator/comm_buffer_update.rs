@@ -277,7 +277,7 @@ mod tests {
     };
     use patina::uefi::boot_services::StandardBootServices;
 
-    use alloc::boxed::Box;
+    use std::boxed::Box;
 
     /// Helper to create a test protocol notify context without boot services
     fn create_test_context(updatable_buffer_id: u8) -> Box<ProtocolNotifyContext> {

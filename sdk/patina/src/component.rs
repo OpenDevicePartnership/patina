@@ -214,8 +214,6 @@ pub mod prelude {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
-
     use super::*;
     use crate as patina;
     use crate::{

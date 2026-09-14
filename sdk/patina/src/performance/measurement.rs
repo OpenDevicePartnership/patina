@@ -186,8 +186,8 @@ impl PerformanceProperty {
 mod tests {
     use super::*;
 
-    use alloc::boxed::Box;
     use core::ptr;
+    use std::boxed::Box;
 
     use crate::performance::record::{
         PerformanceRecord,

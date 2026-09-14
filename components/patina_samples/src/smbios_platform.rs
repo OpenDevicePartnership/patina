@@ -28,8 +28,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-extern crate alloc;
-
 use alloc::{string::String, vec};
 use patina::{
     component::{component, service::Service},

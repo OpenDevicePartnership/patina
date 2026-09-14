@@ -121,7 +121,6 @@ mod tests {
 
     #[test]
     fn test_smbios_error_all_variants() {
-        extern crate std;
         use std::vec;
 
         // Test all error variants for completeness

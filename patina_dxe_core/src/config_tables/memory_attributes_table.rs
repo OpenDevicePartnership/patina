@@ -6,7 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-extern crate alloc;
 use alloc::vec::Vec;
 
 #[cfg(not(test))]
@@ -251,7 +250,6 @@ pub fn core_install_memory_attributes_table() {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-    extern crate std;
     use super::*;
 
     use crate::{
