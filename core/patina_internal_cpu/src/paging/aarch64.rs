@@ -98,27 +98,8 @@ pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-
     use super::*;
-    use mockall::mock;
-
-    mock! {
-        PageAllocator {}
-        impl PageAllocator for PageAllocator {
-            fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> Result<u64, PtError>;
-        }
-    }
-
-    mock! {
-        PageTable {}
-        impl PageTable for PageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn install_page_table(&mut self) -> Result<(), PtError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
-        }
-    }
+    use patina_paging::MockPageTable;
 
     #[test]
     fn test_map_memory_region() {

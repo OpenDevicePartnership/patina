@@ -43,8 +43,8 @@ patina_internal_cpu = { version = "23.2.0", path = "core/patina_internal_cpu" }
 lzma-rust2 = { version = "0.16", default-features = false }
 patina_macro = { version = "23.2.0", path = "sdk/patina_macro" }
 patina_mm = { version = "23.2.0", path = "components/patina_mm" }
-patina_mtrr = { version = "1.1.9" }
-patina_paging = { version = "11.0.4" }
+patina_mtrr = { version = "2" }
+patina_paging = { version = "11.1.1" }
 patina_performance = { version = "23.2.0", path = "components/patina_performance" }
 patina_smbios = { version = "23.2.0", path = "components/patina_smbios" }
 patina_stacktrace = { version = "23.2.0", path = "core/patina_stacktrace" }

@@ -31,7 +31,11 @@ arm-gic = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
+patina_paging = { workspace = true, features = ["mockall"] }
 serial_test = { workspace = true }
+
+[target.'cfg(all(target_arch="x86_64"))'.dev-dependencies]
+patina_mtrr = { workspace = true, features = ["mockall"] }
 
 [features]
 default = []

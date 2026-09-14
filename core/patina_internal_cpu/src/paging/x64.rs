@@ -182,50 +182,8 @@ fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use mockall::mock;
-    use patina_mtrr::{
-        error::MtrrResult,
-        structs::{MtrrMemoryRange, MtrrSettings},
-    };
-
-    mock! {
-        PageAllocator {}
-        impl PageAllocator for PageAllocator {
-            fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> Result<u64, PtError>;
-        }
-    }
-
-    mock! {
-        PageTable {}
-        impl PageTable for PageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn install_page_table(&mut self) -> Result<(), PtError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
-        }
-    }
-
-    mock! {
-        Mtrr {}
-        impl Mtrr for Mtrr {
-            fn is_supported(&self) -> bool;
-            fn get_all_mtrrs(&self) -> MtrrResult<MtrrSettings>;
-            fn set_all_mtrrs(&mut self, mtrr_setting: &MtrrSettings);
-            fn get_memory_attribute(&self, address: u64) -> MtrrMemoryCacheType;
-            fn set_memory_attribute(
-                &mut self,
-                base_address: u64,
-                length: u64,
-                attribute: MtrrMemoryCacheType,
-            ) -> MtrrResult<()>;
-            fn set_memory_attributes(&mut self, ranges: &[MtrrMemoryRange]) -> MtrrResult<()>;
-            #[allow(refining_impl_trait_internal)]
-            fn get_memory_ranges(&self) -> MtrrResult<Vec<MtrrMemoryRange>>;
-
-            fn debug_print_all_mtrrs(&self);
-        }
-    }
+    use patina_mtrr::MockMtrr;
+    use patina_paging::MockPageTable;
 
     #[test]
     fn test_map_memory_region() {
