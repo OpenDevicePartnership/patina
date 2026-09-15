@@ -52,7 +52,9 @@ where
         }
 
         match apply_caching_attributes(address, size, cache_attributes, &mut self.mtrr) {
-            Ok(()) => self.paging.map_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask),
+            Ok(()) | Err(EfiError::Unsupported) => {
+                self.paging.map_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask)
+            }
             Err(status) => Err(efierror_to_pterror(status)),
         }
     }
