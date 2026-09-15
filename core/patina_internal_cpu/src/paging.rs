@@ -44,29 +44,52 @@ pub enum CacheAttributeValue {
 /// The `PatinaPageTable` trait is Patina's abstraction layer over the `PageTable` trait
 /// provided by patina-paging. This trait manages architectural abstractions over the page tables.
 pub trait PatinaPageTable {
-    /// Function to map the designated memory region to with provided
+    /// Function to identity map the designated memory region with the provided
     /// attributes. The requested memory region will be mapped with the specified
     /// attributes, regardless of the current mapping state of the region.
     ///
     /// ## Arguments
-    /// * `address` - The memory address to map.
+    /// * `address` - The memory address to map. VA == PA
     /// * `size` - The memory size to map.
     /// * `attributes` - The memory attributes to map. The acceptable
-    ///   input will be `ExecuteProtect`, `ReadOnly`, as well as Uncacheable,
-    ///   `WriteCombining`, `WriteThrough`, Writeback, `UncacheableExport`
-    ///   Compatible attributes can be "Ored"
+    ///   input will be `ExecuteProtect`, `ReadOnly`, as well as `Uncached`,
+    ///   `WriteCombining`, `WriteThrough`, `Writeback`, `UncachedExport`
+    ///   Compatible attributes can be "`ORed`"
     ///
     /// ## Errors
     /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
     fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
 
+    /// Function to map the designated VA to the specified PA with the provided
+    /// attributes. The requested memory region will be mapped with the specified
+    /// attributes, regardless of the current mapping state of the region.
+    ///
+    /// ## Arguments
+    /// * `va` - The virtual address to map.
+    /// * `pa` - The physical address to map.
+    /// * `size` - The memory size to map.
+    /// * `attributes` - The memory attributes to map. The acceptable
+    ///   input will be `ExecuteProtect`, `ReadOnly`, as well as `Uncached`,
+    ///   `WriteCombining`, `WriteThrough`, `Writeback`, `UncachedExport`
+    ///   Compatible attributes can be "`ORed`"
+    ///
+    /// ## Errors
+    /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
+    fn map_aliased_memory_region(
+        &mut self,
+        va: u64,
+        pa: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError>;
+
     /// Function to unmap the memory region provided by the caller. The
     /// requested memory region must be fully mapped prior to this call. The
     /// entire region does not need to have the same mapping state in order
-    /// to unmap it.
+    /// to unmap it. This API works for either identity mapped or aliased mappings.
     ///
     /// ## Arguments
-    /// * `address` - The memory address to map.
+    /// * `address` - The memory address to unmap.
     /// * `size` - The memory size to map.
     ///
     /// ## Errors
@@ -80,16 +103,15 @@ pub trait PatinaPageTable {
     fn install_page_table(&mut self) -> Result<(), PtError>;
 
     /// Function to query the mapping status and return attribute of supplied
-    /// memory region if it is properly and consistently mapped. This function
-    /// returns the caching attributes for platforms where caching attributes
-    /// are managed outside of the page table (e.g., `x86_64` MTRRs), even when
-    /// the page range itself is unmapped.
+    /// memory region if it is properly and consistently mapped.
     ///
     /// ## Arguments
-    /// * `address` - The memory address to map.
-    /// * `size` - The memory size to map.
+    /// * `address` - The memory address to query.
+    /// * `size` - The memory size to query.
     ///
     /// ## Returns
+    /// Returns memory attributes
+    ///
     ///   `Ok(MemoryAttributes)` if the page range is mapped else
     ///   `Err(PtError, None)` if the page is unmapped and the cache attributes are not available
     ///   `Err(PtError, Some(MemoryAttributes))` if the page is unmapped but caching attributes are available

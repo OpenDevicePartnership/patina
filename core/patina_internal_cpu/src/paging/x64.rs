@@ -59,6 +59,29 @@ where
         }
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
+        let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
+
+        if attributes != (cache_attributes | memory_attributes) {
+            log::error!("Invalid cache attribute: {attributes:#x}");
+            return Err(PtError::InvalidParameter);
+        }
+
+        match apply_caching_attributes(physical_address, size, cache_attributes, &mut self.mtrr) {
+            Ok(()) | Err(EfiError::Unsupported) => {
+                self.paging.map_aliased_memory_region(virtual_address, physical_address, size, memory_attributes)
+            }
+            Err(status) => Err(efierror_to_pterror(status)),
+        }
+    }
+
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.unmap_memory_region(address, size)
     }
