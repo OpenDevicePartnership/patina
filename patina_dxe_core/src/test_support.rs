@@ -115,6 +115,7 @@ impl<F: FnMut()> Drop for StateGuard<F> {
 
 pub struct MockPageTable {
     mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+    aliased_mapped: RefCell<Vec<(u64, u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
     installed: RefCell<bool>,
     // Track current mappings to provide realistic query behavior
@@ -135,6 +136,18 @@ impl PatinaPageTable for MockPageTable {
         });
         // Add new mapping
         current.push((base, len, attrs));
+        Ok(())
+    }
+
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        len: u64,
+        attrs: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.aliased_mapped.borrow_mut().push((virtual_address, physical_address, len, attrs));
+        self.current_mappings.borrow_mut().push((virtual_address, len, attrs));
         Ok(())
     }
 
@@ -206,6 +219,10 @@ impl MockPageTable {
         self.unmapped.borrow().clone()
     }
 
+    pub fn get_aliased_mapped_regions(&self) -> Vec<(u64, u64, u64, MemoryAttributes)> {
+        self.aliased_mapped.borrow().clone()
+    }
+
     pub fn get_current_mappings(&self) -> Vec<(u64, u64, MemoryAttributes)> {
         self.current_mappings.borrow().clone()
     }
@@ -213,6 +230,7 @@ impl MockPageTable {
     pub fn new() -> Self {
         Self {
             mapped: RefCell::new(Vec::new()),
+            aliased_mapped: RefCell::new(Vec::new()),
             unmapped: RefCell::new(Vec::new()),
             installed: RefCell::new(false),
             current_mappings: RefCell::new(Vec::new()),
@@ -233,6 +251,16 @@ impl MockPageTableWrapper {
 impl PatinaPageTable for MockPageTableWrapper {
     fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
         self.inner.borrow_mut().map_memory_region(base, len, attrs)
+    }
+
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        len: u64,
+        attrs: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.inner.borrow_mut().map_aliased_memory_region(virtual_address, physical_address, len, attrs)
     }
 
     fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {

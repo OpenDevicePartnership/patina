@@ -40,6 +40,16 @@ where
         self.paging.map_memory_region(address, size, attributes)
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.paging.map_aliased_memory_region(virtual_address, physical_address, size, attributes)
+    }
+
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.unmap_memory_region(address, size)
     }

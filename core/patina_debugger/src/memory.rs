@@ -188,6 +188,13 @@ mod tests {
 
         impl PatinaPageTable for MemPageTable {
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
+            fn map_aliased_memory_region(
+                &mut self,
+                virtual_address: u64,
+                physical_address: u64,
+                size: u64,
+                attributes: MemoryAttributes,
+            ) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
             fn install_page_table(&mut self) -> Result<(), PtError>;
             fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)>;
