@@ -59,6 +59,29 @@ where
         }
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
+        let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
+
+        if attributes != (cache_attributes | memory_attributes) {
+            log::error!("Invalid cache attribute: {attributes:#x}");
+            return Err(PtError::InvalidParameter);
+        }
+
+        match apply_caching_attributes(physical_address, size, cache_attributes, &mut self.mtrr) {
+            Ok(()) | Err(EfiError::Unsupported) => {
+                self.paging.map_aliased_memory_region(virtual_address, physical_address, size, memory_attributes)
+            }
+            Err(status) => Err(efierror_to_pterror(status)),
+        }
+    }
+
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.unmap_memory_region(address, size)
     }
@@ -200,6 +223,43 @@ mod tests {
         let mut paging = EfiCpuPagingX64 { paging: mock_page_table, mtrr: mock_mtrr };
 
         let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_map_aliased_memory_region() {
+        let mut mock_page_table = MockPageTable::new();
+        let mut mock_mtrr = MockMtrr::new();
+
+        mock_page_table.expect_map_aliased_memory_region().returning(
+            |virtual_address, physical_address, size, attributes| {
+                assert_eq!(virtual_address, 0x2000);
+                assert_eq!(physical_address, 0x1000);
+                assert_eq!(size, 0x1000);
+                assert_eq!(attributes, MemoryAttributes::ReadOnly);
+                Ok(())
+            },
+        );
+        mock_mtrr.expect_is_supported().return_const(true);
+        mock_mtrr.expect_get_memory_attribute().returning(|address| {
+            assert_eq!(address, 0x1000);
+            MtrrMemoryCacheType::Uncacheable
+        });
+        mock_mtrr.expect_set_memory_attribute().returning(|address, size, cache_type| {
+            assert_eq!(address, 0x1000);
+            assert_eq!(size, 0x1000);
+            assert_eq!(cache_type, MtrrMemoryCacheType::WriteBack);
+            Ok(())
+        });
+
+        let mut paging = EfiCpuPagingX64 { paging: mock_page_table, mtrr: mock_mtrr };
+
+        let result = paging.map_aliased_memory_region(
+            0x2000,
+            0x1000,
+            0x1000,
+            MemoryAttributes::Writeback | MemoryAttributes::ReadOnly,
+        );
         assert!(result.is_ok());
     }
 

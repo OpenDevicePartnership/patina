@@ -245,7 +245,7 @@ impl EfiCpuArchProtocolImpl {
     }
 }
 
-/// This component installs the cpu arch protocol
+/// This component installs the cpu arch protocol and optionally the aliased memory mapping protocol.
 #[derive(Default)]
 pub(crate) struct CpuArchProtocolInstaller;
 
@@ -257,9 +257,13 @@ impl CpuArchProtocolInstaller {
         // Convert the protocol to a raw pointer and store it in to protocol DB
         let interface = Box::leak(Box::new(protocol));
 
-        bs.install_protocol_interface(None, interface)
+        let (handle, _) = bs
+            .install_protocol_interface(None, interface)
             .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
         log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+
+        #[cfg(any(test, feature = "confidential_compute"))]
+        super::aliased_memory_map_protocol::install(&bs, handle)?;
 
         Ok(())
     }

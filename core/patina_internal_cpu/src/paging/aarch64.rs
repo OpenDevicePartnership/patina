@@ -40,6 +40,16 @@ where
         self.paging.map_memory_region(address, size, attributes)
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.paging.map_aliased_memory_region(virtual_address, physical_address, size, attributes)
+    }
+
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.unmap_memory_region(address, size)
     }
@@ -110,6 +120,31 @@ mod tests {
         let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
         let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_map_aliased_memory_region() {
+        let mut mock_page_table = MockPageTable::new();
+
+        mock_page_table.expect_map_aliased_memory_region().returning(
+            |virtual_address, physical_address, size, attributes| {
+                assert_eq!(virtual_address, 0x2000);
+                assert_eq!(physical_address, 0x1000);
+                assert_eq!(size, 0x1000);
+                assert_eq!(attributes, MemoryAttributes::Writeback | MemoryAttributes::ReadOnly);
+                Ok(())
+            },
+        );
+
+        let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
+
+        let result = paging.map_aliased_memory_region(
+            0x2000,
+            0x1000,
+            0x1000,
+            MemoryAttributes::Writeback | MemoryAttributes::ReadOnly,
+        );
         assert!(result.is_ok());
     }
 

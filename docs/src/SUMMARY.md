@@ -61,6 +61,7 @@
 - [Patina DXE Core Requirements Checklist](integrate/patina_dxe_core_requirements_checklist.md)
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
+  - [Confidential Compute Integration](integrate/confidential_compute.md)
 
 # Patina DXE Core Subsystems
 
