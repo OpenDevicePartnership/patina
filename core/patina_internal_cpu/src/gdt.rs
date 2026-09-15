@@ -127,9 +127,10 @@ const GDT_ENTRY_COUNT: usize = 11;
 
 // Segment selector values (GDT index * 8, RPL = 0)
 pub(crate) const CODE_SELECTOR: u16 = 7 * 8; // LINEAR_CODE64_SEL at index 7
-const DATA_SELECTOR: u16 = 6 * 8; // LINEAR_DATA64_SEL at index 6
+pub(crate) const DATA_SELECTOR: u16 = 6 * 8; // LINEAR_DATA64_SEL at index 6
 const TSS_SELECTOR: u16 = 8 * 8; // TSS descriptor at index 8
 
+/// Index of the 16-byte TSS descriptor within the GDT entry array.
 static mut SEPARATE_EXCEPTION_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 static mut TSS: [u8; TSS_SIZE] = [0; TSS_SIZE];
 
@@ -185,10 +186,25 @@ static GDT: spin::LazyLock<[u64; GDT_ENTRY_COUNT]> = spin::LazyLock::new(|| {
     ]
 });
 
+/// Operand layout for the `lgdt` and `lidt` instructions.
 #[repr(C, packed)]
-struct GdtPointer {
-    limit: u16,
-    base: u64,
+pub(crate) struct DescriptorTablePointer {
+    pub(crate) limit: u16,
+    pub(crate) base: u64,
+}
+
+/// Descriptor-table pointer for the GDT this module owns, for callers that need to
+/// load it on another processor.
+pub(crate) fn descriptor() -> DescriptorTablePointer {
+    DescriptorTablePointer {
+        limit: (core::mem::size_of::<[u64; GDT_ENTRY_COUNT]>() - 1) as u16,
+        base: GDT.as_ptr() as u64,
+    }
+}
+
+/// Minimal GDT entries retaining the selectors used by long-mode Patina code.
+pub(crate) fn minimal_long_mode_entries() -> [u64; 8] {
+    [NULL_SEL.into(), 0, 0, 0, 0, 0, LINEAR_DATA64_SEL.into(), LINEAR_CODE64_SEL.into()]
 }
 
 #[cfg_attr(coverage, coverage(off))]
@@ -197,7 +213,7 @@ pub fn init() {
     let gdt_ptr = GDT.as_ptr() as usize;
     assert!(gdt_ptr < SIZE_4GB, "GDT above 4GB, MP services will fail");
 
-    let gdtr = GdtPointer { limit: (core::mem::size_of::<[u64; GDT_ENTRY_COUNT]>() - 1) as u16, base: gdt_ptr as u64 };
+    let gdtr = descriptor();
 
     // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
     unsafe {

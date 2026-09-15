@@ -74,6 +74,7 @@
   - [Image Loading and Execution](dxe_core/images.md)
   - [Memory Management](dxe_core/memory_management.md)
   - [Memory Bins](dxe_core/memory_bins.md)
+  - [Multiprocessor Services](dxe_core/mp_services.md)
   - [Performance Measurement](dxe_core/performance_measurement.md)
   - [Protocol Database](dxe_core/protocol_database.md)
   - [Synchronization](dxe_core/synchronization.md)

@@ -11,8 +11,8 @@ use crate::{interrupts::ExceptionContextX64, log_registers};
 use patina::pi::protocol::cpu_arch::EfiSystemContext;
 use patina_stacktrace::{StackFrame, StackTrace};
 
-#[cfg(target_os = "uefi")]
-mod idt;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod idt;
 mod interrupt_manager;
 
 #[allow(unused)]
