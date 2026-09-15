@@ -100,7 +100,7 @@ flowchart TD
 | [patina-fw-patcher](https://github.com/OpenDevicePartnership/patina-fw-patcher) | A developer tool to quickly patch a new patina-dxe-core binary into a platform's firmware |
 | [patina-mtrr](https://github.com/OpenDevicePartnership/patina-mtrr) | A x86_64 MTRR solution we believe is generic enough to be useful outside of Patina. |
 | [patina-paging](https://github.com/OpenDevicePartnership/patina-paging) | A paging solution we believe is generic enough to be useful outside of Patina. |
-| [patina-qemu](https://github.com/OpenDevicePartnership/patina-qemu/) | Two reference virtual platforms (Q35, SBSA) |
+| [patina-qemu](https://github.com/OpenDevicePartnership/patina-qemu/) | Two reference virtual platforms (Q35, ArmVirt) |
 | [patina-readiness-tool](https://github.com/OpenDevicePartnership/patina-readiness-tool) | A DXE core replacement binary that reviews HOBs passed from PEI to DXE to validate your platform is ready to use the Patina DXE Core. |
 | [patina](https://github.com/OpenDevicePartnership/patina) | Core codebase for Patina containing Patina-only crates. |
 <!-- markdownlint-enable MD013 -->

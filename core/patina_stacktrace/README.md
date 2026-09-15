@@ -17,36 +17,36 @@ C:\> .\resolve_stacktrace.cmd
 Enter the PDB directory path (leave empty to use STACKTRACE_PDB_DIR env): C:\temp\stacktrace
 Enter stack trace lines (press Enter twice to finish):
 WARN -       # Child-SP              Return Address         Call Site
-WARN -       0 000001007E2796C0      000001007E27BBDC       qemu_sbsa_dxe_core+185DC
-WARN -       1 000001007E2796F0      000001007E34FB58       qemu_sbsa_dxe_core+1BDC
-WARN -       2 000001007E2797C0      000001007E34F6D0       qemu_sbsa_dxe_core+D5B54
-WARN -       3 000001007E2797F0      000001007E35076C       qemu_sbsa_dxe_core+D56CC
-WARN -       4 000001007E2798A0      000001007E29CEFC       qemu_sbsa_dxe_core+D676C
-WARN -       5 000001007E2798B0      000001007E2A9CB0       qemu_sbsa_dxe_core+22EFC
-WARN -       6 000001007E279920      000001007E2A5EF8       qemu_sbsa_dxe_core+2FCB0
-WARN -       7 000001007E279A00      000001007E2A6628       qemu_sbsa_dxe_core+2BEF8
-WARN -       8 000001007E279A90      000001007E2895A4       qemu_sbsa_dxe_core+2C628
-WARN -       9 000001007E279AD0      000001007E28A1D8       qemu_sbsa_dxe_core+F5A4
-WARN -      10 000001007E279BC0      000001007E27BE24       qemu_sbsa_dxe_core+101D8
+WARN -       0 000001007E2796C0      000001007E27BBDC       qemu_armvirt_dxe_core+185DC
+WARN -       1 000001007E2796F0      000001007E34FB58       qemu_armvirt_dxe_core+1BDC
+WARN -       2 000001007E2797C0      000001007E34F6D0       qemu_armvirt_dxe_core+D5B54
+WARN -       3 000001007E2797F0      000001007E35076C       qemu_armvirt_dxe_core+D56CC
+WARN -       4 000001007E2798A0      000001007E29CEFC       qemu_armvirt_dxe_core+D676C
+WARN -       5 000001007E2798B0      000001007E2A9CB0       qemu_armvirt_dxe_core+22EFC
+WARN -       6 000001007E279920      000001007E2A5EF8       qemu_armvirt_dxe_core+2FCB0
+WARN -       7 000001007E279A00      000001007E2A6628       qemu_armvirt_dxe_core+2BEF8
+WARN -       8 000001007E279A90      000001007E2895A4       qemu_armvirt_dxe_core+2C628
+WARN -       9 000001007E279AD0      000001007E28A1D8       qemu_armvirt_dxe_core+F5A4
+WARN -      10 000001007E279BC0      000001007E27BE24       qemu_armvirt_dxe_core+101D8
 
 # cspell:disable
 ┌────┬──────────────────────────────────────────────────────────────────────┬──────────────────┬──────────────────┬─────────────────────────────────────────────────────────────────────┐
 │ #  ┆ Source Path                                                          ┆ Child-SP         ┆ Return Address   ┆ Call Site                                                           │
 ╞════╪══════════════════════════════════════════════════════════════════════╪══════════════════╪══════════════════╪═════════════════════════════════════════════════════════════════════╡
-│ 0  ┆ /home/vineel/repos/patina/core/patina_stacktrace/src/stacktrace.rs @ ┆ 000001007E2796C0 ┆ 000001007E27BBDC ┆ qemu_sbsa_dxe_core!patina_stacktrace::stacktrace::StackTrace::dump( │
+│ 0  ┆ /home/vineel/repos/patina/core/patina_stacktrace/src/stacktrace.rs @ ┆ 000001007E2796C0 ┆ 000001007E27BBDC ┆ qemu_armvirt_dxe_core!patina_stacktrace::stacktrace::StackTrace::dump( │
 │    ┆ 144                                                                  ┆                  ┆                  ┆ )+0xC                                                               │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 1  ┆ /home/vineel/repos/patina-dxe-core-qemu/bin/sbsa_dxe_core.rs @ 24    ┆ 000001007E2796F0 ┆ 000001007E34FB58 ┆ qemu_sbsa_dxe_core!qemu_sbsa_dxe_core::panic(core::panic::panic_inf │
+│ 1  ┆ /home/vineel/repos/patina-dxe-core-qemu/bin/arm_virt_dxe_core.rs @ 24    ┆ 000001007E2796F0 ┆ 000001007E34FB58 ┆ qemu_armvirt_dxe_core!qemu_armvirt_dxe_core::panic(core::panic::panic_inf │
 │    ┆                                                                      ┆                  ┆                  ┆ o::PanicInfo*)+0x88                                                 │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 2  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E2797C0 ┆ 000001007E34F6D0 ┆ qemu_sbsa_dxe_core!core::panicking::panic_fmt(core::fmt::Arguments, │
+│ 2  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E2797C0 ┆ 000001007E34F6D0 ┆ qemu_armvirt_dxe_core!core::panicking::panic_fmt(core::fmt::Arguments, │
 │    ┆ rustlib/src/rust/library/core/src/panicking.rs @ 75                  ┆                  ┆                  ┆ core::panic::location::Location*)+0x18                              │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 3  ┆ /home/vineel/repos/patina/components/patina_samples/src/component/he ┆ 000001007E2797F0 ┆ 000001007E35076C ┆ qemu_sbsa_dxe_core!patina_samples::component::hello_world::HelloStr │
+│ 3  ┆ /home/vineel/repos/patina/components/patina_samples/src/component/he ┆ 000001007E2797F0 ┆ 000001007E35076C ┆ qemu_armvirt_dxe_core!patina_samples::component::hello_world::HelloStr │
 │    ┆ llo_world.rs @ 23                                                    ┆                  ┆                  ┆ uct::entry_point(patina_samples::component::hello_world::HelloStruc │
 │    ┆                                                                      ┆                  ┆                  ┆ t, patina::component::params::Config<i32>)+0xC4                     │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 4  ┆ /home/vineel/repos/patina/sdk/patina/src/component/params.rs @ 254   ┆ 000001007E2798A0 ┆ 000001007E29CEFC ┆ qemu_sbsa_dxe_core!patina::component::params::impl$20::run<patina_s │
+│ 4  ┆ /home/vineel/repos/patina/sdk/patina/src/component/params.rs @ 254   ┆ 000001007E2798A0 ┆ 000001007E29CEFC ┆ qemu_armvirt_dxe_core!patina::component::params::impl$20::run<patina_s │
 │    ┆                                                                      ┆                  ┆                  ┆ amples::component::hello_world::HelloStruct,enum2$<core::result::Re │
 │    ┆                                                                      ┆                  ┆                  ┆ sult<tuple$<>,enum2$<patina::error::EfiError> > >,enum2$<core::resu │
 │    ┆                                                                      ┆                  ┆                  ┆ lt::Result<tuple$<>,enum2$<patina::error::EfiError> > > (*)(patina_ │
@@ -58,7 +58,7 @@ WARN -      10 000001007E279BC0      000001007E27BE24       qemu_sbsa_dxe_core+1
 │    ┆                                                                      ┆                  ┆                  ┆ n<patina_samples::component::hello_world::HelloStruct> >*,          │
 │    ┆                                                                      ┆                  ┆                  ┆ tuple$<patina::component::params::Config<i32> >)+0x18               │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 5  ┆ /home/vineel/repos/patina/sdk/patina/src/component/struct_component. ┆ 000001007E2798B0 ┆ 000001007E2A9CB0 ┆ qemu_sbsa_dxe_core!patina::component::struct_component::impl$1::run │
+│ 5  ┆ /home/vineel/repos/patina/sdk/patina/src/component/struct_component. ┆ 000001007E2798B0 ┆ 000001007E2A9CB0 ┆ qemu_armvirt_dxe_core!patina::component::struct_component::impl$1::run │
 │    ┆ rs @ 94                                                              ┆                  ┆                  ┆ _unsafe<tuple$<patina::component::params::RunOnce,enum2$<core::resu │
 │    ┆                                                                      ┆                  ┆                  ┆ lt::Result<tuple$<>,enum2$<patina::error::EfiError> > > (*)(patina_ │
 │    ┆                                                                      ┆                  ┆                  ┆ samples::component::hello_world::HelloStruct,patina::component::par │
@@ -74,12 +74,12 @@ WARN -      10 000001007E279BC0      000001007E27BE24       qemu_sbsa_dxe_core+1
 │    ┆                                                                      ┆                  ┆                  ┆ onent::hello_world::HelloStruct,patina::component::params::Config<i │
 │    ┆                                                                      ┆                  ┆                  ┆ 32>)>*, patina::component::storage::UnsafeStorageCell)+0x58         │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 6  ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 371           ┆ 000001007E279920 ┆ 000001007E2A5EF8 ┆ qemu_sbsa_dxe_core!patina_dxe_core::impl$4::dispatch_components::cl │
+│ 6  ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 371           ┆ 000001007E279920 ┆ 000001007E2A5EF8 ┆ qemu_armvirt_dxe_core!patina_dxe_core::impl$4::dispatch_components::cl │
 │    ┆                                                                      ┆                  ┆                  ┆ osure$0(patina_dxe_core::impl$4::dispatch_components::closure_env$0 │
 │    ┆                                                                      ┆                  ┆                  ┆ *, alloc::boxed::Box<dyn$<patina::component::Component>,alloc::allo │
 │    ┆                                                                      ┆                  ┆                  ┆ c::Global>*)+0xB8                                                   │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 7  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E279A00 ┆ 000001007E2A6628 ┆ qemu_sbsa_dxe_core!alloc::vec::impl$1::retain_mut::process_loop<pat │
+│ 7  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E279A00 ┆ 000001007E2A6628 ┆ qemu_armvirt_dxe_core!alloc::vec::impl$1::retain_mut::process_loop<pat │
 │    ┆ rustlib/src/rust/library/alloc/src/vec/mod.rs @ 2243                 ┆                  ┆                  ┆ ina_dxe_core::impl$4::dispatch_components::closure_env$0,alloc::box │
 │    ┆                                                                      ┆                  ┆                  ┆ ed::Box<dyn$<patina::component::Component>,alloc::alloc::Global>,al │
 │    ┆                                                                      ┆                  ┆                  ┆ loc::alloc::Global,true>(unsigned long long,                        │
@@ -88,17 +88,17 @@ WARN -      10 000001007E279BC0      000001007E27BE24       qemu_sbsa_dxe_core+1
 │    ┆                                                                      ┆                  ┆                  ┆ atina::component::Component>,alloc::alloc::Global>,alloc::alloc::Gl │
 │    ┆                                                                      ┆                  ┆                  ┆ obal>*)+0x68                                                        │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 8  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E279A90 ┆ 000001007E2895A4 ┆ qemu_sbsa_dxe_core!alloc::vec::Vec<alloc::boxed::Box<dyn$<patina::c │
+│ 8  ┆ /home/vineel/.rustup/toolchains/1.89.0-x86_64-unknown-linux-gnu/lib/ ┆ 000001007E279A90 ┆ 000001007E2895A4 ┆ qemu_armvirt_dxe_core!alloc::vec::Vec<alloc::boxed::Box<dyn$<patina::c │
 │    ┆ rustlib/src/rust/library/alloc/src/vec/mod.rs @ 2275                 ┆                  ┆                  ┆ omponent::Component>,alloc::alloc::Global>,alloc::alloc::Global>::r │
 │    ┆                                                                      ┆                  ┆                  ┆ etain_mut<alloc::boxed::Box<dyn$<patina::component::Component>,allo │
 │    ┆                                                                      ┆                  ┆                  ┆ c::alloc::Global>,alloc::alloc::Global,patina_dxe_core::impl$4::dis │
 │    ┆                                                                      ┆                  ┆                  ┆ patch_components::closure_env$0>(patina_dxe_core::impl$4::dispatch_ │
 │    ┆                                                                      ┆                  ┆                  ┆ components::closure_env$0)+0x44                                     │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 9  ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 398           ┆ 000001007E279AD0 ┆ 000001007E28A1D8 ┆ qemu_sbsa_dxe_core!patina_dxe_core::Core<patina_dxe_core::Alloc>::c │
+│ 9  ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 398           ┆ 000001007E279AD0 ┆ 000001007E28A1D8 ┆ qemu_armvirt_dxe_core!patina_dxe_core::Core<patina_dxe_core::Alloc>::c │
 │    ┆                                                                      ┆                  ┆                  ┆ ore_dispatcher()+0xA4                                               │
 ├╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 10 ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 555           ┆ 000001007E279BC0 ┆ 000001007E27BE24 ┆ qemu_sbsa_dxe_core!patina_dxe_core::Core<patina_dxe_core::Alloc>::s │
+│ 10 ┆ /home/vineel/repos/patina/patina_dxe_core/src/lib.rs @ 555           ┆ 000001007E279BC0 ┆ 000001007E27BE24 ┆ qemu_armvirt_dxe_core!patina_dxe_core::Core<patina_dxe_core::Alloc>::s │
 │    ┆                                                                      ┆                  ┆                  ┆ tart(patina_dxe_core::Core<patina_dxe_core::Alloc>)+0xAF4           │
 └────┴──────────────────────────────────────────────────────────────────────┴──────────────────┴──────────────────┴─────────────────────────────────────────────────────────────────────┘
 # cspell:enable
