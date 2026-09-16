@@ -149,8 +149,26 @@ impl<const MAX_CPUS: usize> Default for SyscallInterface<MAX_CPUS> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_new_interface_is_uninitialized() {
+        let interface: SyscallInterface<8> = SyscallInterface::new();
+
+        assert!(!interface.is_initialized());
+        // No stack can be handed out before the CPL3 stack array is known.
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::NotInitialized));
+    }
+
+    #[test]
+    fn test_default_interface_is_uninitialized() {
+        let interface: SyscallInterface<8> = SyscallInterface::default();
+
+        assert!(!interface.is_initialized());
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::NotInitialized));
+    }
 
     #[test]
     fn test_cpl3_stack_calculation() {
@@ -167,10 +185,33 @@ mod tests {
     }
 
     #[test]
+    fn test_cpl3_stacks_stay_within_their_own_region() {
+        const BASE: u64 = 0x10000;
+        const SIZE: u64 = 0x4000;
+        let interface: SyscallInterface<8> = SyscallInterface::new();
+        interface.init(4, BASE, SIZE as usize).unwrap();
+
+        // Each CPU's stack pointer must sit at the top of its own slot, so no two CPUs can ever
+        // share a Ring 3 stack.
+        for cpu in 0..4u64 {
+            let stack = interface.get_cpl3_stack(cpu as usize).unwrap();
+            let region_start = BASE + SIZE * cpu;
+            let region_end = region_start + SIZE;
+
+            assert!(stack >= region_start, "CPU {} stack 0x{:x} below its region", cpu, stack);
+            assert!(stack < region_end, "CPU {} stack 0x{:x} past its region", cpu, stack);
+            assert_eq!(stack, region_end - core::mem::size_of::<usize>() as u64);
+        }
+    }
+
+    #[test]
     fn test_init_twice_fails() {
         let interface: SyscallInterface<8> = SyscallInterface::new();
         assert!(interface.init(4, 0x10000, 0x4000).is_ok());
         assert_eq!(interface.init(4, 0x10000, 0x4000), Err(SyscallSetupError::AlreadyInitialized));
+
+        // The original configuration survives the rejected re-initialization.
+        assert_eq!(interface.get_cpl3_stack(0).unwrap(), 0x13FF8);
     }
 
     #[test]
@@ -187,5 +228,29 @@ mod tests {
         let interface: SyscallInterface<4> = SyscallInterface::new();
         // Try to init with more CPUs than the const generic allows
         assert_eq!(interface.init(8, 0x10000, 0x4000), Err(SyscallSetupError::InvalidCpuIndex));
+        // A rejected count must leave the interface uninitialized rather than half-configured.
+        assert!(!interface.is_initialized());
+    }
+
+    #[test]
+    fn test_max_cpus_boundary_is_allowed() {
+        let interface: SyscallInterface<4> = SyscallInterface::new();
+
+        assert!(interface.init(4, 0x10000, 0x4000).is_ok());
+        assert_eq!(interface.get_cpl3_stack(3).unwrap(), 0x10000 + 0x4000 * 4 - 8);
+        assert_eq!(interface.get_cpl3_stack(4), Err(SyscallSetupError::InvalidCpuIndex));
+    }
+
+    #[test]
+    fn test_zero_cpus_rejected_and_interface_stays_usable() {
+        let interface: SyscallInterface<8> = SyscallInterface::new();
+
+        assert_eq!(interface.init(0, 0x10000, 0x4000), Err(SyscallSetupError::InvalidCpuIndex));
+        assert!(!interface.is_initialized());
+
+        // A rejected initialization must not lock out the real one that follows it.
+        assert!(interface.init(2, 0x20000, 0x1000).is_ok());
+        assert!(interface.is_initialized());
+        assert_eq!(interface.get_cpl3_stack(1).unwrap(), 0x21FF8);
     }
 }

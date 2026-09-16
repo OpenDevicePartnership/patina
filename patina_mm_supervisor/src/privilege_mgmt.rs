@@ -50,6 +50,7 @@ use patina::standard::efi::Status;
 
 mod call_gate;
 mod syscall_dispatcher;
+mod syscall_ops;
 pub(crate) mod syscall_setup;
 
 pub type SyscallResult = Result<u64, Status>; // Result of a syscall: Ok(value) or Err(EFI_STATUS)
@@ -157,8 +158,10 @@ pub(crate) mod mock {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use core::cell::RefCell;
 
     #[test]
     fn test_invoke_demoted_routine_delegates_to_mock_handler() {
@@ -181,6 +184,43 @@ mod tests {
         // SAFETY: see above.
         let ret = unsafe { invoke_demoted_routine(7, 0xdead_beef, 0xcafe, 3, 10, 20, 30) };
         assert_eq!(ret, 0x1234);
+
+        mock::clear();
+    }
+
+    #[test]
+    fn test_invoke_demoted_routine_reports_failures_from_ring_3() {
+        // A demoted routine that fails returns its EFI status through the wrapper, which is how
+        // callers learn the Ring 3 work did not succeed.
+        mock::set_handler(|_, _, _, _, _, _, _| Status::ACCESS_DENIED.as_usize());
+        // SAFETY: under `test` the wrapper delegates to the mock; no real privilege transition occurs.
+        let ret = unsafe { invoke_demoted_routine(0, 0x1000, 0x2000, 0, 0, 0, 0) };
+        assert_eq!(ret, Status::ACCESS_DENIED.as_usize());
+
+        // Clearing the handler restores the inert default rather than leaving the last one installed.
+        mock::clear();
+        // SAFETY: see above.
+        let ret = unsafe { invoke_demoted_routine(0, 0x1000, 0x2000, 0, 0, 0, 0) };
+        assert_eq!(ret, 0);
+    }
+
+    #[test]
+    fn test_invoke_demoted_routine_records_every_invocation() {
+        // Each call reaches the handler, so a test can drive a caller through several demotions.
+        let calls = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let recorder = calls.clone();
+        mock::set_handler(move |cpu_index, routine, _stack, arg_count, arg1, _, _| {
+            recorder.borrow_mut().push((cpu_index, routine, arg_count, arg1));
+            0
+        });
+
+        for cpu in 0..3usize {
+            // SAFETY: under `test` the wrapper delegates to the mock; no real privilege transition occurs.
+            let ret = unsafe { invoke_demoted_routine(cpu, 0x1000 + cpu as u64, 0x2000, 1, cpu as u64, 0, 0) };
+            assert_eq!(ret, 0);
+        }
+
+        assert_eq!(*calls.borrow(), vec![(0, 0x1000, 1, 0), (1, 0x1001, 1, 1), (2, 0x1002, 1, 2)]);
 
         mock::clear();
     }
