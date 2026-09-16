@@ -118,6 +118,13 @@ pub trait CpuInfo {
 #[cfg_attr(coverage, coverage(off))]
 pub fn initialize_cpu_subsystem() -> crate::error::Result<Interrupts> {
     let mut cpu = EfiCpu::default();
+    let log_level = log::max_level();
+
+    // Confidential VMs cannot log between GDT install and IDT install because this creates a #VE/#VC exception
+    // which cannot be handled until the IDT is installed. Disable logging globally through this transition.
+    #[cfg(feature = "confidential_compute")]
+    log::set_max_level(log::LevelFilter::Off);
+
     cpu.initialize().inspect_err(|err| {
         log::error!("Failed to initialize CPU subsystem: {err}");
     })?;
@@ -126,6 +133,9 @@ pub fn initialize_cpu_subsystem() -> crate::error::Result<Interrupts> {
     interrupt_manager.initialize().inspect_err(|err| {
         log::error!("Failed to initialize Interrupt Manager: {err}");
     })?;
+
+    // Restore logging
+    log::set_max_level(log_level);
 
     Ok(interrupt_manager)
 }

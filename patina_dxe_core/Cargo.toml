@@ -49,10 +49,11 @@ zerocopy-derive = { workspace = true }
 arm-gic = { workspace = true }
 
 [features]
+compatibility_mode_allowed = []
+confidential_compute = []
+debugger_reload = []
 default = []
 std = ["patina/std"]
-compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
-debugger_reload = []
 # All non-std features to test in CI
-ci_features = ["compatibility_mode_allowed", "v1_resource_descriptor_support", "debugger_reload"]
+ci_features = ["compatibility_mode_allowed", "confidential_compute", "debugger_reload", "v1_resource_descriptor_support"]
