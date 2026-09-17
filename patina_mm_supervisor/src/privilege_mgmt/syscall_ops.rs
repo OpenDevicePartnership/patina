@@ -145,7 +145,6 @@ pub trait SyscallOps {
 pub struct FirmwareOps;
 
 impl SyscallOps for FirmwareOps {
-    #[cfg_attr(coverage, coverage(off))]
     fn check_msr(&self, msr: u32, access: AccessType) -> PolicyDecision {
         match security_state().policy_gate() {
             Some(gate) => gate.is_msr_allowed(msr, access).into(),
@@ -153,7 +152,6 @@ impl SyscallOps for FirmwareOps {
         }
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn check_io(&self, port: u16, width: IoWidth, access: AccessType) -> PolicyDecision {
         match security_state().policy_gate() {
             Some(gate) => gate.is_io_allowed(u32::from(port), width, access).into(),
@@ -161,7 +159,6 @@ impl SyscallOps for FirmwareOps {
         }
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn check_instruction(&self, instruction: Instruction) -> PolicyDecision {
         match security_state().policy_gate() {
             Some(gate) => gate.is_instruction_allowed(instruction).into(),
@@ -171,7 +168,6 @@ impl SyscallOps for FirmwareOps {
 
     // Executes the privileged `rdmsr` instruction, which faults outside ring 0 and cannot run in
     // a host-based unit test.
-    #[cfg_attr(coverage, coverage(off))]
     unsafe fn read_msr(&self, msr: u32) -> u64 {
         // SAFETY: the caller validated this MSR against the firmware policy, as required by the
         // contract of `SyscallOps::read_msr`.
@@ -180,7 +176,6 @@ impl SyscallOps for FirmwareOps {
 
     // Executes the privileged `wrmsr` instruction, which faults outside ring 0 and cannot run in
     // a host-based unit test.
-    #[cfg_attr(coverage, coverage(off))]
     unsafe fn write_msr(&self, msr: u32, value: u64) {
         // SAFETY: the caller validated this MSR against the firmware policy, as required by the
         // contract of `SyscallOps::write_msr`.
@@ -188,7 +183,6 @@ impl SyscallOps for FirmwareOps {
     }
 
     // Executes `in`, which faults outside ring 0 and cannot run in a host-based unit test.
-    #[cfg_attr(coverage, coverage(off))]
     unsafe fn io_read(&self, port: u16, width: IoWidth) -> u64 {
         let value: u64;
         // SAFETY: the caller validated this port and width against the firmware policy, as
@@ -217,7 +211,6 @@ impl SyscallOps for FirmwareOps {
     }
 
     // Executes `out`, which faults outside ring 0 and cannot run in a host-based unit test.
-    #[cfg_attr(coverage, coverage(off))]
     unsafe fn io_write(&self, port: u16, width: IoWidth, value: u64) {
         // SAFETY: the caller validated this port and width against the firmware policy, as
         // required by the contract of `SyscallOps::io_write`. Each `out` writes only the
@@ -233,7 +226,6 @@ impl SyscallOps for FirmwareOps {
 
     // Executes privileged instructions that fault outside ring 0 and cannot run in a host-based
     // unit test.
-    #[cfg_attr(coverage, coverage(off))]
     unsafe fn execute_instruction(&self, instruction: Instruction) {
         // SAFETY: the caller validated the instruction against the firmware policy, as required by
         // the contract of `SyscallOps::execute_instruction`. Each instruction only updates
@@ -249,32 +241,26 @@ impl SyscallOps for FirmwareOps {
 
     // Reads the APIC base MSR, which faults outside ring 0 and cannot run in a host-based unit
     // test.
-    #[cfg_attr(coverage, coverage(off))]
     fn is_bsp(&self) -> bool {
         crate::is_bsp()
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn allocate_user_pages(&self, page_count: usize) -> Result<u64, PageAllocError> {
         security_state().page_allocator().allocate_pages_with_type(page_count, AllocationType::User)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn free_user_pages(&self, addr: u64, page_count: usize) -> Result<(), PageAllocError> {
         security_state().page_allocator().free_pages_checked(addr, page_count, AllocationType::User)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn allocation_type(&self, addr: u64) -> Option<AllocationType> {
         security_state().page_allocator().get_allocation_type(addr)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn query_address_ownership(&self, addr: u64, size: u64) -> Option<PageOwnership> {
         crate::query_address_ownership(addr, size)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn start_ap_procedure(&self, cpu_index: u64, procedure: u64, argument: u64) -> Option<u64> {
         let start_fn = init_state().ap_startup_fn()?;
         log::info!(
@@ -285,22 +271,18 @@ impl SyscallOps for FirmwareOps {
         Some(start_fn(cpu_index, procedure, argument))
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn save_state_read_phase1(&self, protocol: u64, register: u64, cpu_index: u64) -> SyscallResult {
         crate::save_state::save_state_read_phase1(protocol, register, cpu_index)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn save_state_read_phase2(&self, protocol: u64, width: u64, buffer: u64) -> SyscallResult {
         crate::save_state::save_state_read_phase2(protocol, width, buffer)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn is_within_unblocked_region(&self, addr: u64, size: u64) -> bool {
         security_state().unblocked_tracker().is_within_unblocked_region(addr, size)
     }
 
-    #[cfg_attr(coverage, coverage(off))]
     fn comm_buffer_config(&self) -> Option<CommBufferConfig> {
         security_state().comm_buffer_config().copied()
     }
@@ -310,6 +292,7 @@ impl SyscallOps for FirmwareOps {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use patina::standard::efi::Status;
 
     #[test]
     fn test_policy_decision_from_gate_result() {
@@ -334,4 +317,35 @@ mod tests {
         assert_eq!(ops.check_io(0xB2, IoWidth::Byte, AccessType::Write), PolicyDecision::Unavailable);
         assert_eq!(ops.check_instruction(Instruction::Cli), PolicyDecision::Unavailable);
     }
+
+    #[test]
+    fn test_firmware_ops_fails_closed_before_state_is_initialized() {
+        // Ring 3 can issue syscalls before the supervisor finishes bringing its state up. None of
+        // these may hand out memory, claim ownership of an address, or report a buffer as valid
+        // while the backing state is still uninitialized.
+        let ops = FirmwareOps;
+
+        // The page allocator refuses to serve or release memory it does not own yet.
+        assert_eq!(ops.allocate_user_pages(1), Err(PageAllocError::NotInitialized));
+        assert_eq!(ops.free_user_pages(0x1000, 1), Err(PageAllocError::NotInitialized));
+        assert_eq!(ops.allocation_type(0x1000), None);
+
+        // With no page table installed, ownership of an address is unknown rather than "user".
+        assert_eq!(ops.query_address_ownership(0x1000, 0x1000), None);
+
+        // Nothing has been unblocked and no communication buffer has been published. Note the
+        // tracker is deliberately permissive until core initialization completes (see
+        // `UnblockedMemoryTracker::is_memory_blocked`), so this reports the bootstrap answer.
+        assert!(ops.is_within_unblocked_region(0x1000, 0x1000));
+        assert!(ops.comm_buffer_config().is_none());
+
+        // Save-state metadata is published during initialization, so phase 1 is not ready.
+        assert_eq!(ops.save_state_read_phase1(0x1000, 38, 0), Err(Status::NOT_READY));
+    }
+
+    // `start_ap_procedure` and `save_state_read_phase2` are deliberately left uncovered rather
+    // than excluded from coverage: both depend on process-global state that other tests in this
+    // binary mutate (`set_instance` registers an AP startup function; the save-state tests own
+    // the phase 1/2 hand-off slot), so exercising them here would be order dependent. They are
+    // covered through the dispatcher instead, via `SyscallOps` test implementations.
 }

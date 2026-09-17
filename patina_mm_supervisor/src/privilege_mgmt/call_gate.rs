@@ -209,7 +209,6 @@ pub struct TaskStateSegment {
 /// This function is safe to call as it only reads the GDTR register.
 // Reads the GDTR of the running processor, which cannot be exercised deterministically in a
 // host-based unit test.
-#[cfg_attr(coverage, coverage(off))]
 pub unsafe fn get_current_gdt_base() -> u64 {
     // Get current GDT base
     let mut gdtr = GdtRegister::default();
@@ -285,7 +284,6 @@ fn program_privilege_transition_entries(
 // Reads the GDTR and CR0 of the running processor, which cannot be exercised in a host-based
 // unit test; the programming it performs is covered through
 // `program_privilege_transition_entries`.
-#[cfg_attr(coverage, coverage(off))]
 #[unsafe(no_mangle)]
 pub unsafe extern "efiapi" fn setup_call_gate(return_pointer: u64, cpl0_stack_ptr: u64) {
     // Get current GDT base
