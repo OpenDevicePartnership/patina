@@ -491,6 +491,25 @@ mod tests {
     }
 
     #[test]
+    fn test_update_entry_rejects_an_offset_that_overflows() {
+        // The offset arithmetic is guarded so a bogus descriptor offset can never wrap around and
+        // end up addressing memory outside the GDT image.
+        let mut gdt = empty_gdt();
+
+        assert_eq!(
+            update_entry::<CallGateDescriptor, _>(&mut gdt, usize::MAX, |desc| desc.set_offset(0x1000)),
+            Err(CallGateError::GdtTooSmall)
+        );
+        assert_eq!(
+            update_entry::<TaskStateSegment, _>(&mut gdt, usize::MAX - 4, |tss| tss.io_map_base = 0),
+            Err(CallGateError::GdtTooSmall)
+        );
+
+        // A rejected offset must leave the GDT untouched.
+        assert_eq!(gdt, empty_gdt());
+    }
+
+    #[test]
     fn test_program_privilege_transition_entries_is_idempotent() {
         let mut gdt = empty_gdt();
 

@@ -293,6 +293,7 @@ impl SyscallOps for FirmwareOps {
 mod tests {
     use super::*;
     use patina::standard::efi::Status;
+    use serial_test::serial;
 
     #[test]
     fn test_policy_decision_from_gate_result() {
@@ -305,17 +306,6 @@ mod tests {
             PolicyDecision::from(Err(PolicyError::PolicyRootNotFound)),
             PolicyDecision::Denied(PolicyError::PolicyRootNotFound)
         );
-    }
-
-    #[test]
-    fn test_firmware_ops_reports_uninitialized_policy_gate() {
-        // The global policy gate is never initialized in host tests, so every policy query must
-        // fail closed with `Unavailable` rather than silently allowing the access.
-        let ops = FirmwareOps;
-
-        assert_eq!(ops.check_msr(0x1B, AccessType::Read), PolicyDecision::Unavailable);
-        assert_eq!(ops.check_io(0xB2, IoWidth::Byte, AccessType::Write), PolicyDecision::Unavailable);
-        assert_eq!(ops.check_instruction(Instruction::Cli), PolicyDecision::Unavailable);
     }
 
     #[test]
@@ -343,9 +333,143 @@ mod tests {
         assert_eq!(ops.save_state_read_phase1(0x1000, 38, 0), Err(Status::NOT_READY));
     }
 
-    // `start_ap_procedure` and `save_state_read_phase2` are deliberately left uncovered rather
-    // than excluded from coverage: both depend on process-global state that other tests in this
-    // binary mutate (`set_instance` registers an AP startup function; the save-state tests own
-    // the phase 1/2 hand-off slot), so exercising them here would be order dependent. They are
-    // covered through the dispatcher instead, via `SyscallOps` test implementations.
+    // `start_ap_procedure` and `save_state_read_phase2` reach process-global state that other
+    // tests in this binary also touch, so the tests covering them are serialized below.
+
+    /// Byte offsets of the pieces of the synthetic policy blob built by [`install_test_policy`].
+    const ROOTS_OFFSET: u32 = 40;
+    const MSR_DESC_OFFSET: u32 = ROOTS_OFFSET + 3 * 24;
+    const IO_DESC_OFFSET: u32 = MSR_DESC_OFFSET + 8;
+    const INSTRUCTION_DESC_OFFSET: u32 = IO_DESC_OFFSET + 8;
+    const POLICY_SIZE: u32 = INSTRUCTION_DESC_OFFSET + 8;
+
+    /// MSR, I/O port and instruction the synthetic policy permits. Everything else is denied,
+    /// because each policy root uses allow-list semantics.
+    const ALLOWED_MSR: u32 = 0x1B;
+    const ALLOWED_PORT: u16 = 0xB2;
+
+    /// Appends a `PolicyRootV1` describing `count` descriptors of `policy_type` at `offset`.
+    fn push_policy_root(buf: &mut Vec<u8>, policy_type: u32, offset: u32, count: u32) {
+        buf.extend_from_slice(&1u32.to_le_bytes()); // version
+        buf.extend_from_slice(&24u32.to_le_bytes()); // policy_root_size
+        buf.extend_from_slice(&policy_type.to_le_bytes());
+        buf.extend_from_slice(&offset.to_le_bytes());
+        buf.extend_from_slice(&count.to_le_bytes());
+        buf.push(crate::mm_policy::ACCESS_ATTR_ALLOW);
+        buf.extend_from_slice(&[0u8; 3]); // reserved
+    }
+
+    /// Builds a minimal but valid V1.0 firmware policy and installs it as the global policy gate.
+    ///
+    /// The blob is laid out by hand (the policy structures are `repr(C)` and padding free) so the
+    /// test exercises the same parsing the supervisor performs on a real firmware policy.
+    fn install_test_policy() {
+        let mut buf: Vec<u8> = Vec::new();
+
+        // Header: `SecurePolicyDataV1_0`.
+        buf.extend_from_slice(&0u16.to_le_bytes()); // version_minor
+        buf.extend_from_slice(&1u16.to_le_bytes()); // version_major
+        buf.extend_from_slice(&POLICY_SIZE.to_le_bytes()); // size
+        buf.extend_from_slice(&0u32.to_le_bytes()); // memory_policy_offset
+        buf.extend_from_slice(&0u32.to_le_bytes()); // memory_policy_count
+        buf.extend_from_slice(&0u32.to_le_bytes()); // flags
+        buf.extend_from_slice(&0u32.to_le_bytes()); // capabilities
+        buf.extend_from_slice(&0u64.to_le_bytes()); // reserved
+        buf.extend_from_slice(&ROOTS_OFFSET.to_le_bytes()); // policy_root_offset
+        buf.extend_from_slice(&3u32.to_le_bytes()); // policy_root_count
+
+        push_policy_root(&mut buf, crate::mm_policy::TYPE_MSR, MSR_DESC_OFFSET, 1);
+        push_policy_root(&mut buf, crate::mm_policy::TYPE_IO, IO_DESC_OFFSET, 1);
+        push_policy_root(&mut buf, crate::mm_policy::TYPE_INSTRUCTION, INSTRUCTION_DESC_OFFSET, 1);
+
+        // `MsrDescriptorV1_0`: read and write of a single MSR.
+        buf.extend_from_slice(&ALLOWED_MSR.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes()); // length
+        buf.extend_from_slice(
+            &((crate::mm_policy::RESOURCE_ATTR_READ | crate::mm_policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
+        );
+
+        // `IoDescriptorV1_0`: read and write of a single byte-wide port.
+        buf.extend_from_slice(&ALLOWED_PORT.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes()); // length_or_width
+        buf.extend_from_slice(
+            &((crate::mm_policy::RESOURCE_ATTR_READ | crate::mm_policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
+        );
+        buf.extend_from_slice(&0u16.to_le_bytes()); // reserved
+
+        // `InstructionDescriptorV1_0`: execution of `CLI` only.
+        buf.extend_from_slice(&Instruction::Cli.as_index().to_le_bytes());
+        buf.extend_from_slice(&(crate::mm_policy::RESOURCE_ATTR_EXECUTE as u16).to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
+
+        assert_eq!(buf.len(), POLICY_SIZE as usize, "policy blob layout must match its offsets");
+
+        // The gate borrows the blob for the lifetime of the process, matching the firmware case
+        // where the policy lives in a reserved region.
+        let policy: &'static [u8] = Vec::leak(buf);
+
+        // SAFETY: `policy` points at a valid V1.0 policy blob (built above) that lives for the
+        // rest of the process, which is what `PolicyGate::new` requires.
+        let gate = unsafe { crate::mm_policy::PolicyGate::new(policy.as_ptr()) }.expect("policy blob is valid");
+        security_state().set_policy_gate(gate);
+    }
+
+    /// Stand-in AP startup function used when this test wins the one-time registration race.
+    fn test_ap_startup(_cpu_index: u64, _procedure: u64, _argument: u64) -> u64 {
+        Status::UNSUPPORTED.as_usize() as u64
+    }
+
+    #[test]
+    #[serial]
+    fn test_firmware_ops_policy_queries_follow_the_global_gate() {
+        let ops = FirmwareOps;
+
+        // Until the gate is installed every query fails closed, so Ring 3 cannot slip a request
+        // through during bring-up.
+        assert_eq!(ops.check_msr(ALLOWED_MSR, AccessType::Read), PolicyDecision::Unavailable);
+        assert_eq!(ops.check_io(ALLOWED_PORT, IoWidth::Byte, AccessType::Read), PolicyDecision::Unavailable);
+        assert_eq!(ops.check_instruction(Instruction::Cli), PolicyDecision::Unavailable);
+
+        install_test_policy();
+
+        // Permitted by the policy...
+        assert_eq!(ops.check_msr(ALLOWED_MSR, AccessType::Read), PolicyDecision::Allowed);
+        assert_eq!(ops.check_msr(ALLOWED_MSR, AccessType::Write), PolicyDecision::Allowed);
+        assert_eq!(ops.check_io(ALLOWED_PORT, IoWidth::Byte, AccessType::Read), PolicyDecision::Allowed);
+        assert_eq!(ops.check_instruction(Instruction::Cli), PolicyDecision::Allowed);
+
+        // ...and everything outside the allow list is denied.
+        assert_eq!(ops.check_msr(0x200, AccessType::Read), PolicyDecision::Denied(PolicyError::AccessDenied));
+        assert_eq!(
+            ops.check_io(0x70, IoWidth::Byte, AccessType::Read),
+            PolicyDecision::Denied(PolicyError::AccessDenied)
+        );
+        assert_eq!(ops.check_instruction(Instruction::Hlt), PolicyDecision::Denied(PolicyError::AccessDenied));
+
+        // A wider access than the descriptor covers is denied even on an allowed port.
+        assert_eq!(
+            ops.check_io(ALLOWED_PORT, IoWidth::Dword, AccessType::Read),
+            PolicyDecision::Denied(PolicyError::AccessDenied)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_firmware_ops_delegates_save_state_phase2_and_ap_startup() {
+        let ops = FirmwareOps;
+
+        // Phase 2 without a completed phase 1 must be rejected rather than reading save state.
+        assert_eq!(ops.save_state_read_phase2(0x1000, 8, 0x2000), Err(Status::INVALID_PARAMETER));
+
+        // Make sure an AP startup function is registered; this wins only if no other test got
+        // there first, and either way the delegation must report a status rather than `None`.
+        init_state().set_ap_startup_fn(test_ap_startup);
+        assert!(init_state().ap_startup_fn().is_some());
+
+        // `u64::MAX` is never a registered CPU index, so the registered function rejects it
+        // without dispatching any work to a processor.
+        let status = ops.start_ap_procedure(u64::MAX, 0x1000, 0);
+        assert!(status.is_some(), "a registered startup function must yield a status");
+        assert_ne!(status, Some(0), "an invalid CPU index must not report success");
+    }
 }

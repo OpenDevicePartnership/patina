@@ -242,6 +242,17 @@ mod tests {
     }
 
     #[test]
+    fn test_cpl3_stack_pointer_wraps_instead_of_panicking() {
+        // A malformed stack base/size from the PassDown HOB must not panic the supervisor with an
+        // arithmetic overflow; the calculation is defined to wrap.
+        let interface: SyscallInterface<4> = SyscallInterface::new();
+        interface.init(2, u64::MAX - 0x100, 0x1000).unwrap();
+
+        let stack = interface.get_cpl3_stack(0).unwrap();
+        assert_eq!(stack, (u64::MAX - 0x100).wrapping_add(0x1000).wrapping_sub(core::mem::size_of::<usize>() as u64));
+    }
+
+    #[test]
     fn test_zero_cpus_rejected_and_interface_stays_usable() {
         let interface: SyscallInterface<8> = SyscallInterface::new();
 

@@ -569,6 +569,7 @@ fn read_lma_register(view: &SaveStateView, width: u64, out: &mut [u8]) -> Syscal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     struct TestPlatform;
 
@@ -679,7 +680,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_save_state_access_holder() {
+        // Serialized because `FirmwareOps::save_state_read_phase2` consumes this same global
+        // hand-off slot in `privilege_mgmt::syscall_ops`.
         // Test that the mutex works correctly for Phase 1/Phase 2.
         {
             let mut access = crate::state::security_state().lock_save_state_access();
