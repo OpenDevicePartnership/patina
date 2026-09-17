@@ -22,3 +22,17 @@ pub(super) fn handle_comm_update(_comm_buffer: *mut u8, comm_buffer_size: &mut u
 
     efi::Status::ACCESS_DENIED
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_dynamic_updates_and_returns_only_the_response_header() {
+        let mut size = usize::MAX;
+
+        assert_eq!(handle_comm_update(core::ptr::null_mut(), &mut size), efi::Status::ACCESS_DENIED);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+    }
+}
