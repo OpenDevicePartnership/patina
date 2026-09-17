@@ -1083,9 +1083,9 @@ mod tests {
         assert_eq!(denied.handle_instruction(Instruction::Cli), Err(Status::ACCESS_DENIED));
         assert_eq!(denied.ops.effects(), vec![Effect::CheckInstruction(Instruction::Cli)]);
 
-        let ungated = dispatcher(MockOps { instruction_policy: PolicyDecision::Unavailable, ..Default::default() });
-        assert_eq!(ungated.handle_instruction(Instruction::Hlt), Err(Status::NOT_READY));
-        assert_eq!(ungated.ops.effects(), vec![Effect::CheckInstruction(Instruction::Hlt)]);
+        let open_gate = dispatcher(MockOps { instruction_policy: PolicyDecision::Unavailable, ..Default::default() });
+        assert_eq!(open_gate.handle_instruction(Instruction::Hlt), Err(Status::NOT_READY));
+        assert_eq!(open_gate.ops.effects(), vec![Effect::CheckInstruction(Instruction::Hlt)]);
     }
 
     #[test]
