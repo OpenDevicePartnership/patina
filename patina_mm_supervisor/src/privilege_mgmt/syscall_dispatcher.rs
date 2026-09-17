@@ -2,13 +2,13 @@
 //!
 //! This module handles syscall requests from Ring 3 code. When Ring 3 code
 //! executes the `syscall` instruction, the CPU jumps to the address in
-//! MSR_IA32_LSTAR (our SyscallCenter assembly stub), which then calls into
+//! `MSR_IA32_LSTAR` (our `SyscallCenter` assembly stub), which then calls into
 //! this dispatcher.
 //!
 //! ## Syscall Interface
 //!
 //! The syscall uses a custom calling convention:
-//! - RAX: Call index (SyscallIndex)
+//! - RAX: Call index (`SyscallIndex`)
 //! - RDX: Argument 1
 //! - R8:  Argument 2
 //! - R9:  Argument 3
@@ -53,16 +53,16 @@ use super::{
 #[cfg(target_os = "uefi")]
 core::arch::global_asm!(include_str!("syscall_entry.asm"));
 
-/// MM_IO_UINT8 - 8-bit I/O access width.
+/// `MM_IO_UINT8` - 8-bit I/O access width.
 const MM_IO_UINT8: u64 = 0;
-/// MM_IO_UINT16 - 16-bit I/O access width.
+/// `MM_IO_UINT16` - 16-bit I/O access width.
 const MM_IO_UINT16: u64 = 1;
-/// MM_IO_UINT32 - 32-bit I/O access width.
+/// `MM_IO_UINT32` - 32-bit I/O access width.
 const MM_IO_UINT32: u64 = 2;
 
-/// Converts an EFI_MM_IO_WIDTH enum value to our [`IoWidth`] type.
+/// Converts an `EFI_MM_IO_WIDTH` enum value to our [`IoWidth`] type.
 ///
-/// The EFI spec defines: MM_IO_UINT8=0, MM_IO_UINT16=1, MM_IO_UINT32=2.
+/// The EFI spec defines: `MM_IO_UINT8=0`, `MM_IO_UINT16=1`, `MM_IO_UINT32=2`.
 fn efi_io_width_to_io_width(width: u64) -> Option<IoWidth> {
     match width {
         MM_IO_UINT8 => Some(IoWidth::Byte),
@@ -87,11 +87,11 @@ fn check_policy(operation: &str, decision: PolicyDecision) -> Result<(), Status>
     match decision {
         PolicyDecision::Allowed => Ok(()),
         PolicyDecision::Denied(err) => {
-            log::error!("{}: Blocked by policy: {:?}", operation, err);
+            log::error!("{operation}: Blocked by policy: {err:?}");
             Err(Status::ACCESS_DENIED)
         }
         PolicyDecision::Unavailable => {
-            log::error!("{}: Policy gate not initialized", operation);
+            log::error!("{operation}: Policy gate not initialized");
             Err(Status::NOT_READY)
         }
     }
@@ -153,12 +153,11 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     /// is returned to Ring 3 in RAX.
     pub fn dispatch(&self, ctx: &SyscallContext) -> SyscallResult {
         // Parse the syscall index
-        let index = match SyscallIndex::from_u64(ctx.call_index) {
-            Some(idx) => idx,
-            None => {
-                log::error!("Unknown syscall index: 0x{:x}", ctx.call_index);
-                return Err(Status::UNSUPPORTED);
-            }
+        let index = if let Some(idx) = SyscallIndex::from_u64(ctx.call_index) {
+            idx
+        } else {
+            log::error!("Unknown syscall index: 0x{:x}", ctx.call_index);
+            return Err(Status::UNSUPPORTED);
         };
 
         log::trace!(
@@ -197,7 +196,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
                 Ok(err.as_usize() as u64) // Return error code to caller for SaveStateRead2
             }
             Err(err) => {
-                panic!("Syscall: {:?} failed with error: {:?}", index, err); // Panic for other syscalls
+                panic!("Syscall: {index:?} failed with error: {err:?}"); // Panic for other syscalls
             }
             _ => result,
         }
@@ -210,14 +209,14 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     /// - Returns: MSR value in result.value
     fn handle_rdmsr(&self, ctx: &SyscallContext) -> SyscallResult {
         let msr_index = ctx.arg1 as u32;
-        log::trace!("RDMSR: msr=0x{:x}", msr_index);
+        log::trace!("RDMSR: msr=0x{msr_index:x}");
 
         check_policy("RDMSR", self.ops.check_msr(msr_index, AccessType::Read))?;
 
         // SAFETY: the policy gate authorized reading this MSR above, which is the contract of
         // `SyscallOps::read_msr`.
         let value = unsafe { self.ops.read_msr(msr_index) };
-        log::debug!("RDMSR: MSR 0x{:x} = 0x{:x}", msr_index, value);
+        log::debug!("RDMSR: MSR 0x{msr_index:x} = 0x{value:x}");
         Ok(value)
     }
 
@@ -229,14 +228,14 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     fn handle_wrmsr(&self, ctx: &SyscallContext) -> SyscallResult {
         let msr_index = ctx.arg1 as u32;
         let value = ctx.arg2;
-        log::trace!("WRMSR: msr=0x{:x}, value=0x{:x}", msr_index, value);
+        log::trace!("WRMSR: msr=0x{msr_index:x}, value=0x{value:x}");
 
         check_policy("WRMSR", self.ops.check_msr(msr_index, AccessType::Write))?;
 
         // SAFETY: the policy gate authorized writing this MSR above, which is the contract of
         // `SyscallOps::write_msr`.
         unsafe { self.ops.write_msr(msr_index, value) };
-        log::debug!("WRMSR: MSR 0x{:x} written with 0x{:x}", msr_index, value);
+        log::debug!("WRMSR: MSR 0x{msr_index:x} written with 0x{value:x}");
         Ok(0)
     }
 
@@ -245,14 +244,14 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     ///
     /// Validates the instruction against firmware policy before executing it.
     fn handle_instruction(&self, instruction: Instruction) -> SyscallResult {
-        log::trace!("{:?}", instruction);
+        log::trace!("{instruction:?}");
 
         check_policy(instruction_name(instruction), self.ops.check_instruction(instruction))?;
 
         // SAFETY: the policy gate authorized this instruction above, which is the contract of
         // `SyscallOps::execute_instruction`.
         unsafe { self.ops.execute_instruction(instruction) };
-        log::debug!("{:?}: Executed", instruction);
+        log::debug!("{instruction:?}: Executed");
         Ok(0)
     }
 
@@ -260,7 +259,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     ///
     /// Validates the I/O read against firmware policy, then executes the `in` instruction.
     /// - Arg1: I/O port address
-    /// - Arg2: EFI_MM_IO_WIDTH (0=UINT8, 1=UINT16, 2=UINT32)
+    /// - Arg2: `EFI_MM_IO_WIDTH` (0=UINT8, 1=UINT16, 2=UINT32)
     /// - Returns: Value read from the port in result.value
     ///
     /// A port outside the 16-bit I/O space is rejected with `EFI_INVALID_PARAMETER` rather than
@@ -268,24 +267,22 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     fn handle_io_read(&self, ctx: &SyscallContext) -> SyscallResult {
         let port = ctx.arg1;
         let efi_width = ctx.arg2;
-        log::trace!("IO_READ: port=0x{:x}, width={}", port, efi_width);
+        log::trace!("IO_READ: port=0x{port:x}, width={efi_width}");
 
         // Convert EFI_MM_IO_WIDTH to IoWidth
-        let io_width = match efi_io_width_to_io_width(efi_width) {
-            Some(w) => w,
-            None => {
-                log::error!("IO_READ: Invalid IO width: {}", efi_width);
-                return Err(Status::INVALID_PARAMETER);
-            }
+        let io_width = if let Some(w) = efi_io_width_to_io_width(efi_width) {
+            w
+        } else {
+            log::error!("IO_READ: Invalid IO width: {efi_width}");
+            return Err(Status::INVALID_PARAMETER);
         };
 
         // Reject ports outside the 16-bit I/O space before the policy gate sees them.
-        let port_addr = match io_port_from_arg(port) {
-            Some(p) => p,
-            None => {
-                log::error!("IO_READ: Port 0x{:x} is outside the 16-bit I/O space", port);
-                return Err(Status::INVALID_PARAMETER);
-            }
+        let port_addr = if let Some(p) = io_port_from_arg(port) {
+            p
+        } else {
+            log::error!("IO_READ: Port 0x{port:x} is outside the 16-bit I/O space");
+            return Err(Status::INVALID_PARAMETER);
         };
 
         check_policy("IO_READ", self.ops.check_io(port_addr, io_width, AccessType::Read))?;
@@ -294,7 +291,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // contract of `SyscallOps::io_read`.
         let value = unsafe { self.ops.io_read(port_addr, io_width) };
 
-        log::trace!("IO_READ: port=0x{:x} => 0x{:x}", port, value);
+        log::trace!("IO_READ: port=0x{port:x} => 0x{value:x}");
         Ok(value)
     }
 
@@ -302,7 +299,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     ///
     /// Validates the I/O write against firmware policy, then executes the `out` instruction.
     /// - Arg1: I/O port address
-    /// - Arg2: EFI_MM_IO_WIDTH (0=UINT8, 1=UINT16, 2=UINT32)
+    /// - Arg2: `EFI_MM_IO_WIDTH` (0=UINT8, 1=UINT16, 2=UINT32)
     /// - Arg3: Value to write
     ///
     /// A port outside the 16-bit I/O space is rejected with `EFI_INVALID_PARAMETER` rather than
@@ -311,24 +308,22 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         let port = ctx.arg1;
         let efi_width = ctx.arg2;
         let value = ctx.arg3;
-        log::trace!("IO_WRITE: port=0x{:x}, width={}, value=0x{:x}", port, efi_width, value);
+        log::trace!("IO_WRITE: port=0x{port:x}, width={efi_width}, value=0x{value:x}");
 
         // Convert EFI_MM_IO_WIDTH to IoWidth
-        let io_width = match efi_io_width_to_io_width(efi_width) {
-            Some(w) => w,
-            None => {
-                log::error!("IO_WRITE: Invalid IO width: {}", efi_width);
-                return Err(Status::INVALID_PARAMETER);
-            }
+        let io_width = if let Some(w) = efi_io_width_to_io_width(efi_width) {
+            w
+        } else {
+            log::error!("IO_WRITE: Invalid IO width: {efi_width}");
+            return Err(Status::INVALID_PARAMETER);
         };
 
         // Reject ports outside the 16-bit I/O space before the policy gate sees them.
-        let port_addr = match io_port_from_arg(port) {
-            Some(p) => p,
-            None => {
-                log::error!("IO_WRITE: Port 0x{:x} is outside the 16-bit I/O space", port);
-                return Err(Status::INVALID_PARAMETER);
-            }
+        let port_addr = if let Some(p) = io_port_from_arg(port) {
+            p
+        } else {
+            log::error!("IO_WRITE: Port 0x{port:x} is outside the 16-bit I/O space");
+            return Err(Status::INVALID_PARAMETER);
         };
 
         check_policy("IO_WRITE", self.ops.check_io(port_addr, io_width, AccessType::Write))?;
@@ -337,7 +332,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // contract of `SyscallOps::io_write`.
         unsafe { self.ops.io_write(port_addr, io_width, value) };
 
-        log::trace!("IO_WRITE: port=0x{:x} <= 0x{:x}", port, value);
+        log::trace!("IO_WRITE: port=0x{port:x} <= 0x{value:x}");
         Ok(0)
     }
 
@@ -361,15 +356,15 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
 
     /// Handles page allocation syscall.
     ///
-    /// - Arg1: Allocate type (EFI_ALLOCATE_TYPE)
-    /// - Arg2: Memory type (must be EfiRuntimeServicesData)
+    /// - Arg1: Allocate type (`EFI_ALLOCATE_TYPE`)
+    /// - Arg2: Memory type (must be `EfiRuntimeServicesData`)
     /// - Arg3: Page count
     /// - Returns: Allocated physical address in result.value
     fn handle_alloc_page(&self, ctx: &SyscallContext) -> SyscallResult {
         let alloc_type = ctx.arg1 as AllocateType;
         let mem_type = ctx.arg2 as MemoryType;
         let page_count = ctx.arg3;
-        log::trace!("ALLOC_PAGE: alloc_type={}, mem_type={}, count={}", alloc_type, mem_type, page_count);
+        log::trace!("ALLOC_PAGE: alloc_type={alloc_type}, mem_type={mem_type}, count={page_count}");
 
         // Only BSP can allocate pages (AP allocating involves page table updates)
         if !self.ops.is_bsp() {
@@ -378,13 +373,13 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         }
 
         if mem_type != RUNTIME_SERVICES_DATA {
-            log::error!("ALLOC_PAGE: Invalid memory type: {}", mem_type);
+            log::error!("ALLOC_PAGE: Invalid memory type: {mem_type}");
             return Err(Status::INVALID_PARAMETER);
         }
 
         // Currently only AllocateAnyPages is supported by our page allocator
         if alloc_type != ALLOCATE_ANY_PAGES {
-            log::error!("ALLOC_PAGE: Only AllocateAnyPages (0) is supported, got {}", alloc_type);
+            log::error!("ALLOC_PAGE: Only AllocateAnyPages (0) is supported, got {alloc_type}");
             return Err(Status::UNSUPPORTED);
         }
 
@@ -396,11 +391,11 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // Allocate pages as User type (Ring 3 driver request)
         match self.ops.allocate_user_pages(page_count as usize) {
             Ok(addr) => {
-                log::trace!("ALLOC_PAGE: Allocated {} page(s) at 0x{:x}", page_count, addr);
+                log::trace!("ALLOC_PAGE: Allocated {page_count} page(s) at 0x{addr:x}");
                 Ok(addr)
             }
             Err(e) => {
-                log::error!("ALLOC_PAGE: Allocation failed: {:?}", e);
+                log::error!("ALLOC_PAGE: Allocation failed: {e:?}");
                 Err(Status::OUT_OF_RESOURCES)
             }
         }
@@ -414,7 +409,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     fn handle_free_page(&self, ctx: &SyscallContext) -> SyscallResult {
         let addr = ctx.arg1;
         let page_count = ctx.arg2;
-        log::trace!("FREE_PAGE: addr=0x{:x}, count={}", addr, page_count);
+        log::trace!("FREE_PAGE: addr=0x{addr:x}, count={page_count}");
 
         if page_count == 0 {
             log::error!("FREE_PAGE: Zero page count");
@@ -423,7 +418,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
 
         // Validate the address is page-aligned
         if !addr.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            log::error!("FREE_PAGE: Address 0x{:x} is not page-aligned", addr);
+            log::error!("FREE_PAGE: Address 0x{addr:x} is not page-aligned");
             return Err(Status::INVALID_PARAMETER);
         }
 
@@ -434,11 +429,11 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
                 // Good - this is user-owned memory
             }
             Some(crate::mem::AllocationType::Supervisor) => {
-                log::error!("FREE_PAGE: Address 0x{:x} is a supervisor allocation - access denied", addr);
+                log::error!("FREE_PAGE: Address 0x{addr:x} is a supervisor allocation - access denied");
                 return Err(Status::SECURITY_VIOLATION);
             }
             None => {
-                log::error!("FREE_PAGE: Address 0x{:x} is not allocated", addr);
+                log::error!("FREE_PAGE: Address 0x{addr:x} is not allocated");
                 return Err(Status::INVALID_PARAMETER);
             }
         }
@@ -446,11 +441,11 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // Free the pages, verifying they are all User allocations
         match self.ops.free_user_pages(addr, page_count as usize) {
             Ok(()) => {
-                log::debug!("FREE_PAGE: Freed {} page(s) at 0x{:x}", page_count, addr);
+                log::debug!("FREE_PAGE: Freed {page_count} page(s) at 0x{addr:x}");
                 Ok(0)
             }
             Err(e) => {
-                log::error!("FREE_PAGE: Free failed: {:?}", e);
+                log::error!("FREE_PAGE: Free failed: {e:?}");
                 Err(Status::SECURITY_VIOLATION)
             }
         }
@@ -478,7 +473,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         let cpu_index = ctx.arg2;
         let argument = ctx.arg3;
 
-        log::info!("START_AP_PROC: proc=0x{:x}, cpu={}, arg=0x{:x}", procedure, cpu_index, argument);
+        log::info!("START_AP_PROC: proc=0x{procedure:x}, cpu={cpu_index}, arg=0x{argument:x}");
 
         // 1. Validate procedure pointer is non-null
         if procedure == 0 {
@@ -488,13 +483,13 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
 
         // 2. Validate procedure pointer is within mapped memory via page table query
         if self.ops.query_address_ownership(procedure, core::mem::size_of::<usize>() as u64).is_none() {
-            log::error!("START_AP_PROC: Procedure 0x{:x} not in mapped memory", procedure);
+            log::error!("START_AP_PROC: Procedure 0x{procedure:x} not in mapped memory");
             return Err(Status::INVALID_PARAMETER);
         }
 
         // 3. Validate argument pointer (if non-null) is within mapped memory
         if argument != 0 && self.ops.query_address_ownership(argument, core::mem::size_of::<usize>() as u64).is_none() {
-            log::error!("START_AP_PROC: Argument 0x{:x} not in mapped memory", argument);
+            log::error!("START_AP_PROC: Argument 0x{argument:x} not in mapped memory");
             return Err(Status::INVALID_PARAMETER);
         }
 
@@ -535,36 +530,28 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     fn handle_mm_memory_unblocked(&self, ctx: &SyscallContext) -> SyscallResult {
         let addr = ctx.arg1;
         let size = ctx.arg2;
-        log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{:x}, size=0x{:x}", addr, size);
+        log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{addr:x}, size=0x{size:x}");
 
         // Check if the buffer is within an unblocked memory region
         let is_valid = self.ops.is_within_unblocked_region(addr, size);
 
         if !is_valid {
-            log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{:x} size=0x{:x} not in unblocked region", addr, size);
+            log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{addr:x} size=0x{size:x} not in unblocked region");
             return Ok(0); // FALSE
         }
 
         // Additional check - verify buffer is in user-owned space
-        match self.ops.query_address_ownership(addr, size) {
-            Some(owner) => {
-                if owner != PageOwnership::User {
-                    log::trace!(
-                        "MM_MEMORY_UNBLOCKED: addr=0x{:x} size=0x{:x} owned by {:?} - not valid",
-                        addr,
-                        size,
-                        owner
-                    );
-                    return Ok(0); // FALSE
-                }
-            }
-            None => {
-                log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{:x} size=0x{:x} not in mapped memory", addr, size);
+        if let Some(owner) = self.ops.query_address_ownership(addr, size) {
+            if owner != PageOwnership::User {
+                log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{addr:x} size=0x{size:x} owned by {owner:?} - not valid");
                 return Ok(0); // FALSE
             }
+        } else {
+            log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{addr:x} size=0x{size:x} not in mapped memory");
+            return Ok(0); // FALSE
         }
 
-        log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{:x} size=0x{:x} is valid", addr, size);
+        log::trace!("MM_MEMORY_UNBLOCKED: addr=0x{addr:x} size=0x{size:x} is valid");
         Ok(1) // TRUE
     }
 
@@ -577,14 +564,13 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     fn handle_mm_is_comm_buffer(&self, ctx: &SyscallContext) -> SyscallResult {
         let address = ctx.arg1;
         let size = ctx.arg2;
-        log::trace!("MM_IS_COMM_BUFFER: addr=0x{:x}, size=0x{:x}", address, size);
+        log::trace!("MM_IS_COMM_BUFFER: addr=0x{address:x}, size=0x{size:x}");
 
-        let config = match self.ops.comm_buffer_config() {
-            Some(c) => c,
-            None => {
-                log::error!("MM_IS_COMM_BUFFER: Comm buffer config not initialized");
-                return Ok(0); // FALSE
-            }
+        let config = if let Some(c) = self.ops.comm_buffer_config() {
+            c
+        } else {
+            log::error!("MM_IS_COMM_BUFFER: Comm buffer config not initialized");
+            return Ok(0); // FALSE
         };
 
         let buf_start = config.user_comm_buffer_internal;
@@ -594,14 +580,14 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // Check that the range is non-empty and falls entirely within the user comm buffer.
         let is_valid = size > 0 && address >= buf_start && range_end <= buf_end;
 
-        log::debug!("MM_IS_COMM_BUFFER: addr=0x{:x} size=0x{:x} => {}", address, size, is_valid);
+        log::debug!("MM_IS_COMM_BUFFER: addr=0x{address:x} size=0x{size:x} => {is_valid}");
         if is_valid { Ok(1) } else { Ok(0) }
     }
 }
 
 /// C-compatible syscall dispatcher entry point.
 ///
-/// This function is called from the assembly syscall entry stub (SyscallCenter). Its parameters
+/// This function is called from the assembly syscall entry stub (`SyscallCenter`). Its parameters
 /// carry the syscall registers described by the module-level calling convention, and its return
 /// value is the result placed in RAX for the Ring 3 caller.
 #[unsafe(no_mangle)]
@@ -871,8 +857,8 @@ mod tests {
 
     #[test]
     fn test_dispatch_routes_to_handlers() {
-        let any = ALLOCATE_ANY_PAGES as u64;
-        let data = RUNTIME_SERVICES_DATA as u64;
+        let any = u64::from(ALLOCATE_ANY_PAGES);
+        let data = u64::from(RUNTIME_SERVICES_DATA);
         let comm_buffer = CommBufferConfig {
             user_comm_buffer_internal: 0x1_0000,
             user_comm_buffer_size: 0x1000,
@@ -987,14 +973,9 @@ mod tests {
             let (arg1, arg2, arg3) = case.args;
             let d = dispatcher(case.ops);
 
-            assert_eq!(
-                d.dispatch(&ctx(index.as_u64(), arg1, arg2, arg3)),
-                case.expected,
-                "wrong result for {:?}",
-                index
-            );
+            assert_eq!(d.dispatch(&ctx(index.as_u64(), arg1, arg2, arg3)), case.expected, "wrong result for {index:?}");
             if let Some(effect) = case.effect {
-                assert!(d.ops.effects().contains(&effect), "{:?} did not produce {:?}", index, effect);
+                assert!(d.ops.effects().contains(&effect), "{index:?} did not produce {effect:?}");
             }
         }
     }
@@ -1088,8 +1069,7 @@ mod tests {
             assert_eq!(
                 d.ops.effects(),
                 vec![Effect::CheckInstruction(instruction), Effect::Execute(instruction)],
-                "unexpected effects for {:?}",
-                instruction
+                "unexpected effects for {instruction:?}"
             );
         }
     }
@@ -1200,7 +1180,7 @@ mod tests {
         let d = dispatcher(MockOps { allocate_result: Ok(0x8000), ..Default::default() });
 
         assert_eq!(
-            d.handle_alloc_page(&ctx(0, ALLOCATE_ANY_PAGES as u64, RUNTIME_SERVICES_DATA as u64, 2)),
+            d.handle_alloc_page(&ctx(0, u64::from(ALLOCATE_ANY_PAGES), u64::from(RUNTIME_SERVICES_DATA), 2)),
             Ok(0x8000)
         );
         assert_eq!(d.ops.effects(), vec![Effect::AllocateUserPages(2)]);
@@ -1208,8 +1188,8 @@ mod tests {
 
     #[test]
     fn test_alloc_page_rejects_invalid_requests() {
-        let any = ALLOCATE_ANY_PAGES as u64;
-        let data = RUNTIME_SERVICES_DATA as u64;
+        let any = u64::from(ALLOCATE_ANY_PAGES);
+        let data = u64::from(RUNTIME_SERVICES_DATA);
 
         // Every rejected request must be refused with the documented status *and* must never
         // reach the page allocator, so each case checks the recorded effects of its own mock.
@@ -1226,8 +1206,8 @@ mod tests {
 
         for (name, ops, alloc_type, mem_type, page_count, expected) in cases {
             let d = dispatcher(ops);
-            assert_eq!(d.handle_alloc_page(&ctx(0, alloc_type, mem_type, page_count)), Err(expected), "{}", name);
-            assert!(d.ops.effects().is_empty(), "{} reached the allocator", name);
+            assert_eq!(d.handle_alloc_page(&ctx(0, alloc_type, mem_type, page_count)), Err(expected), "{name}");
+            assert!(d.ops.effects().is_empty(), "{name} reached the allocator");
         }
     }
 
@@ -1236,7 +1216,7 @@ mod tests {
         let d = dispatcher(MockOps { allocate_result: Err(PageAllocError::OutOfMemory), ..Default::default() });
 
         assert_eq!(
-            d.handle_alloc_page(&ctx(0, ALLOCATE_ANY_PAGES as u64, RUNTIME_SERVICES_DATA as u64, 4)),
+            d.handle_alloc_page(&ctx(0, u64::from(ALLOCATE_ANY_PAGES), u64::from(RUNTIME_SERVICES_DATA), 4)),
             Err(Status::OUT_OF_RESOURCES)
         );
         assert_eq!(d.ops.effects(), vec![Effect::AllocateUserPages(4)]);
@@ -1277,8 +1257,8 @@ mod tests {
 
         for (name, ops, addr, page_count, expected) in cases {
             let d = dispatcher(ops);
-            assert_eq!(d.handle_free_page(&ctx(0, addr, page_count, 0)), Err(expected), "{}", name);
-            assert!(d.ops.effects().is_empty(), "{} reached the allocator", name);
+            assert_eq!(d.handle_free_page(&ctx(0, addr, page_count, 0)), Err(expected), "{name}");
+            assert!(d.ops.effects().is_empty(), "{name} reached the allocator");
         }
     }
 
@@ -1331,10 +1311,9 @@ mod tests {
             assert_eq!(
                 d.handle_start_ap_proc(&ctx(0, procedure, 1, argument)),
                 Err(Status::INVALID_PARAMETER),
-                "{}",
-                name
+                "{name}"
             );
-            assert!(d.ops.effects().is_empty(), "{} was dispatched to an AP", name);
+            assert!(d.ops.effects().is_empty(), "{name} was dispatched to an AP");
         }
     }
 

@@ -198,8 +198,8 @@ mod tests {
             let region_start = BASE + SIZE * cpu;
             let region_end = region_start + SIZE;
 
-            assert!(stack >= region_start, "CPU {} stack 0x{:x} below its region", cpu, stack);
-            assert!(stack < region_end, "CPU {} stack 0x{:x} past its region", cpu, stack);
+            assert!(stack >= region_start, "CPU {cpu} stack 0x{stack:x} below its region");
+            assert!(stack < region_end, "CPU {cpu} stack 0x{stack:x} past its region");
             assert_eq!(stack, region_end - core::mem::size_of::<usize>() as u64);
         }
     }

@@ -156,7 +156,7 @@ impl SyscallOps for FirmwareOps {
     #[cfg_attr(coverage, coverage(off))]
     fn check_io(&self, port: u16, width: IoWidth, access: AccessType) -> PolicyDecision {
         match security_state().policy_gate() {
-            Some(gate) => gate.is_io_allowed(port as u32, width, access).into(),
+            Some(gate) => gate.is_io_allowed(u32::from(port), width, access).into(),
             None => PolicyDecision::Unavailable,
         }
     }
@@ -199,17 +199,17 @@ impl SyscallOps for FirmwareOps {
                 IoWidth::Byte => {
                     let data: u8;
                     asm!("in al, dx", out("al") data, in("dx") port, options(nomem, nostack));
-                    value = data as u64;
+                    value = u64::from(data);
                 }
                 IoWidth::Word => {
                     let data: u16;
                     asm!("in ax, dx", out("ax") data, in("dx") port, options(nomem, nostack));
-                    value = data as u64;
+                    value = u64::from(data);
                 }
                 IoWidth::Dword => {
                     let data: u32;
                     asm!("in eax, dx", out("eax") data, in("dx") port, options(nomem, nostack));
-                    value = data as u64;
+                    value = u64::from(data);
                 }
             }
         }

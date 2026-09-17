@@ -109,7 +109,7 @@ impl CallGateDescriptor {
     /// Only used by the unit tests, which read back what [`Self::set_offset`] encoded.
     #[cfg(test)]
     pub fn offset(&self) -> u64 {
-        (self.offset_high as u64) << 32 | (self.offset_mid as u64) << 16 | self.offset_low as u64
+        u64::from(self.offset_high) << 32 | u64::from(self.offset_mid) << 16 | u64::from(self.offset_low)
     }
 
     /// Configures the descriptor as the present, Ring 3 callable call gate used to return to
@@ -165,10 +165,10 @@ impl TssDescriptor {
     /// Only used by the unit tests, which read back what [`Self::set_base`] encoded.
     #[cfg(test)]
     pub fn base(&self) -> u64 {
-        (self.base_high as u64) << 32
-            | (self.base_mid_high as u64) << 24
-            | (self.base_mid_low as u64) << 16
-            | self.base_low as u64
+        u64::from(self.base_high) << 32
+            | u64::from(self.base_mid_high) << 24
+            | u64::from(self.base_mid_low) << 16
+            | u64::from(self.base_low)
     }
 }
 
@@ -260,7 +260,7 @@ fn program_privilege_transition_entries(
     return_pointer: u64,
     cpl0_stack_ptr: u64,
 ) -> Result<(), CallGateError> {
-    let tss_addr = gdt_base.wrapping_add(TSS_DESC_OFFSET as u64);
+    let tss_addr = gdt_base.wrapping_add(u64::from(TSS_DESC_OFFSET));
 
     // Program the call gate descriptor for the return address.
     update_entry::<CallGateDescriptor, _>(gdt, CALL_GATE_OFFSET as usize, |desc| desc.set_return_gate(return_pointer))?;
@@ -270,7 +270,7 @@ fn program_privilege_transition_entries(
 
     // Update RSP0 in the TSS.
     update_entry::<TaskStateSegment, _>(gdt, TSS_DESC_OFFSET as usize, |tss| {
-        tss.privilege_stack_table[0] = cpl0_stack_ptr
+        tss.privilege_stack_table[0] = cpl0_stack_ptr;
     })?;
 
     Ok(())
@@ -317,7 +317,7 @@ pub unsafe extern "efiapi" fn setup_call_gate(return_pointer: u64, cpl0_stack_pt
 
     result.expect("GDT contains the call gate, TSS descriptor and TSS");
 
-    log::trace!("Call gate set to 0x{:016x}, CPL0 stack pointer set to 0x{:016x}", return_pointer, cpl0_stack_ptr);
+    log::trace!("Call gate set to 0x{return_pointer:016x}, CPL0 stack pointer set to 0x{cpl0_stack_ptr:016x}");
 }
 
 #[cfg(test)]
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(call_gate.type_attr, CALL_GATE_TYPE_ATTR);
 
         // The TSS descriptor must point at the TSS that follows it in the GDT.
-        assert_eq!(tss_descriptor_of(&gdt).base(), GDT_BASE + TSS_DESC_OFFSET as u64);
+        assert_eq!(tss_descriptor_of(&gdt).base(), GDT_BASE + u64::from(TSS_DESC_OFFSET));
 
         // RSP0 is what the CPU loads when Ring 3 transitions back into Ring 0.
         let rsp0 = tss_of(&gdt).privilege_stack_table[0];
@@ -487,8 +487,7 @@ mod tests {
             assert_eq!(
                 program_privilege_transition_entries(&mut gdt, 0x1000, 0x2000, 0x3000),
                 Err(CallGateError::GdtTooSmall),
-                "unexpected result for a {} byte GDT",
-                size
+                "unexpected result for a {size} byte GDT"
             );
         }
     }
