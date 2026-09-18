@@ -8,6 +8,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+#[cfg(any(test, feature = "confidential_compute"))]
+mod aliased_memory_map_protocol;
 mod cpu_arch_protocol;
 mod efi_cpu;
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]

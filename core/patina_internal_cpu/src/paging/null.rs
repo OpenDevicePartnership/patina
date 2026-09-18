@@ -31,6 +31,16 @@ where
         Ok(())
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        _virtual_address: u64,
+        _physical_address: u64,
+        _size: u64,
+        _attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        Ok(())
+    }
+
     fn unmap_memory_region(&mut self, _address: u64, _size: u64) -> Result<(), PtError> {
         Ok(())
     }

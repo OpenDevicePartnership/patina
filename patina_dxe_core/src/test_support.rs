@@ -115,7 +115,10 @@ impl<F: FnMut()> Drop for StateGuard<F> {
 
 pub struct MockPageTable {
     mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+    aliased_mapped: RefCell<Vec<(u64, u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
+    map_aliased_error: Option<PtError>,
+    unmap_error: Option<PtError>,
     installed: RefCell<bool>,
     // Track current mappings to provide realistic query behavior
     current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
@@ -138,7 +141,25 @@ impl PatinaPageTable for MockPageTable {
         Ok(())
     }
 
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        len: u64,
+        attrs: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        if let Some(error) = self.map_aliased_error.take() {
+            return Err(error);
+        }
+        self.aliased_mapped.borrow_mut().push((virtual_address, physical_address, len, attrs));
+        self.current_mappings.borrow_mut().push((virtual_address, len, attrs));
+        Ok(())
+    }
+
     fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+        if let Some(error) = self.unmap_error.take() {
+            return Err(error);
+        }
         self.unmapped.borrow_mut().push((base, len));
 
         // Remove from current mappings
@@ -198,12 +219,24 @@ impl Default for MockPageTable {
 }
 
 impl MockPageTable {
+    pub fn fail_next_map_aliased_memory_region(&mut self, error: PtError) {
+        self.map_aliased_error = Some(error);
+    }
+
+    pub fn fail_next_unmap_memory_region(&mut self, error: PtError) {
+        self.unmap_error = Some(error);
+    }
+
     pub fn get_mapped_regions(&self) -> Vec<(u64, u64, MemoryAttributes)> {
         self.mapped.borrow().clone()
     }
 
     pub fn get_unmapped_regions(&self) -> Vec<(u64, u64)> {
         self.unmapped.borrow().clone()
+    }
+
+    pub fn get_aliased_mapped_regions(&self) -> Vec<(u64, u64, u64, MemoryAttributes)> {
+        self.aliased_mapped.borrow().clone()
     }
 
     pub fn get_current_mappings(&self) -> Vec<(u64, u64, MemoryAttributes)> {
@@ -213,7 +246,10 @@ impl MockPageTable {
     pub fn new() -> Self {
         Self {
             mapped: RefCell::new(Vec::new()),
+            aliased_mapped: RefCell::new(Vec::new()),
             unmapped: RefCell::new(Vec::new()),
+            map_aliased_error: None,
+            unmap_error: None,
             installed: RefCell::new(false),
             current_mappings: RefCell::new(Vec::new()),
         }
@@ -233,6 +269,16 @@ impl MockPageTableWrapper {
 impl PatinaPageTable for MockPageTableWrapper {
     fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
         self.inner.borrow_mut().map_memory_region(base, len, attrs)
+    }
+
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        len: u64,
+        attrs: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.inner.borrow_mut().map_aliased_memory_region(virtual_address, physical_address, len, attrs)
     }
 
     fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {

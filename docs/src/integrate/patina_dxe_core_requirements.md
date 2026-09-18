@@ -10,6 +10,7 @@ The Patina DXE Core has several functional and implementation differences from t
   way for platform integrators to track if they have met all requirements.
 - The [Patina DXE Core Integration Guide](dxe_core.md) provides a detailed guide of how to integrate the DXE core into a
   platform.
+- Confidential Compute platforms should consult the [Confidential Compute Integration Guide](./confidential_compute.md).
 
 ## Platform Requirements
 

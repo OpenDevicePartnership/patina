@@ -165,6 +165,23 @@ pub fn core_set_memory_space_attributes(
     }
 }
 
+#[cfg_attr(coverage, coverage(off))]
+#[cfg(any(test, feature = "confidential_compute"))]
+pub fn core_map_aliased_memory_region(
+    virtual_address: efi::VirtualAddress,
+    physical_address: efi::PhysicalAddress,
+    length: u64,
+    attributes: u64,
+) -> Result<(), EfiError> {
+    GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes)
+}
+
+#[cfg_attr(coverage, coverage(off))]
+#[cfg(any(test, feature = "confidential_compute"))]
+pub fn core_unmap_aliased_memory_region(virtual_address: efi::VirtualAddress, length: u64) -> Result<(), EfiError> {
+    GCD.unmap_aliased_memory_region(virtual_address, length)
+}
+
 extern "efiapi" fn set_memory_space_capabilities(
     base_address: efi::PhysicalAddress,
     length: u64,

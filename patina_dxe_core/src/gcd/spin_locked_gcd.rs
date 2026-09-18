@@ -1977,12 +1977,23 @@ pub enum MapChangeType {
 /// GCD map change callback function type.
 pub type MapChangeCallback = fn(MapChangeType);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(test, feature = "confidential_compute"))]
+pub(crate) struct AliasedMapping {
+    pub(crate) virtual_address: u64,
+    pub(crate) physical_address: u64,
+    pub(crate) length: u64,
+    pub(crate) attributes: u64,
+}
+
 /// Implements a spin locked GCD suitable for use as a static global.
 pub struct SpinLockedGcd {
     memory: tpl_mutex::TplMutex<GCD>,
     io: tpl_mutex::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
     page_table: tpl_mutex::TplMutex<Option<Box<dyn PatinaPageTable>>>,
+    #[cfg(any(test, feature = "confidential_compute"))]
+    aliased_mappings: tpl_mutex::TplMutex<Vec<AliasedMapping>>,
     /// Contains the current memory protection policy
     pub(crate) memory_protection_policy: MemoryProtectionPolicy,
     last_efi_memory_map_key: tpl_mutex::TplMutex<Option<usize>>,
@@ -2018,6 +2029,8 @@ impl SpinLockedGcd {
             ),
             memory_change_callback,
             page_table: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
+            #[cfg(any(test, feature = "confidential_compute"))]
+            aliased_mappings: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, Vec::new(), "GcdAliasedMappingsLock"),
             memory_protection_policy: MemoryProtectionPolicy::new(),
             last_efi_memory_map_key: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "LastEfiMemoryMapKeyLock"),
         }
@@ -2200,6 +2213,68 @@ impl SpinLockedGcd {
         }
     }
 
+    #[cfg(any(test, feature = "confidential_compute"))]
+    pub(crate) fn map_aliased_memory_region(
+        &self,
+        virtual_address: u64,
+        physical_address: u64,
+        len: u64,
+        attributes: u64,
+    ) -> Result<(), EfiError> {
+        let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
+            & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
+
+        let mut page_table_guard = self.page_table.lock();
+        self.aliased_mappings.lock().try_reserve(1).map_err(|_| EfiError::OutOfResources)?;
+        let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
+
+        page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(|err| {
+            match err {
+                PtError::OutOfResources => EfiError::OutOfResources,
+                PtError::NoMapping => EfiError::NoMapping,
+                _ => EfiError::InvalidParameter,
+            }
+        })?;
+
+        self.aliased_mappings.lock().push(AliasedMapping {
+            virtual_address,
+            physical_address,
+            length: len,
+            attributes,
+        });
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "confidential_compute"))]
+    pub(crate) fn unmap_aliased_memory_region(&self, virtual_address: u64, len: u64) -> Result<(), EfiError> {
+        if !self
+            .aliased_mappings
+            .lock()
+            .iter()
+            .any(|mapping| mapping.virtual_address == virtual_address && mapping.length == len)
+        {
+            return Err(EfiError::NotFound);
+        }
+
+        let mut page_table_guard = self.page_table.lock();
+        let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
+        page_table.unmap_memory_region(virtual_address, len).map_err(|err| match err {
+            PtError::OutOfResources => EfiError::OutOfResources,
+            PtError::NoMapping => EfiError::NoMapping,
+            _ => EfiError::InvalidParameter,
+        })?;
+
+        self.aliased_mappings
+            .lock()
+            .retain(|mapping| mapping.virtual_address != virtual_address || mapping.length != len);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn get_aliased_mappings(&self) -> Vec<AliasedMapping> {
+        self.aliased_mappings.lock().clone()
+    }
+
     pub fn lock_memory_space(&self) {
         self.memory.lock().lock_memory_space();
     }
@@ -2223,6 +2298,7 @@ impl SpinLockedGcd {
         io.maximum_address = 0;
         io.io_blocks = Rbt::new();
         self.page_table.lock().take();
+        self.aliased_mappings.lock().clear();
         // Reset memory protection policy to default state
         self.memory_protection_policy.memory_allocation_default_attributes.set(efi::MEMORY_XP);
     }
@@ -5683,6 +5759,70 @@ mod tests {
 
             assert_eq!(current_mappings.len(), 1);
             assert_eq!(current_mappings[0], (base_address as u64, length as u64, MemoryAttributes::Writeback));
+        });
+    }
+
+    #[test]
+    fn test_map_aliased_memory_region() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            GCD.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+
+            let virtual_address = 0x8000_0000;
+            let physical_address = 0x1000_0000;
+            let length = 0x20_0000;
+            let attributes = efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RUNTIME;
+
+            mock_table.borrow_mut().fail_next_map_aliased_memory_region(PtError::OutOfResources);
+            assert_eq!(
+                GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes),
+                Err(EfiError::OutOfResources)
+            );
+            assert!(GCD.get_aliased_mappings().is_empty());
+
+            assert_eq!(GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes), Ok(()));
+            assert_eq!(
+                GCD.get_aliased_mappings(),
+                vec![AliasedMapping { virtual_address, physical_address, length, attributes }]
+            );
+
+            *GCD.page_table.lock() = None;
+            assert_eq!(
+                mock_table.borrow().get_aliased_mapped_regions(),
+                vec![(
+                    virtual_address,
+                    physical_address,
+                    length,
+                    MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect,
+                )]
+            );
+        });
+    }
+
+    #[test]
+    fn test_unmap_aliased_memory_region() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            GCD.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+
+            let virtual_address = 0x8000_0000;
+            let physical_address = 0x1000_0000;
+            let length = 0x20_0000;
+            GCD.map_aliased_memory_region(virtual_address, physical_address, length, efi::MEMORY_WB).unwrap();
+
+            mock_table.borrow_mut().fail_next_unmap_memory_region(PtError::OutOfResources);
+            assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Err(EfiError::OutOfResources));
+            assert_eq!(
+                GCD.get_aliased_mappings(),
+                vec![AliasedMapping { virtual_address, physical_address, length, attributes: efi::MEMORY_WB }]
+            );
+
+            assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Ok(()));
+            assert!(GCD.get_aliased_mappings().is_empty());
+            assert_eq!(mock_table.borrow().get_unmapped_regions(), vec![(virtual_address, length)]);
+            assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Err(EfiError::NotFound));
         });
     }
 
