@@ -53,6 +53,8 @@ words:
   - cdram
   - cdrom
   - celeron
+  - mwait
+  - xapic
   - clangpdb
   - cntfrq
   - cntpct

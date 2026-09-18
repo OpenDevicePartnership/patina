@@ -18,17 +18,14 @@ use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerTyp
 // Architecture-specific exception type counts.
 // x86_64: 256 IDT entries
 // AArch64: 4 types (Synchronous, IRQ, FIQ, SError)
-const NUM_EXCEPTION_TYPES_X86_64: usize = 256;
+#[cfg(any(test, target_arch = "aarch64"))]
 const NUM_EXCEPTION_TYPES_AARCH64: usize = 4;
 
 // Different architecture have a different number of exception types.
-const NUM_EXCEPTION_TYPES: ExceptionType = if cfg!(test) || cfg!(target_arch = "x86_64") {
-    NUM_EXCEPTION_TYPES_X86_64
-} else if cfg!(target_arch = "aarch64") {
-    NUM_EXCEPTION_TYPES_AARCH64
-} else {
-    panic!("Unimplemented architecture!");
-};
+#[cfg(any(test, target_arch = "x86_64"))]
+const NUM_EXCEPTION_TYPES: ExceptionType = super::x64::idt::IDT_ENTRY_COUNT;
+#[cfg(all(not(test), target_arch = "aarch64"))]
+const NUM_EXCEPTION_TYPES: ExceptionType = NUM_EXCEPTION_TYPES_AARCH64;
 
 // The static exception handlers are needed to track the global state. RwLock is
 // used to allow potential nested exceptions.
@@ -226,7 +223,7 @@ mod tests {
     fn test_num_exception_types() {
         // Verify expected exception type counts per architecture.
         // If changing these values, verify they match the assembly definitions.
-        assert_eq!(NUM_EXCEPTION_TYPES_X86_64, 256);
+        assert_eq!(NUM_EXCEPTION_TYPES, 256);
         assert_eq!(NUM_EXCEPTION_TYPES_AARCH64, 4);
     }
 }

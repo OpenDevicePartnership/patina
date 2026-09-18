@@ -18,7 +18,7 @@
 # reason, avoid variable length jumps or pushes.
 AsmIdtVectorBegin:
     .set vector, 0
-    .rept 256
+    .rept {idt_entry_count}
         sub     rsp, 8
         mov     qword ptr [rsp], vector
         push    rax
