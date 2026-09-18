@@ -1,7 +1,7 @@
 //! Firmware Volume Block Attributes
 //!
 //! Based on the values defined in the UEFI Platform Initialization (PI) Specification V1.8A Section 3.2.1.1
-//! EFI_FIRMWARE_VOLUME_HEADER.
+//! `EFI_FIRMWARE_VOLUME_HEADER`.
 //!
 //! ## License
 //!
@@ -13,7 +13,7 @@
 /// Type alias for firmware volume block attributes (version 2) as defined in the PI Specification
 pub type EfiFvbAttributes2 = u32;
 
-/// EFI_FV_FILE_ATTRIBUTES bit definitions
+/// `EFI_FV_FILE_ATTRIBUTES` bit definitions
 /// Note: Typically named `EFI_FVB2_*` in EDK II code.
 /// `ALIGNMENT` traditionally has the same value as `ALIGNMENT_2G`. To reduce confusion, only
 /// `ALIGNMENT_2G` is specified.

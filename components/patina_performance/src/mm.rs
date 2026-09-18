@@ -8,7 +8,7 @@
 //!
 use patina::standard::efi;
 use zerocopy::{IntoBytes, LittleEndian, U64};
-use zerocopy_derive::*;
+use zerocopy_derive::{FromBytes, Immutable};
 
 /// Errors that may occur when parsing MM structures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl SmmCommHeader {
             return Err(ParseError::BufferTooSmall { required: SMM_COMM_HEADER_SIZE, available: src.len() });
         }
         // SAFETY: The length is validated. SmmCommHeader is repr(C) and plain data.
-        let header = unsafe { &*(src.as_ptr() as *const SmmCommHeader) };
+        let header = unsafe { &*src.as_ptr().cast::<SmmCommHeader>() };
         let found_function_id = header.function_id.get();
         if found_function_id != expected_function_id {
             return Err(ParseError::InvalidFunctionId { expected: expected_function_id, found: found_function_id });
@@ -72,7 +72,7 @@ impl SmmCommHeader {
         Ok((*header, SMM_COMM_HEADER_SIZE))
     }
 
-    /// Get the return status as an efi::Status.
+    /// Get the return status as an `efi::Status`.
     pub fn return_status(&self) -> efi::Status {
         efi::Status::from_usize(self.return_status.get() as usize)
     }
@@ -132,7 +132,7 @@ impl GetRecordSize {
     }
 }
 
-/// MM communicate helper to get a BUFFER_SIZE of bytes at an offset.
+/// MM communicate helper to get a `BUFFER_SIZE` of bytes at an offset.
 #[derive(Debug, Copy, Clone)]
 pub struct GetRecordDataByOffset<const BUFFER_SIZE: usize = SMM_FETCH_CHUNK_BYTES> {
     pub return_status: efi::Status,

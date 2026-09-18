@@ -99,7 +99,7 @@ pub struct StateGuard<F: FnMut()> {
 }
 
 impl<F: FnMut()> StateGuard<F> {
-    /// Creates a new StateGuard with the specified cleanup function.
+    /// Creates a new `StateGuard` with the specified cleanup function.
     ///
     /// The cleanup function will be called when the guard is dropped, even if a panic occurs.
     pub fn new(cleanup: F) -> Self {
@@ -258,7 +258,7 @@ impl PatinaPageTable for MockPageTableWrapper {
         old_cache_attributes: MemoryAttributes,
         new_cache_attributes: MemoryAttributes,
     ) {
-        self.inner.borrow().handle_cacheability_change(address, size, old_cache_attributes, new_cache_attributes)
+        self.inner.borrow().handle_cacheability_change(address, size, old_cache_attributes, new_cache_attributes);
     }
 }
 
@@ -303,7 +303,7 @@ pub(crate) fn with_clean_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) 
 /// Allocates a chunk of memory of the specified size from the system allocator.
 ///
 /// The memory allocated will be 64Kb aligned to simplify alignment requirements such
-/// as AArch64 runtime memory.
+/// as `AArch64` runtime memory.
 ///
 /// ## Safety
 /// This function is intended for test code only. The caller must ensure that the size is valid
@@ -612,38 +612,38 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         let mut cursor = mem.as_mut_ptr();
 
         //PHIT HOB
-        core::ptr::copy(&phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
+        core::ptr::copy(&raw const phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
         cursor = cursor.offset(phit.header.length as isize);
 
         //CPU HOB
-        core::ptr::copy(&cpu, cursor as *mut hob::Cpu, 1);
+        core::ptr::copy(&raw const cpu, cursor as *mut hob::Cpu, 1);
         cursor = cursor.offset(cpu.header.length as isize);
 
         //resource descriptor HOBs - all V2 to enable proper migration
-        core::ptr::copy(&resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor1.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor2, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor2, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor2.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor3, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor3, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor3.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor4, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor4, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor4.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor5, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor5, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor5.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor6, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor6, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor6.v1.header.length as isize);
 
-        core::ptr::copy(&resource_descriptor7, cursor as *mut ResourceDescriptorV2, 1);
+        core::ptr::copy(&raw const resource_descriptor7, cursor as *mut ResourceDescriptorV2, 1);
         cursor = cursor.offset(resource_descriptor7.v1.header.length as isize);
 
         //memory allocation HOBs.
         let mut address: u64 = resource_descriptor1.v1.physical_start;
-        for memory_type in [
+        for memory_type in &[
             efi::RESERVED_MEMORY_TYPE,
             efi::LOADER_CODE,
             efi::LOADER_DATA,
@@ -654,9 +654,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             efi::ACPI_RECLAIM_MEMORY,
             efi::ACPI_MEMORY_NVS,
             efi::PAL_CODE,
-        ]
-        .iter()
-        {
+        ] {
             let granularity = match *memory_type {
                 efi::RESERVED_MEMORY_TYPE
                 | efi::RUNTIME_SERVICES_CODE
@@ -671,7 +669,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
             allocation_hob_template.alloc_descriptor.memory_length = granularity;
 
-            core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+            core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
             cursor = cursor.offset(allocation_hob_template.header.length as isize);
             address += granularity;
         }
@@ -683,14 +681,14 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.v1.physical_start;
         allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
         allocation_hob_template.alloc_descriptor.memory_type = efi::MEMORY_MAPPED_IO;
-        core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+        core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
         cursor = cursor.offset(allocation_hob_template.header.length as isize);
 
         //FV HOB.
-        core::ptr::copy(&firmware_volume_hob, cursor as *mut hob::FirmwareVolume, 1);
+        core::ptr::copy(&raw const firmware_volume_hob, cursor as *mut hob::FirmwareVolume, 1);
         cursor = cursor.offset(firmware_volume_hob.header.length as isize);
 
-        core::ptr::copy(&end, cursor as *mut HobHeader, 1);
+        core::ptr::copy(&raw const end, cursor as *mut HobHeader, 1);
     }
     mem.as_ptr() as *const c_void
 }
@@ -834,15 +832,15 @@ mod tests {
             let mut cursor = mem.as_mut_ptr();
 
             // PHIT HOB
-            core::ptr::copy(&phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
+            core::ptr::copy(&raw const phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
             cursor = cursor.offset(phit.header.length as isize);
 
             // CPU HOB
-            core::ptr::copy(&cpu, cursor as *mut hob::Cpu, 1);
+            core::ptr::copy(&raw const cpu, cursor as *mut hob::Cpu, 1);
             cursor = cursor.offset(cpu.header.length as isize);
 
             // Resource descriptor HOB
-            core::ptr::copy(&resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
+            core::ptr::copy(&raw const resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
             cursor = cursor.offset(resource_descriptor1.v1.header.length as isize);
 
             // Memory allocation HOBs.
@@ -866,11 +864,11 @@ mod tests {
                 allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
                 allocation_hob_template.module_name = base_guids::DXE_CORE_ID;
 
-                core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocationModule, 1);
+                core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocationModule, 1);
                 cursor = cursor.offset(allocation_hob_template.header.length as isize);
             }
 
-            core::ptr::copy(&end, cursor as *mut HobHeader, 1);
+            core::ptr::copy(&raw const end, cursor as *mut HobHeader, 1);
         }
         mem.as_ptr() as *const c_void
     }

@@ -6,20 +6,20 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-#[cfg(not(test))]
+#[cfg(target_os = "uefi")]
 use core::arch::asm;
 use patina::arch as interrupts;
 use patina::error::EfiError;
 
 /// Struct to implement X64 Cpu Init.
 ///
-/// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the x86_64 architecture.
+/// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the `x86_64` architecture.
 #[derive(Default)]
 pub struct EfiCpuX64;
 
 #[allow(dead_code)]
 impl EfiCpuX64 {
-    /// This function initializes the CPU for the x86_64 architecture.
+    /// This function initializes the CPU for the `x86_64` architecture.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         // Initialize floating point units
         self.initialize_fpu();
@@ -36,13 +36,13 @@ impl EfiCpuX64 {
     }
 
     fn initialize_gdt(&self) {
-        #[cfg(not(test))]
+        #[cfg(target_os = "uefi")]
         patina_internal_cpu::gdt::init();
     }
 
     #[cfg_attr(coverage, coverage(off))]
     fn initialize_fpu(&self) {
-        #[cfg(not(test))]
+        #[cfg(target_os = "uefi")]
         // SAFETY: This assembly writes only hard coded values to CR4 register, and MMX and FPU control words. No
         // inputs are used that could violate memory safety.
         unsafe {

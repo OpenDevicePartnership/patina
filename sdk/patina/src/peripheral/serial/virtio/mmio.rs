@@ -230,7 +230,7 @@ impl VirtioMmio {
     }
 
     /// Notifies the device that new entries are available on `queue_index`.
-    /// Issues a SeqCst fence before the write so all prior queue updates are
+    /// Issues a `SeqCst` fence before the write so all prior queue updates are
     /// visible to the device.
     pub(super) fn notify(&mut self, queue_index: u32) {
         fence(Ordering::SeqCst);
@@ -322,9 +322,9 @@ mod tests {
         assert_eq!(regs.queue_sel.0, 1);
         assert_eq!(regs.queue_num.0, 8);
         assert_eq!(regs.queue_ready.0, 1);
-        let desc = (regs.queue_desc_low.0 as u64) | ((regs.queue_desc_high.0 as u64) << 32);
-        let avail = (regs.queue_driver_low.0 as u64) | ((regs.queue_driver_high.0 as u64) << 32);
-        let used = (regs.queue_device_low.0 as u64) | ((regs.queue_device_high.0 as u64) << 32);
+        let desc = u64::from(regs.queue_desc_low.0) | (u64::from(regs.queue_desc_high.0) << 32);
+        let avail = u64::from(regs.queue_driver_low.0) | (u64::from(regs.queue_driver_high.0) << 32);
+        let used = u64::from(regs.queue_device_low.0) | (u64::from(regs.queue_device_high.0) << 32);
         assert_eq!(desc, queue.desc_addr());
         assert_eq!(avail, queue.avail_addr());
         assert_eq!(used, queue.used_addr());

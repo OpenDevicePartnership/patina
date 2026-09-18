@@ -43,6 +43,7 @@ words:
   - athlon
   - autocfg
   - bitvec
+  - blkio
   - bootx
   - bsdata
   - bucketize
@@ -86,6 +87,7 @@ words:
   - eficall
   - efierror
   - eflags
+  - elidable
   - entrantly
   - epage
   - eprom
@@ -114,7 +116,6 @@ words:
   - htons
   - icfgr
   - impls
-  - indoc
   - inmodule
   - intid
   - irouter

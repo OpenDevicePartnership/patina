@@ -157,6 +157,7 @@ impl Access {
 impl fmt::Debug for Access {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Access")
+            .field("has_deferred", &self.has_deferred)
             .field("reads_all_configs", &self.reads_all_configs)
             .field("writes_all_configs", &self.writes_all_configs)
             .field("config_writes", &PrettyFixedBitSet(&self.config_writes))
@@ -168,7 +169,7 @@ impl fmt::Debug for Access {
     }
 }
 
-/// A type redefinition of [FixedBitSet] to allow a custom [Debug] implementation.
+/// A type redefinition of [`FixedBitSet`] to allow a custom [Debug] implementation.
 pub struct PrettyFixedBitSet<'a>(&'a FixedBitSet);
 
 impl fmt::Debug for PrettyFixedBitSet<'_> {
@@ -193,7 +194,7 @@ mod tests {
 
         assert_eq!(
             std::format!("{access:?}"),
-            "Access { reads_all_configs: true, writes_all_configs: true, config_writes: [0], config_reads: [1] }"
+            "Access { has_deferred: false, reads_all_configs: true, writes_all_configs: true, config_writes: [0], config_reads: [1] }"
         );
     }
 

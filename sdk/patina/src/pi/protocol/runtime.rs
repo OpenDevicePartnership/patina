@@ -24,7 +24,7 @@ pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("B7D
 /// export information that is needed at runtime. As such, this protocol allows
 /// services to the DXE Foundation to manage runtime drivers and events.
 /// This protocol also implies that the runtime services required to transition
-/// to virtual mode, SetVirtualAddressMap() and ConvertPointer(), have been
+/// to virtual mode, `SetVirtualAddressMap()` and `ConvertPointer()`, have been
 /// registered into the UEFI Runtime Table in the UEFI System Table. This protocol
 /// must be produced by a runtime DXE driver and may only be consumed by the DXE Foundation.
 ///

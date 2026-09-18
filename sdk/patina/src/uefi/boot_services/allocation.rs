@@ -26,11 +26,11 @@ pub enum AllocType {
 /// Represents a memory map in the UEFI system, containing an array of memory descriptors and metadata.
 #[derive(Debug)]
 pub struct MemoryMap<'a, B: BootServices + ?Sized> {
-    /// An array of [efi::MemoryDescriptor]s that describe the memory map.
+    /// An array of [`efi::MemoryDescriptor`]s that describe the memory map.
     pub descriptors: BootServicesBox<'a, [efi::MemoryDescriptor], B>,
     /// The key for the current memory map.
     pub map_key: usize,
-    /// The version number associated with the [efi::MemoryDescriptor]
+    /// The version number associated with the [`efi::MemoryDescriptor`]
     pub descriptor_version: u32,
 }
 
@@ -84,14 +84,14 @@ impl MemoryAttribute {
     /// does not support CPU memory cryptographic capabilities.
     pub const CPU_CRYPTO: MemoryAttribute = MemoryAttribute(efi::MEMORY_CPU_CRYPTO);
     /// Runtime memory attribute: The memory region needs to be given a virtual mapping by the operating system when
-    /// SetVirtualAddressMap() is called.
+    /// `SetVirtualAddressMap()` is called.
     pub const RUNTIME: MemoryAttribute = MemoryAttribute(efi::MEMORY_RUNTIME);
     /// The memory region is described with additional ISA-specific memory attributes as specified in
-    /// EFI_MEMORY_ISA_MASK.
+    /// `EFI_MEMORY_ISA_MASK`.
     pub const ISA_VALID: MemoryAttribute = MemoryAttribute(efi::MEMORY_ISA_VALID);
     /// Bits reserved for describing optional ISA-specific cacheability attributes that are not covered by
-    /// the standard UEFI Memory Attributes cacheability bits (EFI_MEMORY_UC, EFI_MEMORY_WC, EFI_MEMORY_WT,
-    /// EFI_MEMORY_WB and EFI_MEMORY_UCE). See Calling Conventions for further ISA-specific enumeration of these bits.
+    /// the standard UEFI Memory Attributes cacheability bits (`EFI_MEMORY_UC`, `EFI_MEMORY_WC`, `EFI_MEMORY_WT`,
+    /// `EFI_MEMORY_WB` and `EFI_MEMORY_UCE`). See Calling Conventions for further ISA-specific enumeration of these bits.
     pub const ISA_MASK: MemoryAttribute = MemoryAttribute(efi::MEMORY_ISA_MASK);
 }
 
@@ -105,7 +105,7 @@ impl BitOr for MemoryAttribute {
 
 impl BitOrAssign for MemoryAttribute {
     fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0
+        self.0 |= rhs.0;
     }
 }
 

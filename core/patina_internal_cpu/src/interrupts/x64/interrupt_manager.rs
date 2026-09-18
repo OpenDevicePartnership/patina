@@ -20,16 +20,16 @@ use patina_stacktrace::{StackFrame, StackTrace};
 
 use crate::interrupts::{EfiExceptionInfoDump, HandlerType, InterruptManager, x64::ExceptionContextX64};
 
-/// X64 Implementation of the InterruptManager.
+/// X64 Implementation of the `InterruptManager`.
 ///
-/// An x64 version of the InterruptManager for managing IDT based interrupts.
+/// An x64 version of the `InterruptManager` for managing IDT based interrupts.
 ///
 #[derive(Default, Copy, Clone)]
 pub struct InterruptsX64 {}
 
 #[allow(dead_code)]
 impl InterruptsX64 {
-    /// Creates a new instance of the x64 implementation of the InterruptManager.
+    /// Creates a new instance of the x64 implementation of the `InterruptManager`.
     pub const fn new() -> Self {
         Self {}
     }

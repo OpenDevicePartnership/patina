@@ -218,7 +218,7 @@ where
 }
 
 /// This struct is used to install and uninstall driver binding.
-/// If the UefiDriverBinding go out of scope and it wasn't install, the driver implementing [`DriverBinding`] will be drop.
+/// If the `UefiDriverBinding` go out of scope and it wasn't install, the driver implementing [`DriverBinding`] will be drop.
 /// If installed, the memory will be leaked and the driver binding will live indefinitely.
 pub enum UefiDriverBinding<T, U>
 where
@@ -348,8 +348,8 @@ mod tests {
                     assert_eq!(TEST_HANDLE, interface.driver_binding_protocol.image_handle);
                     assert_eq!(TEST_HANDLE, interface.driver_binding_protocol.driver_binding_handle);
                     assert_eq!(
-                        BOOT_SERVICES as *const MockBootServices,
-                        interface.boot_services as *const MockBootServices
+                        std::ptr::from_ref::<MockBootServices>(BOOT_SERVICES),
+                        std::ptr::from_ref::<MockBootServices>(interface.boot_services)
                     );
 
                     true
@@ -391,8 +391,8 @@ mod tests {
                     assert_eq!(TEST_HANDLE, interface.driver_binding_protocol.image_handle);
                     assert_eq!(TEST_DRIVER_HANDLE, interface.driver_binding_protocol.driver_binding_handle);
                     assert_eq!(
-                        BOOT_SERVICES as *const MockBootServices,
-                        interface.boot_services as *const MockBootServices
+                        std::ptr::from_ref::<MockBootServices>(BOOT_SERVICES),
+                        std::ptr::from_ref::<MockBootServices>(interface.boot_services)
                     );
 
                     true
@@ -436,8 +436,8 @@ mod tests {
                     assert_eq!(TEST_HANDLE, interface.driver_binding_protocol.image_handle);
                     assert_eq!(TEST_DRIVER_HANDLE, interface.driver_binding_protocol.driver_binding_handle);
                     assert_eq!(
-                        BOOT_SERVICES as *const MockBootServices,
-                        interface.boot_services as *const MockBootServices
+                        std::ptr::from_ref::<MockBootServices>(BOOT_SERVICES),
+                        std::ptr::from_ref::<MockBootServices>(interface.boot_services)
                     );
 
                     true

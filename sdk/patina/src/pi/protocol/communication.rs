@@ -27,50 +27,50 @@ pub const EFI_MM_INITIALIZATION_GUID: crate::BinaryGuid =
 /// This protocol provides runtime services for communicating between DXE drivers and a registered MMI handler.
 ///
 /// This function provides a service to send and receive messages from a registered UEFI service. The
-/// EFI_MM_COMMUNICATION_PROTOCOL driver is responsible for doing any of the copies such that the data lives in
+/// `EFI_MM_COMMUNICATION_PROTOCOL` driver is responsible for doing any of the copies such that the data lives in
 /// boot-service-accessible RAM.
 ///
-/// A given implementation of the EFI_MM_COMMUNICATION_PROTOCOL may choose to use the EFI_MM_CONTROL_PROTOCOL for
+/// A given implementation of the `EFI_MM_COMMUNICATION_PROTOCOL` may choose to use the `EFI_MM_CONTROL_PROTOCOL` for
 /// effecting the mode transition, or it may use some other method. The agent invoking the communication interface at
 /// runtime may be virtually mapped. The MM infrastructure code and handlers, on the other hand, execute in physical
 /// mode. As a result, the non- MM agent, which may be executing in the virtual-mode OS context as a result of an OS
-/// invocation of the UEFI SetVirtualAddressMap() service, should use a contiguous memory buffer with a physical
+/// invocation of the UEFI `SetVirtualAddressMap()` service, should use a contiguous memory buffer with a physical
 /// address before invoking this service. If the virtual address of the buffer is used, the MM Driver may not know how
 /// to do the appropriate virtual-to-physical conversion.
 ///
-/// To avoid confusion in interpreting frames, the CommunicateBuffer parameter should always begin with
-/// EFI_MM_COMMUNICATE_HEADER , which is defined in “Related Definitions” below. The header data is mandatory for
+/// To avoid confusion in interpreting frames, the `CommunicateBuffer` parameter should always begin with
+/// `EFI_MM_COMMUNICATE_HEADER` , which is defined in “Related Definitions” below. The header data is mandatory for
 /// messages sent into the MM agent.
 ///
-/// If the CommSize parameter is omitted the MessageLength field in the EFI_MM_COMMUNICATE_HEADER , in conjunction
+/// If the `CommSize` parameter is omitted the `MessageLength` field in the `EFI_MM_COMMUNICATE_HEADER` , in conjunction
 /// with the size of the header itself, can be used to ascertain the total size of the communication payload. If the
-/// MessageLength is zero, or too large for the MM implementation to manage, the MM implementation must update the
-/// MessageLength to reflect the size of the Data buffer that it can tolerate.
+/// `MessageLength` is zero, or too large for the MM implementation to manage, the MM implementation must update the
+/// `MessageLength` to reflect the size of the Data buffer that it can tolerate.
 ///
-/// If the CommSize parameter is passed into the call, but the integer it points to, has a value of 0, then this must
-/// be updated to reflect the maximum size of the CommBuffer that the implementation can tolerate.
+/// If the `CommSize` parameter is passed into the call, but the integer it points to, has a value of 0, then this must
+/// be updated to reflect the maximum size of the `CommBuffer` that the implementation can tolerate.
 ///
-/// Once inside of MM, the MM infrastructure will call all registered handlers with the same HandlerType as the GUID
-/// specified by HeaderGuid and the CommBuffer pointing to Data.
+/// Once inside of MM, the MM infrastructure will call all registered handlers with the same `HandlerType` as the GUID
+/// specified by `HeaderGuid` and the `CommBuffer` pointing to Data.
 ///
 /// This function is not reentrant.
 ///
-/// The standard header is used at the beginning of the EFI_MM_INITIALIZATION_HEADER structure during MM initialization.
+/// The standard header is used at the beginning of the `EFI_MM_INITIALIZATION_HEADER` structure during MM initialization.
 ///
 ///  @param this                The protocol instance.
-///  @param comm_buffer         A pointer to the buffer to convey into MMRAM.
-///  @param comm_size           The size of the data buffer being passed in. On exit, the size of data
+///  @param `comm_buffer`         A pointer to the buffer to convey into MMRAM.
+///  @param `comm_size`           The size of the data buffer being passed in. On exit, the size of data
 ///                             being returned. Zero if the handler does not wish to reply with any data.
 ///                             This parameter is optional and may be NULL.
 ///
-///  @retval Status::SUCCESS           The message was successfully posted.
-///  @retval Status::INVALID_PARAMETER The comm_buffer pointer was NULL.
-///  @retval Status::BAD_BUFFER_SIZE   The buffer is too large for the MM implementation.
-///                                    If this error is returned, the MessageLength field
-///                                    in the comm_buffer header or the integer pointed by
-///                                    comm_size, are updated to reflect the maximum payload
+///  @retval `Status::SUCCESS`           The message was successfully posted.
+///  @retval `Status::INVALID_PARAMETER` The `comm_buffer` pointer was NULL.
+///  @retval `Status::BAD_BUFFER_SIZE`   The buffer is too large for the MM implementation.
+///                                    If this error is returned, the `MessageLength` field
+///                                    in the `comm_buffer` header or the integer pointed by
+///                                    `comm_size`, are updated to reflect the maximum payload
 ///                                    size the implementation can accommodate.
-///  @retval Status::ACCESS_DENIED     The CommunicateBuffer parameter or comm_size parameter,
+///  @retval `Status::ACCESS_DENIED`     The `CommunicateBuffer` parameter or `comm_size` parameter,
 ///                                    if not omitted, are in address range that cannot be
 ///                                    accessed by the MM environment.
 ///
@@ -112,7 +112,7 @@ impl EfiMmCommunicateHeader {
     /// A slice of bytes representing the header.
     pub fn as_bytes(&self) -> &[u8] {
         // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
-        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, Self::size()) }
+        unsafe { core::slice::from_raw_parts(core::ptr::from_ref(self) as *const u8, Self::size()) }
     }
 
     /// Function to get the size of the header in bytes.

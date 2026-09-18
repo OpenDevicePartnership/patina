@@ -16,12 +16,12 @@ use super::BootServices;
 #[must_use = "if unused the Tpl will immediately restored"]
 pub struct TplGuard<'a, T: BootServices + ?Sized> {
     pub(crate) boot_services: &'a T,
-    pub(crate) retore_tpl: Tpl,
+    pub(crate) restore_tpl: Tpl,
 }
 
 impl<T: BootServices + ?Sized> Drop for TplGuard<'_, T> {
     fn drop(&mut self) {
-        self.boot_services.restore_tpl(self.retore_tpl);
+        self.boot_services.restore_tpl(self.restore_tpl);
     }
 }
 
@@ -37,11 +37,11 @@ impl Tpl {
     /// The boot manager executes at this level and passes control to other UEFI applications at this level.
     pub const APPLICATION: Tpl = Tpl(efi::TPL_APPLICATION);
 
-    /// Interrupts code executing below TPL_CALLBACK level.
+    /// Interrupts code executing below `TPL_CALLBACK` level.
     /// Long term operations (such as file system operations and disk I/O) can occur at this level.
     pub const CALLBACK: Tpl = Tpl(efi::TPL_CALLBACK);
 
-    /// Interrupts code executing below TPL_NOTIFY level.
+    /// Interrupts code executing below `TPL_NOTIFY` level.
     /// Blocking is not allowed at this level.
     /// Code executes to completion and returns.
     /// If code requires more processing, it needs to signal an event to wait to obtain control again at whatever level it requires.

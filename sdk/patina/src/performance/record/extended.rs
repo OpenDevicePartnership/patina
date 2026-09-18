@@ -15,7 +15,7 @@ use crate::{Char8String, performance::error::Error};
 /// A performance string event record which includes a GUID.
 #[derive(Debug)]
 pub struct GuidEventRecord {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
     /// corresponding end points shall have lowered one nibble set to non-zero value;
     /// keeping other nibbles same as start point.
@@ -25,7 +25,7 @@ pub struct GuidEventRecord {
     pub acpi_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: crate::BinaryGuid,
 }
 
@@ -62,7 +62,7 @@ impl PerformanceRecord for GuidEventRecord {
 /// A performance string event record which includes an ASCII string.
 #[derive(Debug)]
 pub struct DynamicStringEventRecord<'a> {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
     /// corresponding end points shall have lowered one nibble set to non-zero value;
     /// keeping other nibbles same as start point.
@@ -72,7 +72,7 @@ pub struct DynamicStringEventRecord<'a> {
     pub acpi_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: crate::BinaryGuid,
     /// ASCII string describing the module. Padding supplied at the end if necessary with null characters (0x00).
     /// It may be module name, function name, or token name.
@@ -114,7 +114,7 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
 /// A performance string event record which includes a two GUIDs and an ASCII string.
 #[derive(Debug)]
 pub struct DualGuidStringEventRecord<'a> {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
     /// corresponding end points shall have lowered one nibble set to non-zero value;
     /// keeping other nibbles same as start point.
@@ -176,7 +176,7 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
 /// A performance string event record which includes a GUID, and a QWORD.
 #[derive(Debug)]
 pub struct GuidQwordEventRecord {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
     /// corresponding end points shall have lowered one nibble set to non-zero value;
     /// keeping other nibbles same as start point.
@@ -188,7 +188,7 @@ pub struct GuidQwordEventRecord {
     pub timestamp: u64,
     /// GUID of the module logging the event.
     pub guid: crate::BinaryGuid,
-    /// Qword of misc data, meaning depends on the ProgressId.
+    /// Qword of misc data, meaning depends on the `ProgressId`.
     pub qword: u64,
 }
 
@@ -226,7 +226,7 @@ impl PerformanceRecord for GuidQwordEventRecord {
 /// A performance string event record which includes a GUID, QWORD, and an ASCII string.
 #[derive(Debug)]
 pub struct GuidQwordStringEventRecord<'a> {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
     /// corresponding end points shall have lowered one nibble set to non-zero value;
     /// keeping other nibbles same as start point.
@@ -238,7 +238,7 @@ pub struct GuidQwordStringEventRecord<'a> {
     pub timestamp: u64,
     /// GUID of the module logging the event
     pub guid: crate::BinaryGuid,
-    /// Qword of misc data, meaning depends on the ProgressId
+    /// Qword of misc data, meaning depends on the `ProgressId`
     pub qword: u64,
     /// ASCII string describing the module.
     pub string: &'a str,

@@ -36,7 +36,7 @@ pub const MM_DXE_READY_TO_LOCK_PROTOCOL_GUID: BinaryGuid =
 /// This protocol is installed in the MM handle database when an End-of-DXE MMI
 /// is received. MM drivers can register a protocol notification for this GUID
 /// to perform actions that must happen after all DXE drivers have been dispatched
-/// but before 3rd-party OpROMs execute.
+/// but before 3rd-party `OpROMs` execute.
 ///
 /// Defined in PI as `gEfiMmEndOfDxeProtocolGuid`.
 ///

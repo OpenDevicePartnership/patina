@@ -191,7 +191,7 @@ pub trait PerformanceManager: Send + Sync {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use alloc::string::{String, ToString};
+    use alloc::string::String;
     use alloc::vec::Vec;
     use std::sync::Mutex;
 
@@ -232,7 +232,7 @@ mod tests {
             self.calls.lock().unwrap().push(Recorded {
                 caller_guid: caller_identifier.as_guid().copied(),
                 guid: guid.copied(),
-                string: string.map(|s| s.to_string()),
+                string: string.map(std::string::ToString::to_string),
                 perf_id,
                 attribute,
             });

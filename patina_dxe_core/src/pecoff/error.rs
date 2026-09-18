@@ -8,7 +8,7 @@
 //!
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// Type for describing errors that result from working with PeCoff images.
+/// Type for describing errors that result from working with `PeCoff` images.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Error {
@@ -19,7 +19,7 @@ pub enum Error {
     BufferTooShort(usize, &'static str),
     Parse(scroll::Error),
     BadSignature(u16),
-    /// The parsed PeCoff image does not contain an Optional Header.
+    /// The parsed `PeCoff` image does not contain an Optional Header.
     NoOptionalHeader,
     /// The parsed relocation blocks do not match a previous call to `relocate_image`.
     /// Indicates caller error or image corruption.

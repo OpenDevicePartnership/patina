@@ -268,10 +268,9 @@ pub(super) fn is_mapped(addr: u64) -> bool {
         if pte_state.points_to_pa {
             // we are identity mapped
             return true;
-        } else {
-            // continue down the page table levels
-            next_addr = pte_state.next_address;
         }
+        // continue down the page table levels
+        next_addr = pte_state.next_address;
     }
     unreachable!()
 }

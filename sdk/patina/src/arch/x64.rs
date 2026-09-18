@@ -15,7 +15,7 @@ pub(crate) struct X64;
 
 impl super::ArchSupport for X64 {}
 
-/// Cache writeback granule for x86_64, using 4 bytes following precedence set by Tianocore.
+/// Cache writeback granule for `x86_64`, using 4 bytes following precedence set by Tianocore.
 const CACHE_WRITEBACK_GRANULE: u32 = 4;
 
 /// Writes a byte to an x64 I/O port.
@@ -42,7 +42,7 @@ pub fn rdtsc() -> u64 {
     let hi: u32;
     // SAFETY: `rdtsc` reads a CPU counter and does not violate memory safety.
     unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nostack, nomem)) };
-    ((hi as u64) << 32) | lo as u64
+    (u64::from(hi) << 32) | u64::from(lo)
 }
 
 /// Returns the Current Privilege Level (CPL) from the CS selector.
@@ -112,7 +112,7 @@ impl super::CacheMgmt for X64 {
                 asm_invd();
                 Ok(())
             }
-            _ => Err(EfiError::Unsupported),
+            CpuFlushType::EfiCpuFlushTypeWriteBack => Err(EfiError::Unsupported),
         }
     }
 
@@ -143,7 +143,7 @@ impl super::Timer for X64 {
             // SAFETY: Calling cpuid does not violate memory safety
             let core::arch::x86_64::CpuidResult { eax, ebx, ecx, .. } = unsafe { core::arch::x86_64::__cpuid(0x15) };
             if eax != 0 && ebx != 0 && ecx != 0 {
-                return NonZeroU64::new((ecx as u64 * ebx as u64) / eax as u64);
+                return NonZeroU64::new((u64::from(ecx) * u64::from(ebx)) / u64::from(eax));
             }
         }
 
@@ -155,7 +155,7 @@ impl super::Timer for X64 {
             // SAFETY: Calling cpuid does not violate memory safety
             let core::arch::x86_64::CpuidResult { eax, .. } = unsafe { core::arch::x86_64::__cpuid(0x16) };
             if eax != 0 {
-                return NonZeroU64::new((eax * 1_000_000) as u64);
+                return NonZeroU64::new(u64::from(eax * 1_000_000));
             }
         }
 

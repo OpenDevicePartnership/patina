@@ -41,7 +41,7 @@ pub const EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE: efi::Handle = 10 as efi::Handle;
 /// It is returned from [`get_open_protocol_information`](SpinLockedProtocolDb::get_open_protocol_information)],
 /// and used internally to track protocol usage within the database.
 ///
-/// The semantics of this structure follow that of the EFI_OPEN_PROTOCOL_INFORMATION_ENTRY structure defined in UEFI
+/// The semantics of this structure follow that of the `EFI_OPEN_PROTOCOL_INFORMATION_ENTRY` structure defined in UEFI
 /// spec version 2.10 section 7.3.11.
 ///
 #[derive(Clone, Copy, Debug)]
@@ -225,36 +225,33 @@ impl ProtocolDb {
         interface: *mut c_void,
     ) -> Result<(efi::Handle, Vec<ProtocolNotify>), EfiError> {
         //generate an output handle.
-        let (output_handle, key) = match handle {
-            Some(handle) => {
-                //installing on existing handle.
-                self.validate_handle(handle)?;
-                let key = handle as usize;
-                (handle, key)
-            }
-            None => {
-                //installing on a new handle. Add a BTreeMap to track protocol instances on the new handle.
-                let mut key;
-                if self.hash_new_handles {
-                    let mut hasher = Xorshift64starHasher::default();
+        let (output_handle, key) = if let Some(handle) = handle {
+            //installing on existing handle.
+            self.validate_handle(handle)?;
+            let key = handle as usize;
+            (handle, key)
+        } else {
+            //installing on a new handle. Add a BTreeMap to track protocol instances on the new handle.
+            let mut key;
+            if self.hash_new_handles {
+                let mut hasher = Xorshift64starHasher::default();
+                hasher.write_usize(self.next_handle);
+                key = hasher.finish() as usize;
+                self.next_handle += 1;
+                //make sure we don't collide with an existing key. 0 is reserved for "invalid handle".
+                while key == 0 || self.handles.contains_key(&key) {
                     hasher.write_usize(self.next_handle);
                     key = hasher.finish() as usize;
                     self.next_handle += 1;
-                    //make sure we don't collide with an existing key. 0 is reserved for "invalid handle".
-                    while key == 0 || self.handles.contains_key(&key) {
-                        hasher.write_usize(self.next_handle);
-                        key = hasher.finish() as usize;
-                        self.next_handle += 1;
-                    }
-                } else {
-                    key = self.next_handle;
-                    self.next_handle += 1;
                 }
-
-                self.handles.insert(key, Handle::new(self.next_handle));
-                let handle = key as efi::Handle;
-                (handle, key)
+            } else {
+                key = self.next_handle;
+                self.next_handle += 1;
             }
+
+            self.handles.insert(key, Handle::new(self.next_handle));
+            let handle = key as efi::Handle;
+            (handle, key)
         };
 
         debug_assert!(self.handles.contains_key(&key));
@@ -516,7 +513,7 @@ impl ProtocolDb {
     fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
         // Modeling EDK2 behavior, enumerate handles *already* installed, not only future installs
         let mut fresh_handles = BTreeSet::new();
-        for (key, handle_data) in self.handles.iter() {
+        for (key, handle_data) in &self.handles {
             if handle_data.contains_key(&OrdGuid(protocol)) {
                 fresh_handles.insert(*key as efi::Handle);
             }
@@ -536,7 +533,7 @@ impl ProtocolDb {
     }
 
     fn unregister_protocol_notify_event(&mut self, event: efi::Event) {
-        for (_, v) in self.notifications.iter_mut() {
+        for v in self.notifications.values_mut() {
             v.retain(|x| x.event != event);
         }
     }
@@ -548,7 +545,7 @@ impl ProtocolDb {
     }
 
     fn next_handle_for_registration(&mut self, registration: *mut c_void) -> Option<efi::Handle> {
-        for (_, v) in self.notifications.iter_mut() {
+        for v in self.notifications.values_mut() {
             if let Some(index) = v.iter().position(|notify| notify.registration == registration)
                 && let Some(entry) = v.get_mut(index)
                 && let Some(handle) = entry.fresh_handles.pop_first()
@@ -609,7 +606,7 @@ impl Default for SpinLockedProtocolDb {
 }
 
 impl SpinLockedProtocolDb {
-    /// Creates a new instance of SpinLockedProtocolDb.
+    /// Creates a new instance of `SpinLockedProtocolDb`.
     pub const fn new() -> Self {
         SpinLockedProtocolDb { inner: tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, ProtocolDb::new(), "ProtocolLock") }
     }
@@ -657,25 +654,23 @@ impl SpinLockedProtocolDb {
             EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
         ];
 
-        for target_handle in well_known_handles.iter() {
+        for target_handle in well_known_handles {
             let (handle, _) = self
                 .install_protocol_interface(None, well_known_handle_guid, core::ptr::null_mut())
                 .expect("failed to install well-known handle");
-            if handle != *target_handle {
-                panic!(
-                    "Well-known handle installed at unexpected handle value. \
-                     `init_protocol_db` must be called before any other protocol database operations. \
-                     Expected handle {:#x?}, got {:#x?}",
-                    target_handle, handle
-                );
-            }
+            assert!(
+                handle == *target_handle,
+                "Well-known handle installed at unexpected handle value. \
+                 `init_protocol_db` must be called before any other protocol database operations. \
+                 Expected handle {target_handle:#x?}, got {handle:#x?}"
+            );
         }
         self.lock().enable_handle_hashing();
     }
 
     /// Installs a protocol interface on the given handle.
     ///
-    /// This function closely matches the semantics of the EFI_BOOT_SERVICES.InstallProtocolInterface() API in
+    /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.InstallProtocolInterface()` API in
     /// UEFI spec 2.10 section 7.3.2. Please refer to the spec for details on the input parameters.
     ///
     /// On success, this function returns the handle on which the protocol is installed (which may be newly created if
@@ -684,7 +679,7 @@ impl SpinLockedProtocolDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn install_protocol_interface(
         &self,
         handle: Option<efi::Handle>,
@@ -696,12 +691,12 @@ impl SpinLockedProtocolDb {
 
     /// Removes a protocol interface from the given handle.
     ///
-    /// This function closely matches the semantics of the EFI_BOOT_SERVICES.UninstallProtocolInterface() API in
+    /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.UninstallProtocolInterface()` API in
     /// UEFI spec 2.10 section 7.3.3. Please refer to the spec for details on the input parameters.
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn uninstall_protocol_interface(
         &self,
         handle: efi::Handle,
@@ -751,14 +746,14 @@ impl SpinLockedProtocolDb {
         self.lock().get_interface_for_handle(handle, protocol)
     }
 
-    /// Returns Ok(()) if the handle is a valid handle, Err(Status::INVALID_PARAMETER) otherwise.
+    /// Returns Ok(()) if the handle is a valid handle, `Err(Status::INVALID_PARAMETER)` otherwise.
     pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), EfiError> {
         self.lock().validate_handle(handle)
     }
 
     /// Adds a protocol usage on the specified handle/protocol.
     ///
-    /// This function generally matches the behavior of EFI_BOOT_SERVICES.OpenProtocol() API in the UEFI spec 2.10 section
+    /// This function generally matches the behavior of `EFI_BOOT_SERVICES.OpenProtocol()` API in the UEFI spec 2.10 section
     /// 7.3.9, with the exception that operations requiring interactions with the UEFI driver model are not supported and
     /// are expected to be handled by the caller. Where appropriate, this function returns error status to allow the
     /// caller to implement the behavior that the spec requires for interaction with the UEFI driver model. Refer to the
@@ -768,10 +763,10 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found.
-    /// Returns [`ALREADY_STARTED`](efi::Status::ALREADY_STARTED) if attributes is BY_DRIVER and there is an
+    /// Returns [`ALREADY_STARTED`](efi::Status::ALREADY_STARTED) if attributes is `BY_DRIVER` and there is an
     ///     existing usage by the agent handle.
-    /// Returns [`ACCESS_DENIED`](efi::Status::ACCESS_DENIED) if attributes is efi::OPEN_PROTOCOL_BY_DRIVER |
-    ///     efi::OPEN_PROTOCOL_EXCLUSIVE | BY_DRIVER_EXCLUSIVE and there is an existing usage that conflicts with those
+    /// Returns [`ACCESS_DENIED`](efi::Status::ACCESS_DENIED) if attributes is `efi::OPEN_PROTOCOL_BY_DRIVER` |
+    ///     `efi::OPEN_PROTOCOL_EXCLUSIVE` | `BY_DRIVER_EXCLUSIVE` and there is an existing usage that conflicts with those
     ///     attributes.
     /// Returns [`UNSUPPORTED`](efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
     pub fn add_protocol_usage(
@@ -787,7 +782,7 @@ impl SpinLockedProtocolDb {
 
     /// Removes a protocol usage from the specified handle/protocol.
     ///
-    /// This function generally matches the behavior of EFI_BOOT_SERVICES.CloseProtocol() API in the UEFI spec 2.10
+    /// This function generally matches the behavior of `EFI_BOOT_SERVICES.CloseProtocol()` API in the UEFI spec 2.10
     /// section 7.3.10. Refer to the UEFI spec description for details on input parameters.
     ///
     /// # Errors
@@ -809,7 +804,7 @@ impl SpinLockedProtocolDb {
 
     /// Returns open protocol information for the given handle/protocol.
     ///
-    /// This function generally matches the behavior of EFI_BOOT_SERVICES.OpenProtocolInformation() API in the UEFI spec
+    /// This function generally matches the behavior of `EFI_BOOT_SERVICES.OpenProtocolInformation()` API in the UEFI spec
     /// 2.10 section 7.3.11. Refer to the UEFI spec description for details on input parameters.
     ///
     /// # Errors
@@ -840,7 +835,7 @@ impl SpinLockedProtocolDb {
 
     /// Returns a vector of protocol GUIDs that are installed on the given handle.
     ///
-    /// This function generally matches the behavior of EFI_BOOT_SERVICES.ProtocolsPerHandle() API in the UEFI spec
+    /// This function generally matches the behavior of `EFI_BOOT_SERVICES.ProtocolsPerHandle()` API in the UEFI spec
     /// 2.10 section 7.3.14. Refer to the UEFI spec description for details on input parameters.
     pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, EfiError> {
         self.lock().get_protocols_on_handle(handle)
@@ -848,12 +843,12 @@ impl SpinLockedProtocolDb {
 
     /// Registers a notification event to be returned on protocol installation.
     ///
-    /// This function generally matches the behavior of EFI_BOOT_SERVICES.RegisterProtocolNotify() API in the UEFI spec
+    /// This function generally matches the behavior of `EFI_BOOT_SERVICES.RegisterProtocolNotify()` API in the UEFI spec
     /// 2.10 section 7.3.5. Refer to the UEFI spec description for details on input parameters. This implementation does
-    /// not actually fire the event; instead, a list notifications is returned by [install_protocol_interface](SpinLockedProtocolDb::install_protocol_interface)
+    /// not actually fire the event; instead, a list notifications is returned by [`install_protocol_interface`](SpinLockedProtocolDb::install_protocol_interface)
     /// so that the caller can fire the events.
     ///
-    /// Returns a registration token that can be used with [next_handle_for_registration](SpinLockedProtocolDb::next_handle_for_registration)
+    /// Returns a registration token that can be used with [`next_handle_for_registration`](SpinLockedProtocolDb::next_handle_for_registration)
     /// to iterate over handles that have fresh installations of the specified protocol.
     pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
         self.lock().register_protocol_notify(protocol, event)
@@ -871,7 +866,7 @@ impl SpinLockedProtocolDb {
         self.lock().next_handle_for_registration(registration)
     }
 
-    /// Returns a vector of controller handles that have parent_handle open BY_CHILD_CONTROLLER.
+    /// Returns a vector of controller handles that have `parent_handle` open `BY_CHILD_CONTROLLER`.
     pub fn get_child_handles(&self, parent_handle: efi::Handle) -> Vec<efi::Handle> {
         self.lock().get_child_handles(parent_handle)
     }
@@ -908,7 +903,7 @@ mod tests {
     fn new_should_create_protocol_db() {
         with_locked_state(|| {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.lock().handles.len(), 0)
+            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.lock().handles.len(), 0);
         });
     }
 

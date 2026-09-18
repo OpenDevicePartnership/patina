@@ -7,9 +7,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType};
+use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
 use core::num::NonZeroU64;
-use r_efi::efi;
 
 cfg_if::cfg_if! {
     if #[cfg(not(target_os = "uefi"))] {
@@ -74,7 +73,7 @@ pub fn interrupts_enabled() -> bool {
 
 /// Causes the current architecture's CPU to enter a low power state until the next interrupt.
 pub fn enable_interrupts_and_sleep() {
-    <Arch as Interrupts>::enable_interrupts_and_sleep()
+    <Arch as Interrupts>::enable_interrupts_and_sleep();
 }
 
 /// Executes a closure with CPU interrupts disabled, interrupts will be restored to their
@@ -109,13 +108,13 @@ trait CacheMgmt {
     ///
     /// start             Physical address to start flushing from.
     /// length            Number of bytes to flush. Round up to chipset granularity.
-    /// flush_type        Specifies the type of flush operation to perform.
+    /// `flush_type`        Specifies the type of flush operation to perform.
     ///
     /// ## Errors
     ///
     /// Success       If cache was flushed
     /// Unsupported   If flush type is not supported.
-    /// DeviceError   If requested range could not be flushed.
+    /// `DeviceError`   If requested range could not be flushed.
     fn flush_data_cache(start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError>;
 
     /// Returns the cache writeback granule size in bytes.

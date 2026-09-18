@@ -4,7 +4,7 @@
 //! derive proc-macro to be used on the struct or enum to implement necessary traits and specify the entry point
 //! function for the component.
 //!
-//! A derive macro, [IntoComponent](crate::component::IntoComponent) is provided to automatically implement the
+//! A derive macro, [`IntoComponent`](crate::component::IntoComponent) is provided to automatically implement the
 //! necessary traits for a struct or enum to be used as a component. This trait expects that a default entry point
 //! function of `Self::entry_point` exists. This can be overridden with the `#[entry_point(path = path::to::function)]`
 //! attribute.
@@ -90,7 +90,7 @@ where
             super::type_name::normalized::<Self>()
         );
         log::info!("Dispatching {}", self.metadata.name());
-        self.func.run(&mut self.input, param_value).map(|_| true)
+        self.func.run(&mut self.input, param_value).map(|()| true)
     }
 
     /// Returns the metadata of the Component.
@@ -99,8 +99,8 @@ where
     }
 
     /// One-time initialization of the Component. Should set [Access](super::metadata::Access) requirements.
-    fn initialize(&mut self, _storage: &mut Storage) -> bool {
-        match Func::Param::init_state(_storage, &mut self.metadata) {
+    fn initialize(&mut self, storage: &mut Storage) -> bool {
+        match Func::Param::init_state(storage, &mut self.metadata) {
             Ok(param_state) => {
                 self.param_state = Some(param_state);
                 true

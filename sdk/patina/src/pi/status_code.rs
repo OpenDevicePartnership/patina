@@ -1,5 +1,5 @@
 #![cfg_attr(rustfmt, rustfmt_skip)]
-//! StatusCode related definitions in PI.
+//! `StatusCode` related definitions in PI.
 //!
 //! These status codes are defined in UEFI Platform Initialization Specification 1.2,
 //! Volume 3: Shared Architectural Elements.
@@ -542,7 +542,7 @@ pub const EFI_IO_BUS_ATA_ATAPI:    EfiStatusCodeValue = EFI_IO_BUS | 0x00080000;
 pub const EFI_IO_BUS_FC:           EfiStatusCodeValue = EFI_IO_BUS | 0x00090000;
 /// IP Network I/O bus.
 pub const EFI_IO_BUS_IP_NETWORK:   EfiStatusCodeValue = EFI_IO_BUS | 0x000A0000;
-/// SMBus I/O bus.
+/// `SMBus` I/O bus.
 pub const EFI_IO_BUS_SMBUS:        EfiStatusCodeValue = EFI_IO_BUS | 0x000B0000;
 /// I2C I/O bus.
 pub const EFI_IO_BUS_I2C:          EfiStatusCodeValue = EFI_IO_BUS | 0x000C0000;
@@ -915,151 +915,151 @@ pub const EFI_SW_PS_PC_FFS_REGISTER_FOR_SHADOW:  EfiStatusCodeValue = EFI_SUBCLA
 
 // Software Class EFI Boot Services Subclass Progress Code definitions.
 //
-/// Boot Services RaiseTPL progress code.
+/// Boot Services `RaiseTPL` progress code.
 pub const EFI_SW_BS_PC_RAISE_TPL:                      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC;
-/// Boot Services RestoreTPL progress code.
+/// Boot Services `RestoreTPL` progress code.
 pub const EFI_SW_BS_PC_RESTORE_TPL:                    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000001;
-/// Boot Services AllocatePages progress code.
+/// Boot Services `AllocatePages` progress code.
 pub const EFI_SW_BS_PC_ALLOCATE_PAGES:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000002;
-/// Boot Services FreePages progress code.
+/// Boot Services `FreePages` progress code.
 pub const EFI_SW_BS_PC_FREE_PAGES:                     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000003;
-/// Boot Services GetMemoryMap progress code.
+/// Boot Services `GetMemoryMap` progress code.
 pub const EFI_SW_BS_PC_GET_MEMORY_MAP:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000004;
-/// Boot Services AllocatePool progress code.
+/// Boot Services `AllocatePool` progress code.
 pub const EFI_SW_BS_PC_ALLOCATE_POOL:                  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000005;
-/// Boot Services FreePool progress code.
+/// Boot Services `FreePool` progress code.
 pub const EFI_SW_BS_PC_FREE_POOL:                      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000006;
-/// Boot Services CreateEvent progress code.
+/// Boot Services `CreateEvent` progress code.
 pub const EFI_SW_BS_PC_CREATE_EVENT:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000007;
-/// Boot Services SetTimer progress code.
+/// Boot Services `SetTimer` progress code.
 pub const EFI_SW_BS_PC_SET_TIMER:                      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000008;
-/// Boot Services WaitForEvent progress code.
+/// Boot Services `WaitForEvent` progress code.
 pub const EFI_SW_BS_PC_WAIT_FOR_EVENT:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000009;
-/// Boot Services SignalEvent progress code.
+/// Boot Services `SignalEvent` progress code.
 pub const EFI_SW_BS_PC_SIGNAL_EVENT:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000A;
-/// Boot Services CloseEvent progress code.
+/// Boot Services `CloseEvent` progress code.
 pub const EFI_SW_BS_PC_CLOSE_EVENT:                    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000B;
-/// Boot Services CheckEvent progress code.
+/// Boot Services `CheckEvent` progress code.
 pub const EFI_SW_BS_PC_CHECK_EVENT:                    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000C;
-/// Boot Services InstallProtocolInterface progress code.
+/// Boot Services `InstallProtocolInterface` progress code.
 pub const EFI_SW_BS_PC_INSTALL_PROTOCOL_INTERFACE:     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000D;
-/// Boot Services ReinstallProtocolInterface progress code.
+/// Boot Services `ReinstallProtocolInterface` progress code.
 pub const EFI_SW_BS_PC_REINSTALL_PROTOCOL_INTERFACE:   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000E;
-/// Boot Services UninstallProtocolInterface progress code.
+/// Boot Services `UninstallProtocolInterface` progress code.
 pub const EFI_SW_BS_PC_UNINSTALL_PROTOCOL_INTERFACE:   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000F;
-/// Boot Services HandleProtocol progress code.
+/// Boot Services `HandleProtocol` progress code.
 pub const EFI_SW_BS_PC_HANDLE_PROTOCOL:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000010;
-/// Boot Services PCHandleProtocol progress code.
+/// Boot Services `PCHandleProtocol` progress code.
 pub const EFI_SW_BS_PC_PC_HANDLE_PROTOCOL:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000011;
-/// Boot Services HandleProtocol progress code.
+/// Boot Services `HandleProtocol` progress code.
 pub const EFI_SW_BS_PC_REGISTER_PROTOCOL_NOTIFY:       EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000012;
-/// Boot Services LocateHandle progress code.
+/// Boot Services `LocateHandle` progress code.
 pub const EFI_SW_BS_PC_LOCATE_HANDLE:                  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000013;
-/// Boot Services InstallConfigurationTable progress code.
+/// Boot Services `InstallConfigurationTable` progress code.
 pub const EFI_SW_BS_PC_INSTALL_CONFIGURATION_TABLE:    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000014;
-/// Boot Services LoadImage progress code.
+/// Boot Services `LoadImage` progress code.
 pub const EFI_SW_BS_PC_LOAD_IMAGE:                     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000015;
-/// Boot Services StartImage progress code.
+/// Boot Services `StartImage` progress code.
 pub const EFI_SW_BS_PC_START_IMAGE:                    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000016;
 /// Boot Services Exit progress code.
 pub const EFI_SW_BS_PC_EXIT:                           EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000017;
-/// Boot Services UnloadImage progress code.
+/// Boot Services `UnloadImage` progress code.
 pub const EFI_SW_BS_PC_UNLOAD_IMAGE:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000018;
-/// Boot Services ExitBootServices progress code.
+/// Boot Services `ExitBootServices` progress code.
 pub const EFI_SW_BS_PC_EXIT_BOOT_SERVICES:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000019;
-/// Boot Services GetNextMonotonicCount progress code.
+/// Boot Services `GetNextMonotonicCount` progress code.
 pub const EFI_SW_BS_PC_GET_NEXT_MONOTONIC_COUNT:       EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001A;
 /// Boot Services Stall progress code.
 pub const EFI_SW_BS_PC_STALL:                          EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001B;
-/// Boot Services SetWatchdogTimer progress code.
+/// Boot Services `SetWatchdogTimer` progress code.
 pub const EFI_SW_BS_PC_SET_WATCHDOG_TIMER:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001C;
-/// Boot Services ConnectController progress code.
+/// Boot Services `ConnectController` progress code.
 pub const EFI_SW_BS_PC_CONNECT_CONTROLLER:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001D;
-/// Boot Services DisconnectController progress code.
+/// Boot Services `DisconnectController` progress code.
 pub const EFI_SW_BS_PC_DISCONNECT_CONTROLLER:          EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001E;
-/// Boot Services OpenProtocol progress code.
+/// Boot Services `OpenProtocol` progress code.
 pub const EFI_SW_BS_PC_OPEN_PROTOCOL:                  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000001F;
-/// Boot Services CloseProtocol progress code.
+/// Boot Services `CloseProtocol` progress code.
 pub const EFI_SW_BS_PC_CLOSE_PROTOCOL:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000020;
-/// Boot Services OpenProtocolInformation progress code.
+/// Boot Services `OpenProtocolInformation` progress code.
 pub const EFI_SW_BS_PC_OPEN_PROTOCOL_INFORMATION:      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000021;
-/// Boot Services ProtocolsPerHandle progress code.
+/// Boot Services `ProtocolsPerHandle` progress code.
 pub const EFI_SW_BS_PC_PROTOCOLS_PER_HANDLE:           EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000022;
-/// Boot Services LocateHandleBuffer progress code.
+/// Boot Services `LocateHandleBuffer` progress code.
 pub const EFI_SW_BS_PC_LOCATE_HANDLE_BUFFER:           EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000023;
-/// Boot Services LocateProtocol progress code.
+/// Boot Services `LocateProtocol` progress code.
 pub const EFI_SW_BS_PC_LOCATE_PROTOCOL:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000024;
-/// Boot Services InstallMultipleProtocolInterfaces progress code.
+/// Boot Services `InstallMultipleProtocolInterfaces` progress code.
 pub const EFI_SW_BS_PC_INSTALL_MULTIPLE_INTERFACES:    EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000025;
-/// Boot Services UninstallMultipleProtocolInterfaces progress code.
+/// Boot Services `UninstallMultipleProtocolInterfaces` progress code.
 pub const EFI_SW_BS_PC_UNINSTALL_MULTIPLE_INTERFACES:  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000026;
-/// Boot Services CalculateCrc32 progress code.
+/// Boot Services `CalculateCrc32` progress code.
 pub const EFI_SW_BS_PC_CALCULATE_CRC_32:               EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000027;
-/// Boot Services CopyMem progress code.
+/// Boot Services `CopyMem` progress code.
 pub const EFI_SW_BS_PC_COPY_MEM:                       EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000028;
-/// Boot Services SetMem progress code.
+/// Boot Services `SetMem` progress code.
 pub const EFI_SW_BS_PC_SET_MEM:                        EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000029;
-/// Boot Services CreateEventEx progress code.
+/// Boot Services `CreateEventEx` progress code.
 pub const EFI_SW_BS_PC_CREATE_EVENT_EX:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000002A;
 
 // Software Class EFI Runtime Services Subclass Progress Code definitions.
 //
-/// Runtime Services GetTime progress code.
+/// Runtime Services `GetTime` progress code.
 pub const EFI_SW_RS_PC_GET_TIME:                       EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC;
-/// Runtime Services SetTime progress code.
+/// Runtime Services `SetTime` progress code.
 pub const EFI_SW_RS_PC_SET_TIME:                       EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000001;
-/// Runtime Services GetWakeupTime progress code.
+/// Runtime Services `GetWakeupTime` progress code.
 pub const EFI_SW_RS_PC_GET_WAKEUP_TIME:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000002;
-/// Runtime Services SetWakeupTime progress code.
+/// Runtime Services `SetWakeupTime` progress code.
 pub const EFI_SW_RS_PC_SET_WAKEUP_TIME:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000003;
-/// Runtime Services SetVirtualAddressMap progress code.
+/// Runtime Services `SetVirtualAddressMap` progress code.
 pub const EFI_SW_RS_PC_SET_VIRTUAL_ADDRESS_MAP:        EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000004;
-/// Runtime Services ConvertPointer progress code.
+/// Runtime Services `ConvertPointer` progress code.
 pub const EFI_SW_RS_PC_CONVERT_POINTER:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000005;
-/// Runtime Services GetVariable progress code.
+/// Runtime Services `GetVariable` progress code.
 pub const EFI_SW_RS_PC_GET_VARIABLE:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000006;
-/// Runtime Services GetNextVariableName progress code.
+/// Runtime Services `GetNextVariableName` progress code.
 pub const EFI_SW_RS_PC_GET_NEXT_VARIABLE_NAME:         EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000007;
-/// Runtime Services SetVariable progress code.
+/// Runtime Services `SetVariable` progress code.
 pub const EFI_SW_RS_PC_SET_VARIABLE:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000008;
-/// Runtime Services GetNextHighMonotonicCount progress code.
+/// Runtime Services `GetNextHighMonotonicCount` progress code.
 pub const EFI_SW_RS_PC_GET_NEXT_HIGH_MONOTONIC_COUNT:  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000009;
-/// Runtime Services ResetSystem progress code.
+/// Runtime Services `ResetSystem` progress code.
 pub const EFI_SW_RS_PC_RESET_SYSTEM:                   EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000A;
-/// Runtime Services UpdateCapsule progress code.
+/// Runtime Services `UpdateCapsule` progress code.
 pub const EFI_SW_RS_PC_UPDATE_CAPSULE:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000B;
-/// Runtime Services QueryCapsuleCapabilities progress code.
+/// Runtime Services `QueryCapsuleCapabilities` progress code.
 pub const EFI_SW_RS_PC_QUERY_CAPSULE_CAPABILITIES:     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000C;
-/// Runtime Services QueryVariableInfo progress code.
+/// Runtime Services `QueryVariableInfo` progress code.
 pub const EFI_SW_RS_PC_QUERY_VARIABLE_INFO:            EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000D;
 
 // Software Class EFI DXE Services Subclass Progress Code definitions
 //
-/// DXE Services AddMemorySpace progress code.
+/// DXE Services `AddMemorySpace` progress code.
 pub const EFI_SW_DS_PC_ADD_MEMORY_SPACE:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC;
-/// DXE Services AllocateMemorySpace progress code.
+/// DXE Services `AllocateMemorySpace` progress code.
 pub const EFI_SW_DS_PC_ALLOCATE_MEMORY_SPACE:        EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000001;
-/// DXE Services FreeMemorySpace progress code.
+/// DXE Services `FreeMemorySpace` progress code.
 pub const EFI_SW_DS_PC_FREE_MEMORY_SPACE:            EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000002;
-/// DXE Services RemoveMemorySpace progress code.
+/// DXE Services `RemoveMemorySpace` progress code.
 pub const EFI_SW_DS_PC_REMOVE_MEMORY_SPACE:          EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000003;
-/// DXE Services GetMemorySpaceDescriptor progress code.
+/// DXE Services `GetMemorySpaceDescriptor` progress code.
 pub const EFI_SW_DS_PC_GET_MEMORY_SPACE_DESCRIPTOR:  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000004;
-/// DXE Services SetMemorySpaceAttributes progress code.
+/// DXE Services `SetMemorySpaceAttributes` progress code.
 pub const EFI_SW_DS_PC_SET_MEMORY_SPACE_ATTRIBUTES:  EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000005;
-/// DXE Services GetMemorySpaceMap progress code.
+/// DXE Services `GetMemorySpaceMap` progress code.
 pub const EFI_SW_DS_PC_GET_MEMORY_SPACE_MAP:         EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000006;
-/// DXE Services AddIoSpace progress code.
+/// DXE Services `AddIoSpace` progress code.
 pub const EFI_SW_DS_PC_ADD_IO_SPACE:                 EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000007;
-/// DXE Services AllocateIoSpace progress code.
+/// DXE Services `AllocateIoSpace` progress code.
 pub const EFI_SW_DS_PC_ALLOCATE_IO_SPACE:            EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000008;
-/// DXE Services FreeIoSpace progress code.
+/// DXE Services `FreeIoSpace` progress code.
 pub const EFI_SW_DS_PC_FREE_IO_SPACE:                EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000009;
-/// DXE Services RemoveIoSpace progress code.
+/// DXE Services `RemoveIoSpace` progress code.
 pub const EFI_SW_DS_PC_REMOVE_IO_SPACE:              EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000A;
-/// DXE Services GetIoSpaceDescriptor progress code.
+/// DXE Services `GetIoSpaceDescriptor` progress code.
 pub const EFI_SW_DS_PC_GET_IO_SPACE_DESCRIPTOR:      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000B;
-/// DXE Services GetIoSpaceMap progress code.
+/// DXE Services `GetIoSpaceMap` progress code.
 pub const EFI_SW_DS_PC_GET_IO_SPACE_MAP:             EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000C;
 /// DXE Services Dispatch progress code.
 pub const EFI_SW_DS_PC_DISPATCH:                     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000D;
@@ -1067,7 +1067,7 @@ pub const EFI_SW_DS_PC_DISPATCH:                     EfiStatusCodeValue = EFI_SU
 pub const EFI_SW_DS_PC_SCHEDULE:                     EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000E;
 /// DXE Services Trust progress code.
 pub const EFI_SW_DS_PC_TRUST:                        EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x0000000F;
-/// DXE Services ProcessFirmwareVolume progress code.
+/// DXE Services `ProcessFirmwareVolume` progress code.
 pub const EFI_SW_DS_PC_PROCESS_FIRMWARE_VOLUME:      EfiStatusCodeValue = EFI_SUBCLASS_SPECIFIC | 0x00000010;
 
 // Software Class Error Code definitions.

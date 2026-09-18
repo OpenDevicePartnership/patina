@@ -52,7 +52,7 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
     fn free_cell(self: &mut HeapAllocator<T>, _data: Rebox<T>) {}
 }
 
-/// Provides decompression for Brotli GUIDed sections.
+/// Provides decompression for Brotli `GUIDed` sections.
 #[derive(Default, Clone, Copy)]
 pub struct BrotliSectionExtractor;
 
@@ -76,7 +76,7 @@ impl SectionExtractor for BrotliSectionExtractor {
                     .try_into()
                     .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
             );
-            if out_size > DECOMPRESSION_MAX_MEMORY_LIMIT as u64 {
+            if out_size > u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) {
                 return Err(FirmwareFileSystemError::DataCorrupt);
             }
 
@@ -90,7 +90,7 @@ impl SectionExtractor for BrotliSectionExtractor {
             let mut brotli_state = BrotliState::new(
                 HeapAllocator::<u8> { default_value: 0 },
                 HeapAllocator::<u32> { default_value: 0 },
-                HeapAllocator::<HuffmanCode> { default_value: Default::default() },
+                HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() },
             );
             let in_data = data.get(16..).ok_or(FirmwareFileSystemError::DataCorrupt)?;
             let mut out_data = vec![0u8; out_size as usize];
@@ -108,9 +108,8 @@ impl SectionExtractor for BrotliSectionExtractor {
 
             if matches!(result, BrotliResult::ResultSuccess) {
                 return Ok(out_data);
-            } else {
-                return Err(FirmwareFileSystemError::DataCorrupt);
             }
+            return Err(FirmwareFileSystemError::DataCorrupt);
         }
         Err(FirmwareFileSystemError::Unsupported)
     }
@@ -141,7 +140,7 @@ mod tests {
     fn test_brotli_extractor_out_size_exceeds_limit() {
         // Declare an uncompressed size larger than the 512MB decompression limit; the
         // extractor must reject it before attempting to allocate the output buffer.
-        let out_size = DECOMPRESSION_MAX_MEMORY_LIMIT as u64 + 1;
+        let out_size = u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) + 1;
         let section = create_brotli_section(&[0u8; 4], out_size);
         let extractor = BrotliSectionExtractor;
         let result = extractor.extract(&section);

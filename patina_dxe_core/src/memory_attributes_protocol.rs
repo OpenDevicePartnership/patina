@@ -44,17 +44,16 @@ extern "efiapi" fn get_memory_attributes(
 
     // this API only returns the MEMORY_ACCESS attributes, per UEFI spec
     for desc_result in GCD.iter(base_address as usize, length as usize) {
-        let descriptor = match desc_result {
-            Ok(desc) => desc,
-            Err(_) => {
-                log::error!(
-                    "No descriptors found for range [{:#x}, {:#x}) in {}",
-                    base_address,
-                    base_address + length,
-                    function!()
-                );
-                return efi::Status::NO_MAPPING;
-            }
+        let descriptor = if let Ok(desc) = desc_result {
+            desc
+        } else {
+            log::error!(
+                "No descriptors found for range [{:#x}, {:#x}) in {}",
+                base_address,
+                base_address + length,
+                function!()
+            );
+            return efi::Status::NO_MAPPING;
         };
 
         // if we have already found attributes, ensure they are consistent
@@ -106,28 +105,26 @@ extern "efiapi" fn set_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let end = match base_address.checked_add(length) {
-        Some(e) => e,
-        None => {
-            log::error!("Address overflow in {}", function!());
-            return efi::Status::INVALID_PARAMETER;
-        }
+    let end = if let Some(e) = base_address.checked_add(length) {
+        e
+    } else {
+        log::error!("Address overflow in {}", function!());
+        return efi::Status::INVALID_PARAMETER;
     };
 
     let range = base_address..end;
 
     for desc_result in GCD.iter(base_address as usize, length as usize) {
-        let descriptor = match desc_result {
-            Ok(desc) => desc,
-            Err(_) => {
-                log::error!(
-                    "No descriptors found for range [{:#x}, {:#x}) in {}",
-                    base_address,
-                    base_address + length,
-                    function!()
-                );
-                return efi::Status::UNSUPPORTED;
-            }
+        let descriptor = if let Ok(desc) = desc_result {
+            desc
+        } else {
+            log::error!(
+                "No descriptors found for range [{:#x}, {:#x}) in {}",
+                base_address,
+                base_address + length,
+                function!()
+            );
+            return efi::Status::UNSUPPORTED;
         };
 
         // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
@@ -148,7 +145,7 @@ extern "efiapi" fn set_memory_attributes(
             (current_range.end - current_range.start),
             new_attributes,
         ) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 log::error!(
                     "Failed to set memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
@@ -183,27 +180,25 @@ extern "efiapi" fn clear_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let end = match base_address.checked_add(length) {
-        Some(e) => e,
-        None => {
-            log::error!("Address overflow in {}", function!());
-            return efi::Status::INVALID_PARAMETER;
-        }
+    let end = if let Some(e) = base_address.checked_add(length) {
+        e
+    } else {
+        log::error!("Address overflow in {}", function!());
+        return efi::Status::INVALID_PARAMETER;
     };
     let range = base_address..end;
 
     for desc_result in GCD.iter(base_address as usize, length as usize) {
-        let descriptor = match desc_result {
-            Ok(desc) => desc,
-            Err(_) => {
-                log::error!(
-                    "No descriptors found for range [{:#x}, {:#x}) in {}",
-                    base_address,
-                    base_address + length,
-                    function!()
-                );
-                return efi::Status::UNSUPPORTED;
-            }
+        let descriptor = if let Ok(desc) = desc_result {
+            desc
+        } else {
+            log::error!(
+                "No descriptors found for range [{:#x}, {:#x}) in {}",
+                base_address,
+                base_address + length,
+                function!()
+            );
+            return efi::Status::UNSUPPORTED;
         };
         // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
         // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
@@ -222,7 +217,7 @@ extern "efiapi" fn clear_memory_attributes(
             (current_range.end - current_range.start),
             new_attributes,
         ) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 log::error!(
                     "Failed to clear memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
@@ -291,7 +286,7 @@ pub(crate) fn uninstall_memory_attributes_protocol() {
                     efi::protocols::memory_attribute::PROTOCOL_GUID,
                     interface,
                 ) {
-                    Ok(_) => {
+                    Ok(()) => {
                         log::info!("uninstalled MEMORY_ATTRIBUTES_PROTOCOL_GUID");
                     }
                     Err(e) => {
@@ -338,7 +333,7 @@ mod tests {
     #[test]
     fn test_get_memory_attributes_invalid_alignment() {
         let mut attrs: u64 = 0;
-        let status = get_memory_attributes(core::ptr::null_mut(), 0x1001, 0x1000, &mut attrs as *mut u64);
+        let status = get_memory_attributes(core::ptr::null_mut(), 0x1001, 0x1000, &raw mut attrs);
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 
@@ -410,7 +405,7 @@ mod tests {
                 .unwrap();
 
             let mut attrs: u64 = 0;
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, efi::MEMORY_XP);
         });
@@ -454,8 +449,7 @@ mod tests {
                 .unwrap();
 
             let mut attrs: u64 = 0;
-            let status =
-                get_memory_attributes(core::ptr::null_mut(), addr as u64 + 0x1000, 0x1000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64 + 0x1000, 0x1000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, efi::MEMORY_XP);
         });
@@ -501,7 +495,7 @@ mod tests {
             GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_UC | efi::MEMORY_XP).unwrap();
 
             let mut attrs: u64 = 0;
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, efi::MEMORY_XP);
         });
@@ -547,7 +541,7 @@ mod tests {
             GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_RO).unwrap();
 
             let mut attrs: u64 = 0;
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &raw mut attrs);
             assert_eq!(status, efi::Status::NO_MAPPING);
         });
     }
@@ -558,7 +552,7 @@ mod tests {
             GCD.init(48, 16);
 
             let mut attrs: u64 = 0;
-            let status = get_memory_attributes(core::ptr::null_mut(), 0x0_u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), 0x0_u64, 0x3000, &raw mut attrs);
             assert_eq!(status, efi::Status::NO_MAPPING);
         });
     }
@@ -604,7 +598,7 @@ mod tests {
             let status = set_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, attrs);
             assert_eq!(status, efi::Status::SUCCESS);
 
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, efi::MEMORY_RO | efi::MEMORY_XP);
         });
@@ -653,7 +647,7 @@ mod tests {
             let status = set_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, attrs);
             assert_eq!(status, efi::Status::SUCCESS);
 
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, efi::MEMORY_RO | efi::MEMORY_XP);
         });
@@ -700,7 +694,7 @@ mod tests {
             let status = clear_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, attrs);
             assert_eq!(status, efi::Status::SUCCESS);
 
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, 0);
         });
@@ -749,7 +743,7 @@ mod tests {
             let status = clear_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, attrs);
             assert_eq!(status, efi::Status::SUCCESS);
 
-            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &raw mut attrs);
             assert_eq!(status, efi::Status::SUCCESS);
             assert_eq!(attrs, 0);
         });

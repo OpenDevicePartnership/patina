@@ -48,10 +48,10 @@ const IMAGE_REL_BASED_HIGHLOW: u16 = 3;
 // 64-bit value.
 const IMAGE_REL_BASED_DIR64: u16 = 10;
 
-/// PE/COFF Specification Machine Type for IMAGE_FILE_MACHINE_AMD64 images.
+/// PE/COFF Specification Machine Type for `IMAGE_FILE_MACHINE_AMD64` images.
 #[allow(dead_code)]
 pub const IMAGE_MACHINE_TYPE_X64: u16 = 0x8664;
-/// PE/COFF Specification Machine Type for IMAGE_FILE_MACHINE_ARM64 images.
+/// PE/COFF Specification Machine Type for `IMAGE_FILE_MACHINE_ARM64` images.
 #[allow(dead_code)]
 pub const IMAGE_MACHINE_TYPE_AARCH64: u16 = 0xAA64;
 
@@ -68,12 +68,12 @@ pub enum HeaderType {
 pub struct UefiPeInfo {
     /// Type of header (PE32 or TE)
     pub header_type: HeaderType,
-    /// Offset into an image header where the image_base address is located.
+    /// Offset into an image header where the `image_base` address is located.
     /// NOT the actual image base address.
     pub image_base_header_field_offset: usize,
     /// RVA offset of the entry point.
     pub entry_point_offset: usize,
-    /// The subsystem type (IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER \[0xB\], etc.).
+    /// The subsystem type (`IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER` \[0xB\], etc.).
     pub image_type: u16,
     /// The total length of the image.
     pub size_of_image: u32,
@@ -81,15 +81,15 @@ pub struct UefiPeInfo {
     pub section_alignment: u32,
     /// The total length of the image header.
     pub size_of_headers: usize,
-    /// The COFF machine type (IMAGE_FILE_MACHINE_*).
+    /// The COFF machine type (`IMAGE_FILE_MACHINE`_*).
     pub machine: u16,
     /// Structs representing the section table inside the image header.
     pub sections: Vec<goblin::pe::section_table::SectionTable>,
-    /// The filename, if present, from debug_data
+    /// The filename, if present, from `debug_data`
     pub filename: Option<String>,
     /// The relocation directory, if present.
     pub reloc_dir: Option<goblin::pe::data_directories::DataDirectory>,
-    /// Whether the NX_COMPAT DLL Characteristic flag is set
+    /// Whether the `NX_COMPAT` DLL Characteristic flag is set
     pub nx_compat: bool,
 }
 
@@ -109,7 +109,6 @@ impl UefiPeInfo {
     pub fn parse_mapped(bytes: &[u8]) -> error::Result<Self> {
         let mut opts = goblin::pe::options::ParseOptions::default();
         opts.resolve_rva = false;
-        opts.parse_attribute_certificates = false;
         match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
             PE32_MAGIC => UefiPeInfo::from_pe(bytes, &opts),
             TE_MAGIC => UefiPeInfo::from_te(bytes),
@@ -120,82 +119,120 @@ impl UefiPeInfo {
     /// Parses a PE with a TE header, gathering the necessary data for operating on the image in a UEFI environment.
     fn from_te(bytes: &[u8]) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
-        let parsed_te = goblin::pe::TE::parse(bytes)?;
+        let mut offset = 0;
+        let header = goblin::pe::header::TeHeader::parse(bytes, &mut offset)?;
+        let rva_offset = header.stripped_size as usize - core::mem::size_of::<goblin::pe::header::TeHeader>();
+        let sections = header.sections(bytes, &mut offset)?;
 
         // Set the simple fields.
         pe.image_base_header_field_offset = TE_IMAGE_BASE_HEADER_FIELD_OFFSET;
-        pe.header_type = HeaderType::Te(parsed_te.rva_offset);
-        pe.entry_point_offset = parsed_te.header.entry_point as usize;
-        pe.image_type = parsed_te.header.subsystem as u16;
-        pe.machine = parsed_te.header.machine;
+        pe.header_type = HeaderType::Te(rva_offset);
+        pe.entry_point_offset = header.entry_point as usize;
+        pe.image_type = u16::from(header.subsystem);
+        pe.machine = header.machine;
         pe.section_alignment = 0;
-        pe.size_of_headers = parsed_te.header.base_of_code as usize;
-        pe.sections = parsed_te.sections;
+        pe.size_of_headers = header.base_of_code as usize;
+        pe.sections = sections;
         // TE doesn't have the optional header with DLL Characteristics, so we have to assume the image is NX_COMPAT
         pe.nx_compat = true;
 
         // TE headers always have a reloc dir, even if it's empty
         // unlike PE32 headers.
-        if parsed_te.header.reloc_dir.size != 0 {
-            pe.reloc_dir = Some(parsed_te.header.reloc_dir);
+        if header.reloc_dir.size != 0 {
+            pe.reloc_dir = Some(header.reloc_dir);
         }
 
         // TE headers don't have a size of image filed like PE32 headers
         // so it needs to be calculated.
-        if let Some(last_section) = pe.sections.last() {
-            pe.size_of_image = last_section.virtual_address + last_section.virtual_size;
+        let Some(last_section) = pe.sections.last() else {
+            return Err(error::Error::Goblin(goblin::error::Error::Malformed("No sections found in PE.".to_string())));
+        };
+        pe.size_of_image = last_section.virtual_address + last_section.virtual_size;
 
-            // Parse the filename from the debug data if it exists.
-            if let Some(codeview_data) = &parsed_te.debug_data.codeview_pdb70_debug_info {
-                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-            };
-
-            Ok(pe)
-        } else {
-            Err(error::Error::Goblin(goblin::error::Error::Malformed("No sections found in PE.".to_string())))
+        // Debug data is optional metadata. Use it when valid, but do not reject an otherwise
+        // loadable image when its debug directory cannot be resolved or parsed.
+        let mut debug_opts = goblin::pe::options::ParseOptions::default();
+        debug_opts.resolve_rva = false;
+        match goblin::pe::debug::DebugData::parse_with_opts_and_fixup(
+            bytes,
+            header.debug_dir,
+            &pe.sections,
+            0,
+            &debug_opts,
+            rva_offset as u32,
+        ) {
+            Ok(debug_data) => {
+                if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
+                    pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to parse optional TE/COFF debug metadata: {err:?}");
+            }
         }
+
+        Ok(pe)
     }
 
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
     fn from_pe(bytes: &[u8], opts: &goblin::pe::options::ParseOptions) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
+        let parsed_header = goblin::pe::header::Header::parse(bytes)?;
+        let optional_header = parsed_header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
 
-        // Parse the PE header and verify the optional header exists
-        let parsed_pe = goblin::pe::PE::parse_with_opts(bytes, opts)?;
-        let optional_header = parsed_pe.header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
+        let mut section_table_offset = parsed_header.dos_header.pe_pointer as usize
+            + SIZEOF_PE32_SIGNATURE
+            + SIZEOF_COFF_HEADER
+            + parsed_header.coff_header.size_of_optional_header as usize;
+
+        let sections = parsed_header.coff_header.sections(bytes, &mut section_table_offset)?;
 
         // Set the simple fields
         pe.header_type = HeaderType::Pe;
         pe.entry_point_offset = optional_header.standard_fields.address_of_entry_point as usize;
         pe.image_type = optional_header.windows_fields.subsystem;
-        pe.machine = parsed_pe.header.coff_header.machine;
+        pe.machine = parsed_header.coff_header.machine;
         pe.section_alignment = optional_header.windows_fields.section_alignment;
         pe.size_of_image = optional_header.windows_fields.size_of_image;
-        pe.sections = parsed_pe.sections.into_iter().collect();
+        pe.sections = sections;
         pe.size_of_headers = optional_header.windows_fields.size_of_headers as usize;
         pe.nx_compat = optional_header.windows_fields.dll_characteristics
             & goblin::pe::dll_characteristic::IMAGE_DLLCHARACTERISTICS_NX_COMPAT
             != 0;
 
         // Set the relocation diretory if it exists
-        if let Some(reloc_section) = optional_header.data_directories.get_base_relocation_table() {
-            pe.reloc_dir = Some(*reloc_section);
+        if let Some(&reloc_section) = optional_header.data_directories.get_base_relocation_table() {
+            pe.reloc_dir = Some(reloc_section);
         }
 
         // Calculate the image base offset by finding the offset of the windows fields
         // image_base is the first entry in the windows_fields
-        let mut windows_fields_offset = parsed_pe.header.dos_header.pe_pointer;
+        let mut windows_fields_offset = parsed_header.dos_header.pe_pointer;
         windows_fields_offset += SIZEOF_COFF_HEADER as u32;
         windows_fields_offset += SIZEOF_PE32_SIGNATURE as u32;
         windows_fields_offset += SIZEOF_STANDARD_FIELDS_64 as u32;
         pe.image_base_header_field_offset = windows_fields_offset as usize;
 
-        // Get the filename if the data exists
-        if let Some(debug_data) = parsed_pe.debug_data {
-            if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
-                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-            } else if let Some(codeview_data) = debug_data.codeview_pdb20_debug_info {
-                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+        // Debug data is optional metadata. Use it when valid, but do not reject an otherwise
+        // loadable image when its debug directory cannot be resolved or parsed.
+        if let Some(&debug_table) = optional_header.data_directories.get_debug_table() {
+            match goblin::pe::debug::DebugData::parse_with_opts(
+                bytes,
+                debug_table,
+                &pe.sections,
+                optional_header.windows_fields.file_alignment,
+                opts,
+            ) {
+                Ok(debug_data) => {
+                    if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
+                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+                    } else if let Some(codeview_data) = debug_data.codeview_pdb20_debug_info {
+                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to parse optional PE/COFF debug metadata: {err:?}");
+                }
             }
         }
         Ok(pe)
@@ -206,12 +243,14 @@ impl UefiPeInfo {
         let filename_end = bytes.iter().position(|&c| c == b'\0').unwrap_or(bytes.len());
         let mut filename = String::from_utf8_lossy(bytes.get(..filename_end).unwrap_or(bytes)).into_owned();
 
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
+        // TODO: Determine whether case insensitivity is required here.
         if filename.ends_with(".pdb") || filename.ends_with(".dll") {
             filename.truncate(filename.len() - 4);
         }
 
         if let Some(index) = filename.rfind(|ref c| ['/', '\\'].contains(c)) {
-            filename.drain(..index + 1);
+            filename.drain(..=index);
         }
 
         Ok(Some(format!("{filename}.efi")))
@@ -245,7 +284,7 @@ impl UefiPeInfo {
 ///
 /// ## Panics
 ///
-/// Panics if the loaded_image buffer is not the same length as the image.
+/// Panics if the `loaded_image` buffer is not the same length as the image.
 pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -> error::Result<()> {
     loaded_image.fill(0);
 
@@ -267,7 +306,7 @@ pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -
         let src = image
             .get((section.pointer_to_raw_data as usize)..(section.pointer_to_raw_data as usize + size as usize))
             .ok_or(error::Error::BufferTooShort(size as usize, "image"))?;
-        dst.copy_from_slice(src)
+        dst.copy_from_slice(src);
     }
     Ok(())
 }
@@ -701,7 +740,7 @@ mod tests {
         let mut loaded_image: Vec<u8> = vec![0; pe_info.size_of_image as usize];
         match load_image(&pe_info, edit_image, &mut loaded_image) {
             Err(error::Error::BufferTooShort(..)) => {}
-            Ok(_) => panic!("Expected BufferTooShort error"),
+            Ok(()) => panic!("Expected BufferTooShort error"),
             Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
         }
     }
@@ -935,7 +974,7 @@ mod tests {
 
         // Invalidate virtual size, backflow to size_of_raw_data
         image_info.sections[RELOC_DIR_ENTRY_INDEX].virtual_size = 0;
-        assert!(load_resource_section(&image_info, image).is_ok())
+        assert!(load_resource_section(&image_info, image).is_ok());
     }
 
     #[test]
@@ -1077,5 +1116,44 @@ mod tests {
         let image_info = UefiPeInfo::parse(image).unwrap();
 
         assert!(get_section(".fake", &image_info, image).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_pe_image_with_unmapped_debug_directory_loads_without_filename() {
+        test_support::init_test_logger();
+        let image = include_bytes!("../resources/test/invalid_debug_directory.efi");
+
+        let parsed_header = goblin::pe::header::Header::parse(image).unwrap();
+        let optional_header = parsed_header.optional_header.unwrap();
+        let debug_table = optional_header.data_directories.get_debug_table().unwrap();
+        let debug_table_end = debug_table.virtual_address.checked_add(debug_table.size).unwrap();
+        assert!(debug_table_end <= optional_header.windows_fields.size_of_headers);
+
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        assert!(image_info.filename.is_none());
+
+        let mut loaded_image = vec![0; image_info.size_of_image as usize];
+        load_image(&image_info, image, &mut loaded_image).unwrap();
+    }
+
+    #[test]
+    fn test_te_image_with_malformed_debug_directory_loads_without_filename() {
+        test_support::init_test_logger();
+        let mut image = include_bytes!("../resources/test/te/test_image.te").to_vec();
+
+        // debug_dir is the last field of TeHeader (a DataDirectory { virtual_address, size }).
+        // Corrupt its size so the debug directory can no longer be resolved, without disturbing
+        // anything else about the image.
+        const HEADER_SIZE: usize = core::mem::size_of::<goblin::pe::header::TeHeader>();
+        image[HEADER_SIZE - 8..HEADER_SIZE - 4].copy_from_slice(&0u32.to_le_bytes());
+        image[HEADER_SIZE - 4..HEADER_SIZE].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let image_info = UefiPeInfo::parse(&image).unwrap();
+
+        assert!(image_info.filename.is_none());
+
+        let mut loaded_image = vec![0; image_info.size_of_image as usize];
+        load_image(&image_info, &image, &mut loaded_image).unwrap();
     }
 }

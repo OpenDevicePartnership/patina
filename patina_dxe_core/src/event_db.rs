@@ -33,41 +33,41 @@ use crate::{runtime, tpl_mutex};
 pub enum EventType {
     ///
     /// 0x80000200       Timer event with a notification function that is
-    /// queue when the event is signaled with SignalEvent()
+    /// queue when the event is signaled with `SignalEvent()`
     ///
     TimerNotify = efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
     ///
     /// 0x80000000       Timer event without a notification function. It can be
-    /// signaled with SignalEvent() and checked with CheckEvent() or WaitForEvent().
+    /// signaled with `SignalEvent()` and checked with `CheckEvent()` or `WaitForEvent()`.
     ///
     Timer = efi::EVT_TIMER,
     ///
     /// 0x00000100       Generic event with a notification function that
-    /// can be waited on with CheckEvent() or WaitForEvent()
+    /// can be waited on with `CheckEvent()` or `WaitForEvent()`
     ///
     NotifyWait = efi::EVT_NOTIFY_WAIT,
     ///
     /// 0x00000200       Generic event with a notification function that
-    /// is queue when the event is signaled with SignalEvent()
+    /// is queue when the event is signaled with `SignalEvent()`
     ///
     NotifySignal = efi::EVT_NOTIFY_SIGNAL,
     ///
-    /// 0x00000201       ExitBootServicesEvent.
+    /// 0x00000201       `ExitBootServicesEvent`.
     ///
     ExitBootServices = efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
     ///
-    /// 0x60000202       SetVirtualAddressMapEvent.
+    /// 0x60000202       `SetVirtualAddressMapEvent`.
     ///
     SetVirtualAddress = efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
     ///
     /// 0x00000000       Generic event without a notification function.
-    /// It can be signaled with SignalEvent() and checked with CheckEvent()
-    /// or WaitForEvent().
+    /// It can be signaled with `SignalEvent()` and checked with `CheckEvent()`
+    /// or `WaitForEvent()`.
     ///
     Generic = 0x00000000,
     ///
     /// 0x80000100       Timer event with a notification function that can be
-    /// waited on with CheckEvent() or WaitForEvent()
+    /// waited on with `CheckEvent()` or `WaitForEvent()`
     ///
     TimerNotifyWait = efi::EVT_TIMER | efi::EVT_NOTIFY_WAIT,
 }
@@ -92,17 +92,17 @@ impl TryFrom<u32> for EventType {
 }
 
 impl EventType {
-    /// indicates whether this EventType is NOTIFY_SIGNAL
+    /// indicates whether this `EventType` is `NOTIFY_SIGNAL`
     pub fn is_notify_signal(&self) -> bool {
         (*self as u32) & efi::EVT_NOTIFY_SIGNAL != 0
     }
 
-    /// indicates whether this EventType is NOTIFY_WAIT
+    /// indicates whether this `EventType` is `NOTIFY_WAIT`
     pub fn is_notify_wait(&self) -> bool {
         (*self as u32) & efi::EVT_NOTIFY_WAIT != 0
     }
 
-    /// indicates whether this EventType is TIMER
+    /// indicates whether this `EventType` is TIMER
     pub fn is_timer(&self) -> bool {
         (*self as u32) & efi::EVT_TIMER != 0
     }
@@ -137,7 +137,7 @@ impl TryFrom<u32> for TimerDelay {
 pub struct EventNotification {
     /// event handle
     pub event: efi::Event,
-    /// efi::TPL that notification should run at
+    /// `efi::TPL` that notification should run at
     pub notify_tpl: efi::Tpl,
     /// notification function
     pub notify_function: Option<efi::EventNotify>,
@@ -520,7 +520,7 @@ impl EventDb {
         // the debugger is not enabled.
         patina_debugger::poll_debugger();
 
-        let events: Vec<usize> = self.events.keys().rev().cloned().collect();
+        let events: Vec<usize> = self.events.keys().rev().copied().collect();
         for event in events {
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
@@ -548,11 +548,10 @@ impl EventDb {
     fn consume_next_event_notify(&mut self, tpl_level: efi::Tpl) -> Option<EventNotification> {
         //if items at front of queue don't exist (e.g. due to close_event), silently pop them off.
         while let Some(item) = self.pending_notifies.first() {
-            if !self.events.contains_key(&(item.0.event as usize)) {
-                self.pending_notifies.pop_first();
-            } else {
+            if self.events.contains_key(&(item.0.event as usize)) {
                 break;
             }
+            self.pending_notifies.pop_first();
         }
         //if item at front of queue is not higher than desired efi::TPL, then return none
         //otherwise, pop it off, mark it un-signaled, and return it.
@@ -561,9 +560,8 @@ impl EventDb {
                 return None;
             } else if let Some(item) = self.pending_notifies.pop_first() {
                 return Some(item.0);
-            } else {
-                log::error!("Pending_notifies was empty, but it should have at least one item.");
             }
+            log::error!("Pending_notifies was empty, but it should have at least one item.");
         }
         None
     }
@@ -637,7 +635,7 @@ impl Default for SpinLockedEventDb {
 }
 
 impl SpinLockedEventDb {
-    /// Creates a new instance of EventDb.
+    /// Creates a new instance of `EventDb`.
     pub const fn new() -> Self {
         SpinLockedEventDb {
             inner: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock"),
@@ -655,14 +653,14 @@ impl SpinLockedEventDb {
 
     /// Creates a new event in the event database
     ///
-    /// This function closely matches the semantics of the EFI_BOOT_SERVICES.CreateEventEx() API in
+    /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.CreateEventEx()` API in
     /// UEFI spec 2.10 section 7.1.2. Please refer to the spec for details on the input parameters.
     ///
     /// On success, this function returns the newly created event.
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn create_event(
         &self,
         event_type: u32,
@@ -676,24 +674,24 @@ impl SpinLockedEventDb {
 
     /// Closes (deletes) an event from the event database
     ///
-    /// This function closely matches the semantics of the EFI_BOOT_SERVICES.CloseEvent() API in
+    /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.CloseEvent()` API in
     /// UEFI spec 2.10 section 7.1.3. Please refer to the spec for details on the input parameters.
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn close_event(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().close_event(event)
     }
 
-    /// Marks an event as signaled, and queues it for dispatch if it is of type NotifySignalEvent
+    /// Marks an event as signaled, and queues it for dispatch if it is of type `NotifySignalEvent`
     ///
-    /// This function closely matches the semantics of the EFI_BOOT_SERVICES.SignalEvent() API in
+    /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.SignalEvent()` API in
     /// UEFI spec 2.10 section 7.1.4. Please refer to the spec for details on the input parameters.
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn signal_event(&self, event: efi::Event) -> Result<(), EfiError> {
         if let Some(mut guard) = self.try_lock() {
             guard.signal_event(event)
@@ -731,7 +729,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect event is given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect event is given.
     pub fn get_event_type(&self, event: efi::Event) -> Result<EventType, EfiError> {
         self.lock().get_event_type(event)
     }
@@ -746,7 +744,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     #[allow(dead_code)]
     pub fn clear_signal(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().clear_signal(event)
@@ -756,7 +754,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, EfiError> {
         let mut event_db = self.lock();
         let signaled = event_db.is_signaled(event);
@@ -772,7 +770,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn queue_event_notify(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().queue_event_notify(event)
     }
@@ -781,7 +779,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     #[allow(dead_code)]
     pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, EfiError> {
         self.lock().get_notification_data(event)
@@ -794,7 +792,7 @@ impl SpinLockedEventDb {
     ///
     /// ## Errors
     ///
-    /// Returns efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn set_timer(
         &self,
         event: efi::Event,
@@ -880,7 +878,7 @@ mod tests {
     fn new_should_create_event_db() {
         with_locked_state(|| {
             static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-            assert_eq!(SPIN_LOCKED_EVENT_DB.lock().events.len(), 0)
+            assert_eq!(SPIN_LOCKED_EVENT_DB.lock().events.len(), 0);
         });
     }
 
@@ -1248,7 +1246,7 @@ mod tests {
             for (group_item, queue_item) in iter::zip(group_events.iter().rev(), queue.iter()) {
                 assert_eq!(group_item, &queue_item.0.event);
             }
-        })
+        });
     }
 
     #[test]

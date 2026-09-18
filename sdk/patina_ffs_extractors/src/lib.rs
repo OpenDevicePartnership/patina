@@ -59,7 +59,7 @@ mod tests {
     use patina_ffs::section::{Section, SectionHeader};
 
     /// Constructs a section with the specified GUID and payload, prepending
-    /// the required 16-byte header (out_size + scratch_size) for Brotli sections.
+    /// the required 16-byte header (`out_size` + `scratch_size`) for Brotli sections.
     pub(crate) fn create_brotli_section(payload: &[u8], out_size: u64) -> Section {
         // Brotli section payload format: [out_size: u64, scratch_size: u64, compressed_data...]
         let scratch_size = 0u64;

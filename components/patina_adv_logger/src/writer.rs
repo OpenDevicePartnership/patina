@@ -47,7 +47,7 @@ impl AdvancedLogWriter {
         // SAFETY: The safety requirements for this function transfer to the function called here.
         let header = unsafe { AdvLoggerInfoRef::from_address(address)? };
         let data_size = header.log_buffer_size();
-        let data_start = (address + header.log_buffer_offset() as u64) as *mut u8;
+        let data_start = (address + u64::from(header.log_buffer_offset())) as *mut u8;
         // SAFETY: The caller must ensure that the memory is properly sized and initialized
         // per the safety contract of this function. from_address() validates the signature
         // and version in the header.
@@ -97,7 +97,7 @@ impl AdvancedLogWriter {
         // Get the total size of the long entry with the header, including the
         // alignment padding for 8 byte alignment.
         let data_offset = size_of::<AdvLoggerMessageEntry>() as u16;
-        let unaligned_size = data_offset as u32 + log_entry.data.len() as u32;
+        let unaligned_size = u32::from(data_offset) + log_entry.data.len() as u32;
         let message_size = align_up(unaligned_size, 8).unwrap() as u32;
 
         // try to swap in the updated value. if this grows beyond the buffer, fall out.
@@ -153,8 +153,13 @@ impl AdvancedLogWriter {
         !self.header.hw_port_disabled() && (level & self.header.hw_print_level() != 0)
     }
 
+    /// Returns the hardware print level from the memory log header.
+    pub(crate) fn hw_print_level(&self) -> u32 {
+        self.header.hw_print_level()
+    }
+
     /// Returns whether hardware port writing is enabled for the given level,
-    /// using an overridden hw_print_level bitmask.
+    /// using an overridden `hw_print_level` bitmask.
     pub fn hardware_write_enabled_with_mask(&self, level: u32, mask_override: u32) -> bool {
         !self.header.hw_port_disabled() && (level & mask_override != 0)
     }
@@ -204,7 +209,7 @@ mod tests {
     fn create_fill_check_test() {
         let mut buff_box = Box::new([0_u64; 0x2000]);
         let buffer = buff_box.as_mut();
-        let address = buffer as *mut u64 as PhysicalAddress;
+        let address = buffer.as_mut_ptr() as PhysicalAddress;
         let len = buffer.len() as u32;
 
         // SAFETY: We just allocated this memory so it's valid.
@@ -217,7 +222,7 @@ mod tests {
             let entry: LogEntry<'_> = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             let log_entry = writer.add_log_entry(entry);
             match log_entry {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(EfiError::OutOfResources) => {
                     assert!(writer.discarded_size() > 0);
                     assert!(entries > 0);
@@ -247,7 +252,7 @@ mod tests {
     fn adopt_buffer_test() {
         let buff_box = Box::new([0_u8; 0x10000]);
         let buffer = buff_box.as_ref();
-        let address = buffer as *const u8 as PhysicalAddress;
+        let address = buffer.as_ptr() as PhysicalAddress;
         let len = buffer.len() as u32;
 
         // SAFETY: We just allocated this memory so it's valid.

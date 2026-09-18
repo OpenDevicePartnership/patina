@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "System Management BIOS (SMBIOS) support for Patina UEFI components."
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 log = { workspace = true }

@@ -27,9 +27,8 @@ impl super::SerialIO for Terminal {
     fn try_read(&mut self) -> Option<u8> {
         let buffer = &mut [0u8; 1];
         match std::io::stdin().read(buffer) {
-            Ok(0) => None,
+            Ok(0) | Err(_) => None,
             Ok(_) => Some(buffer[0]),
-            Err(_) => None,
         }
     }
 }

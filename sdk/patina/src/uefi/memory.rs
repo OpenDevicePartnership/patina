@@ -55,7 +55,7 @@ pub enum EfiMemoryType {
     MemoryMappedIOPortSpace = efi::MEMORY_MAPPED_IO_PORT_SPACE,
     /// Address space reserved by the firmware for code that is part of the processor.
     PalCode = efi::PAL_CODE,
-    /// EfiConventionalMemory that supports byte-addressable non-volatility.
+    /// `EfiConventionalMemory` that supports byte-addressable non-volatility.
     PersistentMemory = efi::PERSISTENT_MEMORY,
     /// Present in the system, but not accepted / initalized for use by the system's underlying memory isolation
     /// technology.
@@ -77,9 +77,9 @@ pub struct CustomMemoryType {
 }
 
 impl EfiMemoryType {
-    /// Converts a [efi::MemoryType] to an [EfiMemoryType].
+    /// Converts a [`efi::MemoryType`] to an [`EfiMemoryType`].
     ///
-    /// Returns an [EfiError] if the underlying [u32] value does not match any known EFI memory types.
+    /// Returns an [`EfiError`] if the underlying [u32] value does not match any known EFI memory types.
     pub fn from_efi(value: efi::MemoryType) -> Result<Self, EfiError> {
         let memory_type = match value {
             efi::RESERVED_MEMORY_TYPE => EfiMemoryType::ReservedMemoryType,
@@ -126,8 +126,9 @@ impl From<EfiMemoryType> for efi::MemoryType {
             EfiMemoryType::PalCode => efi::PAL_CODE,
             EfiMemoryType::PersistentMemory => efi::PERSISTENT_MEMORY,
             EfiMemoryType::UnacceptedMemoryType => efi::UNACCEPTED_MEMORY_TYPE,
-            EfiMemoryType::OemMemoryType(custom_memory_type) => custom_memory_type.memory_type,
-            EfiMemoryType::OsMemoryType(custom_memory_type) => custom_memory_type.memory_type,
+            EfiMemoryType::OemMemoryType(custom_memory_type) | EfiMemoryType::OsMemoryType(custom_memory_type) => {
+                custom_memory_type.memory_type
+            }
         }
     }
 }

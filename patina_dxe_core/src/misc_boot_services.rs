@@ -10,7 +10,7 @@ use core::{ffi::c_void, slice::from_raw_parts, sync::atomic::Ordering};
 use patina::arch as interrupts;
 use patina::standard::efi;
 use patina::{
-    guid as base_guids, log_debug_assert,
+    crc32, guid as base_guids, log_debug_assert,
     pi::{protocol, status_code},
     uefi::event::EXIT_BOOT_SERVICES_FAILED_EVENT_GROUP_GUID,
 };
@@ -78,7 +78,7 @@ unsafe extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, c
     // SAFETY: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
         let buffer = from_raw_parts(data as *mut u8, data_size);
-        crc_32.write_unaligned(crc32fast::hash(buffer));
+        crc_32.write_unaligned(crc32::calculate_crc32(buffer));
     }
 
     efi::Status::SUCCESS
@@ -91,13 +91,13 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
         // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
         let metronome = unsafe { metronome_ptr.as_mut().expect("Metronome pointer should not be null.") };
         let ticks_100ns: u128 = (microseconds as u128) * 10;
-        let mut ticks = ticks_100ns / metronome.tick_period as u128;
-        while ticks > u32::MAX as u128 {
+        let mut ticks = ticks_100ns / u128::from(metronome.tick_period);
+        while ticks > u128::from(u32::MAX) {
             let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
             if status.is_error() {
                 log::warn!("metronome.wait_for_tick returned unexpected error {status}");
             }
-            ticks -= u32::MAX as u128;
+            ticks -= u128::from(u32::MAX);
         }
         if ticks != 0 {
             let status = (metronome.wait_for_tick)(metronome_ptr, ticks as u32);
@@ -147,9 +147,7 @@ extern "efiapi" fn set_watchdog_timer(
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocol::metronome::PROTOCOL_GUID.into_inner()) {
         Ok(metronome_arch_ptr) => {
-            if metronome_arch_ptr.is_null() {
-                panic!("Located metronome protocol pointer is null.");
-            }
+            assert!(!metronome_arch_ptr.is_null(), "Located metronome protocol pointer is null.");
             // SAFETY: metronome_arch_ptr is expected to be a valid pointer to the metronome protocol since it is
             // associated with the metronome arch guid.
             unsafe { METRONOME_ARCH_PTR.init(metronome_arch_ptr) };
@@ -167,9 +165,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocol::watchdog::PROTOCOL_GUID.into_inner()) {
         Ok(watchdog_arch_ptr) => {
-            if watchdog_arch_ptr.is_null() {
-                panic!("Located watchdog protocol pointer is null.");
-            }
+            assert!(!watchdog_arch_ptr.is_null(), "Located watchdog protocol pointer is null.");
             // SAFETY: watchdog_arch_ptr is expected to be a valid pointer to the watchdog protocol since it is
             // associated with the watchdog arch guid.
             unsafe { WATCHDOG_ARCH_PTR.init(watchdog_arch_ptr) };
@@ -215,7 +211,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             (timer_arch.set_timer_period)(timer_arch_ptr, 0);
         }
         Err(err) => log::error!("Unable to locate timer arch: {err}"),
-    };
+    }
 
     // Lock the memory space to prevent edits to the memory map after this point.
     GCD.lock_memory_space();
@@ -223,7 +219,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // Terminate the memory map
     // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot services memory allocation functionality
     match terminate_memory_map(map_key) {
-        Ok(_) => (),
+        Ok(()) => (),
         Err(err) => {
             log::error!("Failed to terminate memory map: {err}");
             GCD.unlock_memory_space();
@@ -251,7 +247,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             );
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err}"),
-    };
+    }
 
     // Disable CPU interrupts
     interrupts::disable_interrupts();
@@ -275,7 +271,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             rt_arch_protocol.at_runtime.store(true, Ordering::SeqCst);
         }
         Err(err) => log::error!("Unable to locate runtime architectural protocol: {err}"),
-    };
+    }
 
     crate::runtime::finalize_runtime_support();
     log::info!("EBS completed successfully.");
@@ -365,12 +361,12 @@ mod tests {
                 (st.boot_services().get().calculate_crc32)(
                     BUFFER.as_ptr() as *mut c_void,
                     BUFFER.len(),
-                    &mut data_crc as *mut u32,
+                    &raw mut data_crc,
                 )
             };
             // Verify the function succeeded and CRC32 was calculated correctly for zero buffer
             if status == efi::Status::SUCCESS {
-                let expected_crc = crc32fast::hash(&BUFFER);
+                let expected_crc = crc32::calculate_crc32(&BUFFER);
                 if data_crc == expected_crc {
                     log::debug!("CRC32 calculation successful: {data_crc:#x}");
                 } else {
@@ -383,7 +379,7 @@ mod tests {
             // Test case 2: Zero data size - should return INVALID_PARAMETER
             // SAFETY: The passed in values are safe because they are constructed in this test case.
             let status = unsafe {
-                (st.boot_services().get().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &mut data_crc as *mut u32)
+                (st.boot_services().get().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &raw mut data_crc)
             };
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Zero data size correctly returned INVALID_PARAMETER");
@@ -394,11 +390,7 @@ mod tests {
             // Test case 3: Null data pointer - should return INVALID_PARAMETER
             // SAFETY: The passed in values are safe because they are constructed in this test case.
             let status = unsafe {
-                (st.boot_services().get().calculate_crc32)(
-                    core::ptr::null_mut(),
-                    BUFFER.len(),
-                    &mut data_crc as *mut u32,
-                )
+                (st.boot_services().get().calculate_crc32)(core::ptr::null_mut(), BUFFER.len(), &raw mut data_crc)
             };
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Null data pointer correctly returned INVALID_PARAMETER");
@@ -448,7 +440,7 @@ mod tests {
             }
 
             let data = char16!("Hello");
-            let data_ptr = data.as_ptr() as *mut efi::Char16;
+            let data_ptr = data.as_ptr().cast_mut();
 
             // Test case 3: Set the watchdog timer with non-null data - should return NOT_READY
             // SAFETY: The unsafe block is required because r-efi declares set_watchdog_timer as an
@@ -497,11 +489,11 @@ mod tests {
             ) -> efi::Status {
                 unimplemented!()
             }
-            let watchdog =
+            static WATCHDOG: protocol::watchdog::WatchdogProtocol =
                 protocol::watchdog::WatchdogProtocol { register_handler, set_timer_period, get_timer_period };
-            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
+            // SAFETY: WATCHDOG is a 'static, so the pointer remains valid for the rest of the process.
             unsafe {
-                WATCHDOG_ARCH_PTR.init(&watchdog as *const _ as *mut c_void);
+                WATCHDOG_ARCH_PTR.init(&raw const WATCHDOG as *mut c_void);
             };
             // Test case 5: Set watchdog timer with null data - should return SUCCESS (watchdog protocol available)
             // SAFETY: The unsafe block is required because r-efi declares set_watchdog_timer as an
@@ -562,14 +554,12 @@ mod tests {
                 efi::Status::SUCCESS
             }
 
-            let metronome = protocol::metronome::MetronomeProtocol {
-                tick_period: 10000, //10 microseconds
-                wait_for_tick,
-            };
+            static METRONOME: protocol::metronome::MetronomeProtocol =
+                protocol::metronome::MetronomeProtocol { tick_period: 10000, wait_for_tick };
 
-            // SAFETY: The mock protocol lives for the duration of the test and the pointer is only used by the test.
+            // SAFETY: METRONOME is a 'static, so the pointer remains valid for the rest of the process.
             unsafe {
-                METRONOME_ARCH_PTR.init(&metronome as *const _ as *mut c_void);
+                METRONOME_ARCH_PTR.init(&raw const METRONOME as *mut c_void);
             }
 
             // Test case 4: Normal stall duration - should return SUCCESS (metronome protocol available)

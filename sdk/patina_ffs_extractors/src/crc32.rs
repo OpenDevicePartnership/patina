@@ -6,6 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+use patina::crc32;
 use patina::pi::fw_fs;
 use patina_ffs::{
     FirmwareFileSystemError,
@@ -32,7 +33,7 @@ impl SectionExtractor for Crc32SectionExtractor {
             let crc32_bytes = crc_header.get(..4).ok_or(FirmwareFileSystemError::DataCorrupt)?;
             let crc32 = u32::from_le_bytes(crc32_bytes.try_into().unwrap());
             let content = section.try_content_as_slice()?;
-            if crc32 != crc32fast::hash(content) {
+            if crc32 != crc32::calculate_crc32(content) {
                 //TODO: in EDK2 C reference implementation, data is returned along with EFI_AUTH_STATUS_TEST_FAILED.
                 //For now, just return an error if the CRC fails to check.
                 Err(FirmwareFileSystemError::DataCorrupt)?;
@@ -55,7 +56,7 @@ mod tests {
     #[test]
     fn test_crc32_extractor_valid() {
         let content = b"Hello, CRC32!";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
@@ -79,7 +80,7 @@ mod tests {
     #[test]
     fn test_crc32_extractor_empty_content() {
         let content = b"";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
@@ -93,7 +94,7 @@ mod tests {
         // A malformed section whose GUID-specific data is larger than the 4-byte CRC32 value
         // should only have the first 4 bytes interpreted as the checksum.
         let content = b"Hello, CRC32!";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let mut guid_data = crc32.to_le_bytes().to_vec();
         guid_data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]); // give trailing bytes beyond the CRC32
         let section = create_crc32_section(content, guid_data);
@@ -134,7 +135,7 @@ mod tests {
             attributes: 0x01,
         };
 
-        let crc32_bytes = crc32fast::hash(content).to_le_bytes().to_vec();
+        let crc32_bytes = crc32::calculate_crc32(content).to_le_bytes().to_vec();
         let header = SectionHeader::GuidDefined(guid_header, crc32_bytes, content.len() as u32);
         let section =
             Section::new_from_header_with_data(header, content.to_vec()).expect("Failed to create test section");

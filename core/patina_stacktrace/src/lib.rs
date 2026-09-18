@@ -146,7 +146,7 @@
 //!    /// UefiMain
 //!    /// ~/repos/patina-qemu/MU_BASECORE/ShellPkg/Application/Shell/Shell.c:372
 //!    /// ```
-//!    pub unsafe fn dump_with_fp_chain(_stack_frame: StackFrame) -> StResult<()>
+//!    pub unsafe fn dump_with_fp_chain(stack_frame: StackFrame) -> StResult<()>
 //! ```
 //!
 //! ## API usage

@@ -66,7 +66,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 rbt.get(i).unwrap();
             }
-        })
+        });
     });
 
     // BST 32bit
@@ -80,7 +80,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 bst.get(i).unwrap();
             }
-        })
+        });
     });
 
     // SORTED SLICE 32bit
@@ -94,7 +94,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 ss.search_with_key(i).unwrap();
             }
-        })
+        });
     });
 
     // 128bit nums
@@ -111,7 +111,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 rbt.get(i).unwrap();
             }
-        })
+        });
     });
 
     // BST 128bit
@@ -125,7 +125,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 bst.get(i).unwrap();
             }
-        })
+        });
     });
 
     // SORTED SLICE 128bit
@@ -139,7 +139,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 ss.search_with_key(i).unwrap();
             }
-        })
+        });
     });
 
     // u64 nums (converted into 384bit)
@@ -158,7 +158,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 rbt.get(i).unwrap();
             }
-        })
+        });
     });
 
     // BST 384bit
@@ -172,7 +172,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 bst.get(i).unwrap();
             }
-        })
+        });
     });
 
     // SORTED SLICE 384bit
@@ -186,7 +186,7 @@ fn benchmark_search_function(c: &mut Criterion) {
             for i in &nums {
                 ss.search_with_key(i).unwrap();
             }
-        })
+        });
     });
 
     group.finish();

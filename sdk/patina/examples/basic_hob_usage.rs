@@ -1,19 +1,19 @@
 //! This example demonstrates how to consume Guided HOB(s) (Hand-off Block) in a Patina based monolithic component.
 //!
-//! Specifically, this example demonstrates how to define a custom GUIDed HOB struct and it's parser, then consume it
-//! in a component. Other standard GUIDed HOBs may already be available and only the consumption portion of this
-//! example is relevant. It should be noted that only GUIDed HOBs are provided to components. Any non-GUIDed HOB types
+//! Specifically, this example demonstrates how to define a custom `GUIDed` HOB struct and it's parser, then consume it
+//! in a component. Other standard `GUIDed` HOBs may already be available and only the consumption portion of this
+//! example is relevant. It should be noted that only `GUIDed` HOBs are provided to components. Any non-GUIDed HOB types
 //! are not available to components at this time.
 //!
 //! As an additional note, there is no way for a component to produce a HOB. HOBs (Hand-off Blocks) are specifically
 //! designed as a way for pre-DXE firmware to pass information to the DXE Core. Raw HOBs are passed directly to the
-//! core during initialization from the relevant pre-DXE phase firmware. From there, the core will parse any GUIDed
+//! core during initialization from the relevant pre-DXE phase firmware. From there, the core will parse any `GUIDed`
 //! HOBs found in the HOB list that have registered parsers, and make them available to components.
 //!
 //! ## HOB parsing
 //!
 //! HOBs and their respective parsers are automatically gathered when a component is registered, and one step of Core
-//! initialization is to parse the HOB list and use any registered parsers to parse a GUIDed HOB.
+//! initialization is to parse the HOB list and use any registered parsers to parse a `GUIDed` HOB.
 use patina::{
     BinaryGuid,
     component::{IntoComponent, Storage, component, prelude::*},
@@ -68,7 +68,7 @@ pub struct MultipleHobConsumer;
 impl MultipleHobConsumer {
     pub fn entry_point(self, hob1: Hob<CustomHob1>, hob2: Option<Hob<CustomHob2>>) -> Result<()> {
         // (3) Show off that if we expect a HOB to exist multiple times, we can iterate over it.
-        for hob in hob1.iter() {
+        for hob in &hob1 {
             println!("  Hob1 data: {hob:?}");
         }
 
@@ -77,7 +77,7 @@ impl MultipleHobConsumer {
             // (1) Show off that if we only expect a single HOB, we can dereference it directly.
             Some(hob) => println!("  Hob2 exists with data: {:?}", *hob),
             None => println!("  Hob2 does not exist, continuing without it."),
-        };
+        }
 
         Ok(())
     }

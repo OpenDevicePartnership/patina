@@ -41,7 +41,7 @@ pub fn read_memory<Arch: DebuggerArch>(address: u64, buffer: &mut [u8], unsafe_r
     let page_table = Arch::get_page_table()?;
 
     // Check that all of the pages are mapped before accessing the memory.
-    let len = if !unsafe_read { check_range_access::<Arch>(&page_table, address, buffer.len())? } else { buffer.len() };
+    let len = if unsafe_read { buffer.len() } else { check_range_access::<Arch>(&page_table, address, buffer.len())? };
 
     if len == 0 {
         return Err(());
@@ -157,9 +157,8 @@ fn check_paging_range<P: PatinaPageTable>(page_table: &P, start_address: u64, le
             // return an error.
             if page > start_address {
                 return Ok((page - start_address) as usize);
-            } else {
-                return Err(());
             }
+            return Err(());
         }
 
         // if this is the last page, return the full length
@@ -294,7 +293,7 @@ mod tests {
             Ok(mock_page_table)
         });
 
-        let address = &data as *const _ as u64;
+        let address = &raw const data as u64;
         let result = read_memory::<MockMemDebuggerArch>(address, &mut buffer, false);
         assert!(result.expect("Failed to read memory.") == buffer.len());
         assert_eq!(buffer, data);
@@ -336,7 +335,7 @@ mod tests {
             Ok(mock_page_table)
         });
 
-        let address = &data as *const _ as u64;
+        let address = &raw const data as u64;
         let result = write_memory::<MockMemDebuggerArch>(address, &buffer);
         assert!(result.is_ok());
         assert_eq!(buffer, data);

@@ -12,15 +12,16 @@ use crate::base::error::EfiError;
 use crate::standard::efi;
 
 pub mod c_ptr;
+pub mod crc32;
 pub mod error;
 pub mod guid;
 pub mod hash;
 pub mod protocol;
 pub mod string;
 
-/// EFI memory allocation functions work in units of EFI_PAGEs that are 4KB.
+/// EFI memory allocation functions work in units of `EFI_PAGEs` that are 4KB.
 /// This should in no way be confused with the page size of the processor.
-/// An EFI_PAGE is just the quanta of memory in EFI.
+/// An `EFI_PAGE` is just the quanta of memory in EFI.
 pub const UEFI_PAGE_SIZE: usize = 0x1000;
 
 /// The mask to apply to an address to get the page offset in UEFI.
@@ -418,7 +419,7 @@ pub const fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiErr
 ///
 /// # Note
 /// This macro is typically used to create signatures for UEFI structures
-/// and is the equivalent of the SIGNATURE_16, SIGNATURE_32 and SIGNATURE_64
+/// and is the equivalent of the `SIGNATURE_16`, `SIGNATURE_32` and `SIGNATURE_64`
 /// macros from EDK2.
 #[allow(unused_macros)]
 #[macro_export]

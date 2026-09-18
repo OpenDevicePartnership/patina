@@ -47,7 +47,7 @@ impl AcpiTableProtocol {
 
     /// Installs an ACPI table into the XSDT.
     ///
-    /// This function generally matches the behavior of EFI_ACPI_TABLE_PROTOCOL.InstallAcpiTable() API in the UEFI spec 2.10
+    /// This function generally matches the behavior of `EFI_ACPI_TABLE_PROTOCOL.InstallAcpiTable()` API in the UEFI spec 2.10
     /// section 20.2. Refer to the UEFI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
@@ -80,7 +80,7 @@ impl AcpiTableProtocol {
 
         // The size of the allocated table buffer must be large enough to store the whole table.
         // SAFETY: `acpi_table_buffer` is checked non-null and large enough to read an AcpiTableHeader.
-        let table_header = unsafe { core::ptr::read_unaligned(acpi_table_buffer as *const AcpiTableHeader) };
+        let table_header = unsafe { core::ptr::read_unaligned(acpi_table_buffer.cast::<AcpiTableHeader>()) };
         let tbl_length = table_header.length as usize;
         if tbl_length != acpi_table_buffer_size {
             return efi::Status::INVALID_PARAMETER;
@@ -96,7 +96,7 @@ impl AcpiTableProtocol {
         if let Some(global_mm) = STANDARD_ACPI_PROVIDER.memory_manager.get() {
             // SAFETY: `acpi_table_buffer` has been validated as non-null and of sufficient size above.
             let acpi_table =
-                unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, None, global_mm) };
+                unsafe { AcpiTable::new_from_ptr(acpi_table_buffer.cast::<AcpiTableHeader>(), None, global_mm) };
 
             if let Ok(table) = acpi_table {
                 let signature = table.signature();
@@ -114,9 +114,7 @@ impl AcpiTableProtocol {
                     }
                     Err(e) => {
                         log::error!(
-                            "ACPI protocol: Install failed with error {:?} for table with signature: 0x{:08X}",
-                            e,
-                            signature,
+                            "ACPI protocol: Install failed with error {e:?} for table with signature: 0x{signature:08X}",
                         );
                         return e.into();
                     }
@@ -132,7 +130,7 @@ impl AcpiTableProtocol {
 
     /// Removes an ACPI table from the XSDT.
     ///
-    /// This function generally matches the behavior of EFI_ACPI_TABLE_PROTOCOL.UninstallAcpiTable() API in the UEFI spec 2.10
+    /// This function generally matches the behavior of `EFI_ACPI_TABLE_PROTOCOL.UninstallAcpiTable()` API in the UEFI spec 2.10
     /// section 20.2. Refer to the UEFI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
@@ -143,12 +141,12 @@ impl AcpiTableProtocol {
     /// Returns [`OUT_OF_RESOURCES`](efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
         match STANDARD_ACPI_PROVIDER.uninstall_acpi_table(TableKey(table_key)) {
-            Ok(_) => {
-                log::trace!("ACPI protocol: Successfully uninstalled table with key: {}", table_key);
+            Ok(()) => {
+                log::trace!("ACPI protocol: Successfully uninstalled table with key: {table_key}");
                 efi::Status::SUCCESS
             }
             Err(e) => {
-                log::error!("ACPI protocol: Failed to uninstall table with key: {} - error: {:?}", table_key, e);
+                log::error!("ACPI protocol: Failed to uninstall table with key: {table_key} - error: {e:?}");
                 e.into()
             }
         }
@@ -181,7 +179,7 @@ impl AcpiGetProtocol {
 impl AcpiGetProtocol {
     /// Returns a requested ACPI table.
     ///
-    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 1.8
+    /// This function generally matches the behavior of `EFI_ACPI_SDT_PROTOCOL.GetAcpiTable()` API in the PI spec 1.8
     /// section 9.1. Refer to the PI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
@@ -221,7 +219,7 @@ impl AcpiGetProtocol {
                 efi::Status::SUCCESS
             }
             Err(e) => {
-                log::error!("ACPI protocol: Failed to get table at index {} with error: {:?}", index, e);
+                log::error!("ACPI protocol: Failed to get table at index {index} with error: {e:?}");
                 e.into()
             }
         }
@@ -229,7 +227,7 @@ impl AcpiGetProtocol {
 
     /// Register or unregister a callback when an ACPI table is installed.
     ///
-    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.RegisterNotify() API in the PI spec 1.8
+    /// This function generally matches the behavior of `EFI_ACPI_SDT_PROTOCOL.RegisterNotify()` API in the PI spec 1.8
     /// section 9.1. Refer to the PI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
@@ -249,7 +247,7 @@ impl AcpiGetProtocol {
         };
 
         match STANDARD_ACPI_PROVIDER.register_notify(register, rust_fn) {
-            Ok(_) => efi::Status::SUCCESS,
+            Ok(()) => efi::Status::SUCCESS,
             Err(err) => err.into(),
         }
     }
@@ -284,9 +282,9 @@ mod tests {
         let mut table_key: usize = 0;
         let status = AcpiTableProtocol::install_acpi_table_ext(
             &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
+            dummy_table.as_ptr().cast::<c_void>(),
             dummy_table.len(),
-            &mut table_key as *mut usize,
+            &raw mut table_key,
         );
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
@@ -294,7 +292,7 @@ mod tests {
         let dummy_table: [u8; 8] = [0; 8];
         let status = AcpiTableProtocol::install_acpi_table_ext(
             &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
+            dummy_table.as_ptr().cast::<c_void>(),
             dummy_table.len(),
             core::ptr::null_mut(),
         );
@@ -305,9 +303,9 @@ mod tests {
         let mut table_key: usize = 0;
         let status = AcpiTableProtocol::install_acpi_table_ext(
             &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
+            dummy_table.as_ptr().cast::<c_void>(),
             16, // Incorrect length,
-            &mut table_key as *mut usize,
+            &raw mut table_key,
         );
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
@@ -316,9 +314,9 @@ mod tests {
         let mut table_key: usize = 0;
         let status = AcpiTableProtocol::install_acpi_table_ext(
             &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
+            dummy_table.as_ptr().cast::<c_void>(),
             dummy_table.len(),
-            &mut table_key as *mut usize,
+            &raw mut table_key,
         );
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
@@ -347,9 +345,9 @@ mod tests {
         let mut table_key: usize = 0;
         let status = AcpiTableProtocol::install_acpi_table_ext(
             &AcpiTableProtocol::new(),
-            dummy_table.as_ptr() as *const c_void,
+            dummy_table.as_ptr().cast::<c_void>(),
             dummy_table.len(),
-            &mut table_key as *mut usize,
+            &raw mut table_key,
         );
         assert_eq!(status, efi::Status::NOT_STARTED);
     }

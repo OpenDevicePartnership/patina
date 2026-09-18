@@ -1,4 +1,4 @@
-//! EFI_DEBUG_IMAGE_INFO_TABLE Support
+//! `EFI_DEBUG_IMAGE_INFO_TABLE` Support
 //!
 //! ## License
 //!
@@ -95,7 +95,7 @@ impl DebugImageInfoData {
         }
     }
 
-    /// Creates a new, empty Debug Image Info Table wrapped in a RwLock.
+    /// Creates a new, empty Debug Image Info Table wrapped in a `RwLock`.
     pub(super) const fn new_locked() -> RwLock<Self> {
         RwLock::new(Self::new())
     }
@@ -133,13 +133,13 @@ impl DebugImageInfoData {
     /// Returns the current update status of the table header.
     fn update_status(&self) -> u32 {
         // SAFETY: This is a field owned by this struct and is valid for reads.
-        unsafe { ptr::read_volatile(&self.header.volatile_update_status) }
+        unsafe { ptr::read_volatile(&raw const self.header.volatile_update_status) }
     }
 
     /// Sets the update status of the table header.
     fn set_update_status(&mut self, status: u32) {
         // SAFETY: This is a field owned by this struct and is valid for writes.
-        unsafe { ptr::write_volatile(&mut self.header.volatile_update_status, status) }
+        unsafe { ptr::write_volatile(&raw mut self.header.volatile_update_status, status) }
     }
 
     /// Returns the current capacity of the table.
@@ -149,7 +149,7 @@ impl DebugImageInfoData {
 
     /// Sets the update-in-progress flag.
     fn set_update_in_progress(&mut self) {
-        self.set_update_status(self.update_status() | efi::DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS)
+        self.set_update_status(self.update_status() | efi::DEBUG_IMAGE_INFO_UPDATE_IN_PROGRESS);
     }
 
     fn clear_update_in_progress(&mut self) {
@@ -158,7 +158,7 @@ impl DebugImageInfoData {
 
     /// Sets the table-modified flag.
     fn set_modified(&mut self) {
-        self.set_update_status(self.update_status() | efi::DEBUG_IMAGE_INFO_TABLE_MODIFIED)
+        self.set_update_status(self.update_status() | efi::DEBUG_IMAGE_INFO_TABLE_MODIFIED);
     }
 
     /// Allows for safe modification of the table while managing update flags.

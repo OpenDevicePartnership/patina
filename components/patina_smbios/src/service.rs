@@ -80,7 +80,7 @@ impl<'a> SmbiosRecordsIter<'a> {
     }
 }
 
-impl<'a> Iterator for SmbiosRecordsIter<'a> {
+impl Iterator for SmbiosRecordsIter<'_> {
     type Item = (SmbiosTableHeader, Option<Handle>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -115,14 +115,14 @@ pub trait Smbios {
     ///
     /// # Returns
     ///
-    /// A tuple of (major_version, minor_version).
+    /// A tuple of (`major_version`, `minor_version`).
     fn version(&self) -> (u8, u8);
 
     /// Publishes the SMBIOS table to the UEFI Configuration Table
     ///
     /// # Returns
     ///
-    /// Returns a tuple of (table_address, entry_point_address) on success.
+    /// Returns a tuple of (`table_address`, `entry_point_address`) on success.
     ///
     /// # Errors
     ///
@@ -379,9 +379,9 @@ mod tests {
     #[test]
     fn test_smbios_table_header_debug() {
         let header = SmbiosTableHeader::new(127, 4, 0xFFFF);
-        let debug_str = format!("{:?}", header);
+        let debug_str = format!("{header:?}");
         assert!(debug_str.contains("127"));
-        assert!(debug_str.contains("4"));
+        assert!(debug_str.contains('4'));
     }
 
     #[test]
@@ -767,7 +767,7 @@ mod tests {
 
     // Unit tests for SmbiosImpl using MockBootServices
 
-    /// Creates a MockBootServices configured for TplMutex usage
+    /// Creates a `MockBootServices` configured for `TplMutex` usage
     fn mock_boot_services() -> MockBootServices {
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
@@ -775,7 +775,7 @@ mod tests {
         boot_services
     }
 
-    /// Creates a test SmbiosImpl with MockBootServices
+    /// Creates a test `SmbiosImpl` with `MockBootServices`
     fn create_test_smbios_impl(boot_services: MockBootServices) -> SmbiosImpl<MockBootServices> {
         let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
         manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
@@ -923,7 +923,7 @@ mod tests {
         // We verified it compiles and can be called
     }
 
-    /// Creates a MockBootServices configured for publish_table (includes install_configuration_table)
+    /// Creates a `MockBootServices` configured for `publish_table` (includes `install_configuration_table`)
     fn mock_boot_services_with_config_table() -> MockBootServices {
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);

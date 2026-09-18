@@ -25,7 +25,7 @@ pub mod mm_supv {
 
 /// Test GUIDs for different handlers
 ///
-/// Provides predefined GUIDs used throughout the patina_mm test framework for registering
+/// Provides predefined GUIDs used throughout the `patina_mm` test framework for registering
 /// and identifying different types of test handlers.
 pub mod test_guids {
     use patina::BinaryGuid;

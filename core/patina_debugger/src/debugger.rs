@@ -68,7 +68,7 @@ unsafe impl Sync for ExceptionInfo {}
 /// Patina Debugger
 ///
 /// This struct implements the Debugger trait for the Patina debugger. It wraps
-/// a SerialIO transport and manages the debugger in an internal struct.
+/// a `SerialIO` transport and manages the debugger in an internal struct.
 ///
 pub struct PatinaDebugger<T>
 where
@@ -96,7 +96,7 @@ where
     connection_timed_out: AtomicBool,
 }
 
-/// Safety: Send is safe by default for all but the gdb_buffer, but this is just a raw buffer and is safe to send between threads.
+/// Safety: Send is safe by default for all but the `gdb_buffer`, but this is just a raw buffer and is safe to send between threads.
 unsafe impl<T: SerialIO> Send for DebuggerInternal<'static, T> {}
 
 /// Internal Debugger State
@@ -142,6 +142,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     /// Forces the debugger to be enabled, regardless of later configuration. This
     /// is used for development purposes and is not intended for production or
     /// standard use. If `False` is provided, this routine will not change the configuration.
+    #[must_use]
     pub const fn with_force_enable(mut self, enabled: bool) -> Self {
         if enabled {
             self.enabled = AtomicBool::new(true);
@@ -152,6 +153,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     /// Configures the logging policy for the debugger. See [`DebuggerLoggingPolicy`]
     /// for more information on the available policies. By default, the debugger
     /// will suspend logging while broken in.
+    #[must_use]
     pub const fn with_log_policy(mut self, policy: DebuggerLoggingPolicy) -> Self {
         self.log_policy = policy;
         self
@@ -159,12 +161,14 @@ impl<T: SerialIO> PatinaDebugger<T> {
 
     /// Enables the debugger to initialize the transport. This is typically only required if the transport is not shared
     /// with the logging device. Initializing the transport when it is shared may lead to unexpected behavior.
+    #[must_use]
     pub const fn with_transport_init(mut self) -> Self {
         self.transport_init = true;
         self
     }
 
     /// Customizes the exception types for which the debugger will be invoked.
+    #[must_use]
     pub const fn with_exception_types(mut self, exception_types: &'static [usize]) -> Self {
         self.exception_types = exception_types;
         self
@@ -173,6 +177,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     /// Configures the timeout for the initial breakpoint.
     ///
     /// `timeout_seconds` - Timeout specified in seconds. Zero indicates to wait indefinitely.
+    #[must_use]
     pub const fn with_timeout(mut self, timeout_seconds: u32) -> Self {
         self.initial_break_timeout = timeout_seconds;
         self
@@ -201,36 +206,34 @@ impl<T: SerialIO> PatinaDebugger<T> {
         };
 
         let mut target = PatinaTarget::new(exception_info, &self.system_state);
-        let timeout = match debug.initial_breakpoint {
-            true => {
-                debug.initial_breakpoint = false;
-                self.initial_break_timeout
-            }
-            false => 0,
+        let timeout = if debug.initial_breakpoint {
+            debug.initial_breakpoint = false;
+            self.initial_break_timeout
+        } else {
+            0
         };
 
         // Either take the existing state machine, or start one if this is the first break.
-        let mut gdb = match debug.gdb {
-            Some(_) => debug.gdb.take().unwrap(),
-            None => {
-                // Flush any stale data from the transport.
-                while self.transport.try_read().map_err(|_| DebugError::TransportFailure)?.is_some() {}
+        let mut gdb = if debug.gdb.is_some() {
+            debug.gdb.take().unwrap()
+        } else {
+            // Flush any stale data from the transport.
+            while self.transport.try_read().map_err(|_| DebugError::TransportFailure)?.is_some() {}
 
-                // SAFETY: The buffer will only ever be used by the paired GDB stub
-                // within the internal state lock. Because there is no GDB stub at
-                // this point, there is no other references to the buffer. This
-                // ensures a single locked mutable reference to the buffer.
-                let gdb_buffer = unsafe { debug.gdb_buffer.ok_or(DebugError::NotInitialized)?.as_mut() };
+            // SAFETY: The buffer will only ever be used by the paired GDB stub
+            // within the internal state lock. Because there is no GDB stub at
+            // this point, there is no other references to the buffer. This
+            // ensures a single locked mutable reference to the buffer.
+            let gdb_buffer = unsafe { debug.gdb_buffer.ok_or(DebugError::NotInitialized)?.as_mut() };
 
-                let conn = SerialConnection::new(&self.transport);
+            let conn = SerialConnection::new(&self.transport);
 
-                let builder = GdbStubBuilder::new(conn)
-                    .with_packet_buffer(gdb_buffer)
-                    .build()
-                    .map_err(|_| DebugError::GdbStubInit)?;
+            let builder = GdbStubBuilder::new(conn)
+                .with_packet_buffer(gdb_buffer)
+                .build()
+                .map_err(|_| DebugError::GdbStubInit)?;
 
-                builder.run_state_machine(&mut target).map_err(|_| DebugError::GdbStubInit)?
-            }
+            builder.run_state_machine(&mut target).map_err(|_| DebugError::GdbStubInit)?
         };
 
         let mut timeout_reached = false;
@@ -252,7 +255,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
                 let frequency = timer.perf_frequency();
                 let initial_count = timer.cpu_count();
                 loop {
-                    if (timer.cpu_count() - initial_count) / frequency >= timeout as u64 {
+                    if (timer.cpu_count() - initial_count) / frequency >= u64::from(timeout) {
                         timeout_reached = true;
                         break;
                     }

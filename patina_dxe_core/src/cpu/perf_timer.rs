@@ -30,7 +30,7 @@ impl ArchTimerFunctionality for PerfTimer {
     /// Otherwise, an architecture-specific method is attempted to determine the frequency.
     fn perf_frequency(&self) -> u64 {
         if self.frequency.load(Ordering::Relaxed) == 0 {
-            let frequency = patina::arch::get_timer_frequency().map_or(0, |f| f.get());
+            let frequency = patina::arch::get_timer_frequency().map_or(0, core::num::NonZero::get);
             self.frequency.store(frequency, Ordering::Relaxed);
         }
         self.frequency.load(Ordering::Relaxed)
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_zero_frequency_forces_arch_perf_frequency() {
-        let expected = patina::arch::get_timer_frequency().map_or(0, |f| f.get());
+        let expected = patina::arch::get_timer_frequency().map_or(0, std::num::NonZero::get);
 
         let timer = PerfTimer::default();
         assert_eq!(timer.perf_frequency(), expected);

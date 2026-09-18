@@ -537,7 +537,7 @@ version = "1.19.0"
 criteria = "safe-to-run"
 
 [[exemptions.uart_16550]]
-version = "0.3.2"
+version = "0.8.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.uint]]

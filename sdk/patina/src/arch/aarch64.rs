@@ -1,4 +1,4 @@
-//! AArch64 Specific abstractions for Patina.
+//! `AArch64` Specific abstractions for Patina.
 //!
 //! ## License
 //!
@@ -250,12 +250,9 @@ fn flush_data_cache_range(start: efi::PhysicalAddress, length: u64, op: CpuFlush
     let cacheline_size = data_cache_line_len();
     let cacheline_mask = cacheline_size - 1;
     let mut aligned_addr = start & !cacheline_mask;
-    let end_addr = match start.checked_add(length) {
-        Some(end_addr) => end_addr,
-        None => {
-            debug_assert!(false, "Cache range overflow");
-            return;
-        }
+    let Some(end_addr) = start.checked_add(length) else {
+        debug_assert!(false, "Cache range overflow");
+        return;
     };
 
     while aligned_addr < end_addr {

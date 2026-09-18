@@ -144,7 +144,7 @@ pub fn service(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Derive Macro for implementing the `HobConfig` trait for a type.
 ///
 /// This macro uses the [zerocopy::FromBytes](https://docs.rs/zerocopy/latest/zerocopy/trait.FromBytes.html)
-/// implementation to safely create an instance of the type from a byte slice. If FromBytes is not implemented on the
+/// implementation to safely create an instance of the type from a byte slice. If `FromBytes` is not implemented on the
 /// type, a compile time error will be produced.
 ///
 /// ## Macro Attribute
@@ -168,10 +168,10 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     hob_macro::hob_config2(item.into()).into()
 }
 
-/// A proc-macro that registers the annotated function as a test case to be run by patina_test component.
+/// A proc-macro that registers the annotated function as a test case to be run by `patina_test` component.
 ///
-/// There is a distinct difference between doing a #[cfg_attr(..., skip)] and a
-/// #[cfg_attr(..., patina_test)]. The first still compiles the test case, but skips it at runtime. The second does not
+/// There is a distinct difference between doing a #[`cfg_attr`(..., skip)] and a
+/// #[`cfg_attr`(..., `patina_test`)]. The first still compiles the test case, but skips it at runtime. The second does not
 /// compile the test case at all.
 ///
 /// ## Attributes
@@ -296,7 +296,7 @@ pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// The macro automatically:
 /// - Verifies an `entry_point` method exists
-/// - Validates the entry_point parameters at compile time
+/// - Validates the `entry_point` parameters at compile time
 /// - Generates the `IntoComponent` trait implementation
 ///
 /// ## Usage
@@ -334,7 +334,7 @@ pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ## Validation Rules
 ///
 /// - Impl block must contain an `entry_point` method
-/// - Entry point must have `self`, `mut self``, `&self`, or `&mut self` as the first parameter
+/// - Entry point must have `self`, `mut self`, `&self`, or `&mut self` as the first parameter
 /// - No duplicate `ConfigMut<T>` parameters with the same type T
 /// - Cannot have both `Config<T>` and `ConfigMut<T>` for the same type T
 /// - Cannot use `&mut Storage` with `Config<T>` or `ConfigMut<T>`

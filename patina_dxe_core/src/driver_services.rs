@@ -169,12 +169,10 @@ fn authenticate_connect(
             PROTOCOL_DB.locate_protocol(patina::pi::protocol::security2::PROTOCOL_GUID.into_inner())
         {
             let file_path = {
-                if !recursive {
-                    if let Some(remaining_path) = remaining_device_path {
-                        concat_device_path_to_boxed_slice(device_path, remaining_path.as_ptr())
-                    } else {
-                        copy_device_path_to_boxed_slice(device_path)
-                    }
+                if recursive {
+                    copy_device_path_to_boxed_slice(device_path)
+                } else if let Some(remaining_path) = remaining_device_path {
+                    concat_device_path_to_boxed_slice(device_path, remaining_path.as_ptr())
                 } else {
                     copy_device_path_to_boxed_slice(device_path)
                 }
@@ -245,7 +243,7 @@ fn core_connect_single_controller(
             // SAFETY: driver_binding_interface is a clone of driver_candidates which is created above.
             // The pointer should be valid as long as driver_candidates is successfully allocated.
             let driver_binding = unsafe { &mut *(driver_binding_interface) };
-            let device_path = remaining_device_path.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+            let device_path = remaining_device_path.map_or(core::ptr::null_mut(), core::ptr::NonNull::as_ptr);
 
             perf!(perf_driver_binding_support_begin, driver_binding.driver_binding_handle, controller_handle);
 
@@ -254,28 +252,25 @@ fn core_connect_single_controller(
             // as ensured by the construction of driver_candidates above.
             let status =
                 unsafe { (driver_binding.supported)(driver_binding_interface, controller_handle, device_path) };
-            match status {
-                efi::Status::SUCCESS => {
-                    perf!(perf_driver_binding_support_end, driver_binding.driver_binding_handle, controller_handle);
+            if status == efi::Status::SUCCESS {
+                perf!(perf_driver_binding_support_end, driver_binding.driver_binding_handle, controller_handle);
 
-                    started_drivers.push(driver_binding_interface);
+                started_drivers.push(driver_binding_interface);
 
-                    perf!(perf_driver_binding_start_begin, driver_binding.driver_binding_handle, controller_handle);
+                perf!(perf_driver_binding_start_begin, driver_binding.driver_binding_handle, controller_handle);
 
-                    // SAFETY: driver_binding_interface is a valid pointer to a driver binding protocol instance
-                    // as ensured by the construction of driver_candidates above.
-                    let status =
-                        unsafe { (driver_binding.start)(driver_binding_interface, controller_handle, device_path) };
-                    if status == efi::Status::SUCCESS {
-                        one_started = true;
-                    }
-
-                    perf!(perf_driver_binding_start_end, driver_binding.driver_binding_handle, controller_handle);
+                // SAFETY: driver_binding_interface is a valid pointer to a driver binding protocol instance
+                // as ensured by the construction of driver_candidates above.
+                let status =
+                    unsafe { (driver_binding.start)(driver_binding_interface, controller_handle, device_path) };
+                if status == efi::Status::SUCCESS {
+                    one_started = true;
                 }
-                _ => {
-                    perf!(perf_driver_binding_support_end, driver_binding.driver_binding_handle, controller_handle);
-                    continue;
-                }
+
+                perf!(perf_driver_binding_start_end, driver_binding.driver_binding_handle, controller_handle);
+            } else {
+                perf!(perf_driver_binding_support_end, driver_binding.driver_binding_handle, controller_handle);
+                continue;
             }
         }
         if started_drivers.is_empty() {
@@ -302,17 +297,17 @@ fn core_connect_single_controller(
 
 /// Connects a controller to drivers
 ///
-/// This function matches the behavior of EFI_BOOT_SERVICES.ConnectController() API in the UEFI spec 2.10 section
+/// This function matches the behavior of `EFI_BOOT_SERVICES.ConnectController()` API in the UEFI spec 2.10 section
 /// 7.3.12. Refer to the UEFI spec description for details on input parameters, behavior, and error return codes.
 ///
 /// # Safety
-/// This routine cannot hold the protocol db lock while executing DriverBinding->Supported()/Start() since
+/// This routine cannot hold the protocol db lock while executing `DriverBinding->Supported()/Start()` since
 /// they need to access protocol db services. That means this routine can't guarantee that driver bindings remain
 /// valid for the duration of its execution. For example, if a driver were be unloaded in a timer callback after
-/// returning true from Supported() before Start() is called, then the driver binding instance would be uninstalled or
-/// invalid and Start() would be an invalid function pointer when invoked. In general, the spec implicitly assumes
-/// that driver binding instances that are valid at the start of the call to ConnectController() must remain valid for
-/// the duration of the ConnectController() call. If this is not true, then behavior is undefined. This function is
+/// returning true from `Supported()` before `Start()` is called, then the driver binding instance would be uninstalled or
+/// invalid and `Start()` would be an invalid function pointer when invoked. In general, the spec implicitly assumes
+/// that driver binding instances that are valid at the start of the call to `ConnectController()` must remain valid for
+/// the duration of the `ConnectController()` call. If this is not true, then behavior is undefined. This function is
 /// marked unsafe for this reason.
 ///
 /// ## Example
@@ -347,15 +342,15 @@ pub unsafe fn core_connect_controller(
 /// table.
 ///
 ///  NOTE: This routine cannot hold the protocol db lock while executing
-///  DriverBinding->Supported()/Start() since they need to access protocol db
+///  `DriverBinding->Supported()/Start()` since they need to access protocol db
 ///  services. That means this routine can't guarantee that driver bindings
 ///  remain valid for the duration of its execution. For example, if a driver
-///  were be unloaded in a timer callback after returning true from Supported()
-///  before Start() is called, then the driver binding instance would be
-///  uninstalled or invalid and Start() would be an invalid function pointer
+///  were be unloaded in a timer callback after returning true from `Supported()`
+///  before `Start()` is called, then the driver binding instance would be
+///  uninstalled or invalid and `Start()` would be an invalid function pointer
 ///  when invoked. In general, the spec implicitly assumes that driver binding
-///  instances that are valid at the start of the call to ConnectController()
-///  must remain valid for the duration of the ConnectController() call. If this
+///  instances that are valid at the start of the call to `ConnectController()`
+///  must remain valid for the duration of the `ConnectController()` call. If this
 ///  is not true, then behavior is undefined. This function is marked unsafe for
 ///  this reason.
 ///
@@ -411,16 +406,16 @@ unsafe extern "efiapi" fn connect_controller(
 
 /// Disconnects drivers from a controller.
 ///
-/// This function matches the behavior of EFI_BOOT_SERVICES.DisconnectController() API in the UEFI spec 2.10 section
+/// This function matches the behavior of `EFI_BOOT_SERVICES.DisconnectController()` API in the UEFI spec 2.10 section
 /// 7.3.13. Refer to the UEFI spec description for details on input parameters, behavior, and error return codes.
 ///
 /// # Safety
-/// This routine cannot hold the protocol db lock while executing DriverBinding->Stop() since it needs to access
+/// This routine cannot hold the protocol db lock while executing `DriverBinding->Stop()` since it needs to access
 /// protocol db services. That means this routine can't guarantee that driver bindings remain valid for the duration
-/// of its execution. For example, if a driver were to be unloaded in a timer callback while Stop() is being called
-/// on another driver, the driver binding instance could become invalid and Stop() would be an invalid function
+/// of its execution. For example, if a driver were to be unloaded in a timer callback while `Stop()` is being called
+/// on another driver, the driver binding instance could become invalid and `Stop()` would be an invalid function
 /// pointer when invoked. In general, the spec implicitly assumes that driver binding instances that are valid at the
-/// start of the call to DisconnectController() must remain valid for the duration of the DisconnectController()
+/// start of the call to `DisconnectController()` must remain valid for the duration of the `DisconnectController()`
 /// call. If this is not true, then behavior is undefined. This function is marked unsafe for this reason.
 ///
 /// ## Example
@@ -484,8 +479,8 @@ pub unsafe fn core_disconnect_controller(
         // any).
         let mut driver_valid = false;
         let mut child_handles = Vec::new();
-        for (_guid, open_info) in controller_info.iter() {
-            for info in open_info.iter() {
+        for (_guid, open_info) in &controller_info {
+            for info in open_info {
                 if info.agent_handle == Some(driver_handle) {
                     if (info.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
                         driver_valid = true;
@@ -572,15 +567,15 @@ pub unsafe fn core_disconnect_controller(
 /// services table.
 ///
 /// This routine cannot hold the protocol db lock while executing
-/// DriverBinding->Stop() since it needs to access protocol db services. That
+/// `DriverBinding->Stop()` since it needs to access protocol db services. That
 /// means this routine can't guarantee that driver bindings remain valid for the
 /// duration of its execution. For example, if a driver were to be unloaded in a
-/// timer callback while Stop() is being called on another driver, the driver
-/// binding instance could become invalid and Stop() would be an invalid
+/// timer callback while `Stop()` is being called on another driver, the driver
+/// binding instance could become invalid and `Stop()` would be an invalid
 /// function pointer when invoked. In general, the spec implicitly assumes that
 /// driver binding instances that are valid at the start of the call to
-/// DisconnectController() must remain valid for the duration of the
-/// DisconnectController() call. If this is not true, then behavior is
+/// `DisconnectController()` must remain valid for the duration of the
+/// `DisconnectController()` call. If this is not true, then behavior is
 /// undefined. This function is marked unsafe for this reason.
 ///
 /// # Safety
@@ -598,8 +593,8 @@ unsafe extern "efiapi" fn disconnect_controller(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let driver_image_handle = NonNull::new(driver_image_handle).map(|x| x.as_ptr());
-    let child_handle = NonNull::new(child_handle).map(|x| x.as_ptr());
+    let driver_image_handle = NonNull::new(driver_image_handle).map(core::ptr::NonNull::as_ptr);
+    let child_handle = NonNull::new(child_handle).map(core::ptr::NonNull::as_ptr);
     // SAFETY: handles are validated inside core_disconnect_controller. The
     // remaining safety requirement that driver bindings managing the controller
     // remain valid for the duration of the call is an implicit UEFI spec
@@ -800,8 +795,8 @@ mod tests {
     }
 
     /// Installs a driver binding (using `stop_fn`) on a new driver handle, records that driver as
-    /// managing `controller_handle` through a BY_DRIVER open of `protocol`, and registers every handle
-    /// in `children` as a BY_CHILD_CONTROLLER child of that driver. Returns the new driver handle.
+    /// managing `controller_handle` through a `BY_DRIVER` open of `protocol`, and registers every handle
+    /// in `children` as a `BY_CHILD_CONTROLLER` child of that driver. Returns the new driver handle.
     ///
     /// `controller_handle` must already have `protocol` installed (a controller created with
     /// [`new_test_handle`] already has the device path protocol installed).
@@ -2123,6 +2118,6 @@ mod tests {
 
             assert!(boot_services.connect_controller as usize == connect_controller as *const () as usize);
             assert!(boot_services.disconnect_controller as usize == disconnect_controller as *const () as usize);
-        })
+        });
     }
 }

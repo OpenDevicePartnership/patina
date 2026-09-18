@@ -1,7 +1,7 @@
 //! Metronome Architectural Protocol
 //!
 //! Used to wait for ticks from a known time source in a platform. This protocol may be used to implement a simple
-//! version of the Stall() Boot Service.
+//! version of the `Stall()` Boot Service.
 //!
 //! See <https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#metronome-architectural-protocol>
 //!
@@ -28,7 +28,7 @@ pub type WaitForTick = extern "efiapi" fn(*const MetronomeProtocol, tick_number:
 
 /// Used to wait for ticks from a known time source in a platform.
 ///
-/// This protocol may be used to implement a simple version of the Stall() Boot Service. This protocol must be produced
+/// This protocol may be used to implement a simple version of the `Stall()` Boot Service. This protocol must be produced
 /// by a boot service or runtime DXE driver and may only be consumed by the DXE Foundation and DXE drivers that produce
 /// DXE Architectural Protocols.
 ///

@@ -46,7 +46,10 @@ This code which `unwrap`s on logger initialization panics unnecessarily:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use patina_adv_logger::{
+    component::AdvancedLoggerComponent,
+    logger::AdvancedLogger,
+};
 use log::LevelFilter;
 use patina::{
     debug::log::Format,
@@ -71,7 +74,10 @@ Consider replacing it with `match` and returning a `Result`:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-# use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+# use patina_adv_logger::{
+#     component::AdvancedLoggerComponent,
+#     logger::AdvancedLogger,
+# };
 # use log::LevelFilter;
 # use patina::{
 #     debug::log::Format,

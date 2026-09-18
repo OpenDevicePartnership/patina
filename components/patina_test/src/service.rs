@@ -1,9 +1,9 @@
 //! Patina Testing Service
 //!
 //! This module defines the internal service used by the crate to register and execute tests marked with the
-//! `#[patina_test]` attribute. The [TestRunner](crate::component::TestRunner) component checks for the presence of
+//! `#[patina_test]` attribute. The [`TestRunner`](crate::component::TestRunner) component checks for the presence of
 //! the [Recorder] service, registering a new one if it does not. It then uses the Recorder service to register all
-//! discovered tests based on the filtered list each individual TestRunner is configured to run. The Recorder service
+//! discovered tests based on the filtered list each individual `TestRunner` is configured to run. The Recorder service
 //! is then responsible for executing the tests, recording their results, and logging the results at the appropriate
 //! time during the boot process.
 //!
@@ -18,7 +18,7 @@ use crate::{
     alloc::{boxed::Box, collections::BTreeMap, fmt::Display, string::String, vec::Vec},
 };
 
-use core::{ops::DerefMut, ptr::NonNull};
+use core::ptr::NonNull;
 
 use patina::{
     component::{Storage, service::IntoService},
@@ -48,7 +48,7 @@ pub(crate) struct TestRecord {
 
 #[allow(unused)]
 impl TestRecord {
-    /// Creates a new instance of TestRecord.
+    /// Creates a new instance of `TestRecord`.
     pub fn new(
         debug_mode: bool,
         test_case: &'static TestCase,
@@ -124,8 +124,9 @@ impl TestRecord {
                         EventType::NOTIFY_SIGNAL,
                         Tpl::CALLBACK,
                         Some(Self::disable_timer),
-                        NonNull::from_ref(Box::leak(Box::new((event, storage.boot_services().clone())))).as_ptr()
-                            as *mut core::ffi::c_void,
+                        NonNull::from_ref(Box::leak(Box::new((event, storage.boot_services().clone()))))
+                            .as_ptr()
+                            .cast::<core::ffi::c_void>(),
                         &EVENT_GROUP_READY_TO_BOOT,
                     )?;
 
@@ -144,7 +145,7 @@ impl TestRecord {
             self.test_case.name,
             self.pass,
             self.fail,
-            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{}""#, msg))
+            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{msg}""#))
         )
     }
 
@@ -162,11 +163,11 @@ impl TestRecord {
     }
 
     #[cfg_attr(coverage, coverage(off))]
-    /// An EFIAPI compatible event callback to disable a timer event at ReadyToBoot
+    /// An EFIAPI compatible event callback to disable a timer event at `ReadyToBoot`
     extern "efiapi" fn disable_timer(rtb_event: patina::standard::efi::Event, context: *mut core::ffi::c_void) {
         // SAFETY: We set up the context pointer in `run_tests` to point to a valid tuple of (Event, StandardBootServices).
         let (timer_event, boot_services) =
-            unsafe { &mut *(context as *mut (patina::standard::efi::Event, StandardBootServices)) };
+            unsafe { &mut *context.cast::<(patina::standard::efi::Event, StandardBootServices)>() };
         let _ = boot_services.set_timer(*timer_event, EventTimerType::Cancel, 0);
         let _ = boot_services.close_event(rtb_event);
     }
@@ -187,7 +188,7 @@ impl Recorder {
         F: FnOnce(&mut BTreeMap<&'static str, TestRecord>) -> R,
     {
         let mut records = self.records.lock();
-        f(records.deref_mut())
+        f(&mut records)
     }
 
     /// Registers UEFI event callbacks to log the test results at specific points in the boot process.
@@ -230,7 +231,7 @@ impl Recorder {
         });
     }
 
-    /// Runs all tests that are triggered by the [TestTrigger::Manual] trigger if they have not been run before.
+    /// Runs all tests that are triggered by the [`TestTrigger::Manual`] trigger if they have not been run before.
     pub(crate) fn run_manual_tests(&self, storage: &mut Storage) {
         self.with_mut(|data| {
             data.values_mut()
@@ -335,7 +336,7 @@ mod tests {
         tr3.pass = 1;
         recorder.update_record(tr3);
 
-        let output = format!("{}", recorder);
+        let output = format!("{recorder}");
         assert!(output.contains("test ... fail (1 fails, 2 passes): Failure 1"));
         assert!(output.contains("test_that_fails ... fail (2 fails, 0 passes): Failure 2"));
         assert!(output.contains("event_triggered_test ... ok (1 passes)"));
@@ -356,7 +357,7 @@ mod tests {
         recorder.update_record(test_data);
 
         let output = format!("{}", *recorder);
-        std::println!("{}", output);
+        std::println!("{output}");
         assert!(output.contains("test ... ok (1 passes)"));
     }
 
@@ -464,6 +465,6 @@ mod tests {
         assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure 1"}"#));
         assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"err_msg":"Failure 2"}"#));
         assert!(json.starts_with('[') && json.ends_with(']'));
-        assert!(json.contains(","));
+        assert!(json.contains(','));
     }
 }

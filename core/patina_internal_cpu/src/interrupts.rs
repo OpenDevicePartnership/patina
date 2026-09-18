@@ -2,7 +2,7 @@
 //!
 //! This module provides implementation for handling interrupts.
 //!
-//! This module provides implementation for [InterruptManager]. The [Interrupts] struct is the only accessible struct
+//! This module provides implementation for [`InterruptManager`]. The [Interrupts] struct is the only accessible struct
 //! when using this module. The other structs are architecture specific implementations and replace the [Interrupts]
 //! struct at compile time based on the target architecture.
 //!
@@ -48,7 +48,7 @@ cfg_if::cfg_if! {
 
 /// Republished structure for x64 exception context as defined by the UEFI specification.
 pub type ExceptionContextX64 = standard::efi::protocols::debug_support::SystemContextX64;
-/// Republished structure for AArch64 exception context as defined by the UEFI specification.
+/// Republished structure for `AArch64` exception context as defined by the UEFI specification.
 pub type ExceptionContextAArch64 = standard::efi::protocols::debug_support::SystemContextAArch64;
 
 cfg_if::cfg_if! {
@@ -133,7 +133,7 @@ macro_rules! log_registers {
 /// Trait for converting the architecture specific context structures into the
 /// UEFI System Context structure.
 pub(crate) trait EfiSystemContextFactory {
-    /// Creates a EfiSystemContext wrapper pointing to the architecture specific context.
+    /// Creates a `EfiSystemContext` wrapper pointing to the architecture specific context.
     fn create_efi_system_context(&mut self) -> EfiSystemContext;
 }
 

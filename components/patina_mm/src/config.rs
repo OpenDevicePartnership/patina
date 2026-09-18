@@ -138,12 +138,12 @@ impl CommunicateBuffer {
     /// Creates a new `CommunicateBuffer` with the given buffer and ID.
     pub fn new(mut buffer: Pin<&'static mut [u8]>, id: u8) -> Self {
         let length = buffer.len();
-        log::debug!(target: "mm_comm", "Creating new CommunicateBuffer: id={}, size=0x{:X}", id, length);
+        log::debug!(target: "mm_comm", "Creating new CommunicateBuffer: id={id}, size=0x{length:X}");
         buffer.fill(0);
 
         let ptr: NonNull<[u8]> = NonNull::from_mut(Pin::into_inner(buffer));
 
-        log::trace!(target: "mm_comm", "CommunicateBuffer {} created successfully at address {:p}", id, ptr);
+        log::trace!(target: "mm_comm", "CommunicateBuffer {id} created successfully at address {ptr:p}");
         Self {
             buffer: ptr,
             id,
@@ -181,7 +181,7 @@ impl CommunicateBuffer {
     /// - The buffer must be page (4k) aligned so paging attributes can be applied to it.
     /// - The buffer size must be sufficient to hold at least the MM communication header.
     pub unsafe fn from_raw_parts(buffer: *mut u8, size: usize, id: u8) -> Result<Self, CommunicateBufferStatus> {
-        log::trace!(target: "mm_comm", "Creating CommunicateBuffer from raw parts: id={}, ptr={:p}, size=0x{:X}", id, buffer, size);
+        log::trace!(target: "mm_comm", "Creating CommunicateBuffer from raw parts: id={id}, ptr={buffer:p}, size=0x{size:X}");
 
         if size < Self::MINIMUM_BUFFER_SIZE {
             log::error!(target: "mm_comm", "Buffer {} too small: size=0x{:X}, minimum=0x{:X}", id, size, Self::MINIMUM_BUFFER_SIZE);
@@ -189,7 +189,7 @@ impl CommunicateBuffer {
         }
 
         if buffer.is_null() {
-            log::error!(target: "mm_comm", "Buffer {} has null pointer", id);
+            log::error!(target: "mm_comm", "Buffer {id} has null pointer");
             return Err(CommunicateBufferStatus::NoBuffer);
         }
 
@@ -203,7 +203,7 @@ impl CommunicateBuffer {
             return Err(CommunicateBufferStatus::AddressValidationFailed);
         }
 
-        log::debug!(target: "mm_comm", "CommunicateBuffer {} validation passed, creating buffer", id);
+        log::debug!(target: "mm_comm", "CommunicateBuffer {id} validation passed, creating buffer");
         // SAFETY: Caller guarantees pointer validity per function safety contract
         unsafe { Ok(Self::new(Pin::new(core::slice::from_raw_parts_mut(buffer, size)), id)) }
     }
@@ -231,7 +231,7 @@ impl CommunicateBuffer {
     /// - The memory region is valid and accessible throughout buffer lifetime
     /// - The memory is not used by other components concurrently
     /// - The firmware has guaranteed the memory region is stable and properly mapped
-    /// - If provided, the status_mailbox_address points to a valid MmCommBufferStatus structure
+    /// - If provided, the `status_mailbox_address` points to a valid `MmCommBufferStatus` structure
     pub unsafe fn from_firmware_region(
         address: u64,
         size_bytes: usize,
@@ -250,10 +250,7 @@ impl CommunicateBuffer {
 
         log::info!(
             target: "mm_comm",
-            "Creating CommunicateBuffer from firmware region: addr=0x{:X}, size=0x{:X}, id={}",
-            address,
-            size_bytes,
-            buffer_id
+            "Creating CommunicateBuffer from firmware region: addr=0x{address:X}, size=0x{size_bytes:X}, id={buffer_id}"
         );
 
         // SAFETY: Caller guarantees firmware memory region is valid and stable per the function safety contract
@@ -267,7 +264,7 @@ impl CommunicateBuffer {
 
             // SAFETY: Caller guarantees the status mailbox address is valid
             buffer.status_mailbox = NonNull::new(status_ptr);
-            log::info!(target: "mm_comm", "Buffer {} status mailbox configured at address 0x{:X}", buffer_id, status_addr);
+            log::info!(target: "mm_comm", "Buffer {buffer_id} status mailbox configured at address 0x{status_addr:X}");
         }
 
         Ok(buffer)
@@ -411,11 +408,11 @@ impl CommunicateBuffer {
 
         // SAFETY: Buffer size validated, BinaryGuid is repr(transparent) over repr(C) efi::Guid at offset 0.
         // read_unaligned is used because the buffer may not be aligned to the type's requirements.
-        let memory_guid = unsafe { core::ptr::read_unaligned(header_slice.as_ptr() as *const patina::BinaryGuid) };
+        let memory_guid = unsafe { core::ptr::read_unaligned(header_slice.as_ptr().cast::<patina::BinaryGuid>()) };
 
         // SAFETY: Buffer size validated, usize at offset 16 after Guid.
         // read_unaligned is used because the buffer may not be aligned to usize requirements.
-        let memory_message_length = unsafe { core::ptr::read_unaligned(header_slice.as_ptr().add(16) as *const usize) };
+        let memory_message_length = unsafe { core::ptr::read_unaligned(header_slice.as_ptr().add(16).cast::<usize>()) };
 
         // Verify that thee recipient matches
         match self.private_recipient {
@@ -766,7 +763,7 @@ mod tests {
 
         // Test that state verification works
         assert!(comm_buffer.get_header_guid().is_ok());
-        assert_eq!(comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()), Some(expected_bytes));
+        assert_eq!(comm_buffer.get_header_guid().unwrap().as_ref().map(patina::Guid::as_bytes), Some(expected_bytes));
     }
 
     #[test]
@@ -875,7 +872,7 @@ mod tests {
         let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
         assert!(comm_buffer.set_message_info(recipient_guid.clone()).is_ok());
         assert_eq!(
-            comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()),
+            comm_buffer.get_header_guid().unwrap().as_ref().map(patina::Guid::as_bytes),
             Some(recipient_guid.as_bytes())
         );
 
@@ -889,7 +886,7 @@ mod tests {
         let recipient_guid2 = Guid::try_from_string("3210FEDC-ABCD-ABCD-1223-1234567890AB").unwrap();
         assert!(comm_buffer.set_message_info(recipient_guid2.clone()).is_ok());
         assert_eq!(
-            comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()),
+            comm_buffer.get_header_guid().unwrap().as_ref().map(patina::Guid::as_bytes),
             Some(recipient_guid2.as_bytes())
         );
 
@@ -997,7 +994,10 @@ mod tests {
         assert!(comm_buffer.set_message(test_message).is_ok());
 
         // Test that the getters pass consistency checks and return the expected values
-        assert_eq!(comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()), Some(test_guid.as_bytes()));
+        assert_eq!(
+            comm_buffer.get_header_guid().unwrap().as_ref().map(patina::Guid::as_bytes),
+            Some(test_guid.as_bytes())
+        );
         assert_eq!(comm_buffer.get_message_length().unwrap(), test_message.len());
         assert_eq!(comm_buffer.get_message().unwrap(), test_message.to_vec());
     }
@@ -1145,7 +1145,7 @@ mod tests {
     #[test]
     fn test_mm_communication_configuration_display() {
         let default_config = MmCommunicationConfiguration::default();
-        let display_output = format!("{}", default_config);
+        let display_output = format!("{default_config}");
 
         let expected_lines = [
             "MM Communication Configuration:",
@@ -1159,9 +1159,7 @@ mod tests {
         for expected_line in &expected_lines {
             assert!(
                 display_output.contains(expected_line),
-                "Display output should contain: '{}'\nActual output:\n{}",
-                expected_line,
-                display_output
+                "Display output should contain: '{expected_line}'\nActual output:\n{display_output}"
             );
         }
 
@@ -1180,7 +1178,7 @@ mod tests {
             updatable_buffer_id: None,
         };
 
-        let populated_display = format!("{}", populated_config);
+        let populated_display = format!("{populated_config}");
 
         assert!(populated_display.contains("MM Communication Configuration:"));
         assert!(populated_display.contains("  ACPI Base: IO(0x1234)"));

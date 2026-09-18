@@ -49,11 +49,6 @@ use crate::{
     tpl_mutex,
 };
 
-use corosensei::{
-    Coroutine, CoroutineResult, Yielder,
-    stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
-};
-
 use efi::Guid;
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
@@ -68,15 +63,6 @@ const EXPECTED_IMAGE_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_AARCH64;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 compile_error!("Unsupported target_arch for PE/COFF image loading");
 
-pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
-
-// Compile time assert to make sure `STACK_ALIGNMENT` (which comes from corosensei) is never larger than
-// UEFI_PAGE_SIZE. This can cause issues with the stack allocation not being aligned properly. This was chosen rather
-// than updating the `AllocationOptions` alignment configuration being set to `STACK_ALIGNMENT` because we cannot
-// guarantee that the alignment will be a multiple of UEFI_PAGE_SIZE in all cases. We would rather hit a compile time
-// error then runtime error where no image is executed because we fail to allocate the stack.
-const _: () = assert!(STACK_ALIGNMENT < UEFI_PAGE_SIZE);
-
 // dummy function used to initialize PrivateImageData.entry_point.
 #[cfg_attr(coverage, coverage(off))]
 extern "efiapi" fn unimplemented_entry_point(
@@ -84,82 +70,6 @@ extern "efiapi" fn unimplemented_entry_point(
     _system_table: *mut efi::SystemTable,
 ) -> efi::Status {
     unimplemented!()
-}
-
-// define a stack structure for coroutine support.
-struct ImageStack {
-    stack: Box<[u8], PageFree>,
-}
-
-impl ImageStack {
-    fn new(size: usize) -> Result<Self, EfiError> {
-        let len = align_up(size.max(MIN_STACK_SIZE), STACK_ALIGNMENT)?;
-        // allocate an extra page for the stack guard page.
-        let page_count = uefi_size_to_pages!(len) + 1;
-
-        let stack = CoreMemoryManager.allocate_pages(page_count, AllocationOptions::default())?.into_boxed_slice();
-
-        let base_address = stack.as_ptr() as efi::PhysicalAddress;
-        // attempt to set the memory space attributes for the stack guard page.
-        // if we fail, we should still try to continue to boot
-        // the stack grows downwards, so stack here is the guard page
-        let mut attributes = match dxe_services::core_get_memory_space_descriptor(base_address) {
-            Ok(descriptor) => descriptor.attributes,
-            Err(_) => DEFAULT_CACHE_ATTR,
-        };
-
-        attributes = MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes);
-
-        if let Err(err) =
-            dxe_services::core_set_memory_space_attributes(base_address, UEFI_PAGE_SIZE as u64, attributes)
-        {
-            log::error!("Failed to set memory space attributes for stack guard page: {err}");
-            // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
-            // and need to be refactored to handle the page table
-            // debug_assert!(false);
-        }
-
-        // we have the guard page at the bottom, so we need to add a page to the stack pointer for the limit
-        Ok(ImageStack { stack })
-    }
-
-    #[allow(unused)]
-    fn guard(&self) -> &[u8] {
-        self.stack.get(..UEFI_PAGE_SIZE).expect("stack is always > UEFI_PAGE_SIZE")
-    }
-
-    fn body(&self) -> &[u8] {
-        self.stack.get(UEFI_PAGE_SIZE..).expect("stack is always > UEFI_PAGE_SIZE")
-    }
-}
-
-// SAFETY: ImageStack provides a stable, owned stack buffer with valid base/limit pointers.
-unsafe impl Stack for ImageStack {
-    fn base(&self) -> StackPointer {
-        //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
-        self.limit().checked_add(self.body().len()).expect("Stack base address overflow.")
-    }
-    fn limit(&self) -> StackPointer {
-        //stack grows downward, so "limit" is the lowest address, i.e. the ptr.
-        StackPointer::new(self.body().as_ptr() as usize)
-            .expect("Stack pointer address was zero, but it should always be nonzero.")
-    }
-
-    // These routines are only used when building on the host (e.g. for test or
-    // clippy). Corosensei has additional trait requirements for the stack when
-    // building for windows that need to be implemented to support that case.
-    // These are not used in UEFI.
-    #[cfg(windows)]
-    fn teb_fields(&self) -> corosensei::stack::StackTebFields {
-        corosensei::stack::StackTebFields {
-            StackBase: self.base().get(),
-            StackLimit: self.limit().get(),
-            DeallocationStack: self.stack.as_ptr() as usize,
-            GuaranteedStackBytes: 0,
-        }
-    }
-    #[cfg(windows)]
-    fn update_teb_fields(&mut self, _stack_limit: usize, _guaranteed_stack_bytes: usize) {}
 }
 
 // This struct tracks private data associated with a particular image handle.
@@ -176,7 +86,7 @@ struct PrivateImageData {
 }
 
 impl PrivateImageData {
-    /// Creates a new PrivateImageData with an owned image buffer.
+    /// Creates a new `PrivateImageData` with an owned image buffer.
     fn new(mut image_info: efi::protocols::loaded_image::Protocol, pe_info: UefiPeInfo) -> Result<Self, EfiError> {
         let image_size = usize::try_from(image_info.image_size).map_err(|_| EfiError::LoadError)?;
         let section_alignment = usize::try_from(pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
@@ -214,7 +124,7 @@ impl PrivateImageData {
         Ok(image_data)
     }
 
-    /// Creates a new PrivateImageData with a borrowed image buffer.
+    /// Creates a new `PrivateImageData` with a borrowed image buffer.
     fn new_from_static_image(
         image_info: efi::protocols::loaded_image::Protocol,
         image_buffer: &'static [u8],
@@ -320,7 +230,7 @@ impl PrivateImageData {
         let handle = core_install_protocol_interface(
             None,
             efi::protocols::loaded_image::PROTOCOL_GUID,
-            self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
+            core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(self.image_info.as_ref()) as *mut c_void,
         )?;
 
         core_install_protocol_interface(
@@ -361,7 +271,7 @@ impl PrivateImageData {
         if let Err(err) = core_uninstall_protocol_interface(
             handle,
             efi::protocols::loaded_image::PROTOCOL_GUID,
-            self.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
+            core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(self.image_info.as_ref()) as *mut c_void,
         ) && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
             log::warn!("Failed to uninstall loaded image protocol for handle {handle:?}: {err}");
@@ -403,10 +313,10 @@ impl PrivateImageData {
 
     /// Sets both the file path and file name for this image.
     ///
-    /// The file name is a part of the loaded_image protocol, and is the remaining portion of the device path after
+    /// The file name is a part of the `loaded_image` protocol, and is the remaining portion of the device path after
     /// the parent handle's device path (if there is a valid parent handle).
     ///
-    /// The file path is the full device path for this image and is what is set for the loaded_image_device_path protocol.
+    /// The file path is the full device path for this image and is what is set for the `loaded_image_device_path` protocol.
     fn set_file_path(&mut self, file_path: NonNull<Protocol>) -> Result<(), EfiError> {
         let mut fp = file_path.as_ptr();
 
@@ -462,7 +372,7 @@ impl PrivateImageData {
     fn apply_image_memory_protections(&self) -> Result<(), EfiError> {
         for section in &self.pe_info.sections {
             // each section starts at image_base + virtual_address, per PE/COFF spec.
-            let section_base_addr = (self.image_info.image_base as u64) + (section.virtual_address as u64);
+            let section_base_addr = (self.image_info.image_base as u64) + u64::from(section.virtual_address);
 
             // we need to get the current attributes for this region and add our new attribute
             // if we can't find this range in the GCD, try the next one, but report the failure
@@ -477,7 +387,7 @@ impl PrivateImageData {
             // capabilities.
             let aligned_virtual_size =
                 if let Ok(virtual_size) = align_up(section.virtual_size, self.pe_info.section_alignment) {
-                    virtual_size as u64
+                    u64::from(virtual_size)
                 } else {
                     log_debug_assert!(
                         "Failed to align up section size {:#X} with alignment {:#X}",
@@ -524,26 +434,34 @@ unsafe impl Sync for ExitData {}
 // SAFETY: `ExitData` is owned by the caller of `StartImage` and cannot be accessed by any other entity.
 unsafe impl Send for ExitData {}
 
+// corosensei's `Yielder` is unavailable on aarch64-pc-windows-msvc and the functions that
+// use the fields are gated as well, so both fields are cfg-gated out on that target rather than
+// left unused.
+
 // This struct tracks global data used by the imaging subsystem.
 pub(super) struct ImageData {
     system_table: *mut efi::SystemTable,
     private_image_data: BTreeMap<efi::Handle, PrivateImageData>,
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
     current_running_image: Option<efi::Handle>,
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
     image_start_contexts: Vec<*const Yielder<efi::Handle, efi::Status>>,
 }
 
 impl ImageData {
-    /// Creates a new ImageData with default values.
+    /// Creates a new `ImageData` with default values.
     const fn new() -> Self {
         ImageData {
             system_table: core::ptr::null_mut(),
             private_image_data: BTreeMap::new(),
+            #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
             current_running_image: None,
+            #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
             image_start_contexts: Vec::new(),
         }
     }
 
-    /// Creates a new TplMutex wrapping the ImageData.
+    /// Creates a new `TplMutex` wrapping the `ImageData`.
     pub(super) const fn new_locked() -> tpl_mutex::TplMutex<Self> {
         tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, Self::new(), "ImageLock")
     }
@@ -574,7 +492,7 @@ impl ImageData {
             .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE_ID as FFS GUID.");
 
         let mut image_info = empty_image_info();
-        image_info.system_table = system_table as *mut _ as *mut efi::SystemTable;
+        image_info.system_table = core::ptr::from_mut(system_table) as *mut efi::SystemTable;
         image_info.image_base = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
         image_info.image_size = dxe_core_hob.alloc_descriptor.memory_length;
 
@@ -603,16 +521,15 @@ impl ImageData {
         let handle = core_install_protocol_interface(
             Some(protocol_db::DXE_CORE_HANDLE),
             efi::protocols::loaded_image::PROTOCOL_GUID,
-            private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol as *mut c_void,
+            core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(private_image_data.image_info.as_ref())
+                as *mut c_void,
         )
         .unwrap_or_else(|err| panic!("Failed to install dxe core image handle: {err}"));
 
-        if handle != protocol_db::DXE_CORE_HANDLE {
-            panic!(
-                "DXE Core image was installed with DXE_CORE_HANDLE but got {:?} after `install_protocol_interface`",
-                handle
-            );
-        }
+        assert!(
+            handle == protocol_db::DXE_CORE_HANDLE,
+            "DXE Core image was installed with DXE_CORE_HANDLE but got {handle:?} after `install_protocol_interface`"
+        );
 
         let protocol_ptr = NonNull::from(private_image_data.image_info.as_ref());
 
@@ -649,7 +566,7 @@ impl ImageData {
 
     /// Returns the image metadata by its file path using simple file system or load file protocols.
     ///
-    /// Returns a tuple of (image buffer, from_fv, device handle, authentication status).
+    /// Returns a tuple of (image buffer, `from_fv`, device handle, authentication status).
     fn locate_image_metadata_by_file_path(
         boot_policy: bool,
         file_path: NonNull<Protocol>,
@@ -686,18 +603,322 @@ unsafe impl Sync for ImageData {}
 // SAFETY: ImageData is only accessed through the image_data mutex.
 unsafe impl Send for ImageData {}
 
+// corosensei does not support aarch64-pc-windows-msvc (https://github.com/Amanieu/corosensei/issues/29).
+// `dispatch_stub` is used instead on that host.
+#[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
+mod dispatch {
+    #[allow(clippy::wildcard_imports)]
+    use super::*;
+    pub(super) use corosensei::Yielder;
+    use corosensei::{
+        Coroutine, CoroutineResult,
+        stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
+    };
+
+    const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
+
+    // Compile time assert to make sure `STACK_ALIGNMENT` (which comes from corosensei) is never larger than
+    // UEFI_PAGE_SIZE. This can cause issues with the stack allocation not being aligned properly. This was chosen
+    // rather than updating the `AllocationOptions` alignment configuration being set to `STACK_ALIGNMENT` because we
+    // cannot guarantee that the alignment will be a multiple of UEFI_PAGE_SIZE in all cases. We would rather hit a
+    // compile time error then runtime error where no image is executed because we fail to allocate the stack.
+    const _: () = assert!(STACK_ALIGNMENT < UEFI_PAGE_SIZE);
+
+    // define a stack structure for coroutine support.
+    pub(super) struct ImageStack {
+        pub(super) stack: Box<[u8], PageFree>,
+    }
+
+    impl ImageStack {
+        pub(super) fn new(size: usize) -> Result<Self, EfiError> {
+            let len = align_up(size.max(MIN_STACK_SIZE), STACK_ALIGNMENT)?;
+            // allocate an extra page for the stack guard page.
+            let page_count = uefi_size_to_pages!(len) + 1;
+
+            let stack = CoreMemoryManager.allocate_pages(page_count, AllocationOptions::default())?.into_boxed_slice();
+
+            let base_address = stack.as_ptr() as efi::PhysicalAddress;
+            // attempt to set the memory space attributes for the stack guard page.
+            // if we fail, we should still try to continue to boot
+            // the stack grows downwards, so stack here is the guard page
+            let mut attributes = match dxe_services::core_get_memory_space_descriptor(base_address) {
+                Ok(descriptor) => descriptor.attributes,
+                Err(_) => DEFAULT_CACHE_ATTR,
+            };
+
+            attributes = MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes);
+
+            if let Err(err) =
+                dxe_services::core_set_memory_space_attributes(base_address, UEFI_PAGE_SIZE as u64, attributes)
+            {
+                log::error!("Failed to set memory space attributes for stack guard page: {err}");
+                // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
+                // and need to be refactored to handle the page table
+                // debug_assert!(false);
+            }
+
+            // we have the guard page at the bottom, so we need to add a page to the stack pointer for the limit
+            Ok(ImageStack { stack })
+        }
+
+        #[allow(unused)]
+        pub(super) fn guard(&self) -> &[u8] {
+            self.stack.get(..UEFI_PAGE_SIZE).expect("stack is always > UEFI_PAGE_SIZE")
+        }
+
+        pub(super) fn body(&self) -> &[u8] {
+            self.stack.get(UEFI_PAGE_SIZE..).expect("stack is always > UEFI_PAGE_SIZE")
+        }
+    }
+
+    // SAFETY: ImageStack provides a stable, owned stack buffer with valid base/limit pointers.
+    unsafe impl Stack for ImageStack {
+        fn base(&self) -> StackPointer {
+            //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
+            self.limit().checked_add(self.body().len()).expect("Stack base address overflow.")
+        }
+        fn limit(&self) -> StackPointer {
+            //stack grows downward, so "limit" is the lowest address, i.e. the ptr.
+            StackPointer::new(self.body().as_ptr() as usize)
+                .expect("Stack pointer address was zero, but it should always be nonzero.")
+        }
+
+        // These routines are only used when building on the host (e.g. for test or
+        // clippy). Corosensei has additional trait requirements for the stack when
+        // building for windows that need to be implemented to support that case.
+        // These are not used in UEFI.
+        #[cfg(windows)]
+        fn teb_fields(&self) -> corosensei::stack::StackTebFields {
+            corosensei::stack::StackTebFields {
+                StackBase: self.base().get(),
+                StackLimit: self.limit().get(),
+                DeallocationStack: self.stack.as_ptr() as usize,
+                GuaranteedStackBytes: 0,
+            }
+        }
+        #[cfg(windows)]
+        fn update_teb_fields(&mut self, _stack_limit: usize, _guaranteed_stack_bytes: usize) {}
+    }
+
+    impl<P: super::super::PlatformInfo> super::super::PiDispatcher<P> {
+        /// Starts execution of a previously loaded image.
+        ///
+        /// The `image_handle` is validated against the protocol database and the
+        /// private image data map; an error is returned if the handle is unknown or
+        /// the image has already been started.
+        pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
+            PROTOCOL_DB.validate_handle(image_handle)?;
+
+            if let Some(private_data) = self.image_data.lock().private_image_data.get_mut(&image_handle) {
+                if private_data.started {
+                    Err(EfiError::InvalidParameter)?;
+                }
+            } else {
+                Err(EfiError::InvalidParameter)?;
+            }
+
+            // allocate a buffer for the entry point stack.
+            let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
+
+            self.performance.map_or_default(|perf| perf.perf_image_start_begin(image_handle));
+
+            // define a co-routine that wraps the entry point execution. this doesn't
+            // run until the coroutine.resume() call below.
+            let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
+                let mut private_data = self.image_data.lock();
+
+                // mark the image as started and grab a copy of the private info.
+                let status;
+                if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
+                    private_info.started = true;
+                    let entry_point = private_info.entry_point;
+
+                    // save a pointer to the yielder so that exit() can use it.
+                    private_data.image_start_contexts.push(core::ptr::from_ref::<Yielder<_, _>>(yielder));
+
+                    // get a copy of the system table pointer to pass to the entry point.
+                    let system_table = private_data.system_table;
+                    // drop our reference to the private data (i.e. release the lock).
+                    drop(private_data);
+
+                    // SAFETY: Invokes the entry point. The code behind this pointer
+                    // is FFI, which is inherently unsafe. The caller is responsible
+                    // for ensuring that `self` refers to a valid loaded image
+                    // (mapped), and that `entry_point` points to valid executable
+                    // code.
+                    status = unsafe { entry_point(image_handle, system_table) };
+
+                    // SAFETY: any variables with "Drop" routines that need to run need to be explicitly
+                    // dropped before calling exit(). Since exit() effectively "longjmp"s back to
+                    // StartImage(), Rust automatic drops will not be triggered. `image_handle` was
+                    // obtained from the outer `start_image` scope and is the handle of the currently
+                    // running image which will be valid. `exit_data_size` is 0 and `exit_data` is null.
+                    unsafe { self.exit(image_handle, status, 0, core::ptr::null_mut()) };
+                } else {
+                    status = efi::Status::NOT_FOUND;
+                }
+                status
+            });
+
+            // Save the handle of the previously running image and update the currently
+            // running image to the one we are about to invoke. In the event of nested
+            // calls to StartImage(), the chain of previously running images will
+            // be preserved on the stack of the various StartImage() instances.
+            let mut private_data = self.image_data.lock();
+            let previous_image = private_data.current_running_image;
+            private_data.current_running_image = Some(image_handle);
+            drop(private_data);
+
+            // switch stacks and execute the above defined coroutine to start the image.
+            #[allow(clippy::match_same_arms)] // TODO: clippy exception present unto the todo is resolved
+            let status = match coroutine.resume(image_handle) {
+                CoroutineResult::Yield(status) => status,
+                // Note: `CoroutineResult::Return` is unexpected, since it would imply
+                // that exit() failed. TODO: should panic here?
+                CoroutineResult::Return(status) => status,
+            };
+
+            log::info!("start_image entrypoint exit with status: {status}");
+
+            // because we used exit() to return from the coroutine (as opposed to
+            // returning naturally from it), the coroutine is marked as suspended rather
+            // than complete. We need to forcibly mark the coroutine done; otherwise it
+            // will try to use unwind to clean up the co-routine stack (i.e. "drop" any
+            // live objects). This unwind support requires std and will panic if
+            // executed.
+            // SAFETY: force_reset prevents unwinding a suspended coroutine with a custom stack.
+            unsafe { coroutine.force_reset() };
+
+            self.image_data.lock().current_running_image = previous_image;
+
+            self.performance.map_or_default(|perf| perf.perf_image_start_end(image_handle));
+
+            match status {
+                efi::Status::SUCCESS => Ok(()),
+                err => Err(err),
+            }
+        }
+
+        /// Terminates a started image and returns control to the caller of
+        /// `start_image`.
+        ///
+        /// `image_handle` is validated against the private image data map; if not
+        /// found, `INVALID_PARAMETER` is returned.
+        ///
+        /// # Safety
+        ///
+        /// If `image_handle` is valid and if `exit_data_size` is non-zero and
+        /// `exit_data` is non-null, the caller must ensure that `exit_data` points
+        /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
+        /// stored and later returned to the caller of `start_image` to retrieve the
+        /// exit data.
+        pub(super) unsafe fn exit(
+            &self,
+            image_handle: efi::Handle,
+            status: efi::Status,
+            exit_data_size: usize,
+            exit_data: *mut efi::Char16,
+        ) -> efi::Status {
+            let started = match self.image_data.lock().private_image_data.get(&image_handle) {
+                Some(image_data) => image_data.started,
+                None => return efi::Status::INVALID_PARAMETER,
+            };
+
+            // if not started, just unload the image.
+            if !started {
+                return match self.unload_image(image_handle, true) {
+                    Ok(()) => efi::Status::SUCCESS,
+                    Err(_err) => efi::Status::INVALID_PARAMETER,
+                };
+            }
+
+            // image has been started - check the currently running image.
+            let mut private_data = self.image_data.lock();
+            if Some(image_handle) != private_data.current_running_image {
+                return efi::Status::INVALID_PARAMETER;
+            }
+
+            // save the exit data, if present, into the private_image_data for this
+            // image for start_image to retrieve and return.
+            if exit_data_size != 0
+                && !exit_data.is_null()
+                && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
+            {
+                image_data.exit_data = Some(ExitData(exit_data_size, exit_data));
+            }
+
+            // retrieve the yielder that was saved in the start_image entry point
+            // coroutine wrapper.
+            // safety note: this assumes that the top of the image_start_contexts stack
+            // is the currently running image.
+            if let Some(yielder) = private_data.image_start_contexts.pop() {
+                // SAFETY: yielder pointer is created and stored by start_image for the current context.
+                let yielder = unsafe { &*yielder };
+                drop(private_data);
+
+                // safety note: any variables with "Drop" routines that need to run
+                // need to be explicitly dropped before calling suspend(). Since suspend()
+                // effectively "longjmp"s back to StartImage(), rust automatic
+                // drops will not be triggered.
+
+                // transfer control back to start_image by calling the suspend function on
+                // yielder. This will switch stacks back to the start_image that invoked
+                // the entry point coroutine.
+                yielder.suspend(status);
+            }
+
+            //should never reach here, but rust doesn't know that.
+            efi::Status::ACCESS_DENIED
+        }
+    }
+}
+#[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
+use dispatch::Yielder;
+// only referenced by test_stack_guard_sizes_are_calculated_correctly.
+#[cfg(all(test, not(all(target_arch = "aarch64", target_os = "windows"))))]
+use dispatch::ImageStack;
+
+// Stub used only where corosensei does not support coroutine-based dispatch
+// (currently just aarch64-pc-windows-msvc).
+#[cfg(all(target_arch = "aarch64", target_os = "windows"))]
+mod dispatch_stub {
+    #[allow(clippy::wildcard_imports)] // pulls in this file's shared image-dispatch types/helpers
+    use super::*;
+
+    impl<P: super::super::PlatformInfo> super::super::PiDispatcher<P> {
+        pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
+            self.performance.map_or_default(|perf| perf.perf_image_start_begin(image_handle));
+            self.performance.map_or_default(|perf| perf.perf_image_start_end(image_handle));
+            Err(efi::Status::UNSUPPORTED)
+        }
+
+        /// # Safety
+        ///
+        /// Unreachable on supported host targets and actual UEFI builds.
+        pub(super) unsafe fn exit(
+            &self,
+            _image_handle: efi::Handle,
+            _status: efi::Status,
+            _exit_data_size: usize,
+            _exit_data: *mut efi::Char16,
+        ) -> efi::Status {
+            efi::Status::UNSUPPORTED
+        }
+    }
+}
+
 impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Loads the image specified by the device path or slice.
-    /// * parent_image_handle - the handle of the image that is loading this one.
-    /// * file_path - optional device path describing where to load the image from.
+    /// * `parent_image_handle` - the handle of the image that is loading this one.
+    /// * `file_path` - optional device path describing where to load the image from.
     /// * image - optional slice containing the image data.
     ///
     /// One of `file_path` or `image` must be specified.
     /// returns the image handle of the freshly loaded image.
     ///
-    /// Returns Ok(efi::Handle) if the image was loaded successfully.
+    /// Returns `Ok(efi::Handle)` if the image was loaded successfully.
     /// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
-    ///   with security violations, or not at all. See [ImageStatus] for details.
+    ///   with security violations, or not at all. See [`ImageStatus`] for details.
     pub fn load_image(
         &self,
         boot_policy: bool,
@@ -798,9 +1019,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         }
     }
 
-    /// Loads the image specified by the device_path or source_buffer argument.
+    /// Loads the image specified by the `device_path` or `source_buffer` argument.
     ///
-    /// See the EFI_BOOT_SERVICES::LoadImage() API definition in the UEFI spec for parameter
+    /// See the `EFI_BOOT_SERVICES::LoadImage()` API definition in the UEFI spec for parameter
     /// and usage details.
     ///
     /// # Safety
@@ -850,111 +1071,14 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         status
     }
 
-    /// Starts execution of a previously loaded image.
-    ///
-    /// The `image_handle` is validated against the protocol database and the
-    /// private image data map; an error is returned if the handle is unknown or
-    /// the image has already been started.
-    pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
-        PROTOCOL_DB.validate_handle(image_handle)?;
-
-        if let Some(private_data) = self.image_data.lock().private_image_data.get_mut(&image_handle) {
-            if private_data.started {
-                Err(EfiError::InvalidParameter)?;
-            }
-        } else {
-            Err(EfiError::InvalidParameter)?;
-        }
-
-        // allocate a buffer for the entry point stack.
-        let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
-
-        self.performance.map_or_default(|perf| perf.perf_image_start_begin(image_handle));
-
-        // define a co-routine that wraps the entry point execution. this doesn't
-        // run until the coroutine.resume() call below.
-        let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
-            let mut private_data = self.image_data.lock();
-
-            // mark the image as started and grab a copy of the private info.
-            let status;
-            if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
-                private_info.started = true;
-                let entry_point = private_info.entry_point;
-
-                // save a pointer to the yielder so that exit() can use it.
-                private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
-
-                // get a copy of the system table pointer to pass to the entry point.
-                let system_table = private_data.system_table;
-                // drop our reference to the private data (i.e. release the lock).
-                drop(private_data);
-
-                // SAFETY: Invokes the entry point. The code behind this pointer
-                // is FFI, which is inherently unsafe. The caller is responsible
-                // for ensuring that `self` refers to a valid loaded image
-                // (mapped), and that `entry_point` points to valid executable
-                // code.
-                status = unsafe { entry_point(image_handle, system_table) };
-
-                // SAFETY: any variables with "Drop" routines that need to run need to be explicitly
-                // dropped before calling exit(). Since exit() effectively "longjmp"s back to
-                // StartImage(), Rust automatic drops will not be triggered. `image_handle` was
-                // obtained from the outer `start_image` scope and is the handle of the currently
-                // running image which will be valid. `exit_data_size` is 0 and `exit_data` is null.
-                unsafe { self.exit(image_handle, status, 0, core::ptr::null_mut()) };
-            } else {
-                status = efi::Status::NOT_FOUND;
-            }
-            status
-        });
-
-        // Save the handle of the previously running image and update the currently
-        // running image to the one we are about to invoke. In the event of nested
-        // calls to StartImage(), the chain of previously running images will
-        // be preserved on the stack of the various StartImage() instances.
-        let mut private_data = self.image_data.lock();
-        let previous_image = private_data.current_running_image;
-        private_data.current_running_image = Some(image_handle);
-        drop(private_data);
-
-        // switch stacks and execute the above defined coroutine to start the image.
-        let status = match coroutine.resume(image_handle) {
-            CoroutineResult::Yield(status) => status,
-            // Note: `CoroutineResult::Return` is unexpected, since it would imply
-            // that exit() failed. TODO: should panic here?
-            CoroutineResult::Return(status) => status,
-        };
-
-        log::info!("start_image entrypoint exit with status: {status}");
-
-        // because we used exit() to return from the coroutine (as opposed to
-        // returning naturally from it), the coroutine is marked as suspended rather
-        // than complete. We need to forcibly mark the coroutine done; otherwise it
-        // will try to use unwind to clean up the co-routine stack (i.e. "drop" any
-        // live objects). This unwind support requires std and will panic if
-        // executed.
-        // SAFETY: force_reset prevents unwinding a suspended coroutine with a custom stack.
-        unsafe { coroutine.force_reset() };
-
-        self.image_data.lock().current_running_image = previous_image;
-
-        self.performance.map_or_default(|perf| perf.perf_image_start_end(image_handle));
-
-        match status {
-            efi::Status::SUCCESS => Ok(()),
-            err => Err(err),
-        }
-    }
-
     /// Transfers control to the entry point of an image that was loaded by
-    /// load_image. See the EFI_BOOT_SERVICES::StartImage() API definition in
+    /// `load_image`. See the `EFI_BOOT_SERVICES::StartImage()` API definition in
     /// the UEFI spec for usage details.
     ///
-    /// * image_handle - handle of the image to be started.
-    /// * exit_data_size - pointer to receive the size, in bytes, of exit_data.
-    ///   if exit_data is null, this is parameter is ignored.
-    /// * exit_data - pointer to receive a data buffer with exit data, if any.
+    /// * `image_handle` - handle of the image to be started.
+    /// * `exit_data_size` - pointer to receive the size, in bytes, of `exit_data`.
+    ///   if `exit_data` is null, this is parameter is ignored.
+    /// * `exit_data` - pointer to receive a data buffer with exit data, if any.
     ///
     /// # Safety
     ///
@@ -1104,89 +1228,17 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         }
     }
 
-    /// Terminates a started image and returns control to the caller of
-    /// `start_image`.
-    ///
-    /// `image_handle` is validated against the private image data map; if not
-    /// found, `INVALID_PARAMETER` is returned.
-    ///
-    /// # Safety
-    ///
-    /// If `image_handle` is valid and if `exit_data_size` is non-zero and
-    /// `exit_data` is non-null, the caller must ensure that `exit_data` points
-    /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
-    /// stored and later returned to the caller of `start_image` to retrieve the
-    /// exit data.
-    unsafe fn exit(
-        &self,
-        image_handle: efi::Handle,
-        status: efi::Status,
-        exit_data_size: usize,
-        exit_data: *mut efi::Char16,
-    ) -> efi::Status {
-        let started = match self.image_data.lock().private_image_data.get(&image_handle) {
-            Some(image_data) => image_data.started,
-            None => return efi::Status::INVALID_PARAMETER,
-        };
-
-        // if not started, just unload the image.
-        if !started {
-            return match self.unload_image(image_handle, true) {
-                Ok(()) => efi::Status::SUCCESS,
-                Err(_err) => efi::Status::INVALID_PARAMETER,
-            };
-        }
-
-        // image has been started - check the currently running image.
-        let mut private_data = self.image_data.lock();
-        if Some(image_handle) != private_data.current_running_image {
-            return efi::Status::INVALID_PARAMETER;
-        }
-
-        // save the exit data, if present, into the private_image_data for this
-        // image for start_image to retrieve and return.
-        if exit_data_size != 0
-            && !exit_data.is_null()
-            && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
-        {
-            image_data.exit_data = Some(ExitData(exit_data_size, exit_data));
-        }
-
-        // retrieve the yielder that was saved in the start_image entry point
-        // coroutine wrapper.
-        // safety note: this assumes that the top of the image_start_contexts stack
-        // is the currently running image.
-        if let Some(yielder) = private_data.image_start_contexts.pop() {
-            // SAFETY: yielder pointer is created and stored by start_image for the current context.
-            let yielder = unsafe { &*yielder };
-            drop(private_data);
-
-            // safety note: any variables with "Drop" routines that need to run
-            // need to be explicitly dropped before calling suspend(). Since suspend()
-            // effectively "longjmp"s back to StartImage(), rust automatic
-            // drops will not be triggered.
-
-            // transfer control back to start_image by calling the suspend function on
-            // yielder. This will switch stacks back to the start_image that invoked
-            // the entry point coroutine.
-            yielder.suspend(status);
-        }
-
-        //should never reach here, but rust doesn't know that.
-        efi::Status::ACCESS_DENIED
-    }
-
     /// Terminates a loaded EFI image and returns control to boot services. See
-    /// the EFI_BOOT_SERVICES::Exit() API definition in the UEFI spec for usage
+    /// the `EFI_BOOT_SERVICES::Exit()` API definition in the UEFI spec for usage
     /// details.
     ///
     /// `image_handle` is validated against the private image data map; if not
     /// found, `INVALID_PARAMETER` is returned.
     ///
-    /// * image_handle - the handle of the currently running image.
-    /// * exit_status - the exit status for the image.
-    /// * exit_data_size - the size of the exit_data buffer, if exit_data is notnull.
-    /// * exit_data - optional buffer of data provided by the caller.
+    /// * `image_handle` - the handle of the currently running image.
+    /// * `exit_status` - the exit status for the image.
+    /// * `exit_data_size` - the size of the `exit_data` buffer, if `exit_data` is notnull.
+    /// * `exit_data` - optional buffer of data provided by the caller.
     ///
     /// # Safety
     ///
@@ -1216,15 +1268,14 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
             if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
                 let cache_attrs =
                     dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
-                        .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
-                        .unwrap_or(DEFAULT_CACHE_ATTR);
+                        .map_or(DEFAULT_CACHE_ATTR, |desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
 
                 match core_set_memory_space_attributes(
                     buffer.as_ptr() as efi::PhysicalAddress,
                     buffer.len() as u64,
                     cache_attrs,
                 ) {
-                    Ok(_) => {
+                    Ok(()) => {
                         // success, keep going
                     }
                     Err(status) => {
@@ -1234,7 +1285,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
                             status
                         );
                     }
-                };
+                }
             }
         }
 
@@ -1376,13 +1427,13 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
 
     // Read image from the firmware file
     let mut buffer: *mut u8 = core::ptr::null_mut();
-    let buffer_ptr: *mut *mut c_void = &mut buffer as *mut _ as *mut *mut c_void;
+    let buffer_ptr: *mut *mut c_void = &raw mut buffer as *mut *mut c_void;
     let mut buffer_size = 0;
     let mut authentication_status = 0;
     let authentication_status_ptr = &mut authentication_status;
     let status = (fw_vol.read_section)(
         fw_vol,
-        &fv_name_guid,
+        &raw const fv_name_guid,
         PE32,
         0, // Instance
         buffer_ptr,
@@ -1486,7 +1537,7 @@ fn get_file_buffer_from_load_protocol(
         )
     };
 
-    EfiError::status_to_result(status).map(|_| (file_buffer, handle))
+    EfiError::status_to_result(status).map(|()| (file_buffer, handle))
 }
 
 // authenticate the given image against the Security and Security2 Architectural Protocols
@@ -1497,7 +1548,7 @@ fn authenticate_image(
     from_fv: bool,
     authentication_status: u32,
 ) -> Result<(), EfiError> {
-    let device_path_raw = device_path.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+    let device_path_raw = device_path.map_or(core::ptr::null_mut(), core::ptr::NonNull::as_ptr);
 
     // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_ref() is used for shared access
     // which will also check if the pointer is null before allowing access.
@@ -1524,7 +1575,7 @@ fn authenticate_image(
     let mut security_status = efi::Status::SUCCESS;
     if let Some(security2) = security2_protocol {
         security_status = (security2.file_authentication)(
-            security2 as *const _ as *mut pi::protocol::security2::Security2Protocol,
+            core::ptr::from_ref(security2).cast_mut(),
             device_path_raw,
             image.as_ptr() as *const _ as *mut c_void,
             image.len(),
@@ -1533,14 +1584,14 @@ fn authenticate_image(
         if security_status == efi::Status::SUCCESS && from_fv {
             let security = security_protocol.expect("Security Arch must be installed if Security2 Arch is installed");
             security_status = (security.file_authentication_state)(
-                security as *const _ as *mut pi::protocol::security::SecurityProtocol,
+                core::ptr::from_ref(security).cast_mut(),
                 authentication_status,
                 device_path_raw,
             );
         }
     } else if let Some(security) = security_protocol {
         security_status = (security.file_authentication_state)(
-            security as *const _ as *mut pi::protocol::security::SecurityProtocol,
+            core::ptr::from_ref(security).cast_mut(),
             authentication_status,
             device_path_raw,
         );
@@ -1595,8 +1646,12 @@ impl Buffer {
 mod tests {
     extern crate std;
     use super::*;
+    // Only used by `start_image_error_status_should_unload_image`, which is skipped on
+    // aarch64-pc-windows-msvc due to lack of support in corosensei at this time.
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
+    use crate::Core;
     use crate::{
-        Core, MockPlatformInfo,
+        MockPlatformInfo,
         pecoff::UefiPeInfo,
         pi_dispatcher::PiDispatcher,
         protocol_db::{self, DXE_CORE_HANDLE},
@@ -1606,7 +1661,7 @@ mod tests {
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
     use patina::standard::efi::{
-        self,
+        self, Time,
         protocols::device_path::{End, Hardware, Media, TYPE_END, TYPE_HARDWARE, TYPE_MEDIA},
     };
     use patina::{
@@ -1835,10 +1890,7 @@ mod tests {
             // Check for either load error or unsupported. On aarch64, goblin will parse
             // the resources section as well and fail due to the invalid directory table size,
             // returning unsupported.
-            assert!(matches!(
-                status,
-                Err(ImageStatus::LoadError(EfiError::LoadError)) | Err(ImageStatus::LoadError(EfiError::Unsupported))
-            ));
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError | EfiError::Unsupported))));
         });
     }
 
@@ -1891,7 +1943,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security::PROTOCOL_GUID.into_inner(),
-                    &security_protocol as *const _ as *mut _,
+                    &raw const security_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -1941,7 +1993,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security::PROTOCOL_GUID.into_inner(),
-                    &security_protocol as *const _ as *mut _,
+                    &raw const security_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -1970,7 +2022,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security2::PROTOCOL_GUID.into_inner(),
-                    &security2_protocol as *const _ as *mut _,
+                    &raw const security2_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -2020,7 +2072,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security2::PROTOCOL_GUID.into_inner(),
-                    &security2_protocol as *const _ as *mut _,
+                    &raw const security2_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -2072,7 +2124,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security2::PROTOCOL_GUID.into_inner(),
-                    &security2_protocol as *const _ as *mut _,
+                    &raw const security2_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -2117,7 +2169,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     pi::protocol::security2::PROTOCOL_GUID.into_inner(),
-                    &security2_protocol as *const _ as *mut _,
+                    &raw const security2_protocol as *mut _,
                 )
                 .unwrap();
 
@@ -2134,6 +2186,9 @@ mod tests {
         });
     }
 
+    // corosensei does not support aarch64-pc-windows-msvc, so this test (using coroutine-backed dispatch)
+    // can't run on that one host target right now.
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
     #[test]
     fn start_image_should_start_image() {
         with_locked_state(|| {
@@ -2176,6 +2231,9 @@ mod tests {
         });
     }
 
+    // corosensei does not support aarch64-pc-windows-msvc, so this test (using coroutine-backed dispatch)
+    // can't run on that one host target right now.
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
     #[test]
     fn start_image_error_status_should_unload_image() {
         with_locked_state(|| {
@@ -2325,9 +2383,9 @@ mod tests {
             size: core::mem::size_of::<efi::protocols::file::Info>() as u64,
             file_size: test_file.metadata().unwrap().len(),
             physical_size: test_file.metadata().unwrap().len(),
-            create_time: Default::default(),
-            last_access_time: Default::default(),
-            modification_time: Default::default(),
+            create_time: Time::default(),
+            last_access_time: Time::default(),
+            modification_time: Time::default(),
             attribute: 0,
             file_name: [0; 0],
         };
@@ -2842,6 +2900,8 @@ mod tests {
         .unwrap();
     }
 
+    // ImageStack does not exist on aarch64-pc-windows-msvc (corosensei does not support that host target right now).
+    #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
     #[test]
     fn test_stack_guard_sizes_are_calculated_correctly() {
         test_support::with_global_lock(|| {
@@ -2894,7 +2954,7 @@ mod tests {
             pe_info.section_alignment = CUSTOM_ALIGNMENT;
 
             let mut protocol = super::empty_image_info();
-            protocol.image_size = pe_info.size_of_image as u64;
+            protocol.image_size = u64::from(pe_info.size_of_image);
             protocol.image_code_type = efi::BOOT_SERVICES_CODE;
             protocol.image_data_type = efi::BOOT_SERVICES_DATA;
 
@@ -3170,7 +3230,7 @@ mod tests {
     // Test support function to generate device path bytes from a string representation.
     // This does not currently support all device path node types, only the ones I cared about for these tests.
     fn device_path_from_string(path: String) -> Box<[u8]> {
-        let path = path.replace("\\", "/").replace("0x", "");
+        let path = path.replace('\\', "/").replace("0x", "");
 
         let mut total = Vec::new();
         let mut current_path = String::new();
@@ -3368,15 +3428,12 @@ mod tests {
         let mut hobs = Vec::new();
         // SAFETY: Taking a byte view of a stack-allocated HOB struct for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(
-                &ma_hob as *const MemoryAllocationModule as *const u8,
-                core::mem::size_of::<MemoryAllocationModule>(),
-            )
+            core::slice::from_raw_parts(&raw const ma_hob as *const u8, core::mem::size_of::<MemoryAllocationModule>())
         });
         // SAFETY: Taking a byte view of a stack-allocated HOB header for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
             core::slice::from_raw_parts(
-                &end_hob as *const patina::pi::hob::HobHeader as *const u8,
+                &raw const end_hob as *const u8,
                 core::mem::size_of::<patina::pi::hob::HobHeader>(),
             )
         });

@@ -35,7 +35,7 @@ pub struct PE<'a> {
     pub base_address: u64,
 
     /// Size of the image in memory.
-    pub _size_of_image: u32,
+    pub size_of_image: u32,
 
     /// Image name extracted from the loaded PE image.
     pub image_name: Option<&'static str>,
@@ -44,14 +44,14 @@ pub struct PE<'a> {
     pub(crate) bytes: &'a [u8],
 }
 
-impl<'a> fmt::Display for PE<'a> {
+impl fmt::Display for PE<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "PE Image:\n  Name: {}\n  Base Address: 0x{:016X}\n  Size: {} bytes\n  Bytes: {} bytes",
             self.image_name.unwrap_or("<unknown>"),
             self.base_address,
-            self._size_of_image,
+            self.size_of_image,
             self.bytes.len()
         )
     }
@@ -113,7 +113,7 @@ impl PE<'_> {
                     // `rip` is still page-aligned and within that mapping.
                     let bytes = unsafe { core::slice::from_raw_parts(rip as *const u8, size_of_image as usize) };
 
-                    return Ok(Self { base_address: rip, _size_of_image: size_of_image, image_name, bytes });
+                    return Ok(Self { base_address: rip, size_of_image, image_name, bytes });
                 }
             }
 
@@ -164,9 +164,9 @@ impl PE<'_> {
 
         if debug_data_rva == 0 || debug_data_size == 0 {
             return None;
-        };
+        }
 
-        let debug_data = page_base + debug_data_rva as u64;
+        let debug_data = page_base + u64::from(debug_data_rva);
 
         // Check the CodeView signature.
         // SAFETY: `debug_data` is within the caller-provided PE image and points to
@@ -306,7 +306,7 @@ mod tests {
         let bytes = make_fake_pe_image();
         let base = bytes.as_ptr() as u64;
 
-        let pe = PE { base_address: base, _size_of_image: bytes.len() as u32, image_name: Some("fake"), bytes: &bytes };
+        let pe = PE { base_address: base, size_of_image: bytes.len() as u32, image_name: Some("fake"), bytes: &bytes };
 
         // Since we didn't define exception table fields, expect an error.
         // SAFETY: Test creates a fake PE image structure for validation; `pe.bytes` points to a valid slice

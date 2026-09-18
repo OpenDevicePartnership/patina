@@ -17,11 +17,11 @@ use patina_ffs::{
 
 use crate::DECOMPRESSION_MAX_MEMORY_LIMIT;
 
-/// Sentinel uncompressed-size value in the `.lzma` (FORMAT_ALONE) header that indicates
+/// Sentinel uncompressed-size value in the `.lzma` (`FORMAT_ALONE`) header that indicates
 /// the uncompressed size is unknown.
 const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
-/// Provides decompression for LZMA GUIDed sections.
+/// Provides decompression for LZMA `GUIDed` sections.
 #[derive(Default, Clone, Copy)]
 pub struct LzmaSectionExtractor;
 
@@ -47,7 +47,7 @@ impl SectionExtractor for LzmaSectionExtractor {
             let mut decompressed = if unpacked_size == LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE {
                 Vec::<u8>::new()
             } else {
-                if unpacked_size > DECOMPRESSION_MAX_MEMORY_LIMIT as u64 {
+                if unpacked_size > u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) {
                     return Err(FirmwareFileSystemError::DataCorrupt);
                 }
                 Vec::<u8>::with_capacity(unpacked_size as usize)
@@ -122,7 +122,7 @@ mod tests {
     fn test_lzma_extractor_unpacked_size_exceeds_limit() {
         // Declare an unpacked size larger than the 512MB decompression limit (but not the
         // "unknown size" sentinel); the extractor must reject it before decompressing.
-        let unpacked_size = DECOMPRESSION_MAX_MEMORY_LIMIT as u64 + 1;
+        let unpacked_size = u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) + 1;
         let mut lzma_data = vec![0x5D, 0x00, 0x00, 0x80, 0x00]; // LZMA properties
         lzma_data.extend_from_slice(&unpacked_size.to_le_bytes()); // Oversized unpacked size
         lzma_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Placeholder payload

@@ -36,15 +36,15 @@ pub(crate) struct SparseVec<V> {
 }
 
 impl<V> SparseVec<V> {
-    /// Creates a new empty [SparseVec].
+    /// Creates a new empty [`SparseVec`].
     pub const fn new() -> Self {
         Self { values: Vec::new() }
     }
 
     #[inline]
-    /// Returns true if the [SparseVec] contains a value at the given index.
+    /// Returns true if the [`SparseVec`] contains a value at the given index.
     pub fn contains(&self, index: usize) -> bool {
-        self.values.get(index).map(|v| v.is_some()).unwrap_or(false)
+        self.values.get(index).is_some_and(core::option::Option::is_some)
     }
 
     #[inline]
@@ -98,7 +98,7 @@ impl Debug for ConfigRaw {
 }
 
 impl ConfigRaw {
-    /// Creates a new [ConfigRaw] object.
+    /// Creates a new [`ConfigRaw`] object.
     pub fn new(locked: bool, config: Box<dyn Any>) -> Self {
         Self(locked, config)
     }
@@ -193,11 +193,11 @@ pub struct Storage {
     /// A container for all deferred commands that components can register. This is used to delay the execution of
     /// commands that can result in structural changes to the storage.
     deferred: Option<Deferred>,
-    /// A container for all [Config](super::params::Config) and [ConfigMut](super::params::ConfigMut) datums. This
+    /// A container for all [Config](super::params::Config) and [`ConfigMut`](super::params::ConfigMut) datums. This
     /// resource can be accessed both immutably and mutably, so it must be tracked by
     /// [Access](super::metadata::Access).
     configs: SparseVec<RefCell<ConfigRaw>>,
-    /// A map to convert from a TypeId to a config index.
+    /// A map to convert from a `TypeId` to a config index.
     config_indices: BTreeMap<TypeId, usize>,
     /// A container for all service datums. This resource can only be accessed immutably, but one service datum can
     /// represent multiple services. Services must have internal mutability if they need to be modified.
@@ -208,7 +208,7 @@ pub struct Storage {
     hob_parsers: HobParsers,
     /// A container for all [Hob](super::hob::Hob) datums.
     hobs: SparseVec<Vec<Box<dyn Any>>>,
-    /// a map to convert from TypeId to a hob index.
+    /// a map to convert from `TypeId` to a hob index.
     hob_indices: BTreeMap<TypeId, usize>,
     // Standard Boot Services.
     boot_services: StandardBootServices,
@@ -472,29 +472,29 @@ impl<'s> From<&'s Storage> for UnsafeStorageCell<'s> {
 }
 
 impl<'s> UnsafeStorageCell<'s> {
-    /// Creates a [UnsafeStorageCell] that can be used to access everything immutably.
+    /// Creates a [`UnsafeStorageCell`] that can be used to access everything immutably.
     #[inline]
     pub fn new_readonly(storage: &'s Storage) -> Self {
         Self(ptr::from_ref(storage).cast_mut(), PhantomData)
     }
 
-    /// Creates a [UnsafeStorageCell] that can be used to access everything mutably.
+    /// Creates a [`UnsafeStorageCell`] that can be used to access everything mutably.
     #[inline]
     pub fn new_mutable(storage: &'s mut Storage) -> Self {
         Self(ptr::from_mut(storage), PhantomData)
     }
 
-    /// Gets a mutable reference to the [Storage] this [UnsafeStorageCell] wraps.
+    /// Gets a mutable reference to the [Storage] this [`UnsafeStorageCell`] wraps.
     ///
     /// This is an incredibly error-prone operation is only valid in a small number of
     /// circumstances.
     ///
     /// ## Safety
     ///
-    /// - `self` must have been obtained from a call to [UnsafeStorageCell::new_mutable]
+    /// - `self` must have been obtained from a call to [`UnsafeStorageCell::new_mutable`]
     ///   (*not* `as_unsafe_storage_cell_readonly` or any other method of contruction that does not
     ///   provide mutable access to the entire storage).
-    ///   - This means that if you have an [UnsafeStorageCell] that you did not create yourself, it
+    ///   - This means that if you have an [`UnsafeStorageCell`] that you did not create yourself, it
     ///     is likely *unsound* to call this method.
     /// - The returned `&mut Storage` *must* by unique: it must never be allowed to exists at the
     ///   same time as any other borrows of the storage or any accesses to its data.
@@ -508,7 +508,7 @@ impl<'s> UnsafeStorageCell<'s> {
         unsafe { &mut *self.0 }
     }
 
-    /// Gets a reference to the [Storage] this [UnsafeStorageCell] wraps.
+    /// Gets a reference to the [Storage] this [`UnsafeStorageCell`] wraps.
     ///
     /// This can be used for arbitrary shared/readonly access.
     ///

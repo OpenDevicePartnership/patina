@@ -1,11 +1,11 @@
-/// Parses AArch64 unwind data from the `.pdata` and `.xdata` sections.
+/// Parses `AArch64` unwind data from the `.pdata` and `.xdata` sections.
 /// The main goal of this module is to calculate the appropriate stack-pointer
 /// offsets by undoing the operations performed by the prolog of a given
 /// function. These offsets are then used to identify the previous stack frame's
-/// stack pointer (SP) and instruction pointer (PC). Unlike x64, AArch64
+/// stack pointer (SP) and instruction pointer (PC). Unlike x64, `AArch64`
 /// requires more involved unwinding operations.
 ///
-/// Unwind info in AArch64 comes in two flavors:
+/// Unwind info in `AArch64` comes in two flavors:
 /// 1. Packed unwind info for canonical functions, encoded from 2-31 bits.
 /// 2. .xdata-based unpacked unwind info, where the RVA of .xdata is present in
 ///    0-31 bits.
@@ -141,8 +141,7 @@ impl fmt::Display for UnwindInfo<'_> {
                 let cr_value = *cr as u8;
                 write!(
                     f,
-                    "UnwindInfo::PackedUnwindInfo {{ flag: 0x{:X}, func_start_rva: 0x{:X}, function_length: 0x{:X}, reg_f: 0x{:X}, reg_i: 0x{:X}, h: 0x{:X}, cr: 0x{:X}, frame_size: 0x{:X} }}",
-                    flag, func_start_rva, function_length, reg_f, reg_i, h, cr_value, frame_size
+                    "UnwindInfo::PackedUnwindInfo {{ flag: 0x{flag:X}, func_start_rva: 0x{func_start_rva:X}, function_length: 0x{function_length:X}, reg_f: 0x{reg_f:X}, reg_i: 0x{reg_i:X}, h: 0x{h:X}, cr: 0x{cr_value:X}, frame_size: 0x{frame_size:X} }}"
                 )
             }
             UnwindInfo::UnpackedUnwindInfo {
@@ -159,11 +158,10 @@ impl fmt::Display for UnwindInfo<'_> {
             } => {
                 write!(
                     f,
-                    "UnwindInfo::UnpackedUnwindInfo {{ xdata_rva: 0x{:X}, func_start_rva: 0x{:X}, function_length: 0x{:X}, vers: 0x{:X}, x: 0x{:X}, e: 0x{:X}, epilog_count: 0x{:X}, unwind_code_words: 0x{:X}, unwind_codes: ",
-                    xdata_rva, func_start_rva, function_length, vers, x, e, epilog_count, unwind_code_words,
+                    "UnwindInfo::UnpackedUnwindInfo {{ xdata_rva: 0x{xdata_rva:X}, func_start_rva: 0x{func_start_rva:X}, function_length: 0x{function_length:X}, vers: 0x{vers:X}, x: 0x{x:X}, e: 0x{e:X}, epilog_count: 0x{epilog_count:X}, unwind_code_words: 0x{unwind_code_words:X}, unwind_codes: ",
                 )?;
                 for byte in *unwind_codes {
-                    write!(f, "{:02X} ", byte)?;
+                    write!(f, "{byte:02X} ")?;
                 }
                 write!(f, "}}")
             }
@@ -284,7 +282,7 @@ impl<'a> UnwindInfo<'a> {
     /// Calculates the parameters for the previous stack frame.
     ///
     /// # Safety
-    /// The supplied `stack_frame` must originate from a real AArch64 stack frame whose
+    /// The supplied `stack_frame` must originate from a real `AArch64` stack frame whose
     /// recorded SP/FP/PC still identify readable memory governed by the current unwind
     /// metadata. Supplying incorrect register snapshots can lead to invalid pointer
     /// dereferences while decoding the caller state.
@@ -355,19 +353,27 @@ pub enum UnwindCode {
 impl fmt::Display for UnwindCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            UnwindCode::AllocS(size) => write!(f, "AllocS({}) | sub   sp,sp,#0x{:X}", size, *size as u32 * 16u32),
+            UnwindCode::AllocS(size) => write!(f, "AllocS({}) | sub   sp,sp,#0x{:X}", size, u32::from(*size) * 16u32),
             UnwindCode::SaveR19R20X(offset) => {
-                write!(f, "SaveR19R20X({}) | stp   x19,x20,[sp,#-0x{:X}]!", offset, *offset as u32 * 8u32)
+                write!(f, "SaveR19R20X({}) | stp   x19,x20,[sp,#-0x{:X}]!", offset, u32::from(*offset) * 8u32)
             }
             UnwindCode::SaveFpLr(offset) => {
-                write!(f, "SaveFpLr({}) | stp   fp,lr,[sp,#0x{:X}]", offset, *offset as u32 * 8u32)
+                write!(f, "SaveFpLr({}) | stp   fp,lr,[sp,#0x{:X}]", offset, u32::from(*offset) * 8u32)
             }
             UnwindCode::SaveFpLrX(offset) => {
-                write!(f, "SaveFpLrX({}) | stp   fp,lr,[sp,#-0x{:X}]!", offset, (*offset as u32 + 1u32) * 8u32)
+                write!(f, "SaveFpLrX({}) | stp   fp,lr,[sp,#-0x{:X}]!", offset, (u32::from(*offset) + 1u32) * 8u32)
             }
-            UnwindCode::AllocM(size) => write!(f, "AllocM({}) | sub   sp,sp,#0x{:X}", size, *size as u32 * 16u32),
+            UnwindCode::AllocM(size) => write!(f, "AllocM({}) | sub   sp,sp,#0x{:X}", size, u32::from(*size) * 16u32),
             UnwindCode::SaveRegP(x, z) => {
-                write!(f, "SaveRegP({}, {}) | stp   x{},x{},[sp,#0x{:X}]", x, z, 19 + x, 19 + x + 1, *z as u32 * 8u32)
+                write!(
+                    f,
+                    "SaveRegP({}, {}) | stp   x{},x{},[sp,#0x{:X}]",
+                    x,
+                    z,
+                    19 + x,
+                    19 + x + 1,
+                    u32::from(*z) * 8u32
+                )
             }
             UnwindCode::SaveRegPX(x, z) => {
                 write!(
@@ -377,20 +383,28 @@ impl fmt::Display for UnwindCode {
                     z,
                     19 + x,
                     19 + x + 1,
-                    (*z as u32 + 1u32) * 8u32
+                    (u32::from(*z) + 1u32) * 8u32
                 )
             }
             UnwindCode::SaveReg(x, z) => {
-                write!(f, "SaveReg({}, {}) | str   x{},[sp,#0x{:X}]", x, z, 19 + x, *z as u32 * 8u32)
+                write!(f, "SaveReg({}, {}) | str   x{},[sp,#0x{:X}]", x, z, 19 + x, u32::from(*z) * 8u32)
             }
             UnwindCode::SaveRegX(x, z) => {
-                write!(f, "SaveRegX({}, {}) | str   x{},[sp,#-0x{:X}]!", x, z, 19 + x, (*z as u32 + 1u32) * 8u32)
+                write!(f, "SaveRegX({}, {}) | str   x{},[sp,#-0x{:X}]!", x, z, 19 + x, (u32::from(*z) + 1u32) * 8u32)
             }
             UnwindCode::SaveLrPair(x, z) => {
-                write!(f, "SaveLrPair({}, {}) | stp x{},lr,[sp,#0x{:X}]", x, z, 19 + 2 * x, *z as u32 * 8u32)
+                write!(f, "SaveLrPair({}, {}) | stp x{},lr,[sp,#0x{:X}]", x, z, 19 + 2 * x, u32::from(*z) * 8u32)
             }
             UnwindCode::SaveFRegP(x, z) => {
-                write!(f, "SaveFRegP({}, {}) | stp   d{},d{},[sp,#0x{:X}]", x, z, 8 + x, 8 + x + 1, *z as u32 * 8u32)
+                write!(
+                    f,
+                    "SaveFRegP({}, {}) | stp   d{},d{},[sp,#0x{:X}]",
+                    x,
+                    z,
+                    8 + x,
+                    8 + x + 1,
+                    u32::from(*z) * 8u32
+                )
             }
             UnwindCode::SaveFRegPX(x, z) => {
                 write!(
@@ -400,21 +414,21 @@ impl fmt::Display for UnwindCode {
                     z,
                     8 + x,
                     8 + x + 1,
-                    (*z as u32 + 1u32) * 8u32
+                    (u32::from(*z) + 1u32) * 8u32
                 )
             }
             UnwindCode::SaveFReg(x, z) => {
-                write!(f, "SaveFReg({}, {}) | str   d{},[sp,#0x{:X}]", x, z, 8 + x, *z as u32 * 8u32)
+                write!(f, "SaveFReg({}, {}) | str   d{},[sp,#0x{:X}]", x, z, 8 + x, u32::from(*z) * 8u32)
             }
             UnwindCode::SaveFRegX(x, z) => {
-                write!(f, "SaveFRegX({}, {}) | str   d{},[sp,#-0x{:X}]!", x, z, 8 + x, (*z as u32 + 1u32) * 8u32)
+                write!(f, "SaveFRegX({}, {}) | str   d{},[sp,#-0x{:X}]!", x, z, 8 + x, (u32::from(*z) + 1u32) * 8u32)
             }
-            UnwindCode::AllocZ(size) => write!(f, "AllocZ({})", size),
+            UnwindCode::AllocZ(size) => write!(f, "AllocZ({size})"),
             UnwindCode::AllocL(size) => {
                 write!(f, "AllocL({}) | sub   sp,sp,#0x{:X}", size, *size * 16u32)
             }
             UnwindCode::SetFp => write!(f, "SetFp | mov  fp,sp"),
-            UnwindCode::AddFp(x) => write!(f, "AddFp({}) | add fp,sp,#0x{:X}", x, *x as u32 * 8u32),
+            UnwindCode::AddFp(x) => write!(f, "AddFp({}) | add fp,sp,#0x{:X}", x, u32::from(*x) * 8u32),
             UnwindCode::Nop => write!(f, "Nop"),
             UnwindCode::End => write!(f, "End"),
             UnwindCode::EndC => write!(f, "EndC"),
@@ -429,10 +443,10 @@ impl fmt::Display for UnwindCode {
             UnwindCode::Reserved8 => write!(f, "Reserved8"),
             UnwindCode::Reserved9 => write!(f, "Reserved9"),
             UnwindCode::Reserved10 => write!(f, "Reserved10"),
-            UnwindCode::Reserved12(y) => write!(f, "Reserved12({})", y),
-            UnwindCode::Reserved13(y) => write!(f, "Reserved13({})", y),
-            UnwindCode::Reserved14(y) => write!(f, "Reserved14({})", y),
-            UnwindCode::Reserved15(y) => write!(f, "Reserved15({})", y),
+            UnwindCode::Reserved12(y) => write!(f, "Reserved12({y})"),
+            UnwindCode::Reserved13(y) => write!(f, "Reserved13({y})"),
+            UnwindCode::Reserved14(y) => write!(f, "Reserved14({y})"),
+            UnwindCode::Reserved15(y) => write!(f, "Reserved15({y})"),
             UnwindCode::Reserved16 => write!(f, "Reserved16"),
             UnwindCode::Reserved17 => write!(f, "Reserved17"),
             UnwindCode::Reserved18 => write!(f, "Reserved18"),
@@ -476,14 +490,14 @@ impl UnwindCode {
 
         reg_save_size = (reg_save_size + 1) & !1; // ALIGN_UP_BY 2
 
-        let location_size = frame_size / 8 - reg_save_size as u16;
+        let location_size = frame_size / 8 - u16::from(reg_save_size);
 
-        log::debug!("    > integer_save_size: 0x{:X}", integer_save_size); // debug
-        log::debug!("    > floating_point_save_size: 0x{:X}", floating_point_save_size); // debug
-        log::debug!("    > reg_save_size: 0x{:X}", reg_save_size); // debug
-        log::debug!("    > location_size: 0x{:X}", location_size); // debug
+        log::debug!("    > integer_save_size: 0x{integer_save_size:X}"); // debug
+        log::debug!("    > floating_point_save_size: 0x{floating_point_save_size:X}"); // debug
+        log::debug!("    > reg_save_size: 0x{reg_save_size:X}"); // debug
+        log::debug!("    > location_size: 0x{location_size:X}"); // debug
 
-        log::debug!("    > IN(packed): {}", stack_frame); // debug
+        log::debug!("    > IN(packed): {stack_frame}"); // debug
 
         if cr == FrameChainMode::ChainedWithPac {
             log::error!("   > PAC-sign return address encountered");
@@ -500,7 +514,7 @@ impl UnwindCode {
             if reg_i == 1 && cr == FrameChainMode::UnchainedSavedLr {
                 log::debug!("    > alloc_s (0x{:X})", reg_save_size * 8);
                 // prev_pc = read_pointer64(prev_sp + location_size as u64 * 8); // dereference lr
-                prev_sp += reg_save_size as u64 * 8;
+                prev_sp += u64::from(reg_save_size) * 8;
                 save_predec_done = true;
             }
 
@@ -508,15 +522,15 @@ impl UnwindCode {
             // or registers to lave left.
             let mut intreg = 0;
             while intreg < (reg_i / 2) * 2 {
-                if !save_predec_done {
+                if save_predec_done {
+                    log::debug!("    > save_regp (x{}, x{}, 0x{:X})", intreg, intreg + 1, sav_slot * 8);
+                    sav_slot += 2;
+                } else {
                     log::debug!("    > save_regp_x (x{}, x{}, -0x{:X})", intreg, intreg + 1, reg_save_size * 8);
                     sav_slot += 2;
                     save_predec_done = true;
-                } else {
-                    log::debug!("    > save_regp (x{}, x{}, 0x{:X})", intreg, intreg + 1, sav_slot * 8);
-                    sav_slot += 2;
                 }
-                intreg += 2
+                intreg += 2;
             }
 
             // Address the remaining possible cases:
@@ -538,13 +552,13 @@ impl UnwindCode {
                     // sav_slot += 1;
                 }
             } else if cr == FrameChainMode::UnchainedSavedLr {
-                if !save_predec_done {
+                if save_predec_done {
+                    log::debug!("    > save_reg (x{}, 0x{:X})", 11, sav_slot * 8);
+                    // sav_slot += 1;
+                } else {
                     log::debug!("    > save_reg_x (x{}, -0x{:X})", 11, reg_save_size * 8);
                     // sav_slot += 1;
                     // save_predec_done = true;
-                } else {
-                    log::debug!("    > save_reg (x{}, 0x{:X})", 11, sav_slot * 8);
-                    // sav_slot += 1;
                 }
             }
         }
@@ -555,7 +569,7 @@ impl UnwindCode {
         if location_size > 0 {
             if cr == FrameChainMode::ChainedWithPac || cr == FrameChainMode::Chained {
                 if location_size <= (512 / 8) {
-                    log::debug!("    > save_fplr_x (0x{:X})", -(location_size as i32 * 8));
+                    log::debug!("    > save_fplr_x (0x{:X})", -(i32::from(location_size) * 8));
                 } else {
                     log::debug!("    > alloc  (0x{:X})", location_size * 8);
                     log::debug!("    > save_fplr (0x{:X})", 0);
@@ -571,14 +585,14 @@ impl UnwindCode {
                 // caller, and the unwind metadata guarantees the return address lives
                 // `location_size * 8` bytes above it. The computed address therefore
                 // targets properly aligned stack memory containing the saved LR.
-                prev_pc = unsafe { read_pointer64(prev_sp + location_size as u64 * 8)? }; // dereference lr
+                prev_pc = unsafe { read_pointer64(prev_sp + u64::from(location_size) * 8)? }; // dereference lr
             }
         }
 
-        prev_sp += frame_size as u64;
+        prev_sp += u64::from(frame_size);
 
         let prev_stack_frame = StackFrame { sp: prev_sp, pc: prev_pc, ..*stack_frame };
-        log::debug!("    > OUT(packed): {}", prev_stack_frame); // debug
+        log::debug!("    > OUT(packed): {prev_stack_frame}"); // debug
         Ok(prev_stack_frame)
     }
 
@@ -603,7 +617,7 @@ impl UnwindCode {
             })
         };
 
-        log::debug!("    > IN(unpacked): {}", stack_frame); // debug
+        log::debug!("    > IN(unpacked): {stack_frame}"); // debug
 
         // The main unwind decode logic
         while i < unwind_codes.len() {
@@ -616,7 +630,7 @@ impl UnwindCode {
                 let x = byte & 0b00011111;
                 log::debug!("    > {}", UnwindCode::AllocS(x)); // debug
 
-                prev_sp += x as u64 * 16; // deallocate space on the stack
+                prev_sp += u64::from(x) * 16; // deallocate space on the stack
 
                 i += 1;
             } else if (byte >> 5) & 0b111 == 0b001 {
@@ -626,7 +640,7 @@ impl UnwindCode {
                 let z = byte & 0b00011111;
                 log::debug!("    > {}", UnwindCode::SaveR19R20X(z)); // debug
 
-                prev_sp += z as u64 * 8; // pre increment the offset
+                prev_sp += u64::from(z) * 8; // pre increment the offset
                 // ignore r19 r20 values
 
                 i += 1;
@@ -642,11 +656,11 @@ impl UnwindCode {
                 // unwind opcode guarantees that FP and LR were stored contiguously at
                 // `z * 8` bytes from SP. Reading both slots stays within the recorded
                 // stack allocation and observes aligned 64-bit values.
-                prev_fp = unsafe { read_pointer64(prev_sp + z as u64 * 8)? }; // dereference fp
+                prev_fp = unsafe { read_pointer64(prev_sp + u64::from(z) * 8)? }; // dereference fp
                 // SAFETY: Similar to the FP read above, the LR sits immediately after
                 // the FP in memory (8 bytes further), within the stack's allocated range.
                 prev_pc = unsafe {
-                    read_pointer64(prev_sp + z as u64 * 8 + 8 /* step over fp */)?
+                    read_pointer64(prev_sp + u64::from(z) * 8 + 8 /* step over fp */)?
                 }; // dereference lr
 
                 i += 1;
@@ -666,7 +680,7 @@ impl UnwindCode {
                 prev_pc = unsafe {
                     read_pointer64(prev_sp + 8 /* step over fp */)?
                 }; // dereference lr
-                prev_sp += (z as u64 + 1) * 8; // pre increment the offset
+                prev_sp += (u64::from(z) + 1) * 8; // pre increment the offset
 
                 i += 1;
             } else if (byte >> 3) & 0b11111 == 0b11000 {
@@ -674,10 +688,10 @@ impl UnwindCode {
                 // 11000xxx'xxxxxxxx: allocate large stack with size < 32K (2^11 * 16).
 
                 let b1 = at(i + 1)?;
-                let x = (((byte & 0b111) as u16) << 8) | b1 as u16;
+                let x = (u16::from(byte & 0b111) << 8) | u16::from(b1);
                 log::debug!("    > {}", UnwindCode::AllocM(x)); // debug
 
-                prev_sp += x as u64 * 16; // deallocate space on the stack
+                prev_sp += u64::from(x) * 16; // deallocate space on the stack
 
                 i += 2;
             } else if (byte >> 2) & 0b111111 == 0b110010 {
@@ -700,7 +714,7 @@ impl UnwindCode {
                 let z = b1 & 0b00111111;
                 log::debug!("    > {}", UnwindCode::SaveRegPX(x, z)); // debug
 
-                prev_sp += (z as u64 + 1) * 8; // pre increment the offset
+                prev_sp += (u64::from(z) + 1) * 8; // pre increment the offset
 
                 i += 2;
             } else if (byte >> 2) & 0b111111 == 0b110100 {
@@ -721,7 +735,7 @@ impl UnwindCode {
                     // ensures the slot resides within the current stack allocation.
                     // The offset is expressed in units of 8 bytes, so the computed
                     // address is aligned and references initialized stack memory.
-                    prev_pc = unsafe { read_pointer64(prev_sp + z as u64 * 8)? }; // dereference lr
+                    prev_pc = unsafe { read_pointer64(prev_sp + u64::from(z) * 8)? }; // dereference lr
                     log::debug!("    > LR is saved using SaveReg"); // debug
                 }
 
@@ -747,7 +761,7 @@ impl UnwindCode {
                     log::debug!("    > LR is saved using SaveRegX"); // debug
                 }
 
-                prev_sp += (z as u64 + 1) * 8; // pre increment the offset
+                prev_sp += (u64::from(z) + 1) * 8; // pre increment the offset
 
                 i += 2;
             } else if (byte >> 1) & 0b1111111 == 0b1101011 {
@@ -766,7 +780,7 @@ impl UnwindCode {
                 // The unwind info guarantees the memory is part of the live
                 // stack frame, so loading the return address is well-defined.
                 prev_pc = unsafe {
-                    read_pointer64(prev_sp + z as u64 * 8 + 8 /* step over fp */)?
+                    read_pointer64(prev_sp + u64::from(z) * 8 + 8 /* step over fp */)?
                 }; // dereference lr
 
                 i += 2;
@@ -809,14 +823,14 @@ impl UnwindCode {
                 let z = b1 & 0b0011111;
                 log::debug!("    > {}", UnwindCode::SaveFRegX(x, z)); // debug
 
-                prev_sp += (z as u64 + 1) * 8; // pre increment the offset
+                prev_sp += (u64::from(z) + 1) * 8; // pre increment the offset
 
                 i += 2;
             } else if byte == 0b11011111 {
                 // AllocZ(u32) -> 11011111'zzzzzzzz
                 // 11011111'zzzzzzzz: allocate stack with size z * SVE-VL
 
-                let x = at(i + 1)? as u32;
+                let x = u32::from(at(i + 1)?);
                 log::debug!("    > {}", UnwindCode::AllocZ(x)); // debug
 
                 i += 2;
@@ -827,10 +841,10 @@ impl UnwindCode {
                 let b1 = at(i + 1)?;
                 let b2 = at(i + 2)?;
                 let b3 = at(i + 3)?;
-                let x = ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
+                let x = (u32::from(b1) << 16) | (u32::from(b2) << 8) | u32::from(b3);
                 log::debug!("    > {}", UnwindCode::AllocL(x)); // debug
 
-                prev_sp += x as u64 * 16; // pre increment the offset
+                prev_sp += u64::from(x) * 16; // pre increment the offset
 
                 i += 4;
             } else if byte == 0b11100001 {
@@ -848,7 +862,7 @@ impl UnwindCode {
                 let x = at(i + 1)?;
                 log::debug!("    > {}", UnwindCode::AddFp(x)); // debug
 
-                prev_sp = prev_fp - (x as u64 * 8); // restore sp from fp
+                prev_sp = prev_fp - (u64::from(x) * 8); // restore sp from fp
 
                 i += 2;
             } else if byte == 0b11100011 {
@@ -954,7 +968,7 @@ impl UnwindCode {
 
                 let b1 = at(i + 1)?;
                 let b2 = at(i + 2)?;
-                let y = ((b1 as u16) << 8) | (b2 as u16);
+                let y = (u16::from(b1) << 8) | u16::from(b2);
                 log::debug!("    > {}", UnwindCode::Reserved13(y)); // debug
 
                 i += 3;
@@ -964,7 +978,7 @@ impl UnwindCode {
                 let b1 = at(i + 1)?;
                 let b2 = at(i + 2)?;
                 let b3 = at(i + 3)?;
-                let y = ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
+                let y = (u32::from(b1) << 16) | (u32::from(b2) << 8) | u32::from(b3);
                 log::debug!("    > {}", UnwindCode::Reserved14(y)); // debug
 
                 i += 4;
@@ -975,7 +989,7 @@ impl UnwindCode {
                 let b2 = at(i + 2)?;
                 let b3 = at(i + 3)?;
                 let b4 = at(i + 4)?;
-                let y = ((b1 as u32) << 24) | ((b2 as u32) << 16) | ((b3 as u32) << 8) | (b4 as u32);
+                let y = (u32::from(b1) << 24) | (u32::from(b2) << 16) | (u32::from(b3) << 8) | u32::from(b4);
                 log::debug!("    > {}", UnwindCode::Reserved15(y)); // debug
 
                 i += 5;
@@ -1003,7 +1017,7 @@ impl UnwindCode {
         }
 
         let prev_stack_frame = StackFrame { sp: prev_sp, pc: prev_pc, fp: prev_fp };
-        log::debug!("    > OUT(unpacked): {}", prev_stack_frame); // debug
+        log::debug!("    > OUT(unpacked): {prev_stack_frame}"); // debug
         Ok(prev_stack_frame)
     }
 }
@@ -1369,10 +1383,10 @@ mod tests {
 
         let mut lr_slot_base = base_ptr;
         if reg_i == 1 && chain_mode == FrameChainMode::UnchainedSavedLr {
-            lr_slot_base += reg_save_size as u64 * 8;
+            lr_slot_base += u64::from(reg_save_size) * 8;
         }
-        let location_size = frame_size / 8 - reg_save_size as u16;
-        lr_slot_base += location_size as u64 * 8;
+        let location_size = frame_size / 8 - u16::from(reg_save_size);
+        lr_slot_base += u64::from(location_size) * 8;
 
         let lr_index = ((lr_slot_base - base_ptr) / 8) as usize;
         let lr_value = 0xAAAA_BBBB_CCCC_DDDDu64;
@@ -1383,8 +1397,12 @@ mod tests {
             .expect("packed unwind should succeed");
 
         let expected_sp = frame.sp
-            + frame_size as u64
-            + if reg_i == 1 && chain_mode == FrameChainMode::UnchainedSavedLr { reg_save_size as u64 * 8 } else { 0 };
+            + u64::from(frame_size)
+            + if reg_i == 1 && chain_mode == FrameChainMode::UnchainedSavedLr {
+                u64::from(reg_save_size) * 8
+            } else {
+                0
+            };
 
         assert_eq!(prev.pc, lr_value);
         assert_eq!(prev.sp, expected_sp);
@@ -1416,7 +1434,7 @@ mod tests {
         let prev = UnwindCode::get_previous_stack_frame_packed(frame_size, FrameChainMode::Unchained, 3, 2, 1, &frame)
             .expect("packed unwind should succeed");
 
-        assert_eq!(prev.sp, frame.sp + frame_size as u64);
+        assert_eq!(prev.sp, frame.sp + u64::from(frame_size));
         assert_eq!(prev.pc, saved_lr);
     }
 
@@ -1433,7 +1451,7 @@ mod tests {
             .expect("packed unwind should succeed");
 
         assert_eq!(prev.pc, frame.pc);
-        assert_eq!(prev.sp, frame.sp + frame_size as u64);
+        assert_eq!(prev.sp, frame.sp + u64::from(frame_size));
     }
 
     #[test]

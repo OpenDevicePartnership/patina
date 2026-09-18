@@ -1,7 +1,7 @@
 //! Firmware File System (FFS) File Attribute Definitions
 //!
 //! Based on the values defined in the UEFI Platform Initialization (PI) Specification V1.8A Section 3.2.3.1
-//! EFI_FFS_FILE_HEADER.
+//! `EFI_FFS_FILE_HEADER`.
 //!
 //! ## License
 //!

@@ -82,7 +82,7 @@ impl Char8Str {
     pub const unsafe fn from_bytes_with_nul_unchecked(bytes: &[u8]) -> &Char8Str {
         // SAFETY: `Char8Str` is `#[repr(transparent)]` over `[u8]`, so `&[u8]` and `&Char8Str` share
         // the same layout. The caller upholds the value invariants.
-        unsafe { &*(bytes as *const [u8] as *const Char8Str) }
+        unsafe { &*(core::ptr::from_ref::<[u8]>(bytes) as *const Char8Str) }
     }
 
     /// Creates a `&Char8Str` from the bytes up to and including the first NUL, ignoring anything
@@ -415,7 +415,7 @@ impl TryFrom<&Char16Str> for Char8String {
         let mut bytes = Vec::with_capacity(value.len() + 1);
         for (position, &unit) in value.iter().enumerate() {
             if unit > 0xFF {
-                return Err(StringError::NotLatin1 { position, value: unit as u32 });
+                return Err(StringError::NotLatin1 { position, value: u32::from(unit) });
             }
             bytes.push(unit as u8);
         }
@@ -678,7 +678,7 @@ impl<const N: usize> TryFrom<Char16Array<N>> for Char8Array<N> {
         let mut out = [0u8; N];
         for (position, &unit) in src.iter().enumerate() {
             if unit > 0xFF {
-                return Err(StringError::NotLatin1 { position, value: unit as u32 });
+                return Err(StringError::NotLatin1 { position, value: u32::from(unit) });
             }
             out[position] = unit as u8;
         }
@@ -992,6 +992,16 @@ mod tests {
         let name = char8!("Firmware");
         assert_eq!(name.len(), 8);
         assert!(name == "Firmware");
+    }
+
+    const CHAR8_MACRO_CONST: &Char8Str = char8!("Firmware");
+    static CHAR8_MACRO_STATIC_TABLE: [&Char8Str; 2] = [char8!("A"), char8!("B")];
+
+    #[test]
+    fn test_char8_macro_in_const_and_static_context() {
+        assert!(CHAR8_MACRO_CONST == "Firmware");
+        assert!(CHAR8_MACRO_STATIC_TABLE[0] == "A");
+        assert!(CHAR8_MACRO_STATIC_TABLE[1] == "B");
     }
 
     #[test]

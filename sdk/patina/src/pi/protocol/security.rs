@@ -1,7 +1,7 @@
 //! Security Architectural Protocol
 //!
 //! Security Architectural Protocol:
-//! Abstracts security-specific functions from the DXE Foundation for purposes of handling GUIDed section
+//! Abstracts security-specific functions from the DXE Foundation for purposes of handling `GUIDed` section
 //! encapsulations. This protocol must be produced by a boot service or runtime DXE driver and may only be consumed by
 //! the DXE Foundation and any other DXE drivers that need to validate the authentication of files.
 //!
@@ -19,7 +19,7 @@ use crate::standard::efi;
 /// Security Arch Protocol GUID.
 pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("A46423E3-4617-49F1-B9FF-D1BFA9115839");
 
-/// The EFI_SECURITY_ARCH_PROTOCOL (SAP) is used to abstract platform-specific
+/// The `EFI_SECURITY_ARCH_PROTOCOL` (SAP) is used to abstract platform-specific
 /// policy from the DXE core response to an attempt to use a file that returns a
 /// given status for the authentication check from the section extraction protocol.
 ///
@@ -28,37 +28,37 @@ pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("A46
 /// and other exception operations.  The File parameter allows for possible logging
 /// within the SAP of the driver.
 ///
-/// If File is NULL, then EFI_INVALID_PARAMETER is returned.
+/// If File is NULL, then `EFI_INVALID_PARAMETER` is returned.
 ///
 /// If the file specified by File with an authentication status specified by
-/// AuthenticationStatus is safe for the DXE Core to use, then EFI_SUCCESS is returned.
+/// `AuthenticationStatus` is safe for the DXE Core to use, then `EFI_SUCCESS` is returned.
 ///
 /// If the file specified by File with an authentication status specified by
-/// AuthenticationStatus is not safe for the DXE Core to use under any circumstances,
-/// then EFI_ACCESS_DENIED is returned.
+/// `AuthenticationStatus` is not safe for the DXE Core to use under any circumstances,
+/// then `EFI_ACCESS_DENIED` is returned.
 ///
 /// If the file specified by File with an authentication status specified by
-/// AuthenticationStatus is not safe for the DXE Core to use right now, but it
-/// might be possible to use it at a future time, then EFI_SECURITY_VIOLATION is
+/// `AuthenticationStatus` is not safe for the DXE Core to use right now, but it
+/// might be possible to use it at a future time, then `EFI_SECURITY_VIOLATION` is
 /// returned.
 ///
-/// @param  this             The EFI_SECURITY_ARCH_PROTOCOL instance.
-/// @param  authentication_status
+/// @param  this             The `EFI_SECURITY_ARCH_PROTOCOL` instance.
+/// @param  `authentication_status`
 ///                          This is the authentication type returned from the Section
 ///                          Extraction protocol. See the Section Extraction Protocol
 ///                          Specification for details on this type.
 /// @param  file             This is a pointer to the device path of the file that is
 ///                          being dispatched. This will optionally be used for logging.
 ///
-/// @retval Status::SUCCESS            The file specified by File did authenticate, and the
+/// @retval `Status::SUCCESS`            The file specified by File did authenticate, and the
 ///                                    platform policy dictates that the DXE Core may use File.
-/// @retval Status::INVALID_PARAMETER  Driver is NULL.
-/// @retval Status::SECURITY_VIOLATION The file specified by File did not authenticate, and
+/// @retval `Status::INVALID_PARAMETER`  Driver is NULL.
+/// @retval `Status::SECURITY_VIOLATION` The file specified by File did not authenticate, and
 ///                                    the platform policy dictates that File should be placed
 ///                                    in the untrusted state. A file may be promoted from
 ///                                    the untrusted to the trusted state at a future time
-///                                    with a call to the Trust() DXE Service.
-/// @retval Status::ACCESS_DENIED      The file specified by File did not authenticate, and
+///                                    with a call to the `Trust()` DXE Service.
+/// @retval `Status::ACCESS_DENIED`      The file specified by File did not authenticate, and
 ///                                    the platform policy dictates that File should not be
 ///                                    used for any purpose.
 pub type EfiSecurityFileAuthenticationState = extern "efiapi" fn(
@@ -67,7 +67,7 @@ pub type EfiSecurityFileAuthenticationState = extern "efiapi" fn(
     file: *mut efi::protocols::device_path::Protocol,
 ) -> efi::Status;
 
-/// The EFI_SECURITY_ARCH_PROTOCOL is used to abstract platform-specific policy
+/// The `EFI_SECURITY_ARCH_PROTOCOL` is used to abstract platform-specific policy
 /// from the DXE core.  This includes locking flash upon failure to authenticate,
 /// attestation logging, and other exception operations.
 #[repr(C)]

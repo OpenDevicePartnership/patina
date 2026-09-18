@@ -102,15 +102,12 @@ fn benchmark_delete_function(c: &mut Criterion) {
             },
             |bst| {
                 for i in &nums_shuffled {
-                    match bst.delete(i.key()) {
-                        Ok(_) => {}
-                        Err(_) => {
-                            std::println!("{}", nums.len());
-                            std::println!("{nums:?}");
-                            std::println!("{}", nums_shuffled.len());
-                            std::println!("{nums_shuffled:?}");
-                            panic!("Failed to delete {i}");
-                        }
+                    if bst.delete(i.key()).is_err() {
+                        std::println!("{}", nums.len());
+                        std::println!("{nums:?}");
+                        std::println!("{}", nums_shuffled.len());
+                        std::println!("{nums_shuffled:?}");
+                        panic!("Failed to delete {i}");
                     }
                 }
             },
@@ -262,7 +259,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
         );
     });
 
-    group.finish()
+    group.finish();
 }
 
 criterion_group!(benches, benchmark_delete_function);

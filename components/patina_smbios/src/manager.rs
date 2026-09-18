@@ -1,9 +1,9 @@
 //! SMBIOS Manager Module
 //!
 //! This module provides the core SMBIOS manager implementation organized into focused submodules:
-//! - `core`: SmbiosManager struct and SmbiosRecords trait implementation
-//! - `record`: Internal record structures (SmbiosRecord)
-//! - `protocol`: C/EDKII protocol compatibility layer (SmbiosProtocol)
+//! - `core`: `SmbiosManager` struct and `SmbiosRecords` trait implementation
+//! - `record`: Internal record structures (`SmbiosRecord`)
+//! - `protocol`: C/EDKII protocol compatibility layer (`SmbiosProtocol`)
 //!
 //! ## License
 //!
@@ -41,8 +41,8 @@ use self::protocol::{SmbiosProtocol, SmbiosProtocolInternal};
 /// This function registers the SMBIOS protocol with UEFI so that C/EDK drivers can access
 /// SMBIOS functionality. The protocol functions access the manager through the protocol struct.
 ///
-/// The manager is protected by TplMutex at NOTIFY level. When protocol functions
-/// are called, the TplMutex.lock() automatically raises TPL to NOTIFY, preventing
+/// The manager is protected by `TplMutex` at NOTIFY level. When protocol functions
+/// are called, the `TplMutex.lock()` automatically raises TPL to NOTIFY, preventing
 /// timer interrupt reentrancy. TPL is automatically restored when the lock guard drops.
 ///
 /// Returns the protocol handle on success. The caller is responsible for managing the
@@ -66,7 +66,7 @@ pub fn install_smbios_protocol(
         boot_services.install_protocol_interface_unchecked(
             None, // Let UEFI create a new handle
             &SmbiosProtocol::PROTOCOL_GUID,
-            interface as *mut _,
+            interface.cast(),
         )
     };
 
@@ -80,7 +80,7 @@ pub fn install_smbios_protocol(
             unsafe {
                 drop(Box::from_raw(interface));
             }
-            log::error!("Failed to install SMBIOS protocol: {}", status);
+            log::error!("Failed to install SMBIOS protocol: {status}");
             Err(SmbiosError::AllocationFailed)
         }
     }

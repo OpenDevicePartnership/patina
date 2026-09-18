@@ -210,9 +210,9 @@ pub(crate) fn parse_eisa_id(value: &str, offset: usize, field: &str) -> Result<u
         return Err(DevicePathError::new(offset, format!("{field} is not a valid seven-character EISA ID")));
     }
 
-    let first = (first.to_ascii_uppercase() - b'A' + 1) as u32;
-    let second = (second.to_ascii_uppercase() - b'A' + 1) as u32;
-    let third = (third.to_ascii_uppercase() - b'A' + 1) as u32;
+    let first = u32::from(first.to_ascii_uppercase() - b'A' + 1);
+    let second = u32::from(second.to_ascii_uppercase() - b'A' + 1);
+    let third = u32::from(third.to_ascii_uppercase() - b'A' + 1);
     let product = u16::from_str_radix(value.get(3..).expect("validated EISA ID has an ASCII product suffix"), 16)
         .map_err(|_| DevicePathError::new(offset, format!("{field} has an invalid product identifier")))?;
     Ok((u32::from(product) << 16) | (first << 10) | (second << 5) | third)

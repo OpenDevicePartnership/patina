@@ -1,4 +1,4 @@
-//! Error codes for the patina_stacktrace crate
+//! Error codes for the `patina_stacktrace` crate
 //!
 //! ## License
 //!
@@ -118,19 +118,19 @@ impl fmt::Display for Error {
             Error::UnwindCodeOutOfBounds { requested, available, .. } => {
                 write!(
                     fmt,
-                    "Unwind code read exceeded buffer bounds (requested offset {}, available {})",
-                    requested, available
+                    "Unwind code read exceeded buffer bounds (requested offset {requested}, available {available})"
                 )
             }
         }
     }
 }
 
-/// A specialized result type for the patina_stacktrace crate.
+/// A specialized result type for the `patina_stacktrace` crate.
 pub type StResult<T> = Result<T, Error>;
 
 impl Error {
     /// Propagate the provided module name onto errors that carry optional module context.
+    #[must_use]
     pub fn with_module(self, fallback: Option<&'static str>) -> Self {
         match self {
             Error::OutOfBoundsRead { module, index } => Error::OutOfBoundsRead { module: module.or(fallback), index },
@@ -148,7 +148,7 @@ impl Error {
             Error::UnwindCodeOutOfBounds { module, requested, available } => {
                 Error::UnwindCodeOutOfBounds { module: module.or(fallback), requested, available }
             }
-            other => other,
+            other @ Error::ImageNotFound { .. } => other,
         }
     }
 }
@@ -240,7 +240,7 @@ mod tests {
                 assert_eq!(index, 7);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::OutOfBoundsRead { module: Some("explicit"), index: 9 }.with_module(fallback);
         match err {
@@ -249,7 +249,7 @@ mod tests {
                 assert_eq!(index, 9);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::Malformed { module: None, reason: "bad" }.with_module(fallback);
         match err {
@@ -258,7 +258,7 @@ mod tests {
                 assert_eq!(reason, "bad");
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::Malformed { module: Some("explicit"), reason: "bad" }.with_module(fallback);
         match err {
@@ -267,13 +267,13 @@ mod tests {
                 assert_eq!(reason, "bad");
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::ExceptionDirectoryNotFound { module: None }.with_module(fallback);
         match err {
             Error::ExceptionDirectoryNotFound { module } => assert_eq!(module, fallback),
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::RuntimeFunctionNotFound { module: None, rip_rva: 0x10 }.with_module(fallback);
         match err {
@@ -282,7 +282,7 @@ mod tests {
                 assert_eq!(rip_rva, 0x10);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err =
             Error::UnwindInfoNotFound { module: None, image_base: 0x1000, unwind_info: 0x20 }.with_module(fallback);
@@ -293,7 +293,7 @@ mod tests {
                 assert_eq!(unwind_info, 0x20);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::UnwindInfoNotFound { module: None, image_base: 0x2000, unwind_info: 0x30 }.with_module(None);
         match err {
@@ -303,13 +303,13 @@ mod tests {
                 assert_eq!(unwind_info, 0x30);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::UnexpectedUnwindCode { module: None }.with_module(fallback);
         match err {
             Error::UnexpectedUnwindCode { module } => assert_eq!(module, fallback),
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::UnwindCodeOutOfBounds { module: None, requested: 5, available: 3 }.with_module(fallback);
         match err {
@@ -319,12 +319,12 @@ mod tests {
                 assert_eq!(available, 3);
             }
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
 
         let err = Error::ImageNotFound { rip: 0x1234 }.with_module(fallback);
         match err {
             Error::ImageNotFound { rip } => assert_eq!(rip, 0x1234),
             other => panic!("Unexpected variant: {other:?}"),
-        };
+        }
     }
 }

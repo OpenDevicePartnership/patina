@@ -110,13 +110,13 @@ pub type GetNextFile = extern "efiapi" fn(
 /// Retrieves volume-specific information.
 ///
 /// Returns information about the firmware volume. The information type is specified
-/// by the InformationType GUID parameter.
+/// by the `InformationType` GUID parameter.
 pub type GetInfo = extern "efiapi" fn(*const FirmwareVolumeProtocol, *const Guid, *mut usize, *mut c_void) -> Status;
 
 /// Modifies volume-specific information.
 ///
 /// Sets information about the firmware volume. The information type is specified
-/// by the InformationType GUID parameter.
+/// by the `InformationType` GUID parameter.
 pub type SetInfo = extern "efiapi" fn(*const FirmwareVolumeProtocol, *const Guid, usize, *const c_void) -> Status;
 
 /// The Firmware Volume Protocol provides file-level access to the firmware volume. Each firmware volume driver must
@@ -140,7 +140,7 @@ pub struct FirmwareVolumeProtocol {
     pub write_file: WriteFile,
     /// Finds the next file in the firmware volume.
     pub get_next_file: GetNextFile,
-    /// Size of the search key for get_next_file.
+    /// Size of the search key for `get_next_file`.
     pub key_size: u32,
     /// Handle of the parent firmware volume.
     pub parent_handle: Handle,

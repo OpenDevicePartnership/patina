@@ -1,4 +1,4 @@
-//! Serial Traits and Implementations for the [SerialIO] interface.
+//! Serial Traits and Implementations for the [`SerialIO`] interface.
 //!
 //! ## License
 //!
@@ -41,6 +41,7 @@ impl<T: SerialIO> SharedSerial<T> {
     /// under multi-core contention, at the cost of reintroducing a self-deadlock hazard if the
     /// same core re-enters the port while already holding it (e.g. logging from a panic handler
     /// mid-write). Prefer [`SharedSerial::new`] unless you specifically need lossless output.
+    #[must_use]
     pub fn with_blocking(mut self) -> Self {
         self.blocking = true;
         self

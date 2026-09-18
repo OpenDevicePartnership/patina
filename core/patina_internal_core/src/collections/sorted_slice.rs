@@ -30,7 +30,10 @@ where
             // 2. The correct number of T elements that fit in the byte slice is calculated
             // 3. The lifetime 'a ensures the byte slice remains valid for the sorted slice's lifetime
             slice: unsafe {
-                slice::from_raw_parts_mut::<'a, T>(slice as *mut [u8] as *mut T, slice.len() / mem::size_of::<T>())
+                slice::from_raw_parts_mut::<'a, T>(
+                    core::ptr::from_mut::<[u8]>(slice).cast::<T>(),
+                    slice.len() / mem::size_of::<T>(),
+                )
             },
             item_count: 0,
         }
@@ -61,7 +64,7 @@ where
             return Err(Error::OutOfSpace);
         }
 
-        if !elements.is_sorted_by_key(|e| e.key()) {
+        if !elements.is_sorted_by_key(super::SliceKey::key) {
             return Err(Error::NotSorted);
         }
 
@@ -82,7 +85,7 @@ where
             match last.key().cmp(next.key()) {
                 core::cmp::Ordering::Equal => return Err(Error::AlreadyExists),
                 core::cmp::Ordering::Greater => return Err(Error::NotSorted),
-                _ => (),
+                core::cmp::Ordering::Less => (),
             }
         }
 
@@ -198,6 +201,7 @@ where
     T: Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[allow(clippy::explicit_deref_methods)]
         f.debug_struct("MemoryBlockSlice").field("block_count", &self.item_count).field("slice", &self.deref()).finish()
     }
 }
@@ -218,7 +222,7 @@ mod tests {
         let ss = SortedSlice::<'_, u32>::new(&mut mem);
 
         assert_eq!(0, ss.item_count);
-        assert_eq!(mem_ptr, ss.slice.as_ptr() as *const u8);
+        assert_eq!(mem_ptr, ss.slice.as_ptr().cast::<u8>());
         assert_eq!(MEM_SIZE / mem::size_of::<u32>(), ss.slice.len());
         assert_eq!(MEM_SIZE / mem::size_of::<u32>(), ss.capacity());
         assert_eq!(0, ss.len(), "The deref impl should only return the used part of the slice.");
@@ -336,7 +340,7 @@ mod tests {
         }
         assert_eq!(None, iter.next());
 
-        for i in (&mut ss).into_iter() {
+        for i in &mut ss {
             *i += 1;
         }
     }

@@ -15,9 +15,9 @@ use crate::{bit, performance::record::known::KnownPerfId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub enum PerfAttribute {
-    /// A PERF_START/PERF_START_EX record.
+    /// A `PERF_START/PERF_START_EX` record.
     PerfStartEntry,
-    /// A PERF_END/PERF_END_EX record.
+    /// A `PERF_END/PERF_END_EX` record.
     PerfEndEntry,
     /// A general performance record.
     PerfEntry,
@@ -52,20 +52,20 @@ impl CallerIdentifier {
             // `validate_guid` performs basic validations but cannot guarantee safety.
             Some(CallerIdentifier::Guid(unsafe { *(ptr as *const efi::Guid) }))
         } else {
-            Some(CallerIdentifier::Handle(ptr as efi::Handle))
+            Some(CallerIdentifier::Handle(ptr.cast_mut()))
         }
     }
 
     /// Checks if the `CallerIdentifier` is a GUID pointer.
     ///
     /// This is the case with newly-added performance IDs used for signaling events and callbacks
-    /// that were not backwards-compatible with the existing create_performance_measurement interface.
-    /// These ids are: PerfEvent, PerfEventSignalStart, PerfEventSignalEnd, PerfCallbackStart, PerfCallbackEnd,
-    /// PerfFunctionStart, PerfFunctionEnd, PerfInModuleStart, PerfInModuleEnd, PerfCrossModuleStart, PerfCrossModuleEnd.
+    /// that were not backwards-compatible with the existing `create_performance_measurement` interface.
+    /// These ids are: `PerfEvent`, `PerfEventSignalStart`, `PerfEventSignalEnd`, `PerfCallbackStart`, `PerfCallbackEnd`,
+    /// `PerfFunctionStart`, `PerfFunctionEnd`, `PerfInModuleStart`, `PerfInModuleEnd`, `PerfCrossModuleStart`, `PerfCrossModuleEnd`.
     pub fn perf_id_is_guid(perf_id: u16) -> bool {
         let perf_id = match KnownPerfId::try_from(perf_id) {
             Ok(id) => id,
-            Err(_) => return false,
+            Err(()) => return false,
         };
         matches!(
             perf_id,
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_validate_guid_caller_identifier() {
         let valid_guid = efi::Guid::from_bytes(&[1; 16]);
-        let valid_guid_ptr = &valid_guid as *const efi::Guid as *const c_void;
+        let valid_guid_ptr = &raw const valid_guid as *const c_void;
 
         #[allow(clippy::manual_dangling_ptr)]
         let invalid_guid_ptr = 0x1_usize as *const c_void; // Misaligned pointer.
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(combined, 7);
     }
 
-    /// Validates that each KnownPerfId maps to the FPDT record type expected by the EDK2
+    /// Validates that each `KnownPerfId` maps to the FPDT record type expected by the EDK2
     /// Dp.c parser (ShellPkg/DynamicCommand/DpDynamicCommand/Dp.c). A mismatch causes
     /// ASSERT(FALSE) in the C parser at runtime.
     #[test]

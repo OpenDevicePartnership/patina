@@ -1,6 +1,6 @@
 //! Debugger Transport Implementations.
 //!
-//! This modules contains the implementation Connection traits for a SerialIO
+//! This modules contains the implementation Connection traits for a `SerialIO`
 //! debugger transport as well as other related implementations.
 //!
 //! ## License
@@ -14,19 +14,19 @@ use core::result::Result;
 use gdbstub::conn::{Connection, ConnectionExt};
 use patina::peripheral::serial::{SerialIO, shared::SharedSerial};
 
-/// Serial Connection for use with GdbStub
+/// Serial Connection for use with `GdbStub`
 ///
-/// Wraps the SerialIO interface for use with GdbStub.
+/// Wraps the `SerialIO` interface for use with `GdbStub`.
 ///
 pub(crate) struct SerialConnection<'a, T: SerialIO> {
     /// Serial IO transport for connecting to the debugger.
     transport: &'a SharedSerial<T>,
-    /// Peeked byte for use with the GdbStub peek method.
+    /// Peeked byte for use with the `GdbStub` peek method.
     peeked_byte: Option<u8>,
 }
 
 impl<'a, T: SerialIO> SerialConnection<'a, T> {
-    /// Create a new SerialConnection
+    /// Create a new `SerialConnection`
     pub fn new(transport: &'a SharedSerial<T>) -> Self {
         SerialConnection { transport, peeked_byte: None }
     }
@@ -82,7 +82,7 @@ pub struct LoggingSuspender {
 }
 
 impl LoggingSuspender {
-    /// Suspend logging within the current scope. When the returned LoggingSuspender
+    /// Suspend logging within the current scope. When the returned `LoggingSuspender`
     /// goes out of scope, logging will be restored to the previous level.
     pub fn suspend() -> Self {
         let level = log::max_level();

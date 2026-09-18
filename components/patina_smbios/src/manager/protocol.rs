@@ -119,7 +119,7 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS Add] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS Add] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -127,11 +127,11 @@ impl SmbiosProtocol {
         // Cast from protocol pointer to internal struct pointer is safe due to repr(C) layout:
         // SmbiosProtocolInternal has SmbiosProtocol as its first field, so a pointer to
         // SmbiosProtocol is also a valid pointer to the containing SmbiosProtocolInternal.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
 
         let manager = match internal.manager.try_lock() {
             Ok(guard) => guard,
-            Err(_) => {
+            Err(()) => {
                 debug_assert!(false, "[SMBIOS Add] ERROR: try_lock FAILED - mutex already locked!");
                 return efi::Status::DEVICE_ERROR;
             }
@@ -149,7 +149,7 @@ impl SmbiosProtocol {
             }
 
             // Scan for the string pool terminator (double null)
-            let base_ptr = record as *const u8;
+            let base_ptr = record.cast::<u8>();
 
             // Scan for double null terminator
             let mut consecutive_nulls = 0;
@@ -215,12 +215,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS UpdateString] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS UpdateString] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
         let manager = internal.manager.lock();
 
         // SAFETY: The pointers are checked for being null above and guaranteed valid by caller
@@ -256,12 +256,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS Remove] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS Remove] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
         let manager = internal.manager.lock();
 
         match manager.remove(smbios_handle) {
@@ -292,12 +292,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS GetNext] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS GetNext] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
 
         let found_handle = {
             let manager = internal.manager.lock();
@@ -350,7 +350,7 @@ impl SmbiosProtocol {
             }
             efi::Status::SUCCESS
         } else {
-            debug_assert!(false, "[SMBIOS GetNext] Record handle {:04X} not found in second lookup", found_handle);
+            debug_assert!(false, "[SMBIOS GetNext] Record handle {found_handle:04X} not found in second lookup");
             efi::Status::NOT_FOUND
         }
     }
@@ -498,7 +498,7 @@ mod tests {
         // Since protocol is at offset 0, any properly aligned SmbiosProtocolInternal pointer
         // is also a properly aligned SmbiosProtocol pointer (and vice versa when protocol is first field)
         let protocol = SmbiosProtocol::new(3, 9);
-        let protocol_ptr = &protocol as *const SmbiosProtocol;
+        let protocol_ptr = &raw const protocol;
         let protocol_addr = protocol_ptr as usize;
 
         // This pointer should be valid for casting to SmbiosProtocolInternal alignment

@@ -8,7 +8,7 @@
 //!
 use core::{ffi::c_void, mem::size_of, num::NonZeroUsize, ptr::NonNull, slice};
 
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use patina::{
     pi::{
         self,
@@ -102,22 +102,22 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 }
 
 impl<P: PlatformInfo> FvProtocolData<P> {
-    /// Creates a new [FvProtocolData] instance.
+    /// Creates a new [`FvProtocolData`] instance.
     pub const fn new() -> Self {
         Self { fv_metadata: BTreeMap::new(), _platform_info: core::marker::PhantomData }
     }
 
-    /// Creates a new [TplMutex] wrapping a new [FvProtocolData] instance.
+    /// Creates a new [`TplMutex`] wrapping a new [`FvProtocolData`] instance.
     pub const fn new_locked() -> tpl_mutex::TplMutex<Self> {
         tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, Self::new(), "FvData")
     }
 
-    /// Returns a locked instance of the global [FvProtocolData].
+    /// Returns a locked instance of the global [`FvProtocolData`].
     fn instance<'a>() -> tpl_mutex::TplGuard<'a, Self> {
         Core::<P>::instance().pi_dispatcher.fv_data.lock()
     }
 
-    /// Rust implementation of the FVB protocol's get_attributes method.
+    /// Rust implementation of the FVB protocol's `get_attributes` method.
     fn fvb_get_attributes(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol>,
@@ -130,7 +130,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         Ok(fv.attributes())
     }
 
-    /// Rust implementation of the FVB protocol's get_physical_address method.
+    /// Rust implementation of the FVB protocol's `get_physical_address` method.
     fn fvb_get_physical_address(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol>,
@@ -140,7 +140,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         Ok(physical_address as efi::PhysicalAddress)
     }
 
-    /// Rust implementation of the FVB protocol's get_block_size method.
+    /// Rust implementation of the FVB protocol's `get_block_size` method.
     fn fvb_get_block_size(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol>,
@@ -194,7 +194,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         unsafe { Ok(slice::from_raw_parts(lba_start, bytes_to_read)) }
     }
 
-    /// Rust implementation of the FV protocol's get_volume_attributes method.
+    /// Rust implementation of the FV protocol's `get_volume_attributes` method.
     fn fv_get_volume_attributes(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume::FirmwareVolumeProtocol>,
@@ -205,10 +205,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // its invariants - like not removing fv once installed - are upheld).
         let fv = unsafe { VolumeRef::new_from_address(physical_address)? };
 
-        Ok(fv.attributes() as fv::attributes::EfiFvAttributes)
+        Ok(fv::attributes::EfiFvAttributes::from(fv.attributes()))
     }
 
-    /// Rust implementation of the FV protocol's read_file method.
+    /// Rust implementation of the FV protocol's `read_file` method.
     fn fv_read_file(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume::FirmwareVolumeProtocol>,
@@ -253,7 +253,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             .ok_or(EfiError::NotFound)
     }
 
-    /// Rust implementation of the FV protocol's GetNextFile method.
+    /// Rust implementation of the FV protocol's `GetNextFile` method.
     fn fv_get_next_file(
         &self,
         protocol: NonNull<pi::protocol::firmware_volume::FirmwareVolumeProtocol>,
@@ -382,7 +382,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ///
     /// ## Safety
     ///
-    /// Caller must ensure that base_address points to a valid firmware volume.
+    /// Caller must ensure that `base_address` points to a valid firmware volume.
     pub unsafe fn install_firmware_volume(
         &mut self,
         base_address: u64,
@@ -415,7 +415,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     ///
     /// ## Safety
     ///
-    /// Caller must ensure that base_address points to a valid firmware volume.
+    /// Caller must ensure that `base_address` points to a valid firmware volume.
     unsafe fn install_fv_device_path_protocol(
         &self,
         handle: Option<efi::Handle>,
@@ -424,19 +424,16 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must ensure that base_address is valid.
         let fv = unsafe { VolumeRef::new_from_address(base_address) }?;
 
-        let device_path_ptr = match fv.fv_name() {
-            Some(fv_name) => {
-                // Construct FvPiWgDevicePath
-                let device_path = FvPiWgDevicePath::new_fv(fv_name.into_inner());
-                Box::into_raw(Box::new(device_path)) as *mut c_void
-            }
-            None => {
-                // Construct FvMemMapDevicePath
-                let device_path =
-                    FvMemMapDevicePath::new(MEMORY_MAPPED_IO, base_address, base_address.saturating_add(fv.size()));
+        let device_path_ptr = if let Some(fv_name) = fv.fv_name() {
+            // Construct FvPiWgDevicePath
+            let device_path = FvPiWgDevicePath::new_fv(fv_name.into_inner());
+            Box::into_raw(Box::new(device_path)) as *mut c_void
+        } else {
+            // Construct FvMemMapDevicePath
+            let device_path =
+                FvMemMapDevicePath::new(MEMORY_MAPPED_IO, base_address, base_address.saturating_add(fv.size()));
 
-                Box::into_raw(Box::new(device_path)) as *mut c_void
-            }
+            Box::into_raw(Box::new(device_path)) as *mut c_void
         };
 
         // install the protocol and return status
@@ -447,7 +444,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 // FV / FVB EFIAPI compliant protocol method implementations.
 #[cfg_attr(coverage, coverage(off))]
 impl<P: PlatformInfo> FvProtocolData<P> {
-    /// EFIAPI compliant FVB protocol GetAttributes method.
+    /// EFIAPI compliant FVB protocol `GetAttributes` method.
     extern "efiapi" fn fvb_get_attributes_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         attributes: *mut fvb::attributes::EfiFvbAttributes2,
@@ -464,12 +461,12 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Err(err) => return err.into(),
             // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
             Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
-        };
+        }
 
         efi::Status::SUCCESS
     }
 
-    /// EFIAPI compliant FVB protocol SetAttributes method.
+    /// EFIAPI compliant FVB protocol `SetAttributes` method.
     extern "efiapi" fn fvb_set_attributes_efiapi(
         _this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         _attributes: *mut fvb::attributes::EfiFvbAttributes2,
@@ -477,7 +474,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FVB protocol GetPhysicalAddress method.
+    /// EFIAPI compliant FVB protocol `GetPhysicalAddress` method.
     extern "efiapi" fn fvb_get_physical_address_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         address: *mut efi::PhysicalAddress,
@@ -494,12 +491,12 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Err(err) => return err.into(),
             // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
             Ok(physical_address) => unsafe { address.write_unaligned(physical_address) },
-        };
+        }
 
         efi::Status::SUCCESS
     }
 
-    /// EFIAPI compliant FVB protocol GetBlockSize method.
+    /// EFIAPI compliant FVB protocol `GetBlockSize` method.
     extern "efiapi" fn fvb_get_block_size_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         lba: efi::Lba,
@@ -567,7 +564,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             num_bytes.write_unaligned(data.len());
         }
 
-        if data.len() != bytes_to_read { efi::Status::BAD_BUFFER_SIZE } else { efi::Status::SUCCESS }
+        if data.len() == bytes_to_read { efi::Status::SUCCESS } else { efi::Status::BAD_BUFFER_SIZE }
     }
 
     /// EFIAPI compliant FVB protocol Write method.
@@ -581,7 +578,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FVB protocol EraseBlocks method.
+    /// EFIAPI compliant FVB protocol `EraseBlocks` method.
     extern "efiapi" fn fvb_erase_blocks_efiapi(
         _this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         //... TODO: this should be variadic; however, variadic and eficall don't mix well presently.
@@ -589,7 +586,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FV protocol GetVolumeAttributes method.
+    /// EFIAPI compliant FV protocol `GetVolumeAttributes` method.
     extern "efiapi" fn fv_get_volume_attributes_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         fv_attributes: *mut fv::attributes::EfiFvAttributes,
@@ -598,7 +595,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let Some(protocol) = NonNull::new(this as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol) else {
+        let Some(protocol) = NonNull::new(this.cast_mut()) else {
             return efi::Status::INVALID_PARAMETER;
         };
 
@@ -613,7 +610,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::SUCCESS
     }
 
-    /// EFIAPI compliant FV protocol SetVolumeAttributes method.
+    /// EFIAPI compliant FV protocol `SetVolumeAttributes` method.
     extern "efiapi" fn fv_set_volume_attributes_efiapi(
         _this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         _fv_attributes: *mut fv::attributes::EfiFvAttributes,
@@ -621,7 +618,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FV protocol ReadFile method.
+    /// EFIAPI compliant FV protocol `ReadFile` method.
     extern "efiapi" fn fv_read_file_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         name_guid: *const efi::Guid,
@@ -640,7 +637,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let Some(protocol) = NonNull::new(this as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol) else {
+        let Some(protocol) = NonNull::new(this.cast_mut()) else {
             return efi::Status::INVALID_PARAMETER;
         };
 
@@ -724,7 +721,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         status
     }
 
-    /// EFIAPI compliant FV protocol ReadSection method.
+    /// EFIAPI compliant FV protocol `ReadSection` method.
     extern "efiapi" fn fv_read_section_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         name_guid: *const efi::Guid,
@@ -738,7 +735,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let Some(protocol) = NonNull::new(this as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol) else {
+        let Some(protocol) = NonNull::new(this.cast_mut()) else {
             return efi::Status::INVALID_PARAMETER;
         };
 
@@ -752,9 +749,21 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok(section) => section,
         };
 
-        let section_data = match section.try_content_as_slice() {
+        let section_content = match section.try_content_as_slice() {
             Ok(data) => data,
             Err(err) => return err.into(),
+        };
+
+        // Certain section types (Compression, GuidDefined, Version, FreeFormSubtypeGuid) have
+        // type-specific headers that the PI spec requires ReadSection to include in the returned
+        // data. For these types, we need to prepend the type-specific header bytes to the content.
+        let type_specific_header = section.header().type_specific_header_bytes();
+        let owned_section_data: Vec<u8>;
+        let section_data = if type_specific_header.is_empty() {
+            section_content
+        } else {
+            owned_section_data = type_specific_header.iter().chain(section_content.iter()).copied().collect();
+            owned_section_data.as_slice()
         };
 
         // get the buffer_size and buffer parameters from caller.
@@ -809,7 +818,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         if dest_buffer.len() < section_data.len() { efi::Status::WARN_BUFFER_TOO_SMALL } else { efi::Status::SUCCESS }
     }
 
-    /// EFIAPI compliant FV protocol WriteFile method.
+    /// EFIAPI compliant FV protocol `WriteFile` method.
     extern "efiapi" fn fv_write_file_efiapi(
         _this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         _number_of_files: u32,
@@ -819,7 +828,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FV protocol GetNextFile method.
+    /// EFIAPI compliant FV protocol `GetNextFile` method.
     extern "efiapi" fn fv_get_next_file_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         key: *mut c_void,
@@ -832,7 +841,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let Some(protocol) = NonNull::new(this as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol) else {
+        let Some(protocol) = NonNull::new(this.cast_mut()) else {
             return efi::Status::INVALID_PARAMETER;
         };
 
@@ -868,7 +877,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::SUCCESS
     }
 
-    /// EFIAPI compliant FV protocol GetInfo method.
+    /// EFIAPI compliant FV protocol `GetInfo` method.
     extern "efiapi" fn fv_get_info_efiapi(
         _this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         _information_type: *const efi::Guid,
@@ -878,7 +887,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         efi::Status::UNSUPPORTED
     }
 
-    /// EFIAPI compliant FV protocol SetInfo method.
+    /// EFIAPI compliant FV protocol `SetInfo` method.
     extern "efiapi" fn fv_set_info_efiapi(
         _this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         _information_type: *const efi::Guid,
@@ -894,7 +903,7 @@ pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Gui
     let file_node = &FvPiWgDevicePath::new_file(file_name);
     concat_device_path_to_boxed_slice(
         fv_device_path as *mut _ as *const efi::protocols::device_path::Protocol,
-        file_node as *const _ as *const efi::protocols::device_path::Protocol,
+        core::ptr::from_ref(file_node) as *const efi::protocols::device_path::Protocol,
     )
 }
 
@@ -905,8 +914,15 @@ mod tests {
     use crate::{MockComponentInfo, MockCpuInfo, MockMemoryInfo, test_support};
     use patina::pi::{
         BootMode,
+        fw_fs::{ffs::section::header::FreeformSubtypeGuid, fv::BlockMapEntry, fvb},
         hob::{self, Hob, HobList},
     };
+    use patina_ffs::{
+        file::File as FfsFile,
+        section::{Section, SectionHeader},
+        volume::Volume,
+    };
+
     use patina_ffs_extractors::CompositeSectionExtractor;
     extern crate alloc;
     use crate::test_collateral;
@@ -985,7 +1001,7 @@ mod tests {
 
             // Generate some example HOBs
 
-            let _firmware_volume2 = gen_firmware_volume2();
+            let firmware_volume2 = gen_firmware_volume2();
             let _firmware_volume0 = gen_firmware_volume();
             let end_of_hob_list = gen_end_of_hoblist();
 
@@ -993,7 +1009,7 @@ mod tests {
             let mut hoblist = HobList::new();
 
             // Push the example HOBs onto the HOB l
-            hoblist.push(Hob::FirmwareVolume2(&_firmware_volume2));
+            hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
             hoblist.push(Hob::Handoff(&end_of_hob_list));
 
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
@@ -1007,16 +1023,16 @@ mod tests {
     fn test_fv_functionality() {
         test_support::with_global_lock(|| {
             let mut fv_att: u64 = 0x1;
-            let fv_attributes: *mut fv::attributes::EfiFvAttributes = &mut fv_att;
+            let fv_attributes: *mut fv::attributes::EfiFvAttributes = &raw mut fv_att;
             let guid_invalid: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-            let guid_ref_invalid_ref: *const efi::Guid = &guid_invalid;
+            let guid_ref_invalid_ref: *const efi::Guid = &raw const guid_invalid;
             let mut auth_valid_status: u32 = 1;
-            let auth_valid_p: *mut u32 = &mut auth_valid_status;
+            let auth_valid_p: *mut u32 = &raw mut auth_valid_status;
             let mut guid_valid: efi::Guid =
                 efi::Guid::from_fields(0x1fa1f39e, 0xfeff, 0x4aae, 0xbd, 0x7b, &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09]);
-            let guid_valid_ref: *mut efi::Guid = &mut guid_valid;
+            let guid_valid_ref: *mut efi::Guid = &raw mut guid_valid;
             let mut file_rd_attr: u32 = fvb::attributes::raw::fvb2::READ_STATUS;
-            let file_attributes: *mut fv::file::EfiFvFileAttributes = &mut file_rd_attr;
+            let file_attributes: *mut fv::file::EfiFvFileAttributes = &raw mut file_rd_attr;
 
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
@@ -1081,8 +1097,9 @@ mod tests {
             /* Create an interface with No physical address and no private data - cover Error Conditions */
             let fv_interface_no_data = MockProtocolData::new_fv_protocol(None);
 
-            let fv_ptr_no_data =
-                fv_interface_no_data.as_ref() as *const pi::protocol::firmware_volume::FirmwareVolumeProtocol;
+            let fv_ptr_no_data = std::ptr::from_ref::<pi::protocol::firmware_volume::FirmwareVolumeProtocol>(
+                fv_interface_no_data.as_ref(),
+            );
 
             /* Create a Firmware Volume Block Interface with Invalid Physical Address */
             let fvb_intf_invalid = MockProtocolData::new_fvb_protocol(parent_handle);
@@ -1110,8 +1127,9 @@ mod tests {
                     None => core::ptr::null_mut(),
                 },
             });
-            let fvb_intf_data_n_mut =
-                fvb_intf_data_n.as_mut() as *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let fvb_intf_data_n_mut = std::ptr::from_mut::<
+                pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
+            >(fvb_intf_data_n.as_mut());
 
             // SAFETY: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. It uses direct memory allocations to create buffers for testing FFI
@@ -1151,13 +1169,11 @@ mod tests {
                      * hence delcare and free up after use immediately
                      */
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let buffer_valid3 = alloc(layout3) as *mut c_void;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
                     /* Handle various cases for different conditions to hit */
                     MockProtocolData::fvb_read_efiapi(
                         fvb_ptr_mut_prot,
@@ -1200,18 +1216,16 @@ mod tests {
                      * hence delcare and free up after use immediately
                      */
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let buffer_valid3 = alloc(layout3) as *mut c_void;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
                     let mut buffer_size_random: usize = 99;
-                    let buffer_size_random_ref: *mut usize = &mut buffer_size_random;
+                    let buffer_size_random_ref: *mut usize = &raw mut buffer_size_random;
                     let mut num_buffer_empty: usize = 0;
-                    let num_buffer_empty_ref: *mut usize = &mut num_buffer_empty;
+                    let num_buffer_empty_ref: *mut usize = &raw mut num_buffer_empty;
 
                     /* Handle the Null Case */
                     MockProtocolData::fvb_get_block_size_efiapi(
@@ -1262,12 +1276,9 @@ mod tests {
                     /* Handling Not Found Case */
                     let mut p_address: efi::PhysicalAddress = 0x12345;
 
-                    MockProtocolData::fvb_get_physical_address_efiapi(fvb_intf_data_n_mut, &mut p_address as *mut u64);
-                    MockProtocolData::fvb_get_physical_address_efiapi(
-                        fvb_intf_invalid_mutpro,
-                        &mut p_address as *mut u64,
-                    );
-                    MockProtocolData::fvb_get_physical_address_efiapi(fvb_ptr_mut_prot, &mut p_address as *mut u64);
+                    MockProtocolData::fvb_get_physical_address_efiapi(fvb_intf_data_n_mut, &raw mut p_address);
+                    MockProtocolData::fvb_get_physical_address_efiapi(fvb_intf_invalid_mutpro, &raw mut p_address);
+                    MockProtocolData::fvb_get_physical_address_efiapi(fvb_ptr_mut_prot, &raw mut p_address);
                     MockProtocolData::fvb_get_physical_address_efiapi(fvb_ptr_mut_prot, std::ptr::null_mut());
                 };
                 let fvb_test_write_file = || {
@@ -1287,13 +1298,11 @@ mod tests {
 
                 let fvb_test_write = || {
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let buffer_valid3 = alloc(layout3) as *mut c_void;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
                     MockProtocolData::fvb_write_efiapi(
                         fvb_ptr_mut_prot,
@@ -1317,7 +1326,7 @@ mod tests {
 
                 let fvb_test_get_attributes = || {
                     let mut fvb_attributes: fvb::attributes::EfiFvbAttributes2 = 0x123456;
-                    let fvb_attributes_ref: *mut fvb::attributes::EfiFvbAttributes2 = &mut fvb_attributes;
+                    let fvb_attributes_ref: *mut fvb::attributes::EfiFvbAttributes2 = &raw mut fvb_attributes;
 
                     MockProtocolData::fvb_get_attributes_efiapi(fvb_ptr_mut_prot, std::ptr::null_mut());
                     MockProtocolData::fvb_get_attributes_efiapi(fvb_ptr_mut_prot, fvb_attributes_ref);
@@ -1330,17 +1339,15 @@ mod tests {
                      * hence delcare and free up after use immediately
                      */
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut file_type_read: fv::EfiFvFileType = 1;
-                    let file_type_read_ref: *mut fv::EfiFvFileType = &mut file_type_read;
+                    let file_type_read_ref: *mut fv::EfiFvFileType = &raw mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-                    let n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
+                    let n_guid_ref_mut: *mut efi::Guid = &raw mut n_guid_mut;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
                     MockProtocolData::fv_get_next_file_efiapi(
                         ptr::null(),
                         std::ptr::null_mut(),
@@ -1383,7 +1390,7 @@ mod tests {
                     );
                     /*handle  fw_fs::FfsFileRawType::FFS_MIN case */
                     let mut file_type_read: fv::EfiFvFileType = ffs::file::raw::r#type::FFS_MIN;
-                    let file_type_read_ref1: *mut fv::EfiFvFileType = &mut file_type_read;
+                    let file_type_read_ref1: *mut fv::EfiFvFileType = &raw mut file_type_read;
 
                     MockProtocolData::fv_get_next_file_efiapi(
                         fv_ptr1,
@@ -1411,13 +1418,11 @@ mod tests {
                      * hence delcare and free up after use immediately
                      */
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let mut buffer_valid3 = alloc(layout3) as *mut c_void;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
                     let mut gd2: efi::Guid = efi::Guid::from_fields(
                         0x434f695c,
@@ -1427,7 +1432,7 @@ mod tests {
                         0xba,
                         &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c],
                     );
-                    let name_guid2: *mut efi::Guid = &mut gd2;
+                    let name_guid2: *mut efi::Guid = &raw mut gd2;
 
                     /* Cover the NULL Case, User Passing Invalid Parameter Case  */
                     MockProtocolData::fv_read_section_efiapi(
@@ -1445,7 +1450,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         6,
                         10,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1456,7 +1461,7 @@ mod tests {
                         guid_valid_ref,
                         6,
                         10,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1466,7 +1471,7 @@ mod tests {
                         name_guid2,
                         6,
                         10,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1477,7 +1482,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         1,
                         1,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1488,7 +1493,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         1,
                         1,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1501,20 +1506,18 @@ mod tests {
                      * hence delcare and free up after use immediately
                      */
                     let mut len3 = 1000;
-                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let mut buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut found_type: u8 = ffs::file::raw::r#type::DRIVER;
-                    let found_type_ref: *mut fv::EfiFvFileType = &mut found_type;
+                    let found_type_ref: *mut fv::EfiFvFileType = &raw mut found_type;
 
-                    if buffer_valid3.is_null() {
-                        panic!("Memory allocation failed!");
-                    }
+                    assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
                     MockProtocolData::fv_read_file_efiapi(
                         ptr::null(),
                         ptr::null(),
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         std::ptr::null_mut(),
                         found_type_ref,
                         file_attributes,
@@ -1524,7 +1527,7 @@ mod tests {
                     MockProtocolData::fv_read_file_efiapi(
                         fv_ptr1,
                         guid_ref_invalid_ref,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1533,7 +1536,7 @@ mod tests {
                     MockProtocolData::fv_read_file_efiapi(
                         fv_ptr1,
                         guid_valid_ref,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1542,7 +1545,7 @@ mod tests {
                     MockProtocolData::fv_read_file_efiapi(
                         fv_ptr3_const,
                         guid_valid_ref,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1551,7 +1554,7 @@ mod tests {
                     MockProtocolData::fv_read_file_efiapi(
                         fv_ptr_no_data,
                         guid_valid_ref,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1567,11 +1570,11 @@ mod tests {
                         auth_valid_p,
                     );
                     let mut buffer_size_zero = 0usize;
-                    let buffer_size_zero_ptr: *mut usize = &mut buffer_size_zero;
+                    let buffer_size_zero_ptr: *mut usize = &raw mut buffer_size_zero;
                     let status = MockProtocolData::fv_read_file_efiapi(
                         fv_ptr1,
                         guid_valid_ref,
-                        &mut buffer_valid3 as *mut *mut c_void,
+                        &raw mut buffer_valid3,
                         buffer_size_zero_ptr,
                         found_type_ref,
                         file_attributes,
@@ -1633,14 +1636,12 @@ mod tests {
                 let layout = Layout::from_size_align(1000, 8).unwrap();
                 let mut buffer = alloc(layout) as *mut c_void;
 
-                if buffer.is_null() {
-                    panic!("Memory allocation failed!");
-                }
+                assert!(!buffer.is_null(), "Memory allocation failed!");
 
                 let mut len = 1000;
-                let buffer_size: *mut usize = &mut len;
+                let buffer_size: *mut usize = &raw mut len;
                 let mut authentication_status: u32 = 1;
-                let authentication_statusp: *mut u32 = &mut authentication_status;
+                let authentication_statusp: *mut u32 = &raw mut authentication_status;
                 let mut guid1: efi::Guid = efi::Guid::from_fields(
                     0x1fa1f39e,
                     0xfeff,
@@ -1649,14 +1650,14 @@ mod tests {
                     0x7b,
                     &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
                 );
-                let name_guid3: *mut efi::Guid = &mut guid1;
+                let name_guid3: *mut efi::Guid = &raw mut guid1;
 
                 MockProtocolData::fv_read_section_efiapi(
                     fv_ptr1,
                     name_guid3,
                     6,
                     10,
-                    &mut buffer as *mut *mut c_void,
+                    &raw mut buffer,
                     buffer_size,
                     authentication_statusp,
                 );
@@ -1716,7 +1717,7 @@ mod tests {
                     0x7b,
                     &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
                 );
-                let name_guid: *mut efi::Guid = &mut guid;
+                let name_guid: *mut efi::Guid = &raw mut guid;
 
                 // First, get the actual file size by passing null buffer
                 let mut actual_file_size: usize = 0;
@@ -1728,10 +1729,10 @@ mod tests {
                     fv_ptr1,
                     name_guid,
                     std::ptr::null_mut(),
-                    &mut actual_file_size,
-                    &mut found_type,
-                    &mut file_attributes,
-                    &mut auth_status,
+                    &raw mut actual_file_size,
+                    &raw mut found_type,
+                    &raw mut file_attributes,
+                    &raw mut auth_status,
                 );
                 assert_eq!(status, efi::Status::SUCCESS);
                 assert!(actual_file_size > 0, "File size should be greater than 0");
@@ -1750,11 +1751,11 @@ mod tests {
                 let status = MockProtocolData::fv_read_file_efiapi(
                     fv_ptr1,
                     name_guid,
-                    &mut buffer as *mut *mut c_void,
-                    &mut buffer_size,
-                    &mut found_type,
-                    &mut file_attributes,
-                    &mut auth_status,
+                    &raw mut buffer,
+                    &raw mut buffer_size,
+                    &raw mut found_type,
+                    &raw mut file_attributes,
+                    &raw mut auth_status,
                 );
 
                 // 1. Status should be WARN_BUFFER_TOO_SMALL
@@ -1787,11 +1788,11 @@ mod tests {
                 let status_zero = MockProtocolData::fv_read_file_efiapi(
                     fv_ptr1,
                     name_guid,
-                    &mut buffer_zero as *mut *mut c_void,
-                    &mut buffer_size_zero,
-                    &mut found_type,
-                    &mut file_attributes,
-                    &mut auth_status,
+                    &raw mut buffer_zero,
+                    &raw mut buffer_size_zero,
+                    &raw mut found_type,
+                    &raw mut file_attributes,
+                    &raw mut auth_status,
                 );
 
                 assert_eq!(
@@ -1846,7 +1847,7 @@ mod tests {
                     0xFE,
                     &[0xE3, 0xE7, 0x56, 0x33, 0x62, 0xA9],
                 );
-                let name_guid: *mut efi::Guid = &mut guid;
+                let name_guid: *mut efi::Guid = &raw mut guid;
 
                 // First get the actual file size by passing null buffer
                 let mut actual_section_size: usize = 0;
@@ -1857,9 +1858,9 @@ mod tests {
                     name_guid,
                     19,
                     0,
-                    &mut std::ptr::null_mut() as *mut *mut c_void,
-                    &mut actual_section_size,
-                    &mut auth_status,
+                    std::ptr::from_mut::<*mut c_void>(&mut std::ptr::null_mut()),
+                    &raw mut actual_section_size,
+                    &raw mut auth_status,
                 );
 
                 assert_eq!(status, efi::Status::SUCCESS);
@@ -1881,9 +1882,9 @@ mod tests {
                     name_guid,
                     19,
                     0,
-                    &mut buffer,
-                    &mut buffer_size,
-                    &mut auth_status,
+                    &raw mut buffer,
+                    &raw mut buffer_size,
+                    &raw mut auth_status,
                 );
 
                 // 1. Status should be SUCCESS
@@ -1905,6 +1906,107 @@ mod tests {
                 assert!(all_ff_remaining, "Remaining buffer beyond section size should remain unchanged (all 0xFE)");
             }
         })
-        .unwrap()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_fv_read_section_freeform_subtype_returns_guid_plus_payload() {
+        fn enable_read_status(fv_bytes: &mut [u8]) {
+            // SAFETY: The serialized FV buffer starts with a valid FV header.
+            let mut header = unsafe { ptr::read_unaligned(fv_bytes.as_ptr() as *const patina::pi::fw_fs::fv::Header) };
+            header.attributes |= fvb::attributes::raw::fvb2::READ_STATUS;
+            header.checksum = 0;
+
+            // SAFETY: The serialized FV buffer is large enough to hold the header.
+            unsafe {
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
+            }
+
+            let header_len = header.header_length as usize;
+            let checksum = fv_bytes[..header_len]
+                .chunks_exact(2)
+                .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
+            header.checksum = 0u16.wrapping_sub(checksum);
+
+            // SAFETY: The serialized FV buffer is large enough to hold the header.
+            unsafe {
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
+            }
+        }
+
+        let file_guid = patina::BinaryGuid::from_fields(
+            0x12345678,
+            0x9abc,
+            0xdef0,
+            0x12,
+            0x34,
+            &[0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0],
+        );
+        let subtype_guid = patina::BinaryGuid::from_fields(
+            0x9bec7109,
+            0x6d7a,
+            0x413a,
+            0x8e,
+            0x4b,
+            &[0x01, 0x9c, 0xed, 0x05, 0x03, 0xe1],
+        );
+        let payload = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee];
+
+        let section = Section::new_from_header_with_data(
+            SectionHeader::FreeFormSubtypeGuid(
+                FreeformSubtypeGuid { sub_type_guid: subtype_guid },
+                payload.len() as u32,
+            ),
+            payload.clone(),
+        )
+        .expect("freeform subtype section should be created");
+
+        let mut file = FfsFile::new(file_guid, ffs::file::raw::r#type::FREEFORM);
+        file.sections_mut().push(section);
+
+        let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
+        fv.files_mut().push(file);
+
+        let mut fv_bytes = fv.serialize().expect("synthetic FV should serialize");
+        enable_read_status(&mut fv_bytes);
+
+        let leaked_fv = fv_bytes.leak();
+        let base_address = leaked_fv.as_ptr() as u64;
+
+        test_support::with_global_lock(|| {
+            static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
+            CORE.override_instance();
+            // SAFETY: Initializes the test GCD state for this test scope only.
+            unsafe { test_support::init_test_gcd(None) };
+
+            let fv_interface = MockProtocolData::new_fv_protocol(None);
+            let fv_ptr = NonNull::from(&*fv_interface);
+            let metadata = Metadata::new_fv(fv_interface, base_address);
+            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+
+            let fv_ptr_raw = fv_ptr.as_ptr();
+            let name_guid = file_guid.into_inner();
+            let mut auth_status = 0u32;
+            let expected_size = core::mem::size_of::<FreeformSubtypeGuid>() + payload.len();
+            let mut returned = vec![0u8; expected_size + 8];
+            let mut returned_ptr = returned.as_mut_ptr() as *mut c_void;
+            let mut returned_size = returned.len();
+
+            let status = MockProtocolData::fv_read_section_efiapi(
+                fv_ptr_raw,
+                &raw const name_guid,
+                ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
+                0,
+                &raw mut returned_ptr,
+                &raw mut returned_size,
+                &raw mut auth_status,
+            );
+
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(returned_size, expected_size);
+            assert_eq!(&returned[..size_of::<efi::Guid>()], subtype_guid.into_inner().as_bytes());
+            assert_eq!(&returned[size_of::<efi::Guid>()..returned_size], payload.as_slice());
+        })
+        .unwrap();
     }
 }

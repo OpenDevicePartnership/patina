@@ -1,4 +1,4 @@
-//! Serial Traits and Implementations for the [SerialIO] interface.
+//! Serial Traits and Implementations for the [`SerialIO`] interface.
 //!
 //! ## License
 //!

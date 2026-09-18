@@ -1,7 +1,7 @@
 //! Management Mode (MM) Message Parser
 //!
 //! This module provides utilities for parsing and manipulating MM communication messages.
-//! It is intended for use in the patina_mm test framework to facilitate testing of MM
+//! It is intended for use in the `patina_mm` test framework to facilitate testing of MM
 //! communication scenarios.
 //!
 //! ## License
@@ -66,7 +66,8 @@ impl MmCommunicateHeader {
         }
 
         // SAFETY: MmCommunicateHeader is repr(C) with well-defined size and layout
-        let header_bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) };
+        let header_bytes =
+            unsafe { core::slice::from_raw_parts(core::ptr::from_ref::<Self>(self).cast::<u8>(), Self::SIZE) };
         buffer[..Self::SIZE].copy_from_slice(header_bytes);
         Ok(())
     }
@@ -81,7 +82,7 @@ impl MmCommunicateHeader {
         let mut header = MmCommunicateHeader { header_guid: patina::BinaryGuid::ZERO, message_length: 0 };
 
         // SAFETY: MmCommunicateHeader is repr(C) with well-defined size and layout
-        let header_bytes = unsafe { core::slice::from_raw_parts_mut(&mut header as *mut Self as *mut u8, Self::SIZE) };
+        let header_bytes = unsafe { core::slice::from_raw_parts_mut((&raw mut header).cast::<u8>(), Self::SIZE) };
         header_bytes.copy_from_slice(&buffer[..Self::SIZE]);
         Ok(header)
     }
@@ -89,7 +90,7 @@ impl MmCommunicateHeader {
 
 /// A MM message parser
 ///
-/// Provides safe, bounds-checked parsing of MM Communication messages for the patina_mm
+/// Provides safe, bounds-checked parsing of MM Communication messages for the `patina_mm`
 /// test framework. This parser validates MM message structure and content without using
 /// unsafe operations, ensuring that test scenarios can safely examine and manipulate
 /// MM Communication buffers while testing the `CommunicateBuffer` and `MmCommunicator`

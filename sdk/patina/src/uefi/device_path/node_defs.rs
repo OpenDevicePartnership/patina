@@ -128,7 +128,7 @@ pub enum MessagingSubType {
     Sd = 26,
     /// Bluetooth device path.
     Bluetooth = 27,
-    /// WiFi device path.
+    /// `WiFi` device path.
     WiFi = 28,
     /// Embedded Multi-Media Card device path.
     Emmc = 29,
@@ -140,7 +140,7 @@ pub enum MessagingSubType {
     Nvdimm = 32,
     /// REST Service device path.
     RestService = 33,
-    /// NVMe over Fabric device path.
+    /// `NVMe` over Fabric device path.
     NvmeOf = 34,
 }
 
@@ -309,7 +309,7 @@ device_path_node! {
 impl Acpi {
     /// PCI Root Bridge HID (PNP0A03).
     pub const PCI_ROOT_HID: u32 = Acpi::eisa_id("PNP0A03");
-    /// PCIe Root Bridge HID (PNP0A08).
+    /// `PCIe` Root Bridge HID (PNP0A08).
     pub const PCIE_ROOT_HID: u32 = Acpi::eisa_id("PNP0A08");
 
     /// Create a new PCI root bridge ACPI device path node.
@@ -563,10 +563,10 @@ pub struct NvmExpress {
 }
 
 impl NvmExpress {
-    /// The on-wire size of NvmExpress data (without header): 4 bytes NSID + 8 bytes EUI64.
+    /// The on-wire size of `NvmExpress` data (without header): 4 bytes NSID + 8 bytes EUI64.
     const DATA_SIZE: usize = 4 + 8;
 
-    /// Create a new NvmExpress device path node.
+    /// Create a new `NvmExpress` device path node.
     ///
     /// # Arguments
     /// * `namespace_id` - The namespace identifier (typically 1 for the first namespace)
@@ -654,7 +654,7 @@ pub struct HardDrive {
 }
 
 impl HardDrive {
-    /// The on-wire size of HardDrive data (without header).
+    /// The on-wire size of `HardDrive` data (without header).
     const DATA_SIZE: usize = 4 + 8 + 8 + 16 + 1 + 1; // 38 bytes
 
     /// Partition format: GPT
@@ -670,7 +670,7 @@ impl HardDrive {
     /// Try to parse a `HardDrive` from a raw device path node.
     ///
     /// Returns `None` if the node's type/subtype does not identify a
-    /// HardDrive node, or if the node data is shorter than
+    /// `HardDrive` node, or if the node data is shorter than
     /// [`HardDrive::DATA_SIZE`] and so cannot be decoded.
     ///
     /// Useful when walking a device path with
@@ -684,7 +684,7 @@ impl HardDrive {
         node.data.pread_with(0, scroll::LE).ok()
     }
 
-    /// Create a new HardDrive device path node for a GPT partition.
+    /// Create a new `HardDrive` device path node for a GPT partition.
     ///
     /// # Arguments
     /// * `partition_number` - 1-based partition number
@@ -735,6 +735,7 @@ impl parse_node::DevicePathNode for HardDrive {
 impl core::fmt::Debug for HardDrive {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("HardDrive")
+            .field("partition_signature", &self.partition_signature)
             .field("partition_number", &self.partition_number)
             .field("partition_start", &self.partition_start)
             .field("partition_size", &self.partition_size)
@@ -806,7 +807,7 @@ pub struct FilePath {
 }
 
 impl FilePath {
-    /// Create a new FilePath device path node from a path string.
+    /// Create a new `FilePath` device path node from a path string.
     pub fn new(path: impl Into<String>) -> Self {
         Self { path: path.into() }
     }
@@ -934,7 +935,7 @@ mod tests {
     #[test]
     fn test_sata_display() {
         let sata = Sata::new(1, 0xFFFF, 0);
-        let display = std::format!("{}", sata);
+        let display = std::format!("{sata}");
         assert!(display.contains("Sata"));
     }
 
@@ -960,7 +961,7 @@ mod tests {
     #[test]
     fn test_nvme_display() {
         let nvme = NvmExpress::new(1, 0);
-        let display = std::format!("{}", nvme);
+        let display = std::format!("{nvme}");
         assert!(display.contains("NvmExpress"));
     }
 
@@ -997,7 +998,7 @@ mod tests {
     #[test]
     fn test_hard_drive_display() {
         let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
-        let display = std::format!("{}", hd);
+        let display = std::format!("{hd}");
         assert!(display.contains("HD"));
     }
 
@@ -1073,7 +1074,7 @@ mod tests {
     #[test]
     fn test_file_path_display() {
         let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
-        let display = std::format!("{}", fp);
+        let display = std::format!("{fp}");
         assert_eq!(display, "\\EFI\\BOOT\\BOOTX64.EFI");
     }
 

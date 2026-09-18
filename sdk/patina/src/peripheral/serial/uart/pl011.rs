@@ -35,7 +35,7 @@ struct Pl011Registers {
     fr: ReadPure<u8>,
 }
 
-/// An interface for writing to a UartPl011 device.
+/// An interface for writing to a `UartPl011` device.
 #[derive(Debug)]
 pub struct UartPl011 {
     /// Owned pointer to the PL011 MMIO register block.

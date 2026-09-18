@@ -25,12 +25,12 @@ struct GdtEntry {
 // defined here should be used.
 impl From<GdtEntry> for u64 {
     fn from(entry: GdtEntry) -> Self {
-        (entry.limit15_0 as u64)
-            | ((entry.base15_0 as u64) << 16)
-            | ((entry.base23_16 as u64) << 32)
-            | ((entry.type_ as u64) << 40)
-            | ((entry.limit19_16_and_flags as u64) << 48)
-            | ((entry.base31_24 as u64) << 56)
+        u64::from(entry.limit15_0)
+            | (u64::from(entry.base15_0) << 16)
+            | (u64::from(entry.base23_16) << 32)
+            | (u64::from(entry.type_) << 40)
+            | (u64::from(entry.limit19_16_and_flags) << 48)
+            | (u64::from(entry.base31_24) << 56)
     }
 }
 
@@ -137,7 +137,7 @@ static mut TSS: [u8; TSS_SIZE] = [0; TSS_SIZE];
 fn tss_descriptor(base: u64, limit: u32) -> (u64, u64) {
     let low: u64 =
         // Limit [15:0]
-        (limit as u64 & 0xFFFF)
+        (u64::from(limit) & 0xFFFF)
         // Base [15:0] at bits 16..31
         | ((base & 0xFFFF) << 16)
         // Base [23:16] at bits 32..39
@@ -147,7 +147,7 @@ fn tss_descriptor(base: u64, limit: u32) -> (u64, u64) {
         // Present bit at bit 47
         | (1u64 << 47)
         // Limit [19:16] at bits 48..51
-        | ((((limit >> 16) as u64) & 0xF) << 48)
+        | ((u64::from(limit >> 16) & 0xF) << 48)
         // Base [31:24] at bits 56..63
         | (((base >> 24) & 0xFF) << 56);
     // High 8 bytes: Base [63:32]
@@ -195,15 +195,13 @@ struct GdtPointer {
 /// Initializes the GDT from a fixed descriptor set and loads it.
 pub fn init() {
     let gdt_ptr = GDT.as_ptr() as usize;
-    if gdt_ptr >= SIZE_4GB {
-        panic!("GDT above 4GB, MP services will fail");
-    }
+    assert!(gdt_ptr < SIZE_4GB, "GDT above 4GB, MP services will fail");
 
     let gdtr = GdtPointer { limit: (core::mem::size_of::<[u64; GDT_ENTRY_COUNT]>() - 1) as u16, base: gdt_ptr as u64 };
 
     // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
     unsafe {
-        core::arch::asm!("lgdt [{}]", in(reg) &gdtr, options(nostack, preserves_flags));
+        core::arch::asm!("lgdt [{}]", in(reg) &raw const gdtr, options(nostack, preserves_flags));
 
         // Reload CS via a far return
         core::arch::asm!(
@@ -212,7 +210,7 @@ pub fn init() {
             "push {tmp}",
             "retfq",
             "2:",
-            sel = in(reg) CODE_SELECTOR as u64,
+            sel = in(reg) u64::from(CODE_SELECTOR),
             tmp = lateout(reg) _,
             options(preserves_flags),
         );

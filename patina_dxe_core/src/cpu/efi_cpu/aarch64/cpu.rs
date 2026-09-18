@@ -1,4 +1,4 @@
-//! AArch64 CPU initialization implementation
+//! `AArch64` CPU initialization implementation
 //!
 //! ## License
 //!
@@ -8,15 +8,15 @@
 //!
 use patina::error::EfiError;
 
-/// Struct to implement AArch64 Cpu Init.
+/// Struct to implement `AArch64` Cpu Init.
 ///
-/// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the AArch64 architecture.
+/// This struct cannot be used directly. It replaces the `EfiCpu` struct when compiling for the `AArch64` architecture.
 #[derive(Default)]
 pub struct EfiCpuAarch64;
 
 #[allow(dead_code)]
 impl EfiCpuAarch64 {
-    /// This function initializes the CPU for the AArch64 architecture.
+    /// This function initializes the CPU for the `AArch64` architecture.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         Ok(())
     }

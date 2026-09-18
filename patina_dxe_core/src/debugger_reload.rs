@@ -71,22 +71,20 @@ fn reload_monitor(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core:
     }
 }
 
-/// Implements the "reload alloc_buffer" command. This command allocates a buffer of the specified size and
+/// Implements the "reload `alloc_buffer`" command. This command allocates a buffer of the specified size and
 /// returns the address of the buffer.
 fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::fmt::Write) {
     // get the requested length of the prep buffer.
-    let buffer_size = match args.next() {
-        Some(size_str) => match size_str.parse::<usize>() {
-            Ok(size) => size,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid buffer size");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "Usage: reload alloc_buffer <size>");
+    let buffer_size = if let Some(size_str) = args.next() {
+        if let Ok(size) = size_str.parse::<usize>() {
+            size
+        } else {
+            let _ = writelncrlf!(out, "Invalid buffer size");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "Usage: reload alloc_buffer <size>");
+        return;
     };
 
     if buffer_size == 0 {
@@ -110,32 +108,28 @@ fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut 
 /// Implements the "reload load" command. This command loads the core image from the specified address and size.
 fn load_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::fmt::Write) {
     // get the address prep buffer.
-    let address = match args.next() {
-        Some(addr_str) => match addr_str.parse::<usize>() {
-            Ok(addr) => addr,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid address");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "No address provided");
+    let address = if let Some(addr_str) = args.next() {
+        if let Ok(addr) = addr_str.parse::<usize>() {
+            addr
+        } else {
+            let _ = writelncrlf!(out, "Invalid address");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "No address provided");
+        return;
     };
 
-    let size = match args.next() {
-        Some(size_str) => match size_str.parse::<usize>() {
-            Ok(size) => size,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid size");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "No size provided");
+    let size = if let Some(size_str) = args.next() {
+        if let Ok(size) = size_str.parse::<usize>() {
+            size
+        } else {
+            let _ = writelncrlf!(out, "Invalid size");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "No size provided");
+        return;
     };
 
     if address == 0 || size == 0 {
@@ -234,8 +228,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     };
 
     // Step 5: Provide the debugger with the context to start the new image.
-    let _ =
-        write!(out, "success:{:x}\nip:{:x}\nsp:{:x}\narg0:{:x}\n", loaded_image_addr, entry_point, stack_ptr, hob_list);
+    let _ = write!(out, "success:{loaded_image_addr:x}\nip:{entry_point:x}\nsp:{stack_ptr:x}\narg0:{hob_list:x}\n");
 }
 
 /// Fixes up the HOB list to reflect the new core image. This involves updating the memory allocation hob for the DXE

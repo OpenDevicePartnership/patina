@@ -40,7 +40,7 @@ impl MemoryAttributesTable {
     ///
     /// Install the Memory Attributes Table
     /// This function is intended to be called by the DXE Core to install the Memory Attributes Table for runtime memory
-    /// allocations/deallocations after ReadyToBoot has occurred. This function will be a no-op until after ReadyToBoot.
+    /// allocations/deallocations after `ReadyToBoot` has occurred. This function will be a no-op until after `ReadyToBoot`.
     /// Callers of the function are not expected to check return status as it is immaterial to the caller whether it
     /// succeeds or not and they will take no different action based on return status.
     ///
@@ -55,7 +55,7 @@ impl MemoryAttributesTable {
     ///
     pub fn install() {
         if POST_RTB.is_completed() {
-            core_install_memory_attributes_table()
+            core_install_memory_attributes_table();
         }
     }
 }
@@ -359,7 +359,7 @@ mod tests {
 
                 // Validate each of our runtime allocations exists in the MAT with expected values.
                 // We don't assume ordering; find by physical_start and number_of_pages.
-                for page in allocated_pages.iter() {
+                for page in &allocated_pages {
                     let expected_type = page.1.0;
                     let expected_physical_start = page.0;
                     let expected_number_of_pages = page.2 as u64;

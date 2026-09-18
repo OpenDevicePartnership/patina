@@ -1,7 +1,7 @@
 //! Benchmarks for GUID operations.
 //!
-//! This benchmark compares the performance of patina::Guid wrapper operations
-//! against patina::standard::efi::Guid operations to measure performance delta.
+//! This benchmark compares the performance of `patina::Guid` wrapper operations
+//! against `patina::standard::efi::Guid` operations to measure performance delta.
 //!
 //! ## Benchmark execution
 //!
@@ -25,10 +25,10 @@
 //!
 //! ## Benchmark Categories
 //!
-//! - **guid_creation**: Tests creation performance from r_efi references and string parsing
-//! - **guid_display**: Tests string formatting performance between wrapper and manual formatting
-//! - **guid_comparison**: Tests equality comparison performance for GUIDs that are equal and not equal
-//! - **guid_complex_operations**: Tests performance of combined create-and-format operations
+//! - **`guid_creation`**: Tests creation performance from `r_efi` references and string parsing
+//! - **`guid_display`**: Tests string formatting performance between wrapper and manual formatting
+//! - **`guid_comparison`**: Tests equality comparison performance for GUIDs that are equal and not equal
+//! - **`guid_complex_operations`**: Tests performance of combined create-and-format operations
 //!
 //! ## License
 //!
@@ -49,21 +49,21 @@ fn create_r_efi_guid() -> efi::Guid {
 // Creation benchmarks
 fn bench_patina_from_ref(b: &mut Bencher<'_>, _input: &usize) {
     let r_efi_guid = create_r_efi_guid();
-    b.iter(|| Guid::from(&r_efi_guid))
+    b.iter(|| Guid::from(&r_efi_guid));
 }
 
 fn bench_patina_try_from_string(b: &mut Bencher<'_>, _input: &usize) {
-    b.iter(|| OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID"))
+    b.iter(|| OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID"));
 }
 
 fn bench_r_efi_direct(b: &mut Bencher<'_>, _input: &usize) {
-    b.iter(create_r_efi_guid)
+    b.iter(create_r_efi_guid);
 }
 
 // Display benchmarks
 fn bench_patina_format(b: &mut Bencher<'_>, _input: &usize) {
     let patina_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID");
-    b.iter(|| format!("{}", patina_guid))
+    b.iter(|| format!("{patina_guid}"));
 }
 
 fn bench_r_efi_manual_format(b: &mut Bencher<'_>, _input: &usize) {
@@ -84,32 +84,32 @@ fn bench_r_efi_manual_format(b: &mut Bencher<'_>, _input: &usize) {
             node[4],
             node[5]
         )
-    })
+    });
 }
 
 // Comparison benchmarks
 fn bench_patina_eq_same(b: &mut Bencher<'_>, _input: &usize) {
     let patina_guid1 = OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID");
     let patina_guid2 = OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID");
-    b.iter(|| patina_guid1 == patina_guid2)
+    b.iter(|| patina_guid1 == patina_guid2);
 }
 
 fn bench_patina_eq_different(b: &mut Bencher<'_>, _input: &usize) {
     let patina_guid1 = OwnedGuid::try_from_string(TEST_GUID_STRING).expect("Valid GUID");
     let patina_guid_different = OwnedGuid::try_from_string("00000000-0000-0000-0000-000000000000").expect("Valid GUID");
-    b.iter(|| patina_guid1 == patina_guid_different)
+    b.iter(|| patina_guid1 == patina_guid_different);
 }
 
 fn bench_r_efi_eq_same(b: &mut Bencher<'_>, _input: &usize) {
     let r_efi_guid1 = create_r_efi_guid();
     let r_efi_guid2 = create_r_efi_guid();
-    b.iter(|| r_efi_guid1 == r_efi_guid2)
+    b.iter(|| r_efi_guid1 == r_efi_guid2);
 }
 
 fn bench_r_efi_eq_different(b: &mut Bencher<'_>, _input: &usize) {
     let r_efi_guid1 = create_r_efi_guid();
     let r_efi_guid_different: efi::Guid = patina::BinaryGuid::ZERO.into();
-    b.iter(|| r_efi_guid1 == r_efi_guid_different)
+    b.iter(|| r_efi_guid1 == r_efi_guid_different);
 }
 
 // Complex operation benchmarks
@@ -117,11 +117,11 @@ fn bench_patina_complex(b: &mut Bencher<'_>, input: &usize) {
     let count = *input;
     b.iter(|| {
         for i in 0..count {
-            let guid_str = format!("{:08x}-0000-0000-0000-000000000000", i);
+            let guid_str = format!("{i:08x}-0000-0000-0000-000000000000");
             let guid = OwnedGuid::try_from_string(&guid_str).expect("Valid GUID");
-            let _formatted = format!("{}", guid);
+            let _formatted = format!("{guid}");
         }
-    })
+    });
 }
 
 fn bench_r_efi_complex(b: &mut Bencher<'_>, input: &usize) {
@@ -145,7 +145,7 @@ fn bench_r_efi_complex(b: &mut Bencher<'_>, input: &usize) {
                 node[5]
             );
         }
-    })
+    });
 }
 
 pub fn benchmark_guid_creation(c: &mut Criterion) {

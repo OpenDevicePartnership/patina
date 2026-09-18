@@ -36,7 +36,7 @@ impl SmbiosConfiguration {
     ///
     /// # Errors
     ///
-    /// Returns `SmbiosError::UnsupportedVersion` if major_version != 3
+    /// Returns `SmbiosError::UnsupportedVersion` if `major_version` != 3
     fn new(major_version: u8, minor_version: u8) -> core::result::Result<Self, SmbiosError> {
         // Only SMBIOS 3.x is supported
         if major_version != 3 {
@@ -55,7 +55,7 @@ impl SmbiosConfiguration {
 /// - Record management: `update_string()`, `remove()`
 /// - Table management: `version()`, `publish_table()`
 ///
-/// The provider creates an SMBIOS manager instance protected by a TplMutex
+/// The provider creates an SMBIOS manager instance protected by a `TplMutex`
 /// and installs the SMBIOS protocol for C/EDKII driver compatibility.
 ///
 /// # Example

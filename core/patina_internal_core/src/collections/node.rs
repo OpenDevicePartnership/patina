@@ -55,7 +55,7 @@ where
         // Using MaybeUninit explicitly represents uninitialized memory.
         let uninit_buffer = unsafe {
             slice::from_raw_parts_mut::<'a, MaybeUninit<Node<D>>>(
-                slice as *mut [u8] as *mut MaybeUninit<Node<D>>,
+                core::ptr::from_mut::<[u8]>(slice).cast::<MaybeUninit<Node<D>>>(),
                 slice.len() / mem::size_of::<Node<D>>(),
             )
         };
@@ -68,7 +68,7 @@ where
         // SAFETY: All nodes have been initialized (though their data fields are uninitialized).
         // We can now safely convert from MaybeUninit<Node<D>> to Node<D>.
         let buffer =
-            unsafe { slice::from_raw_parts_mut(uninit_buffer.as_mut_ptr() as *mut Node<D>, uninit_buffer.len()) };
+            unsafe { slice::from_raw_parts_mut(uninit_buffer.as_mut_ptr().cast::<Node<D>>(), uninit_buffer.len()) };
 
         let storage = Storage { data: buffer, length: 0, available: Cell::default() };
 
@@ -144,14 +144,14 @@ where
         node.set_parent(None);
         node.set_left(None);
         let available_ptr = self.available.get();
-        if !available_ptr.is_null() {
+        if available_ptr.is_null() {
+            node.set_right(None);
+        } else {
             // SAFETY: available_ptr is non-null and points to the head of our free list,
             // which contains valid Node<D> pointers from self.data.
             let root = unsafe { &mut *available_ptr };
             node.set_right(Some(root));
             root.set_left(Some(node));
-        } else {
-            node.set_right(None);
         }
 
         self.available.set(node.as_mut_ptr());
@@ -214,7 +214,7 @@ where
         // 4. MaybeUninit<T> has the same size and alignment as T
         let uninit_buffer = unsafe {
             slice::from_raw_parts_mut::<'a, MaybeUninit<Node<D>>>(
-                slice as *mut [u8] as *mut MaybeUninit<Node<D>>,
+                core::ptr::from_mut::<[u8]>(slice).cast::<MaybeUninit<Node<D>>>(),
                 slice.len() / mem::size_of::<Node<D>>(),
             )
         };
@@ -230,14 +230,14 @@ where
         // SAFETY: All nodes have been initialized (though their data fields are uninitialized).
         // We can now safely convert from MaybeUninit<Node<D>> to Node<D>.
         let buffer =
-            unsafe { slice::from_raw_parts_mut(uninit_buffer.as_mut_ptr() as *mut Node<D>, uninit_buffer.len()) };
+            unsafe { slice::from_raw_parts_mut(uninit_buffer.as_mut_ptr().cast::<Node<D>>(), uninit_buffer.len()) };
 
         // When current capacity is 0, we just need to copy the data and build the available list
         if self.capacity() == 0 {
             self.data = buffer;
             Self::build_linked_list(self.data);
             // if the buffer is empty, we set the available list to null as is expected
-            self.available.set(self.data.first().map(|n| n.as_mut_ptr()).unwrap_or_default());
+            self.available.set(self.data.first().map(NodeTrait::as_mut_ptr).unwrap_or_default());
             return;
         }
 
@@ -279,7 +279,7 @@ where
             }
         }
 
-        let idx = if !self.available.get().is_null() { self.idx(self.available.get()) } else { self.len() };
+        let idx = if self.available.get().is_null() { self.len() } else { self.idx(self.available.get()) };
 
         if let Some(tail) = buffer.get(idx..) {
             Self::build_linked_list(tail);
@@ -408,7 +408,7 @@ where
     }
 
     fn as_mut_ptr(&self) -> *mut Node<D> {
-        self as *const _ as *mut _
+        core::ptr::from_ref(self).cast_mut()
     }
 }
 

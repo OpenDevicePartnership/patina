@@ -49,7 +49,7 @@ impl<S> AdvancedLoggerComponent<S>
 where
     S: SerialIO + Send + 'static,
 {
-    /// Creates a new AdvancedLoggerComponent.
+    /// Creates a new `AdvancedLoggerComponent`.
     pub const fn new(adv_logger: &'static AdvancedLogger<S>) -> Self {
         Self { adv_logger }
     }
@@ -72,13 +72,14 @@ where
 
         // SAFETY: `this` is null-checked above. The protocol struct is installed by Patina with
         //         `Box::leak`, so its alignment and validity are guaranteed.
-        let internal = unsafe { &*(this as *const AdvancedLoggerProtocolInternal<S>) };
+        let internal = unsafe { &*this.cast::<AdvancedLoggerProtocolInternal<S>>() };
 
-        internal.adv_logger.log_write(error_level, None, data);
+        let hw_write = internal.adv_logger.hardware_write_enabled(error_level, None);
+        internal.adv_logger.log_write(error_level, hw_write, data);
         efi::Status::SUCCESS
     }
 
-    /// Entry point to the AdvancedLoggerComponent.
+    /// Entry point to the `AdvancedLoggerComponent`.
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
@@ -96,15 +97,12 @@ where
         };
 
         let protocol = Box::leak(Box::new(protocol));
-        match bs.install_protocol_interface(None, &mut protocol.protocol) {
-            Err(status) => {
-                log::error!("Failed to install Advanced Logger protocol! Status = {status}");
-                Err(EfiError::ProtocolError)
-            }
-            Ok(_) => {
-                log::info!("Advanced Logger protocol installed.");
-                Ok(())
-            }
+        if let Err(status) = bs.install_protocol_interface(None, &mut protocol.protocol) {
+            log::error!("Failed to install Advanced Logger protocol! Status = {status}");
+            Err(EfiError::ProtocolError)
+        } else {
+            log::info!("Advanced Logger protocol installed.");
+            Ok(())
         }
     }
 }

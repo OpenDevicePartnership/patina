@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -13,14 +15,12 @@ workspace = true
 [dependencies]
 bitfield-struct = { workspace = true }
 cfg-if = { workspace = true }
-crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 linked_list_allocator = { workspace = true }
 log = { workspace = true }
 patina_paging = { workspace = true }
 scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
-corosensei = { workspace = true  }
 uuid = { workspace = true  }
 patina = { workspace = true, features = ["core"] }
 patina_ffs = { workspace = true }
@@ -47,11 +47,19 @@ zerocopy-derive = { workspace = true }
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
 
+# corosensei does not currently support aarch64-pc-windows-msvc: https://github.com/Amanieu/corosensei/issues/29.
+# Excluding it for that one host target lets patina_dxe_core still build/lint/test natively on
+# Windows-on-Arm hosts. Actual UEFI targets (x86_64-unknown-uefi, aarch64-unknown-uefi) are
+# unaffected since their target_os is "uefi", not "windows".
+[target.'cfg(not(all(target_arch = "aarch64", target_os = "windows")))'.dependencies]
+corosensei = { workspace = true }
+
 [features]
+compatibility_mode_allowed = []
+confidential_compute = []
+debugger_reload = []
 default = []
 std = ["patina/std"]
-compatibility_mode_allowed = []
 v1_resource_descriptor_support = []
-debugger_reload = []
 # All non-std features to test in CI
-ci_features = ["compatibility_mode_allowed", "v1_resource_descriptor_support", "debugger_reload"]
+ci_features = ["compatibility_mode_allowed", "confidential_compute", "debugger_reload", "v1_resource_descriptor_support"]

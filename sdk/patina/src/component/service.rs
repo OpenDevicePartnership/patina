@@ -3,7 +3,7 @@
 //! The [Service] [Param] is a wait for components to produce and consume services defined by an interface (`Trait`)
 //! that is agnostic to the underlying concrete implementation. It also allows a single concrete type to be used as
 //! multiple services by implementing multiple traits on the same type and specifying the services trait(s) in the
-//! [IntoService] derive macro.
+//! [`IntoService`] derive macro.
 //!
 //! To simplify the management of services, the underlying datum is *always* readonly. This means that only `&self`
 //! interface methods will be available to consumers of the service. If a service needs to be mutable, it should use
@@ -23,14 +23,14 @@
 //! While not suggested, it is possible to publish a service as an EDKII compatible protocol for backwards
 //! compatability with existing EDKII code, allowing for a rust service to be consumed by an EDKII driver. As mentioned
 //! multiple times, this is **only** for backwards compatability and should be avoided if possible. Any rust to rust
-//! component interactions should be done through the [Service] [Param] type. Please review the [IntoService] trait on
+//! component interactions should be done through the [Service] [Param] type. Please review the [`IntoService`] trait on
 //! how to register a service as an EDKII protocol.
 //!
 //! ## Example
 //!
 //! ### Implementing a Service
 //!
-//! See [IntoService][patina_macro::IntoService] macro for more information on how to implement a service. While the
+//! See [`IntoService`][patina_macro::IntoService] macro for more information on how to implement a service. While the
 //! macro does not have to be used, it is recommended to ensure the service is implemented correctly.
 //!
 //! ### Basic Service Usage
@@ -180,7 +180,7 @@ pub trait IntoService {
 /// This type has a static lifetime, which means it can can be consumed during component execution, such as being used
 /// as backing functionality for another service that is being produced by the component.
 ///
-/// While implementing [IntoService] is possible, it is advised to use the [IntoService](patina_macro::IntoService)
+/// While implementing [`IntoService`] is possible, it is advised to use the [`IntoService`](patina_macro::IntoService)
 /// derive macro, which also provides more information.
 pub struct Service<T: ?Sized + 'static> {
     value: OnceCell<&'static dyn Any>,
@@ -195,8 +195,8 @@ impl<T: ?Sized + 'static> Service<T> {
     ///
     /// If you use this function to create an uninitialized service, you **MUST** call [replace](Self::replace)
     /// before using the service, or else dereferencing the service will panic. If you cannot guarantee that the service
-    /// will be initialized before use, consider using [map_or](Self::map_or), [map_or_else](Self::map_or_else), or
-    /// [map_or_default](Self::map_or_default) for any access to the service.
+    /// will be initialized before use, consider using [`map_or`](Self::map_or), [`map_or_else`](Self::map_or_else), or
+    /// [`map_or_default`](Self::map_or_default) for any access to the service.
     ///
     /// ## Example
     ///
@@ -231,8 +231,8 @@ impl<T: ?Sized + 'static> Service<T> {
 
     /// Returns the provided default result (if uninitalized), or applies a function to the contained value (if any).
     ///
-    /// Arguments passed to map_or are eagerly evaluated; if you are passing the result of a function call, it is
-    /// recommended to use map_or_else, which is lazily evaluated.
+    /// Arguments passed to `map_or` are eagerly evaluated; if you are passing the result of a function call, it is
+    /// recommended to use `map_or_else`, which is lazily evaluated.
     ///
     /// ## Example
     ///
@@ -475,7 +475,7 @@ mod tests {
 
         storage.add_service(SomeStruct { x: 1 });
         let s3 = storage.get_service::<SomeStruct>().unwrap();
-        assert_eq!(1, s3.x)
+        assert_eq!(1, s3.x);
     }
 
     #[test]

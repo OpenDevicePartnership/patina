@@ -27,7 +27,7 @@ pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("8F6
 
 /// Retrieves the current attributes and capabilities of a firmware volume.
 ///
-/// On input, Attributes is a pointer to a caller-allocated EFI_FVB_ATTRIBUTES_2 in
+/// On input, Attributes is a pointer to a caller-allocated `EFI_FVB_ATTRIBUTES_2` in
 /// which the current attributes and capabilities are returned.
 pub type GetAttributes = extern "efiapi" fn(*mut FirmwareVolumeBlockProtocol, *mut EfiFvbAttributes2) -> Status;
 
@@ -64,7 +64,7 @@ pub type Write = extern "efiapi" fn(*mut FirmwareVolumeBlockProtocol, Lba, usize
 /// Erases and initializes specified firmware volume blocks.
 ///
 /// The variable argument list is a list of tuples that specify logical block addresses and
-/// the number of blocks to erase. The list is terminated with EFI_LBA_LIST_TERMINATOR.
+/// the number of blocks to erase. The list is terminated with `EFI_LBA_LIST_TERMINATOR`.
 pub type EraseBlocks = extern "efiapi" fn(
     *mut FirmwareVolumeBlockProtocol,
     //... //TODO: variadic functions and eficall! do not mix presently.

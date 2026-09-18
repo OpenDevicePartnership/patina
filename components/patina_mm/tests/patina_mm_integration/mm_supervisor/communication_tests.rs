@@ -174,8 +174,7 @@ fn test_mm_supervisor_invalid_signature() {
     let error_msg = format!("{}", result.unwrap_err());
     assert!(
         error_msg.contains("Invalid signature") || error_msg.contains("Invalid request"),
-        "Error message should mention invalid signature or request: {}",
-        error_msg
+        "Error message should mention invalid signature or request: {error_msg}"
     );
 }
 
@@ -192,8 +191,7 @@ fn test_mm_supervisor_small_request() {
     let error_msg = format!("{}", result.unwrap_err());
     assert!(
         error_msg.contains("Request too small") || error_msg.contains("too small"),
-        "Error message should mention request size: {}",
-        error_msg
+        "Error message should mention request size: {error_msg}"
     );
 }
 

@@ -38,6 +38,7 @@ impl PerformanceConfig {
     /// Returns this configuration with performance measurement enabled and `measurement`
     /// added to the set of enabled  measurements. Intended for chaining from
     /// [`PerformanceConfig::new`] to build a configuration in a const context.
+    #[must_use]
     pub const fn with_measurement(self, measurement: Measurement) -> Self {
         Self { enabled: Self::ENABLED, enabled_measurements: self.enabled_measurements | measurement.as_u32() }
     }

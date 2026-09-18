@@ -111,7 +111,7 @@ pub fn core_uninstall_protocol_interface(
                 return Err(EfiError::NotFound);
             }
         }
-    };
+    }
 
     //attempt to close all OPEN_BY_DRIVER usages.
     let mut usage_close_status = Ok(());
@@ -205,8 +205,7 @@ unsafe extern "efiapi" fn uninstall_protocol_interface(
     let caller_protocol = unsafe { protocol.read_unaligned() };
 
     core_uninstall_protocol_interface(handle, caller_protocol, interface)
-        .map(|_| efi::Status::SUCCESS)
-        .unwrap_or_else(|err| err.into())
+        .map_or_else(core::convert::Into::into, |()| efi::Status::SUCCESS)
 }
 
 // {2ED6CB57-3A78-4C39-9A2A-CA037841D286}
@@ -490,10 +489,9 @@ unsafe extern "efiapi" fn open_protocol(
             }
             return efi::Status::ALREADY_STARTED;
         }
-        Err(EfiError::AlreadyStarted) => (),
+        Ok(()) | Err(EfiError::AlreadyStarted) => (),
         Err(err) => return err.into(),
-        Ok(_) => (),
-    };
+    }
 
     let desired_interface = match PROTOCOL_DB.get_interface_for_handle(handle, protocol) {
         Err(err) => return err.into(),
@@ -543,7 +541,7 @@ unsafe extern "efiapi" fn close_protocol(
     };
     match PROTOCOL_DB.remove_protocol_usage(handle, protocol_guid, Some(agent_handle), controller_handle, None) {
         Err(err) => err.into(),
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
     }
 }
 
@@ -757,7 +755,7 @@ unsafe extern "efiapi" fn protocols_per_handle(
             let guids = slice::from_raw_parts_mut(guid_buffer, protocol_list.len());
             guids.copy_from_slice(&protocol_list);
 
-            let guid_ptrs: Vec<*mut efi::Guid> = guids.iter_mut().map(|x| x as *mut efi::Guid).collect();
+            let guid_ptrs: Vec<*mut efi::Guid> = guids.iter_mut().map(core::ptr::from_mut::<efi::Guid>).collect();
             slice::from_raw_parts_mut(protocol_buffer.read_unaligned(), protocol_list.len())
                 .copy_from_slice(&guid_ptrs);
             efi::Status::SUCCESS
@@ -852,21 +850,7 @@ unsafe extern "efiapi" fn locate_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if !registration.is_null() {
-        if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(registration) {
-            let protocol_guid = {
-                // SAFETY: Caller must ensure that protocol is a valid pointer. It is checked for null above.
-                unsafe { protocol.read_unaligned() }
-            };
-            let i_face = PROTOCOL_DB
-                .get_interface_for_handle(handle, protocol_guid)
-                .expect("Protocol should exist on handle if it is returned for registration key.");
-            // SAFETY: Caller must ensure that interface is a valid pointer. It is checked for null above.
-            unsafe { interface.write_unaligned(i_face) };
-        } else {
-            return efi::Status::NOT_FOUND;
-        }
-    } else {
+    if registration.is_null() {
         let protocol_guid = {
             // SAFETY: Caller must ensure that protocol is a valid pointer. It is checked for null above.
             unsafe { protocol.read_unaligned() }
@@ -880,6 +864,18 @@ unsafe extern "efiapi" fn locate_protocol(
             // SAFETY: Caller must ensure that interface is a valid pointer. It is checked for null above.
             Ok(i_face) => unsafe { interface.write_unaligned(i_face) },
         }
+    } else if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(registration) {
+        let protocol_guid = {
+            // SAFETY: Caller must ensure that protocol is a valid pointer. It is checked for null above.
+            unsafe { protocol.read_unaligned() }
+        };
+        let i_face = PROTOCOL_DB
+            .get_interface_for_handle(handle, protocol_guid)
+            .expect("Protocol should exist on handle if it is returned for registration key.");
+        // SAFETY: Caller must ensure that interface is a valid pointer. It is checked for null above.
+        unsafe { interface.write_unaligned(i_face) };
+    } else {
+        return efi::Status::NOT_FOUND;
     }
     efi::Status::SUCCESS
 }
@@ -888,7 +884,7 @@ pub fn core_locate_device_path(
     protocol: efi::Guid,
     device_path: NonNull<Protocol>,
 ) -> Result<(NonNull<Protocol>, efi::Handle), EfiError> {
-    let device_path_protocol_guid = &efi::protocols::device_path::PROTOCOL_GUID as *const _ as *mut efi::Guid;
+    let device_path_protocol_guid = core::ptr::from_ref(&efi::protocols::device_path::PROTOCOL_GUID).cast_mut();
 
     let mut best_device: efi::Handle = core::ptr::null_mut();
     let mut best_match: isize = -1;
@@ -898,7 +894,7 @@ pub fn core_locate_device_path(
 
     for handle in handles {
         let mut temp_device_path: *mut efi::protocols::device_path::Protocol = core::ptr::null_mut();
-        let temp_device_path_ptr: *mut *mut c_void = &mut temp_device_path as *mut _ as *mut *mut c_void;
+        let temp_device_path_ptr: *mut *mut c_void = &raw mut temp_device_path as *mut *mut c_void;
         // SAFETY: `handle` comes from `locate_handles` and is valid. `device_path_protocol_guid`
         // points to a valid static GUID. `temp_device_path_ptr` is derived from a local variable
         // and is valid for writes.

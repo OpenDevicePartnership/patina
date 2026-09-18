@@ -9,7 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use super::test_support::*;
+use super::test_support::{PageTableLevel, flush_tlb, get_index, get_pte_state, get_self_mapped_page_table, is_mapped};
 use crate::{GCD, gcd::AllocateType};
 use alloc::vec::Vec;
 use patina::standard::efi;

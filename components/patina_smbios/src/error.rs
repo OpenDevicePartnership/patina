@@ -69,7 +69,7 @@ pub enum SmbiosError {
 
     // Table integrity errors
     /// Published SMBIOS table was modified directly instead of using protocol APIs
-    /// Use Remove() + Add() to modify records, or UpdateString() for string fields
+    /// Use `Remove()` + `Add()` to modify records, or `UpdateString()` for string fields
     TableDirectlyModified,
 }
 

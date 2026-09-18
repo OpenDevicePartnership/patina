@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Common internal library for Patina"
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true

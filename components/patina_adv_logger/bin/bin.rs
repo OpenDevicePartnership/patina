@@ -52,7 +52,7 @@ fn main() -> io::Result<()> {
             parse_log(args.header, &parser, &mut out)?;
         }
         None => parse_log(args.header, &parser, &mut io::stdout())?,
-    };
+    }
 
     Ok(())
 }

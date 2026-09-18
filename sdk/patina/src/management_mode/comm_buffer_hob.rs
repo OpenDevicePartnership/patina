@@ -56,7 +56,7 @@ pub struct MmCommBufferStatus {
     pub is_comm_buffer_valid: u8,
 
     /// Padding to align to 8 bytes.
-    /// This padding is necessary to match the structure layout defined in edk2 and mu_basecore.
+    /// This padding is necessary to match the structure layout defined in edk2 and `mu_basecore`.
     pub _padding: [u8; 7],
 
     /// The return status when returning from MM to non-MM.

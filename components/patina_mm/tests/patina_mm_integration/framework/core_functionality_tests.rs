@@ -163,9 +163,9 @@ mod tests {
 
         // Perform multiple communications in sequence
         for i in 0..5 {
-            let test_data = format!("test data {}", i);
+            let test_data = format!("test data {i}");
             let result = communicator.communicate(0, test_data.as_bytes(), Guid::from_ref(&TEST_GUID));
-            assert!(result.is_ok(), "Sequential communication {} should succeed", i);
+            assert!(result.is_ok(), "Sequential communication {i} should succeed");
             assert_eq!(result.unwrap(), b"test response".to_vec());
         }
     }

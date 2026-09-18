@@ -46,25 +46,25 @@ unsafe impl Sync for StandardRuntimeServices {}
 unsafe impl Send for StandardRuntimeServices {}
 
 impl StandardRuntimeServices {
-    /// Create a new StandardRuntimeServices with the provided [efi::RuntimeServices].
+    /// Create a new `StandardRuntimeServices` with the provided [`efi::RuntimeServices`].
     pub fn new(efi_runtime_services: *mut efi::RuntimeServices) -> Self {
         let this = StandardRuntimeServices::new_uninit();
         this.init(efi_runtime_services);
         this
     }
 
-    /// Create a new StandarRuntimeServices that is not initialized.
+    /// Create a new `StandarRuntimeServices` that is not initialized.
     pub const fn new_uninit() -> Self {
         Self { efi_runtime_services: Once::new() }
     }
 
-    /// Initialized the StandardRuntimeServices.
+    /// Initialized the `StandardRuntimeServices`.
     pub fn init(&self, efi_runtime_services: *mut efi::RuntimeServices) {
         assert!(!efi_runtime_services.is_null(), "Cannot initialize StandardRuntimeServices with null pointer!");
         self.efi_runtime_services.call_once(|| efi_runtime_services);
     }
 
-    /// Return true if StandardRuntimeServices is initialized.
+    /// Return true if `StandardRuntimeServices` is initialized.
     pub fn is_init(&self) -> bool {
         self.efi_runtime_services.is_completed()
     }
@@ -238,7 +238,7 @@ pub trait RuntimeServices {
     ///
     /// Returns a tuple of (name, namespace)
     ///
-    /// Note: Unlike get_variable, a non-null terminated name will return INVALID_PARAMETER per UEFI spec
+    /// Note: Unlike `get_variable`, a non-null terminated name will return `INVALID_PARAMETER` per UEFI spec
     ///
     /// UEFI Spec Documentation: [8.2.2. EFI_RUNTIME_SERVICES.GetNextVariableName()](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#getnextvariablename)
     ///
@@ -302,7 +302,7 @@ pub trait RuntimeServices {
 
     /// Gets the UEFI variable name after the one provided.
     ///
-    /// Will populate next_name and next_namespace.
+    /// Will populate `next_name` and `next_namespace`.
     ///
     /// # Safety
     ///
@@ -351,7 +351,7 @@ impl RuntimeServices for StandardRuntimeServices {
         let status = unsafe {
             set_variable(
                 name.as_mut_ptr(),
-                namespace as *const _ as *mut _,
+                core::ptr::from_ref(namespace).cast_mut(),
                 attributes,
                 data.len(),
                 data.as_ptr() as *mut c_void,
@@ -389,7 +389,7 @@ impl RuntimeServices for StandardRuntimeServices {
         let status = unsafe {
             get_variable(
                 name.as_mut_ptr(),
-                namespace as *const _ as *mut _,
+                core::ptr::from_ref(namespace).cast_mut(),
                 ptr::addr_of_mut!(attributes),
                 ptr::addr_of_mut!(data_size),
                 match data {
@@ -499,7 +499,7 @@ impl RuntimeServices for StandardRuntimeServices {
     }
 }
 
-/// Clone implementation for MockRuntimeServices that creates a new mock with default expectations.
+/// Clone implementation for `MockRuntimeServices` that creates a new mock with default expectations.
 #[cfg(any(test, feature = "mockall"))]
 impl Clone for MockRuntimeServices {
     fn clone(&self) -> Self {
@@ -573,12 +573,12 @@ pub(crate) mod test {
         }
     }
 
-    /// Mocks GetVariable() from UEFI spec
+    /// Mocks `GetVariable()` from UEFI spec
     ///
-    /// Expects to be passed DUMMY_FIRST_NAME, DUMMY_FIRST_NAMESPACE, and to return
-    /// DUMMY_ATTRIBUTES, and DUMMY_DATA.
+    /// Expects to be passed `DUMMY_FIRST_NAME`, `DUMMY_FIRST_NAMESPACE`, and to return
+    /// `DUMMY_ATTRIBUTES`, and `DUMMY_DATA`.
     ///
-    /// DUMMY_UNKNOWN_NAME can be passed in to test searching for non-existant variables.
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
     ///
     pub extern "efiapi" fn mock_efi_get_variable(
         name: *mut u16,
@@ -616,11 +616,11 @@ pub(crate) mod test {
         efi::Status::SUCCESS
     }
 
-    /// Mocks SetVariable() from UEFI spec
+    /// Mocks `SetVariable()` from UEFI spec
     ///
-    /// Expects to be passed DUMMY_FIRST_NAME, DUMMY_FIRST_NAMESPACE, and DUMMY_DATA
+    /// Expects to be passed `DUMMY_FIRST_NAME`, `DUMMY_FIRST_NAMESPACE`, and `DUMMY_DATA`
     ///
-    /// DUMMY_UNKNOWN_NAME can be passed in to test searching for non-existant variables.
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
     ///
     pub extern "efiapi" fn mock_efi_set_variable(
         name: *mut u16,
@@ -656,13 +656,13 @@ pub(crate) mod test {
         efi::Status::SUCCESS
     }
 
-    /// Mocks GetNextVariableName() from UEFI spec
+    /// Mocks `GetNextVariableName()` from UEFI spec
     ///
     /// Will mock a list of two variables:
-    ///     1. DUMMY_FIRST_NAME (under namespace DUMMY_FIRST_NAMESPACE)
-    ///     2. DUMMY_SECOND_NAME (under namespace DUMMY_SECOND_NAME)
+    ///     1. `DUMMY_FIRST_NAME` (under namespace `DUMMY_FIRST_NAMESPACE`)
+    ///     2. `DUMMY_SECOND_NAME` (under namespace `DUMMY_SECOND_NAME`)
     ///
-    /// DUMMY_UNKNOWN_NAME can be passed in to test searching for non-existant variables.
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
     ///
     pub extern "efiapi" fn mock_efi_get_next_variable_name(
         name_size: *mut usize,
@@ -723,12 +723,12 @@ pub(crate) mod test {
         }
     }
 
-    /// Mocks QueryVariableInfo() from UEFI spec
+    /// Mocks `QueryVariableInfo()` from UEFI spec
     ///
-    /// Expects to be passed DUMMY_ATTRIBUTES, and to return, DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE,
-    /// DUMMY_REMAINING_VARIABLE_STORAGE_SIZE, and DUMMY_MAXIMUM_VARIABLE_SIZE.
+    /// Expects to be passed `DUMMY_ATTRIBUTES`, and to return, `DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE`,
+    /// `DUMMY_REMAINING_VARIABLE_STORAGE_SIZE`, and `DUMMY_MAXIMUM_VARIABLE_SIZE`.
     ///
-    /// DUMMY_INVALID_ATTRIBUTES can be passed in to test querying invalid attributes.
+    /// `DUMMY_INVALID_ATTRIBUTES` can be passed in to test querying invalid attributes.
     ///
     pub extern "efiapi" fn mock_efi_query_variable_info(
         attributes: u32,
@@ -911,7 +911,7 @@ pub(crate) mod test {
     #[test]
     fn test_debug_output_should_not_crash() {
         let runtime_services = runtime_services!();
-        let debug_str = format!("{:?}", runtime_services);
+        let debug_str = format!("{runtime_services:?}");
         assert!(!debug_str.is_empty());
         assert!(debug_str.contains("StandardRuntimeServices"));
     }

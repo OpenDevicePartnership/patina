@@ -58,12 +58,12 @@
 //! ### Key Components
 //!
 //! - **Smbios service**: Provides type-safe SMBIOS operations through structured records
-//! - **Global Manager**: Single source of truth for SMBIOS data, protected by TplMutex
+//! - **Global Manager**: Single source of truth for SMBIOS data, protected by `TplMutex`
 //! - **C Protocol**: EDKII-compatible protocol for legacy driver integration
 //!
 //! ## Thread Safety and TPL Protection
 //!
-//! The global SMBIOS manager is protected by a **TplMutex** at **TPL_NOTIFY** level:
+//! The global SMBIOS manager is protected by a **`TplMutex`** at **`TPL_NOTIFY`** level:
 //!
 //! - Prevents timer interrupt reentrancy during SMBIOS operations
 //! - TPL automatically raised to NOTIFY when accessing the manager
@@ -250,7 +250,7 @@
 //!
 //! ## Thread Safety
 //!
-//! - Global manager protected by TplMutex at TPL_NOTIFY
+//! - Global manager protected by `TplMutex` at `TPL_NOTIFY`
 //! - Prevents reentrancy from timer interrupts
 //! - Safe for concurrent access from different components
 //! - UEFI DXE model ensures single-threaded execution at same TPL
@@ -281,7 +281,7 @@
 //! - No 4GB table size limitation
 //! - Standard string pool format (null-terminated, double-null terminated)
 //! - Proper checksum calculation for entry point
-//! - ACPI_RECLAIM_MEMORY type for table storage
+//! - `ACPI_RECLAIM_MEMORY` type for table storage
 //!
 //! # Error Handling
 //!

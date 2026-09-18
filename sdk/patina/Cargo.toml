@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Common types and functionality used in UEFI development."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -49,12 +51,12 @@ fixedbitset = { workspace = true, optional = true }
 bitvec = { workspace = true }
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
+crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
 log = { workspace = true }
 r-efi = { version = "7.1", default-features = false }
 mockall = { workspace = true, optional = true }
 num-traits = { workspace = true }
-indoc = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
 safe-mmio = { workspace = true }
 scroll = { workspace = true }

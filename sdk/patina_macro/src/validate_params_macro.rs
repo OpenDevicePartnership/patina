@@ -16,8 +16,8 @@ use syn::{FnArg, FnModifiers, ImplItem, ItemFn, ItemImpl, Pat, Type, TypePath, p
 /// This macro must be applied to impl blocks that define components. It does the following:
 /// 1. Extract the type name from the impl block
 /// 2. Verify an `entry_point` method exists
-/// 3. Validate the entry_point parameters for conflicts
-/// 4. Generate the IntoComponent trait implementation
+/// 3. Validate the `entry_point` parameters for conflicts
+/// 4. Generate the `IntoComponent` trait implementation
 ///
 /// ## Usage
 ///
@@ -57,7 +57,7 @@ pub(crate) fn component_entry_point(_attr: TokenStream, item: TokenStream) -> To
     }
 }
 
-/// Validates a component impl block and generates the IntoComponent implementation.
+/// Validates a component impl block and generates the `IntoComponent` implementation.
 fn validate_component_impl_block(impl_block: ItemImpl) -> TokenStream {
     // Extract the type name from the impl block
     let type_path = match &*impl_block.self_ty {
@@ -134,7 +134,9 @@ fn validate_component_impl_block(impl_block: ItemImpl) -> TokenStream {
     let alloc_name = quote::format_ident!("__alloc_component_{}", type_ident);
 
     // Just extract the parameter identifiers (not bounds) for putting them into turbofish
-    let turbofish = if !generics.params.is_empty() {
+    let turbofish = if generics.params.is_empty() {
+        quote!()
+    } else {
         let param_idents = generics.params.iter().map(|param| match param {
             syn::GenericParam::Type(type_param) => {
                 let ident = &type_param.ident;
@@ -150,8 +152,6 @@ fn validate_component_impl_block(impl_block: ItemImpl) -> TokenStream {
             }
         });
         quote!(::<#(#param_idents),*>)
-    } else {
-        quote!()
     };
 
     let entry_point_fn = quote!(#type_ident #turbofish :: entry_point);
@@ -208,7 +208,7 @@ pub(crate) fn check_impl_method_has_self(func: &ItemFn) -> Result<(), TokenStrea
     }
 }
 
-/// Validates that a component's entry_point function doesn't have conflicting parameters.
+/// Validates that a component's `entry_point` function doesn't have conflicting parameters.
 // Note: Marked as dead code since it's only used by tests.
 #[allow(dead_code)]
 pub(crate) fn validate_component_params2(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -257,10 +257,8 @@ impl ParamType {
             }
 
             // &mut Storage conflicts with Config<T> or ConfigMut<T>
-            (ParamType::StorageMut, ParamType::Config(_))
-            | (ParamType::Config(_), ParamType::StorageMut)
-            | (ParamType::StorageMut, ParamType::ConfigMut(_))
-            | (ParamType::ConfigMut(_), ParamType::StorageMut) => {
+            (ParamType::StorageMut, ParamType::Config(_) | ParamType::ConfigMut(_))
+            | (ParamType::Config(_) | ParamType::ConfigMut(_), ParamType::StorageMut) => {
                 Some("You cannot use &mut Storage together with Config<T> or ConfigMut<T> parameters.")
             }
 
@@ -301,14 +299,14 @@ impl ParamType {
 /// Converts type paths to a consistent format that allows comparing
 /// qualified and unqualified paths. For example:
 /// - `Config` -> "Config"
-/// - `patina::component::Config` -> "patina::component::Config"
-/// - `crate::Config` -> "crate::Config"
+/// - `patina::component::Config` -> "`patina::component::Config`"
+/// - `crate::Config` -> "`crate::Config`"
 fn normalize_type_path(path: &syn::Path) -> String {
     let segments: Vec<String> = path.segments.iter().map(|seg| seg.ident.to_string()).collect();
     segments.join("::")
 }
 
-/// Extract the inner type from a generic type like Config<T> or ConfigMut<T>
+/// Extract the inner type from a generic type like Config<T> or `ConfigMut`<T>
 /// and return its normalized canonical representation.
 fn extract_generic_inner(path: &TypePath) -> Option<String> {
     if let Some(segment) = path.path.segments.last()
@@ -354,7 +352,7 @@ fn normalize_type(ty: &Type) -> String {
         }
         Type::Reference(type_ref) => {
             let inner = normalize_type(&type_ref.elem);
-            if type_ref.mutability.is_some() { format!("&mut {}", inner) } else { format!("&{}", inner) }
+            if type_ref.mutability.is_some() { format!("&mut {inner}") } else { format!("&{inner}") }
         }
         _ => quote!(#ty).to_string(),
     }
@@ -365,7 +363,7 @@ fn normalize_type(ty: &Type) -> String {
 /// Examples:
 /// - `Config` -> "Config"
 /// - `patina::component::Config` -> "Config"
-/// - `crate::something::ConfigMut` -> "ConfigMut"
+/// - `crate::something::ConfigMut` -> "`ConfigMut`"
 fn get_base_type_name(path: &syn::Path) -> Option<String> {
     path.segments.last().map(|seg| seg.ident.to_string())
 }
@@ -422,9 +420,8 @@ fn classify_param(ty: &Type) -> ParamType {
                 if base_name == "Storage" {
                     if type_ref.mutability.is_some() {
                         return ParamType::StorageMut;
-                    } else {
-                        return ParamType::Storage;
                     }
+                    return ParamType::Storage;
                 }
             }
             ParamType::Other
@@ -444,7 +441,7 @@ pub(crate) fn check_param_conflicts(func: &ItemFn) -> Result<(), TokenStream> {
             let param_type = classify_param(&pat_type.ty);
             let param_name = match &*pat_type.pat {
                 Pat::Ident(ident) => ident.ident.to_string(),
-                _ => format!("param_{}", idx),
+                _ => format!("param_{idx}"),
             };
             // Get the span of the entire parameter (pattern + type)
             let param_span = pat_type.span();
@@ -463,18 +460,17 @@ pub(crate) fn check_param_conflicts(func: &ItemFn) -> Result<(), TokenStream> {
                 // For ConfigMut conflicts, include the concrete type in the message
                 let detailed_conflict_msg = match (type1, type2) {
                     (ParamType::ConfigMut(t1), ParamType::ConfigMut(_)) => {
-                        format!("Each ConfigMut<{}> type can only appear once in a component's entry point.", t1)
+                        format!("Each ConfigMut<{t1}> type can only appear once in a component's entry point.")
                     }
                     (ParamType::Config(t1), ParamType::ConfigMut(_))
                     | (ParamType::ConfigMut(t1), ParamType::Config(_)) => {
-                        format!("You cannot have both Config<{}> and ConfigMut<{}> for the same type.", t1, t1)
+                        format!("You cannot have both Config<{t1}> and ConfigMut<{t1}> for the same type.")
                     }
                     _ => conflict_msg.to_string(),
                 };
 
                 let error_msg = format!(
-                    "Patina component parameter conflict detected: parameter '{}' (position {}) conflicts with parameter '{}' (position {}). {}",
-                    name2, idx2, name1, idx1, detailed_conflict_msg
+                    "Patina component parameter conflict detected: parameter '{name2}' (position {idx2}) conflicts with parameter '{name1}' (position {idx1}). {detailed_conflict_msg}"
                 );
 
                 // Create the primary error at the second parameter location
@@ -487,9 +483,9 @@ pub(crate) fn check_param_conflicts(func: &ItemFn) -> Result<(), TokenStream> {
                     | (ParamType::Commands, ParamType::Commands)
                     | (ParamType::StandardBootServices, ParamType::StandardBootServices)
                     | (ParamType::StandardRuntimeServices, ParamType::StandardRuntimeServices) => {
-                        format!("first '{}' parameter here", name1)
+                        format!("first '{name1}' parameter here")
                     }
-                    _ => format!("conflicts with '{}' parameter here", name1),
+                    _ => format!("conflicts with '{name1}' parameter here"),
                 };
                 error.combine(syn::Error::new(*span1, note_msg));
 

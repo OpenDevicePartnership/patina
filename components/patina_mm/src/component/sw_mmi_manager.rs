@@ -78,7 +78,7 @@ impl SwMmiManager {
         if let Some(ctrl) = platform_mm_control {
             log::debug!(target: "sw_mmi", "Platform MM Control is available. Calling platform-specific init...");
             ctrl.init().inspect_err(|&err| {
-                log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {}", err);
+                log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {err}");
             })?;
             log::trace!(target: "sw_mmi", "Platform MM Control initialization completed successfully");
         } else {
@@ -102,57 +102,57 @@ unsafe impl SwMmiTrigger for SwMmiManager {
     // This is tested in integration tests, but it is difficult to unit test with little value returned due to
     // the nature of hardware I/O port operations.
     #[cfg_attr(coverage, coverage(off))]
-    fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
-        log::debug!(target: "sw_mmi", "Triggering SW MMI with cmd_port_value=0x{:02X}, data_port_value=0x{:02X}", _cmd_port_value, _data_port_value);
+    fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina::error::Result<()> {
+        log::debug!(target: "sw_mmi", "Triggering SW MMI with cmd_port_value=0x{cmd_port_value:02X}, data_port_value=0x{data_port_value:02X}");
 
         log::trace!(target: "sw_mmi", "Writing to MMI command port...");
         match self.inner_config.cmd_port {
-            MmiPort::Smi(_port) => {
-                log::trace!(target: "sw_mmi", "Using SMI command port: 0x{:04X}", _port);
+            MmiPort::Smi(port) => {
+                log::trace!(target: "sw_mmi", "Using SMI command port: 0x{port:04X}");
                 cfg_if::cfg_if! {
                     if #[cfg(all(target_arch = "x86_64", target_os = "uefi"))] {
-                        log::trace!(target: "sw_mmi", "Writing SMI command port: {_port:#X}");
+                        log::trace!(target: "sw_mmi", "Writing SMI command port: {port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.cmd_port)
                         // 2. The SwMmiTrigger trait is marked unsafe, requiring callers to ensure hardware is
                         //    initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI command port is the defined mechanism for triggering software MMIs
-                        unsafe { patina::arch::x64::io_out8(_port, _cmd_port_value) };
+                        unsafe { patina::arch::x64::io_out8(port, cmd_port_value) };
                         log::trace!(target: "sw_mmi", "SMI command port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI command port write skipped (not on target platform)");
                     }
                 }
             }
-            MmiPort::Smc(_smc_port) => {
-                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{:08X}", _smc_port);
+            MmiPort::Smc(smc_port) => {
+                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{smc_port:08X}");
                 todo!("SMC communication not implemented yet.");
             }
         }
 
         log::trace!(target: "sw_mmi", "Writing to MMI data port...");
         match self.inner_config.data_port {
-            MmiPort::Smi(_port) => {
-                log::trace!(target: "sw_mmi", "Using SMI data port: 0x{:04X}", _port);
+            MmiPort::Smi(port) => {
+                log::trace!(target: "sw_mmi", "Using SMI data port: 0x{port:04X}");
                 cfg_if::cfg_if! {
                     if #[cfg(all(target_arch = "x86_64", target_os = "uefi"))] {
-                        log::trace!(target: "sw_mmi", "Writing SMI data port: {_port:#X}");
+                        log::trace!(target: "sw_mmi", "Writing SMI data port: {port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.data_port)
                         // 2. The SwMmiTrigger trait is marked unsafe, requiring callers to ensure hardware is
                         //     initialized upholding its safety contract.
                         // 3. This service is only registered after platform initialization (entry_point completion)
                         // 4. Writing to the SMI data port is the defined mechanism for passing data to MMI handlers
-                        unsafe { patina::arch::x64::io_out8(_port, _data_port_value) };
+                        unsafe { patina::arch::x64::io_out8(port, data_port_value) };
                         log::trace!(target: "sw_mmi", "SMI data port write completed");
                     } else {
                         log::trace!(target: "sw_mmi", "SMI data port write skipped (not on target platform)");
                     }
                 }
             }
-            MmiPort::Smc(_smc_port) => {
-                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{:08X}", _smc_port);
+            MmiPort::Smc(smc_port) => {
+                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{smc_port:08X}");
                 todo!("SMC communication not implemented yet.");
             }
         }

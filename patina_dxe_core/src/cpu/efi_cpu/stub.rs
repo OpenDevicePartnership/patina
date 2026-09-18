@@ -10,7 +10,7 @@ use patina::error::EfiError;
 
 /// Struct to implement Null Cpu Init.
 ///
-/// This struct cannot be used directly. It replaces the `EfiCpu` struct when not compiling for x86_64 or AArch64 UEFI architectures.
+/// This struct cannot be used directly. It replaces the `EfiCpu` struct when not compiling for `x86_64` or `AArch64` UEFI architectures.
 #[derive(Default, Copy, Clone)]
 pub struct EfiCpuStub;
 

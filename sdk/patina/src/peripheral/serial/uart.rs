@@ -1,4 +1,4 @@
-//! [SerialIO](crate::peripheral::serial::SerialIO) UART implementations.
+//! [`SerialIO`](crate::peripheral::serial::SerialIO) UART implementations.
 //!
 //! ## License
 //!

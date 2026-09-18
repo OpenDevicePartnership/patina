@@ -122,7 +122,7 @@ enum TplControllerStorage<C> {
 /// This mutex will raise the TPL to the specified level when locked, and restore it when the lock is released.
 ///
 /// The mutex owns its TPL controller. SDK callers normally provide an owned
-/// BootServices instance or a clone if they need to retain a copy.
+/// `BootServices` instance or a clone if they need to retain a copy.
 pub struct TplMutex<T: ?Sized, B: TplController = StandardBootServices> {
     tpl_controller: TplControllerStorage<B>,
     tpl_lock_level: Tpl,
@@ -130,7 +130,7 @@ pub struct TplMutex<T: ?Sized, B: TplController = StandardBootServices> {
     data: UnsafeCell<T>,
 }
 
-/// RAII implementation of a [TplMutex] lock. When this structure is dropped, the lock will be unlocked.
+/// RAII implementation of a [`TplMutex`] lock. When this structure is dropped, the lock will be unlocked.
 #[must_use = "if unused the TplMutex will immediately unlock"]
 pub struct TplMutexGuard<'a, T: ?Sized, B: TplController> {
     tpl_mutex: &'a TplMutex<T, B>,
@@ -138,7 +138,7 @@ pub struct TplMutexGuard<'a, T: ?Sized, B: TplController> {
 }
 
 impl<T, B: TplController> TplMutex<T, B> {
-    /// Create a new TplMutex in an unlocked state.
+    /// Create a new `TplMutex` in an unlocked state.
     /// Takes ownership of the TPL controller.
     pub const fn new(tpl_controller: B, tpl_lock_level: Tpl, data: T) -> Self {
         Self {
@@ -149,8 +149,8 @@ impl<T, B: TplController> TplMutex<T, B> {
         }
     }
 
-    /// Create a new TplMutex in an unlocked, uninitialized state.
-    /// The resulting TplMutex will not be usable until its TPL controller is initialized.
+    /// Create a new `TplMutex` in an unlocked, uninitialized state.
+    /// The resulting `TplMutex` will not be usable until its TPL controller is initialized.
     pub const fn new_uninit(tpl_lock_level: Tpl, data: T) -> Self {
         Self {
             tpl_controller: TplControllerStorage::Deferred(OnceCell::new()),
@@ -160,7 +160,7 @@ impl<T, B: TplController> TplMutex<T, B> {
         }
     }
 
-    /// Initialize the TPL controller for this TplMutex. This must be called before the mutex can be used.
+    /// Initialize the TPL controller for this `TplMutex`. This must be called before the mutex can be used.
     ///
     /// # Panics
     /// This call will panic if the mutex is already initialized.
@@ -182,15 +182,15 @@ impl<T: ?Sized, B: TplController> TplMutex<T, B> {
         }
     }
 
-    /// Attempt to lock the mutex and return a [TplMutexGuard] if the mutex was not locked.
+    /// Attempt to lock the mutex and return a [`TplMutexGuard`] if the mutex was not locked.
     ///
     /// # Panics
     /// This call will panic if the mutex is already locked.
     pub fn lock(&self) -> TplMutexGuard<'_, T, B> {
-        self.try_lock().map_err(|_| "Re-entrant lock").unwrap()
+        self.try_lock().map_err(|()| "Re-entrant lock").unwrap()
     }
 
-    /// Attempt to lock the mutex and return [TplMutexGuard] if the mutex was not locked.
+    /// Attempt to lock the mutex and return [`TplMutexGuard`] if the mutex was not locked.
     ///
     /// # Errors
     /// If the mutex is already lock, then this call will return [Err].
@@ -261,13 +261,13 @@ impl<T: ?Sized + fmt::Debug, B: TplController> fmt::Debug for TplMutex<T, B> {
 
 impl<T: ?Sized + fmt::Debug, B: TplController> fmt::Debug for TplMutexGuard<'_, T, B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Debug::fmt(self.deref(), f)
+        Debug::fmt(&**self, f)
     }
 }
 
 impl<T: ?Sized + fmt::Display, B: TplController> fmt::Display for TplMutexGuard<'_, T, B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(self.deref(), f)
+        Display::fmt(&**self, f)
     }
 }
 

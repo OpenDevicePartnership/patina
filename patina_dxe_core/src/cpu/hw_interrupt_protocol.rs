@@ -418,7 +418,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
                     // The special interrupt do not need to be acknowledged
                 }
                 _ => {
-                    log::error!("Invalid interrupt source: 0x{:x}", raw_value);
+                    log::error!("Invalid interrupt source: 0x{raw_value:x}");
                 }
             }
             return;
@@ -432,11 +432,11 @@ impl InterruptHandler for HwInterruptProtocolHandler {
             .unwrap_or_else(|| panic!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
 
         if let Some(handler) = *rw_handler {
-            handler(raw_value as u64, context);
+            handler(u64::from(raw_value), context);
         } else {
             GicCpuInterface::end_interrupt(int_id, InterruptGroup::Group1);
-            log::error!("Unhandled Exception! 0x{:x}", exception_type);
-            log::error!("Exception Context: {:#x?}", context);
+            log::error!("Unhandled Exception! 0x{exception_type:x}");
+            log::error!("Exception Context: {context:#x?}");
             panic! {"Unhandled Exception! 0x{:x}", exception_type};
         }
     }
@@ -493,7 +493,7 @@ impl HwInterruptProtocolHandler {
             if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
                 return err.into();
             }
-        };
+        }
 
         efi::Status::SUCCESS
     }

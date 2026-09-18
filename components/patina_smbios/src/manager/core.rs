@@ -93,9 +93,7 @@ impl SmbiosManager {
     pub fn new(major_version: u8, minor_version: u8) -> Result<Self, SmbiosError> {
         if major_version != 3 {
             log::error!(
-                "SMBIOS version {}.{} is not supported. Only SMBIOS 3.x is supported.",
-                major_version,
-                minor_version
+                "SMBIOS version {major_version}.{minor_version} is not supported. Only SMBIOS 3.x is supported."
             );
             return Err(SmbiosError::UnsupportedVersion);
         }
@@ -145,14 +143,14 @@ impl SmbiosManager {
             .allocate_pages(table_pages, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
         let table_slice = table_allocation.into_raw_slice::<u8>();
-        let table_addr = table_slice as *mut u8 as u64;
+        let table_addr = table_slice.cast::<u8>() as u64;
 
         // Allocate entry point buffer (1 page is plenty)
         let ep_allocation = memory_manager
             .allocate_pages(1, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
         let ep_slice = ep_allocation.into_raw_slice::<u8>();
-        let ep_addr = ep_slice as *mut u8 as u64;
+        let ep_addr = ep_slice.cast::<u8>() as u64;
 
         *self.table_buffer_addr.borrow_mut() = Some(table_addr);
         *self.ep_buffer_addr.borrow_mut() = Some(ep_addr);
@@ -172,7 +170,7 @@ impl SmbiosManager {
     /// Validate a string for use in SMBIOS records
     ///
     /// Ensures the string meets SMBIOS specification requirements:
-    /// - Can be encoded as Latin-1 (CHAR8) and does not exceed SMBIOS_STRING_MAX_LENGTH (64 bytes)
+    /// - Can be encoded as Latin-1 (CHAR8) and does not exceed `SMBIOS_STRING_MAX_LENGTH` (64 bytes)
     /// - Does not contain null terminators (they are added during serialization)
     ///
     /// # Arguments
@@ -204,7 +202,7 @@ impl SmbiosManager {
     ///
     /// Returns `SmbiosError::EmptyStringInPool` if consecutive nulls are found in the middle
     ///
-    /// Returns `SmbiosError::StringTooLong` if any string exceeds SMBIOS_STRING_MAX_LENGTH
+    /// Returns `SmbiosError::StringTooLong` if any string exceeds `SMBIOS_STRING_MAX_LENGTH`
     pub(super) fn validate_and_count_strings(string_pool_area: &[u8]) -> Result<usize, SmbiosError> {
         let len = string_pool_area.len();
 
@@ -292,8 +290,8 @@ impl SmbiosManager {
     ///
     /// # Errors
     ///
-    /// If the handle is not within valid range, returns SmbiosError::HandleOutOfRange.
-    /// If the handle is already in use, returns SmbiosError::HandleInUse.
+    /// If the handle is not within valid range, returns `SmbiosError::HandleOutOfRange`.
+    /// If the handle is already in use, returns `SmbiosError::HandleInUse`.
     fn add_request_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
         if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(request_handle) {
             log::error!("add_request_handle - HandleOutOfRange");
@@ -322,7 +320,7 @@ impl SmbiosManager {
     ///
     /// # Errors
     ///
-    /// If there is no available handle, return SmbiosError::HandleExhausted.
+    /// If there is no available handle, return `SmbiosError::HandleExhausted`.
     fn alloc_new_smbios_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
         for handle in 0..SMBIOS_HANDLE_PI_RESERVED {
             if self.used_handles.borrow_mut().insert(handle) {
@@ -336,8 +334,8 @@ impl SmbiosManager {
 
     /// Get a SMBIOS handle based on the requested handle
     ///
-    /// Follow PI spec, if the requested handle is FFFEh, then call alloc_new_smbios_handle to
-    /// get a unique handle. Otherwise, call add_request_handle to check if the handle is
+    /// Follow PI spec, if the requested handle is `FFFEh`, then call `alloc_new_smbios_handle` to
+    /// get a unique handle. Otherwise, call `add_request_handle` to check if the handle is
     /// already in use. If it is not, then use the requested handle as is.
     ///
     /// # Arguments
@@ -358,11 +356,11 @@ impl SmbiosManager {
 
     /// Build SMBIOS table data and entry point using pre-allocated buffers
     ///
-    /// Copies table data into pre-allocated buffers without calling allocate_pages.
+    /// Copies table data into pre-allocated buffers without calling `allocate_pages`.
     /// This allows safe republishing during Add/Update/Remove operations.
     ///
-    /// Returns (table_address, ep_address, entry_point) but does NOT install the configuration table.
-    /// The caller must call install_configuration_table separately without holding locks.
+    /// Returns (`table_address`, `ep_address`, `entry_point`) but does NOT install the configuration table.
+    /// The caller must call `install_configuration_table` separately without holding locks.
     ///
     pub fn build_table_data(&self) -> Result<(PhysicalAddress, PhysicalAddress, Smbios30EntryPoint), SmbiosError> {
         // Get pre-allocated buffer addresses
@@ -455,7 +453,7 @@ impl SmbiosManager {
 
     /// Calculate a hash for table data using Xorshift64*
     ///
-    /// Uses Xorshift64starHasher to detect modifications including byte swaps
+    /// Uses `Xorshift64starHasher` to detect modifications including byte swaps
     /// that a simple checksum would miss. Not for cryptographic integrity.
     fn calculate_table_checksum(data: &[u8]) -> u64 {
         use core::hash::Hasher;
@@ -490,10 +488,8 @@ impl SmbiosManager {
 
         if actual_checksum != expected_checksum {
             log::error!(
-                "[SMBIOS] Published table was modified directly (checksum mismatch: expected {:08X}, found {:08X}). \
-                 Use Remove() + Add() to modify records, or UpdateString() for string fields.",
-                expected_checksum,
-                actual_checksum
+                "[SMBIOS] Published table was modified directly (checksum mismatch: expected {expected_checksum:08X}, found {actual_checksum:08X}). \
+                 Use Remove() + Add() to modify records, or UpdateString() for string fields."
             );
             return Err(SmbiosError::TableDirectlyModified);
         }
@@ -772,7 +768,7 @@ mod tests {
     /// Test helper: Build a simple SMBIOS record with the given header and strings
     ///
     /// This helper manually constructs a minimal SMBIOS record for testing purposes.
-    /// In production code, use structured record types (Type0, Type1, etc.) with to_bytes().
+    /// In production code, use structured record types (Type0, Type1, etc.) with `to_bytes()`.
     fn build_test_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Vec<u8> {
         let mut bytes = Vec::new();
 

@@ -186,7 +186,7 @@ mod tests {
         let entries = [(0x100, 0x180, 0x500), (0x200, 0x280, 0x520)];
         let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
         let image = build_pe_bytes(&entries, &unwind_data);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x120, ..StackFrame::default() };
 
         let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("expected runtime function");
@@ -200,7 +200,7 @@ mod tests {
         let entries = [(0x100, 0x150, 0x500), (0x150, 0x1A0, 0x520)];
         let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..]), (0x520u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
         let image = build_pe_bytes(&entries, &unwind_data);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x150, ..StackFrame::default() };
 
         let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("expected boundary runtime function");
@@ -213,7 +213,7 @@ mod tests {
         let entries = [(0x100, 0x180, 0x500)];
         let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
         let image = build_pe_bytes(&entries, &unwind_data);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x1C0, ..StackFrame::default() };
 
         let error = RuntimeFunction::find_function(&pe, &mut frame).unwrap_err();

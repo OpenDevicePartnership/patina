@@ -23,7 +23,7 @@ pub struct RuntimeFunction<'a> {
     /// End of the function RVA.
     pub end_rva: u32,
 
-    /// Packed unwind info in AArch64 (the second word of the `.pdata` section).
+    /// Packed unwind info in `AArch64` (the second word of the `.pdata` section).
     pub unwind_info: u32,
 }
 
@@ -95,6 +95,7 @@ impl<'a> RuntimeFunction<'a> {
 
                     let flag = unwind_info & 0x3;
 
+                    #[allow(clippy::match_same_arms)]
                     let function_length = match flag {
                         // Packed unwind data not used; remaining bits point to an
                         // `.xdata` record. The length of the function can only be
@@ -209,11 +210,11 @@ impl<'a> RuntimeFunction<'a> {
                         module: pe.image_name,
                         reason: "pc underflow while adjusting to previous instruction",
                     })?;
-                    log::debug!("    > Decrementing pc_rva {:X} -> {:X}", pc_rva, decremented_pc_rva); // debug
+                    log::debug!("    > Decrementing pc_rva {pc_rva:X} -> {decremented_pc_rva:X}"); // debug
                     pc_rva = decremented_pc_rva;
                     stack_frame.pc = decremented_pc;
                 } else {
-                    log::debug!("    > Found Runtime function({}) for pc_rva {:X}", runtime_function, pc_rva); // debug
+                    log::debug!("    > Found Runtime function({runtime_function}) for pc_rva {pc_rva:X}"); // debug
                     return Ok(runtime_function);
                 }
             } else {
@@ -249,9 +250,7 @@ impl<'a> RuntimeFunction<'a> {
                     reason: "pc underflow while retrying runtime function lookup",
                 })?;
                 log::debug!(
-                    "    > Runtime Function not found, retrying by decrementing pc_rva {:X} -> {:X}",
-                    pc_rva,
-                    decremented_pc_rva
+                    "    > Runtime Function not found, retrying by decrementing pc_rva {pc_rva:X} -> {decremented_pc_rva:X}"
                 ); // debug
                 pc_rva = decremented_pc_rva;
                 stack_frame.pc = decremented_pc;
@@ -334,7 +333,7 @@ mod tests {
                 assert_eq!(function_length, 0x40);
                 assert_eq!(frame_size, 0x80);
             }
-            other => panic!("unexpected unwind info variant: {other:?}"),
+            other @ UnwindInfo::UnpackedUnwindInfo { .. } => panic!("unexpected unwind info variant: {other:?}"),
         }
     }
 
@@ -364,7 +363,7 @@ mod tests {
         let unwind = make_packed_unwind_info(function_length, 0x40, 1);
         let entries = [(0x100u32, unwind)];
         let image = build_pe_bytes(&entries, &[]);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x100 + 0x20, ..StackFrame::default() };
 
         let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("runtime function");
@@ -380,7 +379,7 @@ mod tests {
         let curr_unwind = make_packed_unwind_info(0x40, 0x40, 1);
         let entries = [(0x0E0u32, prev_unwind), (0x120u32, curr_unwind)];
         let image = build_pe_bytes(&entries, &[]);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x120, ..StackFrame::default() };
 
         let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("adjusted runtime function");
@@ -394,7 +393,7 @@ mod tests {
         let unwind = make_packed_unwind_info(0x40, 0x40, 1);
         let entries = [(0x100u32, unwind)];
         let image = build_pe_bytes(&entries, &[]);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x200, ..StackFrame::default() };
 
         let err = RuntimeFunction::find_function(&pe, &mut frame).unwrap_err();
@@ -414,7 +413,7 @@ mod tests {
 
         let entries = [(0x180u32, xdata_rva)];
         let image = build_pe_bytes(&entries, &[(xdata_rva, &xdata)]);
-        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let pe = PE { base_address: 0, size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
         let mut frame = StackFrame { pc: 0x180 + 0x10, ..StackFrame::default() };
 
         let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("runtime function with xdata");
@@ -426,7 +425,7 @@ mod tests {
                 assert_eq!(parsed_len, function_length);
                 assert_eq!(unwind_codes, &[0xAA, 0xBB, 0xCC, 0xDD]);
             }
-            other => panic!("unexpected variant: {other:?}"),
+            other @ UnwindInfo::PackedUnwindInfo { .. } => panic!("unexpected variant: {other:?}"),
         }
     }
 }

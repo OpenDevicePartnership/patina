@@ -61,7 +61,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 rbt.add(*i).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("bst", "32bit"), &nums, |b, nums| {
@@ -72,7 +72,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 bst.add(*i).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("sorted_slice", "32bit"), &nums, |b, nums| {
@@ -83,7 +83,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 ss.add(*i).unwrap();
             }
-        })
+        });
     });
 
     let nums = random_numbers::<i128>(0, 100_000);
@@ -96,7 +96,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 rbt.add(*i).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("bst", "128bit"), &nums, |b, nums| {
@@ -107,7 +107,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 bst.add(*i).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("sorted_slice", "128bit"), &nums, |b, nums| {
@@ -118,7 +118,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 ss.add(*i).unwrap();
             }
-        })
+        });
     });
 
     let nums = random_numbers::<u32>(0, 100_000);
@@ -131,7 +131,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 rbt.add(Uint::from(*i)).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("bst", "384bit"), &nums, |b, nums| {
@@ -142,7 +142,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 bst.add(Uint::from(*i)).unwrap();
             }
-        })
+        });
     });
 
     group.bench_with_input(BenchmarkId::new("sorted_slice", "384bit"), &nums, |b, nums| {
@@ -153,7 +153,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             for i in nums {
                 ss.add(Uint::from(*i)).unwrap();
             }
-        })
+        });
     });
 
     group.finish();

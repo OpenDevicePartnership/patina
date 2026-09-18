@@ -258,14 +258,10 @@ impl DebuggerArch for Aarch64Arch {
     fn memory_poke_test(address: u64) -> Result<(), ()> {
         POKE_TEST_MARKER.store(true, Ordering::SeqCst);
 
-        // Attempt to read the address to check if it is accessible.
-        // This will raise a page fault if the address is not accessible.
-
-        let _value: u64;
         // SAFETY: The safety of this is dubious and may cause a page fault, but
         // the exception handler will catch it and resolve it by stepping beyond
         // the exception.
-        unsafe { asm!("ldr {}, [{}]", out(reg) _value, in(reg) address, options(nostack)) };
+        unsafe { asm!("ldr {}, [{}]", out(reg) _, in(reg) address, options(nostack)) };
 
         // Check if the marker was cleared, indicating a page fault. Reset either way.
         if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
@@ -282,7 +278,7 @@ impl DebuggerArch for Aarch64Arch {
     }
 }
 
-/// AArch64 core registers
+/// `AArch64` core registers
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Aarch64CoreRegs {
     /// X0-X30 general purpose registers
@@ -338,7 +334,7 @@ impl Registers for Aarch64CoreRegs {
             }};
         }
 
-        for reg in self.regs.iter_mut() {
+        for reg in &mut self.regs {
             *reg = read!(u64);
         }
 
@@ -428,7 +424,7 @@ impl UefiArchRegs for Aarch64CoreRegs {
         context.sp = self.sp;
         context.elr = self.pc;
         context.fpsr = self.fpsr;
-        context.spsr = self.cpsr as u64;
+        context.spsr = u64::from(self.cpsr);
     }
 
     fn read_register_from_context(
@@ -561,7 +557,7 @@ impl UefiArchRegs for Aarch64CoreRegs {
                 write_field!(context.fpsr, u64);
             }
             Aarch64CoreRegId::Spsr => {
-                context.spsr = u32::from_le_bytes(buf.try_into().map_err(|_| ())?) as u64;
+                context.spsr = u64::from(u32::from_le_bytes(buf.try_into().map_err(|_| ())?));
             }
         }
 
@@ -639,6 +635,8 @@ impl Wcr {
 }
 
 fn read_dbg_wcr(index: usize) -> Wcr {
+    // Arms read different watchpoint registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     let value = match index {
         0 => read_sysreg!(dbgwcr0_el1),
         1 => read_sysreg!(dbgwcr1_el1),
@@ -651,6 +649,8 @@ fn read_dbg_wcr(index: usize) -> Wcr {
 
 fn write_dbg_wcr(index: usize, wcr: Wcr) {
     let value: u64 = wcr.into();
+    // Arms write different watchpoint registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     match index {
         0 => write_sysreg!(reg dbgwcr0_el1, value, "isb sy"),
         1 => write_sysreg!(reg dbgwcr1_el1, value, "isb sy"),
@@ -661,6 +661,8 @@ fn write_dbg_wcr(index: usize, wcr: Wcr) {
 }
 
 fn read_dbg_wvr(index: usize) -> u64 {
+    // Arms read different watchpoint registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     match index {
         0 => read_sysreg!(dbgwvr0_el1),
         1 => read_sysreg!(dbgwvr1_el1),
@@ -671,6 +673,8 @@ fn read_dbg_wvr(index: usize) -> u64 {
 }
 
 fn write_dbg_wvr(index: usize, value: u64) {
+    // Arms write different watchpoint registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     match index {
         0 => write_sysreg!(reg dbgwvr0_el1, value),
         1 => write_sysreg!(reg dbgwvr1_el1, value),

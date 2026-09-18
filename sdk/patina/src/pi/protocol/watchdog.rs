@@ -1,6 +1,6 @@
 //! Watchdog Architectural Protocol
 //!
-//! Used to implement the Boot Service SetWatchdogTimer() . The watchdog timer may be implemented in
+//! Used to implement the Boot Service `SetWatchdogTimer()` . The watchdog timer may be implemented in
 //! software using Boot Services, or it may be implemented with specialized hardware. The protocol provides a service
 //! to register a handler when the watchdog timer fires and a service to set the amount of time to wait before the
 //! watchdog timer is fired.

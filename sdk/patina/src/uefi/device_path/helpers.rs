@@ -25,7 +25,7 @@ use crate::{
 /// representing the complete path from system root to device.
 ///
 /// Partial device paths start with other node types (e.g., Media type 4 for HD nodes,
-/// Messaging type 3 for NVMe without root) and must be expanded by matching against
+/// Messaging type 3 for `NVMe` without root) and must be expanded by matching against
 /// the current device topology before they can be used for many scenarios, including booting.
 ///
 /// # Arguments
@@ -53,7 +53,7 @@ pub fn is_partial_device_path(device_path: &DevicePath) -> bool {
 ///
 /// This function takes a partial (short-form) device path and finds the corresponding
 /// full device path by enumerating all device handles and matching against the partial
-/// path's identifying characteristics (e.g., partition GUID for HardDrive nodes).
+/// path's identifying characteristics (e.g., partition GUID for `HardDrive` nodes).
 ///
 /// If the input is already a full device path (starts with Hardware or ACPI node),
 /// it is returned unchanged.
@@ -71,7 +71,7 @@ pub fn is_partial_device_path(device_path: &DevicePath) -> bool {
 /// # Supported Partial Path Types
 ///
 /// Currently supports:
-/// - **HardDrive (Media type 4, subtype 1)**: Matches by partition signature and signature type
+/// - **`HardDrive` (Media type 4, subtype 1)**: Matches by partition signature and signature type
 ///
 /// Future enhancements may add support for:
 /// - FilePath-only paths (require filesystem enumeration)
@@ -84,11 +84,13 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
 
     // Use LocateDevicePath to find the handle with the best matching device path.
     // This is more efficient than enumerating all handles manually.
-    let mut device_path_ptr = partial_path as *mut DevicePath as *mut u8 as *mut efi::protocols::device_path::Protocol;
+    let mut device_path_ptr =
+        core::ptr::from_mut::<DevicePath>(partial_path) as *mut u8 as *mut efi::protocols::device_path::Protocol;
     // SAFETY: device_path_ptr points to a valid device path from partial_path.
-    let handle =
-        unsafe { boot_services.locate_device_path(&efi::protocols::device_path::PROTOCOL_GUID, &mut device_path_ptr) }
-            .map_err(EfiError::from)?;
+    let handle = unsafe {
+        boot_services.locate_device_path(&efi::protocols::device_path::PROTOCOL_GUID, &raw mut device_path_ptr)
+    }
+    .map_err(EfiError::from)?;
 
     // Get the full device path from the matched handle
     // SAFETY: handle_protocol is safe when the handle is valid (from locate_device_path)
@@ -97,8 +99,8 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
         .map_err(EfiError::from)?;
 
     // SAFETY: The device path pointer comes from a valid protocol interface.
-    let full_path =
-        unsafe { DevicePath::try_from_ptr(full_dp_ptr as *const _ as *const u8) }.map_err(|_| EfiError::DeviceError)?;
+    let full_path = unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(full_dp_ptr) as *const u8) }
+        .map_err(|_| EfiError::DeviceError)?;
 
     // Combine the full path prefix with the remaining partial path.
     // The remaining path (after the matched portion) needs to be appended.
@@ -197,7 +199,10 @@ mod tests {
         let path_ref: &DevicePath = full_handle_path.as_ref();
         // SAFETY: path_ref is a valid DevicePath reference and size() returns its exact byte length.
         let bytes: alloc::vec::Vec<u8> = unsafe {
-            alloc::vec::Vec::from(core::slice::from_raw_parts(path_ref as *const _ as *const u8, path_ref.size()))
+            alloc::vec::Vec::from(core::slice::from_raw_parts(
+                std::ptr::from_ref(path_ref) as *const u8,
+                path_ref.size(),
+            ))
         };
         let leaked_bytes = Box::leak(bytes.into_boxed_slice());
         let full_path_ptr: usize = leaked_bytes.as_ptr() as usize;

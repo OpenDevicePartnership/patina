@@ -1,10 +1,10 @@
-//! A module for defining the [Hob] [Param] type and default implementations for the [FromHob] trait.
+//! A module for defining the [Hob] [Param] type and default implementations for the [`FromHob`] trait.
 //!
-//! This module contains the definitions for [Hob] and the [FromHob] trait. The [Hob] type is a new dependency
+//! This module contains the definitions for [Hob] and the [`FromHob`] trait. The [Hob] type is a new dependency
 //! injectable [Param] implementation that allows components to access read-only HOB (Hand off Block) values. See the
 //! types for more documentation.
 //!
-//! The [FromHob] trait is used to parse guided HOBs as specified in the PI specification.
+//! The [`FromHob`] trait is used to parse guided HOBs as specified in the PI specification.
 //!
 //! ## Example
 //!
@@ -121,10 +121,10 @@ pub trait FromHob: Sized + 'static {
 
 pub use patina_macro::FromHob;
 
-/// An immutable Hob value registered with [Storage] via the [FromHob] trait.
+/// An immutable Hob value registered with [Storage] via the [`FromHob`] trait.
 ///
 /// The underlying datum of this type is a slice. The first element of the slice can be directly accessed by
-/// dereferencing the struct. The entire slice can be iterated over using the [Hob::iter] method or the [IntoIterator]
+/// dereferencing the struct. The entire slice can be iterated over using the [`Hob::iter`] method or the [`IntoIterator`]
 /// trait.
 ///
 /// ## Example
@@ -346,7 +346,7 @@ mod tests {
         }
 
         for hob in &hobs {
-            assert!([5, 10].contains(&hob.unused))
+            assert!([5, 10].contains(&hob.unused));
         }
     }
 

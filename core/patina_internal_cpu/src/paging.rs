@@ -29,7 +29,7 @@ cfg_if::cfg_if! {
 
 /// Enum representing the cache attribute value of a memory region if it is not maintained
 /// by the page table. On x64 platforms, this allows for unmapped pages to still reflect
-/// the cache attributes as managed by MTRRs. On ARM64 this will always be NotSupported as
+/// the cache attributes as managed by MTRRs. On ARM64 this will always be `NotSupported` as
 /// cache attributes are always managed by the page table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheAttributeValue {
@@ -41,7 +41,7 @@ pub enum CacheAttributeValue {
     NotSupported,
 }
 
-/// The PatinaPageTable trait is Patina's abstraction layer over the PageTable trait
+/// The `PatinaPageTable` trait is Patina's abstraction layer over the `PageTable` trait
 /// provided by patina-paging. This trait manages architectural abstractions over the page tables.
 pub trait PatinaPageTable {
     /// Function to map the designated memory region to with provided
@@ -52,8 +52,8 @@ pub trait PatinaPageTable {
     /// * `address` - The memory address to map.
     /// * `size` - The memory size to map.
     /// * `attributes` - The memory attributes to map. The acceptable
-    ///   input will be ExecuteProtect, ReadOnly, as well as Uncacheable,
-    ///   WriteCombining, WriteThrough, Writeback, UncacheableExport
+    ///   input will be `ExecuteProtect`, `ReadOnly`, as well as Uncacheable,
+    ///   `WriteCombining`, `WriteThrough`, Writeback, `UncacheableExport`
     ///   Compatible attributes can be "Ored"
     ///
     /// ## Errors
@@ -82,7 +82,7 @@ pub trait PatinaPageTable {
     /// Function to query the mapping status and return attribute of supplied
     /// memory region if it is properly and consistently mapped. This function
     /// returns the caching attributes for platforms where caching attributes
-    /// are managed outside of the page table (e.g., x86_64 MTRRs), even when
+    /// are managed outside of the page table (e.g., `x86_64` MTRRs), even when
     /// the page range itself is unmapped.
     ///
     /// ## Arguments

@@ -14,7 +14,7 @@
 //!
 //! ## Features
 //!
-//! This module has two main use cases: (1) for end users to write their own components and (2) for the DxeCore to manage
+//! This module has two main use cases: (1) for end users to write their own components and (2) for the `DxeCore` to manage
 //! these components and their dependencies. (1) is always available, however (2) is only available when the `core`
 //! feature flag is enabled.
 //!
@@ -59,7 +59,7 @@
 //!
 //! ### Entry Point Requirements
 //!
-//! The entry point function's first parameter must be `self, `mut self`, `&self` or `&mut self`. The rest of the
+//! The entry point function's first parameter must be `self`, `mut self`, `&self` or `&mut self`. The rest of the
 //! parameters must implement the [Param](params::Param) trait, which is described in more detail below.
 //!
 //! Note: there is an arbitrary parameter count limit of 5, but this can be changed in the future if needed. See the
@@ -77,9 +77,9 @@
 //! | Option\<P\>                  | An Option, where P implements `Param`. Allows components to run even when the underlying parameter is unavailable. See the [params] module for more info.             |
 //! | (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit. See the [params] module for more info.            |
 //! | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked. See The [params] module for more info.                                |
-//! | ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked. See the [params] module for more info.                                      |
+//! | `ConfigMut`\<T\>               | A mutable config value that will only be available while the underlying data is unlocked. See the [params] module for more info.                                      |
 //! | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. See [service] module for more info. |
-//! | StandardBootServices         | Rust implementation of Boot Services                                                                                                                                  |
+//! | `StandardBootServices`         | Rust implementation of Boot Services                                                                                                                                  |
 //!
 //! ### Examples
 //!
@@ -166,7 +166,7 @@ pub trait Component {
     /// ## Safety
     ///
     /// - Each parameter must properly register its access, so the scheduler can ensure that there are no data
-    ///   conflicts in [Params](params::Param) for parallel execution of components. See [Param::init_state](params::Param::init_state)
+    ///   conflicts in [Params](params::Param) for parallel execution of components. See [`Param::init_state`](params::Param::init_state)
     ///   for more information on how to properly register parameter access.
     unsafe fn run_unsafe(&mut self, storage: storage::UnsafeStorageCell) -> Result<bool>;
 

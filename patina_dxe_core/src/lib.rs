@@ -258,14 +258,14 @@ type MockCore = Core<MockPlatformInfo>;
 
 /// Platform configured DXE Core responsible for the DXE phase of UEFI booting.
 ///
-/// This struct is generic over the [PlatformInfo] trait, which is used to provide platform-specific configuration to
-/// the core. The [PlatformInfo] trait is composed of multiple sub-traits that configure the different subsystems of
-/// the Patina DXE Core. Review the [PlatformInfo] trait documentation and each type alias within the trait for more
+/// This struct is generic over the [`PlatformInfo`] trait, which is used to provide platform-specific configuration to
+/// the core. The [`PlatformInfo`] trait is composed of multiple sub-traits that configure the different subsystems of
+/// the Patina DXE Core. Review the [`PlatformInfo`] trait documentation and each type alias within the trait for more
 /// information on the different configurations available to the platform.
 ///
-/// To properly use this struct, the platform must implement the [PlatformInfo] on a type and then create a static
+/// To properly use this struct, the platform must implement the [`PlatformInfo`] on a type and then create a static
 /// instance of the [Core] struct with the platform types as generic parameters (See example below). From there, simply
-/// call the [entry_point](Core::entry_point) method within the main function to start the DXE Core.
+/// call the [`entry_point`](Core::entry_point) method within the main function to start the DXE Core.
 ///
 /// ## Examples
 ///
@@ -315,7 +315,7 @@ type MockCore = Core<MockPlatformInfo>;
 /// static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
 /// ```
 pub struct Core<P: PlatformInfo> {
-    /// A parsed and heap-allocated list of HOBs provided by [Self::entry_point].
+    /// A parsed and heap-allocated list of HOBs provided by [`Self::entry_point`].
     hob_list: Once<HobList<'static>>,
     /// The subsystem responsible for data management and dispatch of Patina components.
     component_dispatcher: TplMutex<ComponentDispatcher>,
@@ -325,7 +325,7 @@ pub struct Core<P: PlatformInfo> {
 
 #[cfg_attr(coverage, coverage(off))]
 impl<P: PlatformInfo> Core<P> {
-    /// Creates a new instance of the DXE Core in the NoAlloc phase.
+    /// Creates a new instance of the DXE Core in the `NoAlloc` phase.
     pub const fn new(section_extractor: P::Extractor) -> Self {
         Self {
             hob_list: Once::new(),
@@ -374,13 +374,9 @@ impl<P: PlatformInfo> Core<P> {
 
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
-        if !self.set_instance() {
-            panic!("DXE Core instance was already set!");
-        }
+        assert!(self.set_instance(), "DXE Core instance was already set!");
 
-        if physical_hob_list.is_null() {
-            panic!("DXE Core entry point called with null HOB list pointer!");
-        }
+        assert!(!physical_hob_list.is_null(), "DXE Core entry point called with null HOB list pointer!");
 
         let relocated_hob_list = self.init_memory(physical_hob_list);
 
@@ -395,9 +391,10 @@ impl<P: PlatformInfo> Core<P> {
     ///
     /// Returns an `EfiError::AlreadyStarted` if the HOB list has already been set.
     fn set_hob_list(&self, hob_list: HobList<'static>) -> Result<&HobList<'static>> {
-        match self.hob_list.is_completed() {
-            true => Err(error::EfiError::AlreadyStarted),
-            false => Ok(self.hob_list.call_once(|| hob_list)),
+        if self.hob_list.is_completed() {
+            Err(error::EfiError::AlreadyStarted)
+        } else {
+            Ok(self.hob_list.call_once(|| hob_list))
         }
     }
 
@@ -431,7 +428,7 @@ impl<P: PlatformInfo> Core<P> {
         hob_list.discover_hobs(physical_hob_list);
 
         log::trace!("HOB list discovered is:");
-        log::trace!("{:#x?}", hob_list);
+        log::trace!("{hob_list:#x?}");
 
         //make sure that well-known handles exist.
         PROTOCOL_DB.init_protocol_db();
@@ -456,9 +453,7 @@ impl<P: PlatformInfo> Core<P> {
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
-        if self.set_hob_list(hob_list).is_err() {
-            panic!("HOB list was already set!");
-        }
+        assert!(self.set_hob_list(hob_list).is_ok(), "HOB list was already set!");
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
@@ -686,11 +681,11 @@ fn call_bds() -> ! {
                     EFI_PROGRESS_CODE,
                     EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
                     0,
-                    &dxe_core_guid,
+                    &raw const dxe_core_guid,
                     ptr::null(),
                 );
             } else {
-                log::error!("status_code protocol pointer is NULL")
+                log::error!("status_code protocol pointer is NULL");
             }
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err}"),
@@ -707,11 +702,11 @@ fn call_bds() -> ! {
                     (bds_protocol_ptr.as_ref().entry)(bds_protocol_ptr.as_ptr());
                 }
             } else {
-                log::error!("bds protocol pointer is NULL")
+                log::error!("bds protocol pointer is NULL");
             }
         }
         Err(err) => log::error!("Unable to locate BDS arch protocol: {err}"),
-    };
+    }
 
     unreachable!("BDS arch protocol should be found and should never return.");
 }
@@ -736,18 +731,20 @@ mod tests {
             // other tests already.
             CORE.override_instance();
 
-            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-                panic!("CORE instance mismatch");
-            }
+            assert!(
+                NonNull::from_ref(&CORE) == NonNull::from_ref(Core::<MockPlatformInfo>::instance()),
+                "CORE instance mismatch"
+            );
 
             // We return true because its the same address
             assert!(CORE.set_instance());
             // This should fail because CORE2 is a different instance
             assert!(!CORE2.set_instance());
 
-            if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
-                panic!("CORE instance mismatch after second set_instance");
-            }
+            assert!(
+                NonNull::from_ref(&CORE) == NonNull::from_ref(Core::<MockPlatformInfo>::instance()),
+                "CORE instance mismatch after second set_instance"
+            );
         })
         .unwrap();
     }
@@ -774,7 +771,7 @@ mod tests {
                 test_support::init_test_protocol_db();
             }
 
-            f()
+            f();
         })
     }
 
@@ -782,7 +779,7 @@ mod tests {
     fn test_mock_call_bds_valid_non_null() {
         static BDS_CALLED: AtomicBool = AtomicBool::new(false);
         extern "efiapi" fn mock_bds(_this: *mut patina::pi::protocol::bds::BdsProtocol) {
-            BDS_CALLED.store(true, core::sync::atomic::Ordering::Relaxed)
+            BDS_CALLED.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
         assert!(
@@ -792,7 +789,7 @@ mod tests {
                 protocols::core_install_protocol_interface(
                     None,
                     patina::pi::protocol::bds::PROTOCOL_GUID.into_inner(),
-                    protocol as *mut _ as *mut c_void,
+                    std::ptr::from_mut(protocol) as *mut c_void,
                 )
                 .unwrap();
 
@@ -805,7 +802,7 @@ mod tests {
             })
         );
 
-        assert!(BDS_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+        assert!(BDS_CALLED.load(core::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -866,7 +863,7 @@ mod tests {
                 protocols::core_install_protocol_interface(
                     None,
                     patina::pi::protocol::status_code::PROTOCOL_GUID.into_inner(),
-                    protocol as *mut _ as *mut c_void,
+                    std::ptr::from_mut(protocol) as *mut c_void,
                 )
                 .unwrap();
 
@@ -879,7 +876,7 @@ mod tests {
             })
         );
 
-        assert!(STATUS_CODE_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+        assert!(STATUS_CODE_CALLED.load(core::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

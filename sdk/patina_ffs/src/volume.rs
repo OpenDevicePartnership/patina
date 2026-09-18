@@ -71,7 +71,7 @@ impl<'a> VolumeRef<'a> {
         }
 
         // SAFETY: buffer is large enough to contain the header.
-        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const fv::Header) };
+        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<fv::Header>()) };
 
         // Signature must be ASCII '_FVH'
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
@@ -121,7 +121,7 @@ impl<'a> VolumeRef<'a> {
         }
 
         //ext_header_offset: must be inside the fv
-        if fv_header.ext_header_offset as u64 > fv_header.fv_length {
+        if u64::from(fv_header.ext_header_offset) > fv_header.fv_length {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
@@ -133,7 +133,7 @@ impl<'a> VolumeRef<'a> {
                     .get(ext_header_offset..ext_header_offset + mem::size_of::<fv::ExtHeader>())
                     .ok_or(FirmwareFileSystemError::InvalidHeader)?;
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
-                let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr() as *const fv::ExtHeader) };
+                let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr().cast::<fv::ExtHeader>()) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -200,13 +200,13 @@ impl<'a> VolumeRef<'a> {
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
 
-    /// Instantiate a new FirmwareVolume from a base address.
+    /// Instantiate a new `FirmwareVolume` from a base address.
     ///
     /// ## Safety
     ///
-    /// Caller must ensure that base_address is the address of the start of a firmware volume.
-    /// Caller must ensure that the lifetime of the buffer at base_address is longer than the
-    /// returned VolumeRef.
+    /// Caller must ensure that `base_address` is the address of the start of a firmware volume.
+    /// Caller must ensure that the lifetime of the buffer at `base_address` is longer than the
+    /// returned `VolumeRef`.
     ///
     /// ## Examples
     ///
@@ -279,7 +279,7 @@ impl<'a> VolumeRef<'a> {
 
     /// Resolve information about a Logical Block Address (LBA).
     ///
-    /// Returns a tuple of (byte_offset_from_fv_start, block_size, remaining_blocks_in_region).
+    /// Returns a tuple of (`byte_offset_from_fv_start`, `block_size`, `remaining_blocks_in_region`).
     /// Errors if `lba` is out of range per the block map.
     ///
     /// ```rust no_run
@@ -403,14 +403,11 @@ impl<'a> Iterator for FileRefIter<'a> {
         if let Ok(ref file) = result {
             // per the PI spec, "Given a file F, the next file FvHeader is located at the next 8-byte aligned firmware volume
             // offset following the last byte the file F"
-            match align_up(self.next_offset as u64 + file.size() as u64, 8) {
-                Ok(next_offset) => {
-                    self.next_offset = next_offset as usize;
-                }
-                Err(_) => {
-                    self.error = true;
-                    return Some(Err(FirmwareFileSystemError::DataCorrupt));
-                }
+            if let Ok(next_offset) = align_up(self.next_offset as u64 + file.size() as u64, 8) {
+                self.next_offset = next_offset as usize;
+            } else {
+                self.error = true;
+                return Some(Err(FirmwareFileSystemError::DataCorrupt));
             }
         } else {
             self.error = true;
@@ -440,7 +437,7 @@ pub struct Volume {
 impl Volume {
     /// Create a new empty Firmware Volume builder with the given block map.
     ///
-    /// Defaults to the FFSv3 filesystem GUID, no extended header, and unbounded capacity.
+    /// Defaults to the `FFSv3` filesystem GUID, no extended header, and unbounded capacity.
     pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
         Self {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
@@ -479,9 +476,9 @@ impl Volume {
     ///
     /// Produces a correct FV header (including checksum), inserts PAD files to
     /// satisfy file alignment and optional extended header placement, respects
-    /// filesystem capabilities (FFSv2 vs FFSv3), and pads to capacity when set.
+    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to capacity when set.
     /// Errors propagate from serializing files and sections or when constraints
-    /// are violated (e.g., file too large for FFSv2).
+    /// are violated (e.g., file too large for `FFSv2`).
     ///
     /// ## Examples
     ///
@@ -534,13 +531,13 @@ impl Volume {
         //Patch the initial header into the output buffer
         // SAFETY: fv_header is repr(C) so it is safe to treat as a byte array for serialization.
         let mut fv_buffer =
-            unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)).to_vec() };
+            unsafe { from_raw_parts((&raw mut fv_header).cast::<u8>(), mem::size_of_val(&fv_header)).to_vec() };
 
         // add the block map
         for block in self.block_map.iter().chain(iter::once(&BlockMapEntry { num_blocks: 0, length: 0 })) {
             // SAFETY: block is repr(C) so it is safe to treat as a byte array for serialization.
             fv_buffer.extend_from_slice(unsafe {
-                from_raw_parts(block as *const BlockMapEntry as *const u8, mem::size_of_val(block))
+                from_raw_parts(core::ptr::from_ref::<BlockMapEntry>(block).cast::<u8>(), mem::size_of_val(block))
             });
         }
 
@@ -551,7 +548,11 @@ impl Volume {
             let offset = fv_buffer.len();
             // SAFETY: ext_header is repr(C) so it is safe to treat as a byte array.
             let mut ext_hdr_data = unsafe {
-                from_raw_parts(ext_header as *const fv::ExtHeader as *const u8, mem::size_of_val(ext_header)).to_vec()
+                from_raw_parts(
+                    core::ptr::from_ref::<fv::ExtHeader>(ext_header).cast::<u8>(),
+                    mem::size_of_val(ext_header),
+                )
+                .to_vec()
             };
             ext_hdr_data.extend(data);
 
@@ -670,7 +671,9 @@ impl Volume {
         fv_buffer
             .get_mut(..mem::size_of_val(&fv_header))
             .ok_or(FirmwareFileSystemError::InvalidHeader)?
-            .copy_from_slice(unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)) });
+            .copy_from_slice(unsafe {
+                from_raw_parts((&raw mut fv_header).cast::<u8>(), mem::size_of_val(&fv_header))
+            });
 
         // verify the checksum
         debug_assert_eq!(
@@ -845,7 +848,7 @@ mod test {
     }
 
     fn stringify(error: FirmwareFileSystemError) -> String {
-        format!("efi error: {:x?}", error).to_string()
+        format!("efi error: {error:x?}").to_string()
     }
 
     fn extract_text_from_section(section: &Section) -> Option<String> {
@@ -876,7 +879,7 @@ mod test {
                 assert_eq!(target.size, ffs_file.size(), "[{file_name}] Error with the file size (Full size).");
                 let sections = ffs_file.sections_with_extractor(extractor).map_err(stringify)?;
                 for section in sections.iter().enumerate() {
-                    println!("{:x?}", section);
+                    println!("{section:x?}");
                 }
                 assert_eq!(
                     target.number_of_sections,
@@ -929,7 +932,7 @@ mod test {
                 );
                 let sections: Vec<&Section> = ffs_file.section_iter().collect();
                 for section in sections.iter().enumerate() {
-                    println!("{:x?}", section);
+                    println!("{section:x?}");
                 }
                 assert_eq!(
                     target.number_of_sections,
@@ -1040,7 +1043,7 @@ mod test {
 
         // bogus signature.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).signature ^= 0xdeadbeef;
@@ -1049,7 +1052,7 @@ mod test {
 
         // bogus header_length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).header_length = 0;
@@ -1058,7 +1061,7 @@ mod test {
 
         // bogus checksum.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).checksum ^= 0xbeef;
@@ -1067,7 +1070,7 @@ mod test {
 
         // bogus revision.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).revision = 1;
@@ -1076,7 +1079,7 @@ mod test {
 
         // bogus filesystem guid.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         //SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).file_system_guid = patina::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
@@ -1085,7 +1088,7 @@ mod test {
 
         // bogus fv length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).fv_length = 0;
@@ -1094,10 +1097,10 @@ mod test {
 
         // bogus ext header offset.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
-            (*fv_header).fv_length = ((*fv_header).ext_header_offset - 1) as u64;
+            (*fv_header).fv_length = u64::from((*fv_header).ext_header_offset - 1);
         };
         assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
 
@@ -1127,18 +1130,18 @@ mod test {
 
         let a = A { foo: 0, bar: 0, baz: 0, block_map: [fv::BlockMapEntry { length: 0, num_blocks: 0 }; 0] };
 
-        let a_ptr = &a as *const A;
+        let a_ptr = &raw const a;
 
         // SAFETY: test case for checking pointer math here.
         unsafe {
-            assert_eq!(((*a_ptr).block_map).as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
+            assert_eq!(((*a_ptr).block_map).as_ptr(), a_ptr.add(1).cast::<fv::BlockMapEntry>());
         }
     }
 
     struct ExampleSectionExtractor {}
     impl SectionExtractor for ExampleSectionExtractor {
         fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-            println!("Encapsulated section: {:?}", section);
+            println!("Encapsulated section: {section:?}");
             Ok(Vec::new()) //A real section extractor would provide the extracted buffer on return.
         }
     }
@@ -1199,7 +1202,7 @@ mod test {
                 assert_eq!(length, 0);
                 assert_eq!(header.compression_type, 1);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_guid_defined: [u8; 32] = [
@@ -1221,10 +1224,10 @@ mod test {
                 );
                 assert_eq!(header.data_offset, 0x1C);
                 assert_eq!(header.attributes, 0x3412);
-                assert_eq!(guid_data.to_vec(), &[0x00u8, 0x01, 0x02, 0x03]);
+                assert_eq!(guid_data.clone(), &[0x00u8, 0x01, 0x02, 0x03]);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_version: [u8; 14] =
@@ -1236,7 +1239,7 @@ mod test {
                 assert_eq!(build_number, 0);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_freeform_subtype: [u8; 24] = [
@@ -1255,7 +1258,7 @@ mod test {
                 );
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         Ok(())
@@ -1345,7 +1348,7 @@ mod test {
 
             let mismatch = &original_fv_bytes.iter().zip(&serialized_fv_bytes).enumerate().find_map(
                 |(offset, (expected, actual))| {
-                    if *expected != *actual { Some((offset, (*expected, *actual))) } else { None }
+                    if *expected == *actual { None } else { Some((offset, (*expected, *actual))) }
                 },
             );
 

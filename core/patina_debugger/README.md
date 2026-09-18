@@ -44,7 +44,8 @@ The self-hosted debugger is lightweight and tightly integrated with Patina, offe
 
 ## Platform Integration
 
-1. Instantiate a `PatinaDebugger` with the platform UART configuration (for example, `Uart16550::Io { base: 0x3F8 }`).
+1. Instantiate a `PatinaDebugger` with the platform UART configuration (for example,
+   `unsafe { Uart16550::new_io(0x3F8) }`).
 2. Apply any policy overrides such as `.with_force_enable`, `.with_log_policy`, or `.with_transport_init` when
    if the debugger must initialize the transport.
 3. Register the debugger using `patina_debugger::set_debugger(&DEBUGGER)` before the Patina DXE Core starts dispatching

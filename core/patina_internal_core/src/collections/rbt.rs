@@ -30,7 +30,7 @@ where
     /// Creates a zero capacity red-black tree.
     ///
     /// This is useful for creating a tree at compile time and replacing the memory later. Use
-    /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
+    /// [`with_capacity`](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
     /// [expand](Self::expand) to replace the memory later.
     pub const fn new() -> Self {
         Rbt { storage: Storage::new(), root: Cell::new(core::ptr::null_mut()) }
@@ -76,9 +76,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [AlreadyExists](Error::AlreadyExists) if the value already exists in the tree.
+    /// Returns [`AlreadyExists`](Error::AlreadyExists) if the value already exists in the tree.
     ///
-    /// Returns [OutOfSpace](Error::OutOfSpace) if the storage is full.
+    /// Returns [`OutOfSpace`](Error::OutOfSpace) if the storage is full.
     ///
     pub fn add(&mut self, data: D) -> Result<usize> {
         let (idx, node) = self.storage.add(data)?;
@@ -128,22 +128,24 @@ where
         let mut current = start;
         loop {
             match node.key().cmp(current.key()) {
-                Ordering::Less => match current.left() {
-                    Some(left) => current = left,
-                    None => {
+                Ordering::Less => {
+                    if let Some(left) = current.left() {
+                        current = left;
+                    } else {
                         current.set_left(Some(node));
                         node.set_parent(Some(current));
                         return Ok(());
                     }
-                },
-                Ordering::Greater => match current.right() {
-                    Some(right) => current = right,
-                    None => {
+                }
+                Ordering::Greater => {
+                    if let Some(right) = current.right() {
+                        current = right;
+                    } else {
                         current.set_right(Some(node));
                         node.set_parent(Some(current));
                         return Ok(());
                     }
-                },
+                }
                 Ordering::Equal => return Err(Error::AlreadyExists),
             }
         }
@@ -157,7 +159,7 @@ where
     ///
     /// # Time Complexity
     ///
-    /// O(log n) for a balanced tree. Use [get_with_idx](Self::get_with_idx)
+    /// O(log n) for a balanced tree. Use [`get_with_idx`](Self::get_with_idx)
     /// if you know the index, as it is O(1).
     ///
     pub fn get(&self, key: &D::Key) -> Option<&D> {
@@ -1760,7 +1762,7 @@ mod tests {
         while let Some(cur) = current {
             assert_eq!(cur, &val);
             current = rbt.next(*cur);
-            val += 1
+            val += 1;
         }
 
         val -= 1;
@@ -1872,11 +1874,11 @@ mod fuzz_tests {
             random_numbers.shuffle(&mut rng);
 
             assert_eq!(random_numbers.len(), RBT_MAX_SIZE - 1);
-            for num in random_numbers.iter() {
+            for num in &random_numbers {
                 assert!(rbt.add(*num).is_ok());
             }
             assert!(rbt.height() < 25);
-            random_numbers.sort();
+            random_numbers.sort_unstable();
 
             #[cfg(feature = "alloc")]
             {
@@ -1905,7 +1907,7 @@ mod fuzz_tests {
             random_numbers.shuffle(&mut rng);
 
             assert_eq!(random_numbers.len(), RBT_MAX_SIZE);
-            for num in random_numbers.iter() {
+            for num in &random_numbers {
                 assert!(rbt.add(*num).is_ok());
             }
 
@@ -1937,7 +1939,7 @@ mod fuzz_tests {
         random_numbers.shuffle(&mut rng);
 
         assert_eq!(random_numbers.len(), RBT_MAX_SIZE);
-        for num in random_numbers.iter() {
+        for num in &random_numbers {
             assert!(rbt.add(*num).is_ok());
         }
 

@@ -21,7 +21,7 @@ pub const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("2a22e38f-9d1c-49d
 /// The MM communicate buffer facilitates data sharing between non-MM and MM code.
 ///
 /// The MM IPL code allocates a "fixed" runtime type memory as the MM communication buffer,
-/// and communicates its address and size to MM Core via MmCommBuffer GUIDed HOB.
+/// and communicates its address and size to MM Core via `MmCommBuffer` `GUIDed` HOB.
 #[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout)]
 #[repr(C, packed)]
 pub struct MmCommBuffer {
@@ -29,7 +29,7 @@ pub struct MmCommBuffer {
     pub physical_start: u64,
     /// Size of the communication buffer in UEFI pages (4KB each)
     pub number_of_pages: u64,
-    /// The address of a MM_COMM_BUFFER_STATUS structure.
+    /// The address of a `MM_COMM_BUFFER_STATUS` structure.
     pub status: u64,
 }
 

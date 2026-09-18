@@ -25,6 +25,8 @@ pub enum GicVersion {
 #[allow(dead_code)]
 fn get_control_system_reg_enable() -> u64 {
     let current_el = get_current_el();
+    // Arms read different EL-specific registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     match current_el {
         AArch64El::EL2 => read_sysreg!(ICC_SRE_EL2),
         AArch64El::EL1 => read_sysreg!(ICC_SRE_EL1),
@@ -34,6 +36,8 @@ fn get_control_system_reg_enable() -> u64 {
 #[allow(dead_code)]
 fn set_control_system_reg_enable(icc_sre: u64) -> u64 {
     let current_el = get_current_el();
+    // Arms write different EL-specific registers. Identical only when built against the host stub macros.
+    #[allow(clippy::match_same_arms)]
     match current_el {
         AArch64El::EL2 => {
             write_sysreg!(reg ICC_SRE_EL2, icc_sre);
@@ -75,7 +79,7 @@ pub struct AArch64InterruptInitializer {
 }
 
 impl AArch64InterruptInitializer {
-    /// Create AArch64InterruptInitializer from register bases and initialize GICv3/4 hardware for use by the current
+    /// Create `AArch64InterruptInitializer` from register bases and initialize GICv3/4 hardware for use by the current
     /// cpu.
     ///
     /// * Enable affinity routing and non-secure group 1 interrupts.
@@ -88,7 +92,7 @@ impl AArch64InterruptInitializer {
     ///
     /// `gicr_base` must point to the GIC Redistributor register space.
     ///
-    /// Caller must guarantee that access to these registers is exclusive to this AArch64InterruptInitializer instance
+    /// Caller must guarantee that access to these registers is exclusive to this `AArch64InterruptInitializer` instance
     ///
     pub unsafe fn new(gicd_base: *mut u64, gicr_base: *mut u64) -> Result<Self, EfiError> {
         let gic_v = get_system_gic_version();
@@ -100,8 +104,8 @@ impl AArch64InterruptInitializer {
         // Convert raw GIC address pointers to appropriate types.
         // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         let (gicd, gicr) = unsafe {
-            let gicd = UniqueMmioPointer::new(NonNull::new(gicd_base as _).ok_or(EfiError::InvalidParameter)?);
-            let gicr = NonNull::new(gicr_base as _).ok_or(EfiError::InvalidParameter)?;
+            let gicd = UniqueMmioPointer::new(NonNull::new(gicd_base.cast()).ok_or(EfiError::InvalidParameter)?);
+            let gicr = NonNull::new(gicr_base.cast()).ok_or(EfiError::InvalidParameter)?;
             (gicd, gicr)
         };
 
@@ -110,7 +114,7 @@ impl AArch64InterruptInitializer {
         let mut r_count = 0;
 
         let mpidr = read_sysreg!(MPIDR_EL1) & MPIDR_AFFINITY_MASK;
-        log::debug!("Current CPU MPIDR: {:#x}", mpidr);
+        log::debug!("Current CPU MPIDR: {mpidr:#x}");
         // Support for GIC v4 is backward compatible with GIC v3, so always enable it.
         // SAFETY: function safety requirements guarantee exclusive access to the GICR registers.
         for (index, redistributor) in unsafe { GicRedistributorIterator::new(gicr, true) }.enumerate() {
@@ -118,10 +122,7 @@ impl AArch64InterruptInitializer {
             if redistributor.typer().core_mpidr() == mpidr {
                 if cpu_r_idx != usize::MAX {
                     log::error!(
-                        "Multiple redistributors found for current cpu mpidr {:#x} at index {} and {}",
-                        mpidr,
-                        cpu_r_idx,
-                        index
+                        "Multiple redistributors found for current cpu mpidr {mpidr:#x} at index {cpu_r_idx} and {index}"
                     );
                     return Err(EfiError::DeviceError);
                 }
@@ -134,7 +135,7 @@ impl AArch64InterruptInitializer {
                 if redistributor.typer().core_mpidr() == mpidr { "(Current CPU)" } else { "" }
             );
         }
-        log::info!("Total Redistributors: {}, Current CPU Redistributor Index: {}", r_count, cpu_r_idx);
+        log::info!("Total Redistributors: {r_count}, Current CPU Redistributor Index: {cpu_r_idx}");
         if cpu_r_idx == usize::MAX {
             log::error!("Failed to find redistributor for current cpu");
             return Err(EfiError::DeviceError);

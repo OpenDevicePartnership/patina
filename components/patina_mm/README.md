@@ -18,11 +18,11 @@ without relying a driver implemented in C. Read more about MM Technology [here](
 
 ## Platform Managed Components and services
 
-- **MmCommunicator component**: Consumes locked MM configuration, registers the `MmCommunication` service, and
+- **`MmCommunicator` component**: Consumes locked MM configuration, registers the `MmCommunication` service, and
   coordinates MM execution through a swappable executor abstraction that enables in-depth host-based testing.
-- **SwMmiManager component**: Consumes the same configuration, registers the `SwMmiTrigger` service, and optionally
+- **`SwMmiManager` component**: Consumes the same configuration, registers the `SwMmiTrigger` service, and optionally
   invokes `PlatformMmControl` before exposing MM interrupt capabilities.
-- **PlatformMmControl service (optional)**: Lets platforms implement platform-specific logic to prepare for MM
+- **`PlatformMmControl` service (optional)**: Lets platforms implement platform-specific logic to prepare for MM
   interrupts.
 
 ## Platform Configuration

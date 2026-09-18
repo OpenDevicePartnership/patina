@@ -119,31 +119,39 @@ mod tests {
         let mut scratch_size = 0u32;
 
         // SAFETY: src is valid, dst_size is valid, scratch_size is valid.
-        let status = unsafe { get_info(ptr::null_mut(), ptr::null_mut(), 16, &mut dst_size, &mut scratch_size) };
+        let status =
+            unsafe { get_info(ptr::null_mut(), ptr::null_mut(), 16, &raw mut dst_size, &raw mut scratch_size) };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         // SAFETY: src is valid, dst_size is null under test, scratch_size is valid.
         let status = unsafe {
-            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, ptr::null_mut(), &mut scratch_size)
+            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, ptr::null_mut(), &raw mut scratch_size)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         // SAFETY: src and dst_size are valid, scratch_size is null under test.
-        let status =
-            unsafe { get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &mut dst_size, ptr::null_mut()) };
+        let status = unsafe {
+            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &raw mut dst_size, ptr::null_mut())
+        };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         let mut small = [0u8; 4];
         // SAFETY: all pointers reference valid stack values.
         let status = unsafe {
-            get_info(ptr::null_mut(), small.as_mut_ptr() as *mut c_void, 4, &mut dst_size, &mut scratch_size)
+            get_info(ptr::null_mut(), small.as_mut_ptr() as *mut c_void, 4, &raw mut dst_size, &raw mut scratch_size)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         let mut undersized = compressed_header(100, 50);
         // SAFETY: all pointers reference valid stack values.
         let status = unsafe {
-            get_info(ptr::null_mut(), undersized.as_mut_ptr() as *mut c_void, 16, &mut dst_size, &mut scratch_size)
+            get_info(
+                ptr::null_mut(),
+                undersized.as_mut_ptr() as *mut c_void,
+                16,
+                &raw mut dst_size,
+                &raw mut scratch_size,
+            )
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
@@ -155,8 +163,9 @@ mod tests {
         let mut scratch_size = 0xFFFF_FFFFu32;
 
         // SAFETY: all pointers reference valid stack values and src_size matches the buffer.
-        let status =
-            unsafe { get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &mut dst_size, &mut scratch_size) };
+        let status = unsafe {
+            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &raw mut dst_size, &raw mut scratch_size)
+        };
         assert_eq!(status, efi::Status::SUCCESS);
         assert_eq!(dst_size, 100);
         assert_eq!(scratch_size, 0);

@@ -46,7 +46,7 @@ pub type AddMemorySpace = extern "efiapi" fn(GcdMemoryType, PhysicalAddress, u64
 ///
 /// This service allocates nonexistent memory, reserved memory, system memory,
 /// or memory-mapped I/O resources from the Global Coherency Domain of the processor.
-/// The allocation strategy is determined by the GcdAllocateType parameter.
+/// The allocation strategy is determined by the `GcdAllocateType` parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
@@ -126,7 +126,7 @@ pub type AddIoSpace = extern "efiapi" fn(GcdIoType, PhysicalAddress, u64) -> Sta
 ///
 /// This service allocates nonexistent I/O, reserved I/O, or I/O resources
 /// from the Global Coherency Domain of the processor. The allocation strategy
-/// is determined by the GcdAllocateType parameter.
+/// is determined by the `GcdAllocateType` parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.10
@@ -288,13 +288,13 @@ pub struct MemorySpaceDescriptor {
     pub attributes: u64,
     /// Type of the memory region.
     pub memory_type: GcdMemoryType,
-    /// The image handle of the agent that allocated the memory resource described by PhysicalStart and NumberOfBytes.
+    /// The image handle of the agent that allocated the memory resource described by `PhysicalStart` and `NumberOfBytes`.
     ///
     /// If this field is NULL, then the memory resource is not currently allocated.
     pub image_handle: Handle,
     /// The device handle for which the memory resource has been allocated.
     ///
-    /// If ImageHandle is NULL, then the memory resource is not currently allocated.
+    /// If `ImageHandle` is NULL, then the memory resource is not currently allocated.
     ///
     /// If this field is NULL, then the memory resource is not associated with a device that is described by a device handle.
     pub device_handle: Handle,
@@ -342,7 +342,7 @@ pub enum GcdIoType {
     /// An I/O region currently being decoded by a system component that produces
     /// I/O ports that can be used to access I/O devices.
     Io,
-    /// Maximum value for GcdIoType enumeration
+    /// Maximum value for `GcdIoType` enumeration
     Maximum,
 }
 
@@ -356,13 +356,13 @@ pub struct IoSpaceDescriptor {
     pub length: u64,
     /// Type of the I/O region.
     pub io_type: GcdIoType,
-    /// The image handle of the agent that allocated the I/O resource described by PhysicalStart and NumberOfBytes.
+    /// The image handle of the agent that allocated the I/O resource described by `PhysicalStart` and `NumberOfBytes`.
     ///
     /// If this field is NULL, then the I/O resource is not currently allocated.
     pub image_handle: Handle,
     /// The device handle for which the I/O resource has been allocated.
     ///
-    /// If ImageHandle is NULL , then the I/O resource is not currently allocated.
+    /// If `ImageHandle` is NULL , then the I/O resource is not currently allocated.
     ///
     /// If this field is NULL, then the I/O resource is not associated with a device that is described by a device handle.
     pub device_handle: Handle,
@@ -437,7 +437,7 @@ impl Default for MemorySpaceDescriptor {
             length: Default::default(),
             capabilities: Default::default(),
             attributes: Default::default(),
-            memory_type: Default::default(),
+            memory_type: GcdMemoryType::default(),
             image_handle: 0 as Handle,
             device_handle: 0 as Handle,
         }
@@ -449,7 +449,7 @@ impl Default for IoSpaceDescriptor {
         Self {
             base_address: Default::default(),
             length: Default::default(),
-            io_type: Default::default(),
+            io_type: GcdIoType::default(),
             image_handle: 0 as Handle,
             device_handle: 0 as Handle,
         }

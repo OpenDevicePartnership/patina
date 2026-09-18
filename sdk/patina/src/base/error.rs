@@ -209,6 +209,6 @@ mod tests {
         // An unknown status delegates to the `efi::Status` `Display` impl.
         let status = efi::Status::from_usize(0x1234);
         let unknown = EfiError::Unknown(status);
-        assert_eq!(format!("{}", unknown), format!("{}", status));
+        assert_eq!(format!("{unknown}"), format!("{}", status));
     }
 }

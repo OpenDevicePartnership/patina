@@ -1,6 +1,6 @@
 //! DXE Core CPU initialization types.
 //!
-//! This module provides the [EfiCpu] type used for boot-time CPU initialization. The [EfiCpu]
+//! This module provides the [`EfiCpu`] type used for boot-time CPU initialization. The [`EfiCpu`]
 //! struct is architecture specific and selected at compile time based on the target architecture.
 //!
 //! ## License

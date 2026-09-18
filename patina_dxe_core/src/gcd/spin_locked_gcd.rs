@@ -9,7 +9,7 @@
 use crate::pecoff::UefiPeInfo;
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina::{DEFAULT_CACHE_ATTR, error::EfiError, log_debug_assert};
+use patina::{DEFAULT_CACHE_ATTR, crc32, error::EfiError, log_debug_assert};
 
 use patina::standard::efi;
 use patina::{
@@ -178,14 +178,14 @@ const ATTRIBUTE_CONVERSION_TABLE: [GcdAttributeConversionEntry; 15] = [
 pub fn get_capabilities(gcd_mem_type: GcdMemoryType, attributes: u64) -> u64 {
     let mut capabilities = 0;
 
-    for conversion in ATTRIBUTE_CONVERSION_TABLE.iter() {
+    for conversion in &ATTRIBUTE_CONVERSION_TABLE {
         if conversion.attribute == 0 {
             break;
         }
 
         if (conversion.memory
             || (gcd_mem_type != GcdMemoryType::SystemMemory && gcd_mem_type != GcdMemoryType::MoreReliable))
-            && (attributes & (conversion.attribute as u64) != 0)
+            && (attributes & u64::from(conversion.attribute) != 0)
         {
             capabilities |= conversion.capability;
         }
@@ -246,57 +246,53 @@ impl PageAllocator for PagingAllocator<'_> {
                 protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
                 None,
             );
-            match res {
-                Ok(root_page) => Ok(root_page as u64),
-                Err(_) => {
-                    // if we failed, try again with normal allocation
-                    log::error!(
-                        "Failed to allocate root page for the page table page pool, retrying with normal allocation"
-                    );
+            if let Ok(root_page) = res {
+                Ok(root_page as u64)
+            } else {
+                // if we failed, try again with normal allocation
+                log::error!(
+                    "Failed to allocate root page for the page table page pool, retrying with normal allocation"
+                );
 
-                    match self.gcd.memory.lock().allocate_memory_space(
-                        DEFAULT_ALLOCATION_STRATEGY,
-                        GcdMemoryType::SystemMemory,
-                        UEFI_PAGE_SHIFT,
-                        uefi_pages_to_size!(len),
-                        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        None,
-                    ) {
-                        Ok(root_page) => Ok(root_page as u64),
-                        Err(e) => {
-                            // okay we are good and dead now
-                            panic!("Failed to allocate root page for the page table page pool: {e}");
-                        }
+                match self.gcd.memory.lock().allocate_memory_space(
+                    DEFAULT_ALLOCATION_STRATEGY,
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    uefi_pages_to_size!(len),
+                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                    None,
+                ) {
+                    Ok(root_page) => Ok(root_page as u64),
+                    Err(e) => {
+                        // okay we are good and dead now
+                        panic!("Failed to allocate root page for the page table page pool: {e}");
                     }
                 }
             }
+        } else if let Some(page) = self.page_pool.pop() {
+            Ok(page)
         } else {
-            match self.page_pool.pop() {
-                Some(page) => Ok(page),
-                None => {
-                    // allocate 512 pages at a time
-                    let len = PAGE_POOL_CAPACITY;
+            // allocate 512 pages at a time
+            let len = PAGE_POOL_CAPACITY;
 
-                    // we only allocate here, not map. The page table is self-mapped, so we don't have to identity
-                    // map them. This function is called with the page table lock held, so we cannot do that
-                    match self.gcd.memory.lock().allocate_memory_space(
-                        DEFAULT_ALLOCATION_STRATEGY,
-                        GcdMemoryType::SystemMemory,
-                        UEFI_PAGE_SHIFT,
-                        uefi_pages_to_size!(len),
-                        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        None,
-                    ) {
-                        Ok(addr) => {
-                            for i in 0..len {
-                                self.page_pool.push(addr as u64 + ((i * UEFI_PAGE_SIZE) as u64));
-                            }
-                            self.page_pool.pop().ok_or(PtError::OutOfResources)
-                        }
-                        Err(e) => {
-                            panic!("Failed to allocate pages for the page table page pool {e}");
-                        }
+            // we only allocate here, not map. The page table is self-mapped, so we don't have to identity
+            // map them. This function is called with the page table lock held, so we cannot do that
+            match self.gcd.memory.lock().allocate_memory_space(
+                DEFAULT_ALLOCATION_STRATEGY,
+                GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                uefi_pages_to_size!(len),
+                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                None,
+            ) {
+                Ok(addr) => {
+                    for i in 0..len {
+                        self.page_pool.push(addr as u64 + ((i * UEFI_PAGE_SIZE) as u64));
                     }
+                    self.page_pool.pop().ok_or(PtError::OutOfResources)
+                }
+                Err(e) => {
+                    panic!("Failed to allocate pages for the page table page pool {e}");
                 }
             }
         }
@@ -321,11 +317,13 @@ impl GCD {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)] // The function pointers are excluded from debug prints.
 impl core::fmt::Debug for GCD {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GCD")
             .field("maximum_address", &self.maximum_address)
             .field("memory_blocks", &self.memory_blocks)
+            .field("prioritize_32_bit_memory", &self.prioritize_32_bit_memory)
             .finish()
     }
 }
@@ -399,7 +397,7 @@ impl GCD {
             GCD.memory_protection_policy
                 .apply_allocated_memory_protection_policy(attributes, GcdMemoryType::SystemMemory),
         ) {
-            Ok(_) | Err(EfiError::NotReady) => Ok(()),
+            Ok(()) | Err(EfiError::NotReady) => Ok(()),
             Err(err) => Err(err),
         }?;
 
@@ -420,7 +418,7 @@ impl GCD {
                 len - MEMORY_BLOCK_SLICE_SIZE,
                 MemoryProtectionPolicy::apply_free_memory_policy(attributes, GcdMemoryType::SystemMemory),
             ) {
-                Ok(_) | Err(EfiError::NotReady) => Ok(()),
+                Ok(()) | Err(EfiError::NotReady) => Ok(()),
                 Err(err) => Err(err),
             }?;
         }
@@ -431,7 +429,7 @@ impl GCD {
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
     ///
     /// # Safety
-    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
+    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [`MEMORY_BLOCK_SLICE_SIZE`].
     /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
     ///
     /// # Documentation
@@ -646,7 +644,7 @@ impl GCD {
 
         Self::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition)
             .map(|_| ())
-            .map_err(|e| e.into())
+            .map_err(core::convert::Into::into)
     }
 
     #[cfg_attr(coverage, coverage(off))]
@@ -1812,7 +1810,7 @@ impl IoGCD {
         ensure!(buffer.capacity() >= self.io_descriptor_count(), EfiError::InvalidParameter);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
-        log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
+        log::trace!(target: "allocations", "[{}] Enter\n", function!());
 
         if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
@@ -2062,7 +2060,7 @@ impl SpinLockedGcd {
             // we might be freeing an entire image but the stack guard page is already unmapped.
             if paging_attrs & MemoryAttributes::ReadProtect == MemoryAttributes::ReadProtect {
                 match page_table.unmap_memory_region(base_address as u64, len as u64) {
-                    Ok(_) => {
+                    Ok(()) => {
                         log::trace!(
                             target: "paging",
                             "Memory region {base_address:#x?} of length {len:#x?} unmapped",
@@ -2135,7 +2133,7 @@ impl SpinLockedGcd {
             }
 
             match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
-                Ok(_) => {
+                Ok(()) => {
                     let new_cache_attributes = paging_attrs & MemoryAttributes::CacheAttributesMask;
                     let old_cache_attributes =
                         region_attributes.map(|attrs| attrs & MemoryAttributes::CacheAttributesMask);
@@ -2367,14 +2365,14 @@ impl SpinLockedGcd {
         for section in pe_info.sections {
             // each section starts at image_base + virtual_address, per PE/COFF spec.
             let section_base_address =
-                dxe_core_hob.alloc_descriptor.memory_base_address + (section.virtual_address as u64);
+                dxe_core_hob.alloc_descriptor.memory_base_address + u64::from(section.virtual_address);
             let (attributes, _) =
                 MemoryProtectionPolicy::apply_image_protection_policy(section.characteristics, &dxe_core_desc);
 
             // We need to use the virtual size for the section length, but
             // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
             let aligned_virtual_size = match align_up(section.virtual_size, pe_info.section_alignment) {
-                Ok(size) => size as u64,
+                Ok(size) => u64::from(size),
                 Err(_) => {
                     panic!(
                         "Failed to align section size {:#x?} with alignment {:#x?}",
@@ -2464,13 +2462,10 @@ impl SpinLockedGcd {
                     .memory_protection_policy
                     .apply_allocated_memory_protection_policy(gcd_desc.attributes, gcd_desc.memory_type);
                 match self.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
-                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Ok(()) | Err(EfiError::NotReady) => (),
                     Err(e) => {
                         log::error!(
-                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
-                            stack_address,
-                            stack_length,
-                            e
+                            "Could not set NX for memory address {stack_address:#X} for len {stack_length:#X} with error {e:?}"
                         );
                         debug_assert!(false);
                     }
@@ -2481,13 +2476,10 @@ impl SpinLockedGcd {
                     UEFI_PAGE_SIZE,
                     MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
                 ) {
-                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Ok(()) | Err(EfiError::NotReady) => (),
                     Err(e) => {
                         log::error!(
-                            "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
-                            stack_address,
-                            UEFI_PAGE_SIZE,
-                            e
+                            "Could not set RP for memory address {stack_address:#X} for len {UEFI_PAGE_SIZE:#X} with error {e:?}"
                         );
                         debug_assert!(false);
                     }
@@ -2526,7 +2518,7 @@ impl SpinLockedGcd {
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
     ///
     /// # Safety
-    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
+    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [`MEMORY_BLOCK_SLICE_SIZE`].
     /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
     ///
     /// # Documentation
@@ -2558,7 +2550,7 @@ impl SpinLockedGcd {
         if result.is_ok() {
             if let Some(page_table) = &mut *self.page_table.lock() {
                 match page_table.unmap_memory_region(base_address as u64, len as u64) {
-                    Ok(_) => {}
+                    Ok(()) => {}
                     Err(status) => {
                         log::error!(
                             "Failed to unmap memory region {base_address:#x?} of length {len:#x?}. Status: {status:#x?} during
@@ -2616,7 +2608,7 @@ impl SpinLockedGcd {
                 attributes =
                     self.memory_protection_policy.apply_allocated_memory_protection_policy(attributes, memory_type);
                 match self.set_memory_space_attributes(*base_address, len, attributes) {
-                    Ok(_) => (),
+                    Ok(()) => (),
                     Err(EfiError::NotReady) => {
                         // this is expected if paging is not initialized yet. The GCD will still be updated, but
                         // the page table will not yet. When we initialize paging, the GCD will use the attributes
@@ -2718,7 +2710,7 @@ impl SpinLockedGcd {
     /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
     /// global coherency domain of the processor.
     ///
-    /// Ownership of the memory as indicated by the image_handle associated with the block is retained, which means that
+    /// Ownership of the memory as indicated by the `image_handle` associated with the block is retained, which means that
     /// it cannot be re-allocated except by the original owner or by requests targeting a specific address within the
     /// block (i.e. [`Self::allocate_memory_space`] with [`AllocateType::Address`]).
     ///
@@ -2763,7 +2755,7 @@ impl SpinLockedGcd {
         // to maintain compatibility with existing drivers, we preserve this poor paradigm.
         if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
             match self.set_paging_attributes(base_address, len, attributes) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(EfiError::NotReady) => {
                     // before the page table is installed, we expect to get a return of NotReady. This means the GCD
                     // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
@@ -2787,8 +2779,7 @@ impl SpinLockedGcd {
                     {
                         // well, we did our best. The GCD and page table are now out of sync, which is a critical error.
                         log::error!(
-                            "Failed to roll back GCD attributes after page table attribute set failure. This is a critical error. GCD and page table are now out of sync. Rollback error: {:?}",
-                            rollback_err
+                            "Failed to roll back GCD attributes after page table attribute set failure. This is a critical error. GCD and page table are now out of sync. Rollback error: {rollback_err:?}"
                         );
                     }
 
@@ -2823,7 +2814,7 @@ impl SpinLockedGcd {
                 attributes,
                 desc.attributes,
             ) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(EfiError::NotReady) => {
                     // before the page table is installed, we expect to get a return of NotReady. This means the GCD
                     // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
@@ -2953,7 +2944,7 @@ impl SpinLockedGcd {
         self.io.lock().allocate_io_space(allocate_type, io_type, alignment, len, image_handle, device_handle)
     }
 
-    /// Acquires lock and delegates to [`IoGCD::free_io_space]
+    /// Acquires lock and delegates to [`IoGCD::free_io_space`]
     pub fn free_io_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         self.io.lock().free_io_space(base_address, len)
     }
@@ -2981,7 +2972,7 @@ impl SpinLockedGcd {
     ///
     /// * `memory_map_bytes` - The byte slice representing the EFI memory map
     pub fn set_last_efi_memory_map_key(&self, memory_map_bytes: &[u8]) {
-        let key = crc32fast::hash(memory_map_bytes) as usize;
+        let key = crc32::calculate_crc32(memory_map_bytes) as usize;
         *self.last_efi_memory_map_key.lock() = Some(key);
     }
 }
@@ -3030,7 +3021,7 @@ impl<'a> DescRangeIterator<'a> {
     }
 }
 
-impl<'a> Iterator for DescRangeIterator<'a> {
+impl Iterator for DescRangeIterator<'_> {
     type Item = Result<MemorySpaceDescriptor, EfiError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -3173,7 +3164,7 @@ mod tests {
             let gcd = GCD::new(48);
             assert_eq!(2_usize.pow(48), gcd.maximum_address);
             assert_eq!(gcd.memory_blocks.capacity(), 0);
-            assert_eq!(0, gcd.memory_descriptor_count())
+            assert_eq!(0, gcd.memory_descriptor_count());
         });
     }
 
@@ -3451,7 +3442,7 @@ mod tests {
                         MemoryBlock::Unallocated(md) => {
                             assert_eq!(100, md.base_address);
                             assert_eq!(10, md.length);
-                            assert_eq!(efi::MEMORY_RUNTIME | efi::MEMORY_ACCESS_MASK | 123, md.capabilities);
+                            assert_eq!(efi::MEMORY_RUNTIME | efi::MEMORY_ACCESS_MASK | 0x007b, md.capabilities);
                             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
                             assert_eq!(0, md.image_handle as usize);
                             assert_eq!(0, md.device_handle as usize);
@@ -3673,7 +3664,7 @@ mod tests {
             );
 
             match gcd.remove_memory_space(0, 10) {
-                Ok(_) => {
+                Ok(()) => {
                     let mb = copy_memory_block(&gcd)[0];
                     match mb {
                         MemoryBlock::Unallocated(md) => {
@@ -6105,7 +6096,7 @@ mod tests {
                         descriptors.push(desc);
                     }
                     Err(e) => {
-                        panic!("Should not get error for existing descriptors: {:?}", e);
+                        panic!("Should not get error for existing descriptors: {e:?}");
                     }
                 }
             }
@@ -6544,7 +6535,7 @@ mod tests {
                 };
 
                 let result_active = GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::CONVENTIONAL_MEMORY, true);
-                assert_eq!(result_active, attributes, "Failed for attributes={:#x}", attributes);
+                assert_eq!(result_active, attributes, "Failed for attributes={attributes:#x}");
 
                 let result_capabilities =
                     GCD::adjust_efi_memory_map_descriptor(&descriptor, efi::CONVENTIONAL_MEMORY, false);
@@ -6554,7 +6545,7 @@ mod tests {
                     GcdMemoryType::SystemMemory,
                     efi::CONVENTIONAL_MEMORY,
                 );
-                assert_eq!(result_capabilities, expected, "Failed for capabilities={:#x}", capabilities);
+                assert_eq!(result_capabilities, expected, "Failed for capabilities={capabilities:#x}");
             }
         });
     }
@@ -6780,7 +6771,7 @@ mod tests {
 
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Should count: 1 SystemMemory (from create_gcd) + 1 runtime MMIO
-            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+            assert!(count >= 2, "Expected at least 2 descriptors, got {count}");
         });
     }
 
@@ -6819,7 +6810,7 @@ mod tests {
 
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Should count: SystemMemory (from create_gcd) + runtime MMIO + Persistent + Reserved = at least 4
-            assert!(count >= 4, "Expected at least 4 descriptors, got {}", count);
+            assert!(count >= 4, "Expected at least 4 descriptors, got {count}");
         });
     }
 
@@ -6862,7 +6853,7 @@ mod tests {
 
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Expect 1 SystemMemory (from create_gcd) + 1 Persistent
-            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+            assert!(count >= 2, "Expected at least 2 descriptors, got {count}");
         });
     }
 
@@ -6881,7 +6872,7 @@ mod tests {
 
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Expect 1 SystemMemory (from create_gcd) + 1 Unaccepted
-            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+            assert!(count >= 2, "Expected at least 2 descriptors, got {count}");
         });
     }
 
@@ -6897,7 +6888,7 @@ mod tests {
 
             let count = gcd.memory_descriptor_count_for_efi_memory_map();
             // Should count: 1 SystemMemory (from create_gcd) + 1 Reserved
-            assert!(count >= 2, "Expected at least 2 descriptors, got {}", count);
+            assert!(count >= 2, "Expected at least 2 descriptors, got {count}");
         });
     }
 

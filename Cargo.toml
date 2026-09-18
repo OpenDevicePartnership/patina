@@ -3,11 +3,13 @@ resolver = "3"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "23.0.2"
+version = "23.2.0"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.90"
 repository = "https://github.com/OpenDevicePartnership/patina"
+keywords = ["uefi", "firmware", "edk2"]
+categories = ["embedded", "no-std", "hardware-support"]
 
 [workspace.dependencies]
 # alloc-no-stdlib is pinned to the 2.x because brotli-decompressor 5.0.3 (the latest release)
@@ -27,33 +29,32 @@ fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "0.5", default-features = false }
 gdbstub = { version = "0.7.10", default-features = false }
 goblin = { version = "0.10.7", default-features = false }
-indoc = { version = "2.0" }
 linked_list_allocator = { version = "0.10" }
 linkme = { version = "0.3.36" }
 log = { version = "0.4", default-features = false }
 memoffset = {version = "0.9.1" }
 num-traits = { version = "0.2", default-features = false }
-patina = { version = "23.0.2", path = "sdk/patina" }
-patina_debugger = { version = "23.0.2", path = "core/patina_debugger" }
-patina_ffs = { version = "23.0.2", path = "sdk/patina_ffs" }
-patina_ffs_extractors = { version = "23.0.2", path = "sdk/patina_ffs_extractors" }
-patina_internal_core = { version = "23.0.2", path = "core/patina_internal_core", default-features = false }
-patina_internal_cpu = { version = "23.0.2", path = "core/patina_internal_cpu" }
+patina = { version = "23.2.0", path = "sdk/patina" }
+patina_debugger = { version = "23.2.0", path = "core/patina_debugger" }
+patina_ffs = { version = "23.2.0", path = "sdk/patina_ffs" }
+patina_ffs_extractors = { version = "23.2.0", path = "sdk/patina_ffs_extractors" }
+patina_internal_core = { version = "23.2.0", path = "core/patina_internal_core", default-features = false }
+patina_internal_cpu = { version = "23.2.0", path = "core/patina_internal_cpu" }
 lzma-rust2 = { version = "0.16", default-features = false }
-patina_macro = { version = "23.0.2", path = "sdk/patina_macro" }
-patina_mm = { version = "23.0.2", path = "components/patina_mm" }
-patina_mtrr = { version = "1.1.6" }
-patina_paging = { version = "11.0.4" }
-patina_performance = { version = "23.0.2", path = "components/patina_performance" }
-patina_smbios = { version = "23.0.2", path = "components/patina_smbios" }
-patina_stacktrace = { version = "23.0.2", path = "core/patina_stacktrace" }
-patina_test = { version = "23.0.2", path = "components/patina_test" }
+patina_macro = { version = "23.2.0", path = "sdk/patina_macro" }
+patina_mm = { version = "23.2.0", path = "components/patina_mm" }
+patina_mtrr = { version = "2" }
+patina_paging = { version = "11.1.1" }
+patina_performance = { version = "23.2.0", path = "components/patina_performance" }
+patina_smbios = { version = "23.2.0", path = "components/patina_smbios" }
+patina_stacktrace = { version = "23.2.0", path = "core/patina_stacktrace" }
+patina_test = { version = "23.2.0", path = "components/patina_test" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 scroll = { version = "0.13", default-features = false, features = ["derive"]}
 spin = { version = "0.12" }
 syn = { version = "3" }
-uart_16550 = { version = "0.3.2" }
+uart_16550 = { version = "0.8" }
 corosensei = { version = "0.3.4", default-features = false }
 uuid = { version = "1.23", default-features = false }
 zerocopy = { version = "0.8" }
@@ -71,8 +72,108 @@ serde_yaml = { version = "0.9" }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [workspace.lints.clippy]
+###########################
+# Clippy Groups
+###########################
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+
+###########################
+# Individual Lint Overrides
+###########################
+# cargo::redundant_feature_names violation - Fixes:
+#     `the "_support" suffix in the feature name "v1_resource_descriptor_support" is redundant`
+#   This is allowed until the v1_resource_descriptor_support feature is dropped.
+redundant_feature_names = "allow"
+# pedantic::cast_possible_truncation - Temporarily allowed until all cases are updated (each fix needs a lot of
+#                                      attention) to determine if the truncation is intentional and safe or not.
+cast_possible_truncation = "allow"
+# pedantic::cast_possible_wrap - Higher priority. Temporarily allowed until each instance is reviewed. About 20
+#                                instances currently in the codebase.
+cast_possible_wrap = "allow"
+# pedantic::cast_precision_loss - Higher priority. Temporarily allowed until each instance is reviewed. About 9
+#                                 instances currently in the codebase.
+cast_precision_loss = "allow"
+# pedantic::cast_ptr_alignment - Higher priority. Temporarily allowed until each instance is reviewed.
+cast_ptr_alignment = "allow"
+# pedantic::cast_sign_loss - Higher priority. Temporarily allowed until each instance is reviewed.
+#                            About 15 instances currently in the codebase.
+cast_sign_loss = "allow"
+# pedantic::elidable_lifetime_names - Allowed because the automock macro cannot handle anonymous lifetimes in traits.
+elidable_lifetime_names = "allow"
+# pedantic::inline_always - Temporarily allowed until each instance is evaluated to determine if the inline is
+#                           necessary or not.
+inline_always = "allow"
+# pedantic::items_after_statements - Temporarily allowed until all cases are updated.
+items_after_statements = "allow"
+# pedantic::iter_without_into_iter - Temporarily allowed until all cases are updated.
+iter_without_into_iter = "allow"
+# pedantic::large_stack_arrays - Higher priority. Temporarily allowed until each instance is reviewed. About 33
+#                                instances currently in the codebase.
+large_stack_arrays = "allow"
+# pedantic::manual_let_else - Temporarily allowed until all cases are updated.
+manual_let_else = "allow"
+# pedantic::match_wild_err_arm - Temporarily allowed until further review of each instance is completed to determine
+#                                if the wildcard arm is appropriate or not.
+match_wild_err_arm = "allow"
+# pedantic::missing_errors_doc - Temporarily allowed until all cases are updated (each fix needs a lot of attention).
+missing_errors_doc = "allow"
+# pedantic::missing_panics_doc - Temporarily allowed until all cases are updated. Each fix needs a lot of attention to
+#                                (1) determine if the panic is intentional and safe or not, and (2) write appropriate
+#                                documentation for the panic scenario.
+missing_panics_doc = "allow"
+# pedantic::must_use_candidate - Allowed due to the number of instances, a degree of subjectivity in determining if
+#                                a function should be marked must_use, and the potential for breaking public APIs.
+must_use_candidate = "allow"
+# pedantic::needless_continue - Temporarily allowed until each instance is updated to determine the best
+#                               approach for each case.
+needless_continue = "allow"
+# pedantic::needless_pass_by_value - Temporarily allowed due to the number of instances that need updated in existing
+#                                    code. Each update needs to be carefully reviewed.
+needless_pass_by_value = "allow"
+# pedantic::ptr_as_ptr - Temporarily allowed until all instances are fixed. Remaining instances in pre-existing code
+#                        code need further inspection.
+ptr_as_ptr = "allow"
+# pedantic::pub_underscore_fields - Temporarily allowed until each instance is reviewed.
+pub_underscore_fields = "allow"
+# pedantic::ref_option_ref - All occurrences are currently related to automock. Revisit to determine if this should
+#                            stay allowed.
+ref_option_ref = "allow"
+# pedantic::should_panic_without_expect - Temporarily allowed until each instance is updated to have a custom panic
+#                                         message.
+should_panic_without_expect = "allow"
+# pedantic::similar_names - Allowed due to substantial impact to public APIs and relatively low risk of confusion.
+similar_names = "allow"
+# pedantic::struct_field_names - Temporarily allowed due to a substantial impact to public APIs.
+struct_field_names = "allow"
+# pedantic::too_many_lines - Temporarily allowed until all cases are updated (each fix needs a lot of attention) since
+#                            large functions (> 100 lines) may need additional refactoring in surrounding code.
+too_many_lines = "allow"
+# pedantic::trivially_copy_pass_by_ref - Higher priority. Temporarily allowed until each instance is reviewed.
+#                                        About 17 instances currently in the codebase.
+trivially_copy_pass_by_ref = "allow"
+# pedantic::unnecessary_box_returns - Temporarily allowed until each instance is reviewed. Impact on APIs for each
+#                                     case needs to be assessed.
+unnecessary_box_returns = "allow"
+# pedantic::unnecessary_wraps - In most cases this is probably fine, but each case needs to be reviewed to determine
+#                               the impact on the API.
+unnecessary_wraps = "allow"
+# pedantic::unreadable_literal - Temporarily allowed until all cases are updated. Simple changes but thousands of
+#                                instances to fix.
+unreadable_literal = "allow"
+# pedantic::unused_self - Temporarily allowed until each instance is reviewed.
+unused_self = "allow"
+# pedantic::verbose_bit_mask - Allowed due to project preference for flexibility in how to represent operations.
+verbose_bit_mask = "allow"
+# restriction::indexing_slicing - Denied to prevent panics resulting from out-of-bounds indexing.
 indexing_slicing = "deny"
-undocumented_unsafe_blocks = "warn"
+# restriction::undocumented_unsafe_blocks - Denied to ensure all unsafe blocks are documented with SAFETY comments.
+undocumented_unsafe_blocks = "deny"
 
 [workspace.lints.rust]
 # Set by cargo-llvm-cov during coverage runs. Declared here so gating

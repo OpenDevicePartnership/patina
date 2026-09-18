@@ -40,6 +40,7 @@ use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 /// }
 /// ```
 #[cfg_attr(test, mockall::automock)]
+#[allow(clippy::used_underscore_binding)] // Allow underscore bindings to avoid unused variable warnings.
 pub trait ComponentInfo: Sized {
     /// A platform callback to register components with the core.
     #[inline(always)]
@@ -116,26 +117,26 @@ impl Default for ComponentDispatcher {
     }
 }
 
-/// SAFETY: The ComponentDispatcher is `Send` as all data stored within this structure is owned by it, and not shared.
+/// SAFETY: The `ComponentDispatcher` is `Send` as all data stored within this structure is owned by it, and not shared.
 unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {
-    /// Creates a new locked ComponentDispatcher.
+    /// Creates a new locked `ComponentDispatcher`.
     ///
-    /// Uses TPL_APPLICATION so that component entry points can use boot services
+    /// Uses `TPL_APPLICATION` so that component entry points can use boot services
     /// that are restricted at higher TPL levels.
     #[inline(always)]
     pub(crate) const fn new_locked() -> TplMutex<Self> {
         TplMutex::new(efi::TPL_APPLICATION, Self::new(), "ComponentDispatcher")
     }
 
-    /// Creates a new ComponentDispatcher.
+    /// Creates a new `ComponentDispatcher`.
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self { components: Vec::new(), rejected: Vec::new(), storage: Storage::new() }
     }
 
-    /// Applies the component information provided by the given type implementing [ComponentInfo].
+    /// Applies the component information provided by the given type implementing [`ComponentInfo`].
     pub(crate) fn apply_component_info<C: ComponentInfo>(&mut self) {
         C::configs(Add::new(self));
         C::services(Add::new(self));
@@ -144,9 +145,10 @@ impl ComponentDispatcher {
 
     /// Inserts a component at the given index.
     pub(crate) fn insert_component(&mut self, idx: usize, mut component: Box<dyn patina::component::Component>) {
-        match component.initialize(&mut self.storage) {
-            true => self.components.insert(idx, component),
-            false => self.rejected.push(component),
+        if component.initialize(&mut self.storage) {
+            self.components.insert(idx, component);
+        } else {
+            self.rejected.push(component);
         }
     }
 
@@ -252,10 +254,8 @@ impl ComponentDispatcher {
             let max_name_len = not_dispatched.map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
 
             let not_dispatched = self.components.iter().chain(&self.rejected);
-            let max_param_len = not_dispatched
-                .map(|c| c.metadata().error_message().map(|s| s.len()).unwrap_or(0))
-                .max()
-                .unwrap_or(param_len);
+            let max_param_len =
+                not_dispatched.map(|c| c.metadata().error_message().map_or(0, |s| s.len())).max().unwrap_or(param_len);
 
             log::warn!("Components not dispatched:");
             log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");

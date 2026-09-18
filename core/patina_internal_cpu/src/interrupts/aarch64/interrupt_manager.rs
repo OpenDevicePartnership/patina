@@ -18,7 +18,7 @@ use crate::interrupts::{
 };
 
 cfg_if::cfg_if! {
-    if #[cfg(not(test))] {
+    if #[cfg(target_os = "uefi")] {
         use core::arch::global_asm;
         use patina::{read_sysreg, write_sysreg, arch::aarch64::{AArch64El, get_current_el}};
 
@@ -31,13 +31,13 @@ cfg_if::cfg_if! {
         }
     }
 }
-/// AARCH64 Implementation of the InterruptManager.
+/// AARCH64 Implementation of the `InterruptManager`.
 #[derive(Default, Copy, Clone)]
 pub struct InterruptsAarch64 {}
 
 #[allow(dead_code)]
 impl InterruptsAarch64 {
-    /// Creates a new instance of the AARCH64 implementation of the InterruptManager.
+    /// Creates a new instance of the AARCH64 implementation of the `InterruptManager`.
     pub const fn new() -> Self {
         Self {}
     }
@@ -64,7 +64,7 @@ impl InterruptManager for InterruptsAarch64 {}
 #[cfg_attr(coverage, coverage(off))]
 fn enable_fiq() {
     cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
+        if #[cfg(target_os = "uefi")]  {
             write_sysreg!(reg daifclr, imm 0x01, "isb sy");
         } else {
             unimplemented!()
@@ -75,7 +75,7 @@ fn enable_fiq() {
 #[cfg_attr(coverage, coverage(off))]
 fn disable_fiq() {
     cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
+        if #[cfg(target_os = "uefi")]  {
             write_sysreg!(reg daifset, imm 0x01, "isb sy");
         } else {
             unimplemented!()
@@ -86,7 +86,7 @@ fn disable_fiq() {
 #[cfg_attr(coverage, coverage(off))]
 fn get_fiq_state() -> Result<bool, EfiError> {
     cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
+        if #[cfg(target_os = "uefi")]  {
             let daif = read_sysreg!(daif);
             Ok(daif & 0x40 == 0)
         } else {
@@ -98,7 +98,7 @@ fn get_fiq_state() -> Result<bool, EfiError> {
 #[cfg_attr(coverage, coverage(off))]
 fn enable_async_abort() {
     cfg_if::cfg_if! {
-        if #[cfg(not(test))]  {
+        if #[cfg(target_os = "uefi")]  {
             write_sysreg!(reg daifclr, imm 0x04, "isb sy");
         } else {
             unimplemented!()
@@ -109,10 +109,10 @@ fn enable_async_abort() {
 #[cfg_attr(coverage, coverage(off))]
 fn initialize_exception() -> Result<(), EfiError> {
     // Set the stack pointer for EL0 to be used for synchronous exceptions
-    #[cfg(not(test))]
+    #[cfg(target_os = "uefi")]
     {
         // SAFETY: We are using the address of a symbol defined in assembly as the stack pointer for EL0.
-        let mut sp_el0_reg = unsafe { &sp_el0_end as *const _ as u64 };
+        let mut sp_el0_reg = unsafe { core::ptr::from_ref(&sp_el0_end) as u64 };
         sp_el0_reg &= !0x0F;
         write_sysreg!(reg sp_el0, sp_el0_reg);
 
@@ -125,11 +125,13 @@ fn initialize_exception() -> Result<(), EfiError> {
 
         // Program VBar
         // SAFETY: We are using the address of the exception handlers as the vector base address.
-        let vec_base = unsafe { &exception_handlers_start as *const _ as u64 };
+        let vec_base = unsafe { core::ptr::from_ref(&exception_handlers_start) as u64 };
+        // Arms write different EL-specific registers. Identical only when built against the host stub macros.
+        #[allow(clippy::match_same_arms)]
         match current_el {
             AArch64El::EL2 => write_sysreg!(reg vbar_el2, vec_base, "isb sy"),
             AArch64El::EL1 => write_sysreg!(reg vbar_el1, vec_base, "isb sy"),
-        };
+        }
     }
 
     let fiq = get_fiq_state();

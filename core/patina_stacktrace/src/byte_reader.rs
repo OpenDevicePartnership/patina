@@ -7,11 +7,11 @@ pub(crate) trait ByteReader {
     fn read8(&self, index: usize) -> StResult<u8>;
     fn read16(&self, index: usize) -> StResult<u16>;
     fn read32(&self, index: usize) -> StResult<u32>;
-    fn _read64(&self, index: usize) -> StResult<u64>;
+    fn read64(&self, index: usize) -> StResult<u64>;
     fn read8_with(&self, index: &mut usize) -> StResult<u8>;
     fn read16_with(&self, index: &mut usize) -> StResult<u16>;
     fn read32_with(&self, index: &mut usize) -> StResult<u32>;
-    fn _read64_with(&self, index: &mut usize) -> StResult<u64>;
+    fn read64_with(&self, index: &mut usize) -> StResult<u64>;
 }
 
 impl ByteReader for [u8] {
@@ -42,7 +42,7 @@ impl ByteReader for [u8] {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    fn _read64(&self, index: usize) -> StResult<u64> {
+    fn read64(&self, index: usize) -> StResult<u64> {
         let bytes: [u8; 8] = self
             .get(index..index + 8)
             .ok_or(Error::OutOfBoundsRead { module: None, index })?
@@ -75,8 +75,8 @@ impl ByteReader for [u8] {
         res
     }
 
-    fn _read64_with(&self, index: &mut usize) -> StResult<u64> {
-        let res = self._read64(*index);
+    fn read64_with(&self, index: &mut usize) -> StResult<u64> {
+        let res = self.read64(*index);
         if res.is_ok() {
             *index += core::mem::size_of::<u64>();
         }
@@ -127,8 +127,8 @@ mod tests {
     #[test]
     fn test_read64() {
         let buffer = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        assert_eq!(buffer._read64(0).unwrap(), 0x0807060504030201);
-        assert!(buffer._read64(1).is_err());
+        assert_eq!(buffer.read64(0).unwrap(), 0x0807060504030201);
+        assert!(buffer.read64(1).is_err());
     }
 
     #[test]
@@ -165,9 +165,9 @@ mod tests {
     fn test_read64_with() {
         let buffer = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
         let mut index = 0;
-        assert_eq!(buffer._read64_with(&mut index).unwrap(), 0x0807060504030201);
+        assert_eq!(buffer.read64_with(&mut index).unwrap(), 0x0807060504030201);
         assert_eq!(index, 8);
-        assert!(buffer._read64_with(&mut index).is_err());
+        assert!(buffer.read64_with(&mut index).is_err());
     }
 
     #[test]
@@ -176,13 +176,13 @@ mod tests {
         assert_eq!(buffer.read8(2).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 2 });
         assert_eq!(buffer.read16(1).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 1 });
         assert_eq!(buffer.read32(0).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
-        assert_eq!(buffer._read64(0).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
+        assert_eq!(buffer.read64(0).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
     }
 
     #[test]
     fn read_pointer64_reads_value() {
         let value: u64 = 0x0123_4567_89AB_CDEF;
-        let ptr = &value as *const u64 as u64;
+        let ptr = &raw const value as u64;
         // SAFETY: Test creates a valid pointer from a stack variable that remains live for the duration of this call.
         assert_eq!(unsafe { read_pointer64(ptr).unwrap() }, value);
     }

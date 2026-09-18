@@ -12,7 +12,7 @@ use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::boxed::Box;
 use patina::standard::efi;
-use patina::{component::component, pi::error_codes::EFI_NOT_AVAILABLE_YET, uefi::boot_services::BootServices};
+use patina::{component::component, crc32, pi::error_codes::EFI_NOT_AVAILABLE_YET, uefi::boot_services::BootServices};
 
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
 
@@ -36,7 +36,7 @@ impl EfiRuntimeServicesTable {
 
     /// Creates a new Runtime Services Table instance from the given raw pointer.
     /// # Safety
-    /// The pointer must be valid and point to a properly initialized efi::RuntimeServices structure.
+    /// The pointer must be valid and point to a properly initialized `efi::RuntimeServices` structure.
     pub unsafe fn from_raw_pointer(ptr: *mut efi::RuntimeServices) -> Self {
         Self { runtime_services: ptr }
     }
@@ -49,8 +49,8 @@ impl EfiRuntimeServicesTable {
 
         // SAFETY: table_copy is a valid, initialized RuntimeServices value on the stack.
         let tbl_slice =
-            unsafe { from_raw_parts(&table_copy as *const _ as *const u8, size_of::<efi::RuntimeServices>()) };
-        table_copy.hdr.crc32 = crc32fast::hash(tbl_slice);
+            unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::RuntimeServices>()) };
+        table_copy.hdr.crc32 = crc32::calculate_crc32(tbl_slice);
 
         // SAFETY: structure construction ensures pointer is valid.
         unsafe { self.runtime_services.write(table_copy) }
@@ -238,7 +238,7 @@ impl EfiBootServicesTable {
 
     /// Creates a new Boot Services Table instance from the given raw pointer.
     /// # Safety
-    /// The pointer must be valid and point to a properly initialized efi::BootServices structure.
+    /// The pointer must be valid and point to a properly initialized `efi::BootServices` structure.
     pub unsafe fn from_raw_pointer(ptr: *mut efi::BootServices) -> Self {
         Self { boot_services: ptr }
     }
@@ -249,8 +249,8 @@ impl EfiBootServicesTable {
         table_copy.hdr.crc32 = 0;
 
         // SAFETY: table_copy is a valid, initialized BootServices value on the stack.
-        let tbl_slice = unsafe { from_raw_parts(&table_copy as *const _ as *const u8, size_of::<efi::BootServices>()) };
-        table_copy.hdr.crc32 = crc32fast::hash(tbl_slice);
+        let tbl_slice = unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::BootServices>()) };
+        table_copy.hdr.crc32 = crc32::calculate_crc32(tbl_slice);
 
         // SAFETY: structure construction ensures pointer is valid.
         unsafe { self.boot_services.write(table_copy) }
@@ -714,20 +714,20 @@ impl EfiSystemTable {
     #[allow(dead_code)]
     /// Creates a new EFI System Table instance from the given raw pointer.
     /// # Safety
-    /// The pointer must be valid and point to a properly initialized efi::SystemTable structure.
+    /// The pointer must be valid and point to a properly initialized `efi::SystemTable` structure.
     pub unsafe fn from_raw_pointer(ptr: *mut efi::SystemTable) -> Self {
         // SAFETY: Caller guarantees ptr is a valid SystemTable pointer with initialized pointers
         // per the function safety contract.
         unsafe {
-            if ptr.is_null() {
-                panic!("Attempted to create EfiSystemTable with null System Table pointer");
-            }
-            if (*ptr).boot_services.is_null() {
-                panic!("Attempted to create EfiSystemTable with null Boot Services pointer");
-            }
-            if (*ptr).runtime_services.is_null() {
-                panic!("Attempted to create EfiSystemTable with null Runtime Services pointer");
-            }
+            assert!(!ptr.is_null(), "Attempted to create EfiSystemTable with null System Table pointer");
+            assert!(
+                !(*ptr).boot_services.is_null(),
+                "Attempted to create EfiSystemTable with null Boot Services pointer"
+            );
+            assert!(
+                !(*ptr).runtime_services.is_null(),
+                "Attempted to create EfiSystemTable with null Runtime Services pointer"
+            );
         }
         Self { system_table: ptr }
     }
@@ -739,8 +739,8 @@ impl EfiSystemTable {
         table_copy.hdr.crc32 = 0;
 
         // SAFETY: table_copy is a valid, initialized SystemTable value on the stack.
-        let st_slice = unsafe { from_raw_parts(&table_copy as *const _ as *const u8, size_of::<efi::SystemTable>()) };
-        table_copy.hdr.crc32 = crc32fast::hash(st_slice);
+        let st_slice = unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::SystemTable>()) };
+        table_copy.hdr.crc32 = crc32::calculate_crc32(st_slice);
 
         // SAFETY: structure construction ensures pointer is valid.
         unsafe { self.system_table.write(table_copy) }
@@ -754,12 +754,11 @@ impl EfiSystemTable {
 
     /// Writes the given System Table into the stored pointer and updates the checksum.
     pub fn set(&mut self, new_table: efi::SystemTable) {
-        if new_table.boot_services.is_null() {
-            panic!("Attempted to set System Table with null Boot Services pointer");
-        }
-        if new_table.runtime_services.is_null() {
-            panic!("Attempted to set System Table with null Runtime Services pointer");
-        }
+        assert!(!new_table.boot_services.is_null(), "Attempted to set System Table with null Boot Services pointer");
+        assert!(
+            !new_table.runtime_services.is_null(),
+            "Attempted to set System Table with null Runtime Services pointer"
+        );
         // SAFETY: structure construction ensures pointer is valid.
         unsafe {
             self.system_table.write(new_table);
@@ -771,8 +770,8 @@ impl EfiSystemTable {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the new table is has valid pointers for runtime_services and boot_services.
-    /// Boot services pointer may be null if the table is being updated for use after ExitBootServices.
+    /// The caller must ensure that the new table is has valid pointers for `runtime_services` and `boot_services`.
+    /// Boot services pointer may be null if the table is being updated for use after `ExitBootServices`.
     pub unsafe fn set_unchecked(&mut self, new_table: efi::SystemTable) {
         // SAFETY: caller must ensure that the new_table is valid.
         unsafe {
@@ -792,9 +791,7 @@ impl EfiSystemTable {
         // Self::set ensures runtime_services pointer is not null.
         unsafe {
             let st = self.system_table.read();
-            if st.runtime_services.is_null() {
-                panic!("RuntimeServices pointer is null");
-            }
+            assert!(!st.runtime_services.is_null(), "RuntimeServices pointer is null");
             EfiRuntimeServicesTable::from_raw_pointer(st.runtime_services)
         }
     }
@@ -805,9 +802,7 @@ impl EfiSystemTable {
         // Self::set ensures boot_services pointer is not null.
         unsafe {
             let st = self.system_table.read();
-            if st.boot_services.is_null() {
-                panic!("BootServices pointer is null");
-            }
+            assert!(!st.boot_services.is_null(), "BootServices pointer is null");
             EfiBootServicesTable::from_raw_pointer(st.boot_services)
         }
     }
@@ -816,7 +811,7 @@ impl EfiSystemTable {
     ///
     /// # Safety
     ///
-    /// This should only be called after ExitBootServices has been invoked.
+    /// This should only be called after `ExitBootServices` has been invoked.
     pub unsafe fn clear_boot_time_services(&mut self) {
         let mut st = self.get();
 
@@ -992,6 +987,6 @@ mod tests {
                 table.clear_boot_time_services();
                 assert_eq!((*table.system_table).boot_services, core::ptr::null_mut());
             };
-        })
+        });
     }
 }

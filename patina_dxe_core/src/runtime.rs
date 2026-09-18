@@ -19,7 +19,9 @@ use patina::pi::{list_entry, protocol::runtime};
 
 struct RuntimeData {
     runtime_arch_ptr: *mut runtime::RuntimeProtocol,
+    #[allow(clippy::linkedlist)]
     runtime_images: LinkedList<runtime::ImageEntry, &'static crate::allocator::UefiAllocatorWithFsb>,
+    #[allow(clippy::linkedlist)]
     runtime_events: LinkedList<runtime::EventEntry, &'static crate::allocator::UefiAllocatorWithFsb>,
 }
 
@@ -51,7 +53,7 @@ impl RuntimeData {
         unsafe {
             // Update the image links
             let mut prev: *mut _ = ptr::addr_of_mut!((*self.runtime_arch_ptr).image_head);
-            for entry in self.runtime_images.iter_mut() {
+            for entry in &mut self.runtime_images {
                 (*prev).forward_link = ptr::addr_of_mut!(entry.link);
                 entry.link.back_link = prev;
                 prev = ptr::addr_of_mut!(entry.link);
@@ -61,7 +63,7 @@ impl RuntimeData {
 
             // Update the event links
             let mut prev: *mut _ = ptr::addr_of_mut!((*self.runtime_arch_ptr).event_head);
-            for entry in self.runtime_events.iter_mut() {
+            for entry in &mut self.runtime_events {
                 (*prev).forward_link = ptr::addr_of_mut!(entry.link);
                 entry.link.back_link = prev;
                 prev = ptr::addr_of_mut!(entry.link);
@@ -267,16 +269,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 10, "Too many entries in the image list.");
                 }
                 assert_eq!(count, 10, "Not all entries were found in the image list.");
@@ -294,16 +296,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count * 2);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 5, "Too many entries in the image list.");
                 }
                 assert_eq!(count, 5, "Not all entries were found in the image list.");
@@ -331,16 +333,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 10, "Too many entries in the event list.");
                 }
                 assert_eq!(count, 10, "Not all entries were found in the event list.");
@@ -358,16 +360,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count * 2);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 5, "Too many entries in the event list.");
                 }
                 assert_eq!(count, 5, "Not all entries were found in the event list.");

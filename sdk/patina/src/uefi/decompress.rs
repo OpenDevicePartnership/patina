@@ -514,7 +514,7 @@ impl<'a> CodeIterator<'a> {
         }
 
         for (idx, w) in weight.iter_mut().enumerate().skip(table_bits + 1) {
-            *w = 1 << (16 - idx)
+            *w = 1 << (16 - idx);
         }
 
         // zero unused table entries.
@@ -691,7 +691,7 @@ impl Iterator for CodeIterator<'_> {
                 mask_idx += 1;
                 if decode_idx < NC {
                     break;
-                };
+                }
             }
         }
         //decode_idx the current symbol. Advance the bitstream by the bitlength of the current symbol.
@@ -754,7 +754,7 @@ mod test {
             .unwrap();
         assert_eq!(test_buffer.len(), uncompressed_buffer.len());
         for (idx, (test, reference)) in zip(test_buffer, uncompressed_buffer).enumerate() {
-            assert!(test == reference, "mismatch at idx: {:}, expected {:#x} != {:#x} actual", idx, reference, test);
+            assert!(test == reference, "mismatch at idx: {idx:}, expected {reference:#x} != {test:#x} actual");
         }
     }
 
@@ -777,7 +777,7 @@ mod test {
             .unwrap();
         assert_eq!(test_buffer.len(), uncompressed_buffer.len());
         for (idx, (test, reference)) in zip(test_buffer, uncompressed_buffer).enumerate() {
-            assert!(test == reference, "mismatch at idx: {:}, expected {:#x} != {:#x} actual", idx, reference, test);
+            assert!(test == reference, "mismatch at idx: {idx:}, expected {reference:#x} != {test:#x} actual");
         }
     }
 

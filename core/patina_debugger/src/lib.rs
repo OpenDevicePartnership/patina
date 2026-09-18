@@ -85,7 +85,7 @@
 //! ```
 //!
 //! The debugger can be further configured by using various functions on the
-//! initialization of the debugger struct. See the definition for [debugger::PatinaDebugger]
+//! initialization of the debugger struct. See the definition for [`debugger::PatinaDebugger`]
 //! for more details. Notably, if the device is using the same transport for
 //! logging and debugger, it is advisable to use `.without_log_init()`.
 //!
@@ -122,7 +122,7 @@ extern crate alloc;
 
 pub use debugger::PatinaDebugger;
 
-#[cfg(not(test))]
+#[cfg(target_os = "uefi")]
 use arch::{DebuggerArch, SystemArch};
 use patina::{component::service::perf_timer::ArchTimerFunctionality, peripheral::serial::SerialIO};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
@@ -145,7 +145,7 @@ static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 /// be the first and second elements of the iterator respectively.
 ///
 /// The second argument is a writer that should be used to write the output of the
-/// command. This can be done by directly invoking the [core::fmt::Write] trait methods
+/// command. This can be done by directly invoking the [`core::fmt::Write`] trait methods
 /// or using the `write!` macro. `format!` should be avoided as it will allocate memory
 /// which shouldn't be done in debugger when possible.
 pub type MonitorCommandFn = dyn Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync;
@@ -255,7 +255,7 @@ pub fn breakpoint() {
 /// execution in the current state and an CPU exception must be raised.
 #[inline(always)]
 pub fn breakpoint_unchecked() {
-    #[cfg(not(test))]
+    #[cfg(target_os = "uefi")]
     SystemArch::breakpoint();
     #[cfg(test)]
     panic!("breakpoint_unchecked");
@@ -294,7 +294,7 @@ pub fn initialized() -> bool {
 }
 
 /// Adds a monitor command to the debugger. This may be called before initialization,
-/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// but should not be called before memory allocations are available. See [`MonitorCommandFn`]
 /// for more details on the callback function expectations.
 ///
 /// ## Example

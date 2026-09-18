@@ -215,7 +215,9 @@ macro_rules! char16 {
     ($s:literal) => {{
         static CHAR16_LITERAL: $crate::string::Char16Array<{ $crate::string::ucs2_capacity($s) }> =
             $crate::string::Char16Array::from_str($s);
-        CHAR16_LITERAL.as_char16_str()
+        // SAFETY: `ucs2_capacity($s)` is the encoded length plus one for the NUL terminator, so
+        // the array has no padding and its only NUL is the final element.
+        unsafe { $crate::string::Char16Str::from_units_with_nul_unchecked(CHAR16_LITERAL.as_array()) }
     }};
 }
 
@@ -238,7 +240,9 @@ macro_rules! char8 {
     ($s:literal) => {{
         static CHAR8_LITERAL: $crate::string::Char8Array<{ $crate::string::latin1_capacity($s) }> =
             $crate::string::Char8Array::from_str($s);
-        CHAR8_LITERAL.as_char8_str()
+        // SAFETY: `latin1_capacity($s)` is the encoded length plus one for the NUL terminator, so
+        // the array has no padding and its only NUL is the final element.
+        unsafe { $crate::string::Char8Str::from_bytes_with_nul_unchecked(CHAR8_LITERAL.as_array()) }
     }};
 }
 

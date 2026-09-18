@@ -161,7 +161,7 @@ impl DebuggerArch for X64Arch {
                 unsafe {
                     asm!(
                         "sgdt [{}]",
-                        in(reg) &mut gdtr,
+                        in(reg) &raw mut gdtr,
                         options(nostack, preserves_flags)
                     );
                 }
@@ -177,16 +177,15 @@ impl DebuggerArch for X64Arch {
             Some("mtrr") => {
                 if let Some(val) = tokens.next() {
                     let mtrr = patina_mtrr::create_mtrr_lib(0);
-                    let addr = match u64::from_str_radix(val.trim_start_matches("0x"), 16) {
-                        Ok(a) => a,
-                        Err(_) => {
-                            let _ = write!(out, "Invalid address format: '{val}'. Expected hex address (e.g. 0x1000).");
-                            return;
-                        }
+                    let addr = if let Ok(a) = u64::from_str_radix(val.trim_start_matches("0x"), 16) {
+                        a
+                    } else {
+                        let _ = write!(out, "Invalid address format: '{val}'. Expected hex address (e.g. 0x1000).");
+                        return;
                     };
 
                     let attr = mtrr.get_memory_attribute(addr);
-                    let _ = write!(out, "{}", attr);
+                    let _ = write!(out, "{attr}");
                 } else {
                     let _ = out.write_str("Usage: mtrr <base_address>");
                 }
@@ -201,14 +200,10 @@ impl DebuggerArch for X64Arch {
     fn memory_poke_test(address: u64) -> Result<(), ()> {
         POKE_TEST_MARKER.store(true, Ordering::SeqCst);
 
-        // Attempt to read the address to check if it is accessible.
-        // This will raise a page fault if the address is not accessible.
-
-        let _value: u64;
         // SAFETY: The safety of this is dubious and may cause a page fault, but
         // the exception handler will catch it and resolve it by stepping beyond
         // the exception.
-        unsafe { asm!("mov {}, [{}]", out(reg) _value, in(reg) address, options(nostack)) };
+        unsafe { asm!("mov {}, [{}]", out(reg) _, in(reg) address, options(nostack)) };
 
         // Check if the marker was cleared, indicating a page fault. Reset either way.
         if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
@@ -377,12 +372,12 @@ impl UefiArchRegs for X64CoreRegs {
         context.rip = self.rip;
         context.rflags = self.eflags;
 
-        context.cs = self.segments[0] as u64;
-        context.ss = self.segments[1] as u64;
-        context.ds = self.segments[2] as u64;
-        context.es = self.segments[3] as u64;
-        context.fs = self.segments[4] as u64;
-        context.gs = self.segments[5] as u64;
+        context.cs = u64::from(self.segments[0]);
+        context.ss = u64::from(self.segments[1]);
+        context.ds = u64::from(self.segments[2]);
+        context.es = u64::from(self.segments[3]);
+        context.fs = u64::from(self.segments[4]);
+        context.gs = u64::from(self.segments[5]);
 
         context.cr0 = self.control[0];
         context.cr2 = self.control[1];
@@ -473,27 +468,25 @@ impl UefiArchRegs for X64CoreRegs {
         }
 
         match reg_id {
-            X64CoreRegId::Gpr(index) => {
-                match index {
-                    0 => write_field!(context.rax, u64),
-                    1 => write_field!(context.rbx, u64),
-                    2 => write_field!(context.rcx, u64),
-                    3 => write_field!(context.rdx, u64),
-                    4 => write_field!(context.rsi, u64),
-                    5 => write_field!(context.rdi, u64),
-                    6 => write_field!(context.rbp, u64),
-                    7 => write_field!(context.rsp, u64),
-                    8 => write_field!(context.r8, u64),
-                    9 => write_field!(context.r9, u64),
-                    10 => write_field!(context.r10, u64),
-                    11 => write_field!(context.r11, u64),
-                    12 => write_field!(context.r12, u64),
-                    13 => write_field!(context.r13, u64),
-                    14 => write_field!(context.r14, u64),
-                    15 => write_field!(context.r15, u64),
-                    _ => return Err(()),
-                };
-            }
+            X64CoreRegId::Gpr(index) => match index {
+                0 => write_field!(context.rax, u64),
+                1 => write_field!(context.rbx, u64),
+                2 => write_field!(context.rcx, u64),
+                3 => write_field!(context.rdx, u64),
+                4 => write_field!(context.rsi, u64),
+                5 => write_field!(context.rdi, u64),
+                6 => write_field!(context.rbp, u64),
+                7 => write_field!(context.rsp, u64),
+                8 => write_field!(context.r8, u64),
+                9 => write_field!(context.r9, u64),
+                10 => write_field!(context.r10, u64),
+                11 => write_field!(context.r11, u64),
+                12 => write_field!(context.r12, u64),
+                13 => write_field!(context.r13, u64),
+                14 => write_field!(context.r14, u64),
+                15 => write_field!(context.r15, u64),
+                _ => return Err(()),
+            },
             X64CoreRegId::Rip => context.rip = u64::from_le_bytes(buf.try_into().map_err(|_| ())?),
             X64CoreRegId::Eflags => context.rflags = u64::from_le_bytes(buf.try_into().map_err(|_| ())?),
             X64CoreRegId::Segment(index) => match index {

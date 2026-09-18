@@ -9,8 +9,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::standard::efi::protocols::device_path::{End, Hardware, Media, Protocol};
-use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+use alloc::{boxed::Box, string::String, vec, vec::Vec};
 use core::{
+    fmt::Write,
     mem::size_of_val,
     ptr::{NonNull, slice_from_raw_parts},
     slice::from_raw_parts,
@@ -30,7 +31,7 @@ const DEVICE_PATH_NODE_MIN_LENGTH: usize = core::mem::size_of::<Protocol>();
 ///
 /// ## SAFETY
 ///
-/// device_path input must be a valid pointer (i.e. not null) that points to
+/// `device_path` input must be a valid pointer (i.e. not null) that points to
 /// a well-formed device path that conforms to UEFI spec 2.11 section 10.
 ///
 /// ## Examples
@@ -109,7 +110,7 @@ pub fn copy_device_path_to_boxed_slice(
     Ok(dp_slice.to_vec().into_boxed_slice())
 }
 
-/// Returns the device_path as a byte slice.
+/// Returns the `device_path` as a byte slice.
 pub fn device_path_as_slice(
     device_path: *const efi::protocols::device_path::Protocol,
 ) -> Result<&'static [u8], efi::Status> {
@@ -122,11 +123,11 @@ pub fn device_path_as_slice(
 /// Computes the remaining device path and the number of nodes in common for two device paths.
 ///
 /// if device path `a` is a prefix of or identical to device path `b`, result is Some(pointer to the portion of
-/// device path `b` that remains after removing device path `a`, nodes_in_common).
+/// device path `b` that remains after removing device path `a`, `nodes_in_common`).
 /// if device path `a` is not a prefix of device path `b` (i.e. the first node in `a` that is different from
 /// `b` is not an end node), then the result is None.
 ///
-/// note: nodes_in_common does not count the terminating end node.
+/// note: `nodes_in_common` does not count the terminating end node.
 ///
 /// ## Safety
 ///
@@ -239,8 +240,8 @@ pub fn device_path_as_slice(
 /// assert!(result.is_none());
 /// ```
 pub unsafe fn remaining_device_path(a: NonNull<Protocol>, b: NonNull<Protocol>) -> Option<(NonNull<Protocol>, usize)> {
-    let mut a_ptr = a.as_ptr() as *const efi::protocols::device_path::Protocol;
-    let mut b_ptr = b.as_ptr() as *const efi::protocols::device_path::Protocol;
+    let mut a_ptr = a.as_ptr().cast_const();
+    let mut b_ptr = b.as_ptr().cast_const();
     let mut node_count = 0;
     loop {
         // SAFETY: Caller must ensure pointers are valid device_paths
@@ -248,10 +249,10 @@ pub unsafe fn remaining_device_path(a: NonNull<Protocol>, b: NonNull<Protocol>) 
 
         // SAFETY: a_node is a valid device path node structure obtained from valid device path pointer. The
         // caller is responsible for upholding the function safety contract.
-        if unsafe { is_device_path_end(&a_node) } {
+        if unsafe { is_device_path_end(&raw const a_node) } {
             // SAFETY: b_ptr is derived from `b` which is non-null and points to a node
             // within the same well-formed device path, so it is non-null.
-            return Some((unsafe { NonNull::new_unchecked(b_ptr as *mut _) }, node_count));
+            return Some((unsafe { NonNull::new_unchecked(b_ptr.cast_mut()) }, node_count));
         }
 
         node_count += 1;
@@ -284,7 +285,7 @@ pub unsafe fn remaining_device_path(a: NonNull<Protocol>, b: NonNull<Protocol>) 
 /// Determines whether the given device path points to an end-of-device-path node.
 /// # Safety
 ///
-/// Caller must ensure that the device_path is valid and aligned
+/// Caller must ensure that the `device_path` is valid and aligned
 pub unsafe fn is_device_path_end(device_path: *const efi::protocols::device_path::Protocol) -> bool {
     let node_ptr = device_path;
     // SAFETY: Caller must ensure that device_path is valid and aligned
@@ -327,7 +328,7 @@ impl PartialEq for GenericDevicePathNode {
 impl Eq for GenericDevicePathNode {}
 
 impl GenericDevicePathNode {
-    /// Create a DevicePathNode from raw pointer.
+    /// Create a `DevicePathNode` from raw pointer.
     ///
     /// # Safety
     ///
@@ -361,9 +362,9 @@ impl GenericDevicePathNode {
     }
 }
 
-/// Iterator that returns DevicePathNodes for a given raw device path pointer.
+/// Iterator that returns `DevicePathNodes` for a given raw device path pointer.
 ///
-/// This iterator copies the device path data into DevicePathNode structs to abstract
+/// This iterator copies the device path data into `DevicePathNode` structs to abstract
 /// the unsafe raw pointer operations necessary for direct interaction with a device path.
 ///
 pub struct DevicePathWalker {
@@ -375,7 +376,7 @@ impl From<DevicePathWalker> for String {
         let mut result = String::new();
         for node in device_path_walker {
             // SAFETY: node.header is a valid device path node structure from the iterator
-            if unsafe { is_device_path_end(&node.header) } {
+            if unsafe { is_device_path_end(&raw const node.header) } {
                 break;
             }
             result.push_str(protocol_to_subtype_str(node.header));
@@ -385,7 +386,7 @@ impl From<DevicePathWalker> for String {
                     if i > 0 {
                         result.push(',');
                     }
-                    result.push_str(&format!("0x{byte:02x}"));
+                    let _ = write!(result, "0x{byte:02x}");
                 }
                 result.push('/');
             }
@@ -395,7 +396,7 @@ impl From<DevicePathWalker> for String {
 }
 
 impl DevicePathWalker {
-    /// Creates a DevicePathWalker iterator for the given raw device path pointer.
+    /// Creates a `DevicePathWalker` iterator for the given raw device path pointer.
     ///
     /// ## Safety
     /// Caller must ensure that the raw pointer points to a valid device path structure,

@@ -1,6 +1,6 @@
 //! MM Communicator Integration Tests
 //!
-//! This test file focuses on testing the MmCommunicator component integration
+//! This test file focuses on testing the `MmCommunicator` component integration
 //! with its dependencies using the actual component entry point flow.
 //!
 //! ## Logging
@@ -231,7 +231,7 @@ fn test_real_component_invalid_guid_communication() {
             // This is the expected error when no handler is found
         }
         other => {
-            panic!("Expected CommBufferNotFound error, got: {:?}", other);
+            panic!("Expected CommBufferNotFound error, got: {other:?}");
         }
     }
 }
@@ -255,7 +255,7 @@ fn test_real_component_empty_data_validation() {
             // This is the expected error for invalid input
         }
         other => {
-            panic!("Expected InvalidDataBuffer error, got: {:?}", other);
+            panic!("Expected InvalidDataBuffer error, got: {other:?}");
         }
     }
 }

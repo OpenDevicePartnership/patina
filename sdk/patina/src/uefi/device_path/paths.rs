@@ -29,20 +29,20 @@ use crate::uefi::device_path::{
     parse_node::{DevicePathNode, UnknownDevicePathNode},
 };
 
-/// DevicePathBuf is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
+/// `DevicePathBuf` is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
 #[derive(Debug, Clone)]
 pub struct DevicePathBuf {
     buffer: Vec<u8>,
 }
 
 impl DevicePathBuf {
-    /// Create a DevicePathBuf with an empty buffer.
+    /// Create a `DevicePathBuf` with an empty buffer.
     fn new_empty() -> Self {
         Self { buffer: Vec::new() }
     }
 
     /// Append a node to the device path.
-    /// This function does not ensure that the device path is valid, the EndEntire node must be manually added to the device path.
+    /// This function does not ensure that the device path is valid, the `EndEntire` node must be manually added to the device path.
     pub fn append<T>(&mut self, node: T)
     where
         T: DevicePathNode + Sized,
@@ -68,13 +68,13 @@ impl DevicePathBuf {
         }
     }
 
-    /// Append a device path to this device path, the EndEntire node of self will be removed when appending the other path.
+    /// Append a device path to this device path, the `EndEntire` node of self will be removed when appending the other path.
     pub fn append_device_path(&mut self, device_path: &DevicePath) {
         self.buffer.truncate(self.buffer.len() - EndEntire.header().length);
         self.buffer.extend_from_slice(&device_path.buffer[..]);
     }
 
-    /// Append a device path to this device path, the EndEntire node of self will be replaced with an end instance.
+    /// Append a device path to this device path, the `EndEntire` node of self will be replaced with an end instance.
     pub fn append_device_path_instances(&mut self, device_path: &DevicePath) {
         self.buffer.truncate(self.buffer.len() - EndEntire.header().length);
         self.append(EndInstance);
@@ -119,7 +119,7 @@ impl Deref for DevicePathBuf {
 impl DerefMut for DevicePathBuf {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: DevicePath has the same memory layout as `[u8]`.
-        unsafe { &mut *(self.buffer.as_mut_slice() as *mut [u8] as *mut DevicePath) }
+        unsafe { &mut *(core::ptr::from_mut::<[u8]>(self.buffer.as_mut_slice()) as *mut DevicePath) }
     }
 }
 
@@ -155,7 +155,7 @@ impl PartialEq for DevicePathBuf {
 
 impl Eq for DevicePathBuf {}
 
-/// DevicePath is the borrowed version of a [`DevicePathBuf`].
+/// `DevicePath` is the borrowed version of a [`DevicePathBuf`].
 /// Only immutable operations are possible on this type.
 #[derive(Debug)]
 #[repr(transparent)]
@@ -164,20 +164,20 @@ pub struct DevicePath {
 }
 
 impl DevicePath {
-    /// Create a &DevicePath for a DevicePathBuf.
+    /// Create a &`DevicePath` for a `DevicePathBuf`.
     pub fn from(device_path_buff: &DevicePathBuf) -> &Self {
         // SAFETY: This is safe because DevicePath have the same memory layout as `[u8]`.
-        unsafe { &*(device_path_buff.buffer.as_slice() as *const [u8] as *const Self) }
+        unsafe { &*(core::ptr::from_ref::<[u8]>(device_path_buff.buffer.as_slice()) as *const Self) }
     }
 
-    /// Create a &DevicePath from a pointer to a byte buffer.
+    /// Create a &`DevicePath` from a pointer to a byte buffer.
     /// This is used to interface with device paths from C code.
     ///
     /// # Safety
     ///
     /// The buffer pointer must point to valid device path data that remains valid
     /// for the lifetime 'a. The device path must be properly terminated with an
-    /// EndEntire node.
+    /// `EndEntire` node.
     pub unsafe fn try_from_ptr<'a>(buffer: *const u8) -> Result<&'a DevicePath, &'static str> {
         if buffer.is_null() {
             return Err("Null pointer provided");
@@ -207,7 +207,7 @@ impl DevicePath {
         // SAFETY: The device path structure was validated by iterating through all nodes and finding an end node.
         // The buffer is properly sized and contains a valid device path. The cast is considered safe due to
         // DevicePath's repr(transparent).
-        let device_path = unsafe { &*(buffer as *const [u8] as *const DevicePath) };
+        let device_path = unsafe { &*(core::ptr::from_ref::<[u8]>(buffer) as *const DevicePath) };
         Ok(device_path)
     }
 
@@ -231,7 +231,7 @@ impl DevicePath {
         self.iter().any(|n| EndInstance::is_type(n.header.r#type, n.header.sub_type))
     }
 
-    /// Return a &DevicePath for the n last nodes of the device path.
+    /// Return a &`DevicePath` for the n last nodes of the device path.
     /// This operation does not copy memory since the trailing end of a device path is a valid device path.
     pub fn slice_end(&self, n: usize) -> &DevicePath {
         let count = self.node_count();
@@ -250,7 +250,7 @@ impl DevicePath {
         // SAFETY: The slice `end_buffer` is a valid trailing portion of the device path that contains
         // the last n nodes including the end node. DevicePath is repr(transparent) over [u8], so this cast is
         // considered valid.
-        unsafe { &*(end_buffer as *const [u8] as *const DevicePath) }
+        unsafe { &*(core::ptr::from_ref::<[u8]>(end_buffer) as *const DevicePath) }
     }
 
     /// Return true if the device path starts with the other device path.
@@ -321,9 +321,8 @@ impl Iterator for IterInstance<'_> {
             if node.header().r#type == DevicePathType::End as u8 {
                 item.get_or_insert(DevicePathBuf::new_empty()).append(EndEntire);
                 break;
-            } else {
-                item.get_or_insert(DevicePathBuf::new_empty()).append(node);
             }
+            item.get_or_insert(DevicePathBuf::new_empty()).append(node);
         }
         item
     }
@@ -373,7 +372,7 @@ impl Display for DevicePath {
                 && next.header().r#type != DevicePathType::End as u8
             {
                 f.write_char('/')?;
-            };
+            }
         }
 
         Ok(())

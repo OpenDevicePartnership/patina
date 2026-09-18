@@ -76,7 +76,7 @@ pub trait DevicePathNode: Debug + Display {
     /// Return the header of the device path node.
     fn header(&self) -> Header;
 
-    /// Return true if this device path node has the same type and sub_type.
+    /// Return true if this device path node has the same type and `sub_type`.
     fn is_type(r#type: u8, sub_type: u8) -> bool
     where
         Self: Sized;
@@ -96,7 +96,7 @@ pub struct UnknownDevicePathNode<'a> {
 }
 
 impl<'a> UnknownDevicePathNode<'a> {
-    /// Cast the Unknown device path to a dyn DevicePathNode of the right type.
+    /// Cast the Unknown device path to a dyn `DevicePathNode` of the right type.
     pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
         crate::uefi::device_path::node_defs::cast_to_dyn_device_path_node(self)
     }

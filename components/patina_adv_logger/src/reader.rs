@@ -37,7 +37,7 @@ impl AdvancedLogReader<'static> {
         // SAFETY: The safety requirements for this function transfer to the function called here.
         let header = unsafe { AdvLoggerInfoRef::from_address(address)? };
         let data_size = header.log_buffer_size();
-        let data_start = (address + header.log_buffer_offset() as u64) as *const u8;
+        let data_start = (address + u64::from(header.log_buffer_offset())) as *const u8;
         // SAFETY: The caller must ensure that the memory is properly sized and initialized.
         let data = unsafe { slice::from_raw_parts(data_start, data_size as usize) };
 
@@ -106,7 +106,7 @@ pub struct AdvLogIterator<'a> {
 
 /// Iterator for an Advanced Logger memory buffer.
 impl<'a> AdvLogIterator<'a> {
-    /// Creates a new log iterator from a given AdvancedLogReader reference.
+    /// Creates a new log iterator from a given `AdvancedLogReader` reference.
     fn new(log: &'a AdvancedLogReader) -> Self {
         AdvLogIterator { log, offset: log.header.log_buffer_offset() as usize }
     }
@@ -156,6 +156,7 @@ impl<'a> Iterator for AdvLogIterator<'a> {
 mod tests {
     extern crate std;
     use core::{mem::size_of, sync::atomic::Ordering};
+    use patina::debug::log::DEBUG_INFO;
 
     use super::*;
     use crate::memory_log::*;
@@ -165,7 +166,7 @@ mod tests {
         let buffer_v5 = create_buffer_v5(123, false);
         let log_v5 = AdvancedLogReader::open_log(&buffer_v5).unwrap();
         assert_eq!(log_v5.get_frequency(), 123);
-        assert!(log_v5.hardware_write_enabled(DEBUG_LEVEL_INFO));
+        assert!(log_v5.hardware_write_enabled(DEBUG_INFO));
         assert!(log_v5.get_new_logger_info_address().is_none());
 
         let buffer_v6 = create_buffer_v6(456, 0x1122334455667788);

@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true

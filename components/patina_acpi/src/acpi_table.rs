@@ -35,7 +35,7 @@ use core::{
 };
 
 /// Represents the FADT for ACPI 2.0+.
-/// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
+/// Equivalent to `EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE`.
 #[repr(C, packed)]
 #[derive(Default)]
 pub(crate) struct AcpiFadt {
@@ -90,7 +90,7 @@ impl AcpiFadt {
 #[repr(C, packed)]
 #[derive(Default, Clone, Debug)]
 pub(crate) struct FadtData {
-    pub(crate) _firmware_ctrl: u32,
+    pub(crate) firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
     pub(crate) _reserved0: u8,
 
@@ -148,7 +148,7 @@ pub(crate) struct FadtData {
 }
 
 /// Represents an ACPI address space for ACPI 2.0+.
-/// Equivalent to EFI_ACPI_3_0_GENERIC_ADDRESS_STRUCTURE.
+/// Equivalent to `EFI_ACPI_3_0_GENERIC_ADDRESS_STRUCTURE`.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Default, Copy)]
 pub struct GenericAddressStructure {
@@ -163,7 +163,7 @@ pub struct GenericAddressStructure {
 /// Note that the FACS does not have a standard ACPI header.
 /// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
 /// The FACS is always allocated in NVS, and is required to be 64B-aligned.
-/// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
+/// Equivalent to `EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE`.
 #[repr(C, packed)]
 #[derive(Default, Clone)]
 pub struct AcpiFacs {
@@ -193,7 +193,7 @@ pub struct AcpiDsdt {
 /// Represents the RSDP for ACPI 2.0+.
 /// The RSDP is not a standard ACPI table and does not have a standard header.
 /// It is not present in the list of installed tables and is not directly accessible.
-/// Equivalent to EFI_ACPI_3_0_ROOT_SYSTEM_DESCRIPTION_POINTER.
+/// Equivalent to `EFI_ACPI_3_0_ROOT_SYSTEM_DESCRIPTION_POINTER`.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiRsdp {
@@ -277,7 +277,7 @@ impl AcpiXsdtMetadata {
 }
 
 /// Represents a standard ACPI header.
-/// Equivalent to EFI_ACPI_DESCRIPTION_HEADER.
+/// Equivalent to `EFI_ACPI_DESCRIPTION_HEADER`.
 #[repr(C, packed)]
 #[derive(Default, Clone, Debug)]
 pub struct AcpiTableHeader {
@@ -383,13 +383,13 @@ impl<T> Table<T> {
     /// ## Safety
     ///
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
-    /// - Caller must ensure that the table's first field is [AcpiTableHeader].
+    /// - Caller must ensure that the table's first field is [`AcpiTableHeader`].
     pub unsafe fn new(table: T) -> Result<Self, AcpiError> {
         let returned_table = Table { inner: ManuallyDrop::new(table) };
 
         // Make sure all bytes are valid ASCII.
         // By spec, ACPI table signatures are length-4 ASCII strings (represented numerically as u32's).
-        let is_valid_ascii = returned_table.signature().to_le_bytes().iter().all(|b| b.is_ascii());
+        let is_valid_ascii = returned_table.signature().to_le_bytes().iter().all(u8::is_ascii);
         if !is_valid_ascii {
             return Err(AcpiError::InvalidTableFormat);
         }
@@ -434,7 +434,7 @@ pub struct AcpiTable {
 }
 
 impl AcpiTable {
-    /// Creates a new AcpiTable from a given table.
+    /// Creates a new `AcpiTable` from a given table.
     ///
     /// For this function, the header `length` field must exactly equal `size_of::<T>()`. Because
     /// `table` is passed by value, only `size_of::<T>()` bytes are guaranteed to be available.
@@ -448,12 +448,12 @@ impl AcpiTable {
     /// ## Safety
     ///
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
-    /// - Caller must ensure that the table's first field is [AcpiTableHeader].
+    /// - Caller must ensure that the table's first field is [`AcpiTableHeader`].
     pub unsafe fn new<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
         // When T is provided by value, enforce that the table length is equal to `size_of::<T>()`.
         // SAFETY: Caller guarantees T starts with an AcpiTableHeader and has a C-compatible layout.
         let length =
-            unsafe { AcpiTableHeader::read_length_from_ptr(&table as *const T as *const AcpiTableHeader) } as usize;
+            unsafe { AcpiTableHeader::read_length_from_ptr((&raw const table).cast::<AcpiTableHeader>()) } as usize;
         if length != mem::size_of::<T>() {
             return Err(AcpiError::InvalidTableFormat);
         }
@@ -463,11 +463,15 @@ impl AcpiTable {
 
         // SAFETY: If caller preconditions are met, the table is valid and points to a valid ACPI table header.
         unsafe {
-            AcpiTable::new_from_ptr(table.as_ref() as *const T as *const AcpiTableHeader, Some(TypeId::of::<T>()), mm)
+            AcpiTable::new_from_ptr(
+                core::ptr::from_ref::<T>(table.as_ref()).cast::<AcpiTableHeader>(),
+                Some(TypeId::of::<T>()),
+                mm,
+            )
         }
     }
 
-    /// Creates a new AcpiTable from a raw pointer.
+    /// Creates a new `AcpiTable` from a raw pointer.
     /// When created this way, the type of the table is unknown.
     ///
     /// ## Safety
@@ -516,7 +520,7 @@ impl AcpiTable {
         // SAFETY: If function preconditions are met, the table length is guaranteed to be correct.
         // SAFETY: If allocation succeeds, the destination is valid for writes of `table_length` bytes.
         unsafe {
-            ptr::copy_nonoverlapping(header_ptr as *const u8, dest_alloc, table_length);
+            ptr::copy_nonoverlapping(header_ptr.cast::<u8>(), dest_alloc, table_length);
         }
 
         // Leak the allocated bytes.
@@ -556,7 +560,7 @@ impl AcpiTable {
     /// `self.length` must accurately reflect the allocated size of the table.
     pub(crate) unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
         // SAFETY: If the caller preconditions are met, the length is accurate.
-        unsafe { slice::from_raw_parts_mut(self.table.as_ptr() as *mut u8, self.header().length as usize) }
+        unsafe { slice::from_raw_parts_mut(self.table.as_ptr().cast::<u8>(), self.header().length as usize) }
     }
 
     /// Updates the checksum for an ACPI table.
@@ -576,7 +580,7 @@ impl AcpiTable {
         Ok(())
     }
 
-    /// Returns a reference to the entire AcpiTable.
+    /// Returns a reference to the entire `AcpiTable`.
     ///
     /// ## Safety
     ///
@@ -586,7 +590,7 @@ impl AcpiTable {
         unsafe { self.table.cast::<Table<T>>().as_ref().as_ref() }
     }
 
-    /// Returns a mutable reference to the entire AcpiTable.
+    /// Returns a mutable reference to the entire `AcpiTable`.
     ///
     /// ## Safety
     ///
@@ -596,14 +600,14 @@ impl AcpiTable {
         unsafe { self.table.cast::<Table<T>>().as_mut().as_mut() }
     }
 
-    /// Returns a pointer to the underlying AcpiTable.
+    /// Returns a pointer to the underlying `AcpiTable`.
     pub(crate) fn as_ptr(&self) -> *const AcpiTableHeader {
         self.table.as_ptr() as *const AcpiTableHeader
     }
 
-    /// Returns a mutable pointer to the underlying AcpiTable.
+    /// Returns a mutable pointer to the underlying `AcpiTable`.
     pub(crate) fn as_mut_ptr(&self) -> *mut AcpiTableHeader {
-        self.table.as_ptr() as *mut AcpiTableHeader
+        self.table.as_ptr().cast::<AcpiTableHeader>()
     }
 }
 
@@ -647,7 +651,7 @@ mod tests {
         let boxed: Box<Table<TestTable>> = Box::new(table_union);
         let raw_ptr: *mut Table<TestTable> = Box::into_raw(boxed);
         // SAFETY: This is set up to be non-null by the test.
-        let nn = unsafe { NonNull::new_unchecked(raw_ptr as *mut Table) };
+        let nn = unsafe { NonNull::new_unchecked(raw_ptr.cast::<Table>()) };
 
         // Wrap in AcpiTable.
         let mut acpi_table = AcpiTable { table: nn, type_id: TypeId::of::<TestTable>() };
@@ -659,7 +663,7 @@ mod tests {
         // SAFETY: The table length is correctly specified in the test header.
         let bytes = unsafe { acpi_table.as_bytes() };
         // Total sum must be zero mod 256.
-        let total: u8 = bytes.iter().copied().fold(0u8, |acc, b| acc.wrapping_add(b));
+        let total: u8 = bytes.iter().copied().fold(0u8, u8::wrapping_add);
         assert_eq!(total, 0, "entire table did not sum to zero");
     }
 
@@ -728,7 +732,7 @@ mod tests {
 
         // SAFETY: buf points to a contiguous buffer of total_len bytes with a valid header.
         let table_with_trailing =
-            unsafe { AcpiTable::new_from_ptr(buf.as_ptr() as *const AcpiTableHeader, None, &mm) }.unwrap();
+            unsafe { AcpiTable::new_from_ptr(buf.as_ptr().cast::<AcpiTableHeader>(), None, &mm) }.unwrap();
         assert_eq!(table_with_trailing.header().length(), total_len as u32);
 
         // SAFETY: The length is set correctly by the test.

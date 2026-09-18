@@ -254,12 +254,12 @@ pub type MmiHandlerRegisterFn = unsafe extern "efiapi" fn(
 /// ```
 pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(dispatch_handle: efi::Handle) -> efi::Status;
 
-/// EFI_MM_ENTRY_CONTEXT structure.
+/// `EFI_MM_ENTRY_CONTEXT` structure.
 ///
 /// Processor information and functionality needed by MM Foundation.
 /// Matches the C `EFI_MM_ENTRY_CONTEXT` from PI specification.
 ///
-/// Layout (x86_64, all fields 8 bytes):
+/// Layout (`x86_64`, all fields 8 bytes):
 /// - `mm_startup_this_ap`: Function pointer for `EFI_MM_STARTUP_THIS_AP`
 /// - `currently_executing_cpu`: Index of the processor executing the MM Foundation
 /// - `number_of_cpus`: Total number of possible processors in the platform (1-based)
@@ -268,7 +268,7 @@ pub type MmiHandlerUnregisterFn = unsafe extern "efiapi" fn(dispatch_handle: efi
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct EfiMmEntryContext {
-    /// Function pointer for EFI_MM_STARTUP_THIS_AP.
+    /// Function pointer for `EFI_MM_STARTUP_THIS_AP`.
     pub mm_startup_this_ap: u64,
     /// Index of the currently executing CPU.
     pub currently_executing_cpu: u64,
@@ -334,7 +334,7 @@ pub struct EfiMmSystemTable {
     ///
     /// CPU information records
     ///
-    /// A number between zero and and the NumberOfCpus field. This field designates
+    /// A number between zero and and the `NumberOfCpus` field. This field designates
     /// which processor is executing the MM infrastructure.
     ///
     pub currently_executing_cpu: usize,
@@ -344,14 +344,14 @@ pub struct EfiMmSystemTable {
     pub number_of_cpus: usize,
     ///
     /// Points to an array, where each element describes the number of bytes in the
-    /// corresponding save state specified by CpuSaveState. There are always
-    /// NumberOfCpus entries in the array.
+    /// corresponding save state specified by `CpuSaveState`. There are always
+    /// `NumberOfCpus` entries in the array.
     ///
     pub cpu_save_state_size: *mut usize,
     ///
     /// Points to an array, where each element is a pointer to a CPU save state. The
-    /// corresponding element in CpuSaveStateSize specifies the number of bytes in the
-    /// save state area. There are always NumberOfCpus entries in the array.
+    /// corresponding element in `CpuSaveStateSize` specifies the number of bytes in the
+    /// save state area. There are always `NumberOfCpus` entries in the array.
     ///
     pub cpu_save_state: *mut *mut c_void,
 
@@ -359,12 +359,12 @@ pub struct EfiMmSystemTable {
     /// Extensibility table
     ///
     ///
-    /// The number of UEFI Configuration Tables in the buffer MmConfigurationTable.
+    /// The number of UEFI Configuration Tables in the buffer `MmConfigurationTable`.
     ///
     pub number_of_table_entries: usize,
     ///
     /// A pointer to the UEFI Configuration Tables. The number of entries in the table is
-    /// NumberOfTableEntries.
+    /// `NumberOfTableEntries`.
     ///
     pub mm_configuration_table: *mut efi::ConfigurationTable,
 

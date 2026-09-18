@@ -1,9 +1,9 @@
 //! Debugger Architecture Module
 //!
 //! This module contains the architecture specific implementations for the debugger.
-//! These implementations are abstracted behind the DebuggerArch trait, which is
+//! These implementations are abstracted behind the `DebuggerArch` trait, which is
 //! the architecture agnostic interface the rest of the debugger uses. The architecture
-//! structs also implement the required GdbStub architecture traits for register
+//! structs also implement the required `GdbStub` architecture traits for register
 //! access.
 //!
 //! ## License

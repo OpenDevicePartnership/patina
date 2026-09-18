@@ -25,6 +25,7 @@ use patina::standard::efi;
 use patina::{
     BinaryGuid, Char16Str, OwnedGuid,
     component::service::Service,
+    crc32,
     error::EfiError,
     pi::{
         fw_fs::ffs,
@@ -123,7 +124,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     /// Displays drivers that were discovered but not dispatched.
     pub fn display_discovered_not_dispatched(&self) {
         // Summary report
-        for driver in self.dispatcher_context.lock().pending_drivers.iter() {
+        for driver in &self.dispatcher_context.lock().pending_drivers {
             log::warn!(
                 "Driver {} ({:?}) found but not dispatched.",
                 driver.name.as_deref().unwrap_or("Unnamed"),
@@ -137,7 +138,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
     fn detail_report(&self) {
         log::debug!("Begin Report of Drivers Not Dispatched:");
-        for driver in self.dispatcher_context.lock().pending_drivers.iter() {
+        for driver in &self.dispatcher_context.lock().pending_drivers {
             log::debug!(
                 "Driver {} ({:?}) found but not dispatched. Protocols present:",
                 driver.name.as_deref().unwrap_or("Unnamed"),
@@ -204,7 +205,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         // This includes installing the debug image info table and the system table pointer structure.
         if core_install_configuration_table(
             efi::DEBUG_IMAGE_INFO_TABLE_GUID,
-            self.debug_image_data.read().header() as *const _ as *mut c_void,
+            core::ptr::from_ref(self.debug_image_data.read().header()) as *mut c_void,
             system_table,
         )
         .is_err()
@@ -213,7 +214,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Now create the EFI_SYSTEM_TABLE_POINTER structure
-        let system_table_pointer = system_table.as_mut_ptr() as *const _ as u64;
+        let system_table_pointer = system_table.as_mut_ptr().cast_const() as u64;
 
         // we need to align the the pointer to 4MB and near the top of memory
         let Ok(address) = crate::GCD.allocate_memory_space(
@@ -241,10 +242,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 },
             );
 
-            let crc32 =
-                crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<efi::SystemTablePointer>()));
+            let crc32 = crc32::calculate_crc32(alloc::slice::from_raw_parts(
+                ptr as *const u8,
+                size_of::<efi::SystemTablePointer>(),
+            ));
 
-            core::ptr::write_volatile(&mut (*ptr).crc32, crc32);
+            core::ptr::write_volatile(&raw mut (*ptr).crc32, crc32);
         }
 
         patina_debugger::add_monitor_command(
@@ -289,14 +292,14 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 };
 
                 if depex_satisfied {
-                    scheduled_driver_candidates.push(candidate)
+                    scheduled_driver_candidates.push(candidate);
                 } else {
-                    match candidate.depex.as_ref().map(|x| x.is_associated()) {
+                    match candidate.depex.as_ref().map(patina_internal_core::depex::Depex::is_associated) {
                         Some(Some(AssociatedDependency::Before(guid))) => {
-                            dispatcher.associated_before.entry(OrdGuid(guid)).or_default().push(candidate)
+                            dispatcher.associated_before.entry(OrdGuid(guid)).or_default().push(candidate);
                         }
                         Some(Some(AssociatedDependency::After(guid))) => {
-                            dispatcher.associated_after.entry(OrdGuid(guid)).or_default().push(candidate)
+                            dispatcher.associated_after.entry(OrdGuid(guid)).or_default().push(candidate);
                         }
                         _ => dispatcher.pending_drivers.push(candidate),
                     }
@@ -440,7 +443,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         }
                     }
                 } else {
-                    dispatcher.pending_firmware_volume_images.push(candidate)
+                    dispatcher.pending_firmware_volume_images.push(candidate);
                 }
             }
         }
@@ -555,7 +558,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         match PROTOCOL_DB.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID.into_inner())) {
             Ok(fv_handles) => pd.add_fv_handles(fv_handles).expect("Error adding FV handles"),
             Err(_) => panic!("could not locate handles in protocol call back"),
-        };
+        }
     }
 }
 
@@ -598,7 +601,7 @@ impl PendingFirmwareVolumeImage {
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
         //scenarios (TPM measurement and UEFI Secure Boot) do not use it.
         let status = (security_protocol.file_authentication_state)(
-            security_protocol as *const _ as *mut patina::pi::protocol::security::SecurityProtocol,
+            core::ptr::from_ref(security_protocol).cast_mut(),
             0,
             file_path.as_ptr() as *const _ as *mut efi::protocols::device_path::Protocol,
         );
@@ -662,7 +665,7 @@ impl DispatcherContext {
         }));
     }
 
-    /// Check if a child FV has already been extracted. The FvNameGuid is optional per FDF spec; when it is
+    /// Check if a child FV has already been extracted. The `FvNameGuid` is optional per FDF spec; when it is
     /// not provided, the HOBs will have the zero GUID.
     fn has_pre_extracted_fv_hob(&self, file_name: efi::Guid, fv_name: Option<BinaryGuid>) -> bool {
         self.pre_extracted_fv_hobs.contains(&(file_name.into(), fv_name.unwrap_or(patina::BinaryGuid::ZERO)))
@@ -780,7 +783,7 @@ impl DispatcherContext {
                             // of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
-                                    &filename_node as *const _ as *const u8,
+                                    &raw const filename_node as *const u8,
                                     core::mem::size_of::<efi::protocols::device_path::Protocol>(),
                                 )
                             });
@@ -792,7 +795,7 @@ impl DispatcherContext {
                             // size of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
-                                    &filename_end_node as *const _ as *const u8,
+                                    &raw const filename_end_node as *const u8,
                                     core::mem::size_of::<efi::protocols::device_path::Protocol>(),
                                 )
                             });
@@ -803,9 +806,9 @@ impl DispatcherContext {
 
                             let full_path_bytes =
                                 concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
-                            let full_device_path_for_file = full_path_bytes
-                                .map(|full_path| Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol)
-                                .unwrap_or(fv_device_path);
+                            let full_device_path_for_file = full_path_bytes.map_or(fv_device_path, |full_path| {
+                                Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol
+                            });
 
                             self.pending_drivers.push(PendingDriver {
                                 file_name,
@@ -847,18 +850,18 @@ impl DispatcherContext {
                             .filter(|s| s.section_type() == Some(ffs::section::Type::FirmwareVolumeImage))
                             .collect::<Vec<_>>();
 
-                        if !fv_sections.is_empty() {
+                        if fv_sections.is_empty() {
+                            log::warn!(
+                                "firmware volume image {:?} does not contain a firmware volume image section.",
+                                OwnedGuid::from(file_name)
+                            );
+                        } else {
                             self.pending_firmware_volume_images.push(PendingFirmwareVolumeImage {
                                 parent_fv_handle: handle,
                                 file_name,
                                 depex,
                                 fv_sections,
                             });
-                        } else {
-                            log::warn!(
-                                "firmware volume image {:?} does not contain a firmware volume image section.",
-                                OwnedGuid::from(file_name)
-                            );
                         }
                     }
                 }
@@ -868,7 +871,7 @@ impl DispatcherContext {
     }
 
     fn schedule(&mut self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        for driver in self.pending_drivers.iter_mut() {
+        for driver in &mut self.pending_drivers {
             if driver.firmware_volume_handle == handle
                 && OrdGuid(driver.file_name) == OrdGuid(*file)
                 && let Some(depex) = &mut driver.depex
@@ -882,7 +885,7 @@ impl DispatcherContext {
     }
 
     fn trust(&mut self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        for driver in self.pending_drivers.iter_mut() {
+        for driver in &mut self.pending_drivers {
             if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
                 driver.security_status = efi::Status::SUCCESS;
                 return Ok(());
@@ -1067,7 +1070,7 @@ mod tests {
                     .expect("Failed to add FV handle");
             });
             assert!(result.is_err());
-        })
+        });
     }
 
     #[test]
@@ -1291,7 +1294,7 @@ mod tests {
             CORE.pi_dispatcher.dispatcher_context.lock().executing = true;
             let result = CORE.pi_dispatcher.dispatcher();
             assert_eq!(result, Err(EfiError::AlreadyStarted));
-        })
+        });
     }
 
     #[test]
@@ -1303,7 +1306,7 @@ mod tests {
 
             let result = CORE.pi_dispatcher.dispatcher();
             assert_eq!(result, Err(EfiError::NotFound));
-        })
+        });
     }
 
     #[test]
@@ -1431,7 +1434,7 @@ mod tests {
                 .install_protocol_interface(
                     None,
                     patina::pi::protocol::security::PROTOCOL_GUID.into_inner(),
-                    &security_protocol as *const _ as *mut _,
+                    &raw const security_protocol as *mut _,
                 )
                 .unwrap();
             // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
@@ -1442,7 +1445,7 @@ mod tests {
             CORE.pi_dispatcher.dispatcher().unwrap();
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
-        })
+        });
     }
 
     #[test]

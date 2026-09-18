@@ -1,4 +1,4 @@
-//! AArch64 Paging
+//! `AArch64` Paging
 //!
 //! This module provides an in direction to the external paging crate.
 //!
@@ -74,7 +74,7 @@ where
     }
 }
 
-/// Create an AArch64 paging instance under the general PatinaPageTable trait.
+/// Create an `AArch64` paging instance under the general `PatinaPageTable` trait.
 #[cfg_attr(coverage, coverage(off))]
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
@@ -82,7 +82,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     Ok(EfiCpuPagingAArch64 { paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap() })
 }
 
-/// Open the active AArch64 page table wrapped in the PatinaPageTable trait.
+/// Open the active `AArch64` page table wrapped in the `PatinaPageTable` trait.
 ///
 /// ## Safety
 /// The caller must ensure no other entity is concurrently modifying the page tables.
@@ -98,27 +98,8 @@ pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
-
     use super::*;
-    use mockall::mock;
-
-    mock! {
-        PageAllocator {}
-        impl PageAllocator for PageAllocator {
-            fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> Result<u64, PtError>;
-        }
-    }
-
-    mock! {
-        PageTable {}
-        impl PageTable for PageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn install_page_table(&mut self) -> Result<(), PtError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
-        }
-    }
+    use patina_paging::MockPageTable;
 
     #[test]
     fn test_map_memory_region() {

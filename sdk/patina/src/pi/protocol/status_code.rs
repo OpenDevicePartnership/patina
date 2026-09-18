@@ -30,7 +30,7 @@ pub type EfiStatusCodeType = u32;
 ///
 pub type EfiStatusCodeValue = u32;
 
-/// The definition of the status code extended data header. The data will follow HeaderSize bytes from the
+/// The definition of the status code extended data header. The data will follow `HeaderSize` bytes from the
 /// beginning of the structure and is Size bytes long.
 ///
 /// # Documentation
@@ -115,5 +115,5 @@ impl StatusCodeProtocol {
 #[cfg(feature = "alloc")]
 fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     // SAFETY: P is a ref thus a valid pointer and since the type is sized, the memory boundary of this type is known.
-    unsafe { slice::from_raw_parts((p as *const T) as *const u8, mem::size_of::<T>()) }
+    unsafe { slice::from_raw_parts(core::ptr::from_ref::<T>(p) as *const u8, mem::size_of::<T>()) }
 }

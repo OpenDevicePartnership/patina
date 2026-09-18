@@ -51,25 +51,25 @@ unsafe impl Sync for StandardBootServices {}
 unsafe impl Send for StandardBootServices {}
 
 impl StandardBootServices {
-    /// Create a new StandardBootServices with the provided [efi::BootServices].
+    /// Create a new `StandardBootServices` with the provided [`efi::BootServices`].
     pub fn new(efi_boot_services: *mut efi::BootServices) -> Self {
         let this = Self::new_uninit();
         this.init(efi_boot_services);
         this
     }
 
-    /// Create a new StandardBootServices that has not been initialized.
+    /// Create a new `StandardBootServices` that has not been initialized.
     pub const fn new_uninit() -> Self {
         StandardBootServices { efi_boot_services: Once::new() }
     }
 
-    /// Initialize the StandardBootServices.
+    /// Initialize the `StandardBootServices`.
     pub fn init(&self, efi_boot_services: *mut efi::BootServices) {
         // This struct never mutate the efi_boot_services.
         self.efi_boot_services.call_once(|| efi_boot_services);
     }
 
-    /// Return true if StandardBootServices is initialized.
+    /// Return true if `StandardBootServices` is initialized.
     pub fn is_init(&self) -> bool {
         self.efi_boot_services.is_completed()
     }
@@ -154,7 +154,7 @@ impl Debug for StandardBootServices {
     }
 }
 
-/// Functions that are available *before* a successful call to EFI_BOOT_SERVICES.ExitBootServices().
+/// Functions that are available *before* a successful call to `EFI_BOOT_SERVICES.ExitBootServices()`.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 #[allow(clippy::needless_lifetimes)] //https://github.com/rust-lang/rust-clippy/issues/6622
 pub trait BootServices {
@@ -189,7 +189,7 @@ pub trait BootServices {
     ///
     /// # Safety
     ///
-    /// When calling this method, you have to make sure that *notify_context* pointer is **null** or all of the following is true:
+    /// When calling this method, you have to make sure that *`notify_context`* pointer is **null** or all of the following is true:
     /// * The pointer must be properly aligned.
     /// * It must be "dereferenceable" into type `T`
     /// * It must remain a valid pointer for the lifetime of the event.
@@ -252,7 +252,7 @@ pub trait BootServices {
     ///
     /// [UEFI Spec Documentation: 7.1.3. EFI_BOOT_SERVICES.CloseEvent()](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#efi-boot-services-closeevent)
     ///
-    /// [^note]: It is safe to call *close_event* in the notify function.
+    /// [^note]: It is safe to call *`close_event`* in the notify function.
     fn close_event(&self, event: efi::Event) -> Result<(), efi::Status>;
 
     /// Signals an event.
@@ -279,7 +279,7 @@ pub trait BootServices {
     ///
     /// See [`BootServices::raise_tpl`] and [`BootServices::restore_tpl`] for more details.
     fn raise_tpl_guarded<'a>(&'a self, tpl: Tpl) -> TplGuard<'a, Self> {
-        TplGuard { boot_services: self, retore_tpl: self.raise_tpl(tpl) }
+        TplGuard { boot_services: self, restore_tpl: self.raise_tpl(tpl) }
     }
 
     /// Raises a task’s priority level and returns its previous level.
@@ -461,7 +461,7 @@ pub trait BootServices {
         if mem::size_of::<T>() == 0 {
             old_protocol_interface_ptr = ptr::null_mut();
             new_protocol_interface_ptr = ptr::null_mut();
-        };
+        }
 
         // SAFETY: This is safe because ProtocolInterface provide the right guid for the interface.
         unsafe {
@@ -481,7 +481,7 @@ pub trait BootServices {
     /// Use [`BootServices::reinstall_protocol_interface`] when possible.
     ///
     /// # Safety
-    /// When calling this method, you have to make sure that if *new_protocol_interface* pointer is non-null, it is adhereing to
+    /// When calling this method, you have to make sure that if *`new_protocol_interface`* pointer is non-null, it is adhereing to
     /// the structure associated with the protocol.
     unsafe fn reinstall_protocol_interface_unchecked(
         &self,
@@ -563,7 +563,7 @@ pub trait BootServices {
     ///
     /// # Safety
     ///
-    /// caller must handle conversion of the output c_void to proper type appropriately.
+    /// caller must handle conversion of the output `c_void` to proper type appropriately.
     unsafe fn handle_protocol_unchecked(
         &self,
         handle: efi::Handle,
@@ -659,7 +659,7 @@ pub trait BootServices {
     ///
     /// # Safety
     ///
-    /// When calling this method, you have to make sure that if *agent_handle* pointer is non-null.
+    /// When calling this method, you have to make sure that if *`agent_handle`* pointer is non-null.
     unsafe fn open_protocol_unchecked(
         &self,
         handle: efi::Handle,
@@ -693,7 +693,7 @@ pub trait BootServices {
     ///
     /// # Safety
     ///
-    /// When calling this method, you have to make sure that *driver_image_handle*'s last entry is null per UEFI specification.
+    /// When calling this method, you have to make sure that *`driver_image_handle`*'s last entry is null per UEFI specification.
     ///
     /// This function assumes that all driver bindings managing the controller remain valid for the duration of this call.
     ///
@@ -804,13 +804,16 @@ pub trait BootServices {
     ) -> Result<(), efi::Status> {
         //SAFETY: The generic Protocol ensure that the interfaces is the right type for the specified protocol.
         let interface_ptr = unsafe {
-            self.locate_protocol_unchecked(protocol_guid, registration.map_or(ptr::null_mut(), |r| r.as_ptr()))?
+            self.locate_protocol_unchecked(
+                protocol_guid,
+                registration.map_or(ptr::null_mut(), core::ptr::NonNull::as_ptr),
+            )?
         };
-        if !interface_ptr.is_null() {
+        if interface_ptr.is_null() {
+            Ok(())
+        } else {
             log_debug_assert!("Marker protocol has no data; interface should be null {:?}", protocol_guid);
             Err(efi::Status::INVALID_PARAMETER)
-        } else {
-            Ok(())
         }
     }
 
@@ -932,7 +935,13 @@ pub trait BootServices {
     /// [UEFI Spec Documentation: 7.5.3. EFI_BOOT_SERVICES.CopyMem()](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#efi-boot-services-copymem)
     fn copy_mem<T: 'static>(&self, dest: &mut T, src: &T) {
         // SAFETY: This is safe because refs are valid pointers and the size is trusted from mem size of.
-        unsafe { self.copy_mem_unchecked(dest as *mut T as _, src as *const T as _, mem::size_of::<T>()) }
+        unsafe {
+            self.copy_mem_unchecked(
+                core::ptr::from_mut::<T>(dest) as _,
+                core::ptr::from_ref::<T>(src) as _,
+                mem::size_of::<T>(),
+            );
+        }
     }
 
     /// Use of [`Self::copy_mem`] is preferable if the context allows it.
@@ -986,7 +995,7 @@ pub trait BootServices {
     fn calculate_crc_32<T: 'static>(&self, data: &T) -> Result<u32, efi::Status> {
         // SAFETY: The reference guarantees that the pointer is valid and properly aligned.
         // size_of::<T>() provides the exact size of the data being pointed to.
-        unsafe { self.calculate_crc_32_unchecked(data as *const T as _, mem::size_of::<T>()) }
+        unsafe { self.calculate_crc_32_unchecked(core::ptr::from_ref::<T>(data) as _, mem::size_of::<T>()) }
     }
 
     /// Use [`BootServices::calculate_crc_32`] when possible.
@@ -997,9 +1006,9 @@ pub trait BootServices {
     unsafe fn calculate_crc_32_unchecked(&self, data: *const c_void, data_size: usize) -> Result<u32, efi::Status>;
 }
 
-/// Clone implementation for MockBootServices that creates a new mock with default expectations.
-/// TplMutex owns its BootServices instance, so this Clone impl is needed when passing mocks.
-/// Sets up default expectations for raise_tpl and restore_tpl which are commonly used by TplMutex.
+/// Clone implementation for `MockBootServices` that creates a new mock with default expectations.
+/// `TplMutex` owns its `BootServices` instance, so this Clone impl is needed when passing mocks.
+/// Sets up default expectations for `raise_tpl` and `restore_tpl` which are commonly used by `TplMutex`.
 #[cfg(any(test, feature = "mockall"))]
 impl Clone for MockBootServices {
     fn clone(&self) -> Self {
@@ -1099,7 +1108,7 @@ impl BootServices for StandardBootServices {
                     Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>,
                 >(notify_function),
                 notify_context as *mut c_void,
-                event_group as *const _,
+                core::ptr::from_ref(event_group),
                 event.as_mut_ptr(),
             )
         };
@@ -1215,9 +1224,8 @@ impl BootServices for StandardBootServices {
         nb_pages: usize,
     ) -> Result<usize, efi::Status> {
         let mut memory_address = match alloc_type {
-            AllocType::Address(address) => address,
-            AllocType::MaxAddress(address) => address,
-            _ => 0,
+            AllocType::Address(address) | AllocType::MaxAddress(address) => address,
+            AllocType::AnyPage => 0,
         };
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let allocate_pages = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), allocate_pages) };
@@ -1284,7 +1292,7 @@ impl BootServices for StandardBootServices {
         } {
             s if s == efi::Status::BUFFER_TOO_SMALL => memory_map_size += 0x400, // add more space in case allocation makes the memory map bigger.
             _ => (),
-        };
+        }
 
         let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, memory_map_size).map_err(|s| (s, 0))?;
 
@@ -1360,7 +1368,7 @@ impl BootServices for StandardBootServices {
         let status = unsafe {
             install_protocol_interface(
                 ptr::addr_of_mut!(handle),
-                protocol as *const _ as *mut _,
+                core::ptr::from_ref(protocol).cast_mut(),
                 efi::NATIVE_INTERFACE,
                 interface,
             )
@@ -1389,7 +1397,8 @@ impl BootServices for StandardBootServices {
         // SAFETY: `protocol` is a valid reference cast to a pointer. `interface` is not
         // dereferenced by the implementation. `handle` validity is the caller's responsibility
         // as documented by the `unsafe` on this function.
-        let status = unsafe { uninstall_protocol_interface(handle, protocol as *const _ as *mut _, interface) };
+        let status =
+            unsafe { uninstall_protocol_interface(handle, core::ptr::from_ref(protocol).cast_mut(), interface) };
         match status {
             status if status.is_error() => Err(status),
             _ => Ok(()),
@@ -1416,7 +1425,7 @@ impl BootServices for StandardBootServices {
         let status = unsafe {
             reinstall_protocol_interface(
                 handle,
-                protocol as *const _ as *mut _,
+                core::ptr::from_ref(protocol).cast_mut(),
                 old_protocol_interface,
                 new_protocol_interface,
             )
@@ -1438,7 +1447,11 @@ impl BootServices for StandardBootServices {
         // SAFETY: `protocol` is a valid reference cast to a pointer. `event` is validated by the
         // implementation. `registration` is a local `MaybeUninit` whose address is valid for writes.
         let status = unsafe {
-            register_protocol_notify(protocol as *const _ as *mut _, event, registration.as_mut_ptr() as *mut _)
+            register_protocol_notify(
+                core::ptr::from_ref(protocol).cast_mut(),
+                event,
+                registration.as_mut_ptr() as *mut _,
+            )
         };
         match status {
             status if status.is_error() => Err(status),
@@ -1455,7 +1468,7 @@ impl BootServices for StandardBootServices {
         let locate_handle = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), locate_handle) };
 
         let protocol = match search_type {
-            HandleSearchType::ByProtocol(p) => p as *const _ as *mut _,
+            HandleSearchType::ByProtocol(p) => core::ptr::from_ref(p).cast_mut(),
             _ => ptr::null_mut(),
         };
         let search_key = match search_type {
@@ -1518,7 +1531,8 @@ impl BootServices for StandardBootServices {
         // `protocol` is a valid reference cast to a pointer. `interface` is a local variable
         // whose address is valid for writes. The returned `interface` pointer is the caller's
         // responsibility to use correctly, as documented by the `unsafe` on this function.
-        let status = unsafe { handle_protocol(handle, protocol as *const _ as *mut _, ptr::addr_of_mut!(interface)) };
+        let status =
+            unsafe { handle_protocol(handle, core::ptr::from_ref(protocol).cast_mut(), ptr::addr_of_mut!(interface)) };
         match status {
             status if status.is_error() => Err(status),
             _ => Ok(interface),
@@ -1541,8 +1555,9 @@ impl BootServices for StandardBootServices {
         // SAFETY: `protocol` is a valid reference cast to a pointer. `device_path` validity is
         // the caller's responsibility as documented by the `unsafe` on this function. `device` is
         // a local variable whose address is valid for writes.
-        let status =
-            unsafe { locate_device_path(protocol as *const _ as *mut _, device_path, ptr::addr_of_mut!(device)) };
+        let status = unsafe {
+            locate_device_path(core::ptr::from_ref(protocol).cast_mut(), device_path, ptr::addr_of_mut!(device))
+        };
         match status {
             status if status.is_error() => Err(status),
             _ => Ok(device),
@@ -1571,7 +1586,7 @@ impl BootServices for StandardBootServices {
         let status = unsafe {
             open_protocol(
                 handle,
-                protocol as *const _ as *mut _,
+                core::ptr::from_ref(protocol).cast_mut(),
                 ptr::addr_of_mut!(interface),
                 agent_handle,
                 controller_handle,
@@ -1602,7 +1617,9 @@ impl BootServices for StandardBootServices {
         // SAFETY: `protocol` is a valid Rust reference cast to a pointer. `handle`,
         // `agent_handle`, and `controller_handle` are opaque handles validated internally
         // by the implementation; invalid handles result in an error status, not UB.
-        let status = unsafe { close_protocol(handle, protocol as *const _ as *mut _, agent_handle, controller_handle) };
+        let status = unsafe {
+            close_protocol(handle, core::ptr::from_ref(protocol).cast_mut(), agent_handle, controller_handle)
+        };
         match status {
             status if status.is_error() => Err(status),
             _ => Ok(()),
@@ -1612,7 +1629,7 @@ impl BootServices for StandardBootServices {
     /// Not marked `unsafe` because `protocol` is a Rust reference and is therefore guaranteed
     /// to be valid. `handle` is an opaque handle validated internally by the implementation;
     /// an invalid handle results in an error status, not undefined behavior.
-    /// This is triggered by the fact that efi::Handle aliases to *mut c_void, but
+    /// This is triggered by the fact that `efi::Handle` aliases to *mut `c_void`, but
     /// it is an opaque handle used as a database key.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn open_protocol_information(
@@ -1635,7 +1652,7 @@ impl BootServices for StandardBootServices {
         let status = unsafe {
             open_protocol_information(
                 handle,
-                protocol as *const _ as *mut _,
+                core::ptr::from_ref(protocol).cast_mut(),
                 ptr::addr_of_mut!(entry_buffer),
                 ptr::addr_of_mut!(entry_count),
             )
@@ -1670,7 +1687,7 @@ impl BootServices for StandardBootServices {
             driver_image_handles.push(ptr::null_mut());
             driver_image_handles.as_mut_ptr()
         };
-        let remaining_device_path = remaining_device_path.map_or(ptr::null_mut(), |p| p.as_ptr());
+        let remaining_device_path = remaining_device_path.map_or(ptr::null_mut(), core::ptr::NonNull::as_ptr);
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let connect_controller = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), connect_controller) };
         // SAFETY: The caller must ensure the function's safety contract.
@@ -1689,7 +1706,7 @@ impl BootServices for StandardBootServices {
     ///   wrapped inside Rust types. Passing an invalid value does not by itself
     ///   cause undefined behavior; the firmware is expected to reject it by
     ///   returning an error status. The function is marked `unsafe` due to the
-    ///   underlying contract of core_disconnect_controller() implementation.
+    ///   underlying contract of `core_disconnect_controller()` implementation.
     unsafe fn disconnect_controller(
         &self,
         controller_handle: efi::Handle,
@@ -1720,7 +1737,7 @@ impl BootServices for StandardBootServices {
     /// implementation; an invalid handle results in an error status, not undefined behavior.
     /// The output pointers are derived from local variables.
     ///
-    /// This is triggered by the fact that efi::Event aliases to *mut c_void, but
+    /// This is triggered by the fact that `efi::Event` aliases to *mut `c_void`, but
     /// it is an opaque handle used as a database key.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn protocols_per_handle(
@@ -1761,7 +1778,7 @@ impl BootServices for StandardBootServices {
         let mut buffer = ptr::null_mut();
         let mut buffer_count = 0;
         let protocol = match search_type {
-            HandleSearchType::ByProtocol(p) => p as *const _ as *mut _,
+            HandleSearchType::ByProtocol(p) => core::ptr::from_ref(p).cast_mut(),
             _ => ptr::null_mut(),
         };
         let search_key = match search_type {
@@ -1808,8 +1825,9 @@ impl BootServices for StandardBootServices {
         // SAFETY: `protocol` is a valid Rust reference cast to a pointer. `registration` validity
         // is the caller's responsibility as documented by the `unsafe` on this function.
         // `interface` is a local variable whose address is valid for writes.
-        let status =
-            unsafe { locate_protocol(protocol as *const _ as *mut _, registration, ptr::addr_of_mut!(interface)) };
+        let status = unsafe {
+            locate_protocol(core::ptr::from_ref(protocol).cast_mut(), registration, ptr::addr_of_mut!(interface))
+        };
         match status {
             status if status.is_error() => Err(status),
             _ => Ok(interface),
@@ -1828,8 +1846,8 @@ impl BootServices for StandardBootServices {
     ) -> Result<efi::Handle, efi::Status> {
         let source_buffer_ptr =
             source_buffer.map_or(ptr::null_mut(), |buffer| buffer.as_ptr() as *const _ as *mut c_void);
-        let source_buffer_size = source_buffer.map_or(0, |buffer| buffer.len());
-        let device_path = device_path.map_or(ptr::null_mut(), |p| p.as_ptr());
+        let source_buffer_size = source_buffer.map_or(0, <[u8]>::len);
+        let device_path = device_path.map_or(ptr::null_mut(), core::ptr::NonNull::as_ptr);
         let mut image_handle = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let load_image = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), load_image) };
@@ -1888,7 +1906,7 @@ impl BootServices for StandardBootServices {
         }
     }
 
-    /// This is triggered by the fact that efi::Event aliases to *mut c_void, but
+    /// This is triggered by the fact that `efi::Event` aliases to *mut `c_void`, but
     /// it is an opaque handle used as a database key.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn unload_image(&self, image_handle: efi::Handle) -> Result<(), efi::Status> {
@@ -2001,7 +2019,7 @@ impl BootServices for StandardBootServices {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let copy_mem = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), copy_mem) };
         // SAFETY: caller must ensure that the source and destination are valid for length bytes.
-        unsafe { copy_mem(dest, src as *mut _, length) };
+        unsafe { copy_mem(dest, src.cast_mut(), length) };
     }
 
     fn set_mem(&self, buffer: &mut [u8], value: u8) {
@@ -2037,7 +2055,7 @@ impl BootServices for StandardBootServices {
             unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), install_configuration_table) };
         // SAFETY: The caller already passed the guid input as a valid Rust reference, table itself
         // is not dereferenced.
-        match unsafe { install_configuration_table(guid as *const _ as *mut _, table) } {
+        match unsafe { install_configuration_table(core::ptr::from_ref(guid).cast_mut(), table) } {
             status if status.is_error() => Err(status),
             _ => Ok(()),
         }
@@ -2049,7 +2067,7 @@ impl BootServices for StandardBootServices {
         let calculate_crc32 = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), calculate_crc32) };
         // SAFETY: The caller is responsible for ensuring that `data` points to valid, readable
         // memory of at least `data_size` bytes.
-        match unsafe { calculate_crc32(data as *mut _, data_size, crc32.as_mut_ptr()) } {
+        match unsafe { calculate_crc32(data.cast_mut(), data_size, crc32.as_mut_ptr()) } {
             status if status.is_error() => Err(status),
             // SAFETY: If the call succeeded, crc32 has been initialized.
             _ => Ok(unsafe { crc32.assume_init() }),
@@ -2165,7 +2183,7 @@ mod tests {
         let boot_services = boot_services!(create_event = efi_create_event);
 
         extern "efiapi" fn notify_callback(_e: efi::Event, ctx: Box<i32>) {
-            assert_eq!(10, *ctx)
+            assert_eq!(10, *ctx);
         }
 
         extern "efiapi" fn efi_create_event(
@@ -2242,7 +2260,7 @@ mod tests {
         let boot_services = boot_services!(create_event_ex = efi_create_event_ex);
 
         extern "efiapi" fn notify_callback(_e: efi::Event, ctx: Box<i32>) {
-            assert_eq!(10, *ctx)
+            assert_eq!(10, *ctx);
         }
 
         extern "efiapi" fn efi_create_event_ex(
@@ -2267,7 +2285,7 @@ mod tests {
 
             if let Some(notify_function) = notify_function {
                 // SAFETY: Test code - invoking the notify callback to verify it was registered correctly.
-                unsafe { notify_function(ptr::null_mut(), notify_context as *mut _) };
+                unsafe { notify_function(ptr::null_mut(), notify_context.cast_mut()) };
             }
             efi::Status::SUCCESS
         }
@@ -2449,7 +2467,7 @@ mod tests {
         }
 
         let guard = boot_services.raise_tpl_guarded(Tpl::NOTIFY);
-        assert_eq!(Tpl::APPLICATION, guard.retore_tpl);
+        assert_eq!(Tpl::APPLICATION, guard.restore_tpl);
         assert_eq!(efi::TPL_NOTIFY, CURRENT_TPL.load(Ordering::Relaxed));
         drop(guard);
         assert_eq!(efi::TPL_APPLICATION, CURRENT_TPL.load(Ordering::Relaxed));
@@ -3134,7 +3152,7 @@ mod tests {
             boot_services.open_protocol::<TestProtocol>(1_usize as _, 2_usize as _, 3_usize as _, 4).unwrap()
         };
 
-        assert_eq!(12, interface.0)
+        assert_eq!(12, interface.0);
     }
 
     #[test]
@@ -3161,7 +3179,7 @@ mod tests {
 
         // SAFETY: Test code - calling open_protocol for zero-sized TestProtocolEmpty.
         _ = unsafe { boot_services.open_protocol::<TestProtocolEmpty>(1_usize as _, 2_usize as _, 3_usize as _, 4) }
-            .unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -3235,7 +3253,7 @@ mod tests {
             // SAFETY: Test mock - writing entry buffer pointer and count to output parameters.
             unsafe {
                 ptr::write(entry_buffer, buff);
-                ptr::write(entry_count, 1)
+                ptr::write(entry_count, 1);
             };
 
             efi::Status::SUCCESS
@@ -3377,7 +3395,7 @@ mod tests {
 
             static PROTOCOL_GUID: BinaryGuid = TestProtocol::PROTOCOL_GUID;
             #[allow(unused_allocation)]
-            let buff = Box::new(PROTOCOL_GUID.as_efi_guid() as *const efi::Guid as *mut efi::Guid).into_mut_ptr();
+            let buff = Box::new(std::ptr::from_ref::<efi::Guid>(PROTOCOL_GUID.as_efi_guid()).cast_mut()).into_mut_ptr();
 
             // SAFETY: Test mock - writing protocol GUID buffer pointer and count to output parameters.
             unsafe {
@@ -3418,7 +3436,7 @@ mod tests {
             // SAFETY: Test mock - reading protocol GUID to verify locate_protocol request for TestProtocol.
             assert_eq!(unsafe { ptr::read(protocol_guid) }, TestProtocol::PROTOCOL_GUID);
             // SAFETY: Test mock - writing protocol interface pointer to output parameter.
-            unsafe { ptr::write(interface, &PROTOCOL_INTERFACE as *const u32 as *mut u32 as *mut c_void) };
+            unsafe { ptr::write(interface, (&raw const PROTOCOL_INTERFACE).cast_mut() as *mut c_void) };
             efi::Status::SUCCESS
         }
 
@@ -3692,7 +3710,7 @@ mod tests {
     #[should_panic = "Boot services function set_watchdog_timer is not initialized."]
     fn test_set_watchdog_timer_not_init() {
         let boot_services = boot_services!();
-        _ = boot_services.set_watchdog_timer(0)
+        _ = boot_services.set_watchdog_timer(0);
     }
 
     #[test]
@@ -3851,7 +3869,7 @@ mod tests {
             unsafe {
                 assert_eq!(ptr::addr_of!(BUFFER) as usize, buffer_ptr as usize);
                 assert_eq!(BUFFER.len(), buffer_size);
-                ptr::write(crc, 10)
+                ptr::write(crc, 10);
             }
             efi::Status::SUCCESS
         }
@@ -3863,7 +3881,7 @@ mod tests {
     #[test]
     fn test_debug_output_should_not_crash() {
         let boot_services = boot_services!();
-        let debug_str = format!("{:?}", boot_services);
+        let debug_str = format!("{boot_services:?}");
         assert!(!debug_str.is_empty());
         assert!(debug_str.contains("StandardBootServices"));
     }

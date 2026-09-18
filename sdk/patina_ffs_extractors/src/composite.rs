@@ -50,6 +50,9 @@ impl CompositeSectionExtractor {
 }
 
 impl SectionExtractor for CompositeSectionExtractor {
+    #[allow(clippy::used_underscore_binding)]
+    // Allowed because the parameter is used behind feature flags and will be considered unused
+    // when no features are enabled.
     fn extract(&self, _section: &Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
         #[cfg(feature = "brotli")]
         {
@@ -86,6 +89,7 @@ impl SectionExtractor for CompositeSectionExtractor {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use patina::crc32;
 
     #[test]
     #[cfg(feature = "crc32")]
@@ -93,7 +97,7 @@ mod tests {
         use crate::tests::create_crc32_section;
 
         let content = b"Test CRC32 content";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = CompositeSectionExtractor::default();

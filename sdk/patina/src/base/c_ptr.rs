@@ -13,7 +13,6 @@ use core::{
     marker::PhantomData,
     mem::{self, ManuallyDrop},
     num::NonZeroUsize,
-    ops::Deref,
     ptr::{self, NonNull},
 };
 
@@ -63,7 +62,7 @@ pub unsafe trait CPtr<'a>: Sized {
         this.as_ptr()
     }
 
-    /// Returns a [PtrMetadata] that maintains the underlying lifetime and type information.
+    /// Returns a [`PtrMetadata`] that maintains the underlying lifetime and type information.
     fn metadata(&self) -> PtrMetadata<'a, Self> {
         PtrMetadata { ptr_value: self.as_ptr() as usize, _container: PhantomData }
     }
@@ -146,7 +145,7 @@ unsafe impl<'a, T> CPtr<'a> for &'a T {
 
     /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
-        *self as *const _
+        core::ptr::from_ref(*self)
     }
 }
 // SAFETY: Memory layout and mutability are respected for these types.
@@ -159,7 +158,7 @@ unsafe impl<'a, T> CPtr<'a> for &'a mut T {
 
     /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
-        *self as *const _
+        core::ptr::from_ref(*self)
     }
 }
 // SAFETY: Memory layout and mutability are respected for these types.
@@ -176,7 +175,7 @@ unsafe impl<T> CPtr<'_> for Box<T> {
     type Type = T;
 
     fn as_ptr(&self) -> *const Self::Type {
-        AsRef::as_ref(self) as *const _
+        core::ptr::from_ref(AsRef::as_ref(self))
     }
 }
 #[cfg(any(test, feature = "alloc"))]
@@ -213,7 +212,7 @@ unsafe impl<'a, R: CPtr<'a, Type = T>, T> CPtr<'a> for Option<R> {
     type Type = T;
 
     fn as_ptr(&self) -> *const Self::Type {
-        self.as_ref().map_or(ptr::null(), |p| p.as_ptr())
+        self.as_ref().map_or(ptr::null(), CPtr::as_ptr)
     }
 }
 // SAFETY: Memory layout and mutability are respected for these types.
@@ -226,7 +225,7 @@ unsafe impl<'a, R: CPtr<'a, Type = T>, T> CPtr<'a> for ManuallyDrop<R> {
     type Type = T;
 
     fn as_ptr(&self) -> *const Self::Type {
-        <R as CPtr>::as_ptr(self.deref())
+        <R as CPtr>::as_ptr(&**self)
     }
 }
 // SAFETY: Memory layout and mutability are respected for these types.
@@ -261,8 +260,8 @@ mod tests {
         assert_eq!(ptr, (&foo).as_ptr());
         assert_eq!(ptr, (&mut foo).as_mut_ptr());
 
-        assert_eq!(ptr, (&foo).as_ref() as *const _);
-        assert_eq!(ptr, (&mut foo).as_mut() as *const _);
+        assert_eq!(ptr, std::ptr::from_ref((&foo).as_ref()));
+        assert_eq!(ptr, std::ptr::from_ref((&mut foo).as_mut()));
 
         assert_eq!(ptr, (&mut foo).into_ptr());
         let mut foo = 10;
@@ -280,7 +279,7 @@ mod tests {
 
         // Box should leak with into_ptr
         // SAFETY: Test code - b_ptr is valid as it was just leaked from into_ptr above.
-        let mut b = unsafe { Box::from_raw(b_ptr as *mut i32) };
+        let mut b = unsafe { Box::from_raw(b_ptr.cast_mut()) };
         assert_eq!(&10, <Box<_> as AsRef<_>>::as_ref(&b));
 
         assert_eq!(b_ptr, CMutPtr::as_mut_ptr(&mut b));
@@ -325,7 +324,7 @@ mod tests {
         assert_eq!(ptr, mdb.into_ptr());
 
         // SAFETY: Test code - ptr is valid as it was just leaked from into_ptr above.
-        let mdb = ManuallyDrop::new(unsafe { Box::from_raw(ptr as *mut i32) });
+        let mdb = ManuallyDrop::new(unsafe { Box::from_raw(ptr.cast_mut()) });
         assert_eq!(ptr, mdb.into_mut_ptr());
 
         assert_eq!(ptr::null(), ManuallyDrop::new(()).as_ptr());

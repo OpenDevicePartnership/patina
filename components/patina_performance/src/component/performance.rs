@@ -160,7 +160,7 @@ impl Performance {
                     timer.cpu_count_start(),
                     timer.cpu_count_end(),
                 )),
-            )?
+            )?;
         };
 
         Ok(())
@@ -198,7 +198,7 @@ fn fetch_mm_record_size(comm_service: &Service<dyn MmCommunication>) -> Result<u
     let mut size_req_buf = [0u8; mm::SMM_COMM_HEADER_SIZE];
     mm::GetRecordSize::new()
         .write_into(&mut size_req_buf)
-        .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordSize request".into()))?;
+        .map_err(|()| MmPerformanceError::RecordError("Failed to write GetRecordSize request".into()))?;
 
     let size_resp_bytes = comm_service
         .communicate(1, &size_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
@@ -227,7 +227,7 @@ fn fetch_mm_record_chunk(
 
     data_req
         .write_into(&mut data_req_buf)
-        .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordDataByOffset request".into()))?;
+        .map_err(|()| MmPerformanceError::RecordError("Failed to write GetRecordDataByOffset request".into()))?;
 
     let data_resp_bytes = comm_service
         .communicate(1, &data_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
@@ -315,9 +315,7 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
             let available = self.bytes.len();
             self.bytes = &[];
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
-                "Truncated record (needed {}, had {})",
-                rec_len,
-                available
+                "Truncated record (needed {rec_len}, had {available})"
             ))));
         }
 
@@ -326,7 +324,7 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
             Ok(record) => record,
             Err(err) => {
                 self.bytes = &[];
-                return Some(Err(MmPerformanceError::RecordError(alloc::format!("Failed to parse record: {:?}", err))));
+                return Some(Err(MmPerformanceError::RecordError(alloc::format!("Failed to parse record: {err:?}"))));
             }
         };
 
@@ -377,23 +375,20 @@ fn process_mm_performance_records(
 
                 if let Err(e) = performance.add_generic_record(record) {
                     error_count += 1;
-                    log::error!("Performance: Failed adding MM record #{}: {:?}", record_count, e);
+                    log::error!("Performance: Failed adding MM record #{record_count}: {e:?}");
                 } else {
                     success_count += 1;
                 }
             }
             Err(e) => {
-                log::warn!("Performance: {}", e);
+                log::warn!("Performance: {e}");
                 continue;
             }
         }
     }
 
     log::debug!(
-        "Performance: MM record summary - total: {}, added: {}, failed: {}",
-        record_count,
-        success_count,
-        error_count
+        "Performance: MM record summary - total: {record_count}, added: {success_count}, failed: {error_count}"
     );
 
     Ok(())
@@ -410,7 +405,7 @@ pub extern "efiapi" fn fetch_and_add_mm_performance_records<B>(
     let _ = boot_services.close_event(event);
 
     if let Err(e) = process_mm_performance_records(&comm_service, &performance) {
-        log::error!("Performance: {}", e);
+        log::error!("Performance: {e}");
     }
 }
 
@@ -858,7 +853,7 @@ mod tests {
                     (fid, 0) if fid == TEST_MM_COMM_FUNCTION_ID_SIZE => {
                         // size query
                         self.step.set(1);
-                        Ok(create_size_response!(TEST_PERFORMANCE_RECORD_LENGTH as u64))
+                        Ok(create_size_response!(u64::from(TEST_PERFORMANCE_RECORD_LENGTH)))
                     }
                     (fid, 1) if fid == TEST_MM_COMM_FUNCTION_ID_DATA => {
                         // data query

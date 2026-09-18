@@ -46,10 +46,10 @@ pub enum TestFrameworkError {
 impl core::fmt::Display for TestFrameworkError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TestFrameworkError::HandlerRegistrationFailed(msg) => write!(f, "Handler registration failed: {}", msg),
-            TestFrameworkError::ServiceCreationFailed(msg) => write!(f, "Service creation failed: {}", msg),
-            TestFrameworkError::BufferError(msg) => write!(f, "Buffer error: {}", msg),
-            TestFrameworkError::HandlerError(msg) => write!(f, "Handler error: {}", msg),
+            TestFrameworkError::HandlerRegistrationFailed(msg) => write!(f, "Handler registration failed: {msg}"),
+            TestFrameworkError::ServiceCreationFailed(msg) => write!(f, "Service creation failed: {msg}"),
+            TestFrameworkError::BufferError(msg) => write!(f, "Buffer error: {msg}"),
+            TestFrameworkError::HandlerError(msg) => write!(f, "Handler error: {msg}"),
         }
     }
 }
@@ -103,7 +103,7 @@ impl MmTestFramework {
 
     /// Perform MM communication with the specified GUID and data
     ///
-    /// The is a simple simulation of the core patina_mm communication flow that:
+    /// The is a simple simulation of the core `patina_mm` communication flow that:
     ///
     /// 1. Creates a test buffer
     /// 2. Looks up the appropriate handler in the registry
@@ -211,7 +211,7 @@ impl MmTestFramework {
 ///
 /// ## Design Note
 ///
-/// The HashMap used to store handlers during the build phase is wrapped in `Arc<Mutex<...>>`
+/// The `HashMap` used to store handlers during the build phase is wrapped in `Arc<Mutex<...>>`
 /// only when the framework is built (`.build()`). This is intended to optimize the common
 /// case where the builder is used in a single-threaded context to configure the framework. This
 /// avoids the overhead of synchronization primitives during the build phase, where they are not
@@ -219,9 +219,9 @@ impl MmTestFramework {
 pub struct MmTestFrameworkBuilder {
     /// Handler storage used during the "construction phase"
     ///
-    /// This HashMap is owned exclusively by the builder and accessed only during
+    /// This `HashMap` is owned exclusively by the builder and accessed only during
     /// the single-threaded configuration phase. Handlers are moved in via `Box<dyn MmHandler>`
-    /// and then the entire collection is transferred to the framework's `Arc<Mutex<...>>``
+    /// and then the entire collection is transferred to the framework's `Arc<Mutex<...>>`
     /// wrapper during the `.build()` call.
     handlers: HashMap<BinaryGuid, Box<dyn MmHandler>>,
 }
@@ -273,7 +273,7 @@ impl MmTestFrameworkBuilder {
 
     /// Build the test framework
     ///
-    /// Tansfers the collected handlers from the  builder's simple HashMap into the
+    /// Tansfers the collected handlers from the  builder's simple `HashMap` into the
     /// framework's thread-safe `Arc<Mutex<HashMap>>`.
     ///
     /// ## Ownership Transfer Note
@@ -282,7 +282,7 @@ impl MmTestFrameworkBuilder {
     /// moves from the single-threaded builder to the multi-threaded framework instance.
     ///
     /// - Handler cloning is not used (`Box<dyn MmHandler>` are moved)
-    /// - THe HashMap structure is preserved (only wrapped, not reconstructed)
+    /// - `THe` `HashMap` structure is preserved (only wrapped, not reconstructed)
     /// - Arc reference counting starts at 1 (framework owns the initial reference)
     ///
     /// After this call, the builder is consumed and cannot be reused..

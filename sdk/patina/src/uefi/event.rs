@@ -23,20 +23,20 @@ use crate::standard::efi;
 /// Function signature for event notify function.
 pub type EventNotifyCallback<T> = unsafe extern "efiapi" fn(efi::Event, T);
 
-/// The type of time that is specified in TriggerTime. See the timer delay types in “Related Definitions.”
+/// The type of time that is specified in `TriggerTime`. See the timer delay types in “Related Definitions.”
 #[derive(Debug, Clone, Copy)]
 #[repr(u32)]
 pub enum EventTimerType {
     /// The event’s timer setting is to be cancelled and no timer trigger is to be set.
-    /// TriggerTime is ignored when canceling a timer.
+    /// `TriggerTime` is ignored when canceling a timer.
     Cancel = efi::TIMER_CANCEL,
 
-    /// The event is to be signaled periodically at TriggerTime intervals from the current time.
+    /// The event is to be signaled periodically at `TriggerTime` intervals from the current time.
     /// This is the only timer trigger Type for which the event timer does not need to be reset for each notification.
     /// All other timer trigger types are “one shot.”
     Periodic = efi::TIMER_PERIODIC,
 
-    /// The event is to be signaled in TriggerTime 100ns units.
+    /// The event is to be signaled in `TriggerTime` 100ns units.
     Relative = efi::TIMER_RELATIVE,
 }
 
@@ -63,20 +63,20 @@ impl EventType {
     /// the event’s data structure and notification function need to be allocated from runtime memory.
     /// For more information, see
     /// <a href="https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#setvirtualaddressmap" target="_blank">
-    ///   SetVirtualAddressMap()
+    ///   `SetVirtualAddressMap()`
     /// </a> .
     pub const RUNTIME: EventType = EventType(efi::EVT_RUNTIME);
 
     /// If an event of this type is not already in the signaled state,
-    /// then the event’s NotificationFunction will be queued at the event’s NotifyTpl whenever the event is being waited
+    /// then the event’s `NotificationFunction` will be queued at the event’s `NotifyTpl` whenever the event is being waited
     /// on via [`BootServices::wait_for_event`](crate::uefi::boot_services::BootServices::wait_for_event) or
     /// [`BootServices::check_event`](crate::uefi::boot_services::BootServices::check_event).
     pub const NOTIFY_WAIT: EventType = EventType(efi::EVT_NOTIFY_WAIT);
 
-    /// The event’s NotifyFunction is queued whenever the event is signaled.
+    /// The event’s `NotifyFunction` is queued whenever the event is signaled.
     pub const NOTIFY_SIGNAL: EventType = EventType(efi::EVT_NOTIFY_SIGNAL);
 
-    /// This event is of type [Self::NOTIFY_SIGNAL].
+    /// This event is of type [`Self::NOTIFY_SIGNAL`].
     /// It should not be combined with any other event types.
     /// This event type is functionally equivalent to the `EFI_EVENT_GROUP_EXIT_BOOT_SERVICES` event group.
     /// Refer to `EFI_EVENT_GROUP_EXIT_BOOT_SERVICES` event group description in

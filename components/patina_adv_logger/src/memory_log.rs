@@ -17,12 +17,14 @@ use core::{
     mem::size_of,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
+#[cfg(test)]
+use patina::debug::log::DEBUG_INFO;
 use patina::standard::efi;
 use patina::{
     align_up,
     error::{EfiError, Result},
 };
-use zerocopy_derive::*;
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: patina::BinaryGuid =
@@ -30,16 +32,6 @@ pub const ADV_LOGGER_HOB_GUID: patina::BinaryGuid =
 
 pub const ADV_LOGGER_INFO_VERSION_V5: u16 = 5;
 pub const ADV_LOGGER_INFO_VERSION_V6: u16 = 6;
-
-// UEFI Debug Levels
-/// Error
-pub const DEBUG_LEVEL_ERROR: u32 = 0x80000000;
-/// Warnings
-pub const DEBUG_LEVEL_WARNING: u32 = 0x00000002;
-/// Informational debug messages
-pub const DEBUG_LEVEL_INFO: u32 = 0x00000040;
-/// Detailed debug messages that may significantly impact boot performance
-pub const DEBUG_LEVEL_VERBOSE: u32 = 0x00400000;
 
 // Phase definitions.
 pub const ADVANCED_LOGGER_PHASE_DXE: u16 = 4;
@@ -62,7 +54,7 @@ impl<'a> LogEntry<'a> {
     }
 }
 
-/// Implementation of the C struct ADVANCED_LOGGER_INFO for tracking in-memory
+/// Implementation of the C struct `ADVANCED_LOGGER_INFO` for tracking in-memory
 /// logging structure for Advanced Logger.
 #[derive(Debug)]
 #[repr(C)]
@@ -73,11 +65,11 @@ pub(crate) struct AdvLoggerInfoV5 {
     pub(crate) version: u16,
     /// Reserved for future
     reserved1: [u16; 3],
-    /// Offset from LoggerInfo to start of log, expected to be the size of this structure 8 byte aligned
+    /// Offset from `LoggerInfo` to start of log, expected to be the size of this structure 8 byte aligned
     pub(crate) log_buffer_offset: u32,
     /// Reserved for future
     reserved2: u32,
-    /// Offset from LoggerInfo to where to store next log entry.
+    /// Offset from `LoggerInfo` to where to store next log entry.
     pub(crate) log_current_offset: AtomicU32,
     /// Number of bytes of messages missed
     discarded_size: AtomicU32,
@@ -85,13 +77,13 @@ pub(crate) struct AdvLoggerInfoV5 {
     pub(crate) log_buffer_size: u32,
     /// Log in permanent RAM
     in_permanent_ram: bool,
-    /// After ExitBootServices
+    /// After `ExitBootServices`
     at_runtime: bool,
-    /// After VirtualAddressChange
+    /// After `VirtualAddressChange`
     gone_virtual: bool,
-    /// HdwPort initialized
+    /// `HdwPort` initialized
     hw_port_initialized: bool,
-    /// HdwPort is Disabled
+    /// `HdwPort` is Disabled
     hw_port_disabled: bool,
     /// Reserved for future
     reserved3: [bool; 3],
@@ -107,7 +99,7 @@ pub(crate) struct AdvLoggerInfoV5 {
     reserved4: u32,
 }
 
-/// Implementation of the ADVANCED_LOGGER_INFO V6 C struct.
+/// Implementation of the `ADVANCED_LOGGER_INFO` V6 C struct.
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct AdvLoggerInfoV6 {
@@ -119,10 +111,10 @@ pub(crate) struct AdvLoggerInfoV6 {
 pub(crate) type AdvLoggerInfo = AdvLoggerInfoV6;
 
 impl AdvLoggerInfo {
-    /// Signature for the AdvLoggerInfo structure.
+    /// Signature for the `AdvLoggerInfo` structure.
     pub const SIGNATURE: u32 = 0x474F4C41; // "ALOG"
 
-    /// Version of the current AdvLoggerInfo structure.
+    /// Version of the current `AdvLoggerInfo` structure.
     pub const VERSION: u16 = ADV_LOGGER_INFO_VERSION_V6;
 
     pub fn new(
@@ -341,13 +333,13 @@ impl<'a> AdvLoggerInfoRef<'a> {
 
     pub fn as_ptr(&self) -> *const u8 {
         match *self {
-            AdvLoggerInfoRef::V5(info) => info as *const AdvLoggerInfoV5 as *const u8,
-            AdvLoggerInfoRef::V6(info) => info as *const AdvLoggerInfoV6 as *const u8,
+            AdvLoggerInfoRef::V5(info) => core::ptr::from_ref::<AdvLoggerInfoV5>(info).cast::<u8>(),
+            AdvLoggerInfoRef::V6(info) => core::ptr::from_ref::<AdvLoggerInfoV6>(info).cast::<u8>(),
         }
     }
 }
 
-/// Implementation of the C struct ADVANCED_LOGGER_MESSAGE_ENTRY_V2 for heading
+/// Implementation of the C struct `ADVANCED_LOGGER_MESSAGE_ENTRY_V2` for heading
 /// a memory log entry.
 #[repr(C)]
 #[repr(packed)]
@@ -372,15 +364,15 @@ pub(crate) struct AdvLoggerMessageEntry {
 }
 
 impl AdvLoggerMessageEntry {
-    /// Signature for the AdvLoggerMessageEntry structure.
+    /// Signature for the `AdvLoggerMessageEntry` structure.
     pub const SIGNATURE: u32 = 0x324D4C41; // ALM2
 
-    /// Major version of the AdvLoggerMessageEntry structure.
+    /// Major version of the `AdvLoggerMessageEntry` structure.
     pub const MAJOR_VERSION: u8 = 2;
-    /// Minor version of the AdvLoggerMessageEntry structure.
+    /// Minor version of the `AdvLoggerMessageEntry` structure.
     pub const MINOR_VERSION: u8 = 1;
 
-    /// Creates the structure of AdvLoggerMessageEntry.
+    /// Creates the structure of `AdvLoggerMessageEntry`.
     ///
     /// This routine is only used internally as creating this structure alone
     /// is not a defined operation. This is used for convenience of setting the
@@ -400,7 +392,7 @@ impl AdvLoggerMessageEntry {
         }
     }
 
-    /// Creates the structure of AdvLoggerMessageEntry from a [`LogEntry`].
+    /// Creates the structure of `AdvLoggerMessageEntry` from a [`LogEntry`].
     pub const fn from_log_entry(entry: &LogEntry) -> Self {
         Self::new(entry.phase, entry.level, entry.timestamp, entry.data.len() as u16)
     }
@@ -444,7 +436,7 @@ pub(crate) fn create_buffer_v5(timer_frequency: u64, hw_port_disabled: bool) -> 
         timer_frequency: AtomicU64::new(timer_frequency),
         ticks_at_time: 0,
         time: efi::Time::default(),
-        hw_print_level: DEBUG_LEVEL_INFO,
+        hw_print_level: DEBUG_INFO,
         reserved4: 0,
     };
 
@@ -479,7 +471,7 @@ pub(crate) fn create_buffer_v6(timer_frequency: u64, new_address: u64) -> alloc:
             timer_frequency: AtomicU64::new(timer_frequency),
             ticks_at_time: 0,
             time: efi::Time::default(),
-            hw_print_level: DEBUG_LEVEL_INFO,
+            hw_print_level: DEBUG_INFO,
             reserved4: 0,
         },
         new_logger_info_address: new_address,

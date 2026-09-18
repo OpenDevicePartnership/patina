@@ -82,35 +82,34 @@ pub enum AcpiError {
 impl From<AcpiError> for efi::Status {
     fn from(err: AcpiError) -> Self {
         match err {
-            AcpiError::AllocationFailed => efi::Status::OUT_OF_RESOURCES,
-            AcpiError::FacsUefiNot64BAligned => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidSignature => efi::Status::INVALID_PARAMETER,
-            AcpiError::FadtAlreadyInstalled => efi::Status::ALREADY_STARTED,
-            AcpiError::InstallConfigurationTableFailed => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidTableKey => efi::Status::NOT_FOUND,
-            AcpiError::InvalidTableIndex => efi::Status::INVALID_PARAMETER,
-            AcpiError::InvalidNotifyUnregister => efi::Status::INVALID_PARAMETER,
-            AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
-            AcpiError::XsdtInvalidLengthFromHob => efi::Status::UNSUPPORTED,
-            AcpiError::HobTableNotInstalled => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
-            AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
-            AcpiError::NullRsdpFromHob => efi::Status::NOT_FOUND,
-            AcpiError::NullXsdt => efi::Status::NOT_FOUND,
-            AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
-            AcpiError::NullTablePtr => efi::Status::INVALID_PARAMETER,
-            AcpiError::InvalidTableType => efi::Status::INVALID_PARAMETER,
-            AcpiError::BootServicesAlreadyInitialized => efi::Status::ALREADY_STARTED,
-            AcpiError::MemoryManagerAlreadyInitialized => efi::Status::ALREADY_STARTED,
-            AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
-            AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
-            AcpiError::XsdtAlreadyInstalled => efi::Status::ALREADY_STARTED,
-            AcpiError::XsdtNotInitialized => efi::Status::NOT_STARTED,
-            AcpiError::InvalidChecksumOffset => efi::Status::INVALID_PARAMETER,
-            AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
-            AcpiError::FacsAddressExceeds32BitLimit => efi::Status::UNSUPPORTED,
-            AcpiError::XsdtEntryNotFound => efi::Status::NOT_FOUND,
+            AcpiError::AllocationFailed | AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
+            AcpiError::BootServicesAlreadyInitialized
+            | AcpiError::FadtAlreadyInstalled
+            | AcpiError::MemoryManagerAlreadyInitialized
+            | AcpiError::XsdtAlreadyInstalled => efi::Status::ALREADY_STARTED,
             AcpiError::ChecksumFailed => efi::Status::COMPROMISED_DATA,
+            AcpiError::FacsAddressExceeds32BitLimit
+            | AcpiError::FacsUefiNot64BAligned
+            | AcpiError::HobTableNotInstalled
+            | AcpiError::InstallConfigurationTableFailed
+            | AcpiError::XsdtInvalidLengthFromHob => efi::Status::UNSUPPORTED,
+            AcpiError::InvalidChecksumOffset
+            | AcpiError::InvalidNotifyUnregister
+            | AcpiError::InvalidSignature
+            | AcpiError::InvalidTableFormat
+            | AcpiError::InvalidTableIndex
+            | AcpiError::InvalidTableType
+            | AcpiError::InvalidXsdtEntry
+            | AcpiError::NullTablePtr
+            | AcpiError::TableNotifyFailed
+            | AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
+            AcpiError::InvalidTableKey
+            | AcpiError::NullRsdpFromHob
+            | AcpiError::NullXsdt
+            | AcpiError::ProviderNotInitialized
+            | AcpiError::TableNotPresentInMemory
+            | AcpiError::XsdtEntryNotFound => efi::Status::NOT_FOUND,
+            AcpiError::XsdtNotInitialized => efi::Status::NOT_STARTED,
         }
     }
 }

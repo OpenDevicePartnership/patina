@@ -111,7 +111,7 @@ impl<'a> UnwindInfo<'a> {
 }
 
 /// `UnwindCode`
-/// Source: https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#struct-unwind_code
+/// Source: <https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#struct-unwind_code>
 #[allow(dead_code)] // Enum variants are used for testing the parsed bytes. Ignore their presence in release build
 #[derive(Debug)]
 enum UnwindCode {
@@ -166,6 +166,7 @@ impl UnwindCode {
             let opcode = opcode_opinfo & 0xF;
             let opinfo = opcode_opinfo >> 4;
 
+            #[allow(clippy::match_same_arms)]
             match opcode {
                 0 => offset += 8, // PushNonVolatile
                 1 => {
@@ -197,7 +198,7 @@ impl UnwindCode {
                 }
                 6..=10 => (), // These opcodes do not contribute to rsp offset
                 _ => panic!("Unexpected opcode"),
-            };
+            }
         }
         Ok(offset)
     }
@@ -232,7 +233,7 @@ impl UnwindCode {
                     };
                     UnwindCode::AllocLarge { prolog_offset, size }
                 }
-                2 => UnwindCode::AllocSmall { prolog_offset, size: opinfo as u32 * 8 + 8 },
+                2 => UnwindCode::AllocSmall { prolog_offset, size: u32::from(opinfo) * 8 + 8 },
                 3 => UnwindCode::SetFP { prolog_offset, offset: frame_register_offset },
                 4 => {
                     let reg_offset = u32::from(bytes.read16_with(&mut offset)?) * 8;
@@ -342,7 +343,7 @@ mod tests {
         let codes = [0x04, 0x42];
         let bytes = build_unwind_bytes(1, 1, 8, 1, 5, 3, &codes); // flags = 1, frame_reg = 5, offset_units = 3 -> 48.
         let ui = UnwindInfo::parse(&bytes, Some("disp")).unwrap();
-        let s = format!("{}", ui);
+        let s = format!("{ui}");
         assert!(s.contains("UnwindInfo"));
         assert!(s.contains("version: 0x01"));
         assert!(s.contains("flags: 0x01"));

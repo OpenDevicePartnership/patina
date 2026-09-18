@@ -77,12 +77,12 @@ impl MemoryManager for CoreMemoryManager {
     ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages].
+    /// [`Self::allocate_pages`].
     unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
         // SAFETY: The caller must ensure that the provided address is valid.
         let result = unsafe { core_free_pages(address as efi::PhysicalAddress, page_count) };
         match result {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(EfiError::NotFound) => Err(MemoryError::InvalidAddress),
             Err(_) => Err(MemoryError::InternalError),
         }

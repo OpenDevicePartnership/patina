@@ -1,4 +1,4 @@
-//! AArch64 CPU module
+//! `AArch64` CPU module
 //!
 //! ## License
 //!

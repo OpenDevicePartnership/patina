@@ -216,12 +216,12 @@ where
         // Update the FADT's address pointer to the FACS.
         if let Some(fadt_table) = self.acpi_tables.lock().get_mut(&Self::FADT_KEY) {
             // SAFETY: We verify the table's signature before calling `install_facs`.
-            let facs_addr = unsafe { facs_info.as_ref::<AcpiFacs>() } as *const AcpiFacs as u64;
-            log::trace!("Updating FADT with FACS address: 0x{:016X}", facs_addr);
+            let facs_addr = core::ptr::from_ref::<AcpiFacs>(unsafe { facs_info.as_ref::<AcpiFacs>() }) as u64;
+            log::trace!("Updating FADT with FACS address: 0x{facs_addr:016X}");
             // SAFETY: The struct maintains an invariant mapping between the FADT and `Self::FADT_KEY`.
             unsafe { fadt_table.as_mut::<AcpiFadt>().set_x_firmware_ctrl(facs_addr) };
             // SAFETY: The struct maintains an invariant mapping between the FADT and `Self::FADT_KEY`.
-            unsafe { fadt_table.as_mut::<AcpiFadt>().inner._firmware_ctrl = facs_addr as u32 };
+            unsafe { fadt_table.as_mut::<AcpiFadt>().inner.firmware_ctrl = facs_addr as u32 };
             fadt_table.update_checksum()?;
         }
 
@@ -317,7 +317,7 @@ where
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
-        let xsdt_header = xsdt_ptr as *const AcpiTableHeader;
+        let xsdt_header = xsdt_ptr.cast::<AcpiTableHeader>();
 
         // SAFETY: `get_xsdt_address_from_rsdp` validated that the XSDT has a valid header.
         let xsdt_length = unsafe { AcpiTableHeader::read_length_from_ptr(xsdt_header) };
@@ -328,8 +328,8 @@ where
         // Create a safe slice of the XSDT entries for iteration.
         // SAFETY: The length specified by the HOB should be for a valid XSDT.
         let xsdt_entries_slice = unsafe {
-            let entries_start = (xsdt_ptr as *const u8).add(ACPI_HEADER_LEN);
-            slice::from_raw_parts(entries_start as *const u64, num_entries)
+            let entries_start = xsdt_ptr.cast::<u8>().add(ACPI_HEADER_LEN);
+            slice::from_raw_parts(entries_start.cast::<u64>(), num_entries)
         };
 
         for (i, addr_ptr) in xsdt_entries_slice.iter().enumerate().take(num_entries) {
@@ -397,7 +397,7 @@ where
                 log::error!("Failed to install FADT: FACS address exceeds 32-bit limit");
                 return Err(AcpiError::FacsAddressExceeds32BitLimit);
             }
-            fadt.inner._firmware_ctrl = facs.as_ptr() as u32;
+            fadt.inner.firmware_ctrl = facs.as_ptr() as u32;
         }
 
         // If the DSDT is already installed, update the FACP's x_dsdt field.
@@ -444,11 +444,11 @@ where
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.lock().get_mut(&Self::FADT_KEY) {
             let dsdt_addr = dsdt_info.as_ptr() as u64;
-            log::trace!("Updating FADT with DSDT address: 0x{:016X}", dsdt_addr);
+            log::trace!("Updating FADT with DSDT address: 0x{dsdt_addr:016X}");
             // SAFETY: The struct maintains an invariant mapping between the FADT and `Self::FADT_KEY`.
             unsafe { facp.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt_addr;
             facp.update_checksum()?;
-        };
+        }
 
         dsdt_info.update_checksum()?;
 
@@ -472,7 +472,7 @@ where
 
         // Get the physical address of the table for the XSDT entry.
         let physical_addr = table_info.as_ptr() as u64;
-        log::trace!("Adding table entry to XSDT at address: 0x{:016X}", physical_addr);
+        log::trace!("Adding table entry to XSDT at address: 0x{physical_addr:016X}");
         self.add_entry_to_xsdt(physical_addr)?;
 
         // Since XSDT was modified, recalculate checksum for root tables.
@@ -562,7 +562,7 @@ where
 
             // Update the RSDP with the new XSDT address.
             if let Some(ref mut rsdp) = *self.rsdp.lock() {
-                rsdp.xsdt_address = xsdt_addr
+                rsdp.xsdt_address = xsdt_addr;
             }
 
             // Point to the newly allocated data.
@@ -613,7 +613,7 @@ where
 
                     // SAFETY: The FADT signature has been verified before calling `delete_table`.
                     // The struct maintains an invariant mapping between the FADT and `Self::FADT_KEY`.
-                    unsafe { fadt_table.as_mut::<AcpiFadt>() }.inner._firmware_ctrl = 0;
+                    unsafe { fadt_table.as_mut::<AcpiFadt>() }.inner.firmware_ctrl = 0;
                     fadt_table.update_checksum()?;
                 }
 
@@ -642,7 +642,7 @@ where
             }
         }
 
-        log::trace!("Successfully deleted table with signature: 0x{:08X}", signature);
+        log::trace!("Successfully deleted table with signature: 0x{signature:08X}");
         Ok(())
     }
 
@@ -686,7 +686,7 @@ where
                 // Decrease XSDT length.
                 xsdt_data.set_length(xsdt_data.get_length()? - ACPI_XSDT_ENTRY_SIZE as u32);
             } else {
-                log::error!("Failed to remove table from XSDT: entry with address 0x{:016X} not found", table_address);
+                log::error!("Failed to remove table from XSDT: entry with address 0x{table_address:016X} not found");
                 return Err(AcpiError::XsdtEntryNotFound);
             }
         } else {
@@ -717,7 +717,8 @@ where
         // SAFETY: We know the size and layout of the RSDP in memory.
         let rsdp_bytes = unsafe {
             slice::from_raw_parts_mut(
-                *self.rsdp.lock().as_mut().expect("RSDP should be initialized.") as *mut AcpiRsdp as *mut u8,
+                core::ptr::from_mut::<AcpiRsdp>(*self.rsdp.lock().as_mut().expect("RSDP should be initialized."))
+                    .cast::<u8>(),
                 mem::size_of::<AcpiRsdp>(),
             )
         };
@@ -747,7 +748,7 @@ where
             // Cast RSDP to raw pointer for boot services.
             // SAFETY: ACPI_TABLE_GUID is the correct spec-defined GUID for the RSDP.
             unsafe {
-                let rsdp_ptr = *rsdp as *mut AcpiRsdp as *mut c_void;
+                let rsdp_ptr = core::ptr::from_mut::<AcpiRsdp>(*rsdp).cast::<c_void>();
                 self.boot_services
                     .get()
                     .ok_or(AcpiError::ProviderNotInitialized)?
@@ -784,8 +785,8 @@ where
     /// Retrieves a table at a specific index in the list of installed tables.
     /// This is mostly to assist the C protocol.
     ///
-    /// This function includes a hack/assumption based on the ordering of the BTreeMap, in order to avoid storing values in a indexed list:
-    /// Since the BTreeMap is ordered by key value, and the key values are `usize`s under the hood,
+    /// This function includes a hack/assumption based on the ordering of the `BTreeMap`, in order to avoid storing values in a indexed list:
+    /// Since the `BTreeMap` is ordered by key value, and the key values are `usize`s under the hood,
     /// and we give out table keys in a monotonically increasing manner,
     /// tables are always sorted by order of installation.
     /// As such, BtreeMap.values[idx] is equivalent to indexing into a list of installed tables,

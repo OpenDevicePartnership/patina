@@ -34,7 +34,7 @@ struct AllocationInfo {
 ///
 /// Wraps a `PageAllocator` to provide additional UEFI-specific functionality:
 /// - Association of a particular [`efi::MemoryType`] with the allocator
-/// - A pool implementation that allows tracking the layout and memory_type of UEFI pool allocations.
+/// - A pool implementation that allows tracking the layout and `memory_type` of UEFI pool allocations.
 pub struct UefiAllocator<A>
 where
     A: PageAllocator + GlobalAlloc + Allocator + Display + Sync + Send,
@@ -152,7 +152,7 @@ where
 
         //must be true for any pool allocation
         if allocation_info.signature != POOL_SIG {
-            debug_assert!(false, "Pool signature is incorrect: {:#x?}", allocation_info);
+            debug_assert!(false, "Pool signature is incorrect: {allocation_info:#x?}");
             return Err(EfiError::InvalidParameter);
         }
         // check if allocation is from this pool.
@@ -192,7 +192,7 @@ where
     ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages]
+    /// [`Self::allocate_pages`]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         // SAFETY: address/pages must refer to a valid allocation from this allocator.
         unsafe { self.allocator.free_pages(address, pages) }
@@ -383,7 +383,7 @@ mod tests {
                     let allocation_info = &*allocation_info;
                     assert_eq!(allocation_info.signature, POOL_SIG);
                     assert_eq!(allocation_info.memory_type, efi::RUNTIME_SERVICES_DATA);
-                    assert_eq!(allocation_info.layout, layout)
+                    assert_eq!(allocation_info.layout, layout);
                 }
             });
         });
@@ -585,7 +585,7 @@ mod tests {
                 // SAFETY: ua.alloc/ua.dealloc are used with a valid layout in tests.
                 unsafe {
                     let a = ua.alloc(layout);
-                    ua.dealloc(a, layout)
+                    ua.dealloc(a, layout);
                 }
 
                 // SAFETY: ua.alloc returned non-null for this test allocation.

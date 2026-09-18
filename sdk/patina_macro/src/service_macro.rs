@@ -1,4 +1,4 @@
-//! A module containing Macro(s) implementation details for creating a IntoService implementation.
+//! A module containing Macro(s) implementation details for creating a `IntoService` implementation.
 //!
 //! ## License
 //!
@@ -40,7 +40,7 @@ impl Service {
         let mut streams = Vec::new();
         let mut stream = TokenStream::new();
 
-        for tt in ts.into_iter() {
+        for tt in ts {
             if tt.to_string() == "," {
                 streams.push(stream);
                 stream = TokenStream::new();
@@ -92,7 +92,7 @@ impl Service {
                 let ref_service: &'static #service = leaked;
                 let any: &'static dyn core::any::Any = #alloc_name::boxed::Box::leak(#alloc_name::boxed::Box::new(ref_service));
                 Self::register_service::<#service>(storage, any);
-            })
+            });
         }
         tokens
     }
@@ -106,7 +106,7 @@ impl Service {
     /// Default type parameters are stripped since they are not allowed in impl blocks.
     fn lhs_generics(&self) -> Generics {
         let mut generics = self.generics();
-        for param in generics.params.iter_mut() {
+        for param in &mut generics.params {
             if let syn::GenericParam::Type(param) = param {
                 param.default = None;
             }
@@ -121,7 +121,7 @@ impl Service {
     /// invalid: `impl SomeTrait for MyStruct<T = i32> {}`
     fn rhs_generics(&self) -> Generics {
         let mut generics = self.generics();
-        for param in generics.params.iter_mut() {
+        for param in &mut generics.params {
             if let syn::GenericParam::Type(param) = param {
                 param.bounds.clear();
                 param.default = None;
@@ -153,7 +153,7 @@ impl Parse for Service {
     }
 }
 
-/// The testable version of the `service` macro that uses proc_macro2::Tokenstreams.
+/// The testable version of the `service` macro that uses `proc_macro2::Tokenstreams`.
 pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let service = match syn::parse2::<Service>(item) {
         Ok(service) => service,

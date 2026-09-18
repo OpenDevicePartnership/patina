@@ -512,7 +512,7 @@ pub struct Type4ProcessorInformation {
     pub processor_family: u8,
     /// Processor manufacturer string index
     pub processor_manufacturer: u8,
-    /// Processor ID (PROCESSOR_ID_DATA: 2x u32 = 8 bytes)
+    /// Processor ID (`PROCESSOR_ID_DATA`: 2x u32 = 8 bytes)
     pub processor_id: [u8; 8],
     /// Processor version string index
     pub processor_version: u8,
@@ -618,13 +618,13 @@ pub struct Type16PhysicalMemoryArray {
     pub use_field: MemoryArrayUse,
     /// Primary hardware error correction or detection method
     pub memory_error_correction: MemoryArrayErrorCorrectionType,
-    /// Maximum capacity in KB (0x80000000 = use extended_maximum_capacity)
+    /// Maximum capacity in KB (0x80000000 = use `extended_maximum_capacity`)
     pub maximum_capacity: u32,
     /// Handle of the error information structure (0xFFFE = not provided)
     pub memory_error_information_handle: u16,
     /// Number of slots or sockets for memory devices
     pub number_of_memory_devices: u16,
-    /// Maximum capacity in bytes (SMBIOS 2.7+, valid when maximum_capacity = 0x80000000)
+    /// Maximum capacity in bytes (SMBIOS 2.7+, valid when `maximum_capacity` = 0x80000000)
     pub extended_maximum_capacity: u64,
 
     /// String pool (NOT part of binary SMBIOS format - see struct documentation)
@@ -657,7 +657,7 @@ pub struct Type17MemoryDevice {
     pub total_width: u16,
     /// Data width in bits (0xFFFF = unknown)
     pub data_width: u16,
-    /// Size of the memory device (0x7FFF = use extended_size, 0xFFFF = unknown)
+    /// Size of the memory device (0x7FFF = use `extended_size`, 0xFFFF = unknown)
     pub size: u16,
     /// Form factor of the memory device
     pub form_factor: MemoryFormFactor,
@@ -750,17 +750,17 @@ pub struct Type17MemoryDevice {
 pub struct Type19MemoryArrayMappedAddress {
     /// SMBIOS table header
     pub header: SmbiosTableHeader,
-    /// Starting address in KB (0xFFFFFFFF = use extended_starting_address)
+    /// Starting address in KB (0xFFFFFFFF = use `extended_starting_address`)
     pub starting_address: u32,
-    /// Ending address in KB (0xFFFFFFFF = use extended_ending_address)
+    /// Ending address in KB (0xFFFFFFFF = use `extended_ending_address`)
     pub ending_address: u32,
     /// Handle of the Physical Memory Array this mapping belongs to
     pub memory_array_handle: u16,
     /// Number of memory devices that form a single row of the address
     pub partition_width: u8,
-    /// Starting address in bytes (SMBIOS 2.7+, valid when starting_address = 0xFFFFFFFF)
+    /// Starting address in bytes (SMBIOS 2.7+, valid when `starting_address` = 0xFFFFFFFF)
     pub extended_starting_address: u64,
-    /// Ending address in bytes (SMBIOS 2.7+, valid when ending_address = 0xFFFFFFFF)
+    /// Ending address in bytes (SMBIOS 2.7+, valid when `ending_address` = 0xFFFFFFFF)
     pub extended_ending_address: u64,
 
     /// String pool (NOT part of binary SMBIOS format - see struct documentation)

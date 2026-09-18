@@ -50,7 +50,7 @@ use hob::{HobPerformanceData, merge_hob_performance_buffer};
 use table::Fbpt;
 
 /// This is a temporary global reference for code that has not yet been converted to use the instanced
-/// core mechanisms. This should be removed once driver_services.rs is converted.
+/// core mechanisms. This should be removed once `driver_services.rs` is converted.
 pub(crate) static CORE_PERFORMANCE: Service<CorePerformance> = Service::new_uninit();
 
 /// Performance measurement service owned by the DXE Core.
@@ -97,7 +97,7 @@ impl CorePerformance {
         }
 
         let enabled_measurements = config.enabled_measurements;
-        log::info!("Performance measurement is enabled. measurements: {:#X}", enabled_measurements);
+        log::info!("Performance measurement is enabled. measurements: {enabled_measurements:#X}");
         self.enabled.store(true, Ordering::Relaxed);
         self.timer.set_frequency(frequency);
 
@@ -415,7 +415,7 @@ impl CorePerformance {
                 };
                 self.add_fbpt_record(GuidEventRecord::new(perf_id, 0, timestamp, guid))
             }
-            id @ KnownPerfId::ModuleLoadImageStart | id @ KnownPerfId::ModuleLoadImageEnd => {
+            id @ (KnownPerfId::ModuleLoadImageStart | KnownPerfId::ModuleLoadImageEnd) => {
                 if id == KnownPerfId::ModuleLoadImageStart {
                     self.loaded_image_count.fetch_add(1, Ordering::Relaxed);
                 }
@@ -424,7 +424,7 @@ impl CorePerformance {
                     log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                     return Err(EfiError::InvalidParameter.into());
                 };
-                let load_image_count = self.loaded_image_count.load(Ordering::Relaxed) as u64;
+                let load_image_count = u64::from(self.loaded_image_count.load(Ordering::Relaxed));
                 self.add_fbpt_record(GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, load_image_count))
             }
             KnownPerfId::ModuleDbStart
@@ -565,7 +565,7 @@ fn get_module_guid_from_handle(handle: efi::Handle) -> Result<BinaryGuid, efi::S
                     as *const BinaryGuid;
                 guid = ptr::read_unaligned(guid_ptr);
             }
-        };
+        }
     }
 
     Ok(guid)

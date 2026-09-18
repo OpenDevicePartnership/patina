@@ -141,7 +141,9 @@ deny = [
     # Wrapper crates can optionally be specified to allow the crate when it
     # is a direct dependency of the otherwise banned crate
     #{ crate = "ansi_term@0.11.0", wrappers = ["this-crate-directly-depends-on-ansi_term"] },
-    { crate = "tiny-keccak", reason = "Not updated in 5 years. Use alternative." }
+    { crate = "indoc", reason = "Does not support CRLF, producing hard to read logs." },
+    { crate = "tiny-keccak", reason = "Not updated in 5 years. Use alternative." },
+    { crate = "r-efi", reason = "Depend on `patina` and use `patina::standard::efi` instead of r-efi directly.", wrappers = ["patina", "getrandom"] }
 ]
 
 # List of features to allow/deny
@@ -168,12 +170,7 @@ deny = [
 #exact = true
 
 # Certain crates/versions that will be skipped when doing duplicate detection.
-skip = [
-    #"ansi_term@0.11.0",
-    #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
-
-    { crate = "bitflags", reason = "Need https://github.com/gz/rust-x86/pull/150 to be merged into rust-x86." }
-]
+skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
 # dependencies starting at the specified crate, up to a certain depth, which is

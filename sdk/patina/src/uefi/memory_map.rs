@@ -64,7 +64,7 @@ pub fn print_details(descriptors: &[efi::MemoryDescriptor]) {
     log::info!(target: "memory_map_test", "\n");
     log::info!(target: "memory_map_test", "Memory Summary by Type:");
     log::info!(target: "memory_map_test", "  Total Memory: {} MB", total_memory / SIZE_1MB as u64);
-    for (mem_type, (count, bytes)) in type_counts.iter() {
+    for (mem_type, (count, bytes)) in &type_counts {
         let type_name = match *mem_type {
             efi::RESERVED_MEMORY_TYPE => "Reserved",
             efi::LOADER_CODE => "Loader Code",

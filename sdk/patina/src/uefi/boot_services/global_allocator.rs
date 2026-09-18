@@ -26,45 +26,43 @@ impl<T: BootServices> Deref for BootServicesGlobalAllocator<T> {
 
 impl<T: BootServices> BootServicesGlobalAllocator<T> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match layout.align() {
-            0..=8 => self.allocate_pool(EfiMemoryType::BootServicesData, layout.size()).unwrap_or_default(),
-            _ => {
-                let Ok((extended_layout, tracker_offset)) = layout.extend(Layout::new::<*mut *mut u8>()) else {
-                    return ptr::null_mut();
-                };
-                let alloc_size = extended_layout.align() + extended_layout.size();
-                let Ok(original_ptr) = self.allocate_pool(EfiMemoryType::BootServicesData, alloc_size) else {
-                    return ptr::null_mut();
-                };
-                // SAFETY: Calculating aligned pointer offset within the allocated pool.
-                let ptr = unsafe { original_ptr.add(original_ptr.align_offset(extended_layout.align())) };
-                // SAFETY: Computing tracker pointer location within the allocated region.
-                let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
-                // SAFETY: Writing original_ptr to tracker location for later deallocation.
-                unsafe { ptr::write(tracker_ptr, original_ptr) };
-                ptr
-            }
+        if let 0..=8 = layout.align() {
+            self.allocate_pool(EfiMemoryType::BootServicesData, layout.size()).unwrap_or_default()
+        } else {
+            let Ok((extended_layout, tracker_offset)) = layout.extend(Layout::new::<*mut *mut u8>()) else {
+                return ptr::null_mut();
+            };
+            let alloc_size = extended_layout.align() + extended_layout.size();
+            let Ok(original_ptr) = self.allocate_pool(EfiMemoryType::BootServicesData, alloc_size) else {
+                return ptr::null_mut();
+            };
+            // SAFETY: Calculating aligned pointer offset within the allocated pool.
+            let ptr = unsafe { original_ptr.add(original_ptr.align_offset(extended_layout.align())) };
+            // SAFETY: Computing tracker pointer location within the allocated region.
+            let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
+            // SAFETY: Writing original_ptr to tracker location for later deallocation.
+            unsafe { ptr::write(tracker_ptr, original_ptr) };
+            ptr
         }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        match layout.align() {
+        if let 0..=8 = layout.align() {
             // SAFETY: This dealloc call is safe because the caller(GlobalAlloc)
             // guarantees that the pointer was allocated with the same layout.
-            0..=8 => _ = unsafe { self.free_pool(ptr) },
-            _ => {
-                let Ok((extended_layout, tracker_offset)) = layout.extend(Layout::new::<*mut *mut u8>()) else {
-                    return;
-                };
-                // SAFETY: Reading tracker pointer from the allocated region.
-                let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
-                // SAFETY: Reading original allocation pointer from tracker location.
-                let original_ptr = unsafe { ptr::read(tracker_ptr) };
-                // SAFETY: Verifying alignment matches what we calculated during allocation.
-                debug_assert_eq!(ptr, unsafe { original_ptr.add(original_ptr.align_offset(extended_layout.align())) });
-                // SAFETY: The pointer was allocated by BootServicesGlobalAllocator and is valid.
-                let _ = unsafe { self.free_pool(original_ptr) };
-            }
+            _ = unsafe { self.free_pool(ptr) }
+        } else {
+            let Ok((extended_layout, tracker_offset)) = layout.extend(Layout::new::<*mut *mut u8>()) else {
+                return;
+            };
+            // SAFETY: Reading tracker pointer from the allocated region.
+            let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
+            // SAFETY: Reading original allocation pointer from tracker location.
+            let original_ptr = unsafe { ptr::read(tracker_ptr) };
+            // SAFETY: Verifying alignment matches what we calculated during allocation.
+            debug_assert_eq!(ptr, unsafe { original_ptr.add(original_ptr.align_offset(extended_layout.align())) });
+            // SAFETY: The pointer was allocated by BootServicesGlobalAllocator and is valid.
+            let _ = unsafe { self.free_pool(original_ptr) };
         }
     }
 }

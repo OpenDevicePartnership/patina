@@ -219,7 +219,13 @@ impl MemoryBlock {
                 md.attributes = attributes;
                 Ok(())
             }
-            _ => Err(Error::InvalidStateTransition),
+            _ => {
+                log::error!(
+                    "Invalid GCD state transition: Add({memory_type:?}) requires an unallocated NonExistent block and \
+                     a non-NonExistent target type. Block: {self:#x?}"
+                );
+                Err(Error::InvalidStateTransition)
+            }
         }
     }
 
@@ -230,7 +236,13 @@ impl MemoryBlock {
                 md.capabilities = 0;
                 Ok(())
             }
-            _ => Err(Error::InvalidStateTransition),
+            _ => {
+                log::error!(
+                    "Invalid GCD state transition: Remove requires an unallocated, non-NonExistent block. \
+                     Block: {self:#x?}"
+                );
+                Err(Error::InvalidStateTransition)
+            }
         }
     }
 
@@ -273,7 +285,12 @@ impl MemoryBlock {
                 *self = Self::Unallocated(*md);
                 Ok(())
             }
-            _ => Err(Error::InvalidStateTransition),
+            _ => {
+                log::error!(
+                    "Invalid GCD state transition: Free requires an allocated, Existent block. Block: {self:#x?}"
+                );
+                Err(Error::InvalidStateTransition)
+            }
         }
     }
 
@@ -282,14 +299,25 @@ impl MemoryBlock {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
             {
-                if (md.capabilities | attributes) != md.capabilities {
-                    Err(Error::InvalidStateTransition)
-                } else {
+                if (md.capabilities | attributes) == md.capabilities {
                     md.attributes = attributes;
                     Ok(())
+                } else {
+                    log::error!(
+                        "Invalid GCD state transition: SetAttributes({attributes:#x}) requests attributes not present \
+                         in the block capabilities {:#x}. Block: {md:#x?}",
+                        md.capabilities
+                    );
+                    Err(Error::InvalidStateTransition)
                 }
             }
-            _ => Err(Error::InvalidStateTransition),
+            _ => {
+                log::error!(
+                    "Invalid GCD state transition: SetAttributes({attributes:#x}) requires a non-NonExistent block. \
+                     Block: {self:#x?}"
+                );
+                Err(Error::InvalidStateTransition)
+            }
         }
     }
 
@@ -298,17 +326,28 @@ impl MemoryBlock {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
             {
-                if (capabilities & md.attributes) != md.attributes {
+                if (capabilities & md.attributes) == md.attributes {
+                    md.capabilities = capabilities;
+                    Ok(())
+                } else {
                     //
                     // Current attributes must still be supported with new capabilities
                     //
+                    log::error!(
+                        "Invalid GCD state transition: SetCapabilities({capabilities:#x}) does not support the \
+                         current block attributes {:#x}. Block: {md:#x?}",
+                        md.attributes
+                    );
                     Err(Error::InvalidStateTransition)
-                } else {
-                    md.capabilities = capabilities;
-                    Ok(())
                 }
             }
-            _ => Err(Error::InvalidStateTransition),
+            _ => {
+                log::error!(
+                    "Invalid GCD state transition: SetCapabilities({capabilities:#x}) requires a non-NonExistent \
+                     block. Block: {self:#x?}"
+                );
+                Err(Error::InvalidStateTransition)
+            }
         }
     }
 
@@ -382,7 +421,7 @@ mod memory_block_tests {
                 assert_eq!(md.image_handle, 0 as efi::Handle);
                 assert_eq!(md.device_handle, 0 as efi::Handle);
             }
-            _ => panic!("Expected Allocated"),
+            MemoryBlock::Unallocated(_) => panic!("Expected Allocated"),
         }
 
         // test free transition
@@ -393,7 +432,7 @@ mod memory_block_tests {
                 assert_eq!(md.image_handle, 0 as efi::Handle);
                 assert_eq!(md.device_handle, 0 as efi::Handle);
             }
-            _ => panic!("Expected Unallocated"),
+            MemoryBlock::Allocated(_) => panic!("Expected Unallocated"),
         }
 
         // test capabilities transition

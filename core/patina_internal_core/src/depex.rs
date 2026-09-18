@@ -193,7 +193,7 @@ impl Depex {
                 }
                 Opcode::Push(guid, present) => {
                     if *present {
-                        stack.push(true)
+                        stack.push(true);
                     } else {
                         if let Some(guid) = guid_from_uuid(guid)
                             && protocols.contains(&guid)
@@ -529,14 +529,14 @@ mod tests {
     /// Tests a DEPEX expression with all AND operations that should evaluate to true when all protocols are installed.
     ///
     /// This test is based on the following dependency expression:
-    ///   PUSH EfiPcdProtocolGuid
-    ///   PUSH EfiDevicePathUtilitiesProtocolGuid
-    ///   PUSH EfiHiiStringProtocolGuid
-    ///   PUSH EfiHiiDatabaseProtocolGuid
-    ///   PUSH EfiHiiConfigRoutingProtocolGuid
-    ///   PUSH EfiResetArchProtocolGuid
-    ///   PUSH EfiVariableWriteArchProtocolGuid
-    ///   PUSH EfiVariableArchProtocolGuid
+    ///   PUSH `EfiPcdProtocolGuid`
+    ///   PUSH `EfiDevicePathUtilitiesProtocolGuid`
+    ///   PUSH `EfiHiiStringProtocolGuid`
+    ///   PUSH `EfiHiiDatabaseProtocolGuid`
+    ///   PUSH `EfiHiiConfigRoutingProtocolGuid`
+    ///   PUSH `EfiResetArchProtocolGuid`
+    ///   PUSH `EfiVariableWriteArchProtocolGuid`
+    ///   PUSH `EfiVariableArchProtocolGuid`
     ///   AND
     ///   AND
     ///   AND
@@ -596,15 +596,15 @@ mod tests {
     /// Tests a DEPEX expression with AND and OR operations that should evaluate to true when all protocols are installed.
     ///
     /// This test is based on the following dependency expression:
-    ///   PUSH EfiVariableArchProtocolGuid
-    ///   PUSH EfiVariableWriteArchProtocolGuid
-    ///   PUSH EfiTcgProtocolGuid
-    ///   PUSH EfiTrEEProtocolGuid
+    ///   PUSH `EfiVariableArchProtocolGuid`
+    ///   PUSH `EfiVariableWriteArchProtocolGuid`
+    ///   PUSH `EfiTcgProtocolGuid`
+    ///   PUSH `EfiTrEEProtocolGuid`
     ///   OR
     ///   AND
     ///   AND
-    ///   PUSH EfiPcdProtocolGuid
-    ///   PUSH EfiDevicePathUtilitiesProtocolGuid
+    ///   PUSH `EfiPcdProtocolGuid`
+    ///   PUSH `EfiDevicePathUtilitiesProtocolGuid`
     ///   AND
     ///   AND
     ///   END
@@ -649,15 +649,15 @@ mod tests {
 
     #[test]
     /// This test is based on the following dependency expression:
-    ///   PUSH EfiVariableArchProtocolGuid
-    ///   PUSH EfiVariableWriteArchProtocolGuid
-    ///   PUSH EfiTcgProtocolGuid
-    ///   PUSH EfiTrEEProtocolGuid
+    ///   PUSH `EfiVariableArchProtocolGuid`
+    ///   PUSH `EfiVariableWriteArchProtocolGuid`
+    ///   PUSH `EfiTcgProtocolGuid`
+    ///   PUSH `EfiTrEEProtocolGuid`
     ///   OR
     ///   AND
     ///   AND
-    ///   PUSH EfiPcdProtocolGuid
-    ///   PUSH EfiDevicePathUtilitiesProtocolGuid
+    ///   PUSH `EfiPcdProtocolGuid`
+    ///   PUSH `EfiDevicePathUtilitiesProtocolGuid`
     ///   AND
     ///   AND
     ///   END

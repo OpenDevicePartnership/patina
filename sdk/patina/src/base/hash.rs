@@ -52,7 +52,7 @@ impl Hasher for Xorshift64starHasher {
 
     fn write(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.state ^= byte as u64;
+            self.state ^= u64::from(byte);
             self.state = self.next_state();
         }
     }

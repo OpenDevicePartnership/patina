@@ -42,7 +42,10 @@ use patina_smbios::{
         SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type1SystemInformation, Type2BaseboardInformation,
         Type3SystemEnclosure,
     },
-    smbios_types::*,
+    smbios_types::{
+        BiosCharacteristics, BiosCharacteristicsExt1, BiosCharacteristicsExt2, BoardType, BootUpState,
+        ExtendedBiosRomSize, FeatureFlags, PowerSupplyState, SecurityStatus, ThermalState, WakeUpType,
+    },
 };
 
 /// Example custom vendor-specific OEM record (Type 0x80)
@@ -94,38 +97,38 @@ impl SmbiosExampleComponent {
 
         // Verify SMBIOS version
         let (major, minor) = smbios.version();
-        log::info!("SMBIOS Version: {}.{}", major, minor);
+        log::info!("SMBIOS Version: {major}.{minor}");
 
         // Add platform-specific SMBIOS records
         log::info!("Creating platform SMBIOS records...");
 
         // Type 0: Platform firmware/BIOS information
         if let Err(e) = Self::add_bios_information(&smbios) {
-            log::error!("Failed to add BIOS information: {}", e);
+            log::error!("Failed to add BIOS information: {e}");
             return Err(e);
         }
 
         // Type 1: System information
         if let Err(e) = Self::add_system_information(&smbios) {
-            log::error!("Failed to add system information: {}", e);
+            log::error!("Failed to add system information: {e}");
             return Err(e);
         }
 
         // Type 2: Baseboard/motherboard information
         if let Err(e) = Self::add_baseboard_information(&smbios) {
-            log::error!("Failed to add baseboard information: {}", e);
+            log::error!("Failed to add baseboard information: {e}");
             return Err(e);
         }
 
         // Type 3: System chassis/enclosure information
         if let Err(e) = Self::add_system_enclosure(&smbios) {
-            log::error!("Failed to add system enclosure: {}", e);
+            log::error!("Failed to add system enclosure: {e}");
             return Err(e);
         }
 
         // Type 0x80: Platform-specific vendor record
         if let Err(e) = Self::add_vendor_oem_record(&smbios) {
-            log::error!("Failed to add vendor OEM record: {}", e);
+            log::error!("Failed to add vendor OEM record: {e}");
             return Err(e);
         }
 
@@ -137,12 +140,12 @@ impl SmbiosExampleComponent {
         match smbios.publish_table() {
             Ok((table_addr, entry_point_addr)) => {
                 log::info!("SMBIOS table published successfully");
-                log::info!("  Entry Point: 0x{:X}", entry_point_addr);
-                log::info!("  Table Data: 0x{:X}", table_addr);
+                log::info!("  Entry Point: 0x{entry_point_addr:X}");
+                log::info!("  Table Data: 0x{table_addr:X}");
                 log::info!("Use 'smbiosview' in UEFI Shell to view records");
             }
             Err(e) => {
-                log::error!("Failed to publish SMBIOS table: {:?}", e);
+                log::error!("Failed to publish SMBIOS table: {e:?}");
                 // Continue even if publication fails - not critical for boot
             }
         }
@@ -183,11 +186,11 @@ impl SmbiosExampleComponent {
         };
 
         let handle = smbios.add_record(None, &bios_info).map_err(|e| {
-            log::error!("Failed to add BIOS info: {:?}", e);
+            log::error!("Failed to add BIOS info: {e:?}");
             patina::error::EfiError::DeviceError
         })?;
 
-        log::info!("  Type 0 (BIOS Info) - Handle 0x{:04X}", handle);
+        log::info!("  Type 0 (BIOS Info) - Handle 0x{handle:04X}");
         Ok(())
     }
 
@@ -216,11 +219,11 @@ impl SmbiosExampleComponent {
         };
 
         let handle = smbios.add_record(None, &system_info).map_err(|e| {
-            log::error!("Failed to add system info: {:?}", e);
+            log::error!("Failed to add system info: {e:?}");
             patina::error::EfiError::DeviceError
         })?;
 
-        log::info!("  Type 1 (System Info) - Handle 0x{:04X}", handle);
+        log::info!("  Type 1 (System Info) - Handle 0x{handle:04X}");
         Ok(())
     }
 
@@ -251,11 +254,11 @@ impl SmbiosExampleComponent {
         };
 
         let handle = smbios.add_record(None, &baseboard_info).map_err(|e| {
-            log::error!("Failed to add baseboard info: {:?}", e);
+            log::error!("Failed to add baseboard info: {e:?}");
             patina::error::EfiError::DeviceError
         })?;
 
-        log::info!("  Type 2 (Baseboard Info) - Handle 0x{:04X}", handle);
+        log::info!("  Type 2 (Baseboard Info) - Handle 0x{handle:04X}");
         Ok(())
     }
 
@@ -288,11 +291,11 @@ impl SmbiosExampleComponent {
         };
 
         let handle = smbios.add_record(None, &enclosure_info).map_err(|e| {
-            log::error!("Failed to add system enclosure: {:?}", e);
+            log::error!("Failed to add system enclosure: {e:?}");
             patina::error::EfiError::DeviceError
         })?;
 
-        log::info!("  Type 3 (System Enclosure) - Handle 0x{:04X}", handle);
+        log::info!("  Type 3 (System Enclosure) - Handle 0x{handle:04X}");
         Ok(())
     }
 
@@ -308,11 +311,11 @@ impl SmbiosExampleComponent {
         };
 
         let handle = smbios.add_record(None, &vendor_record).map_err(|e| {
-            log::error!("Failed to add vendor OEM record: {:?}", e);
+            log::error!("Failed to add vendor OEM record: {e:?}");
             patina::error::EfiError::DeviceError
         })?;
 
-        log::info!("  Type 0x80 (Vendor OEM) - Handle 0x{:04X}", handle);
+        log::info!("  Type 0x80 (Vendor OEM) - Handle 0x{handle:04X}");
         Ok(())
     }
 }

@@ -18,7 +18,7 @@ use crate::BinaryGuid;
 /// When the supervisor sends an MMI with this GUID, the core attempts to
 /// dispatch any previously-discovered-but-not-yet-dispatched drivers.
 ///
-/// Defined in StandaloneMmPkg as `gEventMmDispatchGuid`.
+/// Defined in `StandaloneMmPkg` as `gEventMmDispatchGuid`.
 ///
 /// (`7E6EFFFA-69B4-4C1B-A4C7-AFF9C9244FEE`)
 /// ```

@@ -13,9 +13,9 @@
 use patina::uefi::boot_services::{BootServices, StandardBootServices};
 use patina_test::{patina_test, u_assert, u_assert_eq};
 
-use patina::standard::efi;
+use patina::{debug::log::DEBUG_INFO, standard::efi};
 
-use crate::{memory_log, protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
+use crate::{protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
 
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
@@ -42,12 +42,8 @@ fn adv_logger_test(bs: StandardBootServices) -> patina_test::error::Result {
     log::set_max_level(old_max);
 
     // Log using the protocol.
-    let efi_status = (protocol.write_log)(
-        protocol,
-        memory_log::DEBUG_LEVEL_INFO as usize,
-        PROTOCOL_STR.as_bytes().as_ptr(),
-        PROTOCOL_STR.len(),
-    );
+    let efi_status =
+        (protocol.write_log)(protocol, DEBUG_INFO as usize, PROTOCOL_STR.as_bytes().as_ptr(), PROTOCOL_STR.len());
 
     u_assert_eq!(efi_status, efi::Status::SUCCESS, "adv_logger_test: Failed to write to the advanced logger protocol.");
 
@@ -71,17 +67,11 @@ fn adv_logger_test(bs: StandardBootServices) -> patina_test::error::Result {
 
         if log_str.contains(DIRECT_STR) {
             direct_found = true;
-            u_assert!(
-                entry.level == memory_log::DEBUG_LEVEL_INFO,
-                "adv_logger_test: Direct log message has incorrect level."
-            );
+            u_assert!(entry.level == DEBUG_INFO, "adv_logger_test: Direct log message has incorrect level.");
         } else if log_str.contains(PROTOCOL_STR) {
             protocol_found = true;
             u_assert!(direct_found, "adv_logger_test: Protocol log message found before direct log message.");
-            u_assert!(
-                entry.level == memory_log::DEBUG_LEVEL_INFO,
-                "adv_logger_test: Direct log message has incorrect level."
-            );
+            u_assert!(entry.level == DEBUG_INFO, "adv_logger_test: Direct log message has incorrect level.");
         }
     }
 

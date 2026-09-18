@@ -81,7 +81,7 @@ impl MmExecutor for RealMmExecutor {
     fn execute_mm(&self, _comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
         log::debug!(target: "mm_comm", "Triggering SW MMI for MM communication");
         self.sw_mmi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|err| {
-            log::error!(target: "mm_comm", "SW MMI trigger failed: {:?}", err);
+            log::error!(target: "mm_comm", "SW MMI trigger failed: {err:?}");
             Status::SwMmiFailed
         })
     }
@@ -191,7 +191,7 @@ impl MmCommunicator {
     ///
     /// # Coverage
     ///
-    /// This function is marked with `#[coverage(off)]` because it requires StandardBootServices
+    /// This function is marked with `#[coverage(off)]` because it requires `StandardBootServices`
     /// which is not available in unit tests. It is tested through integration tests.
     #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
@@ -223,15 +223,14 @@ impl MmCommunicator {
         self.comm_buffers = RefCell::new(comm_buffers);
 
         let buffer_count = self.comm_buffers.borrow().len();
-        log::info!(target: "mm_comm", "MM Communicator initialized with {} communication buffers", buffer_count);
+        log::info!(target: "mm_comm", "MM Communicator initialized with {buffer_count} communication buffers");
 
         // Only setup a protocol notify callback if buffer updates are enabled and a buffer ID was given
         if enable_buffer_updates {
             if let Some(buffer_id) = updatable_buffer_id {
                 log::info!(
                     target: "mm_comm",
-                    "MM comm buffer updates enabled for buffer ID {}",
-                    buffer_id
+                    "MM comm buffer updates enabled for buffer ID {buffer_id}"
                 );
 
                 let context = comm_buffer_update::register_buffer_update_notify(boot_services, buffer_id)?;
@@ -293,7 +292,7 @@ impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
         let mut comm_buffers = self.comm_buffers.borrow_mut();
         let comm_buffer: &mut CommunicateBuffer =
             comm_buffers.iter_mut().find(|x| x.id() == id && x.is_enabled()).ok_or_else(|| {
-                log::warn!(target: "mm_comm", "Communication buffer not found or it is disabled: id={}", id);
+                log::warn!(target: "mm_comm", "Communication buffer not found or it is disabled: id={id}");
                 Status::CommBufferNotFound
             })?;
 
@@ -310,17 +309,17 @@ impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
 
         log::trace!(target: "mm_comm", "Setting up communication buffer for MM request");
         comm_buffer.set_message_info(recipient.clone()).map_err(|err| {
-            log::error!(target: "mm_comm", "Failed to set message info: {:?}", err);
+            log::error!(target: "mm_comm", "Failed to set message info: {err:?}");
             Status::CommBufferInitError
         })?;
         comm_buffer.set_message(data_buffer).map_err(|err| {
-            log::error!(target: "mm_comm", "Failed to set message data: {:?}", err);
+            log::error!(target: "mm_comm", "Failed to set message data: {err:?}");
             Status::CommBufferInitError
         })?;
 
         log::debug!(target: "mm_comm", "Outgoing MM communication request: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
         log::debug!(target: "mm_comm", "Request Data (hex): {:02X?}", data_buffer.get(..core::cmp::min(data_buffer.len(), 64)).unwrap_or(data_buffer));
-        log::trace!(target: "mm_comm", "Comm buffer before request: {:?}", comm_buffer);
+        log::trace!(target: "mm_comm", "Comm buffer before request: {comm_buffer:?}");
 
         // Set the mailbox status to indicate buffer is valid before triggering MMI
         // For MM environments with a mailbox, this is required for the MM core to process
@@ -332,7 +331,7 @@ impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
                 Status::CommBufferInitError
             })?;
         } else {
-            log::warn!(target: "mm_comm", "Buffer {} has no status mailbox - MM communication may not work correctly", id);
+            log::warn!(target: "mm_comm", "Buffer {id} has no status mailbox - MM communication may not work correctly");
         }
 
         log::debug!(target: "mm_comm", "Executing MM communication");
@@ -344,11 +343,11 @@ impl<E: MmExecutor + 'static> MmCommunication for MmCommunicator<E> {
                 log::error!(target: "mm_comm", "Failed to get MM return status");
                 Status::InvalidResponse
             })?;
-            log::trace!(target: "mm_comm", "MM return status: 0x{:X}, buffer size: 0x{:X}", return_status, return_buffer_size);
+            log::trace!(target: "mm_comm", "MM return status: 0x{return_status:X}, buffer size: 0x{return_buffer_size:X}");
 
             // Check if MM communication was successful (EFI_SUCCESS = 0)
             if return_status != 0 {
-                log::warn!(target: "mm_comm", "MM handler returned error status: 0x{:X}", return_status);
+                log::warn!(target: "mm_comm", "MM handler returned error status: 0x{return_status:X}");
             }
         }
 
@@ -669,7 +668,7 @@ mod tests {
 
         let communicator = create_communicator_with_buffers(buffers, EchoMmExecutor);
 
-        let debug_output = format!("{:?}", communicator);
+        let debug_output = format!("{communicator:?}");
         assert!(debug_output.contains("MM Communicator:"));
         assert!(debug_output.contains("Comm Buffer:"));
         assert!(debug_output.contains("MM Executor Set: true"));
@@ -681,7 +680,7 @@ mod tests {
         let communicator: MmCommunicator<EchoMmExecutor> =
             MmCommunicator { comm_buffers: RefCell::new(vec![buffer]), mm_executor: None, notify_context: None };
 
-        let debug_output = format!("{:?}", communicator);
+        let debug_output = format!("{communicator:?}");
         assert!(debug_output.contains("MM Communicator:"));
         assert!(debug_output.contains("MM Executor Set: false"));
     }
@@ -718,7 +717,7 @@ mod tests {
         ];
 
         for status in statuses {
-            let debug_str = format!("{:?}", status);
+            let debug_str = format!("{status:?}");
             assert!(!debug_str.is_empty(), "Debug format should not be empty");
         }
     }
@@ -813,7 +812,7 @@ mod tests {
 
         let status_layout = Layout::from_size_align(core::mem::size_of::<MmCommBufferStatus>(), page_align).unwrap();
         // SAFETY: status_layout is a valid memory buffer allocated above.
-        let status_ptr = unsafe { alloc(status_layout) as *mut MmCommBufferStatus };
+        let status_ptr = unsafe { alloc(status_layout).cast::<MmCommBufferStatus>() };
         assert!(!status_ptr.is_null(), "Failed to allocate aligned status");
 
         // SAFETY: status_ptr points to a valid memory buffer allocated above.
@@ -870,7 +869,7 @@ mod tests {
         // SAFETY: Cleaning up memory allocated in the test.
         unsafe {
             dealloc(buffer_ptr, buffer_layout);
-            dealloc(status_ptr as *mut u8, status_layout);
+            dealloc(status_ptr.cast::<u8>(), status_layout);
         }
     }
 
@@ -894,7 +893,7 @@ mod tests {
 
         let status_layout = Layout::from_size_align(core::mem::size_of::<MmCommBufferStatus>(), page_align).unwrap();
         // SAFETY: status_layout is a valid memory buffer allocated above.
-        let status_ptr = unsafe { alloc(status_layout) as *mut MmCommBufferStatus };
+        let status_ptr = unsafe { alloc(status_layout).cast::<MmCommBufferStatus>() };
         assert!(!status_ptr.is_null(), "Failed to allocate aligned status");
 
         // SAFETY: status_ptr points to a valid memory buffer allocated above.
@@ -922,7 +921,7 @@ mod tests {
                 unsafe {
                     let ptr = comm_buffer.as_ptr();
                     let length_offset = 16;
-                    let length_ptr = ptr.add(length_offset) as *mut usize;
+                    let length_ptr = ptr.add(length_offset).cast::<usize>();
                     *length_ptr = huge_length;
                 }
 
@@ -938,7 +937,7 @@ mod tests {
         // SAFETY: Cleaning up memory allocated in the test.
         unsafe {
             dealloc(buffer_ptr, buffer_layout);
-            dealloc(status_ptr as *mut u8, status_layout);
+            dealloc(status_ptr.cast::<u8>(), status_layout);
         }
     }
 }

@@ -15,7 +15,7 @@ use core::mem;
 pub struct MemMapDevicePath {
     /// Standard UEFI device path header.
     pub header: efi::protocols::device_path::Protocol,
-    /// EFI_MEMORY_TYPE value.
+    /// `EFI_MEMORY_TYPE` value.
     pub memory_type: u32,
     /// Starting address of the memory region.
     pub starting_address: u64,
@@ -24,7 +24,7 @@ pub struct MemMapDevicePath {
 }
 
 impl MemMapDevicePath {
-    /// Creates a new MemMapDevicePath with the given memory type and address range.
+    /// Creates a new `MemMapDevicePath` with the given memory type and address range.
     pub fn new(memory_type: u32, starting_address: u64, ending_address: u64) -> Self {
         MemMapDevicePath {
             header: efi::protocols::device_path::Protocol {
@@ -52,7 +52,7 @@ pub struct FvMemMapDevicePath {
 }
 
 impl FvMemMapDevicePath {
-    /// Creates a new FvMemMapDevicePath with the given memory type and address range.
+    /// Creates a new `FvMemMapDevicePath` with the given memory type and address range.
     pub fn new(memory_type: u32, starting_address: u64, ending_address: u64) -> Self {
         FvMemMapDevicePath {
             mem_map_device_path: MemMapDevicePath::new(memory_type, starting_address, ending_address),
@@ -73,14 +73,14 @@ impl FvMemMapDevicePath {
 /// Describes a firmware volume device path node.
 #[repr(C)]
 pub struct MediaFwVolDevicePath {
-    /// Standard UEFI device path header with type MEDIA and sub-type SUBTYPE_PIWG_FIRMWARE_VOLUME.
+    /// Standard UEFI device path header with type MEDIA and sub-type `SUBTYPE_PIWG_FIRMWARE_VOLUME`.
     pub header: efi::protocols::device_path::Protocol,
     /// Firmware volume name.
     pub name: efi::Guid,
 }
 
 impl MediaFwVolDevicePath {
-    /// Creates a new MediaFwVolDevicePath with the given firmware volume name.
+    /// Creates a new `MediaFwVolDevicePath` with the given firmware volume name.
     pub fn new(name: efi::Guid, subtype: MediaFwDevicePathSubtype) -> Self {
         MediaFwVolDevicePath {
             header: efi::protocols::device_path::Protocol {
@@ -116,17 +116,17 @@ pub struct FvPiWgDevicePath {
 }
 
 impl FvPiWgDevicePath {
-    /// Instantiate a new FvPiWgDevicePath for a Firmware Volume.
+    /// Instantiate a new `FvPiWgDevicePath` for a Firmware Volume.
     pub fn new_fv(fv_name: efi::Guid) -> Self {
         Self::new_worker(fv_name, MediaFwDevicePathSubtype::FirmwareVolume)
     }
 
-    /// Instantiate a new FvPiWgDevicePath for a Firmware File.
+    /// Instantiate a new `FvPiWgDevicePath` for a Firmware File.
     pub fn new_file(file_name: efi::Guid) -> Self {
         Self::new_worker(file_name, MediaFwDevicePathSubtype::FirmwareFile)
     }
 
-    /// Instantiate a new FvPiWgDevicePath with the given sub-type.
+    /// Instantiate a new `FvPiWgDevicePath` with the given sub-type.
     pub fn new_worker(name: efi::Guid, sub_type: MediaFwDevicePathSubtype) -> Self {
         FvPiWgDevicePath {
             fv_dev_path: MediaFwVolDevicePath::new(name, sub_type),

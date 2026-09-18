@@ -19,7 +19,7 @@ where
     T: LowerHex,
     S: Serializer,
 {
-    serializer.serialize_str(&format!("0x{:x}", num))
+    serializer.serialize_str(&format!("0x{num:x}"))
 }
 
 /// Trait to parse a number from a hex string (with or without "0x" prefix).

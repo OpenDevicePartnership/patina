@@ -22,29 +22,29 @@ pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("378
 ///
 /// This protocol provides runtime services for communicating between DXE drivers and a registered MMI handler.
 ///
-/// Usage is identical to EFI_MM_COMMUNICATION_PROTOCOL.Communicate() except for the notes below:
+/// Usage is identical to `EFI_MM_COMMUNICATION_PROTOCOL.Communicate()` except for the notes below:
 ///
-/// - Instead of passing just the physical address via the comm_buffer parameter, the caller must pass both the physical
+/// - Instead of passing just the physical address via the `comm_buffer` parameter, the caller must pass both the physical
 ///   and the virtual addresses of the communication buffer.
 ///
 /// - If no virtual remapping has taken place, the physical address will be equal to the virtual address, and so the
 ///   caller is required to pass the same value for both parameters.
 ///
 ///  @param this                       The protocol instance.
-///  @param comm_buffer_physical       Physical address of the buffer to convey into MMRAM.
-///  @param comm_buffer_virtual        Virtual address of the buffer to convey into MMRAM.
-///  @param comm_size                  The size of the data buffer being passed in. On exit, the size of data
+///  @param `comm_buffer_physical`       Physical address of the buffer to convey into MMRAM.
+///  @param `comm_buffer_virtual`        Virtual address of the buffer to convey into MMRAM.
+///  @param `comm_size`                  The size of the data buffer being passed in. On exit, the size of data
 ///                                    being returned. Zero if the handler does not wish to reply with any data.
 ///                                    This parameter is optional and may be NULL.
 ///
-///  @retval Status::SUCCESS           The message was successfully posted.
-///  @retval Status::INVALID_PARAMETER The comm_buffer parameters do not refer to the same location in memory.
-///  @retval Status::BAD_BUFFER_SIZE   The buffer is too large for the MM implementation.
-///                                    If this error is returned, the message_length field
-///                                    in the comm_buffer header or the integer pointed by
-///                                    comm_size, are updated to reflect the maximum payload
+///  @retval `Status::SUCCESS`           The message was successfully posted.
+///  @retval `Status::INVALID_PARAMETER` The `comm_buffer` parameters do not refer to the same location in memory.
+///  @retval `Status::BAD_BUFFER_SIZE`   The buffer is too large for the MM implementation.
+///                                    If this error is returned, the `message_length` field
+///                                    in the `comm_buffer` header or the integer pointed by
+///                                    `comm_size`, are updated to reflect the maximum payload
 ///                                    size the implementation can accommodate.
-///  @retval Status::ACCESS_DENIED     The communicate buffer parameters or comm_size parameter,
+///  @retval `Status::ACCESS_DENIED`     The communicate buffer parameters or `comm_size` parameter,
 ///                                    if not omitted, are in an address range that cannot be
 ///                                    accessed by the MM environment.
 ///

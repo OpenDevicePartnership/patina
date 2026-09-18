@@ -20,7 +20,7 @@ pub use interrupt_manager::InterruptsX64;
 
 impl super::EfiSystemContextFactory for ExceptionContextX64 {
     fn create_efi_system_context(&mut self) -> EfiSystemContext {
-        EfiSystemContext { system_context_x64: self as *mut _ }
+        EfiSystemContext { system_context_x64: core::ptr::from_mut(self) }
     }
 }
 

@@ -68,10 +68,9 @@ pub fn core_install_configuration_table(
             if vendor_table.is_null() {
                 // trying to delete a non-existing table
                 return Err(EfiError::NotFound);
-            } else {
-                // adding a new table to an empty configuration table list
-                (vec![efi::ConfigurationTable { vendor_guid, vendor_table }], None)
             }
+            // adding a new table to an empty configuration table list
+            (vec![efi::ConfigurationTable { vendor_guid, vendor_table }], None)
         }
         existing_table_ptr => {
             // existing table is present. Make a copy of it as a Vec to process the updates.
@@ -196,7 +195,7 @@ mod tests {
 
             assert_eq!(
                 // SAFETY: The passed in values are safe because they are constructed in this test case.
-                unsafe { install_configuration_table(&guid as *const _ as *mut _, table) },
+                unsafe { install_configuration_table((&raw const guid).cast_mut(), table) },
                 efi::Status::SUCCESS
             );
             assert_eq!(get_configuration_table(&guid).unwrap().as_ptr(), table);
@@ -211,7 +210,7 @@ mod tests {
 
             assert_eq!(
                 // SAFETY: The passed in values are safe because they are constructed in this test case.
-                unsafe { install_configuration_table(&guid as *const _ as *mut _, table) },
+                unsafe { install_configuration_table((&raw const guid).cast_mut(), table) },
                 efi::Status::SUCCESS
             );
 
