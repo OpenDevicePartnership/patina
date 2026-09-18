@@ -614,7 +614,7 @@ pub(crate) fn coalesced_smrr_range(regions: &[SmramRegion]) -> Option<SmramRegio
     }
 
     log::info!("SMRR Base: 0x{smrr_base:x}, SMRR Size: 0x{smrr_size:x}");
-    Some(SmramRegion { base: u64::from(smrr_base), size: u64::from(smrr_size), pre_allocated: false })
+    Some(SmramRegion::new(u64::from(smrr_base), u64::from(smrr_size), false))
 }
 
 /// Page-granularity allocator for SMRAM memory.
@@ -761,7 +761,7 @@ impl PageAllocator {
                 );
                 return Err(PageAllocError::OutOfMemory);
             };
-            *slot = SmramRegion { base: descriptor.physical_start, size: descriptor.physical_size, pre_allocated };
+            *slot = SmramRegion::new(descriptor.physical_start, descriptor.physical_size, pre_allocated);
             *region_count += 1;
         }
 
@@ -1125,7 +1125,7 @@ mod tests {
             let mut memory = Box::new(AlignedRegion([0xA5; TEST_REGION_BYTES]));
             let base = memory.0.as_mut_ptr() as u64;
             let allocator = PageAllocator::new();
-            let regions = [SmramRegion { base, size: TEST_REGION_BYTES as u64, pre_allocated: false }];
+            let regions = [SmramRegion::new(base, TEST_REGION_BYTES as u64, false)];
 
             // SAFETY: `memory` is page-aligned, exclusively owned by the fixture,
             // remains live with the allocator, and covers the declared region.
@@ -1139,7 +1139,7 @@ mod tests {
 
     /// Builds a `SmramRegion` list from `(base, size, pre_allocated)` tuples.
     fn regions_from(entries: &[(u64, u64, bool)]) -> Vec<SmramRegion> {
-        entries.iter().map(|&(base, size, pre_allocated)| SmramRegion { base, size, pre_allocated }).collect()
+        entries.iter().map(|&(base, size, pre_allocated)| SmramRegion::new(base, size, pre_allocated)).collect()
     }
 
     fn smram_hob_payload(declared_count: u32, descriptors: &[SmramDescriptor]) -> Vec<u8> {
@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn test_page_allocator_rejects_double_initialization() {
         let fixture = AllocatorFixture::new();
-        let regions = [SmramRegion { base: fixture.base, size: TEST_REGION_BYTES as u64, pre_allocated: false }];
+        let regions = [SmramRegion::new(fixture.base, TEST_REGION_BYTES as u64, false)];
 
         // SAFETY: the fixture owns the page-aligned region for its full declared size.
         unsafe {
@@ -1219,16 +1219,12 @@ mod tests {
     fn test_page_allocator_validates_regions_before_writing_bookkeeping() {
         let allocator = PageAllocator::new();
         let empty: [SmramRegion; 0] = [];
-        let unaligned = [SmramRegion { base: 0x1001, size: UEFI_PAGE_SIZE as u64, pre_allocated: false }];
-        let partial_page = [SmramRegion { base: 0x1000, size: UEFI_PAGE_SIZE as u64 - 1, pre_allocated: false }];
-        let overflowing = [SmramRegion {
-            base: u64::MAX - UEFI_PAGE_SIZE as u64 + 1,
-            size: UEFI_PAGE_SIZE as u64,
-            pre_allocated: false,
-        }];
+        let unaligned = [SmramRegion::new(0x1001, UEFI_PAGE_SIZE as u64, false)];
+        let partial_page = [SmramRegion::new(0x1000, UEFI_PAGE_SIZE as u64 - 1, false)];
+        let overflowing = [SmramRegion::new(u64::MAX - UEFI_PAGE_SIZE as u64 + 1, UEFI_PAGE_SIZE as u64, false)];
         let overlapping = [
-            SmramRegion { base: 0x1000, size: 2 * UEFI_PAGE_SIZE as u64, pre_allocated: false },
-            SmramRegion { base: 0x2000, size: UEFI_PAGE_SIZE as u64, pre_allocated: false },
+            SmramRegion::new(0x1000, 2 * UEFI_PAGE_SIZE as u64, false),
+            SmramRegion::new(0x2000, UEFI_PAGE_SIZE as u64, false),
         ];
 
         // SAFETY: these invalid descriptors are rejected before any address is dereferenced.
@@ -1349,22 +1345,8 @@ mod tests {
         PageAllocator::collect_smram_regions(&unaligned[1..], &mut regions, &mut count).unwrap();
 
         assert_eq!(count, 2);
-        assert_eq!(
-            regions[0],
-            SmramRegion {
-                base: descriptors[0].physical_start,
-                size: descriptors[0].physical_size,
-                pre_allocated: false
-            }
-        );
-        assert_eq!(
-            regions[1],
-            SmramRegion {
-                base: descriptors[1].physical_start,
-                size: descriptors[1].physical_size,
-                pre_allocated: true
-            }
-        );
+        assert_eq!(regions[0], SmramRegion::new(descriptors[0].physical_start, descriptors[0].physical_size, false));
+        assert_eq!(regions[1], SmramRegion::new(descriptors[1].physical_start, descriptors[1].physical_size, true));
     }
 
     #[test]
@@ -1414,10 +1396,10 @@ mod tests {
 
     #[test]
     fn test_page_allocator_calculates_bookkeeping_requirements() {
-        let valid = [SmramRegion { base: 0x8000_0000, size: TEST_REGION_BYTES as u64, pre_allocated: false }];
-        let allocated = [SmramRegion { base: 0x8000_0000, size: TEST_REGION_BYTES as u64, pre_allocated: true }];
-        let too_small = [SmramRegion { base: 0x8000_0000, size: 1, pre_allocated: false }];
-        let unaligned = [SmramRegion { base: 0x8000_0001, size: TEST_REGION_BYTES as u64, pre_allocated: false }];
+        let valid = [SmramRegion::new(0x8000_0000, TEST_REGION_BYTES as u64, false)];
+        let allocated = [SmramRegion::new(0x8000_0000, TEST_REGION_BYTES as u64, true)];
+        let too_small = [SmramRegion::new(0x8000_0000, 1, false)];
+        let unaligned = [SmramRegion::new(0x8000_0001, TEST_REGION_BYTES as u64, false)];
 
         assert_eq!(PageAllocator::calculate_bookkeeping(&valid), Ok((valid[0].base, 1)));
         assert_eq!(PageAllocator::calculate_bookkeeping(&allocated), Err(PageAllocError::OutOfMemory));
@@ -1461,7 +1443,7 @@ mod tests {
         let base = 0x8000_0000u64;
         let size = SIZE_256KB as u64;
         let regions = regions_from(&[(base, size, false)]);
-        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion { base, size, pre_allocated: false }));
+        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion::new(base, size, false)));
     }
 
     #[test]
@@ -1478,10 +1460,7 @@ mod tests {
         let small = (0x8000_0000u64, SIZE_256KB as u64, false);
         let large = (0x9000_0000u64, SIZE_256KB as u64 * 4, false);
         let regions = regions_from(&[small, large]);
-        assert_eq!(
-            coalesced_smrr_range(&regions),
-            Some(SmramRegion { base: large.0, size: large.1, pre_allocated: false })
-        );
+        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion::new(large.0, large.1, false)));
     }
 
     #[test]
@@ -1501,10 +1480,7 @@ mod tests {
         let above_size = SIZE_256KB as u64 * 2;
         let above = (base + size, above_size, false);
         let regions = regions_from(&[(base, size, false), above]);
-        assert_eq!(
-            coalesced_smrr_range(&regions),
-            Some(SmramRegion { base, size: size + above_size, pre_allocated: false })
-        );
+        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion::new(base, size + above_size, false)));
     }
 
     #[test]
@@ -1517,10 +1493,7 @@ mod tests {
         let size = SIZE_256KB as u64 * 6; // selected as the largest region
         let below = (low_base, below_size, false);
         let regions = regions_from(&[below, (base, size, false)]);
-        assert_eq!(
-            coalesced_smrr_range(&regions),
-            Some(SmramRegion { base: low_base, size: size + below_size, pre_allocated: false })
-        );
+        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion::new(low_base, size + below_size, false)));
     }
 
     #[test]
@@ -1542,6 +1515,6 @@ mod tests {
         // SMRR must cover a single contiguous physical range.
         let above = (base + size, size, true);
         let regions = regions_from(&[(base, size, false), above]);
-        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion { base, size: size * 2, pre_allocated: false }));
+        assert_eq!(coalesced_smrr_range(&regions), Some(SmramRegion::new(base, size * 2, false)));
     }
 }

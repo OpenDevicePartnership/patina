@@ -871,7 +871,7 @@ mod tests {
     use super::*;
 
     fn region(base: u64, size: u64) -> SmramRegion {
-        SmramRegion { base, size, pre_allocated: false }
+        SmramRegion::new(base, size, false)
     }
 
     fn pass_down() -> MmSupvPassDownHobData {

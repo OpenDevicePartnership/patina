@@ -46,6 +46,15 @@ const MASK_VALID_BIT: u64 = 1 << 11;
 
 /// A region of SMRAM: a physical base address, a size in bytes, and whether it
 /// was reported as pre-allocated in the HOB list.
+///
+/// The layout is `repr(C)` and the tail gap after `pre_allocated` is declared as the
+/// explicit `reserved` field rather than left as implicit padding. A value of this type
+/// is copied into the `INIT_STATE.smrr_range` static, which the SEA auxiliary file
+/// validates byte for byte. Implicit padding has no defined value, so a move can carry
+/// stack residue into it and the validator then reports a mismatch on bytes no code ever
+/// wrote. Naming the gap makes it a real field that is always initialized and that can be
+/// given its own validation rule.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct SmramRegion {
     /// Physical base address of the region.
@@ -54,6 +63,15 @@ pub(crate) struct SmramRegion {
     pub size: u64,
     /// Whether the region was reported as pre-allocated (`EFI_ALLOCATED`).
     pub pre_allocated: bool,
+    /// Explicit tail padding, always zero. See the note on the type.
+    reserved: [u8; 7],
+}
+
+impl SmramRegion {
+    /// Creates a region, zeroing the explicit tail padding.
+    pub(crate) const fn new(base: u64, size: u64, pre_allocated: bool) -> Self {
+        Self { base, size, pre_allocated, reserved: [0; 7] }
+    }
 }
 
 /// Returns `true` if a raw `MSR_SMM_MCA_CAP` value reports SMM Code Access Check support.
