@@ -32,7 +32,6 @@ const IA32_APIC_BSP: u64 = 1 << 8;
 /// platform.
 // Executes the privileged `rdmsr` instruction, which faults outside ring 0 and
 // cannot run in a host-based unit test.
-#[cfg_attr(coverage, coverage(off))]
 pub unsafe fn read_msr(msr: u32) -> u64 {
     let lo: u32;
     let hi: u32;
@@ -60,7 +59,6 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
 /// platform.
 // Executes the privileged `wrmsr` instruction, which faults outside ring 0 and
 // cannot run in a host-based unit test.
-#[cfg_attr(coverage, coverage(off))]
 pub unsafe fn write_msr(msr: u32, value: u64) {
     let lo = value as u32;
     let hi = (value >> 32) as u32;
@@ -84,7 +82,6 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 /// On `x86_64`, this reads the APIC ID from the Local APIC or CPUID.
 // Depends on the running processor's `cpuid` state, which cannot be exercised
 // deterministically in a host-based unit test.
-#[cfg_attr(coverage, coverage(off))]
 pub fn get_current_cpu_id() -> CpuidResult {
     // Use CPUID to get the initial APIC ID
     // CPUID function 0x01
@@ -100,7 +97,6 @@ pub fn get_current_cpu_id() -> CpuidResult {
 /// processor is the bootstrap processor.
 // Reads the IA32_APIC_BASE MSR via the privileged `rdmsr` instruction, which
 // faults outside ring 0 and cannot run in a host-based unit test.
-#[cfg_attr(coverage, coverage(off))]
 pub fn is_bsp() -> bool {
     // SAFETY: The IA32_APIC_BASE MSR is safe to read on x86_64.
     let apic_base = unsafe { read_msr(IA32_APIC_BASE_MSR_INDEX) };
@@ -108,7 +104,6 @@ pub fn is_bsp() -> bool {
 }
 
 /// Read CR3 register.
-#[cfg_attr(coverage, coverage(off))]
 pub(crate) fn read_cr3() -> u64 {
     let value: u64;
 
