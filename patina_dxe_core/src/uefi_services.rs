@@ -18,6 +18,7 @@ mod driver;
 mod event;
 mod image;
 mod protocol;
+mod state;
 mod timer_event;
 mod timing;
 mod tpl;

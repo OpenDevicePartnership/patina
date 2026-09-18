@@ -24,6 +24,8 @@ use patina::standard::efi;
 
 use crate::events::{EVENT_DB, check_event as core_check_event};
 
+use super::state::UEFI_SERVICES_STATE;
+
 /// Owns a component-supplied notification closure for the lifetime of an event.
 struct ClosureHolder {
     callback: EventNotifyCallback,
@@ -36,11 +38,21 @@ extern "efiapi" fn notify_trampoline(_event: efi::Event, context: *mut c_void) {
     if context.is_null() {
         return;
     }
+
+    UEFI_SERVICES_STATE.event_notify.enter(context);
+
     // SAFETY: `context` was produced by `Box::into_raw` of a `ClosureHolder` in
-    // `create_event_internal` and remains valid until `close_event` reclaims and drops it. UEFI
+    // `create_event_internal` and remains valid until freed below or by `close_event`. UEFI
     // dispatches notifications serially at the event's TPL, so there is no concurrent access.
     let holder = unsafe { &mut *(context as *mut ClosureHolder) };
     (holder.callback)();
+
+    if UEFI_SERVICES_STATE.event_notify.exit(context) {
+        // The callback closed its own event above. Free the closure now that it has returned
+        // instead of while it was still executing.
+        // SAFETY: `context` has not been freed yet, `close_event` only recorded the request earlier.
+        drop(unsafe { Box::from_raw(context as *mut ClosureHolder) });
+    }
 }
 
 /// Creates an event backed by a boxed notification closure.
@@ -113,9 +125,13 @@ impl EventServices for CoreEventServices {
 
         if let Some(context) = context
             && !context.is_null()
+            // The event is closing itself, or an ancestor event if closed from a nested
+            // notification. The notify trampoline frees the closure once that callback returns.
+            && !UEFI_SERVICES_STATE.event_notify.request_close(context)
         {
             // SAFETY: `context` is the `ClosureHolder` pointer created in `create_event_internal`.
-            // The event has just been closed, so no further notifications can reference it.
+            // The event has just been closed and its callback (if any) is not on the call
+            // stack, so nothing can reference it any further.
             drop(unsafe { Box::from_raw(context as *mut ClosureHolder) });
         }
 
@@ -140,8 +156,19 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use std::{cell::Cell, rc::Rc};
 
     extern "efiapi" fn noop_wait_notify(_event: efi::Event, _context: *mut c_void) {}
+
+    /// Bumps a shared counter when dropped, so a test can confirm that a closure's captured
+    /// environment is freed only once, and only after its callback has finished running.
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn test_tpl_to_efi_maps_all_variants() {
@@ -250,6 +277,96 @@ mod tests {
 
             assert_eq!(service.close_event(event), Ok(()));
             assert_eq!(service.close_event(event), Err(EventError::InvalidParameter));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_core_event_services_close_event_from_within_own_callback_defers_free() {
+        crate::test_support::with_global_lock(|| {
+            let service = CoreEventServices;
+
+            // The closure needs its own `Event` handle to self-close, but that handle is only
+            // known after `create_event` returns, so it is threaded through after the fact.
+            let self_event: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+            let self_event_in_callback = self_event.clone();
+
+            let drop_count = Arc::new(AtomicUsize::new(0));
+            let drop_counter = DropCounter(drop_count.clone());
+            let ran_after_self_close = Arc::new(AtomicUsize::new(0));
+            let ran_after_self_close_in_callback = ran_after_self_close.clone();
+
+            let callback: EventNotifyCallback = Box::new(move || {
+                let _keep_alive = &drop_counter;
+                let event = self_event_in_callback.get().expect("event handle set before signaling");
+                assert_eq!(CoreEventServices.close_event(event), Ok(()));
+                // If the closure's own captured state had been freed by the call above, touching
+                // captured state here would be a use-after-free.
+                ran_after_self_close_in_callback.fetch_add(1, Ordering::SeqCst);
+            });
+
+            let event = service.create_event(Tpl::Callback, callback).unwrap();
+            self_event.set(Some(event));
+
+            // Releasing the event database lock inside `signal_event` dispatches synchronously, so
+            // the callback (and its nested self-close) has already run by the time this returns.
+            service.signal_event(event).unwrap();
+
+            assert_eq!(ran_after_self_close.load(Ordering::SeqCst), 1);
+            assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+
+            // The event was already closed by its own callback, so closing it again must fail.
+            assert_eq!(service.close_event(event), Err(EventError::InvalidParameter));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_core_event_services_close_event_from_nested_notification_defers_free() {
+        crate::test_support::with_global_lock(|| {
+            let service = CoreEventServices;
+
+            let event_b_slot: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+            let event_b_slot_for_a = event_b_slot.clone();
+
+            // Event A (higher TPL) closes event B when it fires. Event B signals A from its own
+            // callback, which nests A's dispatch (and B's close) inside B's still-running callback.
+            let event_a = service
+                .create_event(
+                    Tpl::Notify,
+                    Box::new(move || {
+                        let event_b = event_b_slot_for_a.get().expect("event B registered before signaling");
+                        assert_eq!(CoreEventServices.close_event(event_b), Ok(()));
+                    }),
+                )
+                .unwrap();
+
+            let drop_count = Arc::new(AtomicUsize::new(0));
+            let drop_counter = DropCounter(drop_count.clone());
+            let ran_after_nested_close = Arc::new(AtomicUsize::new(0));
+            let ran_after_nested_close_in_b = ran_after_nested_close.clone();
+
+            let event_b = service
+                .create_event(
+                    Tpl::Callback,
+                    Box::new(move || {
+                        let _keep_alive = &drop_counter;
+                        CoreEventServices.signal_event(event_a).unwrap();
+                        // Event B was closed above, nested inside this call, while this callback
+                        // (and its captured `drop_counter`) was still running.
+                        ran_after_nested_close_in_b.fetch_add(1, Ordering::SeqCst);
+                    }),
+                )
+                .unwrap();
+            event_b_slot.set(Some(event_b));
+
+            service.signal_event(event_b).unwrap();
+
+            assert_eq!(ran_after_nested_close.load(Ordering::SeqCst), 1);
+            assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+            assert_eq!(service.close_event(event_b), Err(EventError::InvalidParameter));
+
+            service.close_event(event_a).unwrap();
         })
         .unwrap();
     }

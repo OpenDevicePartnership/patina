@@ -7,7 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::collections::btree_map::BTreeMap;
 use core::any::TypeId;
 
 use patina::BinaryGuid;
@@ -15,18 +14,11 @@ use patina::component::service::{
     IntoService,
     uefi_services::config_table::{ConfigTableError, ConfigTablePtr, ConfigurationTableServices},
 };
-use patina::standard::efi;
 
 use crate::config_tables::{core_install_configuration_table, get_configuration_table};
 use crate::systemtables::SYSTEM_TABLE;
-use crate::tpl_mutex::TplMutex;
 
-/// Records the Rust type installed under each GUID using [`ConfigurationTableServices::install_typed_table`], so
-/// [`ConfigurationTableServices::get_typed_table`] can verify a lookup's type before a caller casts the pointer.
-///
-/// This is separate from the real configuration table entries in [`SYSTEM_TABLE`] and is only used internally.
-static CONFIG_TABLE_TYPES: TplMutex<BTreeMap<BinaryGuid, TypeId>> =
-    TplMutex::new(efi::TPL_NOTIFY, BTreeMap::new(), "ConfigTableTypeLock");
+use super::state::UEFI_SERVICES_STATE;
 
 /// Core implementation of [`ConfigurationTableServices`], operating on the global system table via
 /// the core's internal Rust APIs.
@@ -62,7 +54,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut types = CONFIG_TABLE_TYPES.lock();
+        let mut types = UEFI_SERVICES_STATE.config_table_types.lock();
         // A stale type entry (in the `BTreeMap`) can outlive its table if something removed it using
         // `remove_table` (untyped) directly, so only reject the install if the table is still present
         // in the actual system table.
@@ -76,7 +68,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     }
 
     fn get_typed_table(&self, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
-        if CONFIG_TABLE_TYPES.lock().get(&guid) != Some(&type_id) {
+        if UEFI_SERVICES_STATE.config_table_types.lock().get(&guid) != Some(&type_id) {
             return None;
         }
         self.get_table(guid)
@@ -84,7 +76,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
 
     fn remove_typed_table(&self, guid: BinaryGuid) -> Result<(), ConfigTableError> {
         self.remove_table(guid)?;
-        CONFIG_TABLE_TYPES.lock().remove(&guid);
+        UEFI_SERVICES_STATE.config_table_types.lock().remove(&guid);
         Ok(())
     }
 
@@ -94,7 +86,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut types = CONFIG_TABLE_TYPES.lock();
+        let mut types = UEFI_SERVICES_STATE.config_table_types.lock();
         // SAFETY: forwarding the precondition on `table` upheld by this function's own caller.
         unsafe { self.install_table(guid, table) }?;
         types.insert(guid, type_id);

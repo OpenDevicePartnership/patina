@@ -26,6 +26,7 @@ use crate::events::EVENT_DB;
 use crate::protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface};
 
 use super::event::tpl_to_efi;
+use super::state::UEFI_SERVICES_STATE;
 
 /// Owns a component-supplied installation-notify closure for the lifetime of a registration (until cancelled).
 struct NotifyHolder {
@@ -41,13 +42,22 @@ extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c
     if context.is_null() {
         return;
     }
+
+    UEFI_SERVICES_STATE.protocol_install_notify.enter(context);
+
     // SAFETY: `context` is the `NotifyHolder` created in `register_install_notify`, valid until
-    // `cancel_install_notify` reclaims it. Notifications dispatch serially at the event's TPL.
+    // freed below or by `cancel_install_notify`. Notifications dispatch serially at the event's TPL.
     let holder = unsafe { &mut *(context as *mut NotifyHolder) };
     while let Some(handle) = PROTOCOL_DB.next_handle_for_registration(holder.registration) {
         if let Some(handle) = Handle::from_raw(handle) {
             (holder.callback)(handle);
         }
+    }
+
+    if UEFI_SERVICES_STATE.protocol_install_notify.exit(context) {
+        // The dispatch cancelled its own registration above, so free the holder now.
+        // SAFETY: `context` has not been freed yet, `cancel_install_notify` only recorded the request.
+        drop(unsafe { Box::from_raw(context as *mut NotifyHolder) });
     }
 }
 
@@ -159,9 +169,13 @@ impl ProtocolServices for CoreProtocolServices {
 
         EVENT_DB.close_event(event).map_err(ProtocolError::from)?;
 
-        if !context.is_null() {
+        // This registration is cancelling itself, or an ancestor registration if cancelled from a
+        // nested notification. The notify install trampoline frees the holder when the dispatch
+        // loop returns.
+        if !context.is_null() && !UEFI_SERVICES_STATE.protocol_install_notify.request_close(context) {
             // SAFETY: `context` is the `NotifyHolder` created in `register_install_notify`. The
-            // event is now closed and unregistered, so no further notification can reference it.
+            // event is now closed and unregistered, and its dispatch (if any) is not on the
+            // call stack, so nothing can reference it any further.
             drop(unsafe { Box::from_raw(context as *mut NotifyHolder) });
         }
 
@@ -444,6 +458,106 @@ mod tests {
                 NotifyRegistration::from_raw(0x7FFF_FFFF as *mut c_void, core::ptr::null_mut(), core::ptr::null_mut());
 
             assert_eq!(service.cancel_install_notify(bogus), Err(ProtocolError::InvalidParameter));
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_cancel_install_notify_from_within_own_callback_defers_free() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("13131313-1313-1313-1313-131313131313");
+
+            // The callback needs its own `NotifyRegistration` to cancel itself, but that value is
+            // only known after `register_install_notify` returns, so it is threaded through after.
+            let self_registration: Rc<RefCell<Option<NotifyRegistration>>> = Rc::new(RefCell::new(None));
+            let self_registration_in_callback = Rc::clone(&self_registration);
+
+            // The closure's capture is the only thing that can prove the boxed `NotifyHolder` (and
+            // this `Rc`) was actually dropped, and only after the callback finished running.
+            let marker = Rc::new(());
+            let captured = Rc::clone(&marker);
+            let ran_after_self_cancel = Rc::new(RefCell::new(0usize));
+            let ran_after_self_cancel_in_callback = Rc::clone(&ran_after_self_cancel);
+
+            let registration = service
+                .register_install_notify(
+                    guid,
+                    Tpl::Callback,
+                    Box::new(move |_handle| {
+                        let _ = &captured;
+                        if let Some(reg) = self_registration_in_callback.borrow_mut().take() {
+                            assert_eq!(CoreProtocolServices.cancel_install_notify(reg), Ok(()));
+                        }
+                        // If the closure's own captured state had been freed by the call above,
+                        // touching captured state here would be a use-after-free.
+                        *ran_after_self_cancel_in_callback.borrow_mut() += 1;
+                    }),
+                )
+                .unwrap();
+            self_registration.replace(Some(registration));
+
+            // Nothing was installed for this protocol at registration time, so the callback (and
+            // its nested self-cancel) only runs once this install signals the registration's event.
+            service.install_interface(None, guid, fake_interface(0x9000)).unwrap();
+
+            assert_eq!(*ran_after_self_cancel.borrow(), 1);
+            assert_eq!(Rc::strong_count(&marker), 1);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_cancel_install_notify_from_nested_notification_defers_free() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid_a = test_guid("14141414-1414-1414-1414-141414141414");
+            let guid_b = test_guid("15151515-1515-1515-1515-151515151515");
+
+            let registration_b_slot: Rc<RefCell<Option<NotifyRegistration>>> = Rc::new(RefCell::new(None));
+            let registration_b_slot_for_a = Rc::clone(&registration_b_slot);
+
+            // Registration A (higher TPL) cancels registration B when it fires.
+            let registration_a = service
+                .register_install_notify(
+                    guid_a,
+                    Tpl::Notify,
+                    Box::new(move |_handle| {
+                        let reg_b = registration_b_slot_for_a
+                            .borrow_mut()
+                            .take()
+                            .expect("registration B set before triggering A");
+                        assert_eq!(CoreProtocolServices.cancel_install_notify(reg_b), Ok(()));
+                    }),
+                )
+                .unwrap();
+
+            let marker = Rc::new(());
+            let captured = Rc::clone(&marker);
+            let ran_after_nested_cancel = Rc::new(RefCell::new(0usize));
+            let ran_after_nested_cancel_in_b = Rc::clone(&ran_after_nested_cancel);
+
+            // Registration B (lower TPL) installs protocol A from its own callback, which nests
+            // A's dispatch (and B's cancellation) inside B's still-running callback.
+            let registration_b = service
+                .register_install_notify(
+                    guid_b,
+                    Tpl::Callback,
+                    Box::new(move |_handle| {
+                        let _ = &captured;
+                        CoreProtocolServices.install_interface(None, guid_a, fake_interface(0xA000)).unwrap();
+                        // Registration B was cancelled above, nested inside this call, while this
+                        // callback (and its captured state) was still running.
+                        *ran_after_nested_cancel_in_b.borrow_mut() += 1;
+                    }),
+                )
+                .unwrap();
+            registration_b_slot.replace(Some(registration_b));
+
+            service.install_interface(None, guid_b, fake_interface(0xB000)).unwrap();
+
+            assert_eq!(*ran_after_nested_cancel.borrow(), 1);
+            assert_eq!(Rc::strong_count(&marker), 1);
+
+            service.cancel_install_notify(registration_a).unwrap();
         });
     }
 }
