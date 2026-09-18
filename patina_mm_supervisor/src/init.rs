@@ -246,10 +246,11 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // Validate the critical incoming HOBs against the untrusted producer's
         // data before any of their contents are consumed below.
         let scanned_regions = scanned_regions.get(..region_count).unwrap_or(&scanned_regions);
-        // SAFETY: `hob_list` is a valid HOB list per the caller's guarantee,
-        // and the page allocator was just initialized so the MMRAM containment
-        // checks are meaningful.
-        if let Err(e) = unsafe { hob_validation::validate_incoming_hobs_pre_paging_init(hob_list, scanned_regions) } {
+        // SAFETY: `hob_list` was checked non-null by `entry_point` and points to
+        // a valid HOB list for the duration of BSP initialization.
+        let handoff = unsafe { (hob_list as *const PhaseHandoffInformationTable).as_ref() }
+            .expect("BSP initialization requires a non-null HOB list");
+        if let Err(e) = hob_validation::validate_incoming_hobs_pre_paging_init(handoff, scanned_regions) {
             panic!("Incoming HOB validation failed: {e}");
         }
 
@@ -258,10 +259,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // Validate the incoming HOBs that require an active page table, now
         // that it is available (the remaining checks that only need the page
         // allocator ran above).
-        // SAFETY: `hob_list` is a valid HOB list per the caller's guarantee,
-        // and the page table was just initialized so per-page attribute queries
-        // are meaningful.
-        if let Err(e) = unsafe { hob_validation::validate_incoming_hobs_post_paging_init(hob_list) } {
+        if let Err(e) = hob_validation::validate_incoming_hobs_post_paging_init(handoff) {
             panic!("Post-paging HOB validation failed: {e}");
         }
 
