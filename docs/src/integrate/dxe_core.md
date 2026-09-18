@@ -121,14 +121,14 @@ Reference: [q35_dxe_core.rs](https://github.com/OpenDevicePartnership/patina-dxe
 
 ### For AARCH64 Platforms
 
-Copy the SBSA reference implementation:
+Copy the ArmVirt reference implementation:
 
 ```txt
 > mkdir -p bin
-> cp <path-to-patina-dxe-core-qemu>/bin/sbsa_dxe_core.rs bin/platform_patina_dxe_core.rs
+> cp <path-to-patina-dxe-core-qemu>/bin/arm_virt_dxe_core.rs bin/platform_patina_dxe_core.rs
 ```
 
-Reference: [sbsa_dxe_core.rs](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/sbsa_dxe_core.rs)
+Reference: [arm_virt_dxe_core.rs](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/arm_virt_dxe_core.rs)
 
 > While the QEMU Patina DXE Core implementations provide a good starting point, you need to modify the copied file to
 > suit your platform's specific requirements.
