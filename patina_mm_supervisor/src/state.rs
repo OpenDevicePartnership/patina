@@ -18,7 +18,7 @@
 //!
 use core::{
     num::NonZeroUsize,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
 };
 
 use spin::{Mutex, MutexGuard, Once, relax::Spin};
@@ -52,8 +52,8 @@ pub(crate) struct InitState {
     processor_id_lookup_fn: Once<fn(usize) -> Option<u64>>,
     /// Set once BSP one-time initialization has completed.
     bsp_init_complete: AtomicBool,
-    /// Pointer to the per-core initialized buffer from the `PassDown` HOB.
-    mm_initialized_buffer: Once<u64>,
+    /// Per-core initialized slots from the `PassDown` HOB.
+    mm_initialized_buffer: Once<&'static [AtomicU8]>,
     /// Number of cores that have completed per-core initialization.
     per_core_init_count: AtomicU32,
     /// User module entry point discovered from the HOB list.
@@ -119,13 +119,13 @@ impl InitState {
         self.bsp_init_complete.load(Ordering::Acquire)
     }
 
-    /// Stores the per-core initialized buffer base address (one-time).
-    pub(crate) fn set_mm_initialized_buffer(&self, buffer_base: u64) {
-        self.mm_initialized_buffer.call_once(|| buffer_base);
+    /// Stores the per-core initialized slots (one-time).
+    pub(crate) fn set_mm_initialized_buffer(&self, buffer: &'static [AtomicU8]) {
+        self.mm_initialized_buffer.call_once(|| buffer);
     }
 
-    /// Returns the per-core initialized buffer base address, if set.
-    pub(crate) fn mm_initialized_buffer(&self) -> Option<u64> {
+    /// Returns the per-core initialized slots, if set.
+    pub(crate) fn mm_initialized_buffer(&self) -> Option<&'static [AtomicU8]> {
         self.mm_initialized_buffer.get().copied()
     }
 
@@ -352,6 +352,7 @@ mod tests {
         assert!(state.supervisor().is_none());
         assert!(state.processor_id_lookup_fn().is_none());
         assert!(!state.is_bsp_init_complete());
+        assert!(state.mm_initialized_buffer().is_none());
         assert_eq!(state.per_core_init_count(), 0);
         assert!(state.user_entry_point().is_none());
         assert!(state.mseg_base().is_none());
@@ -395,18 +396,22 @@ mod tests {
 
     #[test]
     fn test_init_state_one_time_values_ignore_later_writes() {
-        let state = InitState::new();
-        let smrr = SmramRegion { base: 0x6000_0000, size: 0x10_0000, pre_allocated: false };
+        static INITIALIZED_BUFFER: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(1)];
+        static REPLACEMENT_BUFFER: [AtomicU8; 1] = [AtomicU8::new(2)];
 
-        state.set_mm_initialized_buffer(0x8000_0000);
+        let state = InitState::new();
+        let smrr = SmramRegion::new(0x6000_0000, 0x10_0000, false);
+
+        state.set_mm_initialized_buffer(&INITIALIZED_BUFFER);
         state.set_mseg_base(0x7000_0000);
         state.set_smrr_range(smrr);
 
-        state.set_mm_initialized_buffer(0x9000_0000);
+        state.set_mm_initialized_buffer(&REPLACEMENT_BUFFER);
         state.set_mseg_base(0x9000_0000);
-        state.set_smrr_range(SmramRegion { base: 0x9000_0000, size: 0x2000, pre_allocated: true });
+        state.set_smrr_range(SmramRegion::new(0x9000_0000, 0x2000, true));
 
-        assert_eq!(state.mm_initialized_buffer(), Some(0x8000_0000));
+        let stored_buffer = state.mm_initialized_buffer().expect("initialized buffer should be stored");
+        assert!(core::ptr::eq(stored_buffer, &INITIALIZED_BUFFER));
         assert_eq!(state.mseg_base(), Some(0x7000_0000));
         assert_eq!(state.smrr_range(), Some(smrr));
     }

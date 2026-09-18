@@ -11,7 +11,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::ffi::c_void;
+use core::{ffi::c_void, sync::atomic::AtomicU8};
 
 use patina::{
     UEFI_PAGE_SIZE, align_range,
@@ -1019,7 +1019,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// ## Safety
     ///
     /// The buffer pointers carried in `data` (e.g. the firmware policy buffer)
-    /// must reference valid memory, as they are dereferenced during setup.
+    /// must reference valid memory for their declared sizes and remain resident
+    /// for the supervisor's lifetime, as they are dereferenced during setup and
+    /// runtime.
     unsafe fn init_from_pass_down_hob(&self, data: &[u8], number_of_cpus: u64) -> Result<(u64, u64), PolicyInitError> {
         let pass_down = parse_pass_down_hob(data)?;
 
@@ -1030,10 +1032,29 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let mmi_entry_size = pass_down.mmi_entrypoint_size;
         let sm_base = pass_down.sm_base;
 
-        // Store per-core initialized buffer address
+        // Store bounded per-core initialized slots.
         if mm_initialized_buffer != 0 {
-            init_state().set_mm_initialized_buffer(mm_initialized_buffer);
-            log::info!("MM Initialized buffer set to 0x{mm_initialized_buffer:016x}");
+            let cpu_count: usize = number_of_cpus
+                .try_into()
+                .map_err(|_| PolicyInitError::InvalidCpuCount { found: number_of_cpus, maximum: MAX_CPUS })?;
+            if cpu_count == 0 || cpu_count > MAX_CPUS {
+                return Err(PolicyInitError::InvalidCpuCount { found: number_of_cpus, maximum: MAX_CPUS });
+            }
+            if !is_buffer_inside_mmram(mm_initialized_buffer, number_of_cpus) {
+                log::error!(
+                    "MM initialized buffer at 0x{mm_initialized_buffer:016x} does not contain {cpu_count} slot(s) in MMRAM"
+                );
+                return Err(PolicyInitError::InvalidPolicyData);
+            }
+            let buffer_address =
+                usize::try_from(mm_initialized_buffer).map_err(|_| PolicyInitError::InvalidPolicyData)?;
+            let buffer_ptr = core::ptr::with_exposed_provenance::<AtomicU8>(buffer_address);
+            // SAFETY: The PassDown HOB was validated before this routine is called and this
+            // function's contract requires its buffer pointers to remain valid. The validated
+            // CPU count is the number of one-byte initialized slots supplied by the MM IPL.
+            let initialized_slots = unsafe { core::slice::from_raw_parts(buffer_ptr, cpu_count) };
+            init_state().set_mm_initialized_buffer(initialized_slots);
+            log::info!("MM Initialized buffer set to 0x{mm_initialized_buffer:016x} with {cpu_count} slot(s)");
         } else {
             log::warn!("MM Initialized buffer is null in PassDown HOB");
         }

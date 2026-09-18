@@ -226,37 +226,32 @@ pub(crate) fn is_buffer_inside_mmram(base: u64, size: u64) -> bool {
 /// Reads the 1-byte slot at `mm_initialized_buffer + cpu_index`.
 /// A non-zero value indicates the core has completed initialization.
 fn is_core_initialized(cpu_index: usize) -> bool {
-    if let Some(buffer_base) = init_state().mm_initialized_buffer() {
-        if buffer_base == 0 {
-            return false;
-        }
-        let slot_ptr = (buffer_base as usize + cpu_index) as *const u8;
-        // SAFETY: The buffer is provided by the MM IPL and is guaranteed to be valid.
-        // Each core only reads its own slot or slots of other cores.
-        let value = unsafe { core::ptr::read_volatile(slot_ptr) };
-        value != 0
-    } else {
-        false
-    }
+    let Some(buffer) = init_state().mm_initialized_buffer() else {
+        return false;
+    };
+
+    let Some(slot) = buffer.get(cpu_index) else {
+        log::error!("Core index {cpu_index} is outside the MM initialized buffer ({} slots)", buffer.len());
+        return false;
+    };
+    slot.load(Ordering::Acquire) != 0
 }
 
 /// Marks a specific core as initialized.
 ///
 /// Writes a non-zero value to the 1-byte slot at `mm_initialized_buffer + cpu_index`.
 fn mark_core_initialized(cpu_index: usize) {
-    if let Some(buffer_base) = init_state().mm_initialized_buffer() {
-        if buffer_base == 0 {
-            log::error!("MM initialized buffer is null, cannot mark core {cpu_index} as initialized");
-            return;
-        }
-        let slot_ptr = (buffer_base as usize + cpu_index) as *mut u8;
-        // SAFETY: The buffer is provided by the MM IPL and is guaranteed to be valid.
-        // Each core writes only to its own slot.
-        unsafe { core::ptr::write_volatile(slot_ptr, 1) };
-        log::trace!("Core {} marked as initialized at 0x{:016x}", cpu_index, slot_ptr as u64);
-    } else {
+    let Some(buffer) = init_state().mm_initialized_buffer() else {
         log::error!("MM initialized buffer not set, cannot mark core {cpu_index} as initialized");
-    }
+        return;
+    };
+
+    let Some(slot) = buffer.get(cpu_index) else {
+        log::error!("Core index {cpu_index} is outside the MM initialized buffer ({} slots)", buffer.len());
+        return;
+    };
+    slot.store(1, Ordering::Release);
+    log::trace!("Core {cpu_index} marked as initialized");
 }
 
 impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
@@ -453,22 +448,102 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> Default for MmSupervisorCore<P, MAX
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use core::sync::atomic::AtomicU8;
+    use patina::standard::efi;
+    use serial_test::serial;
 
     struct TestPlatform;
 
     impl PlatformInfo for TestPlatform {}
 
+    fn test_mmi_handler(_: *mut u8, _: &mut usize) -> efi::Status {
+        efi::Status::SUCCESS
+    }
+
+    static TEST_MMI_HANDLERS: &[SupervisorMmiHandler] = &[SupervisorMmiHandler {
+        name: "TestHandler",
+        handler_guid: MM_COMMON_REGION_HOB_GUID.into_inner(),
+        handle: test_mmi_handler,
+    }];
+
+    struct PlatformWithHandler;
+
+    impl PlatformInfo for PlatformWithHandler {
+        fn mmi_handlers() -> &'static [SupervisorMmiHandler] {
+            TEST_MMI_HANDLERS
+        }
+    }
+
     #[test]
-    fn test_supervisor_creation() {
-        let _supervisor: MmSupervisorCore<TestPlatform, 4> = MmSupervisorCore::new();
-        // Just verify it compiles and creates without panic
+    fn test_supervisor_creation_and_accessors() {
+        let supervisor: MmSupervisorCore<TestPlatform, 4> = MmSupervisorCore::new();
+
+        assert_eq!(supervisor.cpu_manager().max_cpus(), 4);
+        assert_eq!(supervisor.cpu_manager().registered_count(), 0);
+        assert_eq!(supervisor.mailbox_manager().check_mailbox(0), None);
+        assert_eq!(supervisor.mailbox_manager().check_mailbox(4), None);
+        assert!(!supervisor.initialized.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_supervisor_default_matches_new() {
+        let supervisor: MmSupervisorCore<TestPlatform, 2> = MmSupervisorCore::default();
+
+        assert_eq!(supervisor.cpu_manager().max_cpus(), 2);
+        assert_eq!(supervisor.cpu_manager().registered_count(), 0);
+        assert!(!supervisor.initialized.load(Ordering::Relaxed));
     }
 
     #[test]
     fn test_supervisor_is_const() {
-        // Verify we can create a static instance (no heap allocation)
         static _SUPERVISOR: MmSupervisorCore<TestPlatform, 4> = MmSupervisorCore::new();
+    }
+
+    #[test]
+    fn test_platform_info_default_and_custom_handlers() {
+        assert!(TestPlatform::mmi_handlers().is_empty());
+
+        let handlers = PlatformWithHandler::mmi_handlers();
+        assert!(core::ptr::eq(handlers, TEST_MMI_HANDLERS));
+        assert_eq!(handlers[0].name, "TestHandler");
+
+        let mut buffer_size = 0;
+        assert_eq!((handlers[0].handle)(core::ptr::null_mut(), &mut buffer_size), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_is_buffer_inside_mmram_fails_closed_before_allocator_initialization() {
+        assert!(!is_buffer_inside_mmram(0x1000, 0x1000));
+        assert!(!is_buffer_inside_mmram(u64::MAX, 1));
+    }
+
+    #[test]
+    #[serial]
+    fn test_core_initialization_functions_handle_state_values_and_bounds() {
+        static SLOTS: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
+
+        assert!(init_state().mm_initialized_buffer().is_none());
+        assert!(!is_core_initialized(0));
+        mark_core_initialized(0);
+
+        init_state().set_mm_initialized_buffer(&SLOTS);
+        assert!(!is_core_initialized(0));
+        assert!(!is_core_initialized(1));
+
+        SLOTS[1].store(0xFF, Ordering::Relaxed);
+        assert!(is_core_initialized(1));
+        SLOTS[1].store(0, Ordering::Relaxed);
+
+        mark_core_initialized(1);
+        assert!(!is_core_initialized(0));
+        assert!(is_core_initialized(1));
+
+        mark_core_initialized(SLOTS.len());
+        assert!(!is_core_initialized(SLOTS.len()));
+        assert!(!is_core_initialized(0));
+        assert!(is_core_initialized(1));
     }
 }
