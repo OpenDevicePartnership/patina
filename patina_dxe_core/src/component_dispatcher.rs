@@ -411,10 +411,18 @@ mod tests {
             name: GUID3,
         };
 
+        let unused_hob = patina::pi::hob::GenericHob {
+            header: patina::pi::hob::HobHeader {
+                r#type: patina::pi::hob::UNUSED,
+                length: core::mem::size_of::<patina::pi::hob::GenericHob>() as u16,
+                reserved: 0,
+            },
+        };
+
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob1, hob1_bytes));
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob2, hob2_bytes));
         hob_list.push(patina::pi::hob::Hob::GuidHob(&guid_hob3, hob3_bytes));
-        hob_list.push(patina::pi::hob::Hob::Misc(30)); // Non-guid HOB to ensure it's ignored.
+        hob_list.push(patina::pi::hob::Hob::Misc(&unused_hob)); // Non-guid HOB to ensure it's ignored.
 
         struct TestComponent;
 
