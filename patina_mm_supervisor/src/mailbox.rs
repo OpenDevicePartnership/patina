@@ -295,6 +295,7 @@ impl<const MAX_APS: usize> Default for MailboxManager<MAX_APS> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 
