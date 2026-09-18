@@ -33,17 +33,29 @@ pub(crate) enum PageOwnership {
 ///   - `Supervisor` set  => `PageOwnership::Supervisor` (U/S = 0)
 ///   - `Supervisor` clear => `PageOwnership::User` (U/S = 1)
 ///
-/// Returns `None` if the page table is not initialized or the address is unmapped.
+/// Returns `None` if the range is empty or invalid, the page table is not initialized,
+/// or the address is unmapped.
 pub(crate) fn query_address_ownership(address: u64, size: u64) -> Option<PageOwnership> {
+    query_address_ownership_with(address, size, |aligned_addr, aligned_size| {
+        let page_table = security_state().lock_page_table();
+        page_table.as_ref()?.query_memory_region(aligned_addr, aligned_size).ok()
+    })
+}
+
+fn query_address_ownership_with(
+    address: u64,
+    size: u64,
+    query: impl FnOnce(u64, u64) -> Option<MemoryAttributes>,
+) -> Option<PageOwnership> {
+    if size == 0 || address.checked_add(size).is_none() {
+        return None;
+    }
+
     let (aligned_addr, aligned_size) = align_range(address, size, UEFI_PAGE_SIZE as u64).ok()?;
-    let page_table = security_state().lock_page_table();
-    let pt = page_table.as_ref()?;
-    let attrs = pt.query_memory_region(aligned_addr, aligned_size).ok()?;
+    let aligned_end = aligned_addr.checked_add(aligned_size)?;
+    let attrs = query(aligned_addr, aligned_size)?;
     log::trace!(
-        "Queried page ownership for address range 0x{:016x}-0x{:016x}: attributes={:?}",
-        aligned_addr,
-        aligned_addr + aligned_size,
-        attrs
+        "Queried page ownership for address range 0x{aligned_addr:016x}-0x{aligned_end:016x}: attributes={attrs:?}"
     );
     if attrs.contains(MemoryAttributes::Supervisor) {
         Some(PageOwnership::Supervisor)
@@ -55,19 +67,56 @@ pub(crate) fn query_address_ownership(address: u64, size: u64) -> Option<PageOwn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::Cell;
 
     #[test]
     fn test_page_ownership_is_copy_and_comparable() {
         let owner = PageOwnership::Supervisor;
-        let copied = owner; // relies on `Copy`
+        let copied = owner;
         assert_eq!(owner, copied);
         assert_ne!(PageOwnership::Supervisor, PageOwnership::User);
     }
 
     #[test]
-    fn test_query_address_ownership_none_when_page_table_uninitialized() {
-        // With no page table installed, ownership cannot be determined.
-        *security_state().lock_page_table() = None;
-        assert_eq!(query_address_ownership(0x1000, 0x1000), None);
+    fn test_query_address_ownership_aligns_range_and_identifies_user_pages() {
+        let queried_range = Cell::new(None);
+
+        let ownership = query_address_ownership_with(0x1234, 0x1000, |address, size| {
+            queried_range.set(Some((address, size)));
+            Some(MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect)
+        });
+
+        assert_eq!(ownership, Some(PageOwnership::User));
+        assert_eq!(queried_range.get(), Some((0x1000, 0x2000)));
+    }
+
+    #[test]
+    fn test_query_address_ownership_identifies_supervisor_pages() {
+        let ownership = query_address_ownership_with(0x2000, 0x1000, |_, _| {
+            Some(MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly)
+        });
+
+        assert_eq!(ownership, Some(PageOwnership::Supervisor));
+    }
+
+    #[test]
+    fn test_query_address_ownership_returns_none_when_query_fails() {
+        assert_eq!(query_address_ownership_with(0x2000, 0x1000, |_, _| None), None);
+    }
+
+    #[test]
+    fn test_query_address_ownership_rejects_invalid_ranges_without_querying() {
+        for (address, size) in [(0x1000, 0), (u64::MAX, 1), (u64::MAX - 0xfff, 0xfff)] {
+            let queried = Cell::new(false);
+
+            assert_eq!(
+                query_address_ownership_with(address, size, |_, _| {
+                    queried.set(true);
+                    Some(MemoryAttributes::empty())
+                }),
+                None
+            );
+            assert!(!queried.get(), "invalid range {address:#x}+{size:#x} was queried");
+        }
     }
 }
