@@ -118,6 +118,11 @@ impl ProtocolServices for CoreProtocolServices {
         notify_tpl: Tpl,
         callback: NotifyCallback,
     ) -> Result<NotifyRegistration, ProtocolError> {
+        // `efi::EVT_NOTIFY_SIGNAL` requires the notification TPL to be <= Tpl::Notify, so Tpl::HighLevel is invalid.
+        if notify_tpl > Tpl::Notify {
+            return Err(ProtocolError::InvalidParameter);
+        }
+
         let holder = Box::new(NotifyHolder { callback, registration: core::ptr::null_mut() });
         let context = Box::into_raw(holder).cast::<c_void>();
 
@@ -399,6 +404,18 @@ mod tests {
             assert_eq!(seen.borrow()[0], handle);
 
             service.cancel_install_notify(registration).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_register_install_notify_rejects_high_level_tpl() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("16161616-1616-1616-1616-161616161616");
+
+            let result = service.register_install_notify(guid, Tpl::HighLevel, Box::new(|_h| {}));
+
+            assert_eq!(result.err(), Some(ProtocolError::InvalidParameter));
         });
     }
 

@@ -24,7 +24,10 @@
 use mockall::automock;
 
 /// A task priority level, used to serialize access to shared state in the UEFI event model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Variants are declared in ascending priority order, so derived [`PartialOrd`]/[`Ord`] compare
+/// TPLs by priority (e.g. `Tpl::Notify > Tpl::Callback`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tpl {
     /// The lowest priority level, used for normal execution (`TPL_APPLICATION`).
     Application,
