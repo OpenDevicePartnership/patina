@@ -17,7 +17,7 @@ use core::{ffi::c_void, marker::Send, ptr};
 use log::Level;
 use patina::standard::efi;
 use patina::{
-    component::service::{Service, perf_timer::ArchTimerFunctionality},
+    component::service::{Service, cell::ServiceCell, perf_timer::ArchTimerFunctionality},
     debug::log::{DEBUG_ERROR, DEBUG_INFO, DEBUG_VERBOSE, DEBUG_WARN, Format},
     error::EfiError,
     peripheral::serial::{SerialIO, shared::SharedSerial},
@@ -54,7 +54,7 @@ where
     hw_print_level_override_callback: Option<fn(u32) -> u32>,
     format: Format,
     memory_log: RwLock<Option<AdvancedLogWriter>>,
-    pub(crate) timer: Service<dyn ArchTimerFunctionality>,
+    pub(crate) timer: ServiceCell<dyn ArchTimerFunctionality>,
 }
 
 impl<'a, S> AdvancedLogger<'a, S>
@@ -83,7 +83,7 @@ where
             hw_print_level_override_callback: None,
             format,
             memory_log: RwLock::new(None),
-            timer: Service::new_uninit(),
+            timer: ServiceCell::new(),
         }
     }
 
@@ -122,7 +122,7 @@ where
     /// Initializes the performance timer service for timestamping log entries.
     /// Should only be called once during setup.
     pub fn init_timer(&self, timer: Service<dyn ArchTimerFunctionality>) {
-        self.timer.replace(&timer);
+        self.timer.publish(timer).expect("Timer service was already initialized!");
     }
 
     /// Initialize the advanced logger.
@@ -448,7 +448,7 @@ mod tests {
             serial,
         );
         logger_uninit.init_timer(patina::component::service::Service::mock(Box::new(MockTimer {})));
-        assert!(logger_uninit.timer.cpu_count() > 0);
+        assert!(logger_uninit.timer.get().unwrap().cpu_count() > 0);
     }
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
