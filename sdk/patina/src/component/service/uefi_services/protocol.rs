@@ -290,6 +290,8 @@ pub trait ProtocolServices {
     /// # Errors
     ///
     /// Returns [`ProtocolError::OutOfResources`] if the notification could not be registered.
+    /// Returns [`ProtocolError::InvalidParameter`] if `notify_tpl` is [`Tpl::HighLevel`], which this
+    /// registration cannot support.
     fn register_install_notify(
         &self,
         protocol: BinaryGuid,
@@ -502,6 +504,8 @@ pub trait ProtocolServicesExt: ProtocolServices {
     /// # Errors
     ///
     /// Returns [`ProtocolError::OutOfResources`] if the notification could not be registered.
+    /// Returns [`ProtocolError::InvalidParameter`] if `notify_tpl` is [`Tpl::HighLevel`], which this
+    /// registration cannot support.
     fn on_protocol_installed<P: ProtocolInterface>(
         &self,
         notify_tpl: Tpl,
