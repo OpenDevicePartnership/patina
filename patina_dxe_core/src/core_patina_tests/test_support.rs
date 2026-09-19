@@ -98,7 +98,7 @@ pub(super) fn flush_tlb() {
         0x4 =>
         // SAFETY: We are simply invalidating the TLB, which is a safe operation
         unsafe {
-            asm!("tlbi alle1", "dsb nsh", "isb sy", options(nostack));
+            asm!("tlbi vmalle1", "dsb nsh", "isb sy", options(nostack));
         },
         _ => panic!("Unsupported Exception Level for TLB flush"),
     }
