@@ -75,5 +75,31 @@ and if not will continue to gracefully map pages.
 ### Virtualization Exceptions
 
 Patina, like EDK II, does not have generic virtualization exception handling because this is platform/hypervisor
-specific. Platforms will provide virtualization exception handlers during Patina initialization that Patina will
+specific. Platforms must provide virtualization exception handlers during Patina initialization that Patina will
 install.
+
+```rust
+# extern crate patina_dxe_core;
+use patina_dxe_core::{CpuInfo, ExceptionContext, ExceptionType, InterruptHandler};
+
+const EXCEPTION_VECTOR_VE: ExceptionType = 20;
+
+struct MyPlatform;
+
+impl InterruptHandler for MyPlatform {
+    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext) {
+      // Handle...
+    }
+}
+
+impl CpuInfo for MyPlatform {
+    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
+        static EXCEPTION_HANDLERS: [(ExceptionType, &'static dyn InterruptHandler); 1] =
+            [(EXCEPTION_VECTOR_VE, &MyPlatform)];
+
+        &EXCEPTION_HANDLERS
+    }
+}
+```
+
+Patina will install these to the new IDT/VBAR immediately upon creation to ensure the exceptions can be serviced.

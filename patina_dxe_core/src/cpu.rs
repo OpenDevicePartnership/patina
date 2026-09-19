@@ -22,7 +22,8 @@ pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use perf_timer::PerfTimer;
 
 use efi_cpu::EfiCpu;
-use patina_internal_cpu::interrupts::Interrupts;
+pub use patina_internal_cpu::interrupts::{ExceptionContext, ExceptionContextX64, ExceptionType, InterruptHandler};
+use patina_internal_cpu::interrupts::{HandlerType, InterruptManager, Interrupts};
 
 /// A configuration struct containing the GIC bases (`gic_d`, `gic_r`) for AARCH64 systems.
 ///
@@ -115,10 +116,17 @@ pub trait CpuInfo {
     fn perf_timer_frequency() -> Option<u64> {
         None
     }
+
+    /// Returns the exception handlers supplied by the platform as exception vector and handler pairs.
+    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
+        &[]
+    }
 }
 
 #[cfg_attr(coverage, coverage(off))]
-pub fn initialize_cpu_subsystem() -> crate::error::Result<Interrupts> {
+pub fn initialize_cpu_subsystem(
+    exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
+) -> crate::error::Result<Interrupts> {
     let mut cpu = EfiCpu::default();
     let log_level = log::max_level();
 
@@ -135,6 +143,10 @@ pub fn initialize_cpu_subsystem() -> crate::error::Result<Interrupts> {
     interrupt_manager.initialize().inspect_err(|err| {
         log::error!("Failed to initialize Interrupt Manager: {err}");
     })?;
+
+    for &(exception_type, handler) in exception_handlers {
+        interrupt_manager.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+    }
 
     // Restore logging
     log::set_max_level(log_level);
@@ -162,5 +174,6 @@ mod tests {
         }
 
         assert!(<TestPlatform as CpuInfo>::perf_timer_frequency().is_none());
+        assert!(<TestPlatform as CpuInfo>::exception_handlers().is_empty());
     }
 }
