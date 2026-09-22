@@ -67,7 +67,7 @@ use cpu::CpuManager;
 use intrinsics::{get_current_cpu_id, is_bsp};
 use mailbox::MailboxManager;
 // Re-exported for use by descendant modules via `crate::` paths.
-use mem::{AllocationType, SharedPagingAllocator};
+use mem::{AllocationType, SharedPagingAllocator, page_allocator::MmramPlacement};
 
 use privilege_mgmt::{invoke_demoted_routine, syscall_setup::SyscallInterface};
 
@@ -218,9 +218,25 @@ pub struct MmSupervisorCore<P: PlatformInfo, const MAX_CPUS: usize> {
     _phantom: core::marker::PhantomData<fn() -> P>,
 }
 
+/// Returns whether `[base, base + size)` lies entirely inside MMRAM.
+///
+/// Reports `false` before the regions are known, since nothing can be shown to be inside MMRAM
+/// until then.
+///
+/// ## Panics
+///
+/// Panics if the range is only partly inside MMRAM; see [`MmramPlacement::is_inside`].
 pub(crate) fn is_buffer_inside_mmram(base: u64, size: u64) -> bool {
-    // we will go over the page allocator to see if this region falls inside any of the MMRAM regions
-    security_state().page_allocator().is_region_inside_mmram(base, size)
+    security_state().page_allocator().classify_mmram(base, size).is_some_and(|p| p.is_inside(base, size))
+}
+
+/// Returns whether `[base, base + size)` touches MMRAM at all, including a range that only
+/// crosses a boundary.
+///
+/// Reports an overlap when the regions are not known yet, since nothing can be shown to lie
+/// outside MMRAM before then.
+pub(crate) fn buffer_overlaps_mmram(base: u64, size: u64) -> bool {
+    !matches!(security_state().page_allocator().classify_mmram(base, size), Some(MmramPlacement::Outside))
 }
 
 /// Checks if a specific core has completed initialization.

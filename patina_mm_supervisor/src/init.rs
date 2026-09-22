@@ -29,7 +29,7 @@ use patina_paging::{
 
 use crate::{
     AllocationType, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo, SharedPagingAllocator,
-    hob_validation,
+    buffer_overlaps_mmram, hob_validation,
     intrinsics::{get_current_cpu_id, read_cr3, write_msr},
     is_buffer_inside_mmram,
     mem::page_allocator::SmramDescriptor,
@@ -1343,6 +1343,49 @@ fn parse_user_comm_buffer_hob(data: &[u8]) -> Result<ParsedCommBuffer, PolicyIni
     parse_comm_buffer_fields(hob.physical_start, hob.number_of_pages, hob.status_buffer, "User communication buffer")
 }
 
+/// Requires that `[address, address + size)` is usable as an external communication buffer:
+/// entirely outside MMRAM, and mapped supervisor-only in the active page table.
+///
+/// The MM IPL names these buffers and sits outside the supervisor's trust boundary. The
+/// supervisor copies a response back into the buffer, so any part of it inside MMRAM turns that
+/// copy into an MMRAM write with a payload chosen outside MM - hence overlap rather than
+/// containment, since a partly-inside buffer carries the same primitive in its tail. Ring 3 works
+/// on the internal copy, so direct access here would let a demoted driver rewrite a request, or
+/// its status mailbox, while it is being serviced.
+///
+/// ## Panics
+///
+/// Panics if the range touches MMRAM, or is user-accessible, unmapped, or not uniformly mapped.
+/// This runs during BSP initialization, where failing closed is the only safe outcome.
+fn require_external_comm_buffer(address: u64, size: u64, description: &str) {
+    require_external_comm_buffer_with(address, size, description, buffer_overlaps_mmram, query_address_ownership);
+}
+
+/// Applies the [`require_external_comm_buffer`] rules to the results of `overlaps_mmram` and
+/// `query`.
+fn require_external_comm_buffer_with(
+    address: u64,
+    size: u64,
+    description: &str,
+    overlaps_mmram: impl FnOnce(u64, u64) -> bool,
+    query: impl FnOnce(u64, u64) -> Option<PageOwnership>,
+) {
+    let end = address.saturating_add(size);
+
+    assert!(
+        !overlaps_mmram(address, size),
+        "{description} at 0x{address:016x}-0x{end:016x} overlaps MMRAM; it must lie entirely outside"
+    );
+
+    match query(address, size) {
+        Some(PageOwnership::Supervisor) => {}
+        Some(PageOwnership::User) => panic!(
+            "{description} at 0x{address:016x}-0x{end:016x} is mapped user-accessible; it must be supervisor-only"
+        ),
+        None => panic!("{description} at 0x{address:016x}-0x{end:016x} is unmapped or not uniformly mapped"),
+    }
+}
+
 /// Processes the supervisor communication buffer HOB (`MM_COMMON_REGION_HOB_GUID`).
 ///
 /// Returns `(buffer_addr, buffer_size, internal_copy_addr, status_buffer_addr)`.
@@ -1351,22 +1394,12 @@ fn init_supv_comm_buffer(data: &[u8]) -> Result<(u64, u64, u64, u64), PolicyInit
 
     let buffer = parse_supv_comm_buffer_hob(data)?;
 
-    // Validate ownership if outside MMRAM
-    if !is_buffer_inside_mmram(buffer.address, buffer.size) {
-        match query_address_ownership(buffer.address, buffer.size) {
-            Some(PageOwnership::Supervisor) => { /* expected */ }
-            Some(PageOwnership::User) => {
-                panic!(
-                    "Supervisor common buffer at 0x{:016x}-0x{:016x} is not marked as supervisor-owned",
-                    buffer.address,
-                    buffer.address + buffer.size
-                );
-            }
-            None => {
-                panic!("Failed to query page ownership for supervisor common buffer at 0x{:016x}", buffer.address);
-            }
-        }
-    }
+    require_external_comm_buffer(buffer.address, buffer.size, "Supervisor communication buffer");
+    require_external_comm_buffer(
+        buffer.status_address,
+        core::mem::size_of::<MmCommBufferStatus>() as u64,
+        "Supervisor status buffer",
+    );
 
     // Allocate internal copy
     let supv_comm_buffer_internal = security_state()
@@ -1399,35 +1432,12 @@ unsafe fn init_user_comm_buffer(data: *mut u8, data_len: usize) -> Result<(u64, 
         parse_user_comm_buffer_hob(bytes)?
     };
 
-    // Validate ownership if outside MMRAM
-    if !is_buffer_inside_mmram(buffer.address, buffer.size) {
-        match query_address_ownership(buffer.address, buffer.size) {
-            Some(PageOwnership::Supervisor) => { /* expected */ }
-            Some(PageOwnership::User) => {
-                panic!(
-                    "User common buffer at 0x{:016x}-0x{:016x} is not marked as user-owned",
-                    buffer.address,
-                    buffer.address + buffer.size
-                );
-            }
-            None => {
-                panic!("Failed to query page ownership for user common buffer at 0x{:016x}", buffer.address);
-            }
-        }
-    }
-
-    // Validate status buffer
-    if !is_buffer_inside_mmram(buffer.status_address, core::mem::size_of::<MmCommBufferStatus>() as u64) {
-        match query_address_ownership(buffer.status_address, core::mem::size_of::<MmCommBufferStatus>() as u64) {
-            Some(PageOwnership::Supervisor) => { /* expected */ }
-            Some(PageOwnership::User) => {
-                panic!("Status buffer at 0x{:016x} is not marked as supervisor-exposed", buffer.status_address);
-            }
-            None => {
-                panic!("Failed to query page ownership for status buffer at 0x{:016x}", buffer.status_address);
-            }
-        }
-    }
+    require_external_comm_buffer(buffer.address, buffer.size, "User communication buffer");
+    require_external_comm_buffer(
+        buffer.status_address,
+        core::mem::size_of::<MmCommBufferStatus>() as u64,
+        "User status buffer",
+    );
 
     // Allocate internal copy
     let user_comm_buffer_internal = security_state()
@@ -1489,6 +1499,101 @@ mod tests {
         },
         state::InitState,
     };
+
+    /// Answers the ownership query with a fixed result.
+    fn owned_as(owner: Option<PageOwnership>) -> impl FnOnce(u64, u64) -> Option<PageOwnership> {
+        move |_, _| owner
+    }
+
+    /// Answers the MMRAM overlap query with a fixed result.
+    fn overlaps(value: bool) -> impl FnOnce(u64, u64) -> bool {
+        move |_, _| value
+    }
+
+    #[test]
+    fn test_require_external_comm_buffer_accepts_a_supervisor_mapped_buffer_outside_mmram() {
+        require_external_comm_buffer_with(
+            0x1000,
+            0x1000,
+            "Test buffer",
+            overlaps(false),
+            owned_as(Some(PageOwnership::Supervisor)),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Test buffer at 0x0000000000001000-0x0000000000002000 overlaps MMRAM")]
+    fn test_require_external_comm_buffer_rejects_a_buffer_touching_mmram() {
+        // The copy-back would otherwise turn a payload chosen outside MM into an MMRAM write.
+        // Ownership is supervisor-only here, so the MMRAM rule is what has to reject it.
+        require_external_comm_buffer_with(
+            0x1000,
+            0x1000,
+            "Test buffer",
+            overlaps(true),
+            owned_as(Some(PageOwnership::Supervisor)),
+        );
+    }
+
+    #[test]
+    fn test_require_external_comm_buffer_checks_mmram_before_ownership() {
+        // A buffer in MMRAM must be refused on that ground alone, without the ownership query
+        // getting a chance to accept it.
+        let queried = core::cell::Cell::new(false);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            require_external_comm_buffer_with(0x1000, 0x1000, "Test buffer", overlaps(true), |_, _| {
+                queried.set(true);
+                Some(PageOwnership::Supervisor)
+            });
+        }));
+
+        assert!(result.is_err());
+        assert!(!queried.get(), "ownership was queried for a buffer already known to be in MMRAM");
+    }
+
+    #[test]
+    #[should_panic(expected = "Test buffer at 0x0000000000001000-0x0000000000002000 is mapped user-accessible")]
+    fn test_require_external_comm_buffer_rejects_a_user_mapped_buffer() {
+        require_external_comm_buffer_with(
+            0x1000,
+            0x1000,
+            "Test buffer",
+            overlaps(false),
+            owned_as(Some(PageOwnership::User)),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Test buffer at 0x0000000000001000-0x0000000000002000 is unmapped")]
+    fn test_require_external_comm_buffer_rejects_an_unmapped_buffer() {
+        require_external_comm_buffer_with(0x1000, 0x1000, "Test buffer", overlaps(false), owned_as(None));
+    }
+
+    #[test]
+    fn test_require_external_comm_buffer_queries_the_whole_buffer() {
+        let mmram_range = core::cell::Cell::new(None);
+        let owner_range = core::cell::Cell::new(None);
+
+        require_external_comm_buffer_with(
+            0x2000,
+            0x3000,
+            "Test buffer",
+            |address, size| {
+                mmram_range.set(Some((address, size)));
+                false
+            },
+            |address, size| {
+                owner_range.set(Some((address, size)));
+                Some(PageOwnership::Supervisor)
+            },
+        );
+
+        // Both rules must see the full span, or a buffer whose tail reaches MMRAM or a
+        // user-mapped page would pass.
+        assert_eq!(mmram_range.get(), Some((0x2000, 0x3000)));
+        assert_eq!(owner_range.get(), Some((0x2000, 0x3000)));
+    }
 
     struct TestPlatform;
 

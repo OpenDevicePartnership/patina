@@ -420,9 +420,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // inside that user range.
         let returned_status = unsafe {
             with_user_access(|| {
-                core::ptr::read(
-                    (config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus
-                )
+                core::ptr::read((config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus)
             })
         };
 
