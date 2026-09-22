@@ -53,7 +53,7 @@ use patina::management_mode::supervisor::{
 };
 use patina::pi::hob::{
     EFI_RESOURCE_IO, EFI_RESOURCE_IO_RESERVED, Hob, MEMORY_TYPE_INFO_HOB_GUID, PhaseHandoffInformationTable,
-    ResourceDescriptor,
+    ResourceDescriptor, get_pi_hob_list_size,
 };
 use patina::standard::efi;
 use patina::{UEFI_PAGE_SIZE, align_range};
@@ -208,6 +208,13 @@ pub enum HobValidationError {
         /// The size that was checked for containment.
         size: u64,
     },
+    /// The HOB list itself does not lie inside MMRAM.
+    HobListOutsideMmram {
+        /// Address the HOB list starts at.
+        base: u64,
+        /// Byte length of the list, as walked from its headers.
+        size: u64,
+    },
     /// The active page table was not available to query page attributes.
     PageTableUnavailable,
     /// A page could not be queried in the active page table (e.g. unmapped).
@@ -296,6 +303,9 @@ impl fmt::Display for HobValidationError {
             }
             Self::PassDownPointerOutsideMmram { field, addr, size } => {
                 write!(f, "PassDown pointer `{field}` = 0x{addr:x} (size 0x{size:x}) is outside MMRAM")
+            }
+            Self::HobListOutsideMmram { base, size } => {
+                write!(f, "HOB list at 0x{base:x} (size 0x{size:x}) is not inside MMRAM")
             }
             Self::PageTableUnavailable => write!(f, "active page table is not available to query page attributes"),
             Self::PageAttributeQueryFailed { addr } => {
@@ -433,6 +443,29 @@ fn mmram_span(regions: &[SmramRegion]) -> (u64, u64) {
 /// Returns whether `[base, base + length)` overlaps the MMRAM span.
 fn buffer_overlaps_mmram(mmram: (u64, u64), base: u64, length: u64) -> bool {
     ranges_overlap((base, length), mmram)
+}
+
+/// Validates that the HOB list itself lies inside MMRAM.
+///
+/// Every other check here reasons about regions the HOB list *describes*. The list is itself a
+/// buffer at an address the producer chose, and the supervisor later maps it readable to Ring 3,
+/// so it has to be inside MMRAM for the same reason its contents do.
+///
+/// `length` is the byte length of the list, walked from its headers rather than taken from the
+/// PHIT's `end_of_hob_list`: platforms do not reliably populate that field for the MM HOB list,
+/// and `remap_hob_list_to_user` sizes the same range the same way.
+fn validate_hob_list_inside_mmram(
+    handoff: &PhaseHandoffInformationTable,
+    length: u64,
+    is_inside_mmram: impl Fn(u64, u64) -> bool,
+) -> Result<(), HobValidationError> {
+    let base = core::ptr::from_ref(handoff) as u64;
+
+    if length == 0 || !is_inside_mmram(base, length) {
+        return Err(HobValidationError::HobListOutsideMmram { base, size: length });
+    }
+
+    Ok(())
 }
 
 /// Validates that no memory allocation HOB overlaps MMRAM.
@@ -770,6 +803,14 @@ pub(crate) fn validate_incoming_hobs_pre_paging_init(
     dump_hobs(handoff);
 
     validate_mmram_contiguous(regions)?;
+    // The HOB list is itself a buffer at an address the producer chose, so it is checked before
+    // anything it describes is trusted. Its length is walked from the headers rather than read
+    // from the PHIT, which platforms do not reliably populate for the MM HOB list.
+    //
+    // SAFETY: `handoff` is the MM IPL's HOB list, which the caller guarantees is a valid,
+    // END_OF_HOB_LIST-terminated list for the duration of initialization.
+    let hob_list_len = unsafe { get_pi_hob_list_size(core::ptr::from_ref(handoff).cast()) } as u64;
+    validate_hob_list_inside_mmram(handoff, hob_list_len, is_buffer_inside_mmram)?;
     // MMRAM is a single contiguous span (checked above), so allocations can be
     // tested against one range instead of iterating the region list.
     let hob = Hob::Handoff(handoff);
@@ -1522,6 +1563,41 @@ mod tests {
         pd.mm_initialized_buffer = 0;
         pd.mm_supv_firmware_policy_buffer = 0;
         assert_eq!(validate_pass_down_pointers(&pd, |_, _| false), Ok(()));
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_hob_list_must_be_inside_mmram() {
+        let handoff = PhaseHandoffInformationTable {
+            header: HobHeader {
+                r#type: HANDOFF,
+                length: size_of::<PhaseHandoffInformationTable>() as u16,
+                reserved: 0,
+            },
+            version: 1,
+            boot_mode: BootMode::BootWithFullConfiguration,
+            memory_top: 0x9000,
+            memory_bottom: 0x1000,
+            free_memory_top: 0x8000,
+            free_memory_bottom: 0x2000,
+            // Deliberately left unset: platforms do not reliably populate it for the MM HOB
+            // list, which is why the length is walked from the headers instead.
+            end_of_hob_list: 0,
+        };
+        let base = &raw const handoff as u64;
+
+        assert_eq!(validate_hob_list_inside_mmram(&handoff, 0x40, |_, _| true), Ok(()));
+
+        // A list the producer placed outside MMRAM would be mapped readable to Ring 3 later.
+        assert_eq!(
+            validate_hob_list_inside_mmram(&handoff, 0x40, |_, _| false),
+            Err(HobValidationError::HobListOutsideMmram { base, size: 0x40 })
+        );
+
+        // A zero-length walk means the list has no HOBs at all, which is not a list.
+        assert_eq!(
+            validate_hob_list_inside_mmram(&handoff, 0, |_, _| true),
+            Err(HobValidationError::HobListOutsideMmram { base, size: 0 })
+        );
     }
 
     #[test]

@@ -646,6 +646,13 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// Once all HOB content has been consumed, the page-aligned HOB range is
     /// remapped as read-only + non-executable for the user level.
     ///
+    /// The region is described by the untrusted producer and the mapping clears the supervisor
+    /// bit, so it is required to lie inside MMRAM: exposing memory outside MMRAM to Ring 3 here
+    /// would hand out a region that never went through the unblock path.
+    ///
+    /// Mapping is page-granular, so a HOB list that is not page-aligned and page-sized also
+    /// exposes whatever shares its first and last page. That slack is logged when it exists.
+    ///
     /// ## Safety
     ///
     /// The caller must ensure that `hob_list` points to a valid HOB list.
@@ -663,6 +670,24 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
         if hob_region_size == 0 {
             return;
+        }
+
+        // The region is described by the untrusted producer, so nothing outside MMRAM may be
+        // handed to Ring 3.
+        assert!(
+            is_buffer_inside_mmram(aligned_base, hob_region_size),
+            "HOB list region 0x{aligned_base:016x}-0x{aligned_end:016x} is not inside MMRAM"
+        );
+
+        // Page granularity rounds the range out past the HOB list itself, and everything in
+        // those pages becomes Ring 3 readable along with it.
+        let leading = hob_base - aligned_base;
+        let trailing = hob_region_size - leading - hob_list_size;
+        if leading != 0 || trailing != 0 {
+            log::warn!(
+                "HOB list is not page-aligned and page-sized: exposing 0x{leading:x} bytes before and \
+                 0x{trailing:x} bytes after it to Ring 3"
+            );
         }
 
         let attrs = MemoryAttributes::ReadOnly | MemoryAttributes::ExecuteProtect;
