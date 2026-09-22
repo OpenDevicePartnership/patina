@@ -1070,6 +1070,21 @@ impl PageAllocator {
         }
     }
 
+    /// Overwrites a still-mapped page range with zeros.
+    ///
+    /// Freed pages go back into the same pool that later serves `User` (Ring 3) allocations, so a
+    /// supervisor allocation that is released without scrubbing would disclose its contents to
+    /// Ring 3 on the next reuse. This must run before [`Self::apply_freed_page_attributes`] unmaps
+    /// the range.
+    fn zero_pages(addr: u64, num_pages: usize) {
+        // SMAP is lifted because the range may be user-owned (U/S = 1).
+        crate::runtime::with_user_access(|| {
+            // SAFETY: the caller verified under the state lock that `[addr, addr + num_pages)` is a
+            // live allocation inside a single SMRAM region, and the range is still mapped R/W here.
+            unsafe { core::ptr::write_bytes(addr as *mut u8, 0, uefi_pages_to_size!(num_pages)) };
+        });
+    }
+
     /// Applies restrictive page table attributes to freed pages.
     ///
     /// Marks pages as completely inaccessible: Supervisor + `ReadProtect` + `ExecuteProtect` (NX).
@@ -1096,8 +1111,9 @@ impl PageAllocator {
 
     /// Frees previously allocated pages.
     ///
-    /// After freeing, the pages are marked as inaccessible in the page table
-    /// (Supervisor + `ReadProtect` + `ExecuteProtect`) to prevent use-after-free.
+    /// The pages are zeroed so their contents cannot be recovered through a later allocation, then
+    /// marked as inaccessible in the page table (Supervisor + `ReadProtect` + `ExecuteProtect`) to
+    /// prevent use-after-free.
     pub fn free_pages(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
         if !self.is_initialized() {
             log::error!("Free of 0x{addr:016x} ({num_pages} pages) rejected: allocator is not initialized");
@@ -1109,8 +1125,13 @@ impl PageAllocator {
             return Err(PageAllocError::NotAligned);
         }
 
-        // `free` logs the address and the reason when it rejects the request.
-        self.lock_state().free(addr, num_pages)?;
+        {
+            // Scrub under the state lock so no other CPU can allocate the range before it is clean.
+            let mut state = self.lock_state();
+            // `free` logs the address and the reason when it rejects the request.
+            state.free(addr, num_pages)?;
+            Self::zero_pages(addr, num_pages);
+        }
 
         // Mark freed pages as inaccessible in the page table.
         self.apply_freed_page_attributes(addr, num_pages);
@@ -1120,8 +1141,9 @@ impl PageAllocator {
 
     /// Frees previously allocated pages, verifying the allocation type matches.
     ///
-    /// After freeing, the pages are marked as inaccessible in the page table
-    /// (Supervisor + `ReadProtect` + `ExecuteProtect`) to prevent use-after-free.
+    /// The pages are zeroed so their contents cannot be recovered through a later allocation, then
+    /// marked as inaccessible in the page table (Supervisor + `ReadProtect` + `ExecuteProtect`) to
+    /// prevent use-after-free.
     pub fn free_pages_checked(
         &self,
         addr: u64,
@@ -1138,8 +1160,13 @@ impl PageAllocator {
             return Err(PageAllocError::NotAligned);
         }
 
-        // `free_checked` logs the address and the reason when it rejects the request.
-        self.lock_state().free_checked(addr, num_pages, expected_type)?;
+        {
+            // Scrub under the state lock so no other CPU can allocate the range before it is clean.
+            let mut state = self.lock_state();
+            // `free_checked` logs the address and the reason when it rejects the request.
+            state.free_checked(addr, num_pages, expected_type)?;
+            Self::zero_pages(addr, num_pages);
+        }
 
         // Mark freed pages as inaccessible in the page table.
         self.apply_freed_page_attributes(addr, num_pages);
@@ -1377,6 +1404,42 @@ mod tests {
         assert_eq!(fixture.allocator.free_pages(supervisor, 2), Ok(()));
         assert_eq!(fixture.allocator.free_pages(supervisor, 2), Err(PageAllocError::NotAllocated));
         assert_eq!(fixture.allocator.free_page_count(), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_scrubs_pages_on_free() {
+        let fixture = AllocatorFixture::new();
+
+        // A supervisor allocation holding secrets is released back into the shared pool.
+        let supervisor = fixture.allocator.allocate_pages(2).unwrap();
+        let secret_len = 2 * UEFI_PAGE_SIZE;
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        let secret = unsafe { core::slice::from_raw_parts_mut(supervisor as *mut u8, secret_len) };
+        secret.fill(0x5A);
+
+        assert_eq!(fixture.allocator.free_pages(supervisor, 2), Ok(()));
+
+        // Nothing may survive the free, so the next allocation cannot observe it.
+        let user = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        assert_eq!(user, supervisor, "first-fit must hand back the just-freed range");
+        // SAFETY: as above, for the range the allocator just handed out.
+        let reused = unsafe { core::slice::from_raw_parts(user as *const u8, secret_len) };
+        assert!(reused.iter().all(|&b| b == 0), "freed supervisor pages leaked into a user allocation");
+    }
+
+    #[test]
+    fn test_page_allocator_checked_free_scrubs_pages() {
+        let fixture = AllocatorFixture::new();
+
+        let user = fixture.allocator.allocate_pages_with_type(1, AllocationType::User).unwrap();
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        unsafe { core::slice::from_raw_parts_mut(user as *mut u8, UEFI_PAGE_SIZE) }.fill(0xC3);
+
+        assert_eq!(fixture.allocator.free_pages_checked(user, 1, AllocationType::User), Ok(()));
+
+        // SAFETY: as above; the range is still owned by the fixture after the free.
+        let scrubbed = unsafe { core::slice::from_raw_parts(user as *const u8, UEFI_PAGE_SIZE) };
+        assert!(scrubbed.iter().all(|&b| b == 0), "checked free left page contents behind");
     }
 
     #[test]
