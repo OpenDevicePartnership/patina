@@ -457,6 +457,7 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     /// function registered during [`MmSupervisorCore`] initialization.
     ///
     /// Checks performed before dispatch:
+    /// - Caller is the BSP
     /// - Procedure pointer is non-null
     /// - Procedure pointer is within user-accessible memory (unblocked region)
     /// - Argument pointer (if non-null) is within user-accessible memory
@@ -474,6 +475,16 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         let argument = ctx.arg3;
 
         log::info!("START_AP_PROC: proc=0x{procedure:x}, cpu={cpu_index}, arg=0x{argument:x}");
+
+        // Only the BSP dispatches work; APs poll their mailbox for it. An AP reaching here is
+        // running a procedure the BSP already dispatched to it, so letting it dispatch in turn
+        // would nest the MP state machine: it could contend for a mailbox the BSP is filling,
+        // target itself and then spin the full AP timeout waiting for a response it cannot post,
+        // or leave a second AP busy while the BSP believes every AP is back in the holding pen.
+        if !self.ops.is_bsp() {
+            log::error!("START_AP_PROC: only the BSP may dispatch a procedure to an AP");
+            return Err(Status::ACCESS_DENIED);
+        }
 
         // 1. Validate procedure pointer is non-null
         if procedure == 0 {
@@ -1315,6 +1326,17 @@ mod tests {
             );
             assert!(d.ops.effects().is_empty(), "{name} was dispatched to an AP");
         }
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_caller_that_is_not_the_bsp() {
+        // An AP reaching here is already running a procedure the BSP dispatched to it, so a
+        // nested dispatch must not reach the mailbox at all.
+        let d =
+            dispatcher(MockOps { is_bsp: false, mapped: vec![(0x1000, PageOwnership::User)], ..Default::default() });
+
+        assert_eq!(d.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::ACCESS_DENIED));
+        assert!(d.ops.effects().is_empty(), "a non-BSP caller was dispatched to an AP");
     }
 
     #[test]
