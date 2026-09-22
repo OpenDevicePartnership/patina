@@ -439,10 +439,12 @@ fn actual_write_size(register: MmSaveStateRegister, width: u64) -> usize {
 /// `buffer` must reference a writable user-owned region of at least `out.len()` bytes and
 /// must not overlap `out`.
 unsafe fn copy_to_user(buffer: *mut u8, out: &[u8]) {
-    with_user_access(|| {
-        // SAFETY: guaranteed by the caller's contract; SMAP is disabled for this copy.
-        unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), buffer, out.len()) };
-    });
+    // SAFETY: the caller's contract guarantees `buffer` is a writable user-owned region of at
+    // least `out.len()` bytes that does not overlap `out`, so the only access made while SMAP is
+    // lifted targets that validated user range.
+    unsafe {
+        with_user_access(|| core::ptr::copy_nonoverlapping(out.as_ptr(), buffer, out.len()));
+    }
 }
 
 /// Reads the `PROCESSOR_ID` for a given CPU and writes it to the user buffer.

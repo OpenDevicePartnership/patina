@@ -1077,12 +1077,15 @@ impl PageAllocator {
     /// Ring 3 on the next reuse. This must run before [`Self::apply_freed_page_attributes`] unmaps
     /// the range.
     fn zero_pages(addr: u64, num_pages: usize) {
-        // SMAP is lifted because the range may be user-owned (U/S = 1).
-        crate::runtime::with_user_access(|| {
-            // SAFETY: the caller verified under the state lock that `[addr, addr + num_pages)` is a
-            // live allocation inside a single SMRAM region, and the range is still mapped R/W here.
-            unsafe { core::ptr::write_bytes(addr as *mut u8, 0, uefi_pages_to_size!(num_pages)) };
-        });
+        // SAFETY: the caller verified under the state lock that `[addr, addr + num_pages)` is a
+        // live allocation inside a single SMRAM region and that it is still mapped R/W, so the
+        // only access made while SMAP is lifted stays inside that range. SMAP has to come down
+        // because the range may be user-owned (U/S = 1).
+        unsafe {
+            crate::runtime::with_user_access(|| {
+                core::ptr::write_bytes(addr as *mut u8, 0, uefi_pages_to_size!(num_pages));
+            });
+        }
     }
 
     /// Applies restrictive page table attributes to freed pages.

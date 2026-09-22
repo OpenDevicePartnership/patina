@@ -97,9 +97,17 @@ impl Drop for UserAccessGuard {
 
 /// Runs `access` with SMAP temporarily disabled so the supervisor can read or
 /// write user-owned memory, restoring SMAP protection when the guard is dropped.
-pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
-    // SAFETY: the closure is scoped to the guard's lifetime, and callers are responsible
-    // for ensuring it only accesses valid, correctly-owned user memory.
+///
+/// ## Safety
+///
+/// Lifting SMAP removes the hardware barrier that stops Ring 0 from touching user-owned
+/// memory, so the caller must ensure that every access `access` performs targets a valid,
+/// correctly-owned user range that it has already validated (for example through
+/// [`query_address_ownership`]). Calls must not be nested, and `access` must not migrate
+/// to another CPU or return while a further access still depends on SMAP being lifted.
+pub(crate) unsafe fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
+    // SAFETY: the closure is scoped to the guard's lifetime, and the caller guarantees it only
+    // accesses valid, correctly-owned user memory.
     let _user_access = unsafe { UserAccessGuard::new() };
     access()
 }
@@ -324,36 +332,44 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         }
 
         // Copy the context + status into the supervisor-to-user buffer with SMAP lifted.
-        // SAFETY: supv_to_user_buffer is valid and large enough, verified above.
-        with_user_access(|| unsafe {
-            // Copy the EfiMmEntryContext to the start of the supervisor-to-user buffer
-            core::ptr::copy_nonoverlapping(
-                &raw const entry_context as *const u8,
-                config.supv_to_user_buffer as *mut u8,
-                context_size,
-            );
+        // SAFETY: `supv_to_user_buffer` is the user-owned buffer published by MM IPL and was
+        // verified above to hold `context_size + status_size` bytes, so both copies stay inside
+        // it and every access made while SMAP is lifted targets that user range.
+        unsafe {
+            with_user_access(|| {
+                // Copy the EfiMmEntryContext to the start of the supervisor-to-user buffer
+                core::ptr::copy_nonoverlapping(
+                    &raw const entry_context as *const u8,
+                    config.supv_to_user_buffer as *mut u8,
+                    context_size,
+                );
 
-            // Copy the MmCommBufferStatus right after the context
-            core::ptr::copy_nonoverlapping(
-                core::ptr::from_ref::<MmCommBufferStatus>(status).cast::<u8>(),
-                (config.supv_to_user_buffer as *mut u8).add(context_size),
-                status_size,
-            );
-        });
+                // Copy the MmCommBufferStatus right after the context
+                core::ptr::copy_nonoverlapping(
+                    core::ptr::from_ref::<MmCommBufferStatus>(status).cast::<u8>(),
+                    (config.supv_to_user_buffer as *mut u8).add(context_size),
+                    status_size,
+                );
+            });
+        }
 
         // Determine whether this is synchronous or asynchronous request
         let sync_mmi = status.is_comm_buffer_valid;
 
         if sync_mmi != 0 {
             // Copy user buffer to user internal buffer for processing in Ring 3
-            // SAFETY: Buffers are provided by MM IPL and are guaranteed valid
-            with_user_access(|| unsafe {
-                core::ptr::copy_nonoverlapping(
-                    config.user_comm_buffer as *const u8,
-                    config.user_comm_buffer_internal as *mut u8,
-                    config.user_comm_buffer_size as usize,
-                );
-            });
+            // SAFETY: both buffers are the user-owned communication buffers published by MM IPL,
+            // and both are `user_comm_buffer_size` bytes, so the copy made while SMAP is lifted
+            // stays inside those user ranges.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user_comm_buffer as *const u8,
+                        config.user_comm_buffer_internal as *mut u8,
+                        config.user_comm_buffer_size as usize,
+                    );
+                });
+            }
             log::trace!(
                 "Copied {} bytes from user buffer 0x{:x} to internal 0x{:x}",
                 config.user_comm_buffer_size,
@@ -384,22 +400,31 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
         // Copy the response from the internal buffer back to the user buffer
         if sync_mmi != 0 {
-            // SAFETY: Buffers are provided by MM IPL and are guaranteed valid.
-            with_user_access(|| unsafe {
-                core::ptr::copy_nonoverlapping(
-                    config.user_comm_buffer_internal as *const u8,
-                    config.user_comm_buffer as *mut u8,
-                    config.user_comm_buffer_size as usize,
-                );
-            });
+            // SAFETY: as for the copy in, both buffers are the user-owned communication buffers
+            // published by MM IPL and both are `user_comm_buffer_size` bytes.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user_comm_buffer_internal as *const u8,
+                        config.user_comm_buffer as *mut u8,
+                        config.user_comm_buffer_size as usize,
+                    );
+                });
+            }
         }
 
         // Read the updated MmCommBufferStatus back from the supervisor-to-user buffer
         // (the user may have modified return_status and return_buffer_size)
-        // SAFETY: supv_to_user_buffer is valid and the status is at offset context_size
-        let returned_status = with_user_access(|| unsafe {
-            core::ptr::read((config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus)
-        });
+        // SAFETY: `supv_to_user_buffer` is the user-owned buffer verified above to hold
+        // `context_size + status_size` bytes, so the status read while SMAP is lifted stays
+        // inside that user range.
+        let returned_status = unsafe {
+            with_user_access(|| {
+                core::ptr::read(
+                    (config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus
+                )
+            })
+        };
 
         // Write the returned status back to the user status mailbox, clearing
         // is_comm_buffer_valid to indicate processing is complete
@@ -881,9 +906,12 @@ mod tests {
 
     #[test]
     fn test_with_user_access_runs_the_closure_and_restores_smap() {
-        assert_eq!(with_user_access(|| 42), 42);
-        // The guard is reusable because it is balanced on drop.
-        assert_eq!(with_user_access(|| 7), 7);
+        // SAFETY: the closures touch no memory at all, so there is no user range to validate.
+        unsafe {
+            assert_eq!(with_user_access(|| 42), 42);
+            // The guard is reusable because it is balanced on drop.
+            assert_eq!(with_user_access(|| 7), 7);
+        }
     }
 
     #[test]
