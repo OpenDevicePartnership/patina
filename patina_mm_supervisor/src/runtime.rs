@@ -669,6 +669,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// This is the AP-side handler for `ApCommand::RunProcedure`. It mirrors the C
     /// `ProcedureWrapper` logic: inspects the procedure pointer ownership and either
     /// calls it directly (supervisor-owned) or demotes to Ring 3 (user-owned).
+    ///
+    /// Choosing the ring from the address is only sound because `handle_start_ap_proc` refuses a
+    /// procedure that is not user-owned, so nothing Ring 3 named can reach the supervisor branch.
     fn run_procedure_on_ap(&self, cpu_id: u32, procedure: u64, argument: u64) -> ApResponse {
         log::trace!("AP (CPU {cpu_id}) running procedure 0x{procedure:x} with arg 0x{argument:x}");
 

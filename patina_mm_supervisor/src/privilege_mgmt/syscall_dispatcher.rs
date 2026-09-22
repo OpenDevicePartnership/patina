@@ -458,9 +458,8 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
     ///
     /// Checks performed before dispatch:
     /// - Caller is the BSP
-    /// - Procedure pointer is non-null
-    /// - Procedure pointer is within user-accessible memory (unblocked region)
-    /// - Argument pointer (if non-null) is within user-accessible memory
+    /// - Procedure pointer is non-null and user-owned
+    /// - Argument pointer (if non-null) is user-owned
     ///
     /// The remaining validation (CPU index range, BSP check, AP busy check) and
     /// the actual dispatch are handled by the registered AP startup function,
@@ -476,35 +475,54 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
 
         log::info!("START_AP_PROC: proc=0x{procedure:x}, cpu={cpu_index}, arg=0x{argument:x}");
 
-        // Only the BSP dispatches work; APs poll their mailbox for it. An AP reaching here is
-        // running a procedure the BSP already dispatched to it, so letting it dispatch in turn
-        // would nest the MP state machine: it could contend for a mailbox the BSP is filling,
-        // target itself and then spin the full AP timeout waiting for a response it cannot post,
-        // or leave a second AP busy while the BSP believes every AP is back in the holding pen.
+        // 1. Caller is the BSP. APs poll their mailbox for work the BSP dispatches, so an AP
+        //    reaching here is running a procedure already dispatched to it. Letting it dispatch
+        //    in turn would nest the MP state machine: it could contend for a mailbox the BSP is
+        //    filling, target itself and then spin the full AP timeout waiting for a response it
+        //    cannot post, or leave a second AP busy while the BSP believes every AP is penned.
         if !self.ops.is_bsp() {
             log::error!("START_AP_PROC: only the BSP may dispatch a procedure to an AP");
             return Err(Status::ACCESS_DENIED);
         }
 
-        // 1. Validate procedure pointer is non-null
+        // 2. Validate procedure pointer is non-null
         if procedure == 0 {
             log::error!("START_AP_PROC: Null procedure pointer");
             return Err(Status::INVALID_PARAMETER);
         }
 
-        // 2. Validate procedure pointer is within mapped memory via page table query
-        if self.ops.query_address_ownership(procedure, core::mem::size_of::<usize>() as u64).is_none() {
-            log::error!("START_AP_PROC: Procedure 0x{procedure:x} not in mapped memory");
-            return Err(Status::INVALID_PARAMETER);
+        // 3. The procedure runs demoted on the target AP, so it has to be user-owned. Accepting
+        //    any mapped address would let Ring 3 name a supervisor address to be run for it.
+        let procedure_size = core::mem::size_of::<usize>() as u64;
+        match self.ops.query_address_ownership(procedure, procedure_size) {
+            Some(PageOwnership::User) => {}
+            Some(owner) => {
+                log::error!("START_AP_PROC: Procedure 0x{procedure:x} is owned by {owner:?}, expected User");
+                return Err(Status::SECURITY_VIOLATION);
+            }
+            None => {
+                log::error!("START_AP_PROC: Procedure 0x{procedure:x} not in mapped memory");
+                return Err(Status::INVALID_PARAMETER);
+            }
         }
 
-        // 3. Validate argument pointer (if non-null) is within mapped memory
-        if argument != 0 && self.ops.query_address_ownership(argument, core::mem::size_of::<usize>() as u64).is_none() {
-            log::error!("START_AP_PROC: Argument 0x{argument:x} not in mapped memory");
-            return Err(Status::INVALID_PARAMETER);
+        // 4. The argument reaches the same Ring 3 procedure, which cannot read supervisor memory,
+        //    so a non-null argument must be user-owned too.
+        if argument != 0 {
+            match self.ops.query_address_ownership(argument, procedure_size) {
+                Some(PageOwnership::User) => {}
+                Some(owner) => {
+                    log::error!("START_AP_PROC: Argument 0x{argument:x} is owned by {owner:?}, expected User");
+                    return Err(Status::SECURITY_VIOLATION);
+                }
+                None => {
+                    log::error!("START_AP_PROC: Argument 0x{argument:x} not in mapped memory");
+                    return Err(Status::INVALID_PARAMETER);
+                }
+            }
         }
 
-        // 4. Delegate to the registered AP startup function
+        // 5. Delegate to the registered AP startup function
         match self.ops.start_ap_procedure(cpu_index, procedure, argument) {
             Some(0) => Ok(0),
             Some(status) => Err(Status::from_usize(status as usize)),
@@ -1337,6 +1355,28 @@ mod tests {
 
         assert_eq!(d.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::ACCESS_DENIED));
         assert!(d.ops.effects().is_empty(), "a non-BSP caller was dispatched to an AP");
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_supervisor_owned_procedure() {
+        // The procedure runs demoted on the target AP. Accepting a supervisor-owned address here
+        // is what let Ring 3 pick code for the supervisor to run in Ring 0.
+        let d = dispatcher(MockOps { mapped: vec![(0x1000, PageOwnership::Supervisor)], ..Default::default() });
+
+        assert_eq!(d.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::SECURITY_VIOLATION));
+        assert!(d.ops.effects().is_empty(), "a supervisor-owned procedure was dispatched to an AP");
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_supervisor_owned_argument() {
+        // The argument reaches the same Ring 3 procedure, which cannot read supervisor memory.
+        let d = dispatcher(MockOps {
+            mapped: vec![(0x1000, PageOwnership::User), (0x3000, PageOwnership::Supervisor)],
+            ..Default::default()
+        });
+
+        assert_eq!(d.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0x3000)), Err(Status::SECURITY_VIOLATION));
+        assert!(d.ops.effects().is_empty(), "a supervisor-owned argument was dispatched to an AP");
     }
 
     #[test]
