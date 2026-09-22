@@ -225,11 +225,11 @@ fn verify_policy_snapshot(gate: &PolicyGate, cr3: u64) -> Result<(), efi::Status
 }
 
 fn verify_policy_snapshot_with_context<C: SnapshotVerificationContext>(context: &C) -> Result<(), efi::Status> {
-    let saved_count = if let Some(c) = context.snapshot_count() {
-        c
-    } else {
-        log::warn!("verify_policy_snapshot: no snapshot available, skipping");
-        return Ok(());
+    let Some(saved_count) = context.snapshot_count() else {
+        // Reaching here means the gate reported itself locked without a snapshot behind it.
+        // Nothing to compare against is not a pass.
+        log::error!("verify_policy_snapshot: no snapshot to verify against");
+        return Err(efi::Status::SECURITY_VIOLATION);
     };
 
     let desc_size = core::mem::size_of::<MemDescriptorV1_0>();
@@ -430,7 +430,7 @@ mod tests {
 
         assert!(!context.is_locked(context_gate));
         assert_eq!(context.take_snapshot(context_gate), Err(PolicyError::InternalError));
-        assert_eq!(context.verify_snapshot(context_gate), Ok(()));
+        assert_eq!(context.verify_snapshot(context_gate), Err(efi::Status::SECURITY_VIOLATION));
         assert_eq!(context.fetch_policy(context_gate, &mut destination), Err(PolicyError::InternalError));
         assert!(!tracker.is_core_init_complete());
         context.lock_unblocked_memory();
@@ -439,15 +439,17 @@ mod tests {
         let verification_context = SupervisorSnapshotVerificationContext { gate: context_gate, cr3: 0 };
         assert_eq!(verification_context.snapshot_count(), None);
         assert_eq!(verification_context.allocate_scratch(0), Err(()));
-        assert_eq!(verification_context.verify_snapshot(core::ptr::null_mut(), 0), Ok(()));
+        assert_eq!(verification_context.verify_snapshot(core::ptr::null_mut(), 0), Err(PolicyError::InternalError));
         assert_eq!(verification_context.free_scratch(1, 0), Err(()));
     }
 
     #[test]
-    fn snapshot_verification_skips_work_without_a_saved_snapshot() {
+    fn snapshot_verification_fails_closed_without_a_saved_snapshot() {
         let context = TestSnapshotVerificationContext::new(None);
 
-        assert_eq!(verify_policy_snapshot_with_context(&context), Ok(()));
+        // A gate that reports itself locked with no snapshot behind it is a broken invariant,
+        // not a clean bill of health for the page table.
+        assert_eq!(verify_policy_snapshot_with_context(&context), Err(efi::Status::SECURITY_VIOLATION));
         assert_eq!(context.allocated_pages.get(), None);
         assert_eq!(context.scratch.get(), None);
         assert_eq!(context.freed.get(), None);

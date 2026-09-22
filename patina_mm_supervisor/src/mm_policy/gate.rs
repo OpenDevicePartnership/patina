@@ -473,8 +473,10 @@ impl PolicyGate {
     /// page allocator) large enough to hold the walk results. This avoids
     /// overwriting the saved snapshot during comparison.
     ///
-    /// Returns `Ok(())` if the tables match, or `Err(PolicyError::AccessDenied)`
-    /// if they differ ("security violation").
+    /// Returns `Ok(())` only when a snapshot exists and the tables match it.
+    /// Returns `Err(PolicyError::AccessDenied)` if they differ ("security violation"), and
+    /// `Err(PolicyError::InternalError)` if there is no snapshot to verify against - this
+    /// routine is what detects tampering, so "nothing to compare" must never read as a pass.
     ///
     /// ## Safety
     ///
@@ -489,8 +491,8 @@ impl PolicyGate {
         scratch_max_count: usize,
     ) -> Result<(), PolicyError> {
         let Some(&saved_count) = self.snapshot_count.get() else {
-            log::warn!("verify_snapshot: no snapshot available, skipping verification");
-            return Ok(());
+            log::error!("verify_snapshot: no snapshot to verify against");
+            return Err(PolicyError::InternalError);
         };
 
         // SAFETY: The caller guarantees that `cr3` points to a valid PML4 and
@@ -940,12 +942,17 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_snapshot_is_skipped_before_a_snapshot_is_taken() {
+    fn test_verify_snapshot_fails_closed_before_a_snapshot_is_taken() {
         let policy = PolicyBuilder::new().build();
         let gate = policy.gate();
 
-        // SAFETY: the missing snapshot short-circuits before `cr3`/`scratch` are dereferenced.
-        assert_eq!(unsafe { gate.verify_snapshot(0x1000, |_, _| false, core::ptr::null_mut(), 0) }, Ok(()));
+        // Having nothing to compare against is not a pass: this is the routine that detects
+        // page-table tampering after lock.
+        assert_eq!(
+            // SAFETY: the missing snapshot short-circuits before `cr3`/`scratch` are dereferenced.
+            unsafe { gate.verify_snapshot(0x1000, |_, _| false, core::ptr::null_mut(), 0) },
+            Err(PolicyError::InternalError)
+        );
     }
 
     #[test]
