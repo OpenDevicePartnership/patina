@@ -270,7 +270,7 @@ mod tests {
         let mut mock_page_table = MockMemPageTable::new();
         mock_page_table.expect_query_memory_region().times(2).returning(|_, _| Ok(MemoryAttributes::empty()));
         mock_page_table.expect_query_memory_region().times(1).returning(|_, _| {
-            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported)
+            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
         });
 
         let result = check_paging_range(&mock_page_table, 0x800, 0x3000);
@@ -311,7 +311,7 @@ mod tests {
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
             mock_page_table.expect_query_memory_region().returning(|_, _| {
-                Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported))
+                Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
             });
             Ok(mock_page_table)
         });

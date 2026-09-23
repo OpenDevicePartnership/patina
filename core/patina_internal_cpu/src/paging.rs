@@ -41,7 +41,7 @@ pub enum CacheAttributeValue {
     /// The memory region is unmapped
     Unmapped,
     /// Cache attributes are only supported via the page table for this architecture
-    NotSupported,
+    NotSupported(MemoryAttributes),
 }
 
 /// Errors returned by Patina paging operations.
@@ -71,6 +71,9 @@ pub enum PagingError {
     NonUniformMemoryAttributes,
     /// The operation has already started.
     AlreadyStarted,
+    /// Cache attributes are managed only by the page table. This is not an error, but a condition
+    /// to indicate that only the page table attributes should be respected.
+    CacheAttributesOnlyInPageTable,
 }
 
 impl From<PtError> for PagingError {
@@ -96,7 +99,7 @@ impl From<PtError> for PagingError {
 impl From<MtrrError> for PagingError {
     fn from(error: MtrrError) -> Self {
         match error {
-            MtrrError::MtrrNotSupported => Self::Unsupported,
+            MtrrError::MtrrNotSupported => Self::CacheAttributesOnlyInPageTable,
             MtrrError::VariableRangeMtrrExhausted | MtrrError::OutOfResources => Self::OutOfResources,
             MtrrError::FixedRangeMtrrBaseAddressNotAligned
             | MtrrError::FixedRangeMtrrLengthNotAligned
@@ -202,8 +205,10 @@ pub trait PatinaPageTable {
     /// Returns memory attributes
     ///
     ///   `Ok(MemoryAttributes)` if the page range is mapped else
-    ///   `Err(PagingError, None)` if the page is unmapped and the cache attributes are not available
+    ///   `Err(PagingError, CacheAttributeValue::NotSupported)` if cache attributes are not available
     ///   `Err(PagingError, CacheAttributeValue)` if the page is unmapped but caching attributes are available
+    ///   `Err(CacheAttributesOnlyInPageTable, CacheAttributeValue::NotSupported(MemoryAttributes))`
+    ///    if the cache attributes are only available in the page table. `MemoryAttributes` are the page table attributes.
     fn query_memory_region(
         &self,
         address: u64,

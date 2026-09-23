@@ -232,8 +232,13 @@ fn dump_pte(cr2: u64) {
     #[cfg(target_arch = "x86_64")]
     {
         let mtrr = patina_mtrr::create_mtrr_lib(0);
+
         log::error!("");
-        log::error!("MTRR Cache Attribute: {}", mtrr.get_memory_attribute(cr2));
+        if let Ok(cache_attribute) = mtrr.get_memory_attribute(cr2) {
+            log::error!("MTRR Cache Attribute: {cache_attribute}");
+        } else {
+            log::error!("MTRR Cache Attribute: Unknown");
+        }
         log::error!("");
     }
 }

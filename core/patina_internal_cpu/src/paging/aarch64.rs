@@ -67,7 +67,7 @@ where
         // attributes
         self.paging
             .query_memory_region(address, size)
-            .map_err(|error| (error.into(), CacheAttributeValue::NotSupported))
+            .map_err(|error| (error.into(), CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
     }
 
     fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError> {
