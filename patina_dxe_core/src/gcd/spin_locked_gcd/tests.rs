@@ -3602,6 +3602,36 @@ fn test_is_efi_memory_map_descriptor_multi_page_length() {
 }
 
 #[test]
+fn test_is_efi_memory_map_descriptor_unaligned() {
+    with_locked_state(|| {
+        // Unaligned descriptors are dropped
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: GcdMemoryType::SystemMemory,
+            base_address: 0x2001,
+            length: UEFI_PAGE_SIZE as u64,
+            capabilities: efi::MEMORY_WB,
+            attributes: efi::MEMORY_WB,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
+
+        let descriptor = dxe_services::MemorySpaceDescriptor {
+            memory_type: GcdMemoryType::SystemMemory,
+            base_address: 0x2000,
+            length: (UEFI_PAGE_SIZE - 1) as u64,
+            capabilities: efi::MEMORY_WB,
+            attributes: efi::MEMORY_WB,
+            image_handle: core::ptr::null_mut(),
+            device_handle: core::ptr::null_mut(),
+        };
+
+        assert_eq!(GCD::is_efi_memory_map_descriptor(&descriptor), None);
+    });
+}
+
+#[test]
 fn test_memory_descriptor_count_for_efi_memory_map_empty_gcd() {
     with_locked_state(|| {
         let gcd = GCD::new(48);

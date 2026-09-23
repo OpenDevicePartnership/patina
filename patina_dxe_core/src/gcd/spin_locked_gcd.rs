@@ -1144,10 +1144,9 @@ impl GCD {
     /// * `None` if the descriptor should be excluded
     fn is_efi_memory_map_descriptor(descriptor: &MemorySpaceDescriptor) -> Option<efi::MemoryType> {
         // Validate page alignment and size
-        let number_of_pages = ((descriptor.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
-        if number_of_pages == 0 {
-            log::warn!("GCD returned a memory descriptor smaller than a page.");
-            return None; // skip entries for things smaller than a page
+        if !descriptor.length.is_multiple_of(UEFI_PAGE_SIZE as u64) || descriptor.length == 0 {
+            debug_assert!(false, "GCD returned a non-page aligned memory descriptor.");
+            return None; // skip entries for non-page aligned entries
         }
         if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
             log::warn!("GCD returned a non-page-aligned memory descriptor.");
