@@ -216,17 +216,22 @@ const fn smrr_base_value(raw: u64, smrr_base: u32) -> u64 {
 /// # Panics
 ///
 /// Panics if the CPU does not support MTRRs, SMRRs, or the extended SMRR
-/// capability, or if the provided `range` fails [`verify_smrr_base_size`].
+/// capability, if `range` does not fit the 32-bit SMRR registers, or if it
+/// fails [`verify_smrr_base_size`].
 #[cfg_attr(coverage, coverage(off))]
 pub(crate) fn smrr_initialize(range: SmramRegion) {
-    let smrr_base = range.base as u32;
-    let smrr_size = range.size as u32;
-
     assert!(is_mtrr_supported(), "Unsupported CPU: MTRR not supported");
 
     assert!(is_smrr_supported(), "Unsupported CPU: SMRR not supported");
 
     assert!(is_smrr_ext_supported(), "Unsupported CPU: SMRR extended capability not supported");
+
+    // SMRR_BASE and SMRR_MASK only describe addresses below 4 GiB. Truncating here would
+    // validate and program a completely different region than the one handed in, leaving the
+    // real MMRAM unprotected, so a region that does not fit is fatal rather than narrowed.
+    let (Ok(smrr_base), Ok(smrr_size)) = (u32::try_from(range.base), u32::try_from(range.size)) else {
+        panic!("SMRAM region does not fit the 32-bit SMRR registers! Base: {:#X}, Size: {:#X}", range.base, range.size);
+    };
 
     assert!(
         verify_smrr_base_size(smrr_base, smrr_size),
