@@ -12,6 +12,11 @@
 //!
 //! - **`MSR_IA32_LSTAR`**: Contains the 64-bit RIP for syscall entry (`SyscallCenter`)
 //!
+//! - **`MSR_IA32_FMASK`**: RFLAGS bits the CPU clears on `syscall` entry. `syscall` performs
+//!   no other flag sanitization, so this is the only thing preventing Ring 3 from choosing the
+//!   flags Ring 0 executes under - most importantly DF, which reverses compiler-emitted
+//!   `rep movs`, and AC, which suppresses SMAP.
+//!
 //! - **`MSR_IA32_EFER`**: Extended Feature Enable Register
 //!   - Bit 0 (SCE) must be set to enable syscall/sysret
 //!
