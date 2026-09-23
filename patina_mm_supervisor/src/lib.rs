@@ -64,7 +64,7 @@ mod supervisor_handlers;
 mod test_support;
 
 use cpu::CpuManager;
-use intrinsics::{get_current_cpu_id, is_bsp};
+use intrinsics::{current_apic_id, is_bsp};
 use mailbox::MailboxManager;
 // Re-exported for use by descendant modules via `crate::` paths.
 use mem::{AllocationType, SharedPagingAllocator, page_allocator::MmramPlacement};
@@ -337,7 +337,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// but does not validate the entire system state.
     pub unsafe fn entry_point(&'static self, cpu_index: usize, hob_list: *const c_void) {
         // Get the current CPU's APIC ID, EBX[31:24] contains the initial APIC ID
-        let cpu_id = (get_current_cpu_id().ebx >> 24) & 0xff;
+        let cpu_id = current_apic_id();
 
         // Determine if we're BSP by checking IA32_APIC_BASE MSR
         let is_bsp = is_bsp();

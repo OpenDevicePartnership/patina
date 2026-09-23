@@ -42,6 +42,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     PageOwnership,
+    intrinsics::current_apic_id,
     privilege_mgmt::SyscallResult,
     query_address_ownership,
     runtime::with_user_access,
@@ -85,6 +86,8 @@ pub(crate) struct SaveStateInfo {
 
 /// Holds the parameters from Phase 1 until Phase 2 completes the read.
 pub(crate) struct SaveStateAccessHolder {
+    /// APIC ID of the CPU that staged the request (must match in Phase 2).
+    pub(crate) caller: u32,
     /// User protocol pointer (must match across both phases).
     pub(crate) user_protocol: u64,
     /// Register to read.
@@ -112,11 +115,11 @@ pub fn save_state_read_phase1(protocol: u64, register_raw: u64, cpu_index: u64) 
     let num_cpus = get_number_of_cpus()
         .inspect_err(|status| log::error!("SAVE_STATE_READ: Unable to get number of CPUs: {status:?}"))?;
 
-    stage_read_request(protocol, register_raw, cpu_index, num_cpus)
+    stage_read_request(current_apic_id(), protocol, register_raw, cpu_index, num_cpus)
 }
 
-/// Validates a Phase 1 request against `num_cpus` and stages it for Phase 2.
-fn stage_read_request(protocol: u64, register_raw: u64, cpu_index: u64, num_cpus: u64) -> SyscallResult {
+/// Validates a Phase 1 request against `num_cpus` and stages it for Phase 2 on behalf of `caller`.
+fn stage_read_request(caller: u32, protocol: u64, register_raw: u64, cpu_index: u64, num_cpus: u64) -> SyscallResult {
     let Some(register) = MmSaveStateRegister::from_u64(register_raw) else {
         log::error!("SAVE_STATE_READ: Unknown register value: {register_raw}");
         return Err(Status::INVALID_PARAMETER);
@@ -128,7 +131,7 @@ fn stage_read_request(protocol: u64, register_raw: u64, cpu_index: u64, num_cpus
     }
 
     let mut access = security_state().lock_save_state_access();
-    *access = Some(SaveStateAccessHolder { user_protocol: protocol, register, cpu_index });
+    *access = Some(SaveStateAccessHolder { caller, user_protocol: protocol, register, cpu_index });
 
     Ok(0)
 }
@@ -150,7 +153,7 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         }
     };
 
-    let write_size = validate_read_request(&holder, protocol, width, buffer)?;
+    let write_size = validate_read_request(&holder, current_apic_id(), protocol, width, buffer)?;
 
     let mut out = [0u8; IO_INFO_SIZE];
     let out = out.get_mut(..write_size).ok_or_else(|| {
@@ -186,10 +189,20 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
 /// Returns the number of bytes that will be written to `buffer`.
 fn validate_read_request(
     holder: &SaveStateAccessHolder,
+    caller: u32,
     protocol: u64,
     width: u64,
     buffer: u64,
 ) -> Result<usize, Status> {
+    // The hand-off lives in one slot shared by every core, so a request staged by another CPU
+    // must not be completed here. The protocol pointer cannot catch this: every caller passes
+    // the same user protocol. Reading another core's staged request would let a caller obtain a
+    // register under the trap condition of a CPU other than its own.
+    if holder.caller != caller {
+        log::error!("SAVE_STATE_READ2: staged by CPU {} but completed on CPU {caller}", holder.caller);
+        return Err(Status::ACCESS_DENIED);
+    }
+
     // Verify protocol matches Phase 1
     if holder.user_protocol != protocol {
         log::error!("SAVE_STATE_READ2: Protocol mismatch: expected 0x{:x}, got 0x{:x}", holder.user_protocol, protocol);
@@ -1029,13 +1042,18 @@ mod tests {
         {
             let mut access = crate::state::security_state().lock_save_state_access();
             assert!(access.is_none());
-            *access =
-                Some(SaveStateAccessHolder { user_protocol: 0xDEAD, register: MmSaveStateRegister::Rax, cpu_index: 0 });
+            *access = Some(SaveStateAccessHolder {
+                caller: 7,
+                user_protocol: 0xDEAD,
+                register: MmSaveStateRegister::Rax,
+                cpu_index: 0,
+            });
         }
 
         {
             let mut access = crate::state::security_state().lock_save_state_access();
             let holder = access.take().unwrap();
+            assert_eq!(holder.caller, 7);
             assert_eq!(holder.user_protocol, 0xDEAD);
             assert_eq!(holder.register, MmSaveStateRegister::Rax);
             assert_eq!(holder.cpu_index, 0);
@@ -1108,9 +1126,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_stage_read_request_validates_and_stores_request() {
-        assert_eq!(stage_read_request(0x1000, 38, 0, 4), Ok(0));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 0, 4), Ok(0));
 
         let holder = security_state().lock_save_state_access().take().expect("request staged");
+        assert_eq!(holder.caller, 7);
         assert_eq!(holder.user_protocol, 0x1000);
         assert_eq!(holder.register, MmSaveStateRegister::Rax);
         assert_eq!(holder.cpu_index, 0);
@@ -1119,34 +1138,58 @@ mod tests {
     #[test]
     #[serial]
     fn test_stage_read_request_rejects_bad_register_and_cpu_index() {
-        assert_eq!(stage_read_request(0x1000, 999, 0, 4), Err(Status::INVALID_PARAMETER));
-        assert_eq!(stage_read_request(0x1000, 38, 4, 4), Err(Status::INVALID_PARAMETER));
-        assert_eq!(stage_read_request(0x1000, 38, 9, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 999, 0, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 4, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 9, 4), Err(Status::INVALID_PARAMETER));
 
         assert!(security_state().lock_save_state_access().is_none());
     }
 
     #[test]
+    fn test_validate_read_request_rejects_a_request_staged_by_another_cpu() {
+        // The hand-off slot is shared by every core and every caller passes the same user
+        // protocol, so the staging CPU is the only thing that can tell the requests apart.
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
+
+        assert_eq!(validate_read_request(&holder, 8, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
+    }
+
+    #[test]
     fn test_validate_read_request_rejects_mismatched_or_malformed_requests() {
-        let holder = SaveStateAccessHolder { user_protocol: 0x1000, register: MmSaveStateRegister::Rax, cpu_index: 0 };
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
 
         // Phase 2 must present the same protocol pointer Phase 1 recorded.
-        assert_eq!(validate_read_request(&holder, 0x2000, 8, 0x5000), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x2000, 8, 0x5000), Err(Status::INVALID_PARAMETER));
         // Zero width and null buffers are rejected before anything is read.
-        assert_eq!(validate_read_request(&holder, 0x1000, 0, 0x5000), Err(Status::INVALID_PARAMETER));
-        assert_eq!(validate_read_request(&holder, 0x1000, 8, 0), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 0, 0x5000), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 8, 0), Err(Status::INVALID_PARAMETER));
         // A width the register cannot satisfy is unsupported rather than a policy failure.
-        assert_eq!(validate_read_request(&holder, 0x1000, 16, 0x5000), Err(Status::UNSUPPORTED));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 16, 0x5000), Err(Status::UNSUPPORTED));
     }
 
     #[test]
     #[serial]
     fn test_validate_read_request_denies_buffers_outside_user_memory() {
-        let holder = SaveStateAccessHolder { user_protocol: 0x1000, register: MmSaveStateRegister::Rax, cpu_index: 0 };
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
 
         // Without a page table no address can be proven user-owned, so the read is refused.
         *security_state().lock_page_table() = None;
-        assert_eq!(validate_read_request(&holder, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
     }
 
     #[test]
@@ -1159,7 +1202,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_save_state_read_phase2_consumes_the_staged_request() {
-        assert_eq!(stage_read_request(0x1000, 38, 0, 4), Ok(0));
+        // Staged as this CPU so the hand-off reaches the checks the test is about.
+        assert_eq!(stage_read_request(current_apic_id(), 0x1000, 38, 0, 4), Ok(0));
 
         // The buffer cannot be proven user-owned without a page table.
         *security_state().lock_page_table() = None;
