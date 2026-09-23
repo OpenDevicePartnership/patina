@@ -571,7 +571,21 @@ impl MmUserCore {
             self.mmi_manage(Some(&*comm_guid_ptr), core::ptr::null(), comm_data_ptr, &raw mut data_size)
         };
 
-        *return_buffer_size = (data_size + comm_header_size) as u64;
+        // The handler writes its response length back through `data_size`, and that length
+        // reaches the non-MM caller as the size of the response. A length running past the end of
+        // the communication buffer describes a response that was never written, so there is no
+        // prefix worth returning: report the failure and hand back nothing.
+        let reported = comm_header_size.saturating_add(data_size);
+        if reported > buffer_size {
+            log::error!(
+                "Handler reported a 0x{reported:x}-byte response for a 0x{buffer_size:x}-byte communication buffer; \
+                 rejecting"
+            );
+            *return_buffer_size = 0;
+            return efi::Status::BAD_BUFFER_SIZE;
+        }
+        *return_buffer_size = reported as u64;
+
         status
     }
 
@@ -661,6 +675,13 @@ mod tests {
 
     fn counting_handler(_: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
         HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
+        efi::Status::SUCCESS
+    }
+
+    /// Reports a response far larger than the communication buffer it was given.
+    fn oversized_handler(_: &efi::Guid, _: *mut c_void, comm_buffer_size: *mut usize) -> efi::Status {
+        // SAFETY: `mmi_manage` passes a pointer to the dispatcher's own `data_size`.
+        unsafe { *comm_buffer_size = usize::MAX };
         efi::Status::SUCCESS
     }
 
@@ -1067,6 +1088,23 @@ mod tests {
         let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
 
         assert_eq!(status, efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_response_larger_than_the_buffer() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(oversized_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let total = EfiMmCommunicateHeader::size() + 16;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        // The size travels to the non-MM caller, which uses it to read the response out of the
+        // communication buffer, so a length it cannot hold is refused rather than shortened.
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+        assert_eq!(returned, 0);
     }
 
     #[test]
