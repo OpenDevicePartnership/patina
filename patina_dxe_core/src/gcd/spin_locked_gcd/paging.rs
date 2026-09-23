@@ -14,6 +14,7 @@ use super::{
     PatinaPageTable, PtError, SIZE_4GB, SpinLockedGcd, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, UefiPeInfo,
     Vec, align_up, base_guids, dxe_services, efi, hob, pi_guids, protocol_db, uefi_pages_to_size,
 };
+use patina_internal_cpu::paging::PagingError;
 
 const PAGE_POOL_CAPACITY: usize = 512;
 
@@ -160,7 +161,12 @@ impl SpinLockedGcd {
             // as this indicates a critical error
             let region_attributes = match page_table.query_memory_region(base_address as u64, len as u64) {
                 Ok(attrs) => Some(attrs),
-                Err((PtError::NoMapping, attrs)) => {
+                Err((PagingError::CacheAttributesOnlyInPageTable, CacheAttributeValue::NotSupported(attributes))) => {
+                    // If cache attributes are solely handled by the page table, don't publish the event.
+                    update_cache_attributes = false;
+                    Some(attributes)
+                }
+                Err((PagingError::NoMapping, attrs)) => {
                     // it is not an error if the range is fully not mapped, we just need to map it, unless we are
                     // trying to unmap the region, which we will check for below
                     unmapped = true;
@@ -180,7 +186,7 @@ impl SpinLockedGcd {
                         }
                         // this architecture only describes cache attributes in the page table, so don't send the
                         // cache attribute update event
-                        CacheAttributeValue::NotSupported => {
+                        CacheAttributeValue::NotSupported(_) => {
                             update_cache_attributes = false;
                             None
                         }
@@ -266,8 +272,8 @@ impl SpinLockedGcd {
 
                     debug_assert!(false);
                     match e {
-                        PtError::OutOfResources => Err(EfiError::OutOfResources),
-                        PtError::NoMapping => Err(EfiError::NotFound),
+                        PagingError::OutOfResources => Err(EfiError::OutOfResources),
+                        PagingError::NoMapping => Err(EfiError::NotFound),
                         _ => Err(EfiError::InvalidParameter),
                     }
                 }
@@ -296,8 +302,8 @@ impl SpinLockedGcd {
 
         page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(|err| {
             match err {
-                PtError::OutOfResources => EfiError::OutOfResources,
-                PtError::NoMapping => EfiError::NoMapping,
+                PagingError::OutOfResources => EfiError::OutOfResources,
+                PagingError::NoMapping => EfiError::NoMapping,
                 _ => EfiError::InvalidParameter,
             }
         })?;
@@ -325,8 +331,8 @@ impl SpinLockedGcd {
         let mut page_table_guard = self.page_table.lock();
         let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
         page_table.unmap_memory_region(virtual_address, len).map_err(|err| match err {
-            PtError::OutOfResources => EfiError::OutOfResources,
-            PtError::NoMapping => EfiError::NoMapping,
+            PagingError::OutOfResources => EfiError::OutOfResources,
+            PagingError::NoMapping => EfiError::NoMapping,
             _ => EfiError::InvalidParameter,
         })?;
 

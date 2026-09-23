@@ -8,9 +8,9 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, aarch64::AArch64PageTable};
+use patina_paging::{MemoryAttributes, PageTable, PagingType, aarch64::AArch64PageTable};
 
-use crate::paging::{CacheAttributeValue, PatinaPageTable};
+use crate::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
 use patina::pi::protocol::cpu_arch::CpuFlushType;
 use patina::standard::efi;
 use patina_paging::page_allocator::PageAllocator;
@@ -36,8 +36,8 @@ impl<P> PatinaPageTable for EfiCpuPagingAArch64<P>
 where
     P: PageTable,
 {
-    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
-        self.paging.map_memory_region(address, size, attributes)
+    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PagingError> {
+        self.paging.map_memory_region(address, size, attributes).map_err(Into::into)
     }
 
     fn map_aliased_memory_region(
@@ -46,26 +46,32 @@ where
         physical_address: u64,
         size: u64,
         attributes: MemoryAttributes,
-    ) -> Result<(), PtError> {
-        self.paging.map_aliased_memory_region(virtual_address, physical_address, size, attributes)
+    ) -> Result<(), PagingError> {
+        self.paging.map_aliased_memory_region(virtual_address, physical_address, size, attributes).map_err(Into::into)
     }
 
-    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
-        self.paging.unmap_memory_region(address, size)
+    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PagingError> {
+        self.paging.unmap_memory_region(address, size).map_err(Into::into)
     }
 
-    fn install_page_table(&mut self) -> Result<(), PtError> {
-        self.paging.install_page_table()
+    fn install_page_table(&mut self) -> Result<(), PagingError> {
+        self.paging.install_page_table().map_err(Into::into)
     }
 
-    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+    fn query_memory_region(
+        &self,
+        address: u64,
+        size: u64,
+    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
         // in AARCH64, the caching attributes are managed in the page table and so we will never return just caching
         // attributes
-        self.paging.query_memory_region(address, size).map_err(|e| (e, CacheAttributeValue::NotSupported))
+        self.paging
+            .query_memory_region(address, size)
+            .map_err(|error| (error.into(), CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
-        self.paging.dump_page_tables(address, size)
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError> {
+        self.paging.dump_page_tables(address, size).map_err(Into::into)
     }
 
     fn handle_cacheability_change(
@@ -99,7 +105,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
 #[cfg_attr(coverage, coverage(off))]
 pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<impl PatinaPageTable, PtError> {
+) -> Result<impl PatinaPageTable, PagingError> {
     // SAFETY: Caller ensures no concurrent page table modifications.
     let page_table = unsafe { AArch64PageTable::open_active(page_allocator)? };
     Ok(EfiCpuPagingAArch64 { paging: page_table })

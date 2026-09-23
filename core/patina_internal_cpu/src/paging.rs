@@ -9,6 +9,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use patina::error::EfiError;
+#[cfg(target_arch = "x86_64")]
+use patina_mtrr::error::MtrrError;
 use patina_paging::{MemoryAttributes, PtError};
 
 cfg_if::cfg_if! {
@@ -38,8 +41,97 @@ pub enum CacheAttributeValue {
     /// The memory region is unmapped
     Unmapped,
     /// Cache attributes are only supported via the page table for this architecture
-    NotSupported,
+    NotSupported(MemoryAttributes),
 }
+
+/// Errors returned by Patina paging operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagingError {
+    /// An input parameter is invalid.
+    InvalidParameter,
+    /// The paging operation ran out of resources.
+    OutOfResources,
+    /// No mapping exists for the requested range.
+    NoMapping,
+    /// The requested operation is not supported.
+    Unsupported,
+    /// The requested memory attributes are incompatible.
+    IncompatibleMemoryAttributes,
+    /// The address is not aligned.
+    UnalignedAddress,
+    /// The memory range is not aligned.
+    UnalignedMemoryRange,
+    /// The memory range is invalid.
+    InvalidMemoryRange,
+    /// The range contains both mapped and unmapped pages.
+    InconsistentMappingAcrossRange,
+    /// An internal paging error occurred.
+    InternalError,
+    /// The range has non-uniform memory attributes.
+    NonUniformMemoryAttributes,
+    /// The operation has already started.
+    AlreadyStarted,
+    /// Cache attributes are managed only by the page table. This is not an error, but a condition
+    /// to indicate that only the page table attributes should be respected.
+    CacheAttributesOnlyInPageTable,
+}
+
+impl From<PtError> for PagingError {
+    fn from(error: PtError) -> Self {
+        match error {
+            PtError::InvalidParameter => Self::InvalidParameter,
+            PtError::OutOfResources | PtError::AllocationFailure => Self::OutOfResources,
+            PtError::NoMapping => Self::NoMapping,
+            PtError::IncompatibleMemoryAttributes => Self::IncompatibleMemoryAttributes,
+            PtError::UnalignedPageBase | PtError::UnalignedAddress => Self::UnalignedAddress,
+            PtError::UnalignedMemoryRange => Self::UnalignedMemoryRange,
+            PtError::InvalidMemoryRange => Self::InvalidMemoryRange,
+            PtError::InconsistentMappingAcrossRange => Self::InconsistentMappingAcrossRange,
+            PtError::UnsupportedPagingType => Self::Unsupported,
+            PtError::AdditionOverflow | PtError::SubtractionUnderflow | PtError::InternalError => Self::InternalError,
+            PtError::NonUniformMemoryAttributes => Self::NonUniformMemoryAttributes,
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(coverage, coverage(off))]
+impl From<MtrrError> for PagingError {
+    fn from(error: MtrrError) -> Self {
+        match error {
+            MtrrError::MtrrNotSupported => Self::CacheAttributesOnlyInPageTable,
+            MtrrError::VariableRangeMtrrExhausted | MtrrError::OutOfResources => Self::OutOfResources,
+            MtrrError::FixedRangeMtrrBaseAddressNotAligned
+            | MtrrError::FixedRangeMtrrLengthNotAligned
+            | MtrrError::InvalidParameter => Self::InvalidParameter,
+            MtrrError::BufferTooSmall => Self::InternalError,
+            MtrrError::AlreadyStarted => Self::AlreadyStarted,
+        }
+    }
+}
+
+#[cfg_attr(coverage, coverage(off))]
+impl From<EfiError> for PagingError {
+    fn from(error: EfiError) -> Self {
+        match error {
+            EfiError::OutOfResources => Self::OutOfResources,
+            EfiError::NotFound | EfiError::NoMapping => Self::NoMapping,
+            EfiError::Unsupported => Self::Unsupported,
+            EfiError::BufferTooSmall => Self::InternalError,
+            EfiError::AlreadyStarted => Self::AlreadyStarted,
+            _ => Self::InvalidParameter,
+        }
+    }
+}
+
+#[cfg_attr(coverage, coverage(off))]
+impl core::fmt::Display for PagingError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl core::error::Error for PagingError {}
 
 /// The `PatinaPageTable` trait is Patina's abstraction layer over the `PageTable` trait
 /// provided by patina-paging. This trait manages architectural abstractions over the page tables.
@@ -57,8 +149,8 @@ pub trait PatinaPageTable {
     ///   Compatible attributes can be "`ORed`"
     ///
     /// ## Errors
-    /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
-    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
+    /// * Returns `Ok(())` if successful else `Err(PagingError)` if failed
+    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PagingError>;
 
     /// Function to map the designated VA to the specified PA with the provided
     /// attributes. The requested memory region will be mapped with the specified
@@ -74,14 +166,14 @@ pub trait PatinaPageTable {
     ///   Compatible attributes can be "`ORed`"
     ///
     /// ## Errors
-    /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
+    /// * Returns `Ok(())` if successful else `Err(PagingError)` if failed
     fn map_aliased_memory_region(
         &mut self,
         va: u64,
         pa: u64,
         size: u64,
         attributes: MemoryAttributes,
-    ) -> Result<(), PtError>;
+    ) -> Result<(), PagingError>;
 
     /// Function to unmap the memory region provided by the caller. The
     /// requested memory region must be fully mapped prior to this call. The
@@ -93,14 +185,14 @@ pub trait PatinaPageTable {
     /// * `size` - The memory size to map.
     ///
     /// ## Errors
-    /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
-    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
+    /// * Returns `Ok(())` if successful else `Err(PagingError)` if failed
+    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PagingError>;
 
     /// Function to install the page table from this page table instance.
     ///
     /// ## Errors
-    /// * Returns `Ok(())` if successful else `Err(PtError)` if failed
-    fn install_page_table(&mut self) -> Result<(), PtError>;
+    /// * Returns `Ok(())` if successful else `Err(PagingError)` if failed
+    fn install_page_table(&mut self) -> Result<(), PagingError>;
 
     /// Function to query the mapping status and return attribute of supplied
     /// memory region if it is properly and consistently mapped.
@@ -113,9 +205,15 @@ pub trait PatinaPageTable {
     /// Returns memory attributes
     ///
     ///   `Ok(MemoryAttributes)` if the page range is mapped else
-    ///   `Err(PtError, None)` if the page is unmapped and the cache attributes are not available
-    ///   `Err(PtError, Some(MemoryAttributes))` if the page is unmapped but caching attributes are available
-    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)>;
+    ///   `Err(PagingError, CacheAttributeValue::NotSupported)` if cache attributes are not available
+    ///   `Err(PagingError, CacheAttributeValue)` if the page is unmapped but caching attributes are available
+    ///   `Err(CacheAttributesOnlyInPageTable, CacheAttributeValue::NotSupported(MemoryAttributes))`
+    ///    if the cache attributes are only available in the page table. `MemoryAttributes` are the page table attributes.
+    fn query_memory_region(
+        &self,
+        address: u64,
+        size: u64,
+    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)>;
 
     /// Function to dump memory ranges with their attributes. It uses current
     /// cr3 as the base. This function can be used from
@@ -124,7 +222,7 @@ pub trait PatinaPageTable {
     /// ## Arguments
     /// * `address` - The memory address to map.
     /// * `size` - The memory size to map.
-    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError>;
 
     /// Function to handle a change in the cacheability of a memory region.
     /// This function is called when the cacheability of a memory region changes.

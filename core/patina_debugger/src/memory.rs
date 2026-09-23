@@ -180,25 +180,25 @@ mod tests {
     use crate::*;
     use gdbstub::target::ext::breakpoints;
     use mockall::{predicate::*, *};
-    use patina_internal_cpu::paging::CacheAttributeValue;
-    use patina_paging::{MemoryAttributes, PtError};
+    use patina_internal_cpu::paging::{CacheAttributeValue, PagingError};
+    use patina_paging::MemoryAttributes;
 
     mock! {
         pub MemPageTable {}
 
         impl PatinaPageTable for MemPageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
+            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PagingError>;
             fn map_aliased_memory_region(
                 &mut self,
                 virtual_address: u64,
                 physical_address: u64,
                 size: u64,
                 attributes: MemoryAttributes,
-            ) -> Result<(), PtError>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn install_page_table(&mut self) -> Result<(), PtError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
+            ) -> Result<(), PagingError>;
+            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PagingError>;
+            fn install_page_table(&mut self) -> Result<(), PagingError>;
+            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)>;
+            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError>;
             fn handle_cacheability_change(
                 &self,
                 address: u64,
@@ -246,10 +246,9 @@ mod tests {
     #[test]
     fn test_access_check_invalid_page() {
         let mut mock_page_table = MockMemPageTable::new();
-        mock_page_table
-            .expect_query_memory_region()
-            .times(2)
-            .returning(|_, _| Err((PtError::InvalidMemoryRange, CacheAttributeValue::NotSupported)));
+        mock_page_table.expect_query_memory_region().times(2).returning(|_, _| {
+            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
+        });
 
         let result = check_paging_range(&mock_page_table, 0, 0x1000);
         result.expect_err("Should have return a failure.");
@@ -271,10 +270,7 @@ mod tests {
         let mut mock_page_table = MockMemPageTable::new();
         mock_page_table.expect_query_memory_region().times(2).returning(|_, _| Ok(MemoryAttributes::empty()));
         mock_page_table.expect_query_memory_region().times(1).returning(|_, _| {
-            Err((
-                patina_paging::PtError::InvalidMemoryRange,
-                patina_internal_cpu::paging::CacheAttributeValue::NotSupported,
-            ))
+            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
         });
 
         let result = check_paging_range(&mock_page_table, 0x800, 0x3000);
@@ -315,10 +311,7 @@ mod tests {
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
             mock_page_table.expect_query_memory_region().returning(|_, _| {
-                Err((
-                    patina_paging::PtError::InvalidMemoryRange,
-                    patina_internal_cpu::paging::CacheAttributeValue::NotSupported,
-                ))
+                Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
             });
             Ok(mock_page_table)
         });

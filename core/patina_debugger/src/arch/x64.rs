@@ -184,8 +184,14 @@ impl DebuggerArch for X64Arch {
                         return;
                     };
 
-                    let attr = mtrr.get_memory_attribute(addr);
-                    let _ = write!(out, "{attr}");
+                    match mtrr.get_memory_attribute(addr) {
+                        Ok(attr) => {
+                            let _ = write!(out, "{attr}");
+                        }
+                        Err(_) => {
+                            let _ = write!(out, "Unknown");
+                        }
+                    }
                 } else {
                     let _ = out.write_str("Usage: mtrr <base_address>");
                 }
