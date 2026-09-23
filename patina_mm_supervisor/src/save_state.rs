@@ -113,7 +113,7 @@ fn policy_checks_for_register(reg: MmSaveStateRegister) -> &'static [SaveStateFi
 /// and `register_raw` is the raw `EFI_MM_SAVE_STATE_REGISTER` value.
 pub fn save_state_read_phase1(protocol: u64, register_raw: u64, cpu_index: u64) -> SyscallResult {
     let num_cpus = get_number_of_cpus()
-        .inspect_err(|status| log::error!("SAVE_STATE_READ: Unable to get number of CPUs: {status:?}"))?;
+        .inspect_err(|status| log::error!("SAVE_STATE_READ: Unable to get number of CPUs: {:#x}", status.as_usize()))?;
 
     stage_read_request(current_apic_id(), protocol, register_raw, cpu_index, num_cpus)
 }
@@ -166,7 +166,11 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         read_processor_id(holder.cpu_index, out)?;
     } else {
         let view = get_save_state_view(save_state_info()?, holder.cpu_index).inspect_err(|status| {
-            log::error!("SAVE_STATE_READ2: Unable to get save state view for CPU {}: {status:?}", holder.cpu_index);
+            log::error!(
+                "SAVE_STATE_READ2: Unable to get save state view for CPU {}: {:#x}",
+                holder.cpu_index,
+                status.as_usize()
+            );
         })?;
 
         let Some(gate) = security_state().policy_gate() else {

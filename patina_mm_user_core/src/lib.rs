@@ -357,7 +357,7 @@ impl MmUserCore {
             // the lifetime of the configuration-table entry.
             self.install_configuration_table(&patina::guid::HOB_LIST, hob_list.cast_mut(), 0)
         } {
-            log::error!("Failed to install HOB list configuration table: {status:?}");
+            log::error!("Failed to install HOB list configuration table: {:#x}", status.as_usize());
         }
 
         // Register core MMI handlers (lifecycle events like ready-to-lock,
