@@ -34,6 +34,7 @@ use super::*;
 use alloc::vec::Vec;
 use patina::pi::dxe_services::GcdMemoryType;
 use patina::standard::efi;
+use patina_internal_cpu::paging::PagingError;
 use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
 const DXE_CORE_PE_HEADER_DATA: [u8; 1057] = [
@@ -2507,7 +2508,7 @@ fn test_map_aliased_memory_region() {
         let length = 0x20_0000;
         let attributes = efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RUNTIME;
 
-        mock_table.borrow_mut().fail_next_map_aliased_memory_region(PtError::OutOfResources);
+        mock_table.borrow_mut().fail_next_map_aliased_memory_region(PagingError::OutOfResources);
         assert_eq!(
             GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes),
             Err(EfiError::OutOfResources)
@@ -2545,7 +2546,7 @@ fn test_unmap_aliased_memory_region() {
         let length = 0x20_0000;
         GCD.map_aliased_memory_region(virtual_address, physical_address, length, efi::MEMORY_WB).unwrap();
 
-        mock_table.borrow_mut().fail_next_unmap_memory_region(PtError::OutOfResources);
+        mock_table.borrow_mut().fail_next_unmap_memory_region(PagingError::OutOfResources);
         assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Err(EfiError::OutOfResources));
         assert_eq!(
             GCD.get_aliased_mappings(),

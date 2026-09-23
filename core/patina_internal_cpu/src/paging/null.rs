@@ -9,9 +9,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use patina_paging::{CacheAttributeValue, MemoryAttributes, PtError};
+use patina_paging::MemoryAttributes;
 
-use crate::paging::PatinaPageTable;
+use crate::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
 use patina_paging::page_allocator::PageAllocator;
 
 #[derive(Default)]
@@ -27,7 +27,12 @@ impl<A> PatinaPageTable for EfiCpuPagingNull<A>
 where
     A: PageAllocator,
 {
-    fn map_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
+    fn map_memory_region(
+        &mut self,
+        _address: u64,
+        _size: u64,
+        _attributes: MemoryAttributes,
+    ) -> Result<(), PagingError> {
         Ok(())
     }
 
@@ -37,15 +42,15 @@ where
         _physical_address: u64,
         _size: u64,
         _attributes: MemoryAttributes,
-    ) -> Result<(), PtError> {
+    ) -> Result<(), PagingError> {
         Ok(())
     }
 
-    fn unmap_memory_region(&mut self, _address: u64, _size: u64) -> Result<(), PtError> {
+    fn unmap_memory_region(&mut self, _address: u64, _size: u64) -> Result<(), PagingError> {
         Ok(())
     }
 
-    fn install_page_table(&mut self) -> Result<(), PtError> {
+    fn install_page_table(&mut self) -> Result<(), PagingError> {
         Ok(())
     }
 
@@ -53,11 +58,11 @@ where
         &self,
         _address: u64,
         _size: u64,
-    ) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
         Ok(MemoryAttributes::empty())
     }
 
-    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PagingError> {
         Ok(())
     }
 
@@ -84,6 +89,6 @@ pub fn create_cpu_null_paging<A: PageAllocator + 'static>(
 /// N/A — always returns an error.
 pub unsafe fn open_active_cpu_null_paging<A: PageAllocator + 'static>(
     _page_allocator: A,
-) -> Result<impl PatinaPageTable, PtError> {
-    Err::<EfiCpuPagingNull<A>, _>(PtError::UnsupportedPagingType)
+) -> Result<impl PatinaPageTable, PagingError> {
+    Err::<EfiCpuPagingNull<A>, _>(PagingError::Unsupported)
 }

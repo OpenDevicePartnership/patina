@@ -8,12 +8,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::paging::{CacheAttributeValue, PatinaPageTable};
+use crate::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
 use patina::{error::EfiError, standard::efi};
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
-use patina_paging::{
-    MemoryAttributes, PageTable, PagingType, PtError, page_allocator::PageAllocator, x64::X64PageTable,
-};
+use patina_paging::{MemoryAttributes, PageTable, PagingType, page_allocator::PageAllocator, x64::X64PageTable};
 
 /// The `x86_64` paging implementation. It acts as a bridge between the EFI CPU
 /// Architecture Protocol and the `x86_64` paging implementation.
@@ -27,14 +25,6 @@ where
     mtrr: M,
 }
 
-fn efierror_to_pterror(efi_error: EfiError) -> PtError {
-    match efi_error {
-        EfiError::OutOfResources => PtError::OutOfResources,
-        EfiError::NotFound => PtError::NoMapping,
-        _ => PtError::InvalidParameter, // Default case for unsupported error codes
-    }
-}
-
 /// The `x86_64` paging implementation.
 impl<P, M> PatinaPageTable for EfiCpuPagingX64<P, M>
 where
@@ -42,20 +32,22 @@ where
     M: Mtrr,
 {
     // Paging related APIs
-    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
+    fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PagingError> {
         let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
         let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
 
         if attributes != (cache_attributes | memory_attributes) {
             log::error!("Invalid cache attribute: {attributes:#x}");
-            return Err(PtError::InvalidParameter);
+            return Err(PagingError::InvalidParameter);
         }
 
         match apply_caching_attributes(address, size, cache_attributes, &mut self.mtrr) {
             Ok(()) | Err(EfiError::Unsupported) => {
-                self.paging.map_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask)
+                self.paging
+                    .map_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask)
+                    .map_err(Into::into)
             }
-            Err(status) => Err(efierror_to_pterror(status)),
+            Err(status) => Err(status.into()),
         }
     }
 
@@ -65,32 +57,38 @@ where
         physical_address: u64,
         size: u64,
         attributes: MemoryAttributes,
-    ) -> Result<(), PtError> {
+    ) -> Result<(), PagingError> {
         let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
         let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
 
         if attributes != (cache_attributes | memory_attributes) {
             log::error!("Invalid cache attribute: {attributes:#x}");
-            return Err(PtError::InvalidParameter);
+            return Err(PagingError::InvalidParameter);
         }
 
         match apply_caching_attributes(physical_address, size, cache_attributes, &mut self.mtrr) {
             Ok(()) | Err(EfiError::Unsupported) => {
-                self.paging.map_aliased_memory_region(virtual_address, physical_address, size, memory_attributes)
+                self.paging
+                    .map_aliased_memory_region(virtual_address, physical_address, size, memory_attributes)
+                    .map_err(Into::into)
             }
-            Err(status) => Err(efierror_to_pterror(status)),
+            Err(status) => Err(status.into()),
         }
     }
 
-    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
-        self.paging.unmap_memory_region(address, size)
+    fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PagingError> {
+        self.paging.unmap_memory_region(address, size).map_err(Into::into)
     }
 
-    fn install_page_table(&mut self) -> Result<(), PtError> {
-        self.paging.install_page_table()
+    fn install_page_table(&mut self) -> Result<(), PagingError> {
+        self.paging.install_page_table().map_err(Into::into)
     }
 
-    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+    fn query_memory_region(
+        &self,
+        address: u64,
+        size: u64,
+    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
         // start by getting the caching attributes as we need to return those even if the page is unmapped in the
         // page table
         let cache_attr = match self.mtrr.get_memory_attribute(address) {
@@ -111,12 +109,12 @@ where
                     Ok(attr)
                 }
             }
-            Err(err) => Err((err, cache_attr)),
+            Err(err) => Err((err.into(), cache_attr)),
         }
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
-        self.paging.dump_page_tables(address, size)
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError> {
+        self.paging.dump_page_tables(address, size).map_err(Into::into)
     }
 
     fn handle_cacheability_change(
@@ -185,22 +183,10 @@ pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
 #[cfg_attr(coverage, coverage(off))]
 pub unsafe fn open_active_cpu_x64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<impl PatinaPageTable, PtError> {
+) -> Result<impl PatinaPageTable, PagingError> {
     // SAFETY: Caller ensures no concurrent page table modifications.
     let page_table = unsafe { X64PageTable::open_active(page_allocator)? };
     Ok(EfiCpuPagingX64 { paging: page_table, mtrr: create_mtrr_lib(0) })
-}
-
-fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {
-    match err {
-        MtrrError::AlreadyStarted => EfiError::AlreadyStarted,
-        MtrrError::BufferTooSmall => EfiError::BufferTooSmall,
-        MtrrError::FixedRangeMtrrBaseAddressNotAligned
-        | MtrrError::FixedRangeMtrrLengthNotAligned
-        | MtrrError::InvalidParameter => EfiError::InvalidParameter,
-        MtrrError::MtrrNotSupported => EfiError::Unsupported,
-        MtrrError::OutOfResources | MtrrError::VariableRangeMtrrExhausted => EfiError::OutOfResources,
-    }
 }
 
 #[cfg(test)]

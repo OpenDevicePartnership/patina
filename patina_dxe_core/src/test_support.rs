@@ -19,8 +19,8 @@ use patina::{
         hob::{self, HobHeader, HobList, MemoryAllocationHeader, ResourceDescriptorV2},
     },
 };
-use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
-use patina_paging::{MemoryAttributes, PtError};
+use patina_internal_cpu::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
+use patina_paging::MemoryAttributes;
 use spin::{Once, RwLock};
 use std::{any::Any, cell::RefCell, fs::File, io::Read, slice};
 
@@ -117,15 +117,15 @@ pub struct MockPageTable {
     mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
     aliased_mapped: RefCell<Vec<(u64, u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
-    map_aliased_error: Option<PtError>,
-    unmap_error: Option<PtError>,
+    map_aliased_error: Option<PagingError>,
+    unmap_error: Option<PagingError>,
     installed: RefCell<bool>,
     // Track current mappings to provide realistic query behavior
     current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
 }
 
 impl PatinaPageTable for MockPageTable {
-    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PagingError> {
         self.mapped.borrow_mut().push((base, len, attrs));
 
         // Update current mappings - remove any overlapping regions first
@@ -147,7 +147,7 @@ impl PatinaPageTable for MockPageTable {
         physical_address: u64,
         len: u64,
         attrs: MemoryAttributes,
-    ) -> Result<(), PtError> {
+    ) -> Result<(), PagingError> {
         if let Some(error) = self.map_aliased_error.take() {
             return Err(error);
         }
@@ -156,7 +156,7 @@ impl PatinaPageTable for MockPageTable {
         Ok(())
     }
 
-    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PagingError> {
         if let Some(error) = self.unmap_error.take() {
             return Err(error);
         }
@@ -173,7 +173,7 @@ impl PatinaPageTable for MockPageTable {
         Ok(())
     }
 
-    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
         let current = self.current_mappings.borrow();
         let end = base + len;
 
@@ -186,13 +186,13 @@ impl PatinaPageTable for MockPageTable {
         }
 
         // No mapping found - return NoMapping error with empty cache attributes
-        Err((PtError::NoMapping, CacheAttributeValue::Unmapped))
+        Err((PagingError::NoMapping, CacheAttributeValue::Unmapped))
     }
-    fn install_page_table(&mut self) -> Result<(), PtError> {
+    fn install_page_table(&mut self) -> Result<(), PagingError> {
         *self.installed.borrow_mut() = true;
         Ok(())
     }
-    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PagingError> {
         // No-op for testing
         Ok(())
     }
@@ -219,11 +219,11 @@ impl Default for MockPageTable {
 }
 
 impl MockPageTable {
-    pub fn fail_next_map_aliased_memory_region(&mut self, error: PtError) {
+    pub fn fail_next_map_aliased_memory_region(&mut self, error: PagingError) {
         self.map_aliased_error = Some(error);
     }
 
-    pub fn fail_next_unmap_memory_region(&mut self, error: PtError) {
+    pub fn fail_next_unmap_memory_region(&mut self, error: PagingError) {
         self.unmap_error = Some(error);
     }
 
@@ -267,7 +267,7 @@ impl MockPageTableWrapper {
 }
 
 impl PatinaPageTable for MockPageTableWrapper {
-    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PagingError> {
         self.inner.borrow_mut().map_memory_region(base, len, attrs)
     }
 
@@ -277,23 +277,23 @@ impl PatinaPageTable for MockPageTableWrapper {
         physical_address: u64,
         len: u64,
         attrs: MemoryAttributes,
-    ) -> Result<(), PtError> {
+    ) -> Result<(), PagingError> {
         self.inner.borrow_mut().map_aliased_memory_region(virtual_address, physical_address, len, attrs)
     }
 
-    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PagingError> {
         self.inner.borrow_mut().unmap_memory_region(base, len)
     }
 
-    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
         self.inner.borrow().query_memory_region(base, len)
     }
 
-    fn install_page_table(&mut self) -> Result<(), PtError> {
+    fn install_page_table(&mut self) -> Result<(), PagingError> {
         self.inner.borrow_mut().install_page_table()
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError> {
         self.inner.borrow().dump_page_tables(address, size)
     }
 
