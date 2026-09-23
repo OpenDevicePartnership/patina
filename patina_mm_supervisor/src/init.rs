@@ -1126,9 +1126,13 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             PolicyInitError::MemoryAllocationFailed
         })?;
 
+        let policy_buffer_size = usize::try_from(pass_down.mm_supv_firmware_policy_buffer_size)
+            .map_err(|_| PolicyInitError::InvalidPolicyData)?;
+
         // SAFETY: `policy_ptr` is the firmware policy buffer from the PassDown HOB, validated
-        // non-zero above, and stays resident for the supervisor's lifetime.
-        match unsafe { PolicyGate::new(policy_ptr) } {
+        // non-zero above, and stays resident for the supervisor's lifetime. The HOB's reported
+        // size bounds the blob's own internal offsets.
+        match unsafe { PolicyGate::new(policy_ptr, policy_buffer_size) } {
             Ok(mut gate) => {
                 log::info!("Policy gate initialized successfully");
                 // SAFETY: `policy_ptr` is the same valid, resident firmware policy buffer.

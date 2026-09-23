@@ -818,7 +818,8 @@ mod tests {
     fn gate_over(policy: &[u64]) -> PolicyGate {
         // SAFETY: `build_policy` produced a valid, aligned V1.0 policy buffer that the caller
         // keeps alive for the gate's lifetime.
-        unsafe { PolicyGate::new(policy.as_ptr() as *const u8) }.expect("valid policy buffer")
+        unsafe { PolicyGate::new(policy.as_ptr() as *const u8, core::mem::size_of_val(policy)) }
+            .expect("valid policy buffer")
     }
 
     fn descriptor(field: SaveStateField, attributes: u32, condition: SaveStateCondition) -> SaveStateDescriptorV1_0 {

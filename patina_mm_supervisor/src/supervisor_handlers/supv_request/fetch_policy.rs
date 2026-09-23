@@ -400,7 +400,8 @@ mod tests {
         }));
         // SAFETY: `policy` is a valid V1.0 policy header and is leaked for the duration of the
         // process, so it outlives the returned gate.
-        unsafe { PolicyGate::new(core::ptr::from_ref(policy).cast()) }.expect("test policy must be valid")
+        unsafe { PolicyGate::new(core::ptr::from_ref(policy).cast(), core::mem::size_of::<SecurePolicyDataV1_0>()) }
+            .expect("test policy must be valid")
     }
 
     #[test]

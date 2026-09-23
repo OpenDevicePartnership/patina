@@ -60,6 +60,19 @@ pub const RESOURCE_ATTR_COND_READ: u32 = 0x10;
 /// Resource attribute: Conditional write access.
 pub const RESOURCE_ATTR_COND_WRITE: u32 = 0x20;
 
+/// Byte size of one descriptor belonging to `policy_type`, or `None` if the type is not one the
+/// supervisor recognizes.
+pub fn descriptor_size(policy_type: u32) -> Option<usize> {
+    match policy_type {
+        TYPE_MEM => Some(core::mem::size_of::<MemDescriptorV1_0>()),
+        TYPE_IO => Some(core::mem::size_of::<IoDescriptorV1_0>()),
+        TYPE_MSR => Some(core::mem::size_of::<MsrDescriptorV1_0>()),
+        TYPE_INSTRUCTION => Some(core::mem::size_of::<InstructionDescriptorV1_0>()),
+        TYPE_SAVE_STATE => Some(core::mem::size_of::<SaveStateDescriptorV1_0>()),
+        _ => None,
+    }
+}
+
 /// MSRs whose write access defines the privilege boundary the supervisor rests on, as inclusive
 /// `(first, last, description)` ranges.
 ///
@@ -636,6 +649,8 @@ pub(crate) mod test_support {
         memory_policy_count: u32,
         root_reserved: [u8; 3],
         size_override: Option<u32>,
+        root_count_override: Option<u32>,
+        descriptor_count_override: Option<u32>,
     }
 
     impl PolicyBuilder {
@@ -680,6 +695,18 @@ pub(crate) mod test_support {
             self
         }
 
+        /// Overrides the header `policy_root_count` without emitting more roots.
+        pub(crate) fn declared_root_count(mut self, count: u32) -> Self {
+            self.root_count_override = Some(count);
+            self
+        }
+
+        /// Overrides every root's descriptor `count` without emitting more descriptors.
+        pub(crate) fn declared_descriptor_count(mut self, count: u32) -> Self {
+            self.descriptor_count_override = Some(count);
+            self
+        }
+
         pub(crate) fn build(self) -> PolicyBuffer {
             let descriptor_offset = HEADER_SIZE + self.roots.len() * ROOT_SIZE;
             let descriptor_bytes: usize = self.roots.iter().map(|(_, d)| d.count() * d.entry_size()).sum();
@@ -699,7 +726,7 @@ pub(crate) mod test_support {
             write_u32(bytes, 12, self.memory_policy_count);
             write_u32(bytes, 16, self.flags);
             write_u32(bytes, 32, HEADER_SIZE as u32);
-            write_u32(bytes, 36, self.roots.len() as u32);
+            write_u32(bytes, 36, self.root_count_override.unwrap_or(self.roots.len() as u32));
 
             let mut descriptor_at = descriptor_offset;
             for (i, (access_attr, descriptors)) in self.roots.iter().enumerate() {
@@ -708,7 +735,7 @@ pub(crate) mod test_support {
                 write_u32(bytes, at + 4, ROOT_SIZE as u32);
                 write_u32(bytes, at + 8, descriptors.policy_type());
                 write_u32(bytes, at + 12, descriptor_at as u32);
-                write_u32(bytes, at + 16, descriptors.count() as u32);
+                write_u32(bytes, at + 16, self.descriptor_count_override.unwrap_or(descriptors.count() as u32));
                 bytes[at + 20] = *access_attr;
                 bytes[at + 21..at + 24].copy_from_slice(&self.root_reserved);
 
@@ -730,6 +757,11 @@ pub(crate) mod test_support {
             self.words.as_ptr().cast()
         }
 
+        /// Byte length of the buffer backing this policy.
+        pub(crate) fn len(&self) -> usize {
+            self.words.len() * core::mem::size_of::<u64>()
+        }
+
         pub(crate) fn header(&self) -> &SecurePolicyDataV1_0 {
             // SAFETY: `PolicyBuilder::build` wrote an aligned, fully-initialized header at offset 0.
             unsafe { &*self.as_ptr().cast::<SecurePolicyDataV1_0>() }
@@ -737,9 +769,14 @@ pub(crate) mod test_support {
 
         /// Creates a gate over this buffer, which outlives the returned gate.
         pub(crate) fn gate(&self) -> PolicyGate {
-            // SAFETY: `PolicyBuilder::build` produced a valid, aligned V1.0 policy buffer that
+            self.try_gate().expect("valid policy buffer")
+        }
+
+        /// Creates a gate over this buffer, surfacing the validation error for malformed blobs.
+        pub(crate) fn try_gate(&self) -> Result<PolicyGate, PolicyError> {
+            // SAFETY: `PolicyBuilder::build` produced an aligned buffer of `len()` bytes that
             // this `PolicyBuffer` keeps alive for the gate's lifetime.
-            unsafe { PolicyGate::new(self.as_ptr()) }.expect("valid policy buffer")
+            unsafe { PolicyGate::new(self.as_ptr(), self.len()) }
         }
     }
 
