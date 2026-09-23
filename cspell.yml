@@ -67,6 +67,7 @@ words:
   - cudimm
   - cuviper
   - deassertion
+  - debugctl
   - depex
   - deque
   - descs
@@ -95,6 +96,7 @@ words:
   - expressx
   - fastrlp
   - feprom
+  - fmask
   - fnent
   - funty
   - fvmain
@@ -146,6 +148,7 @@ words:
   - mpidr
   - mrdimm
   - msdia
+  - mtrrcap
   - mtrrs
   - nestedfv
   - nocapture
@@ -212,6 +215,7 @@ words:
   - swmmis
   - syscall
   - syscalls
+  - sysenter
   - sysreg
   - sysret
   - tiano
