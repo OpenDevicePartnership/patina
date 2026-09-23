@@ -17,7 +17,7 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-use crate::semaphore::{sem_signal, sem_try_take, sem_wait};
+use crate::semaphore::{sem_signal, sem_try_take};
 
 /// The state of an Application Processor (AP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,19 +299,34 @@ impl<const MAX_CPUS: usize> CpuManager<MAX_CPUS> {
         }
     }
 
-    /// Blocks (spins, no timer) until `ap_count` APs have acknowledged leaving the pen.
+    /// Collects up to `ap_count` acknowledgements that APs have left the holding pen, giving up
+    /// after `timeout_us` microseconds.
     ///
-    pub fn wait_for_ap_exit_acks(&self, ap_count: usize) {
+    /// Returns the number of acknowledgements collected, which equals `ap_count` when every AP
+    /// checked out in time. The caller decides what a short count means; this barrier must not
+    /// block forever, because the APs it waits on are running code the supervisor does not
+    /// control.
+    pub fn wait_for_ap_exit_acks(&self, ap_count: usize, timeout_us: u64) -> usize {
+        if ap_count == 0 {
+            return 0;
+        }
+
         let bsp_index = match self.bsp_id().and_then(|bsp_id| self.find_slot(bsp_id)) {
             Some(index) => index,
-            None => return,
+            None => return 0,
         };
         let Some(slot) = self.slots.get(bsp_index) else {
-            return;
+            return 0;
         };
-        for _ in 0..ap_count {
-            sem_wait(&slot.run);
-        }
+
+        let mut acknowledged = 0;
+        crate::perf_timer::spin_until(timeout_us, || {
+            while acknowledged < ap_count && sem_try_take(&slot.run) {
+                acknowledged += 1;
+            }
+            acknowledged == ap_count
+        });
+        acknowledged
     }
 }
 
@@ -488,9 +503,24 @@ mod tests {
         // (the acks were already counted into the BSP's semaphore).
         manager.ack_exit_to_bsp();
         manager.ack_exit_to_bsp();
-        manager.wait_for_ap_exit_acks(2);
+        assert_eq!(manager.wait_for_ap_exit_acks(2, 1_000_000), 2);
 
         // The semaphores are balanced again, ready for the next round.
         assert!(!manager.take_release_by_index(1));
+    }
+
+    #[test]
+    fn test_exit_barrier_gives_up_on_an_ap_that_never_checks_out() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true); // BSP at slot 0
+        manager.register_cpu(10, 1, false); // AP at slot 1
+        manager.register_cpu(20, 2, false); // AP at slot 2
+
+        manager.release_all_aps();
+        manager.ack_exit_to_bsp();
+
+        // Only one of the two APs checked out, so the barrier reports a short count rather than
+        // spinning forever on a core running code the supervisor does not control.
+        assert_eq!(manager.wait_for_ap_exit_acks(2, 1), 1);
     }
 }

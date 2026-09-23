@@ -133,6 +133,9 @@ pub const MM_SUPV_PASS_DOWN_HOB_REVISION: u32 = 2;
 /// Timeout for waiting for APs to arrive in the holding pen (1 second).
 const AP_ARRIVAL_TIMEOUT_US: u64 = 1_000_000;
 
+/// Timeout for waiting for released APs to acknowledge leaving the holding pen (1 second).
+const AP_EXIT_TIMEOUT_US: u64 = 1_000_000;
+
 /// Timeout for waiting for an AP to complete a dispatched procedure (10 seconds).
 const AP_TIMEOUT_US: u64 = 10_000_000;
 

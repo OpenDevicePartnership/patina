@@ -18,7 +18,8 @@ use patina::{
 };
 
 use crate::{
-    AP_ARRIVAL_TIMEOUT_US, AP_TIMEOUT_US, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo,
+    AP_ARRIVAL_TIMEOUT_US, AP_EXIT_TIMEOUT_US, AP_TIMEOUT_US, CommBufferConfig, MmSupervisorCore, PageOwnership,
+    PlatformInfo,
     cpu::ApState,
     intrinsics::is_bsp,
     mailbox::{ApCommand, ApResponse},
@@ -123,7 +124,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// 2. BSP waits for all registered APs, all cores must be in MM before servicing a request
     /// 3. BSP processes the pending request via `bsp_request_loop`
     /// 4. BSP releases every AP via the per-CPU rendezvous semaphore
-    /// 5. BSP waits indefinitely for every released AP to acknowledge it has left
+    /// 5. BSP waits, bounded by `AP_EXIT_TIMEOUT_US`, for every released AP to acknowledge it has left
     /// 6. Each AP clears its `InHoldingPen` state and acknowledges the BSP
     pub(crate) fn enter_runtime(&'static self, cpu_id: u32, cpu_index: usize) {
         let is_bsp = is_bsp();
@@ -141,7 +142,12 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             // Exit barrier: release every penned AP and wait for each to acknowledge it has left.
             log::trace!("BSP (CPU {cpu_id}) releasing all APs from the holding pen...");
             self.cpu_manager.release_all_aps();
-            self.cpu_manager.wait_for_ap_exit_acks(expected_aps);
+            let acknowledged = self.cpu_manager.wait_for_ap_exit_acks(expected_aps, AP_EXIT_TIMEOUT_US);
+            assert!(
+                acknowledged == expected_aps,
+                "MM Supervisor fail-secure: only {acknowledged}/{expected_aps} APs acknowledged leaving the holding \
+                 pen within the exit window; refusing to resume the platform with cores still in MM"
+            );
 
             self.mailbox_manager.reset_all();
         } else {
