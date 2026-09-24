@@ -370,7 +370,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             self.cpu_manager.register_cpu(cpu_id, cpu_index, true);
 
             // Perform BSP-only one-time initialization.
-            self.bsp_init(hob_list);
+            let user_hob_list = self.bsp_init(hob_list);
 
             // Dispatch to the user level entry point discovered from the HOB list (if found)
             let user_entry = match init_state().user_entry_point() {
@@ -399,7 +399,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                     cpl3_stack,
                     3,
                     UserCommandType::StartUserCore as u64,
-                    hob_list as u64,
+                    user_hob_list,
                     0,
                 )
             };

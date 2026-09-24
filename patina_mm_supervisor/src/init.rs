@@ -39,6 +39,7 @@ use crate::{
     },
     mm_policy::{self, MemDescriptorV1_0, dump_policy, gate::PolicyGate, walk_page_table},
     query_address_ownership,
+    runtime::with_user_access,
     save_state::{SaveStateInfo, validate_save_state_regions},
     smrr::{SmramRegion, configure_smm_code_access, smrr_initialize},
     state::{init_state, security_state},
@@ -509,6 +510,8 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// global page table, discovers the user module entry point, initializes the security policy,
     /// and remaps the HOB list so the demoted user core can read it.
     ///
+    /// Returns the address of the read-only HOB list copy to hand the user core.
+    ///
     /// The MM IPL describes MMRAM and sits outside the supervisor's trust boundary, and the
     /// platform leaves the SMRRs unprogrammed at entry, so no hardware bound is available to check
     /// its descriptors against. Ordering carries the weight instead: the descriptors are parsed
@@ -516,7 +519,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// the SMRR, and only then is anything written into the memory they name. The extent
     /// of MMRAM still originates with the MM IPL, which remains a platform requirement rather than
     /// something the supervisor can verify.
-    pub(crate) fn bsp_init(&'static self, hob_list: *const c_void) {
+    pub(crate) fn bsp_init(&'static self, hob_list: *const c_void) -> u64 {
         log::info!("BSP performing one-time initialization...");
 
         let mut interrupt_manager = Interrupts::new();
@@ -581,13 +584,15 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let mut policy_services = RuntimePolicyInitServices { supervisor: self };
         // SAFETY: `hob_list` is provided by the MM IPL and is guaranteed to be a
         // valid HOB list (the caller asserts it is non-null before dispatching).
-        unsafe {
+        let user_hob_list = unsafe {
             self.discover_and_store_user_entry(hob_list, init_state());
             self.init_policy_and_validate(hob_list, &mut policy_services);
-            self.remap_hob_list_to_user(hob_list);
-        }
+            // Copied last, so the copy carries the rewrites `init_policy_and_validate` made.
+            self.publish_hob_list_to_user(hob_list)
+        };
 
         log::info!("BSP one-time initialization complete.");
+        user_hob_list
     }
 
     /// Commits the validated SMRAM regions to the page allocator and initializes the paging
@@ -701,68 +706,91 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         }
     }
 
-    /// Remaps the HOB list as user-accessible so the demoted user core can walk
-    /// it during `StartUserCore`.
+    /// Publishes a read-only copy of the HOB list for the demoted user core and returns its
+    /// address, reclaiming the producer's pages once the copy is in place.
     ///
-    /// Once all HOB content has been consumed, the page-aligned HOB range is
-    /// remapped as read-only + non-executable for the user level.
-    ///
-    /// The region is described by the untrusted producer and the mapping clears the supervisor
-    /// bit, so it is required to lie inside MMRAM: exposing memory outside MMRAM to Ring 3 here
-    /// would hand out a region that never went through the unblock path.
-    ///
-    /// Mapping is page-granular, so a HOB list that is not page-aligned and page-sized also
-    /// exposes whatever shares its first and last page. That slack is logged when it exists.
+    /// The producer's HOB list does not end on a page boundary, and mapping is page-granular, so
+    /// remapping its backing pages would hand the remainder of its final page to Ring 3 along with
+    /// the list. Nothing constrains what the producer put there. Copying into a dedicated
+    /// allocation instead means the only bytes Ring 3 can reach are the HOB list itself and the
+    /// zeroed tail of its last page.
     ///
     /// ## Safety
     ///
     /// The caller must ensure that `hob_list` points to a valid HOB list.
-    unsafe fn remap_hob_list_to_user(&self, hob_list: *const c_void) {
+    unsafe fn publish_hob_list_to_user(&self, hob_list: *const c_void) -> u64 {
         let hob_base = hob_list as u64;
         // SAFETY: `hob_list` is a valid HOB list per this function's contract.
         let hob_list_size = unsafe { hob::get_pi_hob_list_size(hob_list) } as u64;
+        assert!(hob_list_size != 0, "HOB list at 0x{hob_base:016x} is empty");
 
-        let (aligned_base, hob_region_size) = align_range(hob_base, hob_list_size, UEFI_PAGE_SIZE as u64)
-            .unwrap_or_else(|e| panic!("Failed to page-align HOB list region: {e:?}"));
-        let aligned_end = aligned_base + hob_region_size;
-        log::info!(
-            "HOB list at 0x{hob_base:016x} size 0x{hob_list_size:x}, aligned region 0x{aligned_base:016x}-0x{aligned_end:016x} (0x{hob_region_size:x} bytes)"
-        );
-
-        if hob_region_size == 0 {
-            return;
-        }
-
-        // The region is described by the untrusted producer, so nothing outside MMRAM may be
-        // handed to Ring 3.
+        // The producer named this range, so it is confirmed to be MMRAM before it is read.
         assert!(
-            is_buffer_inside_mmram(aligned_base, hob_region_size),
-            "HOB list region 0x{aligned_base:016x}-0x{aligned_end:016x} is not inside MMRAM"
+            is_buffer_inside_mmram(hob_base, hob_list_size),
+            "HOB list at 0x{hob_base:016x} (0x{hob_list_size:x} bytes) is not inside MMRAM"
         );
 
-        // Page granularity rounds the range out past the HOB list itself, and everything in
-        // those pages becomes Ring 3 readable along with it.
-        let leading = hob_base - aligned_base;
-        let trailing = hob_region_size - leading - hob_list_size;
-        if leading != 0 || trailing != 0 {
-            log::warn!(
-                "HOB list is not page-aligned and page-sized: exposing 0x{leading:x} bytes before and \
-                 0x{trailing:x} bytes after it to Ring 3"
-            );
+        let size = usize::try_from(hob_list_size)
+            .unwrap_or_else(|_| panic!("HOB list size 0x{hob_list_size:x} does not fit the target architecture"));
+        let pages = size.div_ceil(UEFI_PAGE_SIZE);
+        let copy_base = security_state()
+            .page_allocator()
+            .allocate_pages_with_type(pages, AllocationType::User)
+            .unwrap_or_else(|e| panic!("Failed to allocate {pages} pages for the user HOB list copy: {e:?}"));
+        let copy_size = pages * UEFI_PAGE_SIZE;
+
+        // The destination is user-owned, so SMAP comes down for the supervisor to fill it. The
+        // whole allocation is zeroed first because Ring 3 can read the tail of the last page, and
+        // pool memory is not zeroed on allocation.
+        // SAFETY: `copy_base` is a live allocation of `copy_size` bytes that nothing else
+        // references yet, and `hob_base` was checked above to be `size` readable bytes inside
+        // MMRAM. The two cannot overlap: the allocation came from the free pool, while the HOB
+        // list is memory the MM IPL reserved.
+        unsafe {
+            with_user_access(|| {
+                core::ptr::write_bytes(copy_base as *mut u8, 0, copy_size);
+                core::ptr::copy_nonoverlapping(hob_base as *const u8, copy_base as *mut u8, size);
+            });
         }
 
         let attrs = MemoryAttributes::ReadOnly | MemoryAttributes::ExecuteProtect;
-        let mut pt_guard = security_state().lock_page_table();
-        let Some(pt) = pt_guard.as_mut() else {
-            panic!("Page table not initialized, cannot remap HOB list to user level");
-        };
-
-        if let Err(e) = pt.map_memory_region(aligned_base, hob_region_size, attrs) {
-            panic!(
-                "Failed to remap HOB list to user level at 0x{aligned_base:016x} (0x{hob_region_size:x} bytes): {e:?}"
-            );
+        {
+            let mut pt_guard = security_state().lock_page_table();
+            let Some(pt) = pt_guard.as_mut() else {
+                panic!("Page table not initialized, cannot publish the HOB list to user level");
+            };
+            if let Err(e) = pt.map_memory_region(copy_base, copy_size as u64, attrs) {
+                panic!("Failed to map the user HOB list copy at 0x{copy_base:016x} (0x{copy_size:x} bytes): {e:?}");
+            }
         }
-        log::info!("Remapped HOB list 0x{aligned_base:016x}-0x{aligned_end:016x} as user read-only");
+
+        let copy_end = copy_base + copy_size as u64;
+        log::info!(
+            "Published HOB list copy of 0x{hob_list_size:x} bytes from 0x{hob_base:016x} at \
+             0x{copy_base:016x}-0x{copy_end:016x} as user read-only"
+        );
+
+        // The copy is the only HOB list anything uses from here, so the original's pages go back
+        // to the pool, scrubbed and unmapped. Only pages lying wholly inside the list are
+        // released: rounding outward would hand the pool the trailing slack this copy exists to
+        // keep out of Ring 3's reach. The page table lock is released above because freeing takes
+        // it again, and it is not reentrant.
+        let page = UEFI_PAGE_SIZE as u64;
+        let first_page = hob_base.div_ceil(page) * page;
+        let last_page = (hob_base + hob_list_size) / page * page;
+        if let Some(pages) = last_page.checked_sub(first_page).map(|bytes| (bytes / page) as usize).filter(|p| *p != 0)
+        {
+            match security_state().page_allocator().free_pages_checked(first_page, pages, AllocationType::Supervisor) {
+                Ok(()) => log::info!(
+                    "Reclaimed {pages} page(s) of the producer's HOB list at 0x{first_page:016x}-0x{last_page:016x}"
+                ),
+                // Reclaiming is best-effort, but a failure means the range is not what the
+                // descriptors said it was, which is worth saying out loud.
+                Err(e) => log::error!("Failed to reclaim the producer's HOB list at 0x{first_page:016x}: {e:?}"),
+            }
+        }
+
+        copy_base
     }
 
     /// Maps the per-CPU Ring 3 stacks as user-accessible, writable, non-executable pages.
