@@ -170,6 +170,55 @@ impl MmramPlacement {
     }
 }
 
+/// Classifies `[addr, addr + size)` against regions given as `(base, exclusive end)` pairs.
+///
+/// Coverage is measured over the union of the regions, so a range spanning two adjacent regions
+/// is [`MmramPlacement::Inside`] rather than partly inside. An empty range is
+/// [`MmramPlacement::Outside`]; a range whose end overflows is reported as partly inside so a
+/// malformed descriptor fails closed.
+fn classify_coverage(addr: u64, size: u64, mut regions: impl Iterator<Item = (u64, u64)> + Clone) -> MmramPlacement {
+    if size == 0 {
+        return MmramPlacement::Outside;
+    }
+    let Some(end) = addr.checked_add(size) else {
+        return MmramPlacement::PartlyInside;
+    };
+
+    // Extend the covered prefix one region at a time until a gap appears.
+    let mut cursor = addr;
+    while let Some(region_end) =
+        regions.clone().find_map(|(base, region_end)| (cursor >= base && cursor < region_end).then_some(region_end))
+    {
+        cursor = region_end;
+        if cursor >= end {
+            return MmramPlacement::Inside;
+        }
+    }
+
+    if cursor > addr || regions.any(|(base, region_end)| cursor < region_end && base < end) {
+        MmramPlacement::PartlyInside
+    } else {
+        MmramPlacement::Outside
+    }
+}
+
+/// Classifies `[addr, addr + size)` against SMRAM descriptors that have been scanned but not yet
+/// committed to the allocator's bookkeeping.
+pub(crate) fn classify_mmram_in_regions(regions: &[SmramRegion], addr: u64, size: u64) -> MmramPlacement {
+    classify_coverage(
+        addr,
+        size,
+        regions.iter().filter_map(|region| Some((region.base, region.base.checked_add(region.size)?))),
+    )
+}
+
+/// Returns whether any region in `regions` contains `address`.
+pub(crate) fn regions_contain(regions: &[SmramRegion], address: u64) -> bool {
+    regions.iter().any(|region| {
+        region.base <= address && region.base.checked_add(region.size).is_some_and(|region_end| address < region_end)
+    })
+}
+
 /// Internal state for the page allocator, stored in bookkeeping pages.
 #[repr(C)]
 struct AllocatorState {
@@ -552,43 +601,16 @@ impl LockedState<'_> {
         })
     }
 
-    /// Classifies `[addr, addr + size)` against the MMRAM regions.
-    ///
-    /// Coverage is measured over the union of the regions, so a range spanning two adjacent
-    /// regions is [`MmramPlacement::Inside`] rather than partly inside. An empty range is
-    /// [`MmramPlacement::Outside`]; a range whose end overflows is reported as partly inside so a
-    /// malformed descriptor fails closed.
+    /// Classifies `[addr, addr + size)` against the committed MMRAM regions.
     fn classify_mmram(&self, addr: u64, size: u64) -> MmramPlacement {
-        if size == 0 {
-            return MmramPlacement::Outside;
-        }
-        let Some(end) = addr.checked_add(size) else {
-            return MmramPlacement::PartlyInside;
-        };
-
-        let bounds = || {
+        classify_coverage(
+            addr,
+            size,
             self.regions().iter().filter_map(|region| {
                 let size = u64::try_from(region.total_pages.checked_mul(UEFI_PAGE_SIZE)?).ok()?;
                 Some((region.base, region.base.checked_add(size)?))
-            })
-        };
-
-        // Extend the covered prefix one region at a time until a gap appears.
-        let mut cursor = addr;
-        while let Some(region_end) =
-            bounds().find_map(|(base, region_end)| (cursor >= base && cursor < region_end).then_some(region_end))
-        {
-            cursor = region_end;
-            if cursor >= end {
-                return MmramPlacement::Inside;
-            }
-        }
-
-        if cursor > addr || bounds().any(|(base, region_end)| cursor < region_end && base < end) {
-            MmramPlacement::PartlyInside
-        } else {
-            MmramPlacement::Outside
-        }
+            }),
+        )
     }
 
     /// Populates freshly-zeroed bookkeeping with per-region metadata and marks
@@ -920,20 +942,17 @@ impl PageAllocator {
         LockedState { state, region_count, total_pages, guard }
     }
 
-    /// Initializes the page allocator from the HOB list.
+    /// Collects every SMRAM region the HOB list describes into a stack array.
     ///
-    /// This function:
-    /// 1. Scans HOBs to count regions and total pages
-    /// 2. Finds the first non-allocated region for bookkeeping
-    /// 3. Reserves pages for bookkeeping structures
-    /// 4. Initializes the bitmaps
+    /// Nothing in MMRAM is written and no allocator state is published, so the descriptors can
+    /// be validated against a trusted bound before [`init_from_regions`](Self::init_from_regions)
+    /// commits to them. Splitting the two is what keeps a forged descriptor from steering a write
+    /// before it has been rejected.
     ///
     /// ## Safety
     ///
-    /// The caller must ensure that `hob_list` points to a valid HOB list and that
-    /// every non-pre-allocated region it describes is valid, exclusive SMRAM.
-    pub unsafe fn init_from_hob_list(
-        &self,
+    /// The caller must ensure that `hob_list` points to a valid HOB list.
+    pub(crate) unsafe fn scan_hob_list(
         hob_list: *const c_void,
     ) -> Result<([SmramRegion; MAX_TEMP_REGIONS], usize), PageAllocError> {
         if hob_list.is_null() {
@@ -947,7 +966,6 @@ impl PageAllocator {
             (hob_list as *const PhaseHandoffInformationTable).as_ref().ok_or(PageAllocError::NotInitialized)?
         };
 
-        // First pass: scan the HOB list for every SMRAM region.
         let mut regions = [SmramRegion::default(); MAX_TEMP_REGIONS];
         let mut count = 0usize;
         Self::scan_smram_regions(hob_list_info, &mut regions, &mut count)?;
@@ -957,27 +975,20 @@ impl PageAllocator {
             return Err(PageAllocError::NotInitialized);
         }
 
-        let scanned = regions.get(..count).ok_or_else(|| {
-            log::error!("Page allocator init failed: scanned region count {count} exceeds {MAX_TEMP_REGIONS}");
-            PageAllocError::NotInitialized
-        })?;
-        // SAFETY: the HOB-list contract above requires the discovered free regions to be
-        // valid and exclusively owned SMRAM.
-        unsafe {
-            self.init_from_regions(scanned)?;
-        }
-
         Ok((regions, count))
     }
 
     /// Initializes allocator bookkeeping from already parsed SMRAM regions.
+    ///
+    /// This is the first write into memory the producer named, so the caller is expected to have
+    /// validated `scanned` beforehand.
     ///
     /// ## Safety
     ///
     /// Any region that passes the descriptor validation below must describe
     /// valid memory for its full declared size. Non-pre-allocated regions must
     /// additionally be exclusively owned.
-    unsafe fn init_from_regions(&self, scanned: &[SmramRegion]) -> Result<(), PageAllocError> {
+    pub(crate) unsafe fn init_from_regions(&self, scanned: &[SmramRegion]) -> Result<(), PageAllocError> {
         if scanned.is_empty() {
             log::error!("Page allocator init failed: no SMRAM regions were supplied");
             return Err(PageAllocError::NotInitialized);
@@ -1383,7 +1394,7 @@ mod tests {
 
         // SAFETY: a null HOB pointer is explicitly rejected before dereference.
         unsafe {
-            assert_eq!(allocator.init_from_hob_list(ptr::null()), Err(PageAllocError::NotInitialized));
+            assert!(matches!(PageAllocator::scan_hob_list(ptr::null()), Err(PageAllocError::NotInitialized)));
         }
 
         let mut state = allocator.lock_state();
@@ -1672,10 +1683,8 @@ mod tests {
 
     #[test]
     fn test_page_allocator_rejects_a_null_hob_list() {
-        let allocator = PageAllocator::new();
-
         // SAFETY: the null pointer is rejected before any dereference.
-        let result = unsafe { allocator.init_from_hob_list(core::ptr::null()) };
+        let result = unsafe { PageAllocator::scan_hob_list(core::ptr::null()) };
         assert_eq!(result.map(|_| ()), Err(PageAllocError::NotInitialized));
     }
 
@@ -1800,6 +1809,73 @@ mod tests {
         assert_eq!(PageAllocator::calculate_bookkeeping(&allocated), Err(PageAllocError::OutOfMemory));
         assert_eq!(PageAllocator::calculate_bookkeeping(&too_small), Err(PageAllocError::OutOfMemory));
         assert_eq!(PageAllocator::calculate_bookkeeping(&unaligned), Err(PageAllocError::NotAligned));
+    }
+
+    #[test]
+    fn test_page_allocator_classify_mmram_in_regions_matches_the_committed_classifier() {
+        // The pre-commit and post-commit classifiers decide the same security questions, so a
+        // range must not be judged differently depending on which one a caller reaches for.
+        let fixture = AllocatorFixture::new();
+        let base = fixture.base;
+        let regions = regions_from(&[(base, TEST_REGION_BYTES as u64, false)]);
+        let page = UEFI_PAGE_SIZE as u64;
+        let span = TEST_REGION_BYTES as u64;
+
+        for (addr, size) in [
+            (base, page),
+            (base, span),
+            (base + span - page, page),
+            (base + span, page),
+            (base - page, page),
+            (base - page, span),
+            (base + span - page, span),
+            (base, 0),
+            (u64::MAX, page),
+        ] {
+            assert_eq!(
+                classify_mmram_in_regions(&regions, addr, size),
+                fixture.allocator.classify_mmram(addr, size).expect("fixture allocator is initialized"),
+                "classification diverged for 0x{addr:016x} size 0x{size:x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_regions_contain_address() {
+        let regions = regions_from(&[(0x1000, 0x2000, false), (0x8000, 0x1000, true)]);
+
+        assert!(regions_contain(&regions, 0x1000));
+        assert!(regions_contain(&regions, 0x2fff));
+        // Pre-allocated regions still describe MMRAM, so they anchor just as well.
+        assert!(regions_contain(&regions, 0x8000));
+        assert!(!regions_contain(&regions, 0x0fff));
+        assert!(!regions_contain(&regions, 0x3000));
+        assert!(!regions_contain(&regions, 0x9000));
+        assert!(!regions_contain(&[], 0x1000));
+    }
+
+    #[test]
+    fn test_page_allocator_regions_contain_address_does_not_overflow() {
+        let regions = regions_from(&[(u64::MAX - 0xfff, 0x2000, false)]);
+
+        // The declared extent wraps, so nothing can be shown to be inside it.
+        assert!(!regions_contain(&regions, u64::MAX));
+    }
+
+    #[test]
+    fn test_page_allocator_classify_mmram_in_regions() {
+        let regions = regions_from(&[(0x1000, 0x1000, false), (0x2000, 0x1000, true)]);
+
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0x1000), MmramPlacement::Inside);
+        // Adjacent regions cover the range jointly, so this is wholly inside.
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0x2000), MmramPlacement::Inside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x4000, 0x1000), MmramPlacement::Outside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x2800, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x0800, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0), MmramPlacement::Outside);
+        // A range whose end overflows fails closed.
+        assert_eq!(classify_mmram_in_regions(&regions, u64::MAX, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&[], 0x1000, 0x1000), MmramPlacement::Outside);
     }
 
     #[test]

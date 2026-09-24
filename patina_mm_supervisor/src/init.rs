@@ -35,7 +35,7 @@ use crate::{
     mem::page_allocator::SmramDescriptor,
     mem::{
         self,
-        page_allocator::{MAX_TEMP_REGIONS, coalesced_smrr_range},
+        page_allocator::{classify_mmram_in_regions, coalesced_smrr_range, regions_contain},
     },
     mm_policy::{self, MemDescriptorV1_0, dump_policy, gate::PolicyGate, walk_page_table},
     query_address_ownership,
@@ -100,6 +100,52 @@ const SMM_MONITOR_CTL_MSEG_BASE_MASK: u64 = 0xffff_f000;
 
 /// Index into the Fixup64 array for the SMI handler IDTR pointer.
 const FIXUP64_SMI_HANDLER_IDTR: usize = 5;
+
+/// Anchor object placed in the supervisor's own image.
+static IMAGE_ANCHOR: u8 = 0;
+
+/// Why the incoming SMRAM descriptors cannot be used as an MMRAM bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MmramBoundError {
+    /// The descriptors do not cover an address the CPU proves is MMRAM.
+    AnchorOutsideRegions {
+        /// The address that was expected to be covered.
+        anchor: u64,
+    },
+    /// No scanned region meets the SMRR base and size requirements.
+    NoSmrrRange,
+}
+
+/// Returns an address the CPU proves is inside MMRAM.
+///
+/// The supervisor executes in MM from an image the MM IPL loaded into MMRAM, so an address in its
+/// own image is inside MMRAM whatever the HOB list claims. The SMRRs would be the natural source
+/// for a complete bound, but the platform leaves them unprogrammed until the supervisor writes
+/// them, so a single anchor point is what is available this early.
+fn supervisor_image_anchor() -> u64 {
+    &raw const IMAGE_ANCHOR as u64
+}
+
+/// Derives the SMRR range from `scanned` and requires those descriptors to cover `anchor`.
+///
+/// Every other MMRAM containment check resolves against the producer's own description, so it
+/// cannot detect a description that is wrong as a whole. Requiring the description to contain an
+/// address the CPU independently proves is MMRAM is the one check that can, and combined with the
+/// contiguity requirement it confines a forged HOB list to extending the span the supervisor is
+/// genuinely running in.
+fn establish_mmram_bound(
+    scanned: &[SmramRegion],
+    anchor: u64,
+    derive_smrr_range: impl FnOnce(&[SmramRegion]) -> Option<SmramRegion>,
+) -> Result<SmramRegion, MmramBoundError> {
+    if !regions_contain(scanned, anchor) {
+        return Err(MmramBoundError::AnchorOutsideRegions { anchor });
+    }
+
+    let range = derive_smrr_range(scanned).ok_or(MmramBoundError::NoSmrrRange)?;
+    log::info!("Discovered SMRR range: base=0x{:08x}, size=0x{:08x}", range.base, range.size);
+    Ok(range)
+}
 
 /// MM Common Region HOB Data Structure
 ///
@@ -456,10 +502,18 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> PolicyInitServices for RuntimePolic
 impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// BSP-specific initialization.
     ///
-    /// This is called only on the BSP after basic setup is complete. It
-    /// initializes interrupts, the page and paging allocators, the global page
-    /// table, discovers the user module entry point, initializes the security
-    /// policy, and remaps the HOB list so the demoted user core can read it.
+    /// This is called only on the BSP after basic setup is complete. It parses and validates the
+    /// incoming HOB list, programs the SMRR, initializes the page and paging allocators and the
+    /// global page table, discovers the user module entry point, initializes the security policy,
+    /// and remaps the HOB list so the demoted user core can read it.
+    ///
+    /// The MM IPL describes MMRAM and sits outside the supervisor's trust boundary, and the
+    /// platform leaves the SMRRs unprogrammed at entry, so no hardware bound is available to check
+    /// its descriptors against. Ordering carries the weight instead: the descriptors are parsed
+    /// into stack metadata, anchored to the supervisor's own image, validated, and used to program
+    /// the SMRR, and only then is anything written into the memory they name. The extent
+    /// of MMRAM still originates with the MM IPL, which remains a platform requirement rather than
+    /// something the supervisor can verify.
     pub(crate) fn bsp_init(&'static self, hob_list: *const c_void) {
         log::info!("BSP performing one-time initialization...");
 
@@ -468,27 +522,49 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             panic!("Failed to initialize Interrupt Manager: {err:?}");
         });
 
+        // Parse the producer's SMRAM descriptors into stack metadata. Nothing in MMRAM is written
+        // until they have been anchored and validated below.
         // SAFETY: `hob_list` is provided by the MM IPL and is guaranteed to be a
         // valid HOB list (the caller asserts it is non-null before dispatching).
-        let (scanned_regions, region_count) = unsafe {
-            self.init_page_allocators(
-                hob_list,
-                security_state().page_allocator(),
-                security_state().paging_allocator(),
-                init_state(),
-                coalesced_smrr_range,
-            )
+        let (scanned_regions, region_count) = match unsafe { mem::PageAllocator::scan_hob_list(hob_list) } {
+            Ok(scanned) => scanned,
+            Err(e) => panic!("Failed to scan the SMRAM regions described by the HOB list: {e:?}"),
+        };
+        let scanned_regions = scanned_regions.get(..region_count).unwrap_or(&scanned_regions);
+
+        let smrr_range = match establish_mmram_bound(scanned_regions, supervisor_image_anchor(), coalesced_smrr_range) {
+            Ok(range) => range,
+            Err(e) => panic!("Cannot establish an MMRAM bound from the incoming HOB list: {e:?}"),
         };
 
-        // Validate the critical incoming HOBs against the untrusted producer's
-        // data before any of their contents are consumed below.
-        let scanned_regions = scanned_regions.get(..region_count).unwrap_or(&scanned_regions);
+        // Validate the critical incoming HOBs against the scanned metadata, before any of their
+        // contents are consumed below.
         // SAFETY: `hob_list` was checked non-null by `entry_point` and points to
         // a valid HOB list for the duration of BSP initialization.
         let handoff = unsafe { (hob_list as *const PhaseHandoffInformationTable).as_ref() }
             .expect("BSP initialization requires a non-null HOB list");
-        if let Err(e) = hob_validation::validate_incoming_hobs_pre_paging_init(handoff, scanned_regions) {
+        if let Err(e) =
+            hob_validation::validate_incoming_hobs_pre_paging_init(handoff, scanned_regions, |base, size| {
+                classify_mmram_in_regions(scanned_regions, base, size).is_inside(base, size)
+            })
+        {
             panic!("Incoming HOB validation failed: {e}");
+        }
+
+        // Program the range before the allocator makes the first write into MMRAM. Enabling it is
+        // left to `smrr_enable` on the next SMI entry: finalizing it here makes the range enforcing
+        // across the `RSM` back to the non-MM world, which faults that world on this platform.
+        smrr_initialize(smrr_range);
+        init_state().set_smrr_range(smrr_range);
+
+        // SAFETY: the descriptors were anchored and validated above, so the free regions they
+        // describe are MMRAM the supervisor owns exclusively.
+        unsafe {
+            self.init_page_allocators(
+                scanned_regions,
+                security_state().page_allocator(),
+                security_state().paging_allocator(),
+            );
         }
 
         self.init_page_table();
@@ -512,40 +588,25 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         log::info!("BSP one-time initialization complete.");
     }
 
-    /// Initializes the page and paging allocators from the HOB list.
+    /// Commits the validated SMRAM regions to the page allocator and initializes the paging
+    /// allocator from a pool reserved out of it.
     ///
-    /// Sets up SMRAM memory tracking from the HOB list, reserves a pool of
-    /// pages for paging structures (done before paging is initialized to avoid
-    /// a circular dependency), and initializes the paging allocator with that
-    /// pool.
+    /// These are the first writes into the memory the producer described, so `scanned` must
+    /// already have been validated.
     ///
     /// ## Safety
     ///
-    /// The caller must ensure that `hob_list` points to a valid HOB list.
+    /// Every non-pre-allocated region in `scanned` must be valid, exclusively owned MMRAM.
     unsafe fn init_page_allocators(
         &self,
-        hob_list: *const c_void,
+        scanned: &[SmramRegion],
         page_allocator: &mem::PageAllocator,
         paging_allocator: &mem::PagingPoolAllocator,
-        state: &crate::state::InitState,
-        derive_smrr_range: impl FnOnce(&[SmramRegion]) -> Option<SmramRegion>,
-    ) -> ([SmramRegion; MAX_TEMP_REGIONS], usize) {
-        // Initialize the page allocator from the HOB list. This finds all SMRAM
-        // regions and sets up memory tracking.
-        // SAFETY: `hob_list` is a valid HOB list per this function's contract.
-        let (smram_regions, region_count) = match unsafe { page_allocator.init_from_hob_list(hob_list) } {
-            Ok(scanned_regions) => scanned_regions,
-            Err(e) => panic!("Failed to initialize page allocator: {e:?}"),
-        };
-
-        // Derive the SMRR range from the scanned SMRAM regions, coalescing
-        // physically adjacent regions, and store it for later SMRR programming.
-        match derive_smrr_range(smram_regions.get(..region_count).unwrap_or(&smram_regions)) {
-            Some(range) => {
-                log::info!("Discovered SMRR range: base=0x{:08x}, size=0x{:08x}", range.base, range.size);
-                state.set_smrr_range(range);
-            }
-            None => panic!("Failed to determine SMRR range from scanned SMRAM regions"),
+    ) {
+        // SAFETY: the caller guarantees that the free regions in `scanned` are valid, exclusively
+        // owned MMRAM.
+        if let Err(e) = unsafe { page_allocator.init_from_regions(scanned) } {
+            panic!("Failed to initialize page allocator: {e:?}");
         }
 
         // Reserve pages from the page allocator for paging structures. This is
@@ -570,8 +631,6 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         if let Err(e) = init_result {
             panic!("Failed to initialize paging allocator: {e:?}");
         }
-
-        (smram_regions, region_count)
     }
 
     /// Initializes the global page table from the active CR3.
@@ -859,6 +918,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // IA32_SMM_MONITOR_CTL is per-logical-processor, so every core programs it.
         Self::program_mseg_base(cpu_id);
 
+        // SMRR is per-logical-processor. The APs program theirs here; the BSP's was done in `bsp_init`.
         let range =
             init_state().smrr_range().expect("SMRR range must be determined during BSP init before per-core init");
         smrr_initialize(range);
@@ -2020,77 +2080,116 @@ mod tests {
         memory
     }
 
+    /// Scans `hob_list` into an owned region list, as `bsp_init` does before committing to it.
+    fn scan_regions(hob_list: &RawHobList) -> Vec<SmramRegion> {
+        // SAFETY: `hob_list` is a valid contiguous HOB list.
+        let (regions, count) = unsafe { PageAllocator::scan_hob_list(hob_list.as_ptr()) }.expect("scan SMRAM regions");
+        regions[..count].to_vec()
+    }
+
     #[test]
-    fn test_init_page_allocators_from_real_hob_list() {
+    fn test_establish_mmram_bound_returns_the_derived_range() {
+        let regions = [SmramRegion::new(0x1000, 0x2000, false)];
+        let range = SmramRegion::new(0x1000, 0x2000, false);
+
+        assert_eq!(establish_mmram_bound(&regions, 0x1500, |_| Some(range)), Ok(range));
+    }
+
+    #[test]
+    fn test_establish_mmram_bound_rejects_descriptors_that_do_not_cover_the_anchor() {
+        // A HOB list describing MMRAM somewhere other than where the supervisor is executing is
+        // refused outright, and before the range is derived from it.
+        let regions = [SmramRegion::new(0x1000, 0x2000, false)];
+        let derived = core::cell::Cell::new(false);
+
+        let result = establish_mmram_bound(&regions, 0x4000, |_| {
+            derived.set(true);
+            Some(SmramRegion::new(0x1000, 0x2000, false))
+        });
+
+        assert_eq!(result, Err(MmramBoundError::AnchorOutsideRegions { anchor: 0x4000 }));
+        assert!(!derived.get(), "the range was derived from descriptors that had already failed");
+    }
+
+    #[test]
+    fn test_establish_mmram_bound_covers_a_region_end_to_end() {
+        let regions = [SmramRegion::new(0x1000, 0x2000, false)];
+        let range = SmramRegion::new(0x1000, 0x2000, false);
+
+        assert!(establish_mmram_bound(&regions, 0x1000, |_| Some(range)).is_ok());
+        assert!(establish_mmram_bound(&regions, 0x2fff, |_| Some(range)).is_ok());
+        assert_eq!(
+            establish_mmram_bound(&regions, 0x3000, |_| Some(range)),
+            Err(MmramBoundError::AnchorOutsideRegions { anchor: 0x3000 })
+        );
+    }
+
+    #[test]
+    fn test_establish_mmram_bound_rejects_regions_without_an_smrr_range() {
+        let regions = [SmramRegion::new(0x1000, 0x2000, false)];
+
+        assert_eq!(establish_mmram_bound(&regions, 0x1000, |_| None), Err(MmramBoundError::NoSmrrRange));
+    }
+
+    #[test]
+    fn test_supervisor_image_anchor_points_into_the_supervisor_image() {
+        // The anchor is only meaningful if it is a real address in this image.
+        assert_eq!(supervisor_image_anchor(), &raw const IMAGE_ANCHOR as u64);
+        assert_ne!(supervisor_image_anchor(), 0);
+    }
+
+    #[test]
+    fn test_scan_hob_list_does_not_write_the_memory_it_describes() {
+        // Scanning must not commit to the producer's descriptors. Nothing in the memory they name
+        // may be touched until they have been anchored and validated, or a forged descriptor
+        // steers a write before anything has had the chance to reject it.
+        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let size = memory.size() as usize;
+        // SAFETY: `memory` is a live, exclusively owned allocation of `size` bytes and no
+        // references into it are held here.
+        unsafe { core::ptr::write_bytes(memory.base() as *mut u8, 0xa5, size) };
+
+        let scanned = scan_regions(&hob_list);
+
+        assert_eq!(scanned, [SmramRegion::new(memory.base(), memory.size(), false)]);
+        // SAFETY: the same live allocation, read through a shared view while nothing else
+        // references it.
+        let after_scan = unsafe { core::slice::from_raw_parts(memory.base() as *const u8, size) };
+        assert!(after_scan.iter().all(|byte| *byte == 0xa5), "scanning wrote into the memory the HOB list describes");
+
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let page_allocator = PageAllocator::new();
+        let paging_allocator = PagingPoolAllocator::new();
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
+
+        // SAFETY: the same live allocation, read after the allocator has finished with it.
+        let after_commit = unsafe { core::slice::from_raw_parts(memory.base() as *const u8, size) };
+        assert!(
+            after_commit.iter().any(|byte| *byte != 0xa5),
+            "committing left the bookkeeping region untouched, so the test proves nothing"
+        );
+    }
+
+    #[test]
+    fn test_init_page_allocators_commits_scanned_regions() {
         let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
         let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
         let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
         let page_allocator = PageAllocator::new();
         let paging_allocator = PagingPoolAllocator::new();
-        let state = InitState::new();
 
-        // SAFETY: `hob_list` is a valid contiguous HOB list and its SMRAM descriptor
-        // references the live, exclusively owned page-aligned `memory` allocation.
-        let (regions, count) = unsafe {
-            supervisor.init_page_allocators(hob_list.as_ptr(), &page_allocator, &paging_allocator, &state, |regions| {
-                regions.first().copied()
-            })
-        };
+        assert_eq!(scanned, [SmramRegion::new(memory.base(), memory.size(), false)]);
 
-        assert_eq!(count, 1);
-        assert_eq!(regions[0], SmramRegion::new(memory.base(), memory.size(), false));
-        assert_eq!(state.smrr_range(), Some(regions[0]));
+        // SAFETY: the scanned descriptor references the live, exclusively owned page-aligned
+        // `memory` allocation.
+        unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
+
         assert!(page_allocator.is_initialized());
         assert!(paging_allocator.is_initialized());
         assert_eq!(paging_allocator.free_page_count(), mem::DEFAULT_PAGING_POOL_PAGES);
-    }
-
-    #[test]
-    fn test_init_page_allocators_rejects_hob_list_without_smram() {
-        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
-        let hob_list = RawHobList::new().finish();
-        let page_allocator = PageAllocator::new();
-        let paging_allocator = PagingPoolAllocator::new();
-        let state = InitState::new();
-
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            // SAFETY: `hob_list` is a valid contiguous HOB list.
-            unsafe {
-                supervisor.init_page_allocators(
-                    hob_list.as_ptr(),
-                    &page_allocator,
-                    &paging_allocator,
-                    &state,
-                    |regions| regions.first().copied(),
-                );
-            }
-        }));
-
-        assert!(result.is_err());
-        assert!(!page_allocator.is_initialized());
-        assert!(!paging_allocator.is_initialized());
-    }
-
-    #[test]
-    fn test_init_page_allocators_rejects_missing_smrr_range() {
-        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
-        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
-        let hob_list = smram_hob_list(&memory);
-        let page_allocator = PageAllocator::new();
-        let paging_allocator = PagingPoolAllocator::new();
-        let state = InitState::new();
-
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            // SAFETY: `hob_list` and its SMRAM allocation remain valid for the call.
-            unsafe {
-                supervisor
-                    .init_page_allocators(hob_list.as_ptr(), &page_allocator, &paging_allocator, &state, |_| None);
-            }
-        }));
-
-        assert!(result.is_err());
-        assert_eq!(state.smrr_range(), None);
-        assert!(!paging_allocator.is_initialized());
     }
 
     #[test]
@@ -2098,21 +2197,13 @@ mod tests {
         let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
         let memory = PageAlignedMemory::new(2);
         let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
         let page_allocator = PageAllocator::new();
         let paging_allocator = PagingPoolAllocator::new();
-        let state = InitState::new();
 
         let result = catch_unwind(AssertUnwindSafe(|| {
-            // SAFETY: `hob_list` and its SMRAM allocation remain valid for the call.
-            unsafe {
-                supervisor.init_page_allocators(
-                    hob_list.as_ptr(),
-                    &page_allocator,
-                    &paging_allocator,
-                    &state,
-                    |regions| regions.first().copied(),
-                );
-            }
+            // SAFETY: the scanned descriptor references the live `memory` allocation.
+            unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
         }));
 
         assert!(result.is_err());
@@ -2134,20 +2225,12 @@ mod tests {
 
         let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
         let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
         let page_allocator = PageAllocator::new();
-        let state = InitState::new();
 
         let result = catch_unwind(AssertUnwindSafe(|| {
-            // SAFETY: `hob_list` and its SMRAM allocation remain valid for the call.
-            unsafe {
-                supervisor.init_page_allocators(
-                    hob_list.as_ptr(),
-                    &page_allocator,
-                    &paging_allocator,
-                    &state,
-                    |regions| regions.first().copied(),
-                );
-            }
+            // SAFETY: the scanned descriptor references the live `memory` allocation.
+            unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
         }));
 
         assert!(result.is_err());

@@ -61,7 +61,6 @@ use patina_paging::{MemoryAttributes, PageTable};
 use zerocopy::FromBytes;
 
 use crate::init::MmSupvPassDownHobData;
-use crate::is_buffer_inside_mmram;
 use crate::smrr::SmramRegion;
 use crate::state::security_state;
 
@@ -791,11 +790,14 @@ fn validate_pass_down<'a>(
 
 /// Validates the critical incoming HOBs before their contents are consumed.
 ///
-/// `regions` are the MMRAM regions scanned from the HOB list; the page allocator
-/// must already be initialized so the MMRAM containment checks are meaningful.
+/// `regions` are the MMRAM regions scanned from the HOB list, and `is_inside_mmram` resolves
+/// containment against that same scanned set. Both are supplied by the caller rather than read
+/// back from the page allocator so this can run before the allocator has committed to the
+/// producer's descriptors.
 pub(crate) fn validate_incoming_hobs_pre_paging_init(
     handoff: &PhaseHandoffInformationTable,
     regions: &[SmramRegion],
+    is_inside_mmram: impl Fn(u64, u64) -> bool + Copy,
 ) -> Result<(), HobValidationError> {
     // Dump both inputs before validating either, so the full picture is visible
     // even when a later check fails.
@@ -810,15 +812,15 @@ pub(crate) fn validate_incoming_hobs_pre_paging_init(
     // SAFETY: `handoff` is the MM IPL's HOB list, which the caller guarantees is a valid,
     // END_OF_HOB_LIST-terminated list for the duration of initialization.
     let hob_list_len = unsafe { get_pi_hob_list_size(core::ptr::from_ref(handoff).cast()) } as u64;
-    validate_hob_list_inside_mmram(handoff, hob_list_len, is_buffer_inside_mmram)?;
+    validate_hob_list_inside_mmram(handoff, hob_list_len, is_inside_mmram)?;
     // MMRAM is a single contiguous span (checked above), so allocations can be
     // tested against one range instead of iterating the region list.
     let hob = Hob::Handoff(handoff);
     validate_memory_allocations(&hob, mmram_span(regions))?;
-    validate_allocation_modules(&hob, is_buffer_inside_mmram)?;
+    validate_allocation_modules(&hob, is_inside_mmram)?;
     validate_resource_descriptor_overlaps(&hob)?;
     validate_resource_v2_memory_attributes(&hob)?;
-    validate_pass_down(&hob, is_buffer_inside_mmram)?;
+    validate_pass_down(&hob, is_inside_mmram)?;
 
     Ok(())
 }

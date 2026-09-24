@@ -1,10 +1,13 @@
 //! System Management Range Register (SMRR) configuration.
 //!
 //! This module programs the SMRR base and mask MSRs to protect the SMRAM region
-//! from non SMM accesses, and enables the SMM Code Access Check feature. The
-//! SMRRs are initialized on the first SMI entry and, on every subsequent SMI
-//! rendezvous, enabled and finalized by setting the valid in the SMRR mask
-//! register.
+//! from non SMM accesses, and enables the SMM Code Access Check feature.
+//!
+//! The SMRRs are per logical processor and are left unprogrammed by the platform, so each core
+//! programs its own on first entry. The BSP does so during its one-time initialization, before
+//! anything is written into memory the HOB list describes; the APs do so during per-core
+//! initialization. Enabling the range is separate and happens on SMI entry, so it never takes
+//! effect across the `RSM` back to the non-MM world.
 //!
 //! ## License
 //!
@@ -209,9 +212,13 @@ const fn smrr_base_value(raw: u64, smrr_base: u32) -> u64 {
 
 /// Programs the SMRR base and mask registers to protect the given SMRAM region.
 ///
-/// This is called on the first SMI entry. The region is configured as
-/// write-back cacheable but is not yet enabled or finalized; call [`smrr_enable`]
-/// to set the valid and bit-10 fields and activate the range.
+/// The region is configured as write-back cacheable but is not yet enabled or finalized; call
+/// [`smrr_enable`] to set the valid and bit-10 fields and activate the range.
+///
+/// Returns without touching the registers when this processor's SMRR is already finalized, since
+/// a finalized range cannot be reprogrammed until the next reset. That makes the call idempotent
+/// for the BSP, which configures its own SMRR during one-time initialization and reaches
+/// per-core initialization with the range already locked.
 ///
 /// # Panics
 ///
@@ -225,6 +232,12 @@ pub(crate) fn smrr_initialize(range: SmramRegion) {
     assert!(is_smrr_supported(), "Unsupported CPU: SMRR not supported");
 
     assert!(is_smrr_ext_supported(), "Unsupported CPU: SMRR extended capability not supported");
+
+    // SAFETY: SMRR support was verified above, so MSR_SMRR_MASK is a valid architectural MSR and
+    // reading it has no side effects.
+    if mask_reg_bit10_set(unsafe { read_msr(MSR_SMRR_MASK) }) {
+        return;
+    }
 
     // SMRR_BASE and SMRR_MASK only describe addresses below 4 GiB. Truncating here would
     // validate and program a completely different region than the one handed in, leaving the
@@ -260,15 +273,18 @@ const fn smrr_enable_mask(mask: u64) -> Option<u64> {
 /// Enables and finalizes the SMRR by setting the valid and bit-10 fields on the
 /// mask register.
 ///
-/// This is called on every subsequent SMI entry (rendezvous). If bit 10 is
-/// already set, the function does nothing, since a finalized SMRR cannot be
+/// If bit 10 is already set, the function does nothing, since a finalized SMRR cannot be
 /// modified until the next processor reset.
 ///
-/// CPU MTRR/SMRR support is verified once in [`smrr_initialize`] on the first
-/// SMI, so it is not re-checked here on every SMI.
+/// This runs on SMI entry rather than at the end of the first SMI. Finalizing the range while the
+/// supervisor still holds the CPU leaves it enforcing across the `RSM` back to the non-MM world,
+/// which faults on platforms whose pre-boot firmware still reaches into that range.
+///
+/// CPU MTRR/SMRR support is verified in [`smrr_initialize`] before this is first
+/// reached, so it is not re-checked here on every SMI.
 #[cfg_attr(coverage, coverage(off))]
 pub(crate) fn smrr_enable() {
-    // SAFETY: SMRR support was verified in `smrr_initialize` on the first SMI,
+    // SAFETY: SMRR support was verified in `smrr_initialize` before this point,
     // so MSR_SMRR_MASK is a valid architectural MSR. We only set the valid and
     // bit-10 fields to enable and finalize the previously programmed range,
     // preserving all other bits. The write is skipped if the range is already
