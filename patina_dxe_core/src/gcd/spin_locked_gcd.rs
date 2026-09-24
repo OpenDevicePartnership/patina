@@ -1149,7 +1149,7 @@ impl GCD {
             return None; // skip entries for non-page aligned entries
         }
         if !descriptor.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            log::warn!("GCD returned a non-page-aligned memory descriptor.");
+            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
             return None; // skip entries not page aligned
         }
 
