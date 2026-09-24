@@ -216,6 +216,19 @@ The DXE Readiness Tool will fail if a Memory Allocation HOB is discovered that c
 > **Guidance:**
 > Platforms must not allocate page 0.
 
+#### 2.5 FV HOBs Must Have Corresponding Memory Allocation HOB
+
+Patina only builds the initial GCD allocation state from Memory Allocation HOBs. As a result, in order to make sure
+that the FV regions do not get stomped on, Memory Allocation HOBs must be produced for this region.
+PEI_SERVICES.AllocatePages() will create HOBs when called. If the FV is otherwise put into system memory, the platform
+must produce a Memory Allocation HOB for that region.
+
+This is also a requirement in EDK II, but is not explicitly enforced; the Patina Readiness Tool checks for this
+condition.
+
+> **Guidance:**
+> All FV regions must be covered by Memory Allocation HOBs.
+
 ### 3. Miscellaneous Requirements
 
 This section details requirements that do not fit under another category.
