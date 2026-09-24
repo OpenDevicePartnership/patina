@@ -1173,52 +1173,6 @@ fn process_hob_allocations(hob_list: &HobList) {
                     continue;
                 }
             }
-            Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
-            | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
-                header: _,
-                base_address,
-                length,
-                fv_name: _,
-                file_name: _,
-            })
-            | Hob::FirmwareVolume3(hob::FirmwareVolume3 {
-                header: _,
-                base_address,
-                length,
-                authentication_status: _,
-                extracted_fv: _,
-                fv_name: _,
-                file_name: _,
-            }) => {
-                log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
-
-                // EDK II assumes all FVs are MMIO, however many platforms do not report the
-                // backing address space as an MMIO resource, causing the allocation to silently fail.
-                // Instead of assuming MMIO here, retrieve the backing memory type from the GCD if it
-                // exists and allocate the FV region using that type. Note: there are often multiple
-                // FV HOBs for the same FV. This will only allocate for the first HOB since
-                // get_memory_descriptor_for_address() is filtering for free descriptors.
-
-                //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
-                //This means they must be direct-allocated in the GCD, and no stats will be tracked for them.
-                match GCD.get_memory_descriptor_for_address(*base_address, |_, allocated| !allocated) {
-                    Ok(desc) => {
-                        let _ = GCD.allocate_memory_space(
-                    AllocationStrategy::Address(*base_address as usize),
-                    desc.memory_type,
-                    0,
-                    *length as usize,
-                    protocol_db::DXE_CORE_HANDLE,
-                    None)
-                    .inspect_err(|err|{
-                        log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err}",
-                        );
-                    });
-                    }
-                    Err(_) => continue,
-                }
-            }
             _ => continue,
         }
     }
@@ -2046,9 +2000,9 @@ mod tests {
     }
 
     #[test]
-    fn process_hob_allocations_should_allocate_fv_in_system_memory() {
-        // A firmware volume HOB whose region resides in free system memory (rather than MMIO) must still
-        // be allocated so that regular allocations cannot corrupt the FV.
+    fn process_hob_allocations_should_not_allocate_fv_in_system_memory() {
+        // Firmware volume HOBs do not claim memory. The pre-DXE phase must describe claimed regions
+        // with memory allocation HOBs instead.
         with_locked_state(GcdInit::WithHobList(0x1000000), |_physical_hob_list| {
             // Carve out a page-aligned region of free system memory from the GCD, then free it back so it
             // becomes free (unallocated) system memory. This is where the FV HOB will point.
@@ -2089,14 +2043,16 @@ mod tests {
 
             process_hob_allocations(&hob_list);
 
-            // The FV region should now be allocated to the DXE Core, still typed as system memory.
+            // The FV region should remain free system memory.
             let desc = GCD
-                .get_memory_descriptor_for_address(fv_base as u64, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                .get_memory_descriptor_for_address(fv_base as u64, |d, allocated| {
+                    !allocated && d.memory_type != GcdMemoryType::NonExistent
+                })
                 .unwrap();
             assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
-            assert_eq!(desc.base_address, fv_base as u64);
-            assert_eq!(desc.length, fv_len as u64);
-            assert_eq!(desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+            assert!(desc.base_address <= fv_base as u64);
+            assert!(desc.base_address + desc.length >= fv_base as u64 + fv_len as u64);
+            assert_eq!(desc.image_handle, INVALID_HANDLE);
         });
     }
 
@@ -2184,7 +2140,7 @@ mod tests {
                 .unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10002000);
-            assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+            assert_eq!(mmio_desc.length, 0x2000000 - 0x2000);
             assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         });
     }
