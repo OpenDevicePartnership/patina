@@ -39,7 +39,7 @@ use crate::{
     },
     mm_policy::{self, MemDescriptorV1_0, dump_policy, gate::PolicyGate, walk_page_table},
     query_address_ownership,
-    save_state::SaveStateInfo,
+    save_state::{SaveStateInfo, validate_save_state_regions},
     smrr::{SmramRegion, configure_smm_code_access, smrr_initialize},
     state::{init_state, security_state},
 };
@@ -83,6 +83,8 @@ pub enum PolicyInitError {
     MemoryAllocationFailed,
     /// One or more communication buffers are not properly initialized.
     MissingCommunicationBuffer,
+    /// The `PassDown` HOB does not describe usable per-CPU save-state regions.
+    InvalidSaveStateRegions,
 }
 
 /// Offset from SMBASE where the SMI handler code is located.
@@ -1173,12 +1175,16 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             log::warn!("MM Initialized buffer is null in PassDown HOB");
         }
 
-        // Log the per-CPU SMBASE array passed down for the save-state read syscall.
-        if sm_base != 0 {
-            log::info!("CPU SMBASE array at 0x{sm_base:016x}");
-        } else {
-            log::warn!("CPU SMBASE array pointer is null in PassDown HOB");
+        // The save-state syscall reads these regions on Ring 3's behalf, so every entry is proven
+        // to be inside MMRAM and supervisor-only now rather than trusted at each read.
+        let validation = validate_save_state_regions(sm_base, number_of_cpus, is_buffer_inside_mmram, |base, size| {
+            matches!(query_address_ownership(base, size), Some(PageOwnership::Supervisor))
+        });
+        if let Err(e) = validation {
+            log::error!("PassDown HOB does not describe usable save-state regions: {e:?}");
+            return Err(PolicyInitError::InvalidSaveStateRegions);
         }
+        log::info!("Validated save-state regions for {number_of_cpus} CPU(s) from SMBASE array at 0x{sm_base:016x}");
 
         let policy_ptr = firmware_policy_buffer as *const u8;
         let memory_policy_buffer = security_state().page_allocator().allocate_pages(1).map_err(|e| {
