@@ -83,6 +83,8 @@ pub enum PageAllocError {
     InvalidAddress,
     /// The address was not previously allocated.
     NotAllocated,
+    /// The freed range could not be made inaccessible in the page table, so it was left allocated.
+    UnmapFailed,
 }
 
 /// Type of memory allocation - distinguishes supervisor-internal vs user/driver allocations.
@@ -461,8 +463,12 @@ impl LockedState<'_> {
         Some(addr)
     }
 
-    /// Frees `num_pages` starting at `addr`, verifying the pages are allocated.
-    fn free(&mut self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
+    /// Returns the bit range covering `[addr, addr + num_pages)`, requiring every page in it to be
+    /// allocated.
+    ///
+    /// Separate from [`mark_free`](Self::mark_free) so a caller can keep the range allocated while
+    /// it scrubs and unmaps, and abandon the free if either step fails.
+    fn verify_allocated(&self, addr: u64, num_pages: usize) -> Result<core::ops::Range<usize>, PageAllocError> {
         let bit_range = self.allocation_bit_range(addr, num_pages)?;
 
         // Verify all pages are allocated
@@ -475,24 +481,30 @@ impl LockedState<'_> {
                 return Err(PageAllocError::NotAllocated);
             }
         }
-        // Free the pages
+
+        Ok(bit_range)
+    }
+
+    /// Publishes `bit_range` as free and therefore reusable.
+    fn mark_free(&mut self, bit_range: core::ops::Range<usize>) {
         for bit in bit_range {
             self.set_bit_free(bit);
         }
-        log::trace!("Freed {num_pages} page(s) at 0x{addr:016x}");
-        Ok(())
     }
 
-    /// Frees `num_pages` starting at `addr`, verifying the allocation type matches.
-    fn free_checked(
-        &mut self,
+    /// Returns the bit range covering `[addr, addr + num_pages)`, requiring every page in it to be
+    /// allocated with `expected_type`.
+    ///
+    /// The type-checked counterpart to [`verify_allocated`](Self::verify_allocated), and split
+    /// from [`mark_free`](Self::mark_free) for the same reason.
+    fn verify_allocated_with_type(
+        &self,
         addr: u64,
         num_pages: usize,
         expected_type: AllocationType,
-    ) -> Result<(), PageAllocError> {
+    ) -> Result<core::ops::Range<usize>, PageAllocError> {
         let bit_range = self.allocation_bit_range(addr, num_pages)?;
 
-        // Verify all pages are allocated with the expected type
         for (page_offset, bit) in bit_range.clone().enumerate() {
             if !self.is_bit_allocated(bit) {
                 log::error!(
@@ -511,12 +523,8 @@ impl LockedState<'_> {
                 return Err(PageAllocError::InvalidAddress);
             }
         }
-        // Free the pages
-        for bit in bit_range {
-            self.set_bit_free(bit);
-        }
-        log::trace!("Freed {num_pages} {expected_type:?} page(s) at 0x{addr:016x}");
-        Ok(())
+
+        Ok(bit_range)
     }
 
     /// Returns the global bitmap range for a page-aligned allocation range.
@@ -1161,8 +1169,8 @@ impl PageAllocator {
     /// the range.
     fn zero_pages(addr: u64, num_pages: usize) {
         // SAFETY: the caller verified under the state lock that `[addr, addr + num_pages)` is a
-        // live allocation inside a single SMRAM region and that it is still mapped R/W, so the
-        // only access made while SMAP is lifted stays inside that range. SMAP has to come down
+        // live allocation inside a single SMRAM region and has just mapped it R/W, so the only
+        // access made while SMAP is lifted stays inside that range. SMAP has to come down
         // because the range may be user-owned (U/S = 1).
         unsafe {
             crate::runtime::with_user_access(|| {
@@ -1177,22 +1185,29 @@ impl PageAllocator {
     /// This prevents any read, write, or execute access to freed memory, mitigating
     /// use-after-free vulnerabilities.
     ///
-    /// If the global page table is not yet initialized (e.g., during early boot),
-    /// this is a no-op with a warning.
-    fn apply_freed_page_attributes(&self, addr: u64, num_pages: usize) {
+    /// A failure is reported so the caller can leave the range allocated rather than hand a still
+    /// reachable range back to the pool.
+    ///
+    /// Reports success when the global page table is not yet initialized, which only happens
+    /// before [`init_page_table`](crate::MmSupervisorCore::init_page_table). No free path runs
+    /// that early, so this is a diagnostic for a caller that starts to.
+    fn apply_freed_page_attributes(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
         let size = uefi_pages_to_size!(num_pages) as u64;
         let mut pt_guard = crate::state::security_state().lock_page_table();
-        if let Some(ref mut pt) = *pt_guard {
-            // Freed pages: ReadProtect (not present) + NX (no execute) + ReadOnly (no write)
-            // This makes the pages completely inaccessible.
-            if let Err(e) = pt.unmap_memory_region(addr, size) {
-                log::error!("Failed to set freed page attributes for 0x{addr:016x} ({num_pages} pages): {e:?}");
-            } else {
-                log::trace!("Marked 0x{addr:016x} ({num_pages} pages) as inaccessible (RP+NX+RO+S)");
-            }
-        } else {
+        let Some(pt) = pt_guard.as_mut() else {
             log::warn!("Page table not initialized, skipping freed page attribute update for 0x{addr:016x}");
+            return Ok(());
+        };
+
+        // Freed pages: ReadProtect (not present) + NX (no execute) + ReadOnly (no write)
+        // This makes the pages completely inaccessible.
+        if let Err(e) = pt.unmap_memory_region(addr, size) {
+            log::error!("Failed to set freed page attributes for 0x{addr:016x} ({num_pages} pages): {e:?}");
+            return Err(PageAllocError::UnmapFailed);
         }
+
+        log::trace!("Marked 0x{addr:016x} ({num_pages} pages) as inaccessible (RP+NX+RO+S)");
+        Ok(())
     }
 
     /// Frees previously allocated pages.
@@ -1201,28 +1216,7 @@ impl PageAllocator {
     /// marked as inaccessible in the page table (Supervisor + `ReadProtect` + `ExecuteProtect`) to
     /// prevent use-after-free.
     pub fn free_pages(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
-        if !self.is_initialized() {
-            log::error!("Free of 0x{addr:016x} ({num_pages} pages) rejected: allocator is not initialized");
-            return Err(PageAllocError::NotInitialized);
-        }
-
-        if !addr.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            log::error!("Free of 0x{addr:016x} ({num_pages} pages) rejected: address is not page aligned");
-            return Err(PageAllocError::NotAligned);
-        }
-
-        {
-            // Scrub under the state lock so no other CPU can allocate the range before it is clean.
-            let mut state = self.lock_state();
-            // `free` logs the address and the reason when it rejects the request.
-            state.free(addr, num_pages)?;
-            Self::zero_pages(addr, num_pages);
-        }
-
-        // Mark freed pages as inaccessible in the page table.
-        self.apply_freed_page_attributes(addr, num_pages);
-
-        Ok(())
+        self.release_pages(addr, num_pages, None)
     }
 
     /// Frees previously allocated pages, verifying the allocation type matches.
@@ -1236,27 +1230,65 @@ impl PageAllocator {
         num_pages: usize,
         expected_type: AllocationType,
     ) -> Result<(), PageAllocError> {
+        self.release_pages(addr, num_pages, Some(expected_type))
+    }
+
+    /// Scrubs `[addr, addr + num_pages)`, makes it inaccessible, and only then returns it to the
+    /// pool.
+    ///
+    /// The range stays marked allocated for the whole sequence. Publishing it first would let
+    /// another core take it while this one is still scrubbing, and would leave it advertised as
+    /// reusable if the page table transition failed, handing a caller memory that a stale mapping
+    /// still reaches. The state lock is held throughout for the same reason; the page table lock
+    /// is only ever taken after it, never before, so the order cannot invert.
+    fn release_pages(
+        &self,
+        addr: u64,
+        num_pages: usize,
+        expected_type: Option<AllocationType>,
+    ) -> Result<(), PageAllocError> {
+        self.release_pages_with(addr, num_pages, expected_type, |addr, num_pages| {
+            self.apply_freed_page_attributes(addr, num_pages)
+        })
+    }
+
+    /// Runs the [`release_pages`](Self::release_pages) sequence with `restrict` standing in for the
+    /// page table transition.
+    fn release_pages_with(
+        &self,
+        addr: u64,
+        num_pages: usize,
+        expected_type: Option<AllocationType>,
+        restrict: impl FnOnce(u64, usize) -> Result<(), PageAllocError>,
+    ) -> Result<(), PageAllocError> {
         if !self.is_initialized() {
-            log::error!("Checked free of 0x{addr:016x} ({num_pages} pages) rejected: allocator is not initialized");
+            log::error!("Free of 0x{addr:016x} ({num_pages} pages) rejected: allocator is not initialized");
             return Err(PageAllocError::NotInitialized);
         }
 
         if !addr.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            log::error!("Checked free of 0x{addr:016x} ({num_pages} pages) rejected: address is not page aligned");
+            log::error!("Free of 0x{addr:016x} ({num_pages} pages) rejected: address is not page aligned");
             return Err(PageAllocError::NotAligned);
         }
 
-        {
-            // Scrub under the state lock so no other CPU can allocate the range before it is clean.
-            let mut state = self.lock_state();
-            // `free_checked` logs the address and the reason when it rejects the request.
-            state.free_checked(addr, num_pages, expected_type)?;
-            Self::zero_pages(addr, num_pages);
-        }
+        let mut state = self.lock_state();
+        // `verify_allocated` and `verify_allocated_with_type` log the address and the reason when
+        // they reject the request.
+        let bit_range = match expected_type {
+            Some(expected_type) => state.verify_allocated_with_type(addr, num_pages, expected_type)?,
+            None => state.verify_allocated(addr, num_pages)?,
+        };
 
-        // Mark freed pages as inaccessible in the page table.
-        self.apply_freed_page_attributes(addr, num_pages);
+        // A range this allocator handed out is already mapped R/W, but one marked allocated from a
+        // producer's `EFI_ALLOCATED` descriptor keeps whatever the inherited page table gave it,
+        // and the MM IPL maps its HOB list read-only. Restore the attributes the allocator would
+        // have set so the scrub cannot fault on a mapping it never chose.
+        self.apply_data_page_attributes(addr, num_pages, state.bit_type(bit_range.start));
+        Self::zero_pages(addr, num_pages);
+        restrict(addr, num_pages)?;
+        state.mark_free(bit_range);
 
+        log::trace!("Freed {num_pages} page(s) at 0x{addr:016x}");
         Ok(())
     }
 
@@ -1588,32 +1620,37 @@ mod tests {
         let mut state = fixture.allocator.lock_state();
         let user = state.allocate(2, AllocationType::User).unwrap();
 
-        assert_eq!(state.free_checked(user, 2, AllocationType::Supervisor), Err(PageAllocError::InvalidAddress));
+        assert_eq!(
+            state.verify_allocated_with_type(user, 2, AllocationType::Supervisor),
+            Err(PageAllocError::InvalidAddress)
+        );
         assert_eq!(state.allocation_type(user), Some(AllocationType::User));
         assert_eq!(state.allocation_type(user + UEFI_PAGE_SIZE as u64), Some(AllocationType::User));
 
-        assert_eq!(state.free_checked(user, 2, AllocationType::User), Ok(()));
-        assert_eq!(state.free(user, 2), Err(PageAllocError::NotAllocated));
-        assert_eq!(state.free(user, 0), Err(PageAllocError::InvalidAddress));
+        let bit_range =
+            state.verify_allocated_with_type(user, 2, AllocationType::User).expect("the range is user-allocated");
+        state.mark_free(bit_range);
+        assert_eq!(state.verify_allocated(user, 2), Err(PageAllocError::NotAllocated));
+        assert_eq!(state.verify_allocated(user, 0), Err(PageAllocError::InvalidAddress));
     }
 
     #[test]
     fn test_page_allocator_rejects_a_free_whose_page_count_overflows() {
         let fixture = AllocatorFixture::new();
-        let mut state = fixture.allocator.lock_state();
+        let state = fixture.allocator.lock_state();
 
         // Starting one page into the region makes the page index plus the count overflow.
         let second_page = fixture.base + UEFI_PAGE_SIZE as u64;
-        assert_eq!(state.free(second_page, usize::MAX), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(second_page, usize::MAX), Err(PageAllocError::InvalidAddress));
     }
 
     #[test]
     fn test_page_allocator_rejects_a_free_outside_every_region() {
         let fixture = AllocatorFixture::new();
-        let mut state = fixture.allocator.lock_state();
+        let state = fixture.allocator.lock_state();
 
         // An address below the region start belongs to no region at all.
-        assert_eq!(state.free(UEFI_PAGE_SIZE as u64, 1), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(UEFI_PAGE_SIZE as u64, 1), Err(PageAllocError::InvalidAddress));
     }
 
     #[test]
@@ -1705,9 +1742,27 @@ mod tests {
         let allocation = state.allocate(TEST_REGION_PAGES - 1, AllocationType::User).unwrap();
         let last_page = fixture.base + (TEST_REGION_PAGES - 1) as u64 * UEFI_PAGE_SIZE as u64;
 
-        assert_eq!(state.free(last_page, 2), Err(PageAllocError::InvalidAddress));
-        assert_eq!(state.free(allocation, TEST_REGION_PAGES), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(last_page, 2), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(allocation, TEST_REGION_PAGES), Err(PageAllocError::InvalidAddress));
         assert_eq!(state.allocated_page_count(AllocationType::User), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_keeps_pages_allocated_when_they_cannot_be_unmapped() {
+        // A range that could not be made inaccessible must not go back into the pool: a later
+        // allocation would hand out memory that a stale mapping still reaches.
+        let fixture = AllocatorFixture::new();
+        let allocation = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        let free_before = fixture.allocator.free_page_count();
+
+        let result = fixture
+            .allocator
+            .release_pages_with(allocation, 2, Some(AllocationType::User), |_, _| Err(PageAllocError::UnmapFailed));
+
+        assert_eq!(result, Err(PageAllocError::UnmapFailed));
+        assert_eq!(fixture.allocator.free_page_count(), free_before, "the failed range was returned to the pool");
+        assert_eq!(fixture.allocator.get_allocation_type(allocation), Some(AllocationType::User));
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::User), 2);
     }
 
     #[test]
