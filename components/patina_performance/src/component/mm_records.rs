@@ -61,8 +61,10 @@ impl MmRecordCollector {
         let collected = Cell::new(false);
         events.on_event_group(READY_TO_BOOT_EVENT_GROUP_GUID, Tpl::Callback, move || {
             if collected.replace(true) {
+                log::debug!("Performance: Ready to Boot signaled again. MM records already collected, ignoring.");
                 return;
             }
+            log::debug!("Performance: Ready to Boot reached, collecting MM performance records.");
             if let Err(e) = process_mm_performance_records(&mm_comm_service, &performance) {
                 log::error!("Performance: {e}");
             }
