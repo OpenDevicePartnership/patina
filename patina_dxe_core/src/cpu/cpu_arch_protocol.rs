@@ -142,10 +142,10 @@ extern "efiapi" fn register_interrupt_handler(
 
     let const_fn_ptr = interrupt_handler as *const ();
     let result = if const_fn_ptr.is_null() {
-        interrupt_manager.unregister_exception_handler(interrupt_type as ExceptionType)
+        interrupt_manager.unregister_exception_handler(interrupt_type.cast_unsigned())
     } else {
         interrupt_manager
-            .register_exception_handler(interrupt_type as ExceptionType, HandlerType::UefiRoutine(interrupt_handler))
+            .register_exception_handler(interrupt_type.cast_unsigned(), HandlerType::UefiRoutine(interrupt_handler))
     };
 
     match result {

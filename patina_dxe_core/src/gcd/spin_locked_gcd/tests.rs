@@ -2423,7 +2423,7 @@ fn test_init_paging_maps_allocated_and_mmio_regions() {
 
         // Create a fake HobList with a MemoryAllocationModule for DXE Core
         let dxe_core_base = address + 0x1000;
-        let dxe_core_len = 0x1000000;
+        let dxe_core_len: u64 = 0x1000000;
         let hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
             header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::MEMORY_ALLOCATION,
@@ -2433,7 +2433,7 @@ fn test_init_paging_maps_allocated_and_mmio_regions() {
             alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                 name: base_guids::DXE_CORE_ID,
                 memory_base_address: dxe_core_base as u64,
-                memory_length: dxe_core_len as u64,
+                memory_length: dxe_core_len,
                 memory_type: efi::BOOT_SERVICES_DATA,
                 reserved: [0; 4],
             },
@@ -2491,7 +2491,7 @@ fn test_init_paging_maps_allocated_and_mmio_regions() {
 
         // Verify that DXE Core region is being managed
         let dxe_core_base = dxe_core_base as u64;
-        let dxe_core_end = dxe_core_base + dxe_core_len as u64;
+        let dxe_core_end = dxe_core_base + dxe_core_len;
 
         // Check that we have mappings that overlap with or are contained in the DXE Core region
         let has_dxe_core_mapping = current_mappings.iter().any(|(addr, len, _attr)| {
@@ -4170,7 +4170,7 @@ fn init_paging_with_should_have_stack_hob() {
 
         // Create DXE Core HOB but NO stack HOB
         let dxe_core_base = address + 0x1000;
-        let dxe_core_len = 0x1000000;
+        let dxe_core_len: u64 = 0x1000000;
         let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
             header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::MEMORY_ALLOCATION,
@@ -4180,7 +4180,7 @@ fn init_paging_with_should_have_stack_hob() {
             alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                 name: base_guids::DXE_CORE_ID,
                 memory_base_address: dxe_core_base as u64,
-                memory_length: dxe_core_len as u64,
+                memory_length: dxe_core_len,
                 memory_type: efi::BOOT_SERVICES_DATA,
                 reserved: [0; 4],
             },
@@ -4235,7 +4235,7 @@ fn init_paging_with_should_have_non_zero_stack_base_address_length() {
         // Create DXE Core HOB
         let dxe_core_base = address + 0x1000;
         // SAFETY: address/size come from the test buffer and are valid to initialize memory blocks.
-        let dxe_core_len = 0x1000000;
+        let dxe_core_len: u64 = 0x1000000;
         let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
             header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::MEMORY_ALLOCATION,
@@ -4245,7 +4245,7 @@ fn init_paging_with_should_have_non_zero_stack_base_address_length() {
             alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                 name: base_guids::DXE_CORE_ID,
                 memory_base_address: dxe_core_base as u64,
-                memory_length: dxe_core_len as u64,
+                memory_length: dxe_core_len,
                 memory_type: efi::BOOT_SERVICES_DATA,
                 reserved: [0; 4],
             },
@@ -4315,7 +4315,7 @@ fn init_paging_with_should_exist_in_gcd() {
 
         // Create DXE Core HOB
         let dxe_core_base = address + 0x1000;
-        let dxe_core_len = 0x1000000;
+        let dxe_core_len: u64 = 0x1000000;
         let dxe_core_hob = Hob::MemoryAllocationModule(&patina::pi::hob::MemoryAllocationModule {
             header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::MEMORY_ALLOCATION,
@@ -4325,7 +4325,7 @@ fn init_paging_with_should_exist_in_gcd() {
             alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                 name: base_guids::DXE_CORE_ID,
                 memory_base_address: dxe_core_base as u64,
-                memory_length: dxe_core_len as u64,
+                memory_length: dxe_core_len,
                 memory_type: efi::BOOT_SERVICES_DATA,
                 reserved: [0; 4],
             },

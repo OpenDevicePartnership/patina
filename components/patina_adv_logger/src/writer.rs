@@ -259,8 +259,8 @@ mod tests {
         let writer = unsafe { AdvancedLogWriter::initialize_memory_log(address, len) }.unwrap();
 
         // Fill the log.
-        for val in 0..50 {
-            let data = (val as u32).to_be_bytes();
+        for val in 0_u32..50 {
+            let data = val.to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             writer.add_log_entry(entry).unwrap();
         }
@@ -269,8 +269,8 @@ mod tests {
         let writer = unsafe { AdvancedLogWriter::adopt_memory_log(address) }.unwrap();
 
         // Add more entries.
-        for val in 50..100 {
-            let data = (val as u32).to_be_bytes();
+        for val in 50_u32..100 {
+            let data = val.to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             writer.add_log_entry(entry).unwrap();
         }
@@ -280,8 +280,8 @@ mod tests {
         let reader = unsafe { AdvancedLogReader::from_address(address) }.unwrap();
         assert!(writer.discarded_size() == 0);
         let mut iter = reader.iter();
-        for entry_num in 0..100 {
-            let data = (entry_num as u32).to_be_bytes();
+        for entry_num in 0_u32..100 {
+            let data = entry_num.to_be_bytes();
             let log_entry = iter.next().unwrap();
             assert_eq!(log_entry.get_message(), data);
         }

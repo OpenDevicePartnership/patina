@@ -235,6 +235,9 @@ fn test_mm_communication_stress_thousand_calls() {
     );
 
     // Most communications should reach the framework (at least 80% for this test)
+    // `total_attempted` is a `usize`, so the `f64` product will not be negative and casting back
+    // to a `usize` will not lose a sign.
+    #[allow(clippy::cast_sign_loss)]
     let min_expected = (total_attempted as f64 * 0.8) as usize;
     assert!(
         trigger_count >= min_expected,

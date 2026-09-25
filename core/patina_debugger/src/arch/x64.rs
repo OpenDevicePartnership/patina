@@ -619,7 +619,7 @@ impl X64HardwareBreakpoints {
     }
 
     pub fn set_len(&mut self, index: usize, len: u64) {
-        let len = match len {
+        let len: u64 = match len {
             1 => 0,
             2 => 1,
             4 => 2,
@@ -627,7 +627,7 @@ impl X64HardwareBreakpoints {
         };
 
         self.dr7 &= !(Self::DR7_LEN_MASK << (index * Self::DR7_LEN_STRIDE + Self::DR7_LEN_OFFSET));
-        self.dr7 |= (len as u64) << (index * Self::DR7_LEN_STRIDE + Self::DR7_LEN_OFFSET);
+        self.dr7 |= len << (index * Self::DR7_LEN_STRIDE + Self::DR7_LEN_OFFSET);
     }
 
     pub fn get_address(&self, index: usize) -> u64 {

@@ -161,10 +161,11 @@ where
     /// Get the index of a node in the storage container based off the pointer.
     pub fn idx(&self, ptr: *mut Node<D>) -> usize {
         debug_assert!(!ptr.is_null());
-        // SAFETY: Meets the following requirements as specified in `offset_from`:
+        // SAFETY: Meets the following requirements as specified in `offset_from_unsigned`:
         // - `ptr` and `self.data.as_ptr()` are derived from the same allocation (the same slice).
         // - The distance between the pointers, in bytes, must be an exact multiple of the size of Node<T>.
-        unsafe { ptr.offset_from(self.data.as_ptr()) as usize }
+        // - `ptr` is always at or after `self.data.as_ptr()`, since it points into `self.data`.
+        unsafe { ptr.offset_from_unsigned(self.data.as_ptr()) }
     }
 
     /// Gets a reference to a node in the storage container using an index
