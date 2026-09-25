@@ -98,10 +98,9 @@ Only SMBIOS 3.x versions are supported.
 
 If you want to develop your own Patina-based platform SMBIOS component, remove
 your platform's existing SMBIOS driver (e.g., `SmbiosPlatformDxe`,
-`SbsaQemuSmbiosDxe`, `ProcessorSubClassDxe`) from your DSC and FDF files, then
-create a platform-specific component that populates your SMBIOS tables. This
-component uses the `#[component]` macro and receives the `Smbios` service as a
-parameter:
+`ProcessorSubClassDxe`) from your DSC and FDF files, then create a
+platform-specific component that populates your SMBIOS tables. This component
+uses the `#[component]` macro and receives the `Smbios` service as a parameter:
 
 ```rust
 use patina::component::{component, service::Service};
