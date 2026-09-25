@@ -408,9 +408,10 @@ mod tests {
         // where the policy lives in a reserved region.
         let policy: &'static [u8] = Vec::leak(buf);
 
-        // SAFETY: `policy` points at a valid V1.0 policy blob (built above) that lives for the
-        // rest of the process, which is what `PolicyGate::new` requires.
-        let gate = unsafe { crate::mm_policy::PolicyGate::new(policy.as_ptr()) }.expect("policy blob is valid");
+        // SAFETY: `policy` points at a valid V1.0 policy blob (built above) of `policy.len()`
+        // bytes that lives for the rest of the process, which is what `PolicyGate::new` requires.
+        let gate =
+            unsafe { crate::mm_policy::PolicyGate::new(policy.as_ptr(), policy.len()) }.expect("policy blob is valid");
         security_state().set_policy_gate(gate);
     }
 

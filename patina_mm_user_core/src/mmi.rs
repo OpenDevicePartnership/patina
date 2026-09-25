@@ -370,7 +370,7 @@ impl MmiDatabase {
                 }
             }
         }
-        log::info!("Finished dispatching handlers with final status = {return_status:?}");
+        log::info!("Finished dispatching handlers with final status = {:#x}", return_status.as_usize());
         return_status
     }
 

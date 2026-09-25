@@ -98,6 +98,8 @@ enum MailboxState {
     Processing = 2,
     /// Response is ready for BSP to read.
     ResponseReady = 3,
+    /// A sender has claimed the mailbox and is writing the command payload.
+    Filling = 4,
 }
 
 /// A single AP's mailbox for communication with the BSP.
@@ -156,33 +158,35 @@ impl ApMailbox {
     ///
     /// Returns `true` if the command was successfully posted, `false` if the mailbox is busy.
     ///
-    /// The payload (procedure and argument) is written first with `Relaxed`
-    /// ordering, then `state` is set to `CommandPending` with `Release` ordering.
-    /// The AP acquires `state`, which guarantees it sees the fully-written payload.
+    /// The sender first claims the mailbox by moving it to [`MailboxState::Filling`], then writes
+    /// the payload with `Relaxed` ordering, then publishes [`MailboxState::CommandPending`] with
+    /// `Release`. The AP acquires `state`, which guarantees it sees the fully-written payload.
     pub fn send_command(&self, command: ApCommand) -> bool {
-        // Only allow sending if mailbox is empty
-        let result = self.state.compare_exchange(
+        // Claim the mailbox. The state has to change here: a compare-exchange that leaves it
+        // `Empty` is a check rather than a claim, so concurrent senders would all pass it and
+        // interleave their payload writes, leaving the AP a command assembled from both.
+        let claimed = self.state.compare_exchange(
             MailboxState::Empty as u32,
-            MailboxState::Empty as u32, // keep Empty while we fill the payload
+            MailboxState::Filling as u32,
             Ordering::AcqRel,
             Ordering::Acquire,
         );
 
-        if result.is_ok() {
-            // Write all payload fields before publishing.
-            // Relaxed is fine here — the Release store to `state` below
-            // will fence all prior writes.
-            let ApCommand::RunProcedure { procedure, argument } = command;
-            self.procedure.store(procedure, Ordering::Relaxed);
-            self.argument.store(argument, Ordering::Relaxed);
-
-            // Publish: the AP polls on `state` with Acquire, so this
-            // Release ensures it sees the payload written above.
-            self.state.store(MailboxState::CommandPending as u32, Ordering::Release);
-            true
-        } else {
-            false
+        if claimed.is_err() {
+            return false;
         }
+
+        // Write all payload fields before publishing.
+        // Relaxed is fine here - the Release store to `state` below
+        // will fence all prior writes.
+        let ApCommand::RunProcedure { procedure, argument } = command;
+        self.procedure.store(procedure, Ordering::Relaxed);
+        self.argument.store(argument, Ordering::Relaxed);
+
+        // Publish: the AP polls on `state` with Acquire, so this
+        // Release ensures it sees the payload written above.
+        self.state.store(MailboxState::CommandPending as u32, Ordering::Release);
+        true
     }
 
     /// Gets the response from this mailbox (called by BSP).
@@ -329,6 +333,47 @@ mod tests {
 
         // The mailbox is empty again: a fresh command can be sent.
         assert!(mailbox.send_command(cmd));
+    }
+
+    #[test]
+    fn test_only_one_concurrent_sender_claims_the_mailbox() {
+        use std::sync::{Arc, Barrier};
+
+        const SENDERS: u64 = 4;
+
+        // Each sender's payload carries the same value in both fields, so a command assembled
+        // from two senders' writes is visible as a mismatched pair.
+        for _ in 0..64 {
+            let mailbox = Arc::new(ApMailbox::new());
+            let accepted = Arc::new(AtomicU32::new(0));
+            // Thread spawn alone lets each sender finish before the next starts, which hides the
+            // race entirely. Hold them until every one is ready.
+            let start = Arc::new(Barrier::new(SENDERS as usize));
+
+            let senders: Vec<_> = (1..=SENDERS)
+                .map(|n| {
+                    let mailbox = Arc::clone(&mailbox);
+                    let accepted = Arc::clone(&accepted);
+                    let start = Arc::clone(&start);
+                    std::thread::spawn(move || {
+                        let value = n * 0x1111_1111;
+                        start.wait();
+                        if mailbox.send_command(ApCommand::RunProcedure { procedure: value, argument: value }) {
+                            accepted.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })
+                })
+                .collect();
+            for sender in senders {
+                sender.join().expect("sender thread completes");
+            }
+
+            assert_eq!(accepted.load(Ordering::SeqCst), 1, "more than one sender claimed the mailbox");
+
+            let ApCommand::RunProcedure { procedure, argument } =
+                mailbox.take_command().expect("the accepted command is pending");
+            assert_eq!(procedure, argument, "payload was interleaved between senders");
+        }
     }
 
     #[test]

@@ -354,7 +354,7 @@ impl MmUserCore {
             // the lifetime of the configuration-table entry.
             self.install_configuration_table(&patina::guid::HOB_LIST, hob_list.cast_mut(), 0)
         } {
-            log::error!("Failed to install HOB list configuration table: {status:?}");
+            log::error!("Failed to install HOB list configuration table: {:#x}", status.as_usize());
         }
 
         // Register core MMI handlers (lifecycle events like ready-to-lock,
@@ -513,34 +513,45 @@ impl MmUserCore {
         let (comm_guid_ptr, comm_header_size, mut data_size) = if header.header_guid()
             == patina::Guid::from_ref(&patina::pi::protocol::communication3::COMMUNICATE_HEADER_V3_GUID)
         {
-            // V3 header
-            // SAFETY: The buffer was verified above to be at least a legacy header in size, and
-            // the V3 total size is bounds-checked immediately after this read.
+            let header_size = mem::size_of::<patina::pi::protocol::communication3::EfiMmCommunicateHeader>();
+
+            // The V3 header is larger than the legacy one, so the size check above does not cover
+            // it. It has to be bounds-checked before the read, not after: the GUID that selects
+            // this branch sits in the part both layouts share, and is chosen by the caller.
+            if buffer_size < header_size {
+                log::error!("Communication buffer too small for a V3 header: {buffer_size} < {header_size}");
+                return efi::Status::BAD_BUFFER_SIZE;
+            }
+
+            // SAFETY: the buffer was just verified to hold a complete V3 header.
             let v3 = unsafe {
                 core::ptr::read_unaligned(
                     comm_buffer_base as *const patina::pi::protocol::communication3::EfiMmCommunicateHeader,
                 )
             };
-            let header_size = mem::size_of::<patina::pi::protocol::communication3::EfiMmCommunicateHeader>();
+
+            // A total below the header size would leave the payload span negative.
             let total = v3.buffer_size as usize;
-            if total > buffer_size {
-                log::error!("V3 buffer_size 0x{total:x} exceeds available 0x{buffer_size:x}");
+            if total < header_size || total > buffer_size {
+                log::error!(
+                    "V3 buffer_size 0x{total:x} is outside the valid range 0x{header_size:x}..=0x{buffer_size:x}"
+                );
                 return efi::Status::BAD_BUFFER_SIZE;
             }
+
             // GUID to dispatch is `message_guid` in V3
             let guid_offset =
                 core::mem::offset_of!(patina::pi::protocol::communication3::EfiMmCommunicateHeader, message_guid);
             let guid_ptr = (comm_buffer_base as *const u8).wrapping_add(guid_offset) as *const efi::Guid;
-            (guid_ptr, header_size, total.saturating_sub(header_size))
+            (guid_ptr, header_size, total - header_size)
         } else {
-            // Legacy header
+            // Legacy header. `message_length` comes from the buffer, so the available space is
+            // subtracted from the buffer rather than added to the message: the addition overflows
+            // for a large enough claim and wraps back into the accepted range.
             let message_length = header.message_length();
-            let total = EfiMmCommunicateHeader::size() + message_length;
-            if total > buffer_size {
-                log::error!(
-                    "Legacy message_length 0x{message_length:x} exceeds available 0x{:x}",
-                    buffer_size.saturating_sub(EfiMmCommunicateHeader::size())
-                );
+            let available = buffer_size - EfiMmCommunicateHeader::size();
+            if message_length > available {
+                log::error!("Legacy message_length 0x{message_length:x} exceeds available 0x{available:x}");
                 return efi::Status::BAD_BUFFER_SIZE;
             }
             // GUID to dispatch is `header_guid` in legacy
@@ -568,7 +579,21 @@ impl MmUserCore {
             self.mmi_manage(Some(&*comm_guid_ptr), core::ptr::null(), comm_data_ptr, &raw mut data_size)
         };
 
-        *return_buffer_size = (data_size + comm_header_size) as u64;
+        // The handler writes its response length back through `data_size`, and that length
+        // reaches the non-MM caller as the size of the response. A length running past the end of
+        // the communication buffer describes a response that was never written, so there is no
+        // prefix worth returning: report the failure and hand back nothing.
+        let reported = comm_header_size.saturating_add(data_size);
+        if reported > buffer_size {
+            log::error!(
+                "Handler reported a 0x{reported:x}-byte response for a 0x{buffer_size:x}-byte communication buffer; \
+                 rejecting"
+            );
+            *return_buffer_size = 0;
+            return efi::Status::BAD_BUFFER_SIZE;
+        }
+        *return_buffer_size = reported as u64;
+
         status
     }
 
@@ -658,6 +683,13 @@ mod tests {
 
     fn counting_handler(_: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
         HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
+        efi::Status::SUCCESS
+    }
+
+    /// Reports a response far larger than the communication buffer it was given.
+    fn oversized_handler(_: &efi::Guid, _: *mut c_void, comm_buffer_size: *mut usize) -> efi::Status {
+        // SAFETY: `mmi_manage` passes a pointer to the dispatcher's own `data_size`.
+        unsafe { *comm_buffer_size = usize::MAX };
         efi::Status::SUCCESS
     }
 
@@ -800,6 +832,37 @@ mod tests {
             let base = storage.as_mut_ptr().cast::<u8>();
             core::ptr::copy_nonoverlapping(header.as_bytes().as_ptr(), base, EfiMmCommunicateHeader::size());
             core::ptr::copy_nonoverlapping(message.as_ptr(), base.add(EfiMmCommunicateHeader::size()), message.len());
+        }
+        storage
+    }
+
+    /// Byte size of the V3 communicate header.
+    fn v3_header_size() -> usize {
+        mem::size_of::<patina::pi::protocol::communication3::EfiMmCommunicateHeader>()
+    }
+
+    /// A V3-format MM communication buffer of `total` bytes, whose `buffer_size` field claims
+    /// `claimed_buffer_size`.
+    fn v3_comm_buffer(message_guid: efi::Guid, total: usize, claimed_buffer_size: u64) -> Vec<u64> {
+        let mut storage = vec![0u64; total.div_ceil(8).max(1)];
+        // SAFETY: `storage` is 8-byte aligned; each field is written within `total` bytes, and
+        // callers that build a short buffer only write the parts that fit.
+        unsafe {
+            let base = storage.as_mut_ptr().cast::<u8>();
+            let v3_guid = patina::pi::protocol::communication3::COMMUNICATE_HEADER_V3_GUID;
+            core::ptr::copy_nonoverlapping(v3_guid.as_bytes().as_ptr(), base, 16);
+            if total >= 24 {
+                core::ptr::write_unaligned(base.add(16).cast::<u64>(), claimed_buffer_size);
+            }
+            if total >= v3_header_size() {
+                let guid_offset =
+                    core::mem::offset_of!(patina::pi::protocol::communication3::EfiMmCommunicateHeader, message_guid);
+                core::ptr::copy_nonoverlapping(
+                    core::ptr::from_ref(&message_guid).cast::<u8>(),
+                    base.add(guid_offset),
+                    16,
+                );
+            }
         }
         storage
     }
@@ -1064,6 +1127,92 @@ mod tests {
         let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
 
         assert_eq!(status, efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_response_larger_than_the_buffer() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(oversized_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let total = EfiMmCommunicateHeader::size() + 16;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        // The size travels to the non-MM caller, which uses it to read the response out of the
+        // communication buffer, so a length it cannot hold is refused rather than shortened.
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+        assert_eq!(returned, 0);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_v3_header_that_does_not_fit() {
+        let core = init_core();
+
+        // A caller picks the V3 layout through a GUID that sits in the part both layouts share,
+        // so a buffer holding only a legacy header can still select the larger V3 header. Reading
+        // it would run past the end of the communication buffer.
+        for total in [EfiMmCommunicateHeader::size(), v3_header_size() - 1] {
+            let buffer = v3_comm_buffer(HANDLER_GUID, total, total as u64);
+            let mut returned = 0;
+
+            let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+            assert_eq!(status, efi::Status::BAD_BUFFER_SIZE, "a {total}-byte buffer was accepted as V3");
+        }
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_v3_total_outside_the_buffer() {
+        let core = init_core();
+        let total = v3_header_size() + 16;
+
+        // Larger than the buffer, and smaller than the header it must account for.
+        for claimed in [total as u64 + 1, u64::MAX, 0, v3_header_size() as u64 - 1] {
+            let buffer = v3_comm_buffer(HANDLER_GUID, total, claimed);
+            let mut returned = 0;
+
+            let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+            assert_eq!(status, efi::Status::BAD_BUFFER_SIZE, "a claimed size of 0x{claimed:x} was accepted");
+        }
+    }
+
+    #[test]
+    fn test_synchronous_mmi_dispatches_a_valid_v3_message_guid() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(counting_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let total = v3_header_size() + 16;
+        let buffer = v3_comm_buffer(HANDLER_GUID, total, total as u64);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        // The V3 branch dispatches on `message_guid`, not the header GUID that selected it.
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(returned, total as u64);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_message_length_that_would_overflow() {
+        let core = init_core();
+        let total = EfiMmCommunicateHeader::size() + 8;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+
+        // Adding the header size to this wraps, landing back inside the buffer and passing a
+        // check written as `header + message > buffer`.
+        // SAFETY: the header occupies the first bytes of the buffer.
+        unsafe {
+            (*(buffer.as_ptr() as *mut EfiMmCommunicateHeader)).message_length = usize::MAX;
+        }
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
     }
 
     #[test]

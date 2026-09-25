@@ -83,6 +83,8 @@ pub enum PageAllocError {
     InvalidAddress,
     /// The address was not previously allocated.
     NotAllocated,
+    /// The freed range could not be made inaccessible in the page table, so it was left allocated.
+    UnmapFailed,
 }
 
 /// Type of memory allocation - distinguishes supervisor-internal vs user/driver allocations.
@@ -135,6 +137,88 @@ pub struct RegionInfo {
     pub total_pages: usize,
     /// Starting bit index in the global allocation bitmap.
     pub bitmap_start_bit: usize,
+}
+
+/// Where an address range sits relative to MMRAM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MmramPlacement {
+    /// Every byte of the range is MMRAM.
+    Inside,
+    /// No byte of the range is MMRAM.
+    Outside,
+    /// The range is partly MMRAM and partly not.
+    PartlyInside,
+}
+
+impl MmramPlacement {
+    /// Resolves this placement to whether `[base, base + size)` may be treated as MM memory.
+    ///
+    /// ## Panics
+    ///
+    /// Panics on [`MmramPlacement::PartlyInside`]. Callers are deciding whether a
+    /// firmware-described buffer is MM memory, and a range crossing the boundary is neither:
+    /// trusting it exposes the MMRAM half, rejecting it silently leaves a producer describing a
+    /// region it does not own. There is no correct reading, so it is the configuration error it
+    /// looks like.
+    pub fn is_inside(self, base: u64, size: u64) -> bool {
+        match self {
+            Self::Inside => true,
+            Self::Outside => false,
+            Self::PartlyInside => {
+                let end = base.saturating_add(size);
+                panic!("Buffer 0x{base:016x}-0x{end:016x} crosses an MMRAM boundary");
+            }
+        }
+    }
+}
+
+/// Classifies `[addr, addr + size)` against regions given as `(base, exclusive end)` pairs.
+///
+/// Coverage is measured over the union of the regions, so a range spanning two adjacent regions
+/// is [`MmramPlacement::Inside`] rather than partly inside. An empty range is
+/// [`MmramPlacement::Outside`]; a range whose end overflows is reported as partly inside so a
+/// malformed descriptor fails closed.
+fn classify_coverage(addr: u64, size: u64, mut regions: impl Iterator<Item = (u64, u64)> + Clone) -> MmramPlacement {
+    if size == 0 {
+        return MmramPlacement::Outside;
+    }
+    let Some(end) = addr.checked_add(size) else {
+        return MmramPlacement::PartlyInside;
+    };
+
+    // Extend the covered prefix one region at a time until a gap appears.
+    let mut cursor = addr;
+    while let Some(region_end) =
+        regions.clone().find_map(|(base, region_end)| (cursor >= base && cursor < region_end).then_some(region_end))
+    {
+        cursor = region_end;
+        if cursor >= end {
+            return MmramPlacement::Inside;
+        }
+    }
+
+    if cursor > addr || regions.any(|(base, region_end)| cursor < region_end && base < end) {
+        MmramPlacement::PartlyInside
+    } else {
+        MmramPlacement::Outside
+    }
+}
+
+/// Classifies `[addr, addr + size)` against SMRAM descriptors that have been scanned but not yet
+/// committed to the allocator's bookkeeping.
+pub(crate) fn classify_mmram_in_regions(regions: &[SmramRegion], addr: u64, size: u64) -> MmramPlacement {
+    classify_coverage(
+        addr,
+        size,
+        regions.iter().filter_map(|region| Some((region.base, region.base.checked_add(region.size)?))),
+    )
+}
+
+/// Returns whether any region in `regions` contains `address`.
+pub(crate) fn regions_contain(regions: &[SmramRegion], address: u64) -> bool {
+    regions.iter().any(|region| {
+        region.base <= address && region.base.checked_add(region.size).is_some_and(|region_end| address < region_end)
+    })
 }
 
 /// Internal state for the page allocator, stored in bookkeeping pages.
@@ -379,34 +463,43 @@ impl LockedState<'_> {
         Some(addr)
     }
 
-    /// Frees `num_pages` starting at `addr`, verifying the pages are allocated.
-    fn free(&mut self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
+    /// Returns the bit range covering `[addr, addr + num_pages)`, requiring every page in it to be
+    /// allocated.
+    ///
+    /// Separate from [`mark_free`](Self::mark_free) so a caller can keep the range allocated while
+    /// it scrubs and unmaps, and abandon the free if either step fails.
+    fn verify_allocated(&self, addr: u64, num_pages: usize) -> Result<core::ops::Range<usize>, PageAllocError> {
         let bit_range = self.allocation_bit_range(addr, num_pages)?;
 
-        // Verify all pages are allocated
         for bit in bit_range.clone() {
             if !self.is_bit_allocated(bit) {
                 return Err(PageAllocError::NotAllocated);
             }
         }
-        // Free the pages
+
+        Ok(bit_range)
+    }
+
+    /// Publishes `bit_range` as free and therefore reusable.
+    fn mark_free(&mut self, bit_range: core::ops::Range<usize>) {
         for bit in bit_range {
             self.set_bit_free(bit);
         }
-        log::trace!("Freed {num_pages} page(s) at 0x{addr:016x}");
-        Ok(())
     }
 
-    /// Frees `num_pages` starting at `addr`, verifying the allocation type matches.
-    fn free_checked(
-        &mut self,
+    /// Returns the bit range covering `[addr, addr + num_pages)`, requiring every page in it to be
+    /// allocated with `expected_type`.
+    ///
+    /// The type-checked counterpart to [`verify_allocated`](Self::verify_allocated), and split
+    /// from [`mark_free`](Self::mark_free) for the same reason.
+    fn verify_allocated_with_type(
+        &self,
         addr: u64,
         num_pages: usize,
         expected_type: AllocationType,
-    ) -> Result<(), PageAllocError> {
+    ) -> Result<core::ops::Range<usize>, PageAllocError> {
         let bit_range = self.allocation_bit_range(addr, num_pages)?;
 
-        // Verify all pages are allocated with the expected type
         for (page_offset, bit) in bit_range.clone().enumerate() {
             if !self.is_bit_allocated(bit) {
                 return Err(PageAllocError::NotAllocated);
@@ -421,12 +514,8 @@ impl LockedState<'_> {
                 return Err(PageAllocError::InvalidAddress);
             }
         }
-        // Free the pages
-        for bit in bit_range {
-            self.set_bit_free(bit);
-        }
-        log::trace!("Freed {num_pages} {expected_type:?} page(s) at 0x{addr:016x}");
-        Ok(())
+
+        Ok(bit_range)
     }
 
     /// Returns the global bitmap range for a page-aligned allocation range.
@@ -486,6 +575,18 @@ impl LockedState<'_> {
             };
             addr >= region.base && request_end <= region_end
         })
+    }
+
+    /// Classifies `[addr, addr + size)` against the committed MMRAM regions.
+    fn classify_mmram(&self, addr: u64, size: u64) -> MmramPlacement {
+        classify_coverage(
+            addr,
+            size,
+            self.regions().iter().filter_map(|region| {
+                let size = u64::try_from(region.total_pages.checked_mul(UEFI_PAGE_SIZE)?).ok()?;
+                Some((region.base, region.base.checked_add(size)?))
+            }),
+        )
     }
 
     /// Populates freshly-zeroed bookkeeping with per-region metadata and marks
@@ -785,20 +886,17 @@ impl PageAllocator {
         LockedState { state, region_count, total_pages, guard }
     }
 
-    /// Initializes the page allocator from the HOB list.
+    /// Collects every SMRAM region the HOB list describes into a stack array.
     ///
-    /// This function:
-    /// 1. Scans HOBs to count regions and total pages
-    /// 2. Finds the first non-allocated region for bookkeeping
-    /// 3. Reserves pages for bookkeeping structures
-    /// 4. Initializes the bitmaps
+    /// Nothing in MMRAM is written and no allocator state is published, so the descriptors can
+    /// be validated against a trusted bound before [`init_from_regions`](Self::init_from_regions)
+    /// commits to them. Splitting the two is what keeps a forged descriptor from steering a write
+    /// before it has been rejected.
     ///
     /// ## Safety
     ///
-    /// The caller must ensure that `hob_list` points to a valid HOB list and that
-    /// every non-pre-allocated region it describes is valid, exclusive SMRAM.
-    pub unsafe fn init_from_hob_list(
-        &self,
+    /// The caller must ensure that `hob_list` points to a valid HOB list.
+    pub(crate) unsafe fn scan_hob_list(
         hob_list: *const c_void,
     ) -> Result<([SmramRegion; MAX_TEMP_REGIONS], usize), PageAllocError> {
         if hob_list.is_null() {
@@ -811,7 +909,6 @@ impl PageAllocator {
             (hob_list as *const PhaseHandoffInformationTable).as_ref().ok_or(PageAllocError::NotInitialized)?
         };
 
-        // First pass: scan the HOB list for every SMRAM region.
         let mut regions = [SmramRegion::default(); MAX_TEMP_REGIONS];
         let mut count = 0usize;
         Self::scan_smram_regions(hob_list_info, &mut regions, &mut count)?;
@@ -821,24 +918,20 @@ impl PageAllocator {
             return Err(PageAllocError::NotInitialized);
         }
 
-        let scanned = regions.get(..count).ok_or(PageAllocError::NotInitialized)?;
-        // SAFETY: the HOB-list contract above requires the discovered free regions to be
-        // valid and exclusively owned SMRAM.
-        unsafe {
-            self.init_from_regions(scanned)?;
-        }
-
         Ok((regions, count))
     }
 
     /// Initializes allocator bookkeeping from already parsed SMRAM regions.
+    ///
+    /// This is the first write into memory the producer named, so the caller is expected to have
+    /// validated `scanned` beforehand.
     ///
     /// ## Safety
     ///
     /// Any region that passes the descriptor validation below must describe
     /// valid memory for its full declared size. Non-pre-allocated regions must
     /// additionally be exclusively owned.
-    unsafe fn init_from_regions(&self, scanned: &[SmramRegion]) -> Result<(), PageAllocError> {
+    pub(crate) unsafe fn init_from_regions(&self, scanned: &[SmramRegion]) -> Result<(), PageAllocError> {
         if scanned.is_empty() {
             return Err(PageAllocError::NotInitialized);
         }
@@ -977,60 +1070,105 @@ impl PageAllocator {
         }
     }
 
+    /// Overwrites a still-mapped page range with zeros.
+    ///
+    /// Freed pages go back into the same pool that later serves `User` (Ring 3) allocations, so a
+    /// supervisor allocation that is released without scrubbing would disclose its contents to
+    /// Ring 3 on the next reuse. This must run before [`Self::apply_freed_page_attributes`] unmaps
+    /// the range.
+    fn zero_pages(addr: u64, num_pages: usize) {
+        // SAFETY: the caller verified under the state lock that `[addr, addr + num_pages)` is a
+        // live allocation inside a single SMRAM region and has just mapped it R/W, so the only
+        // access made while SMAP is lifted stays inside that range. SMAP has to come down
+        // because the range may be user-owned (U/S = 1).
+        unsafe {
+            crate::runtime::with_user_access(|| {
+                core::ptr::write_bytes(addr as *mut u8, 0, uefi_pages_to_size!(num_pages));
+            });
+        }
+    }
+
     /// Applies restrictive page table attributes to freed pages.
     ///
     /// Marks pages as completely inaccessible: Supervisor + `ReadProtect` + `ExecuteProtect` (NX).
     /// This prevents any read, write, or execute access to freed memory, mitigating
     /// use-after-free vulnerabilities.
     ///
-    /// If the global page table is not yet initialized (e.g., during early boot),
-    /// this is a no-op with a warning.
-    fn apply_freed_page_attributes(&self, addr: u64, num_pages: usize) {
+    /// A failure is reported so the caller can leave the range allocated rather than hand a still
+    /// reachable range back to the pool.
+    ///
+    /// Reports success when the global page table is not yet initialized, which only happens
+    /// before [`init_page_table`](crate::MmSupervisorCore::init_page_table). No free path runs
+    /// that early, so this is a diagnostic for a caller that starts to.
+    fn apply_freed_page_attributes(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
         let size = uefi_pages_to_size!(num_pages) as u64;
         let mut pt_guard = crate::state::security_state().lock_page_table();
-        if let Some(ref mut pt) = *pt_guard {
-            // Freed pages: ReadProtect (not present) + NX (no execute) + ReadOnly (no write)
-            // This makes the pages completely inaccessible.
-            if let Err(e) = pt.unmap_memory_region(addr, size) {
-                log::error!("Failed to set freed page attributes for 0x{addr:016x} ({num_pages} pages): {e:?}");
-            } else {
-                log::trace!("Marked 0x{addr:016x} ({num_pages} pages) as inaccessible (RP+NX+RO+S)");
-            }
-        } else {
+        let Some(pt) = pt_guard.as_mut() else {
             log::warn!("Page table not initialized, skipping freed page attribute update for 0x{addr:016x}");
+            return Ok(());
+        };
+
+        // Freed pages: ReadProtect (not present) + NX (no execute) + ReadOnly (no write)
+        // This makes the pages completely inaccessible.
+        if let Err(e) = pt.unmap_memory_region(addr, size) {
+            log::error!("Failed to set freed page attributes for 0x{addr:016x} ({num_pages} pages): {e:?}");
+            return Err(PageAllocError::UnmapFailed);
         }
+
+        log::trace!("Marked 0x{addr:016x} ({num_pages} pages) as inaccessible (RP+NX+RO+S)");
+        Ok(())
     }
 
     /// Frees previously allocated pages.
     ///
-    /// After freeing, the pages are marked as inaccessible in the page table
-    /// (Supervisor + `ReadProtect` + `ExecuteProtect`) to prevent use-after-free.
+    /// The pages are zeroed so their contents cannot be recovered through a later allocation, then
+    /// marked as inaccessible in the page table (Supervisor + `ReadProtect` + `ExecuteProtect`) to
+    /// prevent use-after-free.
     pub fn free_pages(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
-        if !self.is_initialized() {
-            return Err(PageAllocError::NotInitialized);
-        }
-
-        if !addr.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            return Err(PageAllocError::NotAligned);
-        }
-
-        self.lock_state().free(addr, num_pages)?;
-
-        // Mark freed pages as inaccessible in the page table.
-        self.apply_freed_page_attributes(addr, num_pages);
-
-        Ok(())
+        self.release_pages(addr, num_pages, None)
     }
 
     /// Frees previously allocated pages, verifying the allocation type matches.
     ///
-    /// After freeing, the pages are marked as inaccessible in the page table
-    /// (Supervisor + `ReadProtect` + `ExecuteProtect`) to prevent use-after-free.
+    /// The pages are zeroed so their contents cannot be recovered through a later allocation, then
+    /// marked as inaccessible in the page table (Supervisor + `ReadProtect` + `ExecuteProtect`) to
+    /// prevent use-after-free.
     pub fn free_pages_checked(
         &self,
         addr: u64,
         num_pages: usize,
         expected_type: AllocationType,
+    ) -> Result<(), PageAllocError> {
+        self.release_pages(addr, num_pages, Some(expected_type))
+    }
+
+    /// Scrubs `[addr, addr + num_pages)`, makes it inaccessible, and only then returns it to the
+    /// pool.
+    ///
+    /// The range stays marked allocated for the whole sequence. Publishing it first would let
+    /// another core take it while this one is still scrubbing, and would leave it advertised as
+    /// reusable if the page table transition failed, handing a caller memory that a stale mapping
+    /// still reaches. The state lock is held throughout for the same reason; the page table lock
+    /// is only ever taken after it, never before, so the order cannot invert.
+    fn release_pages(
+        &self,
+        addr: u64,
+        num_pages: usize,
+        expected_type: Option<AllocationType>,
+    ) -> Result<(), PageAllocError> {
+        self.release_pages_with(addr, num_pages, expected_type, |addr, num_pages| {
+            self.apply_freed_page_attributes(addr, num_pages)
+        })
+    }
+
+    /// Runs the [`release_pages`](Self::release_pages) sequence with `restrict` standing in for the
+    /// page table transition.
+    fn release_pages_with(
+        &self,
+        addr: u64,
+        num_pages: usize,
+        expected_type: Option<AllocationType>,
+        restrict: impl FnOnce(u64, usize) -> Result<(), PageAllocError>,
     ) -> Result<(), PageAllocError> {
         if !self.is_initialized() {
             return Err(PageAllocError::NotInitialized);
@@ -1040,11 +1178,22 @@ impl PageAllocator {
             return Err(PageAllocError::NotAligned);
         }
 
-        self.lock_state().free_checked(addr, num_pages, expected_type)?;
+        let mut state = self.lock_state();
+        let bit_range = match expected_type {
+            Some(expected_type) => state.verify_allocated_with_type(addr, num_pages, expected_type)?,
+            None => state.verify_allocated(addr, num_pages)?,
+        };
 
-        // Mark freed pages as inaccessible in the page table.
-        self.apply_freed_page_attributes(addr, num_pages);
+        // A range this allocator handed out is already mapped R/W, but one marked allocated from a
+        // producer's `EFI_ALLOCATED` descriptor keeps whatever the inherited page table gave it,
+        // and the MM IPL maps its HOB list read-only. Restore the attributes the allocator would
+        // have set so the scrub cannot fault on a mapping it never chose.
+        self.apply_data_page_attributes(addr, num_pages, state.bit_type(bit_range.start));
+        Self::zero_pages(addr, num_pages);
+        restrict(addr, num_pages)?;
+        state.mark_free(bit_range);
 
+        log::trace!("Freed {num_pages} page(s) at 0x{addr:016x}");
         Ok(())
     }
 
@@ -1098,6 +1247,18 @@ impl PageAllocator {
             return false;
         }
         self.lock_state().is_region_inside_mmram(addr, size)
+    }
+
+    /// Classifies `[addr, addr + size)` against the MMRAM regions, or `None` if the regions are
+    /// not known yet.
+    ///
+    /// Callers decide what an unknown layout means for them; nothing can be proven to be either
+    /// inside or outside MMRAM before the allocator is initialized.
+    pub fn classify_mmram(&self, addr: u64, size: u64) -> Option<MmramPlacement> {
+        if !self.is_initialized() {
+            return None;
+        }
+        Some(self.lock_state().classify_mmram(addr, size))
     }
 }
 
@@ -1170,7 +1331,7 @@ mod tests {
 
         // SAFETY: a null HOB pointer is explicitly rejected before dereference.
         unsafe {
-            assert_eq!(allocator.init_from_hob_list(ptr::null()), Err(PageAllocError::NotInitialized));
+            assert!(matches!(PageAllocator::scan_hob_list(ptr::null()), Err(PageAllocError::NotInitialized)));
         }
 
         let mut state = allocator.lock_state();
@@ -1280,18 +1441,100 @@ mod tests {
     }
 
     #[test]
+    fn test_page_allocator_scrubs_pages_on_free() {
+        let fixture = AllocatorFixture::new();
+
+        // A supervisor allocation holding secrets is released back into the shared pool.
+        let supervisor = fixture.allocator.allocate_pages(2).unwrap();
+        let secret_len = 2 * UEFI_PAGE_SIZE;
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        let secret = unsafe { core::slice::from_raw_parts_mut(supervisor as *mut u8, secret_len) };
+        secret.fill(0x5A);
+
+        assert_eq!(fixture.allocator.free_pages(supervisor, 2), Ok(()));
+
+        // Nothing may survive the free, so the next allocation cannot observe it.
+        let user = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        assert_eq!(user, supervisor, "first-fit must hand back the just-freed range");
+        // SAFETY: as above, for the range the allocator just handed out.
+        let reused = unsafe { core::slice::from_raw_parts(user as *const u8, secret_len) };
+        assert!(reused.iter().all(|&b| b == 0), "freed supervisor pages leaked into a user allocation");
+    }
+
+    #[test]
+    fn test_page_allocator_checked_free_scrubs_pages() {
+        let fixture = AllocatorFixture::new();
+
+        let user = fixture.allocator.allocate_pages_with_type(1, AllocationType::User).unwrap();
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        unsafe { core::slice::from_raw_parts_mut(user as *mut u8, UEFI_PAGE_SIZE) }.fill(0xC3);
+
+        assert_eq!(fixture.allocator.free_pages_checked(user, 1, AllocationType::User), Ok(()));
+
+        // SAFETY: as above; the range is still owned by the fixture after the free.
+        let scrubbed = unsafe { core::slice::from_raw_parts(user as *const u8, UEFI_PAGE_SIZE) };
+        assert!(scrubbed.iter().all(|&b| b == 0), "checked free left page contents behind");
+    }
+
+    #[test]
+    fn test_page_allocator_classifies_ranges_containment_misses() {
+        let fixture = AllocatorFixture::new();
+        let base = fixture.base;
+        let end = base + TEST_REGION_BYTES as u64;
+        let classify = |addr, size| fixture.allocator.classify_mmram(addr, size);
+
+        // Wholly inside.
+        assert_eq!(classify(base, 0x1000), Some(MmramPlacement::Inside));
+        assert_eq!(classify(base, TEST_REGION_BYTES as u64), Some(MmramPlacement::Inside));
+
+        // Crossing either boundary. These are the ranges `is_region_inside_mmram` reports as
+        // not inside MMRAM, which is why containment alone cannot keep a buffer out of it.
+        assert!(!fixture.allocator.is_region_inside_mmram(base - 0x1000, 0x2000));
+        assert_eq!(classify(base - 0x1000, 0x2000), Some(MmramPlacement::PartlyInside));
+        assert!(!fixture.allocator.is_region_inside_mmram(end - 0x1000, 0x2000));
+        assert_eq!(classify(end - 0x1000, 0x2000), Some(MmramPlacement::PartlyInside));
+
+        // A range that swallows the whole region is also not "inside" it.
+        assert!(!fixture.allocator.is_region_inside_mmram(base - 0x1000, TEST_REGION_BYTES as u64 + 0x2000));
+        assert_eq!(classify(base - 0x1000, TEST_REGION_BYTES as u64 + 0x2000), Some(MmramPlacement::PartlyInside));
+
+        // Clear of the region on either side, and touching only its exclusive bounds.
+        assert_eq!(classify(base - 0x1000, 0x1000), Some(MmramPlacement::Outside));
+        assert_eq!(classify(end, 0x1000), Some(MmramPlacement::Outside));
+
+        // An empty range touches nothing; an overflowing one fails closed.
+        assert_eq!(classify(base, 0), Some(MmramPlacement::Outside));
+        assert_eq!(classify(u64::MAX, 2), Some(MmramPlacement::PartlyInside));
+    }
+
+    #[test]
+    fn test_page_allocator_reports_overlap_before_it_knows_any_regions() {
+        // Nothing can be shown to lie either inside or outside MMRAM before the regions are
+        // scanned, so the layout is reported as unknown rather than guessed at.
+        let allocator = PageAllocator::new();
+
+        assert!(!allocator.is_initialized());
+        assert_eq!(allocator.classify_mmram(0x1000, 0x1000), None);
+    }
+
+    #[test]
     fn test_page_allocator_checked_free_is_atomic_on_type_mismatch() {
         let fixture = AllocatorFixture::new();
         let mut state = fixture.allocator.lock_state();
         let user = state.allocate(2, AllocationType::User).unwrap();
 
-        assert_eq!(state.free_checked(user, 2, AllocationType::Supervisor), Err(PageAllocError::InvalidAddress));
+        assert_eq!(
+            state.verify_allocated_with_type(user, 2, AllocationType::Supervisor),
+            Err(PageAllocError::InvalidAddress)
+        );
         assert_eq!(state.allocation_type(user), Some(AllocationType::User));
         assert_eq!(state.allocation_type(user + UEFI_PAGE_SIZE as u64), Some(AllocationType::User));
 
-        assert_eq!(state.free_checked(user, 2, AllocationType::User), Ok(()));
-        assert_eq!(state.free(user, 2), Err(PageAllocError::NotAllocated));
-        assert_eq!(state.free(user, 0), Err(PageAllocError::InvalidAddress));
+        let bit_range =
+            state.verify_allocated_with_type(user, 2, AllocationType::User).expect("the range is user-allocated");
+        state.mark_free(bit_range);
+        assert_eq!(state.verify_allocated(user, 2), Err(PageAllocError::NotAllocated));
+        assert_eq!(state.verify_allocated(user, 0), Err(PageAllocError::InvalidAddress));
     }
 
     #[test]
@@ -1301,9 +1544,27 @@ mod tests {
         let allocation = state.allocate(TEST_REGION_PAGES - 1, AllocationType::User).unwrap();
         let last_page = fixture.base + (TEST_REGION_PAGES - 1) as u64 * UEFI_PAGE_SIZE as u64;
 
-        assert_eq!(state.free(last_page, 2), Err(PageAllocError::InvalidAddress));
-        assert_eq!(state.free(allocation, TEST_REGION_PAGES), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(last_page, 2), Err(PageAllocError::InvalidAddress));
+        assert_eq!(state.verify_allocated(allocation, TEST_REGION_PAGES), Err(PageAllocError::InvalidAddress));
         assert_eq!(state.allocated_page_count(AllocationType::User), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_keeps_pages_allocated_when_they_cannot_be_unmapped() {
+        // A range that could not be made inaccessible must not go back into the pool: a later
+        // allocation would hand out memory that a stale mapping still reaches.
+        let fixture = AllocatorFixture::new();
+        let allocation = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        let free_before = fixture.allocator.free_page_count();
+
+        let result = fixture
+            .allocator
+            .release_pages_with(allocation, 2, Some(AllocationType::User), |_, _| Err(PageAllocError::UnmapFailed));
+
+        assert_eq!(result, Err(PageAllocError::UnmapFailed));
+        assert_eq!(fixture.allocator.free_page_count(), free_before, "the failed range was returned to the pool");
+        assert_eq!(fixture.allocator.get_allocation_type(allocation), Some(AllocationType::User));
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::User), 2);
     }
 
     #[test]
@@ -1405,6 +1666,73 @@ mod tests {
         assert_eq!(PageAllocator::calculate_bookkeeping(&allocated), Err(PageAllocError::OutOfMemory));
         assert_eq!(PageAllocator::calculate_bookkeeping(&too_small), Err(PageAllocError::OutOfMemory));
         assert_eq!(PageAllocator::calculate_bookkeeping(&unaligned), Err(PageAllocError::NotAligned));
+    }
+
+    #[test]
+    fn test_page_allocator_classify_mmram_in_regions_matches_the_committed_classifier() {
+        // The pre-commit and post-commit classifiers decide the same security questions, so a
+        // range must not be judged differently depending on which one a caller reaches for.
+        let fixture = AllocatorFixture::new();
+        let base = fixture.base;
+        let regions = regions_from(&[(base, TEST_REGION_BYTES as u64, false)]);
+        let page = UEFI_PAGE_SIZE as u64;
+        let span = TEST_REGION_BYTES as u64;
+
+        for (addr, size) in [
+            (base, page),
+            (base, span),
+            (base + span - page, page),
+            (base + span, page),
+            (base - page, page),
+            (base - page, span),
+            (base + span - page, span),
+            (base, 0),
+            (u64::MAX, page),
+        ] {
+            assert_eq!(
+                classify_mmram_in_regions(&regions, addr, size),
+                fixture.allocator.classify_mmram(addr, size).expect("fixture allocator is initialized"),
+                "classification diverged for 0x{addr:016x} size 0x{size:x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_regions_contain_address() {
+        let regions = regions_from(&[(0x1000, 0x2000, false), (0x8000, 0x1000, true)]);
+
+        assert!(regions_contain(&regions, 0x1000));
+        assert!(regions_contain(&regions, 0x2fff));
+        // Pre-allocated regions still describe MMRAM, so they anchor just as well.
+        assert!(regions_contain(&regions, 0x8000));
+        assert!(!regions_contain(&regions, 0x0fff));
+        assert!(!regions_contain(&regions, 0x3000));
+        assert!(!regions_contain(&regions, 0x9000));
+        assert!(!regions_contain(&[], 0x1000));
+    }
+
+    #[test]
+    fn test_page_allocator_regions_contain_address_does_not_overflow() {
+        let regions = regions_from(&[(u64::MAX - 0xfff, 0x2000, false)]);
+
+        // The declared extent wraps, so nothing can be shown to be inside it.
+        assert!(!regions_contain(&regions, u64::MAX));
+    }
+
+    #[test]
+    fn test_page_allocator_classify_mmram_in_regions() {
+        let regions = regions_from(&[(0x1000, 0x1000, false), (0x2000, 0x1000, true)]);
+
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0x1000), MmramPlacement::Inside);
+        // Adjacent regions cover the range jointly, so this is wholly inside.
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0x2000), MmramPlacement::Inside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x4000, 0x1000), MmramPlacement::Outside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x2800, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x0800, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&regions, 0x1000, 0), MmramPlacement::Outside);
+        // A range whose end overflows fails closed.
+        assert_eq!(classify_mmram_in_regions(&regions, u64::MAX, 0x1000), MmramPlacement::PartlyInside);
+        assert_eq!(classify_mmram_in_regions(&[], 0x1000, 0x1000), MmramPlacement::Outside);
     }
 
     #[test]

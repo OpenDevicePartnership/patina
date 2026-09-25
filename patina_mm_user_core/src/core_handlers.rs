@@ -114,7 +114,11 @@ pub fn register_core_mmi_handlers() {
                 log::info!("Registered core MMI handler [{i}] for {}", entry.handler_type);
             }
             Err(status) => {
-                log::error!("Failed to register core MMI handler [{i}] for {}: {status:?}", entry.handler_type);
+                log::error!(
+                    "Failed to register core MMI handler [{i}] for {}: {:#x}",
+                    entry.handler_type,
+                    status.as_usize()
+                );
             }
         }
     }
@@ -155,7 +159,7 @@ fn mm_driver_dispatch_handler(
     // Dispatch the MM drivers discovered during StartUserCore (single dependency-ordered pass).
     match MmUserCore::instance().dispatch_drivers() {
         Ok(count) => log::info!("Successfully dispatched {count} MM driver(s)."),
-        Err(status) => log::error!("Driver dispatch failed: {status:?}"),
+        Err(status) => log::error!("Driver dispatch failed: {:#x}", status.as_usize()),
     }
 
     // Self-unregister (one-shot).
@@ -200,7 +204,7 @@ fn mm_ready_to_lock_handler(
     // Install the MM Ready To Lock Protocol.
     let status = install_lifecycle_protocol(&patina::guid::MM_READY_TO_LOCK_PROTOCOL);
     if status != efi::Status::SUCCESS {
-        log::error!("Failed to install MM Ready To Lock Protocol: {status:?}");
+        log::error!("Failed to install MM Ready To Lock Protocol: {:#x}", status.as_usize());
     }
 
     status

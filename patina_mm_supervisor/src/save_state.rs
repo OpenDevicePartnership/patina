@@ -42,6 +42,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     PageOwnership,
+    intrinsics::current_apic_id,
     privilege_mgmt::SyscallResult,
     query_address_ownership,
     runtime::with_user_access,
@@ -83,8 +84,104 @@ pub(crate) struct SaveStateInfo {
     pub(crate) sm_base: u64,
 }
 
+/// Why the per-CPU save-state regions the `PassDown` HOB describes cannot be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveStateValidationError {
+    /// The SMBASE array is null, empty, misaligned, overflowing, or not entirely inside MMRAM.
+    UnusableSmBaseArray {
+        /// Base address of the array.
+        base: u64,
+        /// Number of entries the array was said to hold.
+        count: u64,
+    },
+    /// The SMBASE array is inside MMRAM but is not mapped supervisor-only.
+    SmBaseArrayNotSupervisorOwned {
+        /// Base address of the array.
+        base: u64,
+        /// Number of entries the array was said to hold.
+        count: u64,
+    },
+    /// A CPU's save-state region is null, overflows, or is not entirely inside MMRAM.
+    UnusableSaveStateRegion {
+        /// Index of the offending CPU.
+        cpu_index: usize,
+        /// The SMBASE the array reported for it.
+        smbase: u64,
+    },
+    /// A CPU's save-state region is inside MMRAM but is not mapped supervisor-only.
+    SaveStateRegionNotSupervisorOwned {
+        /// Index of the offending CPU.
+        cpu_index: usize,
+        /// The SMBASE the array reported for it.
+        smbase: u64,
+    },
+}
+
+/// Requires every per-CPU save-state region the `PassDown` HOB describes to lie inside MMRAM and
+/// to be mapped supervisor-only.
+///
+/// The save-state syscall turns `sm_base[i] + SMRAM_SAVE_STATE_MAP_OFFSET` into a slice and hands
+/// selected bytes of it back to Ring 3. The MM IPL supplies those SMBASEs and sits outside the
+/// supervisor's trust boundary, so an entry that is never checked is an arbitrary read primitive:
+/// proving the array itself is in MMRAM says nothing about where its contents point. Checking all
+/// of them once, here, is what lets [`get_save_state_view`] treat them as sound later.
+///
+/// Being inside MMRAM is not on its own enough. A save-state map holds a CPU's saved context, and
+/// the syscall exists so Ring 3 can read parts of it under policy; a page Ring 3 can reach
+/// directly hands it the whole map and lets it rewrite what the supervisor is about to read.
+/// Supervisor-only mapping is what keeps the syscall the only way in.
+pub(crate) fn validate_save_state_regions(
+    sm_base: u64,
+    number_of_cpus: u64,
+    is_inside_mmram: impl Fn(u64, u64) -> bool,
+    is_supervisor_owned: impl Fn(u64, u64) -> bool,
+) -> Result<(), SaveStateValidationError> {
+    let unusable_array = SaveStateValidationError::UnusableSmBaseArray { base: sm_base, count: number_of_cpus };
+
+    let count = usize::try_from(number_of_cpus).map_err(|_| unusable_array)?;
+    let array_size = number_of_cpus
+        .checked_mul(core::mem::size_of::<u64>() as u64)
+        .filter(|size| *size != 0)
+        .ok_or(unusable_array)?;
+    // Alignment is required as well as containment, because the array is read back as `&[u64]`.
+    if sm_base == 0
+        || !sm_base.is_multiple_of(core::mem::align_of::<u64>() as u64)
+        || sm_base.checked_add(array_size).is_none()
+        || !is_inside_mmram(sm_base, array_size)
+    {
+        return Err(unusable_array);
+    }
+    if !is_supervisor_owned(sm_base, array_size) {
+        return Err(SaveStateValidationError::SmBaseArrayNotSupervisorOwned { base: sm_base, count: number_of_cpus });
+    }
+
+    // SAFETY: the checks above establish that `sm_base` is a non-null, aligned array of `count`
+    // initialized `u64` entries lying entirely inside supervisor-owned MMRAM. The MM IPL
+    // populates it before launching the supervisor and it stays resident for the supervisor's
+    // lifetime.
+    let sm_bases = unsafe { core::slice::from_raw_parts(sm_base as *const u64, count) };
+
+    for (cpu_index, &smbase) in sm_bases.iter().enumerate() {
+        let Some(map_base) = smbase
+            .checked_add(SMRAM_SAVE_STATE_MAP_OFFSET)
+            .filter(|_| smbase != 0)
+            .filter(|base| base.checked_add(SMRAM_SAVE_STATE_MAP_SIZE).is_some())
+            .filter(|base| is_inside_mmram(*base, SMRAM_SAVE_STATE_MAP_SIZE))
+        else {
+            return Err(SaveStateValidationError::UnusableSaveStateRegion { cpu_index, smbase });
+        };
+        if !is_supervisor_owned(map_base, SMRAM_SAVE_STATE_MAP_SIZE) {
+            return Err(SaveStateValidationError::SaveStateRegionNotSupervisorOwned { cpu_index, smbase });
+        }
+    }
+
+    Ok(())
+}
+
 /// Holds the parameters from Phase 1 until Phase 2 completes the read.
 pub(crate) struct SaveStateAccessHolder {
+    /// APIC ID of the CPU that staged the request (must match in Phase 2).
+    pub(crate) caller: u32,
     /// User protocol pointer (must match across both phases).
     pub(crate) user_protocol: u64,
     /// Register to read.
@@ -110,13 +207,13 @@ fn policy_checks_for_register(reg: MmSaveStateRegister) -> &'static [SaveStateFi
 /// and `register_raw` is the raw `EFI_MM_SAVE_STATE_REGISTER` value.
 pub fn save_state_read_phase1(protocol: u64, register_raw: u64, cpu_index: u64) -> SyscallResult {
     let num_cpus = get_number_of_cpus()
-        .inspect_err(|status| log::error!("SAVE_STATE_READ: Unable to get number of CPUs: {status:?}"))?;
+        .inspect_err(|status| log::error!("SAVE_STATE_READ: Unable to get number of CPUs: {:#x}", status.as_usize()))?;
 
-    stage_read_request(protocol, register_raw, cpu_index, num_cpus)
+    stage_read_request(current_apic_id(), protocol, register_raw, cpu_index, num_cpus)
 }
 
-/// Validates a Phase 1 request against `num_cpus` and stages it for Phase 2.
-fn stage_read_request(protocol: u64, register_raw: u64, cpu_index: u64, num_cpus: u64) -> SyscallResult {
+/// Validates a Phase 1 request against `num_cpus` and stages it for Phase 2 on behalf of `caller`.
+fn stage_read_request(caller: u32, protocol: u64, register_raw: u64, cpu_index: u64, num_cpus: u64) -> SyscallResult {
     let Some(register) = MmSaveStateRegister::from_u64(register_raw) else {
         log::error!("SAVE_STATE_READ: Unknown register value: {register_raw}");
         return Err(Status::INVALID_PARAMETER);
@@ -128,7 +225,7 @@ fn stage_read_request(protocol: u64, register_raw: u64, cpu_index: u64, num_cpus
     }
 
     let mut access = security_state().lock_save_state_access();
-    *access = Some(SaveStateAccessHolder { user_protocol: protocol, register, cpu_index });
+    *access = Some(SaveStateAccessHolder { caller, user_protocol: protocol, register, cpu_index });
 
     Ok(0)
 }
@@ -150,7 +247,7 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         }
     };
 
-    let write_size = validate_read_request(&holder, protocol, width, buffer)?;
+    let write_size = validate_read_request(&holder, current_apic_id(), protocol, width, buffer)?;
 
     let mut out = [0u8; IO_INFO_SIZE];
     let out = out.get_mut(..write_size).ok_or(Status::BUFFER_TOO_SMALL)?;
@@ -160,7 +257,11 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
         read_processor_id(holder.cpu_index, out)?;
     } else {
         let view = get_save_state_view(save_state_info()?, holder.cpu_index).inspect_err(|status| {
-            log::error!("SAVE_STATE_READ2: Unable to get save state view for CPU {}: {status:?}", holder.cpu_index);
+            log::error!(
+                "SAVE_STATE_READ2: Unable to get save state view for CPU {}: {:#x}",
+                holder.cpu_index,
+                status.as_usize()
+            );
         })?;
 
         let Some(gate) = security_state().policy_gate() else {
@@ -183,10 +284,20 @@ pub fn save_state_read_phase2(protocol: u64, width: u64, buffer: u64) -> Syscall
 /// Returns the number of bytes that will be written to `buffer`.
 fn validate_read_request(
     holder: &SaveStateAccessHolder,
+    caller: u32,
     protocol: u64,
     width: u64,
     buffer: u64,
 ) -> Result<usize, Status> {
+    // The hand-off lives in one slot shared by every core, so a request staged by another CPU
+    // must not be completed here. The protocol pointer cannot catch this: every caller passes
+    // the same user protocol. Reading another core's staged request would let a caller obtain a
+    // register under the trap condition of a CPU other than its own.
+    if holder.caller != caller {
+        log::error!("SAVE_STATE_READ2: staged by CPU {} but completed on CPU {caller}", holder.caller);
+        return Err(Status::ACCESS_DENIED);
+    }
+
     // Verify protocol matches Phase 1
     if holder.user_protocol != protocol {
         log::error!("SAVE_STATE_READ2: Protocol mismatch: expected 0x{:x}, got 0x{:x}", holder.user_protocol, protocol);
@@ -334,9 +445,9 @@ fn get_save_state_view(info: SaveStateInfo, cpu_index: u64) -> Result<SaveStateV
     // relocation code. The save-state region base is `SmBase + 0xfc00` and every
     // region is the fixed `SMRAM_SAVE_STATE_MAP_SIZE`.
     //
-    // SAFETY: `sm_base` references a valid array of at least `num_cpus` `u64`
-    // entries in SMRAM (from the PassDown HOB), so the slice covers only valid,
-    // initialized memory.
+    // SAFETY: `validate_save_state_regions` proved during initialization that `sm_base` is a
+    // non-null, aligned array of at least `num_cpus` initialized `u64` entries inside MMRAM, and
+    // MMRAM is not writable from outside MM, so it still describes that array here.
     let sm_bases = unsafe { core::slice::from_raw_parts(info.sm_base as *const u64, num_cpus as usize) };
 
     let smbase = *sm_bases.get(cpu_index as usize).ok_or(Status::INVALID_PARAMETER)?;
@@ -344,11 +455,11 @@ fn get_save_state_view(info: SaveStateInfo, cpu_index: u64) -> Result<SaveStateV
         log::error!("SmBase[{cpu_index}] is null");
         return Err(Status::INVALID_PARAMETER);
     }
-    let base = smbase + SMRAM_SAVE_STATE_MAP_OFFSET;
+    let base = smbase.checked_add(SMRAM_SAVE_STATE_MAP_OFFSET).ok_or(Status::INVALID_PARAMETER)?;
 
-    // SAFETY: `base` points to a valid save state region of
-    // `SMRAM_SAVE_STATE_MAP_SIZE` bytes in SMRAM that is stable while this SMI
-    // is serviced and lives for the program's duration.
+    // SAFETY: `validate_save_state_regions` proved during initialization that this entry's
+    // `SMRAM_SAVE_STATE_MAP_SIZE` region lies inside MMRAM, which is stable while this SMI is
+    // serviced and lives for the program's duration.
     Ok(unsafe { SaveStateView::new(base as *const u8, SMRAM_SAVE_STATE_MAP_SIZE as usize) })
 }
 
@@ -391,10 +502,12 @@ fn actual_write_size(register: MmSaveStateRegister, width: u64) -> usize {
 /// `buffer` must reference a writable user-owned region of at least `out.len()` bytes and
 /// must not overlap `out`.
 unsafe fn copy_to_user(buffer: *mut u8, out: &[u8]) {
-    with_user_access(|| {
-        // SAFETY: guaranteed by the caller's contract; SMAP is disabled for this copy.
-        unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), buffer, out.len()) };
-    });
+    // SAFETY: the caller's contract guarantees `buffer` is a writable user-owned region of at
+    // least `out.len()` bytes that does not overlap `out`, so the only access made while SMAP is
+    // lifted targets that validated user range.
+    unsafe {
+        with_user_access(|| core::ptr::copy_nonoverlapping(out.as_ptr(), buffer, out.len()));
+    }
 }
 
 /// Reads the `PROCESSOR_ID` for a given CPU and writes it to the user buffer.
@@ -629,6 +742,169 @@ mod tests {
         }
     }
 
+    /// Returns the address ranges a `FakeSmram` legitimately occupies.
+    fn fake_smram_ranges(smram: &FakeSmram) -> Vec<(u64, u64)> {
+        vec![
+            (smram.sm_bases.as_ptr() as u64, (smram.sm_bases.len() * core::mem::size_of::<u64>()) as u64),
+            (smram.region.as_ptr() as u64, smram.region.len() as u64),
+        ]
+    }
+
+    /// Accepts only ranges lying wholly inside one of `allowed`.
+    fn inside_any(allowed: Vec<(u64, u64)>) -> impl Fn(u64, u64) -> bool {
+        move |addr, size| {
+            allowed
+                .iter()
+                .any(|&(base, len)| addr >= base && addr.checked_add(size).is_some_and(|end| end <= base + len))
+        }
+    }
+
+    /// Answers "supervisor-owned" for every range, isolating the containment rules.
+    fn all_supervisor_owned(_addr: u64, _size: u64) -> bool {
+        true
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_accepts_regions_inside_mmram() {
+        let smram = FakeSmram::new(2);
+        let info = smram.info();
+
+        assert_eq!(
+            validate_save_state_regions(
+                info.sm_base,
+                info.number_of_cpus,
+                inside_any(fake_smram_ranges(&smram)),
+                all_supervisor_owned
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_an_array_that_ring_3_can_reach() {
+        // An array Ring 3 can write lets it choose where every save-state read lands.
+        let smram = FakeSmram::new(2);
+        let info = smram.info();
+
+        assert_eq!(
+            validate_save_state_regions(
+                info.sm_base,
+                info.number_of_cpus,
+                inside_any(fake_smram_ranges(&smram)),
+                |_, _| false
+            ),
+            Err(SaveStateValidationError::SmBaseArrayNotSupervisorOwned { base: info.sm_base, count: 2 })
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_a_region_that_ring_3_can_reach() {
+        // The syscall is meant to be the only way into a save-state map under policy, so a map
+        // Ring 3 can reach directly is refused even though it is inside MMRAM.
+        let smram = FakeSmram::new(2);
+        let info = smram.info();
+        let array_size = (smram.sm_bases.len() * core::mem::size_of::<u64>()) as u64;
+
+        // Only the array itself is supervisor-owned; the maps it points at are not.
+        let owned = move |addr: u64, size: u64| addr == info.sm_base && size == array_size;
+
+        assert_eq!(
+            validate_save_state_regions(
+                info.sm_base,
+                info.number_of_cpus,
+                inside_any(fake_smram_ranges(&smram)),
+                owned
+            ),
+            Err(SaveStateValidationError::SaveStateRegionNotSupervisorOwned {
+                cpu_index: 0,
+                smbase: smram.sm_bases[0]
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_an_array_outside_mmram_without_reading_it() {
+        // The array has to be refused before it is dereferenced, so this points at an address
+        // that would fault if the check were done in the wrong order.
+        let result = validate_save_state_regions(0xdead_0000, 4, |_, _| false, all_supervisor_owned);
+
+        assert_eq!(result, Err(SaveStateValidationError::UnusableSmBaseArray { base: 0xdead_0000, count: 4 }));
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_an_unusable_array() {
+        let smram = FakeSmram::new(2);
+        let sm_base = smram.info().sm_base;
+
+        // Containment is answered yes throughout, so each case is rejected on its own ground:
+        // a null base, an empty array, and an extent that overflows.
+        for (base, count) in [(0, 2), (sm_base, 0), (u64::MAX - 7, 2)] {
+            assert_eq!(
+                validate_save_state_regions(base, count, |_, _| true, all_supervisor_owned),
+                Err(SaveStateValidationError::UnusableSmBaseArray { base, count }),
+                "array at 0x{base:x} with {count} entries should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_a_misaligned_array() {
+        // The array is read back as `&[u64]`, so a misaligned base is refused even when its
+        // extent is acceptable.
+        let smram = FakeSmram::new(2);
+        let base = smram.info().sm_base + 1;
+
+        assert_eq!(
+            validate_save_state_regions(base, 2, |_, _| true, all_supervisor_owned),
+            Err(SaveStateValidationError::UnusableSmBaseArray { base, count: 2 })
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_an_entry_outside_mmram() {
+        // This is the arbitrary-read case: an in-MMRAM array whose entry points anywhere the
+        // producer likes.
+        let mut smram = FakeSmram::new(2);
+        smram.set_smbase(1, 0x1000);
+
+        assert_eq!(
+            validate_save_state_regions(
+                smram.info().sm_base,
+                2,
+                inside_any(fake_smram_ranges(&smram)),
+                all_supervisor_owned
+            ),
+            Err(SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 1, smbase: 0x1000 })
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_a_null_entry() {
+        let mut smram = FakeSmram::new(2);
+        smram.set_smbase(0, 0);
+
+        assert_eq!(
+            validate_save_state_regions(
+                smram.info().sm_base,
+                2,
+                inside_any(fake_smram_ranges(&smram)),
+                all_supervisor_owned
+            ),
+            Err(SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 0, smbase: 0 })
+        );
+    }
+
+    #[test]
+    fn test_validate_save_state_regions_rejects_an_entry_whose_region_overflows() {
+        let mut smram = FakeSmram::new(1);
+        smram.set_smbase(0, u64::MAX);
+
+        assert_eq!(
+            validate_save_state_regions(smram.info().sm_base, 1, |_, _| true, all_supervisor_owned),
+            Err(SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 0, smbase: u64::MAX })
+        );
+    }
+
     /// Builds a zeroed save-state map whose `SMMRevId` advertises I/O trap support.
     fn new_save_state_map() -> Box<[u8; SMRAM_SAVE_STATE_MAP_SIZE as usize]> {
         let mut map = Box::new([0u8; SMRAM_SAVE_STATE_MAP_SIZE as usize]);
@@ -721,7 +997,8 @@ mod tests {
     fn gate_over(policy: &[u64]) -> PolicyGate {
         // SAFETY: `build_policy` produced a valid, aligned V1.0 policy buffer that the caller
         // keeps alive for the gate's lifetime.
-        unsafe { PolicyGate::new(policy.as_ptr() as *const u8) }.expect("valid policy buffer")
+        unsafe { PolicyGate::new(policy.as_ptr() as *const u8, core::mem::size_of_val(policy)) }
+            .expect("valid policy buffer")
     }
 
     fn descriptor(field: SaveStateField, attributes: u32, condition: SaveStateCondition) -> SaveStateDescriptorV1_0 {
@@ -846,13 +1123,18 @@ mod tests {
         {
             let mut access = crate::state::security_state().lock_save_state_access();
             assert!(access.is_none());
-            *access =
-                Some(SaveStateAccessHolder { user_protocol: 0xDEAD, register: MmSaveStateRegister::Rax, cpu_index: 0 });
+            *access = Some(SaveStateAccessHolder {
+                caller: 7,
+                user_protocol: 0xDEAD,
+                register: MmSaveStateRegister::Rax,
+                cpu_index: 0,
+            });
         }
 
         {
             let mut access = crate::state::security_state().lock_save_state_access();
             let holder = access.take().unwrap();
+            assert_eq!(holder.caller, 7);
             assert_eq!(holder.user_protocol, 0xDEAD);
             assert_eq!(holder.register, MmSaveStateRegister::Rax);
             assert_eq!(holder.cpu_index, 0);
@@ -925,9 +1207,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_stage_read_request_validates_and_stores_request() {
-        assert_eq!(stage_read_request(0x1000, 38, 0, 4), Ok(0));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 0, 4), Ok(0));
 
         let holder = security_state().lock_save_state_access().take().expect("request staged");
+        assert_eq!(holder.caller, 7);
         assert_eq!(holder.user_protocol, 0x1000);
         assert_eq!(holder.register, MmSaveStateRegister::Rax);
         assert_eq!(holder.cpu_index, 0);
@@ -936,34 +1219,58 @@ mod tests {
     #[test]
     #[serial]
     fn test_stage_read_request_rejects_bad_register_and_cpu_index() {
-        assert_eq!(stage_read_request(0x1000, 999, 0, 4), Err(Status::INVALID_PARAMETER));
-        assert_eq!(stage_read_request(0x1000, 38, 4, 4), Err(Status::INVALID_PARAMETER));
-        assert_eq!(stage_read_request(0x1000, 38, 9, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 999, 0, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 4, 4), Err(Status::INVALID_PARAMETER));
+        assert_eq!(stage_read_request(7, 0x1000, 38, 9, 4), Err(Status::INVALID_PARAMETER));
 
         assert!(security_state().lock_save_state_access().is_none());
     }
 
     #[test]
+    fn test_validate_read_request_rejects_a_request_staged_by_another_cpu() {
+        // The hand-off slot is shared by every core and every caller passes the same user
+        // protocol, so the staging CPU is the only thing that can tell the requests apart.
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
+
+        assert_eq!(validate_read_request(&holder, 8, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
+    }
+
+    #[test]
     fn test_validate_read_request_rejects_mismatched_or_malformed_requests() {
-        let holder = SaveStateAccessHolder { user_protocol: 0x1000, register: MmSaveStateRegister::Rax, cpu_index: 0 };
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
 
         // Phase 2 must present the same protocol pointer Phase 1 recorded.
-        assert_eq!(validate_read_request(&holder, 0x2000, 8, 0x5000), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x2000, 8, 0x5000), Err(Status::INVALID_PARAMETER));
         // Zero width and null buffers are rejected before anything is read.
-        assert_eq!(validate_read_request(&holder, 0x1000, 0, 0x5000), Err(Status::INVALID_PARAMETER));
-        assert_eq!(validate_read_request(&holder, 0x1000, 8, 0), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 0, 0x5000), Err(Status::INVALID_PARAMETER));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 8, 0), Err(Status::INVALID_PARAMETER));
         // A width the register cannot satisfy is unsupported rather than a policy failure.
-        assert_eq!(validate_read_request(&holder, 0x1000, 16, 0x5000), Err(Status::UNSUPPORTED));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 16, 0x5000), Err(Status::UNSUPPORTED));
     }
 
     #[test]
     #[serial]
     fn test_validate_read_request_denies_buffers_outside_user_memory() {
-        let holder = SaveStateAccessHolder { user_protocol: 0x1000, register: MmSaveStateRegister::Rax, cpu_index: 0 };
+        let holder = SaveStateAccessHolder {
+            caller: 7,
+            user_protocol: 0x1000,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 0,
+        };
 
         // Without a page table no address can be proven user-owned, so the read is refused.
         *security_state().lock_page_table() = None;
-        assert_eq!(validate_read_request(&holder, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
+        assert_eq!(validate_read_request(&holder, 7, 0x1000, 8, 0x5000), Err(Status::ACCESS_DENIED));
     }
 
     #[test]
@@ -976,7 +1283,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_save_state_read_phase2_consumes_the_staged_request() {
-        assert_eq!(stage_read_request(0x1000, 38, 0, 4), Ok(0));
+        // Staged as this CPU so the hand-off reaches the checks the test is about.
+        assert_eq!(stage_read_request(current_apic_id(), 0x1000, 38, 0, 4), Ok(0));
 
         // The buffer cannot be proven user-owned without a page table.
         *security_state().lock_page_table() = None;

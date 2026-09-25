@@ -75,6 +75,11 @@ syscall_center:
 # Architectural definition: CallerAddr in RCX, rFLAGs in R11 from x64 syscall instruction
 # push CallIndex stored at top of stack
 
+    # IA32_FMASK already clears DF and AC on entry; these repeat it so the stub does not depend
+    # on an MSR programmed elsewhere. Neither touches a register or a flag anything here reads.
+    cld
+    clac
+
     swapgs  # get kernel pointer, save user GSbase
     mov gs:[SAVED_USER_RSP], rsp # save user's stack pointer
     mov rsp, gs:[MM_SUPV_RSP] # set up kernel stack

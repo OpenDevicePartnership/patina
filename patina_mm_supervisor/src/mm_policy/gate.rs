@@ -34,10 +34,83 @@ pub enum PolicyError {
     InvalidInstructionIndex,
     /// Policy root not found for the requested type.
     PolicyRootNotFound,
+    /// The policy blob's internal offsets do not describe a structure inside its own buffer.
+    MalformedPolicy,
     /// Access denied by policy.
     AccessDenied,
     /// Internal error during policy evaluation.
     InternalError,
+}
+
+/// Checks that every offset and count inside the policy blob describes a structure lying wholly
+/// within `buffer_size` bytes.
+///
+/// The blob is firmware-supplied data whose fields are otherwise taken at face value by the
+/// descriptor accessors, the per-syscall lookups and the `FETCH_POLICY` copy-out. Validating the
+/// layout once here is what makes those unchecked `slice::from_raw_parts` calls sound.
+///
+/// ## Safety
+///
+/// `policy_ptr` must be non-null and point to `buffer_size` readable bytes.
+unsafe fn validate_policy_layout(policy_ptr: *const u8, buffer_size: usize) -> Result<(), PolicyError> {
+    let header_size = core::mem::size_of::<SecurePolicyDataV1_0>();
+    if buffer_size < header_size {
+        log::error!("policy blob buffer is {buffer_size} bytes, too small for a {header_size}-byte header");
+        return Err(PolicyError::MalformedPolicy);
+    }
+
+    // SAFETY: the buffer was just verified to hold a complete header, and the caller guarantees
+    // `policy_ptr` is readable for `buffer_size` bytes.
+    let policy = unsafe { &*(policy_ptr as *const SecurePolicyDataV1_0) };
+
+    if !policy.is_valid_version() {
+        return Err(PolicyError::InvalidVersion);
+    }
+
+    // Every offset below is bounded against the blob's own declared size, so that has to fit the
+    // allocation first. `fetch_n_update_policy` also copies exactly this many bytes out.
+    let declared = policy.size as usize;
+    if declared < header_size || declared > buffer_size {
+        log::error!("policy blob declares {declared} bytes in a {buffer_size}-byte buffer");
+        return Err(PolicyError::MalformedPolicy);
+    }
+
+    let roots_end = (policy.policy_root_count as usize)
+        .checked_mul(core::mem::size_of::<PolicyRootV1>())
+        .and_then(|bytes| bytes.checked_add(policy.policy_root_offset as usize))
+        .ok_or(PolicyError::MalformedPolicy)?;
+    if roots_end > declared {
+        log::error!(
+            "policy root array ends at {roots_end}, past the {declared}-byte blob ({} roots at offset {})",
+            policy.policy_root_count,
+            policy.policy_root_offset
+        );
+        return Err(PolicyError::MalformedPolicy);
+    }
+
+    // SAFETY: the roots array was just verified to lie wholly inside the blob.
+    let roots = unsafe { policy.get_policy_roots() };
+    for root in roots {
+        // A type the supervisor does not recognize is never looked up, so its descriptors are
+        // never dereferenced and need no bounds.
+        let Some(desc_size) = super::descriptor_size(root.policy_type) else {
+            continue;
+        };
+
+        let descriptors_end = (root.count as usize)
+            .checked_mul(desc_size)
+            .and_then(|bytes| bytes.checked_add(root.offset as usize))
+            .ok_or(PolicyError::MalformedPolicy)?;
+        if descriptors_end > declared {
+            log::error!(
+                "policy type {} descriptors end at {descriptors_end}, past the {declared}-byte blob",
+                root.policy_type
+            );
+            return Err(PolicyError::MalformedPolicy);
+        }
+    }
+
+    Ok(())
 }
 
 /// Policy gate for runtime access validation.
@@ -68,22 +141,22 @@ unsafe impl Sync for PolicyGate {}
 impl PolicyGate {
     /// Creates a new policy gate from a policy buffer pointer.
     ///
+    /// `buffer_size` is the size of the allocation `policy_ptr` names, as reported by the
+    /// `PassDown` HOB. The blob's internal offsets are validated against it, which is what lets
+    /// the descriptor accessors and the `FETCH_POLICY` copy-out trust those offsets later.
+    ///
     /// ## Safety
     ///
-    /// The caller must ensure that `policy_ptr` points to a valid policy buffer
-    /// that remains valid for the lifetime of this `PolicyGate`.
-    pub unsafe fn new(policy_ptr: *const u8) -> Result<Self, PolicyError> {
+    /// The caller must ensure that `policy_ptr` points to `buffer_size` readable bytes that
+    /// remain valid for the lifetime of this `PolicyGate`.
+    pub unsafe fn new(policy_ptr: *const u8, buffer_size: usize) -> Result<Self, PolicyError> {
         if policy_ptr.is_null() {
             return Err(PolicyError::NullPointer);
         }
 
         // SAFETY: `policy_ptr` is non-null (checked above) and, per this function's contract,
-        // points to a valid policy buffer that outlives the gate, so reborrowing the header to
-        // read its version is sound.
-        let policy = unsafe { &*(policy_ptr as *const SecurePolicyDataV1_0) };
-        if !policy.is_valid_version() {
-            return Err(PolicyError::InvalidVersion);
-        }
+        // points to `buffer_size` readable bytes that outlive the gate.
+        unsafe { validate_policy_layout(policy_ptr, buffer_size) }?;
 
         Ok(Self {
             policy_ptr,
@@ -459,8 +532,10 @@ impl PolicyGate {
     /// page allocator) large enough to hold the walk results. This avoids
     /// overwriting the saved snapshot during comparison.
     ///
-    /// Returns `Ok(())` if the tables match, or `Err(PolicyError::AccessDenied)`
-    /// if they differ ("security violation").
+    /// Returns `Ok(())` only when a snapshot exists and the tables match it.
+    /// Returns `Err(PolicyError::AccessDenied)` if they differ ("security violation"), and
+    /// `Err(PolicyError::InternalError)` if there is no snapshot to verify against - this
+    /// routine is what detects tampering, so "nothing to compare" must never read as a pass.
     ///
     /// ## Safety
     ///
@@ -475,8 +550,8 @@ impl PolicyGate {
         scratch_max_count: usize,
     ) -> Result<(), PolicyError> {
         let Some(&saved_count) = self.snapshot_count.get() else {
-            log::warn!("verify_snapshot: no snapshot available, skipping verification");
-            return Ok(());
+            log::error!("verify_snapshot: no snapshot to verify against");
+            return Err(PolicyError::InternalError);
         };
 
         // SAFETY: The caller guarantees that `cr3` points to a valid PML4 and
@@ -562,10 +637,10 @@ impl PolicyGate {
         //    memory policy descriptors after it.
         //
         // SAFETY: The caller guarantees that `dest` is writable for at least
-        // `dest_size` bytes (verified >= `total_bytes` above). `self.policy_ptr`
-        // points to a valid firmware policy blob of `fw_size` bytes (validated at
-        // construction). The memory policy buffer holds `count` valid descriptors
-        // from a prior `take_snapshot` call.
+        // `dest_size` bytes (verified >= `total_bytes` above). `self.policy_ptr` names a blob
+        // whose declared `size` was validated at construction to fit its own buffer, so reading
+        // `fw_size` bytes from it stays inside that buffer. The memory policy buffer holds
+        // `count` valid descriptors from a prior `take_snapshot` call.
         unsafe {
             core::ptr::copy_nonoverlapping(self.policy_ptr, dest, fw_size);
             if mem_policy_bytes > 0 {
@@ -585,8 +660,9 @@ impl PolicyGate {
         // 3. View the policy roots as a slice so the lookup/patch can be done in
         //    safe code.
         //
-        // SAFETY: The header reports `root_count` `PolicyRootV1` entries at
-        // `root_offset`, all within the `total_bytes` region copied above.
+        // SAFETY: `root_offset` and `root_count` came from the header just copied from the blob,
+        // and construction validated that the roots array they describe ends within the blob's
+        // declared size - which is `fw_size`, itself within the `total_bytes` copied above.
         let roots = unsafe { core::slice::from_raw_parts_mut(dest.add(root_offset) as *mut PolicyRootV1, root_count) };
 
         // Find the TYPE_MEM policy root and patch its offset/count.
@@ -672,11 +748,14 @@ mod tests {
     #[test]
     fn test_gate_rejects_an_invalid_policy_buffer() {
         // SAFETY: `new` checks for null before dereferencing.
-        assert_eq!(unsafe { PolicyGate::new(core::ptr::null()) }.err(), Some(PolicyError::NullPointer));
+        assert_eq!(unsafe { PolicyGate::new(core::ptr::null(), 0) }.err(), Some(PolicyError::NullPointer));
 
         let wrong_version = PolicyBuilder::new().version(2, 0).build();
-        // SAFETY: the builder produced an aligned, fully-initialized header that outlives the call.
-        assert_eq!(unsafe { PolicyGate::new(wrong_version.as_ptr()) }.err(), Some(PolicyError::InvalidVersion));
+        assert_eq!(
+            // SAFETY: the builder produced an aligned, fully-initialized header that outlives the call.
+            unsafe { PolicyGate::new(wrong_version.as_ptr(), wrong_version.len()) }.err(),
+            Some(PolicyError::InvalidVersion)
+        );
     }
 
     #[test]
@@ -926,12 +1005,17 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_snapshot_is_skipped_before_a_snapshot_is_taken() {
+    fn test_verify_snapshot_fails_closed_before_a_snapshot_is_taken() {
         let policy = PolicyBuilder::new().build();
         let gate = policy.gate();
 
-        // SAFETY: the missing snapshot short-circuits before `cr3`/`scratch` are dereferenced.
-        assert_eq!(unsafe { gate.verify_snapshot(0x1000, |_, _| false, core::ptr::null_mut(), 0) }, Ok(()));
+        // Having nothing to compare against is not a pass: this is the routine that detects
+        // page-table tampering after lock.
+        assert_eq!(
+            // SAFETY: the missing snapshot short-circuits before `cr3`/`scratch` are dereferenced.
+            unsafe { gate.verify_snapshot(0x1000, |_, _| false, core::ptr::null_mut(), 0) },
+            Err(PolicyError::InternalError)
+        );
     }
 
     #[test]
@@ -992,17 +1076,60 @@ mod tests {
     }
 
     #[test]
-    fn test_fetch_n_update_policy_requires_a_sized_firmware_policy() {
+    fn test_gate_rejects_a_policy_that_declares_no_size() {
         let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![])).declared_size(0).build();
-        let gate = policy.gate();
-        gate.record_snapshot(0);
+        assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));
+    }
 
-        let mut dest = vec![0u8; 256];
-        assert_eq!(
-            // SAFETY: `dest` is writable for `dest.len()` bytes.
-            unsafe { gate.fetch_n_update_policy(dest.as_mut_ptr(), dest.len()) },
-            Err(PolicyError::InternalError)
-        );
+    #[test]
+    fn test_gate_rejects_a_policy_larger_than_its_buffer() {
+        // A blob that claims more bytes than it was handed would make `fetch_n_update_policy`
+        // copy adjacent MMRAM out to the non-MM caller.
+        let policy =
+            PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![])).declared_size(u32::MAX).build();
+        assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));
+    }
+
+    #[test]
+    fn test_gate_rejects_a_root_array_past_the_end_of_the_policy() {
+        let policy =
+            PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![])).declared_root_count(4096).build();
+        assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));
+    }
+
+    #[test]
+    fn test_gate_rejects_descriptors_past_the_end_of_the_policy() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![mem(0x1000, 0x1000, RESOURCE_ATTR_READ)]))
+            .declared_descriptor_count(4096)
+            .build();
+        assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));
+    }
+
+    #[test]
+    fn test_gate_rejects_a_descriptor_count_that_overflows_a_byte_count() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![mem(0x1000, 0x1000, RESOURCE_ATTR_READ)]))
+            .declared_descriptor_count(u32::MAX)
+            .build();
+        assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));
+    }
+
+    #[test]
+    fn test_gate_accepts_a_well_formed_policy() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![mem(0x1000, 0x1000, RESOURCE_ATTR_READ)]))
+            .root(ACCESS_ATTR_DENY, Descriptors::Msr(vec![msr(0x1B, 1, RESOURCE_ATTR_READ as u16)]))
+            .build();
+        assert!(policy.try_gate().is_ok());
+    }
+
+    #[test]
+    fn test_gate_accepts_a_root_of_an_unrecognized_type() {
+        // Types the supervisor does not look up are never dereferenced, so their descriptor
+        // bounds are not the gate's problem.
+        let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Unknown(0x4242)).build();
+        assert!(policy.try_gate().is_ok());
     }
 
     #[test]

@@ -12,8 +12,9 @@
 //!
 //! The privilege management follows the `x86_64` syscall/sysret model:
 //!
-//! 1. **Initialization**: Configure `MSR_IA32_STAR`, `MSR_IA32_LSTAR`, `MSR_IA32_EFER`
-//!    to set up syscall entry points and segment selectors.
+//! 1. **Initialization**: Configure `MSR_IA32_STAR`, `MSR_IA32_LSTAR`, `MSR_IA32_FMASK`
+//!    and `MSR_IA32_EFER` to set up syscall entry points, segment selectors, and the
+//!    RFLAGS bits the CPU clears when Ring 3 enters Ring 0.
 //!
 //! 2. **Demotion**: Use `InvokeDemotedRoutine` to transition from Ring 0 to Ring 3.
 //!    This sets up call gates for return and prepares the Ring 3 stack.

@@ -18,7 +18,8 @@ use patina::{
 };
 
 use crate::{
-    AP_ARRIVAL_TIMEOUT_US, AP_TIMEOUT_US, CommBufferConfig, MmSupervisorCore, PageOwnership, PlatformInfo,
+    AP_ARRIVAL_TIMEOUT_US, AP_EXIT_TIMEOUT_US, AP_TIMEOUT_US, CommBufferConfig, MmSupervisorCore, PageOwnership,
+    PlatformInfo,
     cpu::ApState,
     intrinsics::is_bsp,
     mailbox::{ApCommand, ApResponse},
@@ -97,9 +98,17 @@ impl Drop for UserAccessGuard {
 
 /// Runs `access` with SMAP temporarily disabled so the supervisor can read or
 /// write user-owned memory, restoring SMAP protection when the guard is dropped.
-pub(crate) fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
-    // SAFETY: the closure is scoped to the guard's lifetime, and callers are responsible
-    // for ensuring it only accesses valid, correctly-owned user memory.
+///
+/// ## Safety
+///
+/// Lifting SMAP removes the hardware barrier that stops Ring 0 from touching user-owned
+/// memory, so the caller must ensure that every access `access` performs targets a valid,
+/// correctly-owned user range that it has already validated (for example through
+/// [`query_address_ownership`]). Calls must not be nested, and `access` must not migrate
+/// to another CPU or return while a further access still depends on SMAP being lifted.
+pub(crate) unsafe fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
+    // SAFETY: the closure is scoped to the guard's lifetime, and the caller guarantees it only
+    // accesses valid, correctly-owned user memory.
     let _user_access = unsafe { UserAccessGuard::new() };
     access()
 }
@@ -115,7 +124,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// 2. BSP waits for all registered APs, all cores must be in MM before servicing a request
     /// 3. BSP processes the pending request via `bsp_request_loop`
     /// 4. BSP releases every AP via the per-CPU rendezvous semaphore
-    /// 5. BSP waits indefinitely for every released AP to acknowledge it has left
+    /// 5. BSP waits, bounded by `AP_EXIT_TIMEOUT_US`, for every released AP to acknowledge it has left
     /// 6. Each AP clears its `InHoldingPen` state and acknowledges the BSP
     pub(crate) fn enter_runtime(&'static self, cpu_id: u32, cpu_index: usize) {
         let is_bsp = is_bsp();
@@ -134,7 +143,12 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             // Exit barrier: release every penned AP and wait for each to acknowledge it has left.
             log::trace!("BSP (CPU {cpu_id}) releasing all APs from the holding pen...");
             self.cpu_manager.release_all_aps();
-            self.cpu_manager.wait_for_ap_exit_acks(expected_aps);
+            let acknowledged = self.cpu_manager.wait_for_ap_exit_acks(expected_aps, AP_EXIT_TIMEOUT_US);
+            assert!(
+                acknowledged == expected_aps,
+                "MM Supervisor fail-secure: only {acknowledged}/{expected_aps} APs acknowledged leaving the holding \
+                 pen within the exit window; refusing to resume the platform with cores still in MM"
+            );
 
             self.mailbox_manager.reset_all();
         } else {
@@ -320,36 +334,44 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         }
 
         // Copy the context + status into the supervisor-to-user buffer with SMAP lifted.
-        // SAFETY: supv_to_user_buffer is valid and large enough, verified above.
-        with_user_access(|| unsafe {
-            // Copy the EfiMmEntryContext to the start of the supervisor-to-user buffer
-            core::ptr::copy_nonoverlapping(
-                &raw const entry_context as *const u8,
-                config.supv_to_user_buffer as *mut u8,
-                context_size,
-            );
+        // SAFETY: `supv_to_user_buffer` is the user-owned buffer published by MM IPL and was
+        // verified above to hold `context_size + status_size` bytes, so both copies stay inside
+        // it and every access made while SMAP is lifted targets that user range.
+        unsafe {
+            with_user_access(|| {
+                // Copy the EfiMmEntryContext to the start of the supervisor-to-user buffer
+                core::ptr::copy_nonoverlapping(
+                    &raw const entry_context as *const u8,
+                    config.supv_to_user_buffer as *mut u8,
+                    context_size,
+                );
 
-            // Copy the MmCommBufferStatus right after the context
-            core::ptr::copy_nonoverlapping(
-                core::ptr::from_ref::<MmCommBufferStatus>(status).cast::<u8>(),
-                (config.supv_to_user_buffer as *mut u8).add(context_size),
-                status_size,
-            );
-        });
+                // Copy the MmCommBufferStatus right after the context
+                core::ptr::copy_nonoverlapping(
+                    core::ptr::from_ref::<MmCommBufferStatus>(status).cast::<u8>(),
+                    (config.supv_to_user_buffer as *mut u8).add(context_size),
+                    status_size,
+                );
+            });
+        }
 
         // Determine whether this is synchronous or asynchronous request
         let sync_mmi = status.is_comm_buffer_valid;
 
         if sync_mmi != 0 {
             // Copy user buffer to user internal buffer for processing in Ring 3
-            // SAFETY: Buffers are provided by MM IPL and are guaranteed valid
-            with_user_access(|| unsafe {
-                core::ptr::copy_nonoverlapping(
-                    config.user_comm_buffer as *const u8,
-                    config.user_comm_buffer_internal as *mut u8,
-                    config.user_comm_buffer_size as usize,
-                );
-            });
+            // SAFETY: both buffers are the user-owned communication buffers published by MM IPL,
+            // and both are `user_comm_buffer_size` bytes, so the copy made while SMAP is lifted
+            // stays inside those user ranges.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user_comm_buffer as *const u8,
+                        config.user_comm_buffer_internal as *mut u8,
+                        config.user_comm_buffer_size as usize,
+                    );
+                });
+            }
             log::trace!(
                 "Copied {} bytes from user buffer 0x{:x} to internal 0x{:x}",
                 config.user_comm_buffer_size,
@@ -382,30 +404,53 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
 
         // Copy the response from the internal buffer back to the user buffer
         if sync_mmi != 0 {
-            // SAFETY: Buffers are provided by MM IPL and are guaranteed valid.
-            with_user_access(|| unsafe {
-                core::ptr::copy_nonoverlapping(
-                    config.user_comm_buffer_internal as *const u8,
-                    config.user_comm_buffer as *mut u8,
-                    config.user_comm_buffer_size as usize,
-                );
-            });
+            // SAFETY: as for the copy in, both buffers are the user-owned communication buffers
+            // published by MM IPL and both are `user_comm_buffer_size` bytes.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user_comm_buffer_internal as *const u8,
+                        config.user_comm_buffer as *mut u8,
+                        config.user_comm_buffer_size as usize,
+                    );
+                });
+            }
         }
 
         // Read the updated MmCommBufferStatus back from the supervisor-to-user buffer
         // (the user may have modified return_status and return_buffer_size)
-        // SAFETY: supv_to_user_buffer is valid and the status is at offset context_size
-        let returned_status = with_user_access(|| unsafe {
-            core::ptr::read((config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus)
-        });
+        // SAFETY: `supv_to_user_buffer` is the user-owned buffer verified above to hold
+        // `context_size + status_size` bytes, so the status read while SMAP is lifted stays
+        // inside that user range.
+        let returned_status = unsafe {
+            with_user_access(|| {
+                core::ptr::read((config.supv_to_user_buffer as *const u8).add(context_size) as *const MmCommBufferStatus)
+            })
+        };
 
         // Write the returned status back to the user status mailbox, clearing
         // is_comm_buffer_valid to indicate processing is complete
+        let mut final_status = returned_status;
+        final_status.is_comm_buffer_valid = 0;
+
+        // Ring 3 filled in `return_buffer_size`, and the non-MM caller uses it to read the
+        // response out of the communication buffer. A value past the end of that buffer is not a
+        // response the caller can be given any part of: the supervisor cannot tell which bytes
+        // the user module meant, so truncating would hand back a prefix of something it never
+        // agreed to send. Report the failure instead and return nothing.
+        if final_status.return_buffer_size > config.user_comm_buffer_size {
+            log::error!(
+                "User module reported a 0x{:x}-byte response for a 0x{:x}-byte communication buffer; rejecting",
+                final_status.return_buffer_size,
+                config.user_comm_buffer_size
+            );
+            final_status.return_status = efi::Status::BAD_BUFFER_SIZE.as_usize() as u64;
+            final_status.return_buffer_size = 0;
+        }
+
         // SAFETY: user_status_buffer is valid and writable
         unsafe {
             let status_ptr = config.user_status_buffer as *mut MmCommBufferStatus;
-            let mut final_status = returned_status;
-            final_status.is_comm_buffer_valid = 0;
             core::ptr::write_volatile(status_ptr, final_status);
         }
     }
@@ -427,8 +472,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// 4. Iterate the default handlers then [`PlatformInfo::mmi_handlers`] to find a handler
     ///    matching the header GUID
     /// 5. Call the handler with a pointer to the data payload and mutable size
-    /// 6. Update the status buffer with return status and total response size
+    /// 6. Refuse the request if the handler reported more than the payload space it was given
     /// 7. Copy the internal buffer back to the external buffer
+    /// 8. Update the status buffer with return status and total response size
     fn process_supervisor_request(&self, config: &CommBufferConfig, status: &MmCommBufferStatus, cpu_index: usize) {
         log::trace!("Processing Supervisor request on CPU {cpu_index}...");
 
@@ -514,21 +560,33 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             log::warn!("No handler found for supervisor request GUID: {handler_guid:?}");
         }
 
+        // A handler reports its response length back through `data_size`. A value past the
+        // payload space it was given describes a response that was never written, so there is no
+        // prefix worth copying out: report the failure and return nothing rather than handing the
+        // non-MM caller a length that runs past the end of the communication buffer.
+        let max_data_size = buffer_size - EfiMmCommunicateHeader::size();
+        if data_size > max_data_size {
+            log::error!(
+                "Handler reported a 0x{data_size:x}-byte response for 0x{max_data_size:x} bytes of payload space; \
+                 rejecting"
+            );
+            self.write_supv_status(config, status, efi::Status::BAD_BUFFER_SIZE, 0);
+            return;
+        }
+
         // Compute the total response size (header + data) for the copy-back
         let total_response_size = data_size + EfiMmCommunicateHeader::size();
 
         // Copy the (possibly modified) internal buffer back to the external buffer
-        if total_response_size <= buffer_size {
-            // SAFETY: Both buffers are valid and total_response_size is within bounds
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    config.supv_comm_buffer_internal as *const u8,
-                    config.supv_comm_buffer as *mut u8,
-                    total_response_size,
-                );
-            }
-        } else {
-            log::error!("Response size 0x{total_response_size:x} exceeds buffer capacity 0x{buffer_size:x}");
+        // SAFETY: both buffers are `buffer_size` bytes and an oversized `data_size` returned
+        // above, so `total_response_size` is at most `buffer_size` and the copy stays inside
+        // both allocations.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                config.supv_comm_buffer_internal as *const u8,
+                config.supv_comm_buffer as *mut u8,
+                total_response_size,
+            );
         }
         log::trace!(
             "Copied {} bytes from internal buffer 0x{:x} back to external 0x{:x}",
@@ -615,6 +673,9 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// This is the AP-side handler for `ApCommand::RunProcedure`. It mirrors the C
     /// `ProcedureWrapper` logic: inspects the procedure pointer ownership and either
     /// calls it directly (supervisor-owned) or demotes to Ring 3 (user-owned).
+    ///
+    /// Choosing the ring from the address is only sound because `handle_start_ap_proc` refuses a
+    /// procedure that is not user-owned, so nothing Ring 3 named can reach the supervisor branch.
     fn run_procedure_on_ap(&self, cpu_id: u32, procedure: u64, argument: u64) -> ApResponse {
         log::trace!("AP (CPU {cpu_id}) running procedure 0x{procedure:x} with arg 0x{argument:x}");
 
@@ -879,9 +940,12 @@ mod tests {
 
     #[test]
     fn test_with_user_access_runs_the_closure_and_restores_smap() {
-        assert_eq!(with_user_access(|| 42), 42);
-        // The guard is reusable because it is balanced on drop.
-        assert_eq!(with_user_access(|| 7), 7);
+        // SAFETY: the closures touch no memory at all, so there is no user range to validate.
+        unsafe {
+            assert_eq!(with_user_access(|| 42), 42);
+            // The guard is reusable because it is balanced on drop.
+            assert_eq!(with_user_access(|| 7), 7);
+        }
     }
 
     #[test]
@@ -1073,18 +1137,36 @@ mod tests {
     }
 
     #[test]
-    fn test_process_supervisor_request_refuses_an_oversized_response() {
+    fn test_process_supervisor_request_rejects_an_oversized_response() {
         let core = TestCore::new();
         let mut buffers = TestBuffers::new(64);
         buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
         let config = buffers.config();
-        // A response larger than the buffer skips the copy-back but still reports its size.
+        // A handler that reports more than it was given must not have that size reach the caller,
+        // which would use it to read past the end of the communication buffer.
         HANDLER_RESPONSE_SIZE.store(1024, Ordering::SeqCst);
 
         core.process_supervisor_request(&config, &valid_status(), 0);
 
-        assert_eq!(buffers.supv_external[EfiMmCommunicateHeader::size()], 1);
-        assert_eq!(buffers.supv_status.return_buffer_size, (1024 + EfiMmCommunicateHeader::size()) as u64);
+        // Nothing is copied out and the caller is told why, rather than being handed a prefix of
+        // a response the handler never agreed to send.
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_reports_an_oversized_response_without_overflowing() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(64);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        // Adding the header to this size would wrap an unchecked `usize`.
+        HANDLER_RESPONSE_SIZE.store(usize::MAX, Ordering::SeqCst);
+
+        core.process_supervisor_request(&config, &valid_status(), 0);
+
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, 0);
     }
 
     #[test]
@@ -1222,6 +1304,65 @@ mod tests {
         let context = unsafe { core::ptr::read(supv_to_user as *const EfiMmEntryContext) };
         assert_eq!(context.currently_executing_cpu, 0);
         assert_eq!(context.number_of_cpus, 1);
+    }
+
+    #[test]
+    fn test_process_user_request_rejects_an_oversized_response_from_ring_3() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Some(0));
+
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+        let supv_to_user = config.supv_to_user_buffer;
+        let context_size = core::mem::size_of::<EfiMmEntryContext>();
+
+        // A user module that reports more than the communication buffer holds would otherwise
+        // send the non-MM caller reading past the end of it.
+        mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
+            // SAFETY: the supervisor placed an `MmCommBufferStatus` right after the context.
+            unsafe {
+                let status = (supv_to_user as *mut u8).add(context_size) as *mut MmCommBufferStatus;
+                (*status).return_status = efi::Status::SUCCESS.as_usize() as u64;
+                (*status).return_buffer_size = u64::MAX;
+            }
+            0
+        });
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+
+        assert_eq!(buffers.user_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.user_status.return_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_process_user_request_keeps_a_response_that_fits() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Some(0));
+
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+        let supv_to_user = config.supv_to_user_buffer;
+        let context_size = core::mem::size_of::<EfiMmEntryContext>();
+
+        // Exactly the buffer size is legitimate and must reach the caller untouched.
+        mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
+            // SAFETY: the supervisor placed an `MmCommBufferStatus` right after the context.
+            unsafe {
+                let status = (supv_to_user as *mut u8).add(context_size) as *mut MmCommBufferStatus;
+                (*status).return_buffer_size = 256;
+            }
+            0
+        });
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+
+        assert_eq!(buffers.user_status.return_buffer_size, 256);
     }
 
     #[test]

@@ -474,8 +474,12 @@ mod tests {
     fn test_security_state_save_state_handoff_slot_round_trips() {
         let state = SecurityState::new();
 
-        *state.lock_save_state_access() =
-            Some(SaveStateAccessHolder { user_protocol: 0x1234, register: MmSaveStateRegister::Rax, cpu_index: 2 });
+        *state.lock_save_state_access() = Some(SaveStateAccessHolder {
+            caller: 1,
+            user_protocol: 0x1234,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 2,
+        });
 
         let holder = state.lock_save_state_access().take().expect("hand-off is staged");
         assert_eq!(holder.user_protocol, 0x1234);

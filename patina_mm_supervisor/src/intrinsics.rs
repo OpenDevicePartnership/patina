@@ -90,6 +90,13 @@ pub fn get_current_cpu_id() -> CpuidResult {
     __cpuid(CPUID_VERSION_INFO)
 }
 
+/// Returns the APIC ID of the processor executing this call.
+///
+/// The initial APIC ID is `EBX[31:24]` of CPUID leaf 1.
+pub fn current_apic_id() -> u32 {
+    (get_current_cpu_id().ebx >> 24) & 0xff
+}
+
 /// Checks if the current processor is the Bootstrap Processor (BSP).
 ///
 /// This reads the `IA32_APIC_BASE` MSR and checks the BSP flag (bit 8).
