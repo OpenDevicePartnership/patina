@@ -54,10 +54,16 @@ impl PropertyPublisher {
         timer: Service<dyn ArchTimerFunctionality>,
         config_table: Service<dyn ConfigurationTableServices>,
     ) -> Result<(), EfiError> {
-        let property = PerformanceProperty::new(timer.perf_frequency(), timer.cpu_count_start(), timer.cpu_count_end());
+        let frequency = timer.perf_frequency();
+        let cpu_count_start = timer.cpu_count_start();
+        let cpu_count_end = timer.cpu_count_end();
+        let property = PerformanceProperty::new(frequency, cpu_count_start, cpu_count_end);
         let property: &'static PerformanceProperty = Box::leak(Box::new(property));
 
         config_table.install(property)?;
+        log::info!(
+            "Performance: Installed PerformanceProperty (frequency={frequency}, cpu_count_start={cpu_count_start}, cpu_count_end={cpu_count_end})."
+        );
 
         Ok(())
     }

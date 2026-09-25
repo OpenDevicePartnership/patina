@@ -136,8 +136,10 @@ impl FbptPublisher {
         let published = Cell::new(false);
         events.on_event_group(END_OF_DXE_EVENT_GROUP_GUID, Tpl::Callback, move || {
             if published.replace(true) {
+                log::debug!("Performance: End of DXE signaled again. FBPT was already published, ignoring.");
                 return;
             }
+            log::debug!("Performance: End of DXE reached, publishing FBPT (previous_address={previous_address:?}).");
             report_fbpt(&performance, previous_address, &config_table, &memory, &protocols);
         })?;
 
@@ -200,8 +202,15 @@ fn report_fbpt(
         return;
     };
 
-    if let Err(e) = config_table.install_or_replace(header) {
-        log::error!("Performance: Fail to install configuration table for FBPT firmware performance: {e:?}");
+    let length = header.length;
+    match config_table.install_or_replace(header) {
+        Ok(()) => log::info!(
+            "Performance: Published FBPT at {fbpt_address:#x} (size={length}, reused_previous_address={}).",
+            previous_address == Some(fbpt_address)
+        ),
+        Err(e) => {
+            log::error!("Performance: Fail to install configuration table for FBPT firmware performance: {e:?}");
+        }
     }
 }
 

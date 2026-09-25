@@ -121,7 +121,8 @@ impl MeasurementProtocolPublisher {
             );
         });
 
-        protocols.install_protocol::<EdkiiPerformanceMeasurementProtocol>(None, &PROTOCOL)?;
+        let handle = protocols.install_protocol::<EdkiiPerformanceMeasurementProtocol>(None, &PROTOCOL)?;
+        log::info!("Performance: Installed EDK II Performance Measurement Protocol on handle {handle:?}.");
 
         Ok(())
     }
@@ -182,6 +183,10 @@ pub(crate) unsafe extern "efiapi" fn create_performance_measurement_efiapi(
         log::error!("Performance: create_performance_measurement_efiapi called before service registration.");
         return efi::Status::NOT_READY;
     };
+
+    log::trace!(
+        "Performance: create_measurement perf_id={perf_id:?} attribute={attribute:?} ticker={ticker} address={address:#x}"
+    );
 
     match service.create_measurement(caller_identifier, guid, string.as_deref(), ticker, address, perf_id, attribute) {
         Ok(()) => efi::Status::SUCCESS,
