@@ -297,13 +297,14 @@ This section details Patina requirements that are specific to a particular CPU a
 
 EDK II supplies a driver named `CpuDxe` that provides CPU related functionality to a platform. In Patina DXE Core, this
 is part of the core, not offloaded to a driver. As a result, the CPU Arch and memory attributes protocols are owned by
-the Patina DXE Core. MultiProcessor (MP) Services are not part of the core (see following sections for specific
-guidance on MP Service enabling for specific architectures).
+the Patina DXE Core. Patina also provides an optional native MP Services. It is disabled by default and enabled through
+`CpuInfo::enable_mp_services`.
 
 > **Guidance:**
-> Platforms must not include `CpuDxe` in their platforms and instead use CPU services from Patina DXE Core and MP
-> Services from a separate C based driver such as [`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe)
-> for X64 systems or [`ArmPsciMpServicesDxe`](https://github.com/tianocore/edk2/tree/master/ArmPkg/Drivers/ArmPsciMpServicesDxe).
+> Platforms must not include `CpuDxe`. Platforms may enable Patina MP Services and must then remove or disable any
+> other MP Services provider, such as
+> [`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe). Platforms that do not enable
+> Patina MP Services may continue to provide a separate MP Services driver.
 
 #### 4.2 AArch64-specific requirements
 
@@ -338,9 +339,11 @@ platform produces are appropriate for the regions of memory that they describe.
 
 #### 4.3 X64-specific requirements
 
-As described in the general architectural requirements. X64 systems must exclude `CpuDxe`. In addition
-[`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe) should be included in the
-platform flash file as it is used to install the MP Services protocol.
+As described in the general architectural requirements, X64 systems must exclude `CpuDxe`. X64 platforms can use
+Patina's native [MP Services](../dxe_core/mp_services.md) implementation by returning `true` from
+`CpuInfo::enable_mp_services`. When enabled, the platform must not include another MP Services provider such as
+[`MpDxe`](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/MpDxe). Platforms that leave Patina
+MP Services disabled must provide the protocol through a separate driver.
 
 > Note: The [`patina-mtrr`](https://github.com/OpenDevicePartnership/patina-mtrr) repo provides pure-Rust MTRR support
 > for X64 platforms. This can be used indpendently of the Patina DXE Core. It is intended to provide generic MTRR

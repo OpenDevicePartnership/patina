@@ -22,6 +22,7 @@ spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
+mockall = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
 patina_mtrr = { workspace = true }
@@ -31,6 +32,7 @@ arm-gic = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }
 patina_paging = { workspace = true, features = ["mockall"] }
 serial_test = { workspace = true }
 
@@ -40,5 +42,6 @@ patina_mtrr = { workspace = true, features = ["mockall"] }
 [features]
 default = []
 std = []
+mockall = ["dep:mockall", "std"]
 # All non-std features to test in CI
 ci_features = []

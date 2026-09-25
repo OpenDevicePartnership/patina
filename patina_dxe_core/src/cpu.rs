@@ -14,11 +14,13 @@ mod cpu_arch_protocol;
 mod efi_cpu;
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 mod hw_interrupt_protocol;
+mod mp_services;
 mod perf_timer;
 
 pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeInterruptManager};
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
+pub(crate) use mp_services::MpServicesComponent;
 pub(crate) use perf_timer::PerfTimer;
 
 use efi_cpu::EfiCpu;
@@ -120,6 +122,18 @@ pub trait CpuInfo {
     /// Returns the exception handlers supplied by the platform as exception vector and handler pairs.
     fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
         &[]
+    }
+
+    /// Enables the Patina MP services component from the DXE Core.
+    ///
+    /// - If `true`, MP services will be installed.
+    /// - If `false` (default), The DXE core will not install MP services or interact with APs.
+    ///
+    /// Before enabling Patina MP services, the platform must remove or otherwise
+    /// disable any existing MP services (e.g. `MpDxe.efi` ) to avoid conflicts.
+    #[inline(always)]
+    fn enable_mp_services() -> bool {
+        false
     }
 }
 

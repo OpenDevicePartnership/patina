@@ -28,7 +28,7 @@ mod aarch64;
 #[cfg(not(target_os = "uefi"))]
 mod stub;
 #[cfg(any(target_arch = "x86_64", test))]
-mod x64;
+pub(crate) mod x64;
 
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::gic_manager;

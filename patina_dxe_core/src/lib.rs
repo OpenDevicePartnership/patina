@@ -601,6 +601,9 @@ impl<P: PlatformInfo> Core<P> {
         dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
         dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
         dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
+        if P::CpuInfo::enable_mp_services() {
+            dispatcher.insert_component(0, cpu::MpServicesComponent::default().into_component());
+        }
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
         dispatcher
             .insert_component(0, cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component());
