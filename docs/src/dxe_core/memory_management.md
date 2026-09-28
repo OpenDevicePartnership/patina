@@ -107,7 +107,7 @@ be of this type.
 * Reserving pages for the allocator. This is used to seed the allocator with an initial [bucket](memory_management.md#allocation-buckets)
 of memory.
 * APIs for allocate and free operations of arbitrary sizes, including `impl` for [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
-and [`GloballAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
+and [`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
 traits. See [Rust `Allocator` and `GlobalAlloc` Implementations](memory_management.md#rust-allocator-and-globalalloc-implementations)
 below.
 * APIs for allocating and freeing pages (as distinct from arbitrary sizes). These are pass-throughs to the
@@ -228,7 +228,7 @@ occurred) then a panic will be generated.
 
 In addition to producing the memory allocation APIs required by the UEFI spec, the memory allocation subsystem also
 produces implementations of the [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html) and
-[`GloballAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html) traits.
+[`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html) traits.
 
 These implementations are used within the core for two purposes:
 
