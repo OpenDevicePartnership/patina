@@ -79,8 +79,22 @@ impl TryFromCtx<'_, scroll::Endian> for Header {
     }
 }
 
+/// Reports the encoded payload size of a device path node.
+///
+/// The size excludes the four-byte node header and is used to compute the header
+/// length. It must equal the number of bytes written by the node's payload encoder.
+///
+/// Nodes defined with [`device_path_node!`](crate::device_path_node) can derive it
+/// with `@[DevicePathNodeDerive(MeasureSize)]`, which sums the fields' Rust sizes.
+/// That is only correct for fixed-width integer and byte-array fields; nodes with
+/// variable-length or encoded fields must implement it manually.
+pub trait MeasureSize {
+    /// Return the encoded payload size in bytes, excluding the node header.
+    fn measure_size(&self) -> usize;
+}
+
 /// Trait that every device path node must implement.
-pub trait DevicePathNode: Debug + Display {
+pub trait DevicePathNode: Debug + Display + MeasureSize {
     /// Return the header of the device path node.
     fn header(&self) -> Header;
 
@@ -110,6 +124,12 @@ impl<'a> UnknownDevicePathNode<'a> {
     /// Cast the Unknown device path to a dyn `DevicePathNode` of the right type.
     pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
         crate::uefi::device_path::node::cast_to_dyn_device_path_node(self)
+    }
+}
+
+impl MeasureSize for UnknownDevicePathNode<'_> {
+    fn measure_size(&self) -> usize {
+        self.data.len()
     }
 }
 
@@ -193,7 +213,11 @@ impl Display for UnknownDevicePathNode<'_> {
 /// where the Type and subtype are enum paths where the value can be expressed as u8.a
 ///
 /// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
-/// Currently supported traits are: Debug and Display.
+/// Currently supported traits are: Debug, Display, and [`MeasureSize`].
+///
+/// The header length is computed from the node's [`MeasureSize`] implementation.
+/// Derive it for nodes containing only fixed-width integer and byte-array fields;
+/// implement it manually for nodes with variable-length or encoded fields.
 #[macro_export]
 macro_rules! device_path_node {
     // match a struct with fields.
@@ -218,9 +242,8 @@ macro_rules! device_path_node {
             ),*
         }
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name,
-            0 $(+ core::mem::size_of::<$field_type>())*);
-        device_path_node!(@Derive; $struct_name, $($field_name),*; $($($derive_trait),*)?);
+        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $($($derive_trait),*)?);
     };
     // Match an empty struct.
     (
@@ -228,25 +251,25 @@ macro_rules! device_path_node {
         @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
         $(@[DevicePathNodeDerive( $($derive_trait:ident),* )])?
         $(#[$struct_attr_2:meta])*
-        $struct_vis:vis struct $struct_name:ident $($empty_field:ident),*;
+        $struct_vis:vis struct $struct_name:ident;
     ) => {
         $(#[$struct_attr_1])*
         $(#[$struct_attr_2])*
-        $struct_vis struct $struct_name; $($empty_field),* // no empty field expected, the variable is there because we need it to be empty.
+        $struct_vis struct $struct_name;
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name, 0);
-        device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
+        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(@Derive; $struct_name, ; $($($derive_trait),*)?);
     };
     // Internal Matching to implement the device path node trait.
-    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr) => {
+    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
         impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
         {
             fn header(&self) -> $crate::uefi::device_path::parse_node::Header {
                 $crate::uefi::device_path::parse_node::Header {
                     r#type: $device_path_type as u8,
                     sub_type: $device_path_sub_type as u8,
-                    length: $crate::uefi::device_path::parse_node::Header::size_of_header() + $data_size
-
+                    length: $crate::uefi::device_path::parse_node::Header::size_of_header()
+                        + $crate::uefi::device_path::parse_node::MeasureSize::measure_size(self),
                 }
             }
 
@@ -276,7 +299,7 @@ macro_rules! device_path_node {
         }
     };
     // Internal Matching to implement the debug trait.
-    (@Derive; $struct_name:ident, $($field_name:ident),*; Debug) => {
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Debug) => {
         impl core::fmt::Debug for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 let header = self.header();
@@ -292,7 +315,7 @@ macro_rules! device_path_node {
         }
     };
     // Internal Matching to implement the display trait.
-    (@Derive; $struct_name:ident, $($field_name:ident),*; Display) => {
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Display) => {
         impl core::fmt::Display for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.debug_tuple(stringify!($struct_name))
@@ -303,15 +326,23 @@ macro_rules! device_path_node {
             }
         }
     };
+    // Internal Matching to implement the measure size trait from the fields' Rust sizes.
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; MeasureSize) => {
+        impl $crate::uefi::device_path::parse_node::MeasureSize for $struct_name {
+            fn measure_size(&self) -> usize {
+                0 $(+ core::mem::size_of::<$field_type>())*
+            }
+        }
+    };
     // Internal matching to add a compilation error in case of an unsupported derive trait.
-    (@Derive; $struct_name:ident, $($field_name:ident),*; $trait:ident) => {
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; $trait:ident) => {
         compile_error!("An unsupported derive trait was specified.");
     };
     // Internal matching to call all the derive to add their impl to the struct.
-    (@Derive; $struct_name:ident, $($field_name:ident),*; $head:ident, $($derive_trait:ident),+) => {
-        device_path_node!(@Derive; $struct_name, $($field_name),*; $head);
-        device_path_node!(@Derive; $struct_name, $($field_name),*; $($derive_trait),+);
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; $head:ident, $($derive_trait:ident),+) => {
+        device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $head);
+        device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $($derive_trait),+);
     };
     // Internal matching: do nothing if no derive specified.
-    (@Derive; $struct_name:ident, $($field_name:ident),*; ) => {};
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; ) => {};
 }

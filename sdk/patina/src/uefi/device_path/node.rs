@@ -243,7 +243,7 @@ mod tests {
     fn test_hard_drive_serialization_roundtrip() {
         let guid = [0xAA; 16];
         let hd = HardDrive::new_gpt(2, 4096, 500000, guid);
-        // DATA_SIZE = 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx)
+        // Payload is 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx).
         let mut buf = [0u8; 38];
         let written = buf.pwrite_with(hd.clone(), 0, scroll::LE).unwrap();
         assert_eq!(written, 38);
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_hard_drive_try_from_node_short_data() {
-        let data = [0u8; 16]; // shorter than HardDrive::DATA_SIZE (38)
+        let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
         let node = parse_node::UnknownDevicePathNode {
             header: parse_node::Header {
                 r#type: DevicePathType::Media as u8,
@@ -772,13 +772,17 @@ mod fixed_tests {
 #[cfg(test)]
 mod binary_tests {
     use super::*;
-    use crate::uefi::device_path::{parse_node::Header, paths::DevicePathBuf};
+    use crate::uefi::device_path::{
+        parse_node::{Header, MeasureSize},
+        paths::DevicePathBuf,
+    };
     use alloc::{format, vec};
 
     fn check_node<T>(node: T, expected: &[u8])
     where
         T: DevicePathNode + Clone + for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
     {
+        assert_eq!(node.measure_size() + 4, expected.len());
         assert_eq!(node.header().length, expected.len());
         let mut encoded = vec![0xa5; expected.len() + 3];
         assert_eq!(node.clone().write_into(&mut encoded).unwrap(), expected.len());
@@ -827,6 +831,35 @@ mod binary_tests {
             &[2, 2, 22, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, b'A', 0, b'B', 0, b'C', 0],
         );
         check_node(AcpiAdr { addresses: vec![0x12345678, 9] }, &[2, 3, 12, 0, 0x78, 0x56, 0x34, 0x12, 9, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_device_path_measure_size() {
+        // Derived sizes sum encoded fields rather than including Rust layout padding.
+        let mapped = MemoryMapped { memory_type: 3, start_address: 0x1000, end_address: 0x1fff };
+        assert_eq!(mapped.measure_size(), 20);
+        assert_eq!(core::mem::size_of::<MemoryMapped>(), 24);
+        assert_eq!(Bmc { interface_type: 1, base_address: 0 }.measure_size(), 9);
+        assert_eq!(EndEntire.measure_size(), 0);
+        assert_eq!(EndInstance.measure_size(), 0);
+
+        for (hid, uid, cid) in [("", "", ""), ("PNP0A03", "", "PNP0A08"), ("A", "BCDEFGHIJ", "K")] {
+            let node = ExtendedAcpi {
+                hid: 0,
+                uid: 0,
+                cid: 0,
+                hid_string: hid.into(),
+                uid_string: uid.into(),
+                cid_string: cid.into(),
+            };
+            let size = node.measure_size();
+            let mut payload = vec![0; size];
+            assert_eq!(payload.pwrite_with(node.clone(), 0, scroll::LE).unwrap(), size);
+            assert_eq!(node.header().length, size + 4);
+        }
+
+        let unknown = UnknownDevicePathNode { header: Header::new(6, 1, 7), data: &[1, 2, 3] };
+        assert_eq!(unknown.measure_size(), 3);
     }
 
     #[test]

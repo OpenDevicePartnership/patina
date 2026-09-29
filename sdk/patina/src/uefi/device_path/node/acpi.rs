@@ -11,7 +11,7 @@ use crate::{
     device_path_node,
     uefi::device_path::{
         encoding::AsciiNul,
-        parse_node::{DevicePathNode, Header},
+        parse_node::{DevicePathNode, Header, MeasureSize},
     },
 };
 use alloc::{string::String, vec::Vec};
@@ -24,7 +24,7 @@ use scroll::{
 device_path_node! {
     /// An ACPI physical NVDIMM device, distinct from a messaging namespace node.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
@@ -32,62 +32,42 @@ device_path_node! {
     }
 }
 
-/// Expanded ACPI identifiers, with optional ASCII string overrides.
-///
-/// A nonempty string supersedes its corresponding numeric identifier. Each string
-/// is stored as NUL-terminated ASCII, as specified by UEFI 2.11 Table 10.10.
-#[derive(Debug, Clone, Eq, PartialEq, Pread, Pwrite)]
-pub struct ExtendedAcpi {
-    /// Numeric hardware identifier.
-    pub hid: u32,
-    /// Numeric unique identifier.
-    pub uid: u32,
-    /// Numeric compatible identifier.
-    pub cid: u32,
-    /// Hardware identifier override, without its terminator.
-    #[scroll(ctx = AsciiNul)]
-    pub hid_string: String,
-    /// Unique identifier override, without its terminator.
-    #[scroll(ctx = AsciiNul)]
-    pub uid_string: String,
-    /// Compatible identifier override, without its terminator.
-    #[scroll(ctx = AsciiNul)]
-    pub cid_string: String,
-}
-
-impl DevicePathNode for ExtendedAcpi {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Acpi as u8,
-            AcpiSubType::ExtendedAcpi as u8,
-            19 + self.hid_string.len() + self.uid_string.len() + self.cid_string.len(),
-        )
-    }
-
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Acpi as u8 && subtype == AcpiSubType::ExtendedAcpi as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
+device_path_node! {
+    /// Expanded ACPI identifiers, with optional ASCII string overrides.
+    ///
+    /// A nonempty string supersedes its corresponding numeric identifier. Each string
+    /// is stored as NUL-terminated ASCII, as specified by UEFI 2.11 Table 10.10.
+    @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::ExtendedAcpi)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
+    pub struct ExtendedAcpi {
+        /// Numeric hardware identifier.
+        pub hid: u32,
+        /// Numeric unique identifier.
+        pub uid: u32,
+        /// Numeric compatible identifier.
+        pub cid: u32,
+        /// Hardware identifier override, without its terminator.
+        #[scroll(ctx = AsciiNul)]
+        pub hid_string: String,
+        /// Unique identifier override, without its terminator.
+        #[scroll(ctx = AsciiNul)]
+        pub uid_string: String,
+        /// Compatible identifier override, without its terminator.
+        #[scroll(ctx = AsciiNul)]
+        pub cid_string: String,
     }
 }
 
-impl core::fmt::Display for ExtendedAcpi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+impl MeasureSize for ExtendedAcpi {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.hid)
+            + size_of_val(&self.uid)
+            + size_of_val(&self.cid)
+            + [&self.hid_string, &self.uid_string, &self.cid_string]
+                .iter()
+                .map(|value| value.len() + size_of::<u8>()) // NUL terminator
+                .sum::<usize>()
     }
 }
 
@@ -98,9 +78,15 @@ pub struct AcpiAdr {
     pub addresses: Vec<u32>,
 }
 
+impl MeasureSize for AcpiAdr {
+    fn measure_size(&self) -> usize {
+        size_of_val(self.addresses.as_slice())
+    }
+}
+
 impl DevicePathNode for AcpiAdr {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Acpi as u8, AcpiSubType::Adr as u8, 4 + 4 * self.addresses.len())
+        Header::new(DevicePathType::Acpi as u8, AcpiSubType::Adr as u8, Header::size_of_header() + self.measure_size())
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -167,7 +153,7 @@ impl core::fmt::Display for AcpiAdr {
 
 device_path_node! {
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
-    @[DevicePathNodeDerive(Debug)]
+    @[DevicePathNodeDerive(Debug, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     pub struct Acpi {

@@ -9,7 +9,7 @@
 use super::{DevicePathType, MediaSubType, check_length, invalid};
 use crate::{
     Char16Str, Char16String, device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, Header},
+    uefi::device_path::parse_node::{self, DevicePathNode, Header, MeasureSize},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -21,7 +21,7 @@ use scroll::{
 device_path_node! {
     /// A CD-ROM system partition.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct CdRom {
         /// Boot catalog entry number; zero denotes the initial/default entry.
@@ -36,7 +36,7 @@ device_path_node! {
 device_path_node! {
     /// A protocol used at a location in a media device path.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MediaProtocol {
         /// Protocol identifier as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -47,7 +47,7 @@ device_path_node! {
 device_path_node! {
     /// A firmware file in a PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareFile {
         /// File name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -58,7 +58,7 @@ device_path_node! {
 device_path_node! {
     /// A PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareVolume {
         /// Volume name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -69,7 +69,7 @@ device_path_node! {
 device_path_node! {
     /// A range of offsets within a media device.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RelativeOffsetRange {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -84,7 +84,7 @@ device_path_node! {
 device_path_node! {
     /// A memory-backed disk.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RamDisk {
         /// Starting physical memory address.
@@ -107,9 +107,19 @@ pub struct MediaVendor {
     pub data: Vec<u8>,
 }
 
+impl MeasureSize for MediaVendor {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
+}
+
 impl DevicePathNode for MediaVendor {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Media as u8, MediaSubType::Vendor as u8, 20 + self.data.len())
+        Header::new(
+            DevicePathType::Media as u8,
+            MediaSubType::Vendor as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -183,9 +193,6 @@ pub struct HardDrive {
 }
 
 impl HardDrive {
-    /// The on-wire size of `HardDrive` data (without header).
-    const DATA_SIZE: usize = 4 + 8 + 8 + 16 + 1 + 1; // 38 bytes
-
     /// Partition format: GPT
     pub const FORMAT_GPT: u8 = 0x02;
     /// Partition format: MBR
@@ -199,8 +206,8 @@ impl HardDrive {
     /// Try to parse a `HardDrive` from a raw device path node.
     ///
     /// Returns `None` if the node's type/subtype does not identify a
-    /// `HardDrive` node, or if the node data is shorter than
-    /// [`HardDrive::DATA_SIZE`] and so cannot be decoded.
+    /// `HardDrive` node, or if the node data is shorter than its fixed
+    /// payload and so cannot be decoded.
     ///
     /// Useful when walking a device path with
     /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
@@ -232,12 +239,23 @@ impl HardDrive {
     }
 }
 
+impl MeasureSize for HardDrive {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.partition_number)
+            + size_of_val(&self.partition_start)
+            + size_of_val(&self.partition_size)
+            + size_of_val(&self.partition_signature)
+            + size_of_val(&self.partition_format)
+            + size_of_val(&self.signature_type)
+    }
+}
+
 impl parse_node::DevicePathNode for HardDrive {
     fn header(&self) -> parse_node::Header {
         parse_node::Header {
             r#type: DevicePathType::Media as u8,
             sub_type: MediaSubType::HardDrive as u8,
-            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + self.measure_size(),
         }
     }
 
@@ -356,11 +374,16 @@ impl FilePath {
         Self { path: path.into() }
     }
 
-    /// Calculate the UTF-16 encoded size of the path including null terminator.
+    /// Calculate the CHAR16 encoded size of the path including its NUL terminator.
     fn utf16_size(&self) -> usize {
-        // Each char becomes one UTF-16 code unit (2 bytes), plus null terminator (2 bytes)
-        // Note: This assumes BMP characters only (no surrogate pairs)
-        (self.path.chars().count() + 1) * 2
+        // Each UCS-2 character is one CHAR16 code unit, followed by a CHAR16 terminator.
+        (self.path.chars().count() + 1) * size_of::<u16>()
+    }
+}
+
+impl MeasureSize for FilePath {
+    fn measure_size(&self) -> usize {
+        self.utf16_size()
     }
 }
 
@@ -369,7 +392,7 @@ impl parse_node::DevicePathNode for FilePath {
         parse_node::Header {
             r#type: DevicePathType::Media as u8,
             sub_type: MediaSubType::FilePath as u8,
-            length: parse_node::Header::size_of_header() + self.utf16_size(),
+            length: parse_node::Header::size_of_header() + self.measure_size(),
         }
     }
 

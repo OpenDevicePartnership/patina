@@ -17,7 +17,7 @@ use scroll::{
 device_path_node! {
     /// End of entire device path node.
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
-    @[DevicePathNodeDerive(Debug)]
+    @[DevicePathNodeDerive(Debug, MeasureSize)]
     #[derive(Clone, Copy)]
     pub struct EndEntire;
 }
@@ -47,7 +47,7 @@ impl TryFromCtx<'_, scroll::Endian> for EndEntire {
 device_path_node! {
     /// End of device path instance node.
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
-    @[DevicePathNodeDerive(Debug)]
+    @[DevicePathNodeDerive(Debug, MeasureSize)]
     #[derive(Clone, Copy)]
     pub struct EndInstance;
 }

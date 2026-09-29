@@ -9,7 +9,7 @@
 use super::{DevicePathType, MessagingSubType, ascii, check_length, invalid, read_ascii};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, Header},
+    uefi::device_path::parse_node::{self, DevicePathNode, Header, MeasureSize},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -21,7 +21,7 @@ use scroll::{
 device_path_node! {
     /// An ATAPI device and its logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
@@ -68,7 +68,7 @@ impl TryIntoCtx<scroll::Endian> for Atapi {
 device_path_node! {
     /// A target and logical unit on a SCSI bus.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
@@ -81,7 +81,7 @@ device_path_node! {
 device_path_node! {
     /// A Fibre Channel device using numeric WWN and LUN fields.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -99,7 +99,7 @@ device_path_node! {
     /// The 24-byte layout includes the reserved field, as specified in UEFI 2.11
     /// Table 10.16 and EDK II, rather than the inconsistent 20-byte example.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -114,7 +114,7 @@ device_path_node! {
 device_path_node! {
     /// An IEEE 1394 device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -127,7 +127,7 @@ device_path_node! {
 device_path_node! {
     /// A USB port and interface.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
@@ -140,7 +140,7 @@ device_path_node! {
 device_path_node! {
     /// An I2O random block storage target.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
@@ -151,7 +151,7 @@ device_path_node! {
 device_path_node! {
     /// A network interface's MAC address.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MacAddress {
         /// Address bytes in wire order; producers pad unused bytes with zero.
@@ -164,7 +164,7 @@ device_path_node! {
 device_path_node! {
     /// An IPv6 network connection.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct IpV6 {
         /// Local IPv6 address octets in network order.
@@ -231,7 +231,7 @@ impl TryIntoCtx<scroll::Endian> for IpV6 {
 device_path_node! {
     /// An IEEE 802.1Q virtual LAN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
@@ -268,7 +268,7 @@ impl TryIntoCtx<scroll::Endian> for Vlan {
 device_path_node! {
     /// An InfiniBand fabric endpoint.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
         /// Resource flags; producers clear reserved bits above bit 4.
@@ -287,7 +287,7 @@ device_path_node! {
 device_path_node! {
     /// A UART connection and its serial configuration.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Uart {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -346,7 +346,7 @@ device_path_node! {
     /// port follow the header without gaps. UEFI 2.11 Table 10.36 inconsistently
     /// gives a 32-byte length and leaves an eight-byte hole before the LUN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
@@ -363,7 +363,7 @@ device_path_node! {
 device_path_node! {
     /// A Universal Flash Storage target and logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
@@ -376,7 +376,7 @@ device_path_node! {
 device_path_node! {
     /// A Secure Digital card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
@@ -387,7 +387,7 @@ device_path_node! {
 device_path_node! {
     /// A Bluetooth device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
@@ -398,7 +398,7 @@ device_path_node! {
 device_path_node! {
     /// A wireless network identified by its SSID.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
@@ -409,7 +409,7 @@ device_path_node! {
 device_path_node! {
     /// An embedded Multi-Media Card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
@@ -420,7 +420,7 @@ device_path_node! {
 device_path_node! {
     /// A Bluetooth Low Energy device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
@@ -463,7 +463,7 @@ impl TryIntoCtx<scroll::Endian> for BluetoothLE {
 device_path_node! {
     /// A persistent memory namespace (messaging node, not the ACPI physical device).
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
         /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -474,7 +474,7 @@ device_path_node! {
 device_path_node! {
     /// A logical unit appended to an interface's device path.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
@@ -485,7 +485,7 @@ device_path_node! {
 device_path_node! {
     /// A USB class matching pattern.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
@@ -510,9 +510,19 @@ pub struct MessagingVendor {
     pub data: Vec<u8>,
 }
 
+impl MeasureSize for MessagingVendor {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
+}
+
 impl DevicePathNode for MessagingVendor {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::Vendor as u8, 20 + self.data.len())
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::Vendor as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -580,9 +590,22 @@ pub struct UsbWwid {
     pub serial_number: Vec<u16>,
 }
 
+impl MeasureSize for UsbWwid {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.interface)
+            + size_of_val(&self.vendor_id)
+            + size_of_val(&self.product_id)
+            + size_of_val(self.serial_number.as_slice())
+    }
+}
+
 impl DevicePathNode for UsbWwid {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::UsbWwid as u8, 10 + self.serial_number.len() * 2)
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::UsbWwid as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -685,12 +708,27 @@ pub struct IpV4 {
     pub network: Option<IpV4Network>,
 }
 
+impl MeasureSize for IpV4 {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.local_ip)
+            + size_of_val(&self.remote_ip)
+            + size_of_val(&self.local_port)
+            + size_of_val(&self.remote_port)
+            + size_of_val(&self.protocol)
+            + size_of_val(&self.static_ip)
+            + self
+                .network
+                .as_ref()
+                .map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
+    }
+}
+
 impl DevicePathNode for IpV4 {
     fn header(&self) -> Header {
         Header::new(
             DevicePathType::Messaging as u8,
             MessagingSubType::IpV4 as u8,
-            if self.network.is_some() { 27 } else { 19 },
+            Header::size_of_header() + self.measure_size(),
         )
     }
 
@@ -786,9 +824,24 @@ pub struct Iscsi {
     pub target_name: String,
 }
 
+impl MeasureSize for Iscsi {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.protocol)
+            + size_of_val(&self.options)
+            + size_of_val(&self.lun)
+            + size_of_val(&self.portal_group)
+            + self.target_name.len()
+            + size_of::<u8>() // NUL terminator
+    }
+}
+
 impl DevicePathNode for Iscsi {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::Iscsi as u8, 19 + self.target_name.len())
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::Iscsi as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -863,9 +916,19 @@ pub struct Uri {
     pub uri: String,
 }
 
+impl MeasureSize for Uri {
+    fn measure_size(&self) -> usize {
+        self.uri.len()
+    }
+}
+
 impl DevicePathNode for Uri {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::Uri as u8, 4 + self.uri.len())
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::Uri as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -924,9 +987,19 @@ pub struct Dns {
     pub addresses: Vec<[u8; 16]>,
 }
 
+impl MeasureSize for Dns {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.is_ipv6) + size_of_val(self.addresses.as_slice())
+    }
+}
+
 impl DevicePathNode for Dns {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::Dns as u8, 5 + self.addresses.len() * 16)
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::Dns as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -1018,15 +1091,24 @@ pub struct RestService {
     pub access_mode: u8,
 }
 
+impl MeasureSize for RestService {
+    fn measure_size(&self) -> usize {
+        let vendor = match &self.service {
+            RestServiceType::Vendor { guid, data } => size_of_val(guid) + size_of_val(data.as_slice()),
+            _ => 0,
+        };
+        size_of::<u8>() // service type, encoded as one byte
+            + size_of_val(&self.access_mode)
+            + vendor
+    }
+}
+
 impl DevicePathNode for RestService {
     fn header(&self) -> Header {
         Header::new(
             DevicePathType::Messaging as u8,
             MessagingSubType::RestService as u8,
-            match &self.service {
-                RestServiceType::Vendor { data, .. } => 22 + data.len(),
-                _ => 6,
-            },
+            Header::size_of_header() + self.measure_size(),
         )
     }
 
@@ -1117,9 +1199,19 @@ pub struct NvmeOf {
     pub subsystem_nqn: String,
 }
 
+impl MeasureSize for NvmeOf {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.identifier_type) + size_of_val(&self.identifier) + self.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
+    }
+}
+
 impl DevicePathNode for NvmeOf {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Messaging as u8, MessagingSubType::NvmeOf as u8, 22 + self.subsystem_nqn.len())
+        Header::new(
+            DevicePathType::Messaging as u8,
+            MessagingSubType::NvmeOf as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -1210,9 +1302,6 @@ pub struct Sata {
 }
 
 impl Sata {
-    /// The on-wire size of Sata data (without header): 2 + 2 + 2 = 6 bytes.
-    const DATA_SIZE: usize = 6;
-
     /// Create a new SATA device path node.
     ///
     /// # Arguments
@@ -1224,12 +1313,18 @@ impl Sata {
     }
 }
 
+impl MeasureSize for Sata {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.hba_port) + size_of_val(&self.port_multiplier_port) + size_of_val(&self.lun)
+    }
+}
+
 impl DevicePathNode for Sata {
     fn header(&self) -> parse_node::Header {
         parse_node::Header {
             r#type: DevicePathType::Messaging as u8,
             sub_type: MessagingSubType::Sata as u8,
-            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + self.measure_size(),
         }
     }
 
@@ -1313,9 +1408,6 @@ pub struct NvmExpress {
 }
 
 impl NvmExpress {
-    /// The on-wire size of `NvmExpress` data (without header): 4 bytes NSID + 8 bytes EUI64.
-    const DATA_SIZE: usize = 4 + 8;
-
     /// Create a new `NvmExpress` device path node.
     ///
     /// # Arguments
@@ -1326,12 +1418,18 @@ impl NvmExpress {
     }
 }
 
+impl MeasureSize for NvmExpress {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.namespace_id) + size_of_val(&self.eui64)
+    }
+}
+
 impl parse_node::DevicePathNode for NvmExpress {
     fn header(&self) -> crate::uefi::device_path::parse_node::Header {
         parse_node::Header {
             r#type: DevicePathType::Messaging as u8,
             sub_type: MessagingSubType::NvmExpress as u8,
-            length: parse_node::Header::size_of_header() + Self::DATA_SIZE,
+            length: parse_node::Header::size_of_header() + self.measure_size(),
         }
     }
 

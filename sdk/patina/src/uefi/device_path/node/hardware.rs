@@ -9,7 +9,7 @@
 use super::{DevicePathType, HardwareSubType, check_length, invalid};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{DevicePathNode, Header},
+    uefi::device_path::parse_node::{DevicePathNode, Header, MeasureSize},
 };
 use alloc::vec::Vec;
 use scroll::{
@@ -26,9 +26,19 @@ pub struct HardwareVendor {
     pub data: Vec<u8>,
 }
 
+impl MeasureSize for HardwareVendor {
+    fn measure_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
+}
+
 impl DevicePathNode for HardwareVendor {
     fn header(&self) -> Header {
-        Header::new(DevicePathType::Hardware as u8, HardwareSubType::Vendor as u8, 20 + self.data.len())
+        Header::new(
+            DevicePathType::Hardware as u8,
+            HardwareSubType::Vendor as u8,
+            Header::size_of_header() + self.measure_size(),
+        )
     }
 
     fn is_type(kind: u8, subtype: u8) -> bool {
@@ -84,7 +94,7 @@ impl core::fmt::Display for HardwareVendor {
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Pci {
         /// PCI Function Number.
@@ -97,7 +107,7 @@ device_path_node! {
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct PcCard {
         /// Function Number, 0 is the first one.
@@ -108,7 +118,7 @@ device_path_node! {
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#memory-mapped-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct MemoryMapped {
         /// EFI memory type.
@@ -123,7 +133,7 @@ device_path_node! {
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Controller {
         /// Controller Number.
@@ -134,7 +144,7 @@ device_path_node! {
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bmc-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Bmc {
         /// BMC interface type.
