@@ -2,7 +2,8 @@
 //!
 //! Notification callbacks supplied by components as Rust closures are boxed and stored with the
 //! event's notification context. A single C-ABI "trampoline" recovers the closure and invokes it
-//! when the event fires. The closure is reclaimed and dropped when the event is closed.
+//! when the event fires, passing back the [`Event`] that fired. The closure is reclaimed and
+//! dropped when the event is closed.
 //!
 //! ## License
 //!
@@ -33,11 +34,16 @@ struct ClosureHolder {
 
 /// C-ABI trampoline registered with every event created through [`create_event_internal`].
 ///
-/// It recovers the [`ClosureHolder`] from the notification context and invokes the closure.
-extern "efiapi" fn notify_trampoline(_event: efi::Event, context: *mut c_void) {
+/// It recovers the [`ClosureHolder`] from the notification context and invokes the closure,
+/// passing back the [`Event`] that fired so the closure can signal, check, or close itself.
+extern "efiapi" fn notify_trampoline(event: efi::Event, context: *mut c_void) {
     if context.is_null() {
         return;
     }
+
+    let Some(event) = Event::from_raw(event) else {
+        return;
+    };
 
     UEFI_SERVICES_STATE.event_notify.enter(context);
 
@@ -45,7 +51,7 @@ extern "efiapi" fn notify_trampoline(_event: efi::Event, context: *mut c_void) {
     // `create_event_internal` and remains valid until freed below or by `close_event`. UEFI
     // dispatches notifications serially at the event's TPL, so there is no concurrent access.
     let holder = unsafe { &mut *(context as *mut ClosureHolder) };
-    (holder.callback)();
+    (holder.callback)(event);
 
     if UEFI_SERVICES_STATE.event_notify.exit(context) {
         // The callback closed its own event above. Free the closure now that it has returned
@@ -171,6 +177,17 @@ mod tests {
     }
 
     #[test]
+    fn test_notify_trampoline_returns_when_context_is_null() {
+        notify_trampoline(core::ptr::null_mut(), core::ptr::null_mut());
+    }
+
+    #[test]
+    fn test_notify_trampoline_returns_when_event_is_null() {
+        // Context is never dereferenced on this path, so a dangling non-null value is fine.
+        notify_trampoline(core::ptr::null_mut(), 0x1234usize as *mut c_void);
+    }
+
+    #[test]
     fn test_tpl_to_efi_maps_all_variants() {
         assert_eq!(tpl_to_efi(Tpl::Application), efi::TPL_APPLICATION);
         assert_eq!(tpl_to_efi(Tpl::Callback), efi::TPL_CALLBACK);
@@ -184,7 +201,7 @@ mod tests {
             let service = CoreEventServices;
 
             // TPL_APPLICATION is one level below the minimum notify TPL that `Event::new` accepts.
-            let result = service.create_event(Tpl::Application, Box::new(|| {}));
+            let result = service.create_event(Tpl::Application, Box::new(|_event| {}));
 
             assert_eq!(result, Err(EventError::InvalidParameter));
         })
@@ -197,14 +214,18 @@ mod tests {
             let service = CoreEventServices;
             let counter = Arc::new(AtomicUsize::new(0));
             let callback_counter = counter.clone();
-            let callback: EventNotifyCallback = Box::new(move || {
+            let received: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+            let received_in_callback = received.clone();
+            let callback: EventNotifyCallback = Box::new(move |event| {
                 callback_counter.fetch_add(1, Ordering::SeqCst);
+                received_in_callback.set(Some(event));
             });
 
             let event = service.create_event(Tpl::Callback, callback).unwrap();
             service.signal_event(event).unwrap();
 
             assert_eq!(counter.load(Ordering::SeqCst), 1);
+            assert_eq!(received.get(), Some(event));
 
             service.close_event(event).unwrap();
         })
@@ -217,7 +238,7 @@ mod tests {
             let service = CoreEventServices;
             let counter = Arc::new(AtomicUsize::new(0));
             let callback_counter = counter.clone();
-            let callback: EventNotifyCallback = Box::new(move || {
+            let callback: EventNotifyCallback = Box::new(move |_event| {
                 callback_counter.fetch_add(1, Ordering::SeqCst);
             });
 
@@ -258,7 +279,7 @@ mod tests {
     fn test_core_event_services_check_event_rejects_notify_signal_event() {
         crate::test_support::with_global_lock(|| {
             let service = CoreEventServices;
-            let event = service.create_event(Tpl::Callback, Box::new(|| {})).unwrap();
+            let event = service.create_event(Tpl::Callback, Box::new(|_event| {})).unwrap();
 
             // check_event's UEFI semantics never accept a NOTIFY_SIGNAL event, which is the only
             // kind this service creates.
@@ -273,7 +294,7 @@ mod tests {
     fn test_core_event_services_close_event_then_double_close_fails() {
         crate::test_support::with_global_lock(|| {
             let service = CoreEventServices;
-            let event = service.create_event(Tpl::Callback, Box::new(|| {})).unwrap();
+            let event = service.create_event(Tpl::Callback, Box::new(|_event| {})).unwrap();
 
             assert_eq!(service.close_event(event), Ok(()));
             assert_eq!(service.close_event(event), Err(EventError::InvalidParameter));
@@ -286,19 +307,14 @@ mod tests {
         crate::test_support::with_global_lock(|| {
             let service = CoreEventServices;
 
-            // The closure needs its own `Event` handle to self-close, but that handle is only
-            // known after `create_event` returns, so it is threaded through after the fact.
-            let self_event: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
-            let self_event_in_callback = self_event.clone();
-
             let drop_count = Arc::new(AtomicUsize::new(0));
             let drop_counter = DropCounter(drop_count.clone());
             let ran_after_self_close = Arc::new(AtomicUsize::new(0));
             let ran_after_self_close_in_callback = ran_after_self_close.clone();
 
-            let callback: EventNotifyCallback = Box::new(move || {
+            // The closure gets its own `Event` handle as a callback parameter.
+            let callback: EventNotifyCallback = Box::new(move |event| {
                 let _keep_alive = &drop_counter;
-                let event = self_event_in_callback.get().expect("event handle set before signaling");
                 assert_eq!(CoreEventServices.close_event(event), Ok(()));
                 // If the closure's own captured state had been freed by the call above, touching
                 // captured state here would be a use-after-free.
@@ -306,7 +322,6 @@ mod tests {
             });
 
             let event = service.create_event(Tpl::Callback, callback).unwrap();
-            self_event.set(Some(event));
 
             // Releasing the event database lock inside `signal_event` dispatches synchronously, so
             // the callback (and its nested self-close) has already run by the time this returns.
@@ -334,7 +349,7 @@ mod tests {
             let event_a = service
                 .create_event(
                     Tpl::Notify,
-                    Box::new(move || {
+                    Box::new(move |_event| {
                         let event_b = event_b_slot_for_a.get().expect("event B registered before signaling");
                         assert_eq!(CoreEventServices.close_event(event_b), Ok(()));
                     }),
@@ -349,7 +364,7 @@ mod tests {
             let event_b = service
                 .create_event(
                     Tpl::Callback,
-                    Box::new(move || {
+                    Box::new(move |_event| {
                         let _keep_alive = &drop_counter;
                         CoreEventServices.signal_event(event_a).unwrap();
                         // Event B was closed above, nested inside this call, while this callback
