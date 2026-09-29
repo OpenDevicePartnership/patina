@@ -1080,6 +1080,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     log::warn!(
                         "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{hob:#x?}"
                     );
+                    debug_assert!(desc.memory_base_address != 0, "Memory Allocation HOB has a 0 base address.");
                     continue;
                 }
 
@@ -1091,6 +1092,11 @@ fn process_hob_allocations(hob_list: &HobList) {
                     || (desc.memory_length & UEFI_PAGE_MASK as u64) != 0
                 {
                     log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{hob:#x?}");
+                    debug_assert!(
+                        (desc.memory_base_address & UEFI_PAGE_MASK as u64) == 0
+                            && (desc.memory_length & UEFI_PAGE_MASK as u64) == 0,
+                        "Memory Allocation HOB has invalid address or length granularity."
+                    );
                     continue;
                 }
 

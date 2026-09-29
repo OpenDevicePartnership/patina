@@ -207,9 +207,10 @@ HOBs or part of both HOBs, is being taken into account.
 
 #### 2.4 No Memory Allocation HOB for Page 0
 
-Patina does not allow there to be a memory allocation HOB for page 0. The EDK II DXE Core allows allocations within page
-0. Page 0 must be unmapped in the page table to catch null pointer dereferences and this cannot be safely done if a
-driver has allocated this page.
+Patina does not allow there to be a memory allocation HOB for page 0. Page 0 must be unmapped in the page table to
+catch null pointer dereferences and this cannot be safely done if a driver has allocated this page. The EDK II DXE
+Core also does not allow memory allocations for page 0 and will quietly drop associated allocations. As a result,
+platforms have been seen that still allocate at page 0 despite this.
 
 The DXE Readiness Tool will fail if a Memory Allocation HOB is discovered that covers page 0.
 
