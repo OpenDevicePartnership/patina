@@ -32,41 +32,21 @@ pub use media::*;
 pub use messaging::*;
 pub use node_types::*;
 
+use super::encoding::{ascii, invalid, read_ascii};
 use crate::uefi::device_path::parse_node::{DevicePathNode, UnknownDevicePathNode};
-use alloc::{boxed::Box, string::String};
+use alloc::boxed::Box;
 use scroll::ctx::TryFromCtx;
 
 #[cfg(test)]
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 #[cfg(test)]
 use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
-
-fn invalid(msg: &'static str) -> scroll::Error {
-    scroll::Error::BadInput { size: 0, msg }
-}
 
 fn check_length(size: usize) -> Result<(), scroll::Error> {
     if size > usize::from(u16::MAX) - 4 {
         return Err(invalid("device path payload exceeds the 16-bit node length"));
     }
     Ok(())
-}
-
-fn ascii(value: &str) -> Result<(), scroll::Error> {
-    if !value.is_ascii() || value.as_bytes().contains(&0) {
-        return Err(invalid("device path string must be ASCII without embedded NUL"));
-    }
-    Ok(())
-}
-
-fn read_ascii(data: &[u8], offset: &mut usize) -> Result<String, scroll::Error> {
-    let remaining = data.get(*offset..).ok_or_else(|| invalid("missing ASCII string"))?;
-    let len = remaining.iter().position(|byte| *byte == 0).ok_or_else(|| invalid("missing ASCII terminator"))?;
-    let bytes = remaining.get(..len).ok_or_else(|| invalid("invalid ASCII string bounds"))?;
-    let value = core::str::from_utf8(bytes).map_err(|_| invalid("invalid ASCII string"))?;
-    ascii(value)?;
-    *offset += len + 1;
-    Ok(String::from(value))
 }
 
 /// Decode a node using its type and subtype, preserving unsupported nodes.
@@ -1048,6 +1028,9 @@ mod binary_tests {
         assert!(FilePath::try_from_ctx(&[b'A'], scroll::LE).is_err());
         assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());
         assert!(ExtendedAcpi::try_from_ctx(&[0; 14], scroll::LE).is_err());
+        let mut non_ascii = [0u8; 15];
+        non_ascii[12] = 0xe9;
+        assert!(ExtendedAcpi::try_from_ctx(&non_ascii, scroll::LE).is_err());
         assert!(Dns::try_from_ctx(&[0; 16], scroll::LE).is_err());
         assert!(RestService::try_from_ctx(&[0xff, 1], scroll::LE).is_err());
         assert!(Uri::try_from_ctx(&[0xff], scroll::LE).is_err());

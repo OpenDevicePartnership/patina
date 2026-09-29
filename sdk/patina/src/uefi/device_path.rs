@@ -11,6 +11,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+/// String encoding contexts for device path fields.
+#[cfg(feature = "unstable-device-path")]
+pub mod encoding;
 /// Module for FV-related Device Path struct implementations.
 pub mod fv_types;
 /// Module for device path helper functions such as partial device path detection and expansion.

@@ -6,10 +6,13 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{AcpiSubType, DevicePathType, ascii, check_length, invalid, read_ascii};
+use super::{AcpiSubType, DevicePathType, check_length, invalid};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{DevicePathNode, Header},
+    uefi::device_path::{
+        encoding::AsciiNul,
+        parse_node::{DevicePathNode, Header},
+    },
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -31,8 +34,9 @@ device_path_node! {
 
 /// Expanded ACPI identifiers, with optional ASCII string overrides.
 ///
-/// A nonempty string supersedes its corresponding numeric identifier.
-#[derive(Debug, Clone, Eq, PartialEq)]
+/// A nonempty string supersedes its corresponding numeric identifier. Each string
+/// is stored as NUL-terminated ASCII, as specified by UEFI 2.11 Table 10.10.
+#[derive(Debug, Clone, Eq, PartialEq, Pread, Pwrite)]
 pub struct ExtendedAcpi {
     /// Numeric hardware identifier.
     pub hid: u32,
@@ -41,10 +45,13 @@ pub struct ExtendedAcpi {
     /// Numeric compatible identifier.
     pub cid: u32,
     /// Hardware identifier override, without its terminator.
+    #[scroll(ctx = AsciiNul)]
     pub hid_string: String,
     /// Unique identifier override, without its terminator.
+    #[scroll(ctx = AsciiNul)]
     pub uid_string: String,
     /// Compatible identifier override, without its terminator.
+    #[scroll(ctx = AsciiNul)]
     pub cid_string: String,
 }
 
@@ -75,44 +82,6 @@ impl DevicePathNode for ExtendedAcpi {
         }
         buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
         Ok(header.length)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for ExtendedAcpi {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let hid = data.gread_with(&mut offset, endian)?;
-        let uid = data.gread_with(&mut offset, endian)?;
-        let cid = data.gread_with(&mut offset, endian)?;
-        let hid_string = read_ascii(data, &mut offset)?;
-        let uid_string = read_ascii(data, &mut offset)?;
-        let cid_string = read_ascii(data, &mut offset)?;
-        let (node, consumed) = (Self { hid, uid, cid, hid_string, uid_string, cid_string }, offset);
-        check_length(node.header().length - 4)?;
-        ascii(&node.hid_string)?;
-        ascii(&node.uid_string)?;
-        ascii(&node.cid_string)?;
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for ExtendedAcpi {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.hid_string)?;
-        ascii(&self.uid_string)?;
-        ascii(&self.cid_string)?;
-        let mut offset = 0;
-        data.gwrite_with(self.hid, &mut offset, endian)?;
-        data.gwrite_with(self.uid, &mut offset, endian)?;
-        data.gwrite_with(self.cid, &mut offset, endian)?;
-        for value in [&self.hid_string, &self.uid_string, &self.cid_string] {
-            data.gwrite_with(value.as_bytes(), &mut offset, ())?;
-            data.gwrite_with(0u8, &mut offset, endian)?;
-        }
-        Ok(offset)
     }
 }
 
