@@ -92,6 +92,17 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
 pub fn try_cast_to_dyn_device_path_node(
     unknown: UnknownDevicePathNode<'_>,
 ) -> Result<Box<dyn DevicePathNode + '_>, scroll::Error> {
+    fn decode_node<'a, T>(data: &'a [u8]) -> Result<Box<dyn DevicePathNode + 'a>, scroll::Error>
+    where
+        T: DevicePathNode + TryFromCtx<'a, scroll::Endian, Error = scroll::Error> + 'a,
+    {
+        let (node, consumed) = T::try_from_ctx(data, scroll::LE)?;
+        if consumed != data.len() {
+            return Err(invalid("unexpected trailing device path payload"));
+        }
+        Ok(Box::new(node))
+    }
+
     if unknown.header.length != 4 + unknown.data.len() {
         return Err(invalid("device path header and payload lengths differ"));
     }
@@ -99,88 +110,71 @@ pub fn try_cast_to_dyn_device_path_node(
     if unknown.header.r#type == 0x7f && (unknown.header.length != 4 || !matches!(unknown.header.sub_type, 1 | 0xff)) {
         return Err(invalid("invalid end device path node"));
     }
-    macro_rules! cast {
-        ($unknown:expr, $($ty:ty),*) => {
-            match unknown.header {
-                $(
-                    h if <$ty>::is_type(h.r#type, h.sub_type) => {
-                        let (node, consumed) = <$ty>::try_from_ctx(unknown.data, scroll::LE)?;
-                        if consumed != unknown.data.len() {
-                            return Err(invalid("unexpected trailing device path payload"));
-                        }
-                        Some(Box::new(node) as Box<dyn DevicePathNode>)
-                    }
-                )*,
-                _ => None
-            }
-        };
-    }
 
-    match cast!(
-        &unknown,
+    match unknown.header {
         // Hardware nodes.
-        Pci,
-        PcCard,
-        MemoryMapped,
-        Controller,
-        Bmc,
-        HardwareVendor,
+        h if Pci::is_type(h.r#type, h.sub_type) => decode_node::<Pci>(unknown.data),
+        h if PcCard::is_type(h.r#type, h.sub_type) => decode_node::<PcCard>(unknown.data),
+        h if MemoryMapped::is_type(h.r#type, h.sub_type) => decode_node::<MemoryMapped>(unknown.data),
+        h if Controller::is_type(h.r#type, h.sub_type) => decode_node::<Controller>(unknown.data),
+        h if Bmc::is_type(h.r#type, h.sub_type) => decode_node::<Bmc>(unknown.data),
+        h if HardwareVendor::is_type(h.r#type, h.sub_type) => decode_node::<HardwareVendor>(unknown.data),
         // ACPI nodes.
-        Acpi,
-        ExtendedAcpi,
-        AcpiAdr,
-        NvdimmAcpi,
+        h if Acpi::is_type(h.r#type, h.sub_type) => decode_node::<Acpi>(unknown.data),
+        h if ExtendedAcpi::is_type(h.r#type, h.sub_type) => decode_node::<ExtendedAcpi>(unknown.data),
+        h if AcpiAdr::is_type(h.r#type, h.sub_type) => decode_node::<AcpiAdr>(unknown.data),
+        h if NvdimmAcpi::is_type(h.r#type, h.sub_type) => decode_node::<NvdimmAcpi>(unknown.data),
         // Messaging nodes.
-        NvmExpress,
-        Sata,
-        Atapi,
-        Scsi,
-        FiberChannel,
-        FiberChannelEx,
-        Ieee1394,
-        Usb,
-        UsbWwid,
-        UsbClass,
-        DeviceLogicalUnit,
-        I2oRandomBlockStorageClass,
-        MacAddress,
-        IpV4,
-        IpV6,
-        Vlan,
-        InfiniBand,
-        Uart,
-        MessagingVendor,
-        SasEx,
-        Iscsi,
-        Uri,
-        Ufs,
-        Sd,
-        Bluetooth,
-        WiFi,
-        Emmc,
-        BluetoothLE,
-        Dns,
-        Nvdimm,
-        RestService,
-        NvmeOf,
+        h if NvmExpress::is_type(h.r#type, h.sub_type) => decode_node::<NvmExpress>(unknown.data),
+        h if Sata::is_type(h.r#type, h.sub_type) => decode_node::<Sata>(unknown.data),
+        h if Atapi::is_type(h.r#type, h.sub_type) => decode_node::<Atapi>(unknown.data),
+        h if Scsi::is_type(h.r#type, h.sub_type) => decode_node::<Scsi>(unknown.data),
+        h if FiberChannel::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannel>(unknown.data),
+        h if FiberChannelEx::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannelEx>(unknown.data),
+        h if Ieee1394::is_type(h.r#type, h.sub_type) => decode_node::<Ieee1394>(unknown.data),
+        h if Usb::is_type(h.r#type, h.sub_type) => decode_node::<Usb>(unknown.data),
+        h if UsbWwid::is_type(h.r#type, h.sub_type) => decode_node::<UsbWwid>(unknown.data),
+        h if UsbClass::is_type(h.r#type, h.sub_type) => decode_node::<UsbClass>(unknown.data),
+        h if DeviceLogicalUnit::is_type(h.r#type, h.sub_type) => decode_node::<DeviceLogicalUnit>(unknown.data),
+        h if I2oRandomBlockStorageClass::is_type(h.r#type, h.sub_type) => {
+            decode_node::<I2oRandomBlockStorageClass>(unknown.data)
+        }
+        h if MacAddress::is_type(h.r#type, h.sub_type) => decode_node::<MacAddress>(unknown.data),
+        h if IpV4::is_type(h.r#type, h.sub_type) => decode_node::<IpV4>(unknown.data),
+        h if IpV6::is_type(h.r#type, h.sub_type) => decode_node::<IpV6>(unknown.data),
+        h if Vlan::is_type(h.r#type, h.sub_type) => decode_node::<Vlan>(unknown.data),
+        h if InfiniBand::is_type(h.r#type, h.sub_type) => decode_node::<InfiniBand>(unknown.data),
+        h if Uart::is_type(h.r#type, h.sub_type) => decode_node::<Uart>(unknown.data),
+        h if MessagingVendor::is_type(h.r#type, h.sub_type) => decode_node::<MessagingVendor>(unknown.data),
+        h if SasEx::is_type(h.r#type, h.sub_type) => decode_node::<SasEx>(unknown.data),
+        h if Iscsi::is_type(h.r#type, h.sub_type) => decode_node::<Iscsi>(unknown.data),
+        h if Uri::is_type(h.r#type, h.sub_type) => decode_node::<Uri>(unknown.data),
+        h if Ufs::is_type(h.r#type, h.sub_type) => decode_node::<Ufs>(unknown.data),
+        h if Sd::is_type(h.r#type, h.sub_type) => decode_node::<Sd>(unknown.data),
+        h if Bluetooth::is_type(h.r#type, h.sub_type) => decode_node::<Bluetooth>(unknown.data),
+        h if WiFi::is_type(h.r#type, h.sub_type) => decode_node::<WiFi>(unknown.data),
+        h if Emmc::is_type(h.r#type, h.sub_type) => decode_node::<Emmc>(unknown.data),
+        h if BluetoothLE::is_type(h.r#type, h.sub_type) => decode_node::<BluetoothLE>(unknown.data),
+        h if Dns::is_type(h.r#type, h.sub_type) => decode_node::<Dns>(unknown.data),
+        h if Nvdimm::is_type(h.r#type, h.sub_type) => decode_node::<Nvdimm>(unknown.data),
+        h if RestService::is_type(h.r#type, h.sub_type) => decode_node::<RestService>(unknown.data),
+        h if NvmeOf::is_type(h.r#type, h.sub_type) => decode_node::<NvmeOf>(unknown.data),
         // Media nodes.
-        FilePath,
-        HardDrive,
-        CdRom,
-        MediaVendor,
-        MediaProtocol,
-        PiwgFirmwareFile,
-        PiwgFirmwareVolume,
-        RelativeOffsetRange,
-        RamDisk,
+        h if FilePath::is_type(h.r#type, h.sub_type) => decode_node::<FilePath>(unknown.data),
+        h if HardDrive::is_type(h.r#type, h.sub_type) => decode_node::<HardDrive>(unknown.data),
+        h if CdRom::is_type(h.r#type, h.sub_type) => decode_node::<CdRom>(unknown.data),
+        h if MediaVendor::is_type(h.r#type, h.sub_type) => decode_node::<MediaVendor>(unknown.data),
+        h if MediaProtocol::is_type(h.r#type, h.sub_type) => decode_node::<MediaProtocol>(unknown.data),
+        h if PiwgFirmwareFile::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareFile>(unknown.data),
+        h if PiwgFirmwareVolume::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareVolume>(unknown.data),
+        h if RelativeOffsetRange::is_type(h.r#type, h.sub_type) => decode_node::<RelativeOffsetRange>(unknown.data),
+        h if RamDisk::is_type(h.r#type, h.sub_type) => decode_node::<RamDisk>(unknown.data),
         // BIOS nodes.
-        Bios,
-        // End nodes
-        EndEntire,
-        EndInstance
-    ) {
-        Some(n) => Ok(n),
-        None => Ok(Box::new(unknown)),
+        h if Bios::is_type(h.r#type, h.sub_type) => decode_node::<Bios>(unknown.data),
+        // End nodes.
+        h if EndEntire::is_type(h.r#type, h.sub_type) => decode_node::<EndEntire>(unknown.data),
+        h if EndInstance::is_type(h.r#type, h.sub_type) => decode_node::<EndInstance>(unknown.data),
+        _ => Ok(Box::new(unknown)),
     }
 }
 
@@ -953,6 +947,39 @@ mod binary_tests {
         expected.extend_from_slice(&[0x11; 16]);
         expected.extend_from_slice(&[2, 2]);
         check_node(HardDrive::new_gpt(1, 2048, 4096, [0x11; 16]), &expected);
+    }
+
+    #[test]
+    fn test_device_path_decoder_errors_and_unknown_nodes() {
+        for unknown in [
+            UnknownDevicePathNode { header: Header::new(1, 1, 4), data: &[1] },
+            UnknownDevicePathNode { header: Header::new(1, 1, 5), data: &[1] },
+            UnknownDevicePathNode { header: Header::new(1, 1, 7), data: &[1, 2, 3] },
+            UnknownDevicePathNode { header: Header::new(3, 18, 10), data: &[255, 255, 255, 255, 0, 0] },
+            UnknownDevicePathNode { header: Header::new(3, 23, 16), data: &[0; 12] },
+            UnknownDevicePathNode { header: Header::new(4, 4, 6), data: &[b'A', 0] },
+            UnknownDevicePathNode { header: Header::new(0x7f, 2, 4), data: &[] },
+            UnknownDevicePathNode { header: Header::new(0x7f, 1, 5), data: &[0] },
+            UnknownDevicePathNode { header: Header::new(0x7f, 0xff, 5), data: &[0] },
+        ] {
+            assert!(try_cast_to_dyn_device_path_node(unknown).is_err());
+        }
+        for unknown in [
+            UnknownDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] },
+            UnknownDevicePathNode { header: Header::new(1, 0xff, 6), data: &[1, 2] },
+        ] {
+            let expected = format!("{unknown:?}");
+            let decoded = try_cast_to_dyn_device_path_node(unknown).unwrap();
+            assert_eq!(format!("{decoded:?}"), expected);
+        }
+        let oversized = vec![0; usize::from(u16::MAX) - 3];
+        assert!(
+            try_cast_to_dyn_device_path_node(UnknownDevicePathNode {
+                header: Header::new(6, 1, 4 + oversized.len()),
+                data: &oversized,
+            })
+            .is_err()
+        );
     }
 
     #[test]
