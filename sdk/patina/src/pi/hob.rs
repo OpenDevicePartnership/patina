@@ -32,22 +32,15 @@
 //!   }
 //! }
 //!
-//! fn gen_end_of_hoblist() -> hob::PhaseHandoffInformationTable {
+//! fn gen_end_of_hoblist() -> hob::EndOfHobList {
 //!   let header = hob::HobHeader {
 //!     r#type: hob::END_OF_HOB_LIST,
-//!     length: size_of::<hob::PhaseHandoffInformationTable>() as u16,
+//!     length: size_of::<hob::HobHeader>() as u16,
 //!     reserved: 0,
 //!   };
 //!
-//!   hob::PhaseHandoffInformationTable {
+//!   hob::EndOfHobList {
 //!     header,
-//!     version: 0x00010000,
-//!     boot_mode: BootMode::BootWithFullConfiguration,
-//!     memory_top: 0xdeadbeef,
-//!     memory_bottom: 0xdeadc0de,
-//!     free_memory_top: 104,
-//!     free_memory_bottom: 255,
-//!     end_of_hob_list: 0xdeaddeadc0dec0de,
 //!   }
 //! }
 //!
@@ -144,7 +137,19 @@ use crate::standard::efi::MemoryType;
 /// HOB structures that allows iteration from one HOB to the next until the end-of-list
 /// marker is encountered.
 ///
-#[repr(C)]
+/// Note:
+///  - All HOBs must start with a HOB generic header.
+///  - All HOBs must be multiples of 8 bytes in length.
+///  - All HOBs will begin on an 8-byte boundary.
+///
+/// See [PI spec 1.10 III - 4.5.2. HOB Construction Rules](https://uefi.org/specs/PI/1.10/V3_HOB_Design_Discussion.html#hob-construction-rules)  
+/// Since [PI spec 1.2B](https://uefi.org/sites/default/files/resources/PI_Spec_1.2_B.zip)
+///
+/// Note:
+///  The align(8) makes the Rust object conform to the PI alignment requirement.
+///  However, this does not bring obvious benefits to the parser or compiler, though it may help code analysis tools.
+///
+#[repr(C, align(8))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct HobHeader {
     // EFI_HOB_GENERIC_HEADER
@@ -162,6 +167,8 @@ pub struct HobHeader {
     ///
     pub reserved: u32,
 }
+const _: () = assert!(core::mem::size_of::<HobHeader>() == 8);
+const _: () = assert!(core::mem::align_of::<HobHeader>() == 8);
 
 /// Memory allocation HOB header that describes allocated memory regions.
 ///
@@ -205,15 +212,53 @@ pub struct MemoryAllocationHeader {
     pub reserved: [u8; 4],
 }
 
-/// Describes pool memory allocations.
+/// Generic HOB structure for HOBs that are defined by the PI spec but unused by Patina now.
+/// - MEMORY_POOL
+/// - UNUSED
+/// - LOAD_PEIM_UNUSED
+/// - (etc.)
 ///
-/// The memory pool HOB is produced by the HOB producer phase and describes pool
-/// memory allocations. The HOB consumer phase should be able to ignore these HOBs.
-/// The purpose of this HOB is to allow for the HOB producer phase to have a simple
-/// memory allocation mechanism within the HOB list. The size of the memory allocation
-/// is stipulated by the `HobLength` field in the generic HOB header.
+#[repr(C)]
+#[derive(Debug)]
+pub struct GenericHob {
+    /// The common header shared by all HOBs.
+    pub header: HobHeader,
+}
+
+impl GenericHob {
+    /// Returns the variant part as a byte slice.
+    pub fn payload(&self) -> &[u8] {
+        let struct_size: usize = core::mem::size_of::<Self>();
+        debug_assert!((self.header.length as usize) >= struct_size);
+        let data_len = (self.header.length as usize).saturating_sub(struct_size);
+
+        unsafe {
+            let data_ptr = core::ptr::from_ref(self).cast::<u8>().add(struct_size);
+            core::slice::from_raw_parts(data_ptr, data_len)
+        }
+    }
+
+    /// Returns the entire HOB as a byte slice
+    pub fn as_slice(&self) -> &[u8] {
+        let total_size = self.header.length as usize;
+        unsafe {
+            let data_ptr = core::ptr::from_ref(self).cast::<u8>();
+            core::slice::from_raw_parts(data_ptr, total_size)
+        }
+    }
+}
+
+/// Indicates the end of the HOB list. This HOB must be the last one in the HOB list.
 ///
-pub type MemoryPool = HobHeader;
+/// This HOB type indicates the end of the HOB list. This HOB type must be the last HOB type in the
+/// HOB list and terminates the HOB list. A HOB list should be considered ill formed if it does not have
+/// a final HOB of type EFI_HOB_TYPE_END_OF_HOB_LIST.
+///
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct EndOfHobList {
+    pub header: HobHeader,
+}
 
 /// Phase Handoff Information Table (PHIT) HOB.
 ///
@@ -605,6 +650,21 @@ pub struct GuidHob {
     //
 }
 
+impl GuidHob {
+    /// Returns the data portion of the GUID HOB as a byte slice.
+    ///
+    pub fn guid_data_slice(&self) -> &[u8] {
+        let struct_size: usize = core::mem::size_of::<Self>();
+        debug_assert!((self.header.length as usize) >= struct_size);
+        let guid_data_size = (self.header.length as usize).saturating_sub(struct_size);
+
+        unsafe {
+            let guid_data_ptr = core::ptr::from_ref(self).cast::<u8>().add(struct_size);
+            core::slice::from_raw_parts(guid_data_ptr, guid_data_size)
+        }
+    }
+}
+
 /// Details the location of firmware volumes that contain firmware files.
 ///
 /// The firmware volume HOB details the location of firmware volumes that contain
@@ -772,6 +832,8 @@ pub struct Capsule {
 pub enum Hob<'a> {
     /// Phase handoff information table HOB.
     Handoff(&'a PhaseHandoffInformationTable),
+    /// End of HOB list HOB.    
+    EndOfHobList(&'a EndOfHobList),
     /// Memory allocation HOB.
     MemoryAllocation(&'a MemoryAllocation),
     /// Memory allocation module HOB.
@@ -793,12 +855,16 @@ pub enum Hob<'a> {
     /// Resource descriptor v2 HOB.
     ResourceDescriptorV2(&'a ResourceDescriptorV2),
     /// Miscellaneous HOB type.
-    Misc(u16),
+    /// The type that is defined by the PI spec but unused by Patina now.
+    /// - MEMORY_POOL
+    /// - UNUSED
+    /// - LOAD_PEIM_UNUSED
+    Misc(&'a GenericHob),
 }
 
 /// Trait for Hand-Off Block types.
 pub trait HobTrait {
-    /// Returns the size of the HOB.
+    /// Returns the entire size of the HOB, including header and data.
     fn size(&self) -> usize;
     /// Returns a pointer to the HOB data.
     fn as_ptr<T>(&self) -> *const T;
@@ -810,6 +876,7 @@ impl HobTrait for Hob<'_> {
     fn size(&self) -> usize {
         match self {
             Hob::Handoff(_) => size_of::<PhaseHandoffInformationTable>(),
+            Hob::EndOfHobList(_) => size_of::<EndOfHobList>(),
             Hob::MemoryAllocation(_) => size_of::<MemoryAllocation>(),
             Hob::MemoryAllocationModule(_) => size_of::<MemoryAllocationModule>(),
             Hob::Capsule(_) => size_of::<Capsule>(),
@@ -820,7 +887,7 @@ impl HobTrait for Hob<'_> {
             Hob::FirmwareVolume3(_) => size_of::<FirmwareVolume3>(),
             Hob::Cpu(_) => size_of::<Cpu>(),
             Hob::ResourceDescriptorV2(_) => size_of::<ResourceDescriptorV2>(),
-            Hob::Misc(_) => size_of::<u16>(),
+            Hob::Misc(hob) => hob.header.length as usize,
         }
     }
 
@@ -828,6 +895,7 @@ impl HobTrait for Hob<'_> {
     fn as_ptr<T>(&self) -> *const T {
         match self {
             Hob::Handoff(hob) => core::ptr::from_ref::<PhaseHandoffInformationTable>(*hob) as *const _,
+            Hob::EndOfHobList(hob) => core::ptr::from_ref::<EndOfHobList>(*hob) as *const _,
             Hob::MemoryAllocation(hob) => core::ptr::from_ref::<MemoryAllocation>(*hob) as *const _,
             Hob::MemoryAllocationModule(hob) => core::ptr::from_ref::<MemoryAllocationModule>(*hob) as *const _,
             Hob::Capsule(hob) => core::ptr::from_ref::<Capsule>(*hob) as *const _,
@@ -838,7 +906,7 @@ impl HobTrait for Hob<'_> {
             Hob::FirmwareVolume3(hob) => core::ptr::from_ref::<FirmwareVolume3>(*hob) as *const _,
             Hob::Cpu(hob) => core::ptr::from_ref::<Cpu>(*hob) as *const _,
             Hob::ResourceDescriptorV2(hob) => core::ptr::from_ref::<ResourceDescriptorV2>(*hob) as *const _,
-            Hob::Misc(hob) => *hob as *const u16 as *const _,
+            Hob::Misc(hob) => core::ptr::from_ref::<GenericHob>(*hob) as *const _,
         }
     }
 }
@@ -897,6 +965,7 @@ impl Hob<'_> {
     pub fn header(&self) -> HobHeader {
         match self {
             Hob::Handoff(hob) => hob.header,
+            Hob::EndOfHobList(hob) => hob.header,
             Hob::MemoryAllocation(hob) => hob.header,
             Hob::MemoryAllocationModule(hob) => hob.header,
             Hob::Capsule(hob) => hob.header,
@@ -907,14 +976,43 @@ impl Hob<'_> {
             Hob::FirmwareVolume3(hob) => hob.header,
             Hob::Cpu(hob) => hob.header,
             Hob::ResourceDescriptorV2(hob) => hob.v1.header,
-            Hob::Misc(hob_type) => {
-                HobHeader { r#type: *hob_type, length: mem::size_of::<HobHeader>() as u16, reserved: 0 }
-            }
+            Hob::Misc(hob) => hob.header,
         }
     }
 }
 
-/// A HOB iterator.
+/// A HOB iterator over the `PI spec HOB list`
+///
+/// ## Start
+///
+///  The `PI spec HOB list` is a contiguous region of memory. The first node is PHIT, and the last node is END_OF_HOB_LIST.
+///
+///  To start iteration from any HOB (beginning or middle) in the `PI spec HOB list`:
+///
+///   1. Cast the pointer to a `GenericHob` reference
+///   2. Create a `Hob::Misc` from the reference
+///   3. Use `.iter()` to start iteration.
+///  
+///  To start iteration from the beginning of the `PI spec HOB list`:
+///
+///   1. Cast the pointer to a `PhaseHandoffInformationTable` reference
+///   2. Create a `Hob::Handoff` from the reference
+///   3. Use `.iter()` to start iteration.
+///
+/// ## Iteration
+///
+///  During iteration:
+///   
+/// - HOBs of interest are returned as their corresponding `Hob` enum variant, bound to the corresponding HOB type
+/// - Other HOBs are returned as `Hob::Misc`, bound to `hob::GenericHob`
+/// - `END_OF_HOB_LIST` stops the iterator and returns `None`
+///
+/// ## See Also
+///
+/// See [PI spec 1.10 III - 4.2. HOB Overview](https://uefi.org/specs/PI/1.10/V3_HOB_Design_Discussion.html#hob-overview)
+///
+///  HOBs are allocated sequentially in memory ...
+///  The sequential list of HOBs in memory will be referred to as the HOB list.
 ///
 pub struct HobIter<'a> {
     hob_ptr: *const HobHeader,
@@ -985,7 +1083,14 @@ impl<'a> Iterator for HobIter<'a> {
                     Hob::ResourceDescriptorV2((self.hob_ptr as *const ResourceDescriptorV2).as_ref().expect(NOT_NULL))
                 }
                 END_OF_HOB_LIST => return None,
-                hob_type => Hob::Misc(hob_type),
+                MEMORY_POOL | LOAD_PEIM_UNUSED | UNUSED => {
+                    // Intentionally ignored
+                    Hob::Misc((self.hob_ptr as *const GenericHob).as_ref().expect(NOT_NULL))
+                }
+                _ => {
+                    debug_assert!(false, "Unknown HOB type: {}", hob_header.r#type);
+                    Hob::Misc((self.hob_ptr as *const GenericHob).as_ref().expect(NOT_NULL))
+                }
             }
         };
         self.hob_ptr = (self.hob_ptr as usize + hob_header.length as usize) as *const HobHeader;
@@ -1012,10 +1117,10 @@ pub struct EFiMemoryTypeInformation {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::pi::{
-        BootMode, hob,
+        BootMode,
         hob::{
-            Capsule, Cpu, FirmwareVolume, MemoryAllocation, PhaseHandoffInformationTable, ResourceDescriptor,
-            get_pi_hob_list_size,
+            self, Capsule, Cpu, EndOfHobList, FirmwareVolume, GenericHob, Hob, MemoryAllocation,
+            PhaseHandoffInformationTable, ResourceDescriptor, get_pi_hob_list_size,
         },
     };
 
@@ -1095,7 +1200,7 @@ pub(crate) mod tests {
         hob::ResourceDescriptorV2 { v1, attributes: 8 }
     }
 
-    // Generate a test phase handoff information table hob
+    // Generate a test memory allocation hob
     // # Returns
     // A MemoryAllocation hob
     pub(crate) fn gen_memory_allocation() -> hob::MemoryAllocation {
@@ -1206,31 +1311,73 @@ pub(crate) mod tests {
     }
 
     // Generate a test end of hoblist hob
-    // # Returns
-    // A PhaseHandoffInformationTable hob
-    pub(crate) fn gen_end_of_hoblist() -> hob::PhaseHandoffInformationTable {
-        let header = hob::HobHeader {
-            r#type: hob::END_OF_HOB_LIST,
-            length: size_of::<hob::PhaseHandoffInformationTable>() as u16,
-            reserved: 0,
-        };
+    //
+    pub(crate) fn gen_end_of_hoblist() -> hob::EndOfHobList {
+        let header =
+            hob::HobHeader { r#type: hob::END_OF_HOB_LIST, length: size_of::<hob::HobHeader>() as u16, reserved: 0 };
 
-        hob::PhaseHandoffInformationTable {
-            header,
-            version: 0x00010000,
-            boot_mode: BootMode::BootWithFullConfiguration,
-            memory_top: 0xdeadbeef,
-            memory_bottom: 0xdeadc0de,
-            free_memory_top: 104,
-            free_memory_bottom: 255,
-            end_of_hob_list: 0xdeaddeadc0dec0de,
-        }
+        hob::EndOfHobList { header }
     }
 
     pub(crate) fn gen_cpu() -> hob::Cpu {
         let header = hob::HobHeader { r#type: hob::CPU, length: size_of::<hob::Cpu>() as u16, reserved: 0 };
 
         hob::Cpu { header, size_of_memory_space: 0, size_of_io_space: 0, reserved: [0; 6] }
+    }
+
+    pub(crate) fn gen_memory_pool() -> [u8; 0x18] {
+        let length = (size_of::<hob::GenericHob>() + 0x10) as u16;
+        assert_eq!(length, 0x18);
+        let mut buffer = [0x33u8; 0x18];
+
+        unsafe {
+            // Write GenericHob bytes to buffer
+            let hob = buffer.as_mut_ptr().cast::<hob::GenericHob>();
+            hob.write_unaligned(hob::GenericHob {
+                header: hob::HobHeader { r#type: hob::MEMORY_POOL, length, reserved: 0 },
+            });
+        }
+        buffer
+    }
+
+    pub(crate) fn gen_unused() -> hob::GenericHob {
+        let header = hob::HobHeader { r#type: hob::UNUSED, length: size_of::<hob::HobHeader>() as u16, reserved: 0 };
+
+        hob::GenericHob { header }
+    }
+
+    #[test]
+    fn test_gen_memory_pool() {
+        let buffer = gen_memory_pool();
+        assert_eq!(buffer.len(), 0x18);
+
+        // // Wrong!! Decode GenericHob from buffer
+        // let hob = unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast::<hob::GenericHob>()) };
+
+        // Must be cast to preserve trailing data.
+        declare_aligned_buffer!(aligned_buffer, buffer);
+        let hob = aligned_buffer.cast::<hob::GenericHob>();
+        // SAFETY: The hob alignment is ensured by `declare_aligned_buffer!`
+        let hob = unsafe { hob.as_ref() }.unwrap();
+
+        assert_eq!(hob.header.r#type, hob::MEMORY_POOL);
+        assert_eq!(hob.header.length, 0x18);
+        assert_eq!(hob.payload().as_ptr() as usize, hob.as_slice().as_ptr() as usize + 0x8);
+        assert_eq!(hob.payload(), [0x33u8; 0x10]);
+    }
+
+    #[test]
+    fn test_gen_guid_hob() {
+        let buffer = gen_guid_hob();
+        assert_eq!(buffer.len(), size_of::<hob::GuidHob>() + 8);
+
+        declare_aligned_buffer!(aligned_buffer, buffer);
+        let guid_hob = aligned_buffer.cast::<hob::GuidHob>();
+        // SAFETY: The hob alignment is ensured by `declare_aligned_buffer!`
+        let guid_hob = unsafe { guid_hob.as_ref() }.unwrap();
+        assert_eq!(guid_hob.header.r#type, hob::GUID_EXTENSION);
+        assert_eq!(guid_hob.header.length as usize, size_of::<hob::GuidHob>() + 8);
+        assert_eq!(guid_hob.guid_data_slice(), [1_u8, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -1242,20 +1389,39 @@ pub(crate) mod tests {
         // SAFETY: The list is created in this test with a valid end-of-list marker
         let size = unsafe { get_pi_hob_list_size(&raw const end_of_list as *const c_void) };
 
-        assert_eq!(size, size_of::<PhaseHandoffInformationTable>());
+        assert_eq!(size, size_of::<EndOfHobList>());
     }
+
+    /// Declare a 8-byte aligned buffer pointer.
+    ///
+    /// Use a macro because we need a lifetime helper variable `_aligned_storage`
+    ///
+    macro_rules! declare_aligned_buffer {
+        ($ptr:ident, $buffer:expr) => {
+            let mut _aligned_storage: Option<Vec<u64>> = None;
+
+            let $ptr: *const core::ffi::c_void = if ($buffer.as_ptr() as usize) % 8 == 0 {
+                $buffer.as_ptr() as *const core::ffi::c_void
+            } else {
+                let mut aligned = vec![0u64; $buffer.len().div_ceil(8)];
+                unsafe {
+                    core::ptr::copy_nonoverlapping($buffer.as_ptr(), aligned.as_mut_ptr() as *mut u8, $buffer.len());
+                }
+                _aligned_storage = Some(aligned);
+                _aligned_storage.as_ref().unwrap().as_ptr() as *const core::ffi::c_void
+            };
+        };
+    }
+    pub(super) use declare_aligned_buffer;
 
     #[test]
     fn test_get_pi_hob_list_size_multiple_hobs() {
-        use core::ffi::c_void;
-
         // Create a HOB list with multiple HOBs in contiguous memory
         let capsule = gen_capsule();
         let firmware_volume = gen_firmware_volume();
         let end_of_list = gen_end_of_hoblist();
 
-        let expected_size =
-            size_of::<Capsule>() + size_of::<FirmwareVolume>() + size_of::<PhaseHandoffInformationTable>();
+        let expected_size = size_of::<Capsule>() + size_of::<FirmwareVolume>() + size_of::<EndOfHobList>();
 
         // This buffer will hold the contiguous HOBs
         let mut buffer = Vec::new();
@@ -1275,21 +1441,21 @@ pub(crate) mod tests {
 
         // Add an end-of-list HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
-        let end_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
-        };
+        let end_bytes =
+            unsafe { core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()) };
         buffer.extend_from_slice(end_bytes);
 
+        // assert_eq!((buffer.as_ptr() as usize) % 8, 0); // if allocator already provides 8-byte alignment
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
     }
 
     #[test]
     fn test_get_pi_hob_list_size_varied_hob_types() {
-        use core::ffi::c_void;
-
         // Create a HOB list with various HOB types
         let cpu = gen_cpu();
         let resource = gen_resource_descriptor();
@@ -1299,7 +1465,7 @@ pub(crate) mod tests {
         let expected_size = size_of::<Cpu>()
             + size_of::<ResourceDescriptor>()
             + size_of::<MemoryAllocation>()
-            + size_of::<PhaseHandoffInformationTable>();
+            + size_of::<EndOfHobList>();
 
         // This buffer will hold the contiguous HOBs
         let mut buffer = Vec::new();
@@ -1319,12 +1485,79 @@ pub(crate) mod tests {
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>())
         });
 
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
 
         assert_eq!(size, expected_size);
+    }
+
+    #[test]
+    fn test_pi_hob_list_iter() {
+        // generate some test hobs
+        let handoff = gen_phase_handoff_information_table();
+        let cpu = gen_cpu();
+        let resource = gen_resource_descriptor();
+        let memory_alloc = gen_memory_allocation();
+        let end_of_list = gen_end_of_hoblist();
+
+        let expected_size = size_of::<PhaseHandoffInformationTable>()
+            + size_of::<Cpu>()
+            + size_of::<ResourceDescriptor>()
+            + size_of::<MemoryAllocation>()
+            + size_of::<EndOfHobList>();
+
+        // SAFETY: Creating a contiguous memory from structs for test purposes.
+        let buffer = unsafe {
+            [
+                core::slice::from_raw_parts(&raw const handoff as *const u8, size_of::<PhaseHandoffInformationTable>()),
+                core::slice::from_raw_parts(&raw const cpu as *const u8, size_of::<Cpu>()),
+                core::slice::from_raw_parts(&raw const resource as *const u8, size_of::<ResourceDescriptor>()),
+                core::slice::from_raw_parts(&raw const memory_alloc as *const u8, size_of::<MemoryAllocation>()),
+                core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<EndOfHobList>()),
+            ]
+        }
+        .concat();
+
+        declare_aligned_buffer!(aligned_buffer, buffer); // ensure 8-byte alignment
+
+        // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
+        let size = unsafe { get_pi_hob_list_size(aligned_buffer) };
+        assert_eq!(size, expected_size);
+
+        //
+        // Test iteration from the beginning.
+        //
+
+        let hob_list_begin = aligned_buffer.cast::<PhaseHandoffInformationTable>();
+        let hob_list_begin = unsafe { hob_list_begin.as_ref() }.unwrap();
+
+        let hob_list = Hob::Handoff(hob_list_begin);
+
+        let mut count: u32 = 0;
+        for _hob in hob_list.iter() {
+            count += 1;
+        }
+        assert_eq!(count, 4); // found all HOBs except END_OF_HOB_LIST
+
+        //
+        // Test iteration from the middle.
+        //
+        let shift = size_of::<PhaseHandoffInformationTable>() + size_of::<Cpu>();
+        let middle = unsafe { aligned_buffer.byte_add(shift) };
+        let middle = middle.cast::<GenericHob>();
+        let middle = unsafe { middle.as_ref() }.unwrap();
+
+        let middle_list = Hob::Misc(middle);
+
+        let mut count_from_middle: u32 = 0;
+        for _hob in middle_list.iter() {
+            count_from_middle += 1;
+        }
+        assert_eq!(count_from_middle, 2); // from middle to END_OF_HOB_LIST (exclusive)
     }
 }
