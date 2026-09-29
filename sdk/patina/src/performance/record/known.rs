@@ -11,9 +11,7 @@
 use alloc::string::String;
 use core::convert::TryFrom;
 
-use r_efi::efi;
-
-use crate::uefi_protocol::performance_measurement::PerfAttribute;
+use crate::{performance::measurement::PerfAttribute, standard::efi};
 
 /// Performance tokens for well-known performance events.
 #[derive(Debug, Eq, PartialEq)]
@@ -213,6 +211,51 @@ impl KnownPerfId {
             Err(efi::Status::INVALID_PARAMETER)
         }
     }
+
+    /// Normalizes a raw performance id for a start/end measurement entry.
+    ///
+    /// Mirrors the EDK II `CreatePerformanceMeasurement` behavior for token-based measurements:
+    /// - Entries with [`PerfAttribute::PerfEntry`] carry an explicit known id and are returned unchanged.
+    /// - A `perf_id` of `0` is derived from the caller metadata via [`Self::try_from_perf_info`].
+    /// - An id that is both a known id and a known token is rejected.
+    /// - An unknown id is snapped to the low-4-bit start/end convention (start ids clear the low nibble; end ids set
+    ///   it).
+    ///
+    /// ## Errors
+    ///
+    /// Returns [`efi::Status::INVALID_PARAMETER`] when the metadata is inconsistent or an id cannot be derived.
+    pub fn normalize_perf_id(
+        perf_id: u16,
+        handle: efi::Handle,
+        token: Option<&String>,
+        attribute: PerfAttribute,
+    ) -> Result<u16, efi::Status> {
+        if attribute == PerfAttribute::PerfEntry {
+            return Ok(perf_id);
+        }
+
+        if perf_id == 0 {
+            return Ok(Self::try_from_perf_info(handle, token, attribute)?.as_u16());
+        }
+
+        let is_known_id = KnownPerfId::try_from(perf_id).is_ok();
+        let is_known_token = token.is_some_and(|s| KnownPerfToken::try_from(s.as_str()).is_ok());
+
+        if is_known_id && is_known_token {
+            return Err(efi::Status::INVALID_PARAMETER);
+        }
+
+        if !is_known_id && !is_known_token {
+            // By convention, a start measurement has its lower 4 bits as 0, and an end measurement does not.
+            if attribute == PerfAttribute::PerfStartEntry && (perf_id & 0x000F) != 0 {
+                return Ok(perf_id & 0xFFF0);
+            } else if attribute == PerfAttribute::PerfEndEntry && (perf_id & 0x000F) == 0 {
+                return Ok(perf_id + 1);
+            }
+        }
+
+        Ok(perf_id)
+    }
 }
 
 impl TryFrom<u16> for KnownPerfId {
@@ -248,7 +291,7 @@ impl TryFrom<u16> for KnownPerfId {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use core::{assert_eq, convert::From, ptr};
 
@@ -267,6 +310,66 @@ mod tests {
         assert_eq!(Ok(KnownPerfToken::LoadImage), KnownPerfToken::try_from("LoadImage"));
         assert_eq!(Ok(KnownPerfToken::StartImage), KnownPerfToken::try_from("StartImage"));
         assert_eq!(Ok(KnownPerfToken::PEIM), KnownPerfToken::try_from("PEIM"));
+    }
+
+    #[test]
+    fn test_normalize_perf_id_perf_entry_is_unchanged() {
+        // PerfEntry carries an explicit id and must pass through untouched, even a "start-shaped" value.
+        assert_eq!(Ok(0x1234), KnownPerfId::normalize_perf_id(0x1234, ptr::null_mut(), None, PerfAttribute::PerfEntry));
+    }
+
+    #[test]
+    fn test_normalize_perf_id_zero_is_derived_from_token() {
+        assert_eq!(
+            Ok(KnownPerfId::ModuleStart.as_u16()),
+            KnownPerfId::normalize_perf_id(
+                0,
+                1 as efi::Handle,
+                Some(&String::from("StartImage")),
+                PerfAttribute::PerfStartEntry
+            )
+        );
+    }
+
+    #[test]
+    fn test_normalize_perf_id_zero_without_metadata_errors() {
+        assert_eq!(
+            Err(efi::Status::INVALID_PARAMETER),
+            KnownPerfId::normalize_perf_id(0, ptr::null_mut(), None, PerfAttribute::PerfStartEntry)
+        );
+    }
+
+    #[test]
+    fn test_normalize_perf_id_known_id_and_token_is_rejected() {
+        assert_eq!(
+            Err(efi::Status::INVALID_PARAMETER),
+            KnownPerfId::normalize_perf_id(
+                KnownPerfId::ModuleStart.as_u16(),
+                1 as efi::Handle,
+                Some(&String::from("StartImage")),
+                PerfAttribute::PerfStartEntry
+            )
+        );
+    }
+
+    #[test]
+    fn test_normalize_perf_id_unknown_applies_low_bit_convention() {
+        // Start entries clear the low nibble.
+        assert_eq!(
+            Ok(0x1230),
+            KnownPerfId::normalize_perf_id(0x1234, 1 as efi::Handle, None, PerfAttribute::PerfStartEntry)
+        );
+        // End entries set the low nibble by incrementing when it is zero.
+        assert_eq!(
+            Ok(0x1231),
+            KnownPerfId::normalize_perf_id(0x1230, 1 as efi::Handle, None, PerfAttribute::PerfEndEntry)
+        );
+    }
+
+    #[test]
+    fn test_normalize_perf_id_known_id_unknown_token_is_unchanged() {
+        let id = KnownPerfId::ModuleStart.as_u16();
+        assert_eq!(Ok(id), KnownPerfId::normalize_perf_id(id, 1 as efi::Handle, None, PerfAttribute::PerfStartEntry));
     }
 
     #[test]

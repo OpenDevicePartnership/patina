@@ -1,0 +1,5 @@
+error: Controller is not a valid integer in node `Ata`, argument 1 at character 4
+ --> tests/ui/devpath_invalid_symbol.rs:5:29
+  |
+5 | const _: [u8; 0] = devpath!("Ata(Tertiary,Master,0)");
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^^

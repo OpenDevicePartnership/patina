@@ -17,32 +17,43 @@ mod section_decompress;
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
-    string::{String, ToString},
+    string::String,
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void};
-use mu_rust_helpers::guid::guid_fmt;
+use patina::standard::efi;
 use patina::{
-    device_path::walker::concat_device_path_to_boxed_slice,
+    BinaryGuid, Char16Str, OwnedGuid,
+    component::service::Service,
+    crc32,
     error::EfiError,
-    pi::{fw_fs::ffs, hob::HobList, protocols::firmware_volume_block},
+    pi::{
+        fw_fs::ffs,
+        hob::{Hob, HobList},
+        protocol::firmware_volume_block,
+    },
+    uefi::device_path::walker::concat_device_path_to_boxed_slice,
 };
 use patina_ffs::{
     section::{Section, SectionExtractor},
     volume::VolumeRef,
 };
-use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
-use r_efi::efi;
+use patina_internal_core::depex::{AssociatedDependency, Depex, Opcode};
 use spin::RwLock;
 
-use debug_image_info_table::EfiSystemTablePointer;
 use image::ImageStatus;
 use section_decompress::CoreExtractor;
 
 use crate::{
-    PlatformInfo, config_tables::core_install_configuration_table, events::EVENT_DB,
-    pi_dispatcher::fv::device_path_bytes_for_fv_file, protocol_db::DXE_CORE_HANDLE, protocols::PROTOCOL_DB,
-    systemtables::EfiSystemTable, tpl_mutex::TplMutex,
+    PlatformInfo,
+    config_tables::core_install_configuration_table,
+    events::EVENT_DB,
+    performance::{self, CorePerformance},
+    pi_dispatcher::fv::device_path_bytes_for_fv_file,
+    protocol_db::DXE_CORE_HANDLE,
+    protocols::PROTOCOL_DB,
+    systemtables::EfiSystemTable,
+    tpl_mutex::TplMutex,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -85,6 +96,8 @@ pub(crate) struct PiDispatcher<P: PlatformInfo> {
     fv_data: TplMutex<fv::FvProtocolData<P>>,
     /// Section extractor used when working with firmware volumes.
     section_extractor: CoreExtractor<P::Extractor>,
+    /// Optional performance service reference.
+    performance: Service<CorePerformance>,
 }
 
 impl<P: PlatformInfo> PiDispatcher<P> {
@@ -96,7 +109,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             debug_image_data: debug_image_info_table::DebugImageInfoData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
             section_extractor: CoreExtractor::new(section_extractor),
+            performance: Service::new_uninit(),
         }
+    }
+
+    pub(crate) fn set_performance(&self, performance: &Service<performance::CorePerformance>) {
+        self.performance.replace(performance);
     }
 
     fn instance<'a>() -> &'a Self {
@@ -105,13 +123,39 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
     /// Displays drivers that were discovered but not dispatched.
     pub fn display_discovered_not_dispatched(&self) {
+        // Summary report
         for driver in &self.dispatcher_context.lock().pending_drivers {
             log::warn!(
                 "Driver {} ({:?}) found but not dispatched.",
                 driver.name.as_deref().unwrap_or("Unnamed"),
-                guid_fmt!(driver.file_name)
+                OwnedGuid::from(driver.file_name)
             );
         }
+
+        // Detail report
+        self.detail_report();
+    }
+
+    fn detail_report(&self) {
+        log::debug!("Begin Report of Drivers Not Dispatched:");
+        for driver in &self.dispatcher_context.lock().pending_drivers {
+            log::debug!(
+                "Driver {} ({:?}) found but not dispatched. Protocols present:",
+                driver.name.as_deref().unwrap_or("Unnamed"),
+                OwnedGuid::from(driver.file_name)
+            );
+
+            if let Some(depex) = &driver.depex {
+                // Number and print each pushed protocol GUID and whether it is present.
+                for (index, (guid, present)) in depex.pushes().enumerate() {
+                    log::debug!("  [{}] {guid:?} : {present}", index + 1);
+                }
+                log::debug!("  Expression: {}", depex.infix_expression());
+            } else {
+                log::debug!("  No Depex");
+            }
+        }
+        log::debug!("End Report of Drivers Not Dispatched.");
     }
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
@@ -139,6 +183,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             )
             .expect("Failed to create callback for runtime image memory protection fixups.");
 
+        // Get the FV2/3 HOBs before we register for FV protocol installation callbacks
+        self.dispatcher_context.lock().cache_pre_extracted_fv_hobs(hob_list);
+
         //set up call back for FV protocol installation.
         let event = EVENT_DB
             .create_event(
@@ -157,8 +204,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         // Perform image related initialization for the debugger.
         // This includes installing the debug image info table and the system table pointer structure.
         if core_install_configuration_table(
-            debug_image_info_table::EFI_DEBUG_IMAGE_INFO_TABLE_GUID,
-            self.debug_image_data.read().header() as *const _ as *mut c_void,
+            efi::DEBUG_IMAGE_INFO_TABLE_GUID,
+            core::ptr::from_ref(self.debug_image_data.read().header()) as *mut c_void,
             system_table,
         )
         .is_err()
@@ -167,38 +214,40 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Now create the EFI_SYSTEM_TABLE_POINTER structure
-        let system_table_pointer = system_table.as_mut_ptr() as *const _ as u64;
+        let system_table_pointer = system_table.as_mut_ptr().cast_const() as u64;
 
         // we need to align the the pointer to 4MB and near the top of memory
         let Ok(address) = crate::GCD.allocate_memory_space(
             crate::gcd::AllocateType::TopDown(None),
             patina::pi::dxe_services::GcdMemoryType::SystemMemory,
             ALIGNMENT_SHIFT_4MB,
-            patina::base::UEFI_PAGE_SIZE,
+            patina::UEFI_PAGE_SIZE,
             crate::protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
         ) else {
             return;
         };
 
-        let ptr = address as *mut EfiSystemTablePointer;
+        let ptr = address as *mut efi::SystemTablePointer;
 
         // SAFETY: This is safe because we just allocated this. We have to do a volatile write because we don't use this
         // pointer, an external debugger does
         unsafe {
             core::ptr::write_volatile(
                 ptr,
-                EfiSystemTablePointer {
+                efi::SystemTablePointer {
                     signature: efi::SYSTEM_TABLE_SIGNATURE,
                     efi_system_table_base: system_table_pointer,
                     crc32: 0,
                 },
             );
 
-            let crc32 =
-                crc32fast::hash(alloc::slice::from_raw_parts(ptr as *const u8, size_of::<EfiSystemTablePointer>()));
+            let crc32 = crc32::calculate_crc32(alloc::slice::from_raw_parts(
+                ptr as *const u8,
+                size_of::<efi::SystemTablePointer>(),
+            ));
 
-            core::ptr::write_volatile(&mut (*ptr).crc32, crc32);
+            core::ptr::write_volatile(&raw mut (*ptr).crc32, crc32);
         }
 
         patina_debugger::add_monitor_command(
@@ -212,7 +261,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
     /// Installs any firmware volumes from FV HOBs in the hob list
     #[inline(always)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn install_firmware_volumes_from_hoblist(
         &self,
         hob_list: &patina::pi::hob::HobList,
@@ -236,21 +285,21 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
             let mut scheduled_driver_candidates = Vec::new();
             for mut candidate in driver_candidates {
-                log::debug!(target: "patina_internal_depex", "Evaluating depex for candidate: {} ({:?})", candidate.name.as_deref().unwrap_or("Unnamed"), guid_fmt!(candidate.file_name));
+                log::debug!(target: "depex", "Evaluating depex for candidate: {} ({:?})", candidate.name.as_deref().unwrap_or("Unnamed"), OwnedGuid::from(candidate.file_name));
                 let depex_satisfied = match candidate.depex {
                     Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                     None => dispatcher.arch_protocols_available,
                 };
 
                 if depex_satisfied {
-                    scheduled_driver_candidates.push(candidate)
+                    scheduled_driver_candidates.push(candidate);
                 } else {
-                    match candidate.depex.as_ref().map(|x| x.is_associated()) {
+                    match candidate.depex.as_ref().map(patina_internal_core::depex::Depex::is_associated) {
                         Some(Some(AssociatedDependency::Before(guid))) => {
-                            dispatcher.associated_before.entry(OrdGuid(guid)).or_default().push(candidate)
+                            dispatcher.associated_before.entry(OrdGuid(guid)).or_default().push(candidate);
                         }
                         Some(Some(AssociatedDependency::After(guid))) => {
-                            dispatcher.associated_after.entry(OrdGuid(guid)).or_default().push(candidate)
+                            dispatcher.associated_after.entry(OrdGuid(guid)).or_default().push(candidate);
                         }
                         _ => dispatcher.pending_drivers.push(candidate),
                     }
@@ -275,7 +324,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         let mut dispatch_attempted = false;
         for mut driver in scheduled {
             if driver.image_handle.is_none() {
-                log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
+                log::info!("Loading file: {:?}", OwnedGuid::from(driver.file_name));
                 let data = driver.pe32.try_content_as_slice()?;
 
                 // `driver.device_path` is constructed from FV and file information and is
@@ -310,18 +359,18 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                     }
                     efi::Status::SECURITY_VIOLATION => {
                         log::info!(
-                            "Deferring driver: {} ({:?}) due to security status: {:x?}",
+                            "Deferring driver: {} ({:?}) due to security status: {}",
                             driver.name.as_deref().unwrap_or("Unnamed"),
-                            guid_fmt!(driver.file_name),
+                            OwnedGuid::from(driver.file_name),
                             efi::Status::SECURITY_VIOLATION
                         );
                         self.dispatcher_context.lock().pending_drivers.push(driver);
                     }
                     unexpected_status => {
                         log::info!(
-                            "Dropping driver: {} ({:?}) due to security status: {:x?}",
+                            "Dropping driver: {} ({:?}) due to security status: {}",
                             driver.name.as_deref().unwrap_or("Unnamed"),
-                            guid_fmt!(driver.file_name),
+                            OwnedGuid::from(driver.file_name),
                             unexpected_status
                         );
                     }
@@ -351,7 +400,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                                 Err(e) => {
                                     log::warn!(
                                         "Failed to parse FV from file {:?}: {:?}",
-                                        guid_fmt!(candidate.file_name),
+                                        OwnedGuid::from(candidate.file_name),
                                         e
                                     );
                                     continue;
@@ -365,8 +414,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         {
                             log::debug!(
                                 "Skipping FV file {:?} - FV with name GUID {:?} is already installed",
-                                guid_fmt!(candidate.file_name),
-                                guid_fmt!(fv_name_guid)
+                                OwnedGuid::from(candidate.file_name),
+                                OwnedGuid::from(fv_name_guid)
                             );
                             continue;
                         }
@@ -388,13 +437,13 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         } else {
                             log::warn!(
                                 "couldn't install firmware volume image {:?}: {:?}",
-                                guid_fmt!(candidate.file_name),
+                                OwnedGuid::from(candidate.file_name),
                                 res
                             );
                         }
                     }
                 } else {
-                    dispatcher.pending_firmware_volume_images.push(candidate)
+                    dispatcher.pending_firmware_volume_images.push(candidate);
                 }
             }
         }
@@ -441,7 +490,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             else {
                 continue;
             };
-            let fvb_ptr = ptr as *mut firmware_volume_block::Protocol;
+            let fvb_ptr = ptr as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
 
             // SAFETY: fvb_ptr is obtained from a valid handle that has a FVB protocol instance
             // and the as_ref() call checks for null
@@ -472,26 +521,26 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
     /// Schedules a driver for execution.
     #[inline(always)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn schedule(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
         self.dispatcher_context.lock().schedule(handle, file)
     }
 
     /// Marks a driver as trusted for execution.
     #[inline(always)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn trust(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
         self.dispatcher_context.lock().trust(handle, file)
     }
 
     #[inline(always)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     fn add_fv_handles(&self, new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
         self.dispatcher_context.lock().add_fv_handles(new_handles, &self.section_extractor)
     }
 
     #[inline(always)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     /// Caller must ensure that the base address is a valid firmware volume.
     pub unsafe fn install_firmware_volume(
         &self,
@@ -509,7 +558,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         match PROTOCOL_DB.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID.into_inner())) {
             Ok(fv_handles) => pd.add_fv_handles(fv_handles).expect("Error adding FV handles"),
             Err(_) => panic!("could not locate handles in protocol call back"),
-        };
+        }
     }
 }
 
@@ -536,8 +585,8 @@ impl PendingFirmwareVolumeImage {
     fn evaluate_auth(&self) -> Result<(), EfiError> {
         // SAFETY: locate_protocol returns a valid pointer when present. as_ref is used for shared access.
         let security_protocol = unsafe {
-            match PROTOCOL_DB.locate_protocol(patina::pi::protocols::security::PROTOCOL_GUID.into_inner()) {
-                Ok(protocol) => (protocol as *mut patina::pi::protocols::security::Protocol)
+            match PROTOCOL_DB.locate_protocol(patina::pi::protocol::security::PROTOCOL_GUID.into_inner()) {
+                Ok(protocol) => (protocol as *mut patina::pi::protocol::security::SecurityProtocol)
                     .as_ref()
                     .expect("Security Protocol should not be null"),
                 //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
@@ -552,7 +601,7 @@ impl PendingFirmwareVolumeImage {
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
         //scenarios (TPM measurement and UEFI Secure Boot) do not use it.
         let status = (security_protocol.file_authentication_state)(
-            security_protocol as *const _ as *mut patina::pi::protocols::security::Protocol,
+            core::ptr::from_ref(security_protocol).cast_mut(),
             0,
             file_path.as_ptr() as *const _ as *mut efi::protocols::device_path::Protocol,
         );
@@ -581,6 +630,7 @@ struct DispatcherContext {
     pending_drivers: Vec<PendingDriver>,
     fv_section_data: Vec<Box<[u8]>>,
     pending_firmware_volume_images: Vec<PendingFirmwareVolumeImage>,
+    pre_extracted_fv_hobs: BTreeSet<(BinaryGuid, BinaryGuid)>,
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
@@ -594,6 +644,7 @@ impl DispatcherContext {
             pending_drivers: Vec::new(),
             fv_section_data: Vec::new(),
             pending_firmware_volume_images: Vec::new(),
+            pre_extracted_fv_hobs: BTreeSet::new(),
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
@@ -602,6 +653,22 @@ impl DispatcherContext {
 
     const fn new_locked() -> TplMutex<Self> {
         TplMutex::new(efi::TPL_NOTIFY, Self::new(), "Dispatcher Context")
+    }
+
+    // Find all FV2 and extracted FV3 HOBs and cache them. These will be used to determine if a child FV needs to
+    // be extracted or not during FV processing.
+    fn cache_pre_extracted_fv_hobs(&mut self, hob_list: &HobList) {
+        self.pre_extracted_fv_hobs.extend(hob_list.iter().filter_map(|hob| match hob {
+            Hob::FirmwareVolume2(fv2) => Some((fv2.file_name, fv2.fv_name)),
+            Hob::FirmwareVolume3(fv3) if fv3.extracted_fv.into() => Some((fv3.file_name, fv3.fv_name)),
+            _ => None,
+        }));
+    }
+
+    /// Check if a child FV has already been extracted. The `FvNameGuid` is optional per FDF spec; when it is
+    /// not provided, the HOBs will have the zero GUID.
+    fn has_pre_extracted_fv_hob(&self, file_name: efi::Guid, fv_name: Option<BinaryGuid>) -> bool {
+        self.pre_extracted_fv_hobs.contains(&(file_name.into(), fv_name.unwrap_or(patina::BinaryGuid::ZERO)))
     }
 
     fn add_fv_handles(
@@ -620,7 +687,7 @@ impl DispatcherContext {
                             "get_interface_for_handle failed to return an interface on a handle where it should have existed"
                         )
                     }
-                    Ok(protocol) => protocol as *mut firmware_volume_block::Protocol,
+                    Ok(protocol) => protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol,
                 };
 
                 // SAFETY: fvb_ptr was successfully returned from get_interface_for_handle and should point to a
@@ -658,6 +725,7 @@ impl DispatcherContext {
                         continue;
                     }
                 };
+                let fv_name = fv.fv_name();
 
                 for file in fv.files() {
                     let file = file?;
@@ -679,14 +747,14 @@ impl DispatcherContext {
                             .iter()
                             .find(|x| x.section_type() == Some(ffs::section::Type::UserInterface))
                             .and_then(|x| x.try_content_as_slice().ok())
-                            .map(|data| {
-                                let chars: Vec<u16> = data
+                            .and_then(|data| {
+                                let units: Vec<u16> = data
                                     .chunks_exact(2)
                                     .map(|c| {
                                         u16::from_le_bytes(c.try_into().expect("chunks_exact(2) guarantees length"))
                                     })
                                     .collect();
-                                String::from_utf16_lossy(&chars).trim_end_matches('\0').to_string()
+                                Char16Str::from_units_until_nul(&units).ok().map(|s| s.chars().collect())
                             });
 
                         if let Some(pe32_section) =
@@ -695,17 +763,17 @@ impl DispatcherContext {
                             // In this case, this is sizeof(guid) + sizeof(protocol) = 20, so it should always fit an u8
                             const FILENAME_NODE_SIZE: usize =
                                 core::mem::size_of::<efi::protocols::device_path::Protocol>()
-                                    + core::mem::size_of::<r_efi::efi::Guid>();
+                                    + core::mem::size_of::<efi::Guid>();
                             // In this case, this is sizeof(protocol) = 4, so it should always fit an u8
                             const END_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>();
 
                             let filename_node = efi::protocols::device_path::Protocol {
-                                r#type: r_efi::protocols::device_path::TYPE_MEDIA,
-                                sub_type: r_efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
+                                r#type: efi::protocols::device_path::TYPE_MEDIA,
+                                sub_type: efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
                                 length: [FILENAME_NODE_SIZE as u8, 0x00],
                             };
                             let filename_end_node = efi::protocols::device_path::Protocol {
-                                r#type: r_efi::protocols::device_path::TYPE_END,
+                                r#type: efi::protocols::device_path::TYPE_END,
                                 sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
                                 length: [END_NODE_SIZE as u8, 0x00],
                             };
@@ -715,7 +783,7 @@ impl DispatcherContext {
                             // of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
-                                    &filename_node as *const _ as *const u8,
+                                    &raw const filename_node as *const u8,
                                     core::mem::size_of::<efi::protocols::device_path::Protocol>(),
                                 )
                             });
@@ -727,7 +795,7 @@ impl DispatcherContext {
                             // size of the struct
                             filename_nodes_buf.extend_from_slice(unsafe {
                                 core::slice::from_raw_parts(
-                                    &filename_end_node as *const _ as *const u8,
+                                    &raw const filename_end_node as *const u8,
                                     core::mem::size_of::<efi::protocols::device_path::Protocol>(),
                                 )
                             });
@@ -738,9 +806,9 @@ impl DispatcherContext {
 
                             let full_path_bytes =
                                 concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
-                            let full_device_path_for_file = full_path_bytes
-                                .map(|full_path| Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol)
-                                .unwrap_or(fv_device_path);
+                            let full_device_path_for_file = full_path_bytes.map_or(fv_device_path, |full_path| {
+                                Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol
+                            });
 
                             self.pending_drivers.push(PendingDriver {
                                 file_name,
@@ -753,12 +821,18 @@ impl DispatcherContext {
                                 security_status: efi::Status::NOT_READY,
                             });
                         } else {
-                            log::warn!("driver {:?} does not contain a PE32 section.", guid_fmt!(file_name));
+                            log::warn!("driver {:?} does not contain a PE32 section.", OwnedGuid::from(file_name));
                         }
                     }
                     if file.file_type_raw() == ffs::file::raw::r#type::FIRMWARE_VOLUME_IMAGE {
                         let file = file.clone();
                         let file_name = file.name().into_inner();
+
+                        // if we have an FV2 or extracted FV3 HOB for this FV, the producer phase already
+                        // extracted (processed) this FV image, so we don't need to extract it again.
+                        if self.has_pre_extracted_fv_hob(file_name, fv_name) {
+                            continue;
+                        }
 
                         let sections = file.sections_with_extractor(extractor)?;
 
@@ -776,18 +850,18 @@ impl DispatcherContext {
                             .filter(|s| s.section_type() == Some(ffs::section::Type::FirmwareVolumeImage))
                             .collect::<Vec<_>>();
 
-                        if !fv_sections.is_empty() {
+                        if fv_sections.is_empty() {
+                            log::warn!(
+                                "firmware volume image {:?} does not contain a firmware volume image section.",
+                                OwnedGuid::from(file_name)
+                            );
+                        } else {
                             self.pending_firmware_volume_images.push(PendingFirmwareVolumeImage {
                                 parent_fv_handle: handle,
                                 file_name,
                                 depex,
                                 fv_sections,
                             });
-                        } else {
-                            log::warn!(
-                                "firmware volume image {:?} does not contain a firmware volume image section.",
-                                guid_fmt!(file_name)
-                            );
                         }
                     }
                 }
@@ -797,7 +871,7 @@ impl DispatcherContext {
     }
 
     fn schedule(&mut self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        for driver in self.pending_drivers.iter_mut() {
+        for driver in &mut self.pending_drivers {
             if driver.firmware_volume_handle == handle
                 && OrdGuid(driver.file_name) == OrdGuid(*file)
                 && let Some(depex) = &mut driver.depex
@@ -811,7 +885,7 @@ impl DispatcherContext {
     }
 
     fn trust(&mut self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        for driver in self.pending_drivers.iter_mut() {
+        for driver in &mut self.pending_drivers {
             if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
                 driver.security_status = efi::Status::SUCCESS;
                 return Ok(());
@@ -825,13 +899,13 @@ impl DispatcherContext {
 unsafe impl Send for DispatcherContext {}
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use core::sync::atomic::AtomicBool;
     use std::{fs::File, io::Read, vec};
 
     use log::{Level, LevelFilter, Metadata, Record};
-    use patina::{device_path::walker::DevicePathWalker, pi};
+    use patina::{pi, uefi::device_path::walker::DevicePathWalker};
     use patina_ffs_extractors::NullSectionExtractor;
     use uuid::uuid;
 
@@ -867,7 +941,7 @@ mod tests {
     where
         F: Fn() + std::panic::RefUnwindSafe,
     {
-        test_support::with_global_lock(|| {
+        test_support::with_clean_global_lock(|| {
             // SAFETY: Test-only initialization of the protocol database occurs under the global lock.
             unsafe { test_support::init_test_protocol_db() };
             f();
@@ -877,7 +951,7 @@ mod tests {
 
     // Monkey patch for get_physical_address that always returns NOT_FOUND.
     extern "efiapi" fn get_physical_address1(
-        _: *mut pi::protocols::firmware_volume_block::Protocol,
+        _: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         _: *mut u64,
     ) -> efi::Status {
         efi::Status::NOT_FOUND
@@ -885,7 +959,7 @@ mod tests {
 
     // Monkey patch for get_physical_address that always returns 0.
     extern "efiapi" fn get_physical_address2(
-        _: *mut pi::protocols::firmware_volume_block::Protocol,
+        _: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         addr: *mut u64,
     ) -> efi::Status {
         // SAFETY: addr is provided by the caller and is expected to be valid for a single u64 write.
@@ -895,7 +969,7 @@ mod tests {
 
     // Monkey patch for get_physical_address that returns a physical address as determined by `GET_PHYSICAL_ADDRESS3_VALUE`
     extern "efiapi" fn get_physical_address3(
-        _: *mut pi::protocols::firmware_volume_block::Protocol,
+        _: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         addr: *mut u64,
     ) -> efi::Status {
         // SAFETY: addr is provided by the caller and is expected to be valid for a single u64 write.
@@ -996,7 +1070,7 @@ mod tests {
                     .expect("Failed to add FV handle");
             });
             assert!(result.is_err());
-        })
+        });
     }
 
     #[test]
@@ -1025,7 +1099,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
@@ -1063,7 +1137,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
@@ -1098,7 +1172,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
@@ -1220,7 +1294,7 @@ mod tests {
             CORE.pi_dispatcher.dispatcher_context.lock().executing = true;
             let result = CORE.pi_dispatcher.dispatcher();
             assert_eq!(result, Err(EfiError::AlreadyStarted));
-        })
+        });
     }
 
     #[test]
@@ -1232,7 +1306,7 @@ mod tests {
 
             let result = CORE.pi_dispatcher.dispatcher();
             assert_eq!(result, Err(EfiError::NotFound));
-        })
+        });
     }
 
     #[test]
@@ -1317,7 +1391,7 @@ mod tests {
 
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication_state(
-                this: *mut patina::pi::protocols::security::Protocol,
+                this: *mut patina::pi::protocol::security::SecurityProtocol,
                 authentication_status: u32,
                 file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -1352,14 +1426,15 @@ mod tests {
                 efi::Status::SUCCESS
             }
 
-            let security_protocol =
-                patina::pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+            let security_protocol = patina::pi::protocol::security::SecurityProtocol {
+                file_authentication_state: mock_file_authentication_state,
+            };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    patina::pi::protocols::security::PROTOCOL_GUID.into_inner(),
-                    &security_protocol as *const _ as *mut _,
+                    patina::pi::protocol::security::PROTOCOL_GUID.into_inner(),
+                    &raw const security_protocol as *mut _,
                 )
                 .unwrap();
             // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
@@ -1370,7 +1445,7 @@ mod tests {
             CORE.pi_dispatcher.dispatcher().unwrap();
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
-        })
+        });
     }
 
     #[test]
@@ -1407,14 +1482,8 @@ mod tests {
             );
 
             // Check that a non-existent FV GUID is not detected
-            let non_existent_guid = r_efi::efi::Guid::from_fields(
-                0x11111111,
-                0x2222,
-                0x3333,
-                0x44,
-                0x55,
-                &[0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB],
-            );
+            let non_existent_guid =
+                efi::Guid::from_fields(0x11111111, 0x2222, 0x3333, 0x44, 0x55, &[0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB]);
             assert!(
                 !CORE.pi_dispatcher.is_fv_already_installed(non_existent_guid),
                 "Should return false for non-existent FV GUID"
@@ -1434,7 +1503,7 @@ mod tests {
             CORE.override_instance();
             // Test that no FVB handles installed returns false
             assert!(
-                !CORE.pi_dispatcher.is_fv_already_installed(r_efi::efi::Guid::from_fields(
+                !CORE.pi_dispatcher.is_fv_already_installed(efi::Guid::from_fields(
                     0xAAAAAAAA,
                     0xBBBB,
                     0xCCCC,
@@ -1458,7 +1527,7 @@ mod tests {
 
             // Test that a non-matching GUID returns false
             assert!(
-                !CORE.pi_dispatcher.is_fv_already_installed(r_efi::efi::Guid::from_fields(
+                !CORE.pi_dispatcher.is_fv_already_installed(efi::Guid::from_fields(
                     0x11111111,
                     0x2222,
                     0x3333,
@@ -1594,14 +1663,8 @@ mod tests {
                 .expect("Failed to install null protocol");
 
             // Should return false since the FVB protocol is null
-            let test_guid = r_efi::efi::Guid::from_fields(
-                0xAAAAAAAA,
-                0xBBBB,
-                0xCCCC,
-                0xDD,
-                0xEE,
-                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
-            );
+            let test_guid =
+                efi::Guid::from_fields(0xAAAAAAAA, 0xBBBB, 0xCCCC, 0xDD, 0xEE, &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44]);
             assert!(
                 !CORE.pi_dispatcher.is_fv_already_installed(test_guid),
                 "Should return false when the FVB protocol is null"
@@ -1633,19 +1696,13 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // Patch get_physical_address to return an error
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
-            let test_guid = r_efi::efi::Guid::from_fields(
-                0xAAAAAAAA,
-                0xBBBB,
-                0xCCCC,
-                0xDD,
-                0xEE,
-                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
-            );
+            let test_guid =
+                efi::Guid::from_fields(0xAAAAAAAA, 0xBBBB, 0xCCCC, 0xDD, 0xEE, &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44]);
             assert!(
                 !CORE.pi_dispatcher.is_fv_already_installed(test_guid),
                 "Should return false when get_physical_address fails"
@@ -1678,18 +1735,12 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
-            let test_guid = r_efi::efi::Guid::from_fields(
-                0xAAAAAAAA,
-                0xBBBB,
-                0xCCCC,
-                0xDD,
-                0xEE,
-                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
-            );
+            let test_guid =
+                efi::Guid::from_fields(0xAAAAAAAA, 0xBBBB, 0xCCCC, 0xDD, 0xEE, &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44]);
             assert!(
                 !CORE.pi_dispatcher.is_fv_already_installed(test_guid),
                 "Should return false when the address is zero"
@@ -1727,7 +1778,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
@@ -1735,14 +1786,8 @@ mod tests {
             // SAFETY: Test-only mutable static is used under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = invalid_fv_raw.expose_provenance() as u64 };
 
-            let test_guid = r_efi::efi::Guid::from_fields(
-                0xAAAAAAAA,
-                0xBBBB,
-                0xCCCC,
-                0xDD,
-                0xEE,
-                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
-            );
+            let test_guid =
+                efi::Guid::from_fields(0xAAAAAAAA, 0xBBBB, 0xCCCC, 0xDD, 0xEE, &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44]);
             assert!(
                 !CORE.pi_dispatcher.is_fv_already_installed(test_guid),
                 "Should return false when volume parsing fails"
@@ -1868,7 +1913,7 @@ mod tests {
             // Create a pending FV image with the corrupted section
             let pending_fv = PendingFirmwareVolumeImage {
                 parent_fv_handle: std::ptr::null_mut(),
-                file_name: r_efi::efi::Guid::from_fields(
+                file_name: efi::Guid::from_fields(
                     0x11111111,
                     0x2222,
                     0x3333,
@@ -1901,5 +1946,123 @@ mod tests {
                 "A corrupted FV should be removed after a dispatch attempt"
             );
         });
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_child_fv_with_fv2_hob() {
+        set_logger();
+        let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
+
+        with_locked_state(|| {
+            use patina::pi::hob;
+
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            // Build an FV2 HOB matching the child FV file in NESTEDFV.Fv.
+            // The child FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75 and the outer FV has no extended
+            // header, so fv_name falls back to the zero GUID.
+            let child_file_name = BinaryGuid::from_string("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75");
+            let zero_guid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+            let fv2_hob = hob::FirmwareVolume2 {
+                header: hob::HobHeader {
+                    r#type: hob::FV2,
+                    length: core::mem::size_of::<hob::FirmwareVolume2>() as u16,
+                    reserved: 0,
+                },
+                base_address: 0,
+                length: 0,
+                fv_name: zero_guid,
+                file_name: child_file_name,
+            };
+
+            let mut hob_list = HobList::new();
+            hob_list.push(Hob::FirmwareVolume2(&fv2_hob));
+
+            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // The child FV should have been skipped because the FV2 HOB matches it.
+            assert_eq!(
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                0,
+                "Child FV should be skipped when a matching FV2 HOB exists"
+            );
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_child_fv_with_extracted_fv3_hob() {
+        set_logger();
+        let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
+
+        with_locked_state(|| {
+            use patina::pi::hob;
+
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            // Build an FV3 HOB with extracted_fv=true matching the child FV file in NESTEDFV.Fv.
+            let child_file_name = BinaryGuid::from_string("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75");
+            let zero_guid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+            let fv3_hob = hob::FirmwareVolume3 {
+                header: hob::HobHeader {
+                    r#type: hob::FV3,
+                    length: core::mem::size_of::<hob::FirmwareVolume3>() as u16,
+                    reserved: 0,
+                },
+                base_address: 0,
+                length: 0,
+                authentication_status: 0,
+                extracted_fv: true.into(),
+                fv_name: zero_guid,
+                file_name: child_file_name,
+            };
+
+            let mut hob_list = HobList::new();
+            hob_list.push(Hob::FirmwareVolume3(&fv3_hob));
+
+            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // The child FV should have been skipped because the extracted FV3 HOB matches it.
+            assert_eq!(
+                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                0,
+                "Child FV should be skipped when a matching extracted FV3 HOB exists"
+            );
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 }

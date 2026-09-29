@@ -8,12 +8,11 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+pub mod config;
 pub mod error;
-pub mod globals;
-pub mod logging;
+pub mod guid;
 pub mod measurement;
 pub mod record;
-pub mod table;
 
 // Re-export the Measurement enum for easier access.
 pub use measurement::Measurement;

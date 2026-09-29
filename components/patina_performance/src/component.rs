@@ -9,6 +9,7 @@
 
 mod performance;
 mod protocol;
+mod table;
 
 // Re-export the Performance component for easier access.
 pub use performance::Performance;

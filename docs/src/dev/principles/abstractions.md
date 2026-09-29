@@ -142,40 +142,47 @@ impl SerialIO for Terminal {
     }
 }
 
-use uart_16550::MmioSerialPort;
+use core::num::NonZero;
+use uart_16550::backend::MmioBackend;
+use uart_16550::{Config, Uart16550 as InnerUart16550};
 struct Uart16550(usize);
 
 impl Uart16550 {
     fn new(addr: usize) -> Self {
         Self(addr)
     }
+
+    /// Returns `None` if the address is rejected or the device can't be detected.
+    fn port(&self) -> Option<InnerUart16550<MmioBackend>> {
+        let addr = core::ptr::NonNull::<u8>::with_exposed_provenance(NonZero::new(self.0)?);
+        // SAFETY: `self.0` is assumed to be a valid, exclusively-owned MMIO address for this example.
+        unsafe { InnerUart16550::new_mmio(addr, 1) }.ok()
+    }
 }
 
 impl SerialIO for Uart16550 {
     fn init(&self) {
-        unsafe { MmioSerialPort::new(self.0).init() };
+        if let Some(mut port) = self.port() {
+            let _ = port.init(Config::DEFAULT);
+        }
     }
 
     fn write(&self, buffer: &[u8]) {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-
-        for b in buffer {
-            port.send(*b);
+        if let Some(mut port) = self.port() {
+            port.send_bytes_exact(buffer);
         }
     }
 
     fn read(&self) -> u8 {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-        port.receive()
+        let mut byte = 0u8;
+        if let Some(mut port) = self.port() {
+            port.receive_bytes_exact(core::slice::from_mut(&mut byte));
+        }
+        byte
     }
 
     fn try_read(&self) -> Option<u8> {
-        let mut port = unsafe { MmioSerialPort::new(self.0) };
-        if let Ok(value) = port.try_receive() {
-            Some(value)
-        } else {
-            None
-        }
+        self.port()?.try_receive_byte().ok()
     }
 }
 

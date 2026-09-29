@@ -1,53 +1,60 @@
 # Patina Performance Component
 
-The Patina performance component maintains the infrastructure to report firmware performance information.
+The Patina performance component acts as the translation layer between the core's performance implementation, and the
+UEFI and ACPI implementations.
 
 ## Responsibilities
 
-- Initialize the FBPT and seed it with any measurements passed in performance data HOBs from prior boot phases.
-- Track the current performance measurement mask and load-image count so event producers can filter their output.
-- Publish performance properties through a configuration table and expose the measurement protocol
-  (`EdkiiPerformanceMeasurement`) for C drivers that need to log performance data.
+- Publish the FBPT at End of DXE so the operating system can consume it later.
+- Expose the EDK II measurement protocol (`EdkiiPerformanceMeasurement`) for C drivers that need to log performance
+  data.
+- Publish performance properties through a configuration table.
 - Optionally merge Management Mode (MM) performance records when an MM communication region is available.
-- Publish the FBPT so the operating system can consume it later.
 
 ## Configuration
 
-By default (e.g. `Performance::new()`), performance measurements are disabled. Performance measurements can then be
-enabled by one of two ways:
+Whether performance measurement is enabled is decided by the DXE Core, not by this component. The core resolves the
+performance configuration from a `PerformanceConfigHob`, falling back to the platform-provided
+`PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` when no such HOB is present. When performance is enabled the core
+publishes the [`PerformanceManager`] service; when it is disabled that service is absent, so this component's
+service dependency is unsatisfied and it does not dispatch.
 
-1. Usage of the `Performance::with_measurements(...)` method to specify the bitmask of `Measurement` values that should
-   be recorded.
-2. Production of the `PerformanceConfigHob` prior to Patina DXE Core execution.
+A platform therefore enables performance in one of two ways:
 
-If both methods are used, the configuration via `PerformanceConfigHob` takes priority.
+1. Production of the `PerformanceConfigHob` prior to Patina DXE Core execution (this takes priority), or
+2. Setting `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` to an enabled configuration with the desired `Measurement` values.
 
-```rust
+```rust,ignore
+use patina::performance::config::PerformanceConfig;
 use patina_dxe_core::*;
-use patina_performance::component::*;
 
-struct ExampleComponent;
+struct ExamplePlatform;
 
-impl ComponentInfo for ExampleComponent {
-  fn components(mut add: Add<Component>) {
-    // Performance measurements are disabled by default, but can be overridden by a performance config HOB.
-    add.component(Performance::new());
+impl PlatformInfo for ExamplePlatform {
+    // Optional override if the platform does not publish the performance configuration HOB.
+    const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new()
+        .with_measurement(patina::performance::Measurement::DriverBindingStart) // Adds driver binding start measurements.
+        .with_measurement(patina::performance::Measurement::DriverBindingStop)  // Adds driver binding stop measurements.
+        .with_measurement(patina::performance::Measurement::LoadImage)          // Adds load image measurements.
+        .with_measurement(patina::performance::Measurement::StartImage);        // Adds start image measurements.
+}
 
-    // Performance measurements are enabled by default, but can be overridden by a performance config HOB.
-    add.component(Performance::new().with_measurements(
-       Measurement::DriverBindingStart
-        | Measurement::DriverBindingStop
-        | Measurement::DriverBindingSupport
-        | Measurement::LoadImage
-        | Measurement::StartImage
-    ));
-  }  
+impl ComponentInfo for ExamplePlatform {
+    fn components(mut add: Add<Component>) {
+        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
+        add.component(patina_performance::component::Performance::new());
+    }
 }
 ```
 
 ## API
 
-| Macro name in EDK II                                                  | Function name in Patina component                                        | Description                                                     |
+The functions below are provided by the [`PerformanceManager`] service (produced by the DXE Core) and the core
+internals; this component makes them reachable from external C modules through the `EdkiiPerformanceMeasurement`
+protocol.
+
+| Macro name in EDK II                                                  | Function name in Patina                                                  | Description                                                     |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | `PERF_START_IMAGE_BEGIN` <br>`PERF_START_IMAGE_END`                   | `perf_image_start_begin`<br>`perf_image_start_end`                       | Measure the performance of start image in core.                 |
 | `PERF_LOAD_IMAGE_BEGIN`<br>`PERF_LOAD_IMAGE_END`                      | `perf_load_image_begin`<br>`perf_load_image_end`                         | Measure the performance of load image in core.                  |
@@ -64,58 +71,51 @@ impl ComponentInfo for ExampleComponent {
 
 ### Logging Performance Measurements
 
-The method to record performance measurements varies according to whether it is performed from within the core or an
-external component.
+Performance measurements are recorded through the [`PerformanceManager`] service, which is produced by the DXE
+Core and consumed both internally by the core and by components via dependency injection.
 
-*Example of measurement from within the core:*
+*Example of recording a measurement through the service:*
 
 ```rust,no_run
-# extern crate mu_rust_helpers;
 # extern crate patina;
-use patina::performance::{
-   logging::perf_function_begin,
-   measurement::create_performance_measurement,
-};
-use mu_rust_helpers::guid::CALLER_ID;
+use patina::component::service::{Service, performance::PerformanceManager};
+use patina::guid::CALLER_ID;
 
-perf_function_begin("foo", &CALLER_ID, create_performance_measurement);
+fn record(perf: Service<dyn PerformanceManager>) {
+    perf.perf_cross_module_begin("DXE", CALLER_ID.as_efi_guid());
+}
 ```
+
+[`PerformanceManager`]: patina::component::service::performance::PerformanceManager
 
 ## Performance Component Overview
 
-The **Performance Component** provides an API for logging performance measurements during firmware execution. This
-API includes:
+The performance measurement API is provided by the [`PerformanceManager`] service, which is produced by the DXE
+Core. This component contributes the UEFI-facing pieces on top of it:
 
-- Utility functions to log specific events.
-- A function to create performance measurements.
+- The EDK II Performance Measurement protocol, produced by this component, for use by external (C) modules.
+- Publishing of the FBPT and performance properties.
 
-If the measurement is initiated from the core, use the `create_performance_measurement` function within the utility
-function. Otherwise, use the function returned by the `EdkiiPerformanceMeasurement` protocol.
+Patina code (core or components) records measurements through the [`PerformanceManager`] service. External modules
+use the function returned by the `EdkiiPerformanceMeasurement` protocol, which routes back into the same service.
 
 ---
 
 ### Initialization and Setup
 
-Upon initialization, the component performs the following steps:
+The DXE Core initializes the FBPT, seeds it with any pre-DXE performance HOB data, and applies the measurement mask
+before this component runs. Upon initialization, the component performs the following steps:
 
-1. **Initialize the Firmware Performance Data Table (FBPT)**
+1. **Install the `EdkiiPerformanceMeasurement` Protocol**
 
-   - Sets up the FBPT data structure to store performance records.
+   - Enables external modules to log performance data through the measurement service.
 
-2. **Populate FBPT with Pre-DXE Data**
-
-   - Retrieves performance data from Hand-Off Blocks (HOBs) generated during the pre-DXE phase and adds them to the FBPT.
-
-3. **Install the `EdkiiPerformanceMeasurement` Protocol**
-
-   - Enables external modules to log performance data using the component API.
-
-4. **Register Events**
+2. **Register Events**
 
    - One event collects performance records logged in Management Mode (MM).
    - Another event publishes the FBPT to allocate the table in reserved memory at the end of the DXE phase.
 
-5. **Install Performance Properties**
+3. **Install Performance Properties**
 
    - Exposes performance-related properties through a configuration table for use by other components.
 

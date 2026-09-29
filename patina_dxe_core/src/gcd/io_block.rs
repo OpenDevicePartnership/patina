@@ -9,7 +9,7 @@
 use core::fmt::Debug;
 
 use patina::pi::dxe_services;
-use r_efi::efi;
+use patina::standard::efi;
 
 use crate::error;
 

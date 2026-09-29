@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Stack Tracing library."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -14,20 +16,7 @@ workspace = true
 cfg-if = { workspace = true }
 log = { workspace = true }
 
-[dev-dependencies]
-winapi = { workspace = true, features = [
-    "psapi",
-    "libloaderapi",
-    "minwinbase",
-    "errhandlingapi",
-    "processthreadsapi",
-    "winbase",
-    "synchapi",
-    "debugapi",
-] }
-
 [features]
 std = []
-doc = []
 # All non-std features to test in CI
 ci_features = []

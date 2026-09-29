@@ -29,8 +29,8 @@
 //! # use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
 //! # use patina::component::service::perf_timer::ArchTimerFunctionality;
 //!
-//! static DEBUGGER: patina_debugger::PatinaDebugger<patina::serial::uart::UartNull> =
-//!     patina_debugger::PatinaDebugger::new(patina::serial::uart::UartNull{})
+//! static DEBUGGER: patina_debugger::PatinaDebugger<patina::peripheral::serial::uart::UartNull> =
+//!     patina_debugger::PatinaDebugger::new(patina::peripheral::serial::uart::UartNull{})
 //!         .with_timeout(30); // Set initial break timeout to 30 seconds.
 //!
 //! fn entry() {
@@ -85,7 +85,7 @@
 //! ```
 //!
 //! The debugger can be further configured by using various functions on the
-//! initialization of the debugger struct. See the definition for [debugger::PatinaDebugger]
+//! initialization of the debugger struct. See the definition for [`debugger::PatinaDebugger`]
 //! for more details. Notably, if the device is using the same transport for
 //! logging and debugger, it is advisable to use `.without_log_init()`.
 //!
@@ -102,13 +102,16 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(not(test), no_std)]
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
-#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
+#[cfg_attr(coverage, coverage(off))]
+// The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod arch;
-#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
+#[cfg_attr(coverage, coverage(off))]
+// The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod dbg_target;
-#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
+#[cfg_attr(coverage, coverage(off))]
+// The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod debugger;
 mod memory;
 mod system;
@@ -119,9 +122,9 @@ extern crate alloc;
 
 pub use debugger::PatinaDebugger;
 
-#[cfg(not(test))]
+#[cfg(target_os = "uefi")]
 use arch::{DebuggerArch, SystemArch};
-use patina::{component::service::perf_timer::ArchTimerFunctionality, serial::SerialIO};
+use patina::{component::service::perf_timer::ArchTimerFunctionality, peripheral::serial::SerialIO};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
 
 /// Global instance of the debugger.
@@ -142,7 +145,7 @@ static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 /// be the first and second elements of the iterator respectively.
 ///
 /// The second argument is a writer that should be used to write the output of the
-/// command. This can be done by directly invoking the [core::fmt::Write] trait methods
+/// command. This can be done by directly invoking the [`core::fmt::Write`] trait methods
 /// or using the `write!` macro. `format!` should be avoided as it will allocate memory
 /// which shouldn't be done in debugger when possible.
 pub type MonitorCommandFn = dyn Fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write) + Send + Sync;
@@ -224,7 +227,7 @@ pub fn set_debugger<T: SerialIO>(debugger: &'static PatinaDebugger<T>) {
 /// Initializes the debugger. This will install the debugger into the exception
 /// handlers using the provided interrupt manager. This routine may invoke a debug
 /// break depending on configuration.
-#[coverage(off)] // Initializing the debugger requires integration testing infrastructure. Disabling coverage until this is completed.
+#[cfg_attr(coverage, coverage(off))] // Initializing the debugger requires integration testing infrastructure. Disabling coverage until this is completed.
 pub fn initialize(interrupt_manager: &mut dyn InterruptManager, timer: Option<&'static dyn ArchTimerFunctionality>) {
     if let Some(debugger) = DEBUGGER.get() {
         debugger.initialize(interrupt_manager, timer);
@@ -252,7 +255,7 @@ pub fn breakpoint() {
 /// execution in the current state and an CPU exception must be raised.
 #[inline(always)]
 pub fn breakpoint_unchecked() {
-    #[cfg(not(test))]
+    #[cfg(target_os = "uefi")]
     SystemArch::breakpoint();
     #[cfg(test)]
     panic!("breakpoint_unchecked");
@@ -291,7 +294,7 @@ pub fn initialized() -> bool {
 }
 
 /// Adds a monitor command to the debugger. This may be called before initialization,
-/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// but should not be called before memory allocations are available. See [`MonitorCommandFn`]
 /// for more details on the callback function expectations.
 ///
 /// ## Example
@@ -377,14 +380,14 @@ impl core::fmt::Display for ExceptionType {
     }
 }
 
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
 
-    static DUMMY_DEBUGGER: PatinaDebugger<patina::serial::uart::UartNull> =
-        PatinaDebugger::new(patina::serial::uart::UartNull {});
+    static DUMMY_DEBUGGER: PatinaDebugger<patina::peripheral::serial::uart::UartNull> =
+        PatinaDebugger::new(patina::peripheral::serial::uart::UartNull {});
 
     fn reset() {
         // Reset the global debugger for testing.

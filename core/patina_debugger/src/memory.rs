@@ -41,7 +41,7 @@ pub fn read_memory<Arch: DebuggerArch>(address: u64, buffer: &mut [u8], unsafe_r
     let page_table = Arch::get_page_table()?;
 
     // Check that all of the pages are mapped before accessing the memory.
-    let len = if !unsafe_read { check_range_access::<Arch>(&page_table, address, buffer.len())? } else { buffer.len() };
+    let len = if unsafe_read { buffer.len() } else { check_range_access::<Arch>(&page_table, address, buffer.len())? };
 
     if len == 0 {
         return Err(());
@@ -79,7 +79,8 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
         let page = current & PAGE_MASK;
         let end = (page + PAGE_SIZE).min(end_address);
         let len = (end - current) as usize;
-        let offset = (current - address) as isize;
+        // Note: Since current is always >= address, this offset cannot be negative.
+        let offset = (current - address) as usize;
 
         // Check that this page is writable before writing. If it is not, then temporarily
         // modify the page table to allow writing.
@@ -95,7 +96,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
         let ptr = current as *mut u8;
         // SAFETY: We have ensured these pages are writable before accessing them.
         unsafe {
-            ptr::copy_nonoverlapping(buffer.as_ptr().offset(offset), ptr, len);
+            ptr::copy_nonoverlapping(buffer.as_ptr().add(offset), ptr, len);
         }
 
         if attributes.contains(MemoryAttributes::ReadOnly) {
@@ -157,9 +158,8 @@ fn check_paging_range<P: PatinaPageTable>(page_table: &P, start_address: u64, le
             // return an error.
             if page > start_address {
                 return Ok((page - start_address) as usize);
-            } else {
-                return Err(());
             }
+            return Err(());
         }
 
         // if this is the last page, return the full length
@@ -173,7 +173,7 @@ fn check_paging_range<P: PatinaPageTable>(page_table: &P, start_address: u64, le
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
 
     use super::*;
@@ -189,6 +189,13 @@ mod tests {
 
         impl PatinaPageTable for MemPageTable {
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
+            fn map_aliased_memory_region(
+                &mut self,
+                virtual_address: u64,
+                physical_address: u64,
+                size: u64,
+                attributes: MemoryAttributes,
+            ) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
             fn install_page_table(&mut self) -> Result<(), PtError>;
             fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)>;
@@ -294,7 +301,7 @@ mod tests {
             Ok(mock_page_table)
         });
 
-        let address = &data as *const _ as u64;
+        let address = &raw const data as u64;
         let result = read_memory::<MockMemDebuggerArch>(address, &mut buffer, false);
         assert!(result.expect("Failed to read memory.") == buffer.len());
         assert_eq!(buffer, data);
@@ -336,7 +343,7 @@ mod tests {
             Ok(mock_page_table)
         });
 
-        let address = &data as *const _ as u64;
+        let address = &raw const data as u64;
         let result = write_memory::<MockMemDebuggerArch>(address, &buffer);
         assert!(result.is_ok());
         assert_eq!(buffer, data);

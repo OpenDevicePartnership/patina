@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Advanced logger component."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -19,9 +21,7 @@ required-features = ['std']
 log = { workspace = true }
 patina = { workspace = true }
 patina_test = { workspace = true }
-r-efi = { workspace = true }
 spin = { workspace = true }
-mu_rust_helpers = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 

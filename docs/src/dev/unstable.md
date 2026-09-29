@@ -13,6 +13,20 @@ Patina.
 All active rustc feature usage is tracked with the [`state:rustc-feature-gate`](https://github.com/OpenDevicePartnership/patina/issues?q=is%3Aissue%20state%3Aopen%20label%3Arustc-feature-gate)
 label.
 
+## How Patina Enables Unstable Features
+
+Patina builds against a pinned stable Rust toolchain rather than nightly (see
+[Rust and Toolchain Version Update Process](rust_version_update_process.md)). A stable `rustc` normally rejects
+`#![feature(...)]` gates, so the build sets `RUSTC_BOOTSTRAP=1` so they are accepted by the stable toolchain.
+
+To constrain the set of unstable features allowed, the build also passes `-Z allow-features=<list>` through `rustflags`
+(in `.cargo/config.toml`).
+
+```admonish important
+When the feature process below adds or removes a feature, update the `-Z allow-features` list in every `rustflags` block
+of `.cargo/config.toml`. A feature that is gated with `#![feature(...)]` but missing from this list will fail to build.
+```
+
 ## When Unstable Rust Features May Be Used
 
 Common scenarios for using unstable features:
@@ -87,9 +101,10 @@ either be accepted or denied and then merged.
 ### Create and Merge Implementation
 
 If the RFC is merged, it is now your responsibility to implement it's usage and create a pull-request for review. The
-pull-request should reference that this is the implementation for your accepted RFC. Once merged, **you must continue**
-**to monitor** the stability of the feature. Notably, if any changes to the feature's API occur, you will be responsible
-for adjusting the usage of the feature in the codebase.
+pull-request should reference that this is the implementation for your accepted RFC. Add the feature name to the
+`-Z allow-features` list in every `rustflags` block of `.cargo/config.toml`. Once merged, **you must continue to monitor**
+the stability of the feature. Notably, if any changes to the feature's API occur, you will be responsible for adjusting
+the usage of the feature in the codebase.
 
 ### Stabilization
 
@@ -106,4 +121,5 @@ declaration of the minimum supported rust version.
 The other possibility is that feature was removed from rustc, or an alternative is available that better meets the needs
 of the project. In this scenario, the project must update all usage of the feature to an alternative.
 
-Finally, once all is said and done, and the `#![feature(...)]` has been removed, the tracking issue can be closed.
+Finally, once all is said and done, and the `#![feature(...)]` has been removed, remove the feature name from the
+`-Z allow-features` list in `.cargo/config.toml` and the tracking issue can be closed.

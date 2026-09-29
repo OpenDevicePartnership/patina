@@ -14,11 +14,14 @@
 use core::ffi::c_void;
 
 use alloc::vec::Vec;
-use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
 use patina::{
     component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
-    guids,
-    pi::hob::{self},
+    guid as base_guids,
+    pi::{
+        guid as pi_guids,
+        hob::{self},
+    },
+    uefi::decompress::{DecompressionAlgorithm, decompress_into_with_algo},
     uefi_size_to_pages, writelncrlf,
 };
 
@@ -68,22 +71,20 @@ fn reload_monitor(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core:
     }
 }
 
-/// Implements the "reload alloc_buffer" command. This command allocates a buffer of the specified size and
+/// Implements the "reload `alloc_buffer`" command. This command allocates a buffer of the specified size and
 /// returns the address of the buffer.
 fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::fmt::Write) {
     // get the requested length of the prep buffer.
-    let buffer_size = match args.next() {
-        Some(size_str) => match size_str.parse::<usize>() {
-            Ok(size) => size,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid buffer size");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "Usage: reload alloc_buffer <size>");
+    let buffer_size = if let Some(size_str) = args.next() {
+        if let Ok(size) = size_str.parse::<usize>() {
+            size
+        } else {
+            let _ = writelncrlf!(out, "Invalid buffer size");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "Usage: reload alloc_buffer <size>");
+        return;
     };
 
     if buffer_size == 0 {
@@ -107,32 +108,28 @@ fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut 
 /// Implements the "reload load" command. This command loads the core image from the specified address and size.
 fn load_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut dyn core::fmt::Write) {
     // get the address prep buffer.
-    let address = match args.next() {
-        Some(addr_str) => match addr_str.parse::<usize>() {
-            Ok(addr) => addr,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid address");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "No address provided");
+    let address = if let Some(addr_str) = args.next() {
+        if let Ok(addr) = addr_str.parse::<usize>() {
+            addr
+        } else {
+            let _ = writelncrlf!(out, "Invalid address");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "No address provided");
+        return;
     };
 
-    let size = match args.next() {
-        Some(size_str) => match size_str.parse::<usize>() {
-            Ok(size) => size,
-            Err(_) => {
-                let _ = writelncrlf!(out, "Invalid size");
-                return;
-            }
-        },
-        None => {
-            let _ = writelncrlf!(out, "No size provided");
+    let size = if let Some(size_str) = args.next() {
+        if let Ok(size) = size_str.parse::<usize>() {
+            size
+        } else {
+            let _ = writelncrlf!(out, "Invalid size");
             return;
         }
+    } else {
+        let _ = writelncrlf!(out, "No size provided");
+        return;
     };
 
     if address == 0 || size == 0 {
@@ -231,8 +228,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     };
 
     // Step 5: Provide the debugger with the context to start the new image.
-    let _ =
-        write!(out, "success:{:x}\nip:{:x}\nsp:{:x}\narg0:{:x}\n", loaded_image_addr, entry_point, stack_ptr, hob_list);
+    let _ = write!(out, "success:{loaded_image_addr:x}\nip:{entry_point:x}\nsp:{stack_ptr:x}\narg0:{hob_list:x}\n");
 }
 
 /// Fixes up the HOB list to reflect the new core image. This involves updating the memory allocation hob for the DXE
@@ -247,7 +243,7 @@ fn fixup_hob_list(
         return Err("Original HOB list address is zero");
     }
 
-    let mut next_hob = physical_hob_list as *mut hob::header::Hob;
+    let mut next_hob = physical_hob_list as *mut hob::HobHeader;
     let mut stack_ptr = 0usize;
     let mut fixed_up_core = false;
     loop {
@@ -264,12 +260,12 @@ fn fixup_hob_list(
             let alloc_hob = unsafe { (next_hob as *mut hob::MemoryAllocationModule).as_mut() }
                 .ok_or("Failed to read memory allocation HOB")?;
 
-            if alloc_hob.module_name == guids::DXE_CORE {
+            if alloc_hob.module_name == base_guids::DXE_CORE_ID {
                 alloc_hob.alloc_descriptor.memory_base_address = core_address as u64;
                 alloc_hob.alloc_descriptor.memory_length = core_buffer_size as u64;
                 alloc_hob.entry_point = entry_point as u64;
                 fixed_up_core = true;
-            } else if alloc_hob.alloc_descriptor.name == guids::HOB_MEMORY_ALLOC_STACK {
+            } else if alloc_hob.alloc_descriptor.name == pi_guids::MEMORY_ALLOC_STACK_HOB_GUID {
                 // Get the top of the stack. The pointer used needs to be offset down 0x18 bytes for
                 // alignment to ensure we match calling convention requirements. Failure to do this will cause
                 // crashes due to mis-aligned stack accesses.

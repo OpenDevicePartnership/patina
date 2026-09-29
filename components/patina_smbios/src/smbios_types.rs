@@ -106,7 +106,7 @@ pub struct BiosCharacteristicsExt1 {
     pub agp_supported: bool,
     /// I2O boot is supported.
     pub i2o_supported: bool,
-    /// LS-120 SuperDisk boot is supported.
+    /// LS-120 `SuperDisk` boot is supported.
     pub superdisk_boot_supported: bool,
     /// ATAPI ZIP drive boot is supported.
     pub zip_drive_boot_supported: bool,
@@ -353,7 +353,7 @@ pub enum ProcessorTypeData {
 ///
 /// Tagged `#[repr(u16)]` to cover the full SMBIOS extended family list.
 /// The 1-byte `processor_family` field on `Type4ProcessorInformation` is a
-/// raw `u8`; set it to `0xFE` (IndicatorFamily2) when using the extended
+/// raw `u8`; set it to `0xFE` (`IndicatorFamily2`) when using the extended
 /// `processor_family2` field for values >= 0x100.
 #[repr(u16)]
 #[derive(Copy, Clone, Debug, IntoBytes, Immutable, KnownLayout)]
@@ -512,25 +512,25 @@ pub enum ProcessorFamilyData {
     AmdOpteron6300 = 0x4D,
     /// AMD Opteron™ 3300 Series processor.
     AmdOpteron3300 = 0x4E,
-    /// AMD FirePro™ Series processor.
+    /// AMD `FirePro`™ Series processor.
     AmdFireProSeries = 0x4F,
     /// SPARC family.
     Sparc = 0x50,
-    /// SuperSPARC.
+    /// `SuperSPARC`.
     SuperSparc = 0x51,
     /// microSPARC II.
     MicroSparcII = 0x52,
-    /// microSPARC IIep.
+    /// microSPARC `IIep`.
     MicroSparcIIep = 0x53,
-    /// UltraSPARC.
+    /// `UltraSPARC`.
     UltraSparc = 0x54,
-    /// UltraSPARC II.
+    /// `UltraSPARC` II.
     UltraSparcII = 0x55,
-    /// UltraSPARC IIi.
+    /// `UltraSPARC` `IIi`.
     UltraSparcIii = 0x56,
-    /// UltraSPARC III.
+    /// `UltraSPARC` III.
     UltraSparcIII = 0x57,
-    /// UltraSPARC IIIi.
+    /// `UltraSPARC` `IIIi`.
     UltraSparcIIIi = 0x58,
     /// 68040.
     Processor68040 = 0x60,
@@ -642,7 +642,7 @@ pub enum ProcessorFamilyData {
     MultiCoreIntelXeon7400Series = 0xAF,
     /// Pentium® III Xeon™ processor.
     PentiumIIIXeon = 0xB0,
-    /// Pentium® III processor with Intel® SpeedStep™ technology.
+    /// Pentium® III processor with Intel® `SpeedStep`™ technology.
     PentiumIIISpeedStep = 0xB1,
     /// Pentium® 4 processor.
     Pentium4 = 0xB2,
@@ -767,11 +767,11 @@ pub enum ProcessorFamilyData {
     IndicatorFamily2 = 0xFE,
     /// Reserved.
     Reserved1 = 0xFF,
-    /// ARMv7.
+    /// `ARMv7`.
     ARMv7 = 0x0100,
-    /// ARMv8.
+    /// `ARMv8`.
     ARMv8 = 0x0101,
-    /// ARMv9.
+    /// `ARMv9`.
     ARMv9 = 0x0102,
     /// SH-3.
     Sh3 = 0x0103,
@@ -779,15 +779,15 @@ pub enum ProcessorFamilyData {
     Sh4 = 0x0104,
     /// ARM.
     Arm = 0x0118,
-    /// StrongARM.
+    /// `StrongARM`.
     StrongARM = 0x0119,
     /// 6x86.
     Processor6x86 = 0x012C,
-    /// MediaGX.
+    /// `MediaGX`.
     MediaGX = 0x012D,
     /// MII.
     Mii = 0x012E,
-    /// WinChip.
+    /// `WinChip`.
     WinChip = 0x0140,
     /// DSP.
     Dsp = 0x015E,
@@ -799,7 +799,7 @@ pub enum ProcessorFamilyData {
     RiscVRV64 = 0x0201,
     /// RISC-V RV128.
     RiscVRV128 = 0x0202,
-    /// LoongArch.
+    /// `LoongArch`.
     LoongArch = 0x0258,
     /// Loongson™ 1 processor.
     Loongson1 = 0x0259,
@@ -965,7 +965,7 @@ pub enum ProcessorUpgrade {
     SocketLGA3647_1 = 0x36,
     /// Socket SP3.
     SocketSP3 = 0x37,
-    /// Socket SP3r2.
+    /// Socket `SP3r2`.
     SocketSP3r2 = 0x38,
     /// Socket LGA2066.
     SocketLGA2066 = 0x39,
@@ -1090,7 +1090,7 @@ pub struct ProcessorCharacteristics {
     pub performance_control: bool,
     /// 128-bit capable.
     pub capable_128bit: bool,
-    /// Arm64 SoC ID.
+    /// Arm64 `SoC` ID.
     pub arm64_soc_id: bool,
     /// Reserved bits.
     #[bits(6)]
@@ -1262,7 +1262,7 @@ pub enum SlotType {
     ProprietaryMemoryCardSlot = 0x0B,
     /// I/O riser card slot.
     IoRiserCardSlot = 0x0C,
-    /// NuBus.
+    /// `NuBus`.
     NuBus = 0x0D,
     /// PCI - 66 MHz capable.
     Pci66mhz = 0x0E,
@@ -1478,7 +1478,7 @@ pub struct SlotCharacteristics1 {
     pub shared_slot: bool,
     /// PC Card slot supports PC Card-16.
     pub pc_supports_pccard16: bool,
-    /// PC Card slot supports CardBus.
+    /// PC Card slot supports `CardBus`.
     pub pc_supports_cardbus: bool,
     /// PC Card slot supports Zoom Video.
     pub pc_supports_zoomvideo: bool,
@@ -1494,9 +1494,9 @@ pub struct SlotCharacteristics2 {
     pub pci_supports_pme: bool,
     /// Slot supports hot-plug devices.
     pub supports_hotplug: bool,
-    /// PCI slot supports SMBus signal.
+    /// PCI slot supports `SMBus` signal.
     pub pci_supports_smbus: bool,
-    /// PCIe slot supports bifurcation.
+    /// `PCIe` slot supports bifurcation.
     pub pcie_supports_bifurcation: bool,
     /// Slot supports async/surprise removal.
     pub supports_async_removal: bool,
@@ -1556,7 +1556,7 @@ pub enum MemoryArrayLocation {
     PcmciaAddOn = 0x08,
     /// Proprietary add-on card.
     ProprietaryAddOn = 0x09,
-    /// NuBus.
+    /// `NuBus`.
     NuBus = 0x0A,
     /// PC-98/C20 add-on card.
     Pc98C20AddOn = 0xA0,

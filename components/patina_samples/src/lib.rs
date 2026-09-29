@@ -17,7 +17,7 @@
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(missing_docs)]
-#![feature(coverage_attribute)]
-#![coverage(off)] // Disable all coverage instrumentation for sample code
+#![cfg_attr(coverage, feature(coverage_attribute))]
+#![cfg_attr(coverage, coverage(off))] // Disable all coverage instrumentation for sample code
 pub mod component;
 pub mod smbios_platform;

@@ -10,7 +10,7 @@ mod fixed_size_block_allocator;
 mod uefi_allocator;
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod usage_tests;
 
 use core::{
@@ -24,7 +24,7 @@ use core::{
 
 extern crate alloc;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use mu_rust_helpers::function;
+use patina::function;
 
 use crate::{
     GCD, config_tables,
@@ -38,17 +38,18 @@ use crate::{
 };
 pub use fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
 use patina::pi::{
-    dxe_services::{self, GcdMemoryType},
+    dxe_services::GcdMemoryType,
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
-use r_efi::{efi, system::TPL_HIGH_LEVEL};
+use patina::standard::efi::{self, TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
 
+#[cfg(test)]
+use patina::guid as base_guids;
 use patina::{
-    base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
-    efi_types::EFI_MAX_MEMORY_TYPE,
     error::EfiError,
-    guids, uefi_size_to_pages, writelncrlf,
+    uefi::memory::EFI_MAX_MEMORY_TYPE,
+    uefi_size_to_pages, writelncrlf, {SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
 };
 
 // Type alias for a UefiAllocator with a SpinLockedFixedSizeBlockAllocator
@@ -98,7 +99,7 @@ pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 // granularity requirements for them.
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "aarch64")] {
-        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina::base::SIZE_64KB;
+        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina::SIZE_64KB;
     } else {
         pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = DEFAULT_PAGE_ALLOCATION_GRANULARITY;
     }
@@ -142,7 +143,7 @@ impl AllocationStatistics {
     }
 }
 
-/// The interface needeed for an allocator used by UefiAllocator.
+/// The interface needeed for an allocator used by `UefiAllocator`.
 pub trait PageAllocator {
     /// Allocates the given number of pages according to the allocation strategy.
     fn allocate_pages(
@@ -362,7 +363,7 @@ fn memory_type_to_str(f: &mut core::fmt::Formatter<'_>, memory_type: efi::Memory
 
 pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
 
-pub struct MemoryDescriptorRef<'a>(&'a efi::MemoryDescriptor);
+pub struct MemoryDescriptorRef<'a>(pub &'a efi::MemoryDescriptor);
 
 impl Debug for MemoryDescriptorRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -395,8 +396,8 @@ impl Debug for MemoryDescriptorSlice<'_> {
 /// Return a vector of the memory ranges owned by a particular allocator
 /// Returns an empty vector if the memory type is not found
 /// This function is used for compatibility mode code to set RWX attributes on memory ranges for Loader Code/Data,
-/// but it is not specific to compatibility mode, which is why it is marked as allow(dead_code) as opposed to behind
-/// the compatibility_mode_allowed feature flag. It is valid for other code to use this API in the absence of
+/// but it is not specific to compatibility mode, which is why it is marked as `allow(dead_code)` as opposed to behind
+/// the `compatibility_mode_allowed` feature flag. It is valid for other code to use this API in the absence of
 /// compatibility mode.
 pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) -> Vec<Range<efi::PhysicalAddress>> {
     // Check static allocators first, then dynamic allocators
@@ -433,12 +434,12 @@ impl AllocatorMap {
     // Returns an iterator that checks all allocators by handle.
     fn find_memory_type_by_handle(&self, handle: efi::Handle) -> Option<efi::MemoryType> {
         // Check static allocators first, then dynamic allocators
-        for (alloc, mem_type) in STATIC_ALLOCATORS.iter() {
+        for (alloc, mem_type) in &STATIC_ALLOCATORS {
             if alloc.handle() == handle {
                 return Some(*mem_type);
             }
         }
-        self.iter_dynamic().find(|x| x.handle() == handle).map(|x| x.memory_type())
+        self.iter_dynamic().find(|x| x.handle() == handle).map(uefi_allocator::UefiAllocator::memory_type)
     }
 
     // Retrieves an allocator for the given memory type, creating one if it doesn't already exist.
@@ -625,7 +626,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
             // SAFETY: buffer is declared above, we pass the address which guarantees it is a valid pointer.
-            unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)).map(|_| buffer) }
+            unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)).map(|()| buffer) }
         }
         Err(err) => Err(err),
     }
@@ -642,7 +643,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
 unsafe extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
     // SAFETY: The caller is responsible for ensuring `buffer` points to a valid allocation.
     match unsafe { core_free_pool(buffer) } {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(status) => status.into(),
     }
 }
@@ -782,7 +783,7 @@ pub fn memory_type_for_handle(handle: efi::Handle) -> Option<efi::MemoryType> {
 unsafe extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
     // SAFETY: The caller is responsible for ensuring `memory` is a valid, previously allocated address.
     match unsafe { core_free_pages(memory, pages) } {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(status) => status.into(),
     }
 }
@@ -962,7 +963,7 @@ unsafe extern "efiapi" fn get_memory_map(
             let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, actual_map_size);
             GCD.set_last_efi_memory_map_key(memory_map_as_bytes);
             if let Some(key) = GCD.get_last_efi_memory_map_key() {
-                log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {:#X}", key);
+                log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {key:#X}");
                 map_key.write_unaligned(key);
             }
         }
@@ -984,7 +985,7 @@ unsafe extern "efiapi" fn get_memory_map(
 }
 
 /// Dumps bin manager peak tracking data at debug level.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn dump_memory_bin_stats() {
     let bin_manager = MEMORY_BIN_MANAGER.lock();
     if bin_manager.is_initialized() {
@@ -1001,10 +1002,10 @@ fn dump_memory_bin_stats() {
 }
 
 /// Dumps per-allocator page counts at trace level.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn dump_allocator_details() {
     log::trace!(target: "allocations", "Allocator page counts:");
-    for (alloc, _) in STATIC_ALLOCATORS.iter() {
+    for (alloc, _) in &STATIC_ALLOCATORS {
         let stats = alloc.stats();
         let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
         let net_pages = stats.claimed_pages.saturating_sub(reserved_free);
@@ -1028,7 +1029,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     }
 }
 
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     let bin_manager = MEMORY_BIN_MANAGER.lock();
     if !bin_manager.is_initialized() || bin_manager.memory_type_information().is_empty() {
@@ -1039,7 +1040,7 @@ pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Resu
     drop(bin_manager);
 
     config_tables::core_install_configuration_table(
-        guids::MEMORY_TYPE_INFORMATION.into_inner(),
+        patina::pi::hob::MEMORY_TYPE_INFO_HOB_GUID.into_inner(),
         table_ptr,
         system_table,
     )
@@ -1094,134 +1095,86 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let address = desc.memory_base_address;
-                match GCD.get_existent_memory_descriptor_for_address(address) {
-                    // we found the region in the GCD, so we can allocate it
-                    Ok(gcd_desc) => {
-                        if gcd_desc.base_address == desc.memory_base_address
-                            && gcd_desc.length == desc.memory_length
-                            && gcd_desc.image_handle != INVALID_HANDLE
-                        {
-                            // check to see if a duplicate HOB has already added this allocation
-                            log::trace!(
-                                "Duplicate allocation HOB at {:#x?} of length {:#x?}. Skipping allocation.",
-                                desc.memory_base_address,
-                                desc.memory_length
-                            );
-                            continue;
-                        }
-                        let alloc_res = match gcd_desc.memory_type {
-                            // if this is system memory, we use core_allocate_pages to allocate it
-                            // so that we can track the allocation in the allocator
-                            GcdMemoryType::SystemMemory => core_allocate_pages(
-                                efi::ALLOCATE_ADDRESS,
-                                desc.memory_type,
-                                uefi_size_to_pages!(desc.memory_length as usize),
-                                address,
-                                None,
-                            ),
-                            GcdMemoryType::NonExistent | GcdMemoryType::Unaccepted => {
-                                // we can't allocate memory in a non-existent or unaccepted memory type
-                                log::error!(
-                                    "Memory Allocation HOB specifies a non-existent or unaccepted memory type: {:#x?}. Cannot allocate memory.",
-                                    desc.memory_type
-                                );
-                                continue;
-                            }
-                            // for all other memory types, we can allocate it directly in the GCD
-                            // because they are not managed by the allocators
-                            _ => GCD
-                                .allocate_memory_space(
-                                    AllocationStrategy::Address(desc.memory_base_address as usize),
-                                    gcd_desc.memory_type,
-                                    0,
-                                    desc.memory_length as usize,
-                                    protocol_db::DXE_CORE_HANDLE,
-                                    None,
-                                )
-                                .map(|address| address as efi::PhysicalAddress),
-                        };
 
-                        if let Err(err) = alloc_res {
-                            if err == EfiError::NotFound && desc.name != guids::ZERO {
-                                // Guided Memory Allocation Hobs are typically MemoryAllocationModule or
-                                // MemoryAllocationStack HOBs which have corresponding non-guided allocation HOBs
-                                // associated with them; they are rejected as duplicates if we attempt to log them.
-                                // Only log trace messages for these.
-                                log::trace!(
-                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                    desc.memory_base_address,
-                                    desc.memory_length,
-                                    err
-                                );
-                            } else {
-                                log::error!(
-                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                    desc.memory_base_address,
-                                    desc.memory_length,
-                                    err
-                                );
-                            }
-                            continue;
-                        }
-                    }
-                    Err(_) => {
-                        log::error!(
-                            "Failed to get memory descriptor for address {address:#x?} in GCD specified in Memory Allocation HOB:\n{hob:#x?}. Cannot allocate memory."
+                if let Ok(gcd_desc) =
+                    GCD.get_memory_descriptor_for_address(address, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                {
+                    // we found the region in the GCD, so we can allocate it
+                    if gcd_desc.base_address == desc.memory_base_address
+                        && gcd_desc.length == desc.memory_length
+                        && gcd_desc.image_handle != INVALID_HANDLE
+                    {
+                        // check to see if a duplicate HOB has already added this allocation
+                        log::trace!(
+                            "Duplicate allocation HOB at {:#x?} of length {:#x?}. Skipping allocation.",
+                            desc.memory_base_address,
+                            desc.memory_length
                         );
                         continue;
                     }
-                }
-            }
-            Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
-            | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
-                header: _,
-                base_address,
-                length,
-                fv_name: _,
-                file_name: _,
-            })
-            | Hob::FirmwareVolume3(hob::FirmwareVolume3 {
-                header: _,
-                base_address,
-                length,
-                authentication_status: _,
-                extracted_fv: _,
-                fv_name: _,
-                file_name: _,
-            }) => {
-                log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
+                    let alloc_res = match gcd_desc.memory_type {
+                        // if this is system memory, we use core_allocate_pages to allocate it
+                        // so that we can track the allocation in the allocator
+                        GcdMemoryType::SystemMemory => core_allocate_pages(
+                            efi::ALLOCATE_ADDRESS,
+                            desc.memory_type,
+                            uefi_size_to_pages!(desc.memory_length as usize),
+                            address,
+                            None,
+                        ),
+                        GcdMemoryType::NonExistent | GcdMemoryType::Unaccepted => {
+                            // we can't allocate memory in a non-existent or unaccepted memory type
+                            log::error!(
+                                "Memory Allocation HOB specifies a non-existent or unaccepted memory type: {:#x?}. Cannot allocate memory.",
+                                desc.memory_type
+                            );
+                            continue;
+                        }
+                        // for all other memory types, we can allocate it directly in the GCD
+                        // because they are not managed by the allocators
+                        _ => GCD
+                            .allocate_memory_space(
+                                AllocationStrategy::Address(desc.memory_base_address as usize),
+                                gcd_desc.memory_type,
+                                0,
+                                desc.memory_length as usize,
+                                protocol_db::DXE_CORE_HANDLE,
+                                None,
+                            )
+                            .map(|address| address as efi::PhysicalAddress),
+                    };
 
-                //The EDK2 C reference core maps FVs to MMIO space, but many implementations don't declare the
-                //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
-                //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
-                //to reserve it in the GCD.
-                if let Ok(existing_desc) = GCD.get_existent_memory_descriptor_for_address(*base_address)
-                    && (existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
-                        || existing_desc.image_handle != INVALID_HANDLE)
-                {
-                    log::info!(
-                        "Skipping FV HOB at {base_address:#x?} of length {length:#x?}. Containing region is not MMIO."
+                    if let Err(err) = alloc_res {
+                        if err == EfiError::NotFound && desc.name != patina::BinaryGuid::ZERO {
+                            // Guided Memory Allocation Hobs are typically MemoryAllocationModule or
+                            // MemoryAllocationStack HOBs which have corresponding non-guided allocation HOBs
+                            // associated with them; they are rejected as duplicates if we attempt to log them.
+                            // Only log trace messages for these.
+                            log::trace!(
+                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                desc.memory_base_address,
+                                desc.memory_length,
+                                err
+                            );
+                        } else {
+                            log::error!(
+                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                desc.memory_base_address,
+                                desc.memory_length,
+                                err
+                            );
+                        }
+                        continue;
+                    }
+                } else {
+                    log::error!(
+                        "Failed to get memory descriptor for address {address:#x?} in GCD specified in Memory Allocation HOB:\n{hob:#x?}. Cannot allocate memory."
                     );
                     continue;
                 }
-
-                //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
-                //This means they must be direct-allocated in the GCD, and no stats will be tracked for them.
-                let _ = GCD.allocate_memory_space(
-                    AllocationStrategy::Address(*base_address as usize),
-                    dxe_services::GcdMemoryType::MemoryMappedIo,
-                    0,
-                    *length as usize,
-                    protocol_db::DXE_CORE_HANDLE,
-                    None)
-                    .inspect_err(|err|{
-                        log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err:#x?}",
-                        );
-                    });
             }
             _ => continue,
-        };
+        }
     }
 
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
@@ -1229,7 +1182,7 @@ fn process_hob_allocations(hob_list: &HobList) {
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
     // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
     // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
-    match GCD.get_existent_memory_descriptor_for_address(0) {
+    match GCD.get_memory_descriptor_for_address(0, |d, _| d.memory_type != GcdMemoryType::NonExistent) {
         Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
             let address: efi::PhysicalAddress = 0;
 
@@ -1260,7 +1213,7 @@ fn process_hob_allocations(hob_list: &HobList) {
 ///
 /// This routine sets the boot services routines for memory allocation and does initial configuration of the allocators.
 /// In particular, this includes reserving a block of pages for each allocator according to the configuration specified
-/// by the platform in the form of the MEMORY_TYPE_INFO HOB. This allows the platform to reserve blocks of memory for
+/// by the platform in the form of the `MEMORY_TYPE_INFO` HOB. This allows the platform to reserve blocks of memory for
 /// memory types that must be stable across S4 resume flows. By reserving additional space beyond what is required, the
 /// memory map reported to the OS can be stable even in the face of small variations in memory from boot-to-boot, which
 /// helps to avoid S4 failure due to memory map change.
@@ -1299,7 +1252,7 @@ pub fn init_memory_support(hob_list: &HobList) {
 /// Note: A local `MemoryBinManager` is used during initialization to avoid holding the global lock
 /// during GCD allocations (which would cause re-entrant lock panics since allocation recording also
 /// acquires the lock).
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeInformation]) {
     if MEMORY_BIN_MANAGER.lock().is_initialized() {
         return;
@@ -1316,7 +1269,7 @@ fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeI
 
     let mut local_manager = MemoryBinManager::new();
     if !local_manager.initialize_from_range(start, length, memory_type_info) {
-        log::warn!(target: "memory_bin", "Failed to initialize bins from range at {:#X}, length {:#X}.", start, length);
+        log::warn!(target: "memory_bin", "Failed to initialize bins from range at {start:#X}, length {length:#X}.");
         return;
     }
 
@@ -1325,20 +1278,20 @@ fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeI
 }
 
 /// Attempts to find a PEI-provided bin range from a Resource Descriptor HOB.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn find_pei_bin_range(
     hob_list: &HobList,
     memory_type_info: &[EFiMemoryTypeInformation],
 ) -> Option<(efi::PhysicalAddress, u64)> {
     let (start, length) = crate::memory_bin::find_memory_type_info_resource_hob(hob_list, memory_type_info)?;
-    log::info!(target: "memory_bin", "Found PEI bin region at {:#X}, length {:#X}.", start, length);
+    log::info!(target: "memory_bin", "Found PEI bin region at {start:#X}, length {length:#X}.");
     Some((start, length))
 }
 
 /// Allocates a single contiguous block from the GCD for all bin types.
 ///
 /// The block is freed back to the GCD immediately so that it can be reclaimed for per-type ranges.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn allocate_contiguous_bin_range(memory_type_info: &[EFiMemoryTypeInformation]) -> Option<(efi::PhysicalAddress, u64)> {
     log::info!(target: "memory_bin", "No PEI bin region found. Allocating a contiguous bin range from the GCD.");
 
@@ -1363,9 +1316,7 @@ fn allocate_contiguous_bin_range(memory_type_info: &[EFiMemoryTypeInformation]) 
         .inspect_err(|err| {
             log::warn!(
                 target: "memory_bin",
-                "Failed to allocate contiguous bin range ({:#X} bytes) from GCD: {:?}",
-                alloc_size,
-                err
+                "Failed to allocate contiguous bin range ({alloc_size:#X} bytes) from GCD: {err:?}"
             );
         })
         .ok()?;
@@ -1405,7 +1356,7 @@ fn seed_bin_statistics_from_hobs(hob_list: &HobList) {
         seeded_count += 1;
     }
 
-    log::info!(target: "memory_bin", "Seeded bin statistics from {} PEI Memory Allocation HOBs.", seeded_count);
+    log::info!(target: "memory_bin", "Seeded bin statistics from {seeded_count} PEI Memory Allocation HOBs.");
 }
 
 /// Claims free GCD pages within each bin range for the corresponding bin type's allocator.
@@ -1517,9 +1468,7 @@ fn reserve_bin_ranges() {
                         if let Err(err) = GCD.free_memory_space_preserving_ownership(block_start as usize, block_len) {
                             log::error!(
                                 target: "memory_bin",
-                                "Failed to free-with-ownership bin pages at {:#X}: {:?}",
-                                block_start,
-                                err
+                                "Failed to free-with-ownership bin pages at {block_start:#X}: {err:?}"
                             );
                         }
                         claimed_pages += block_pages;
@@ -1527,10 +1476,7 @@ fn reserve_bin_ranges() {
                     Err(err) => {
                         log::warn!(
                             target: "memory_bin",
-                            "Failed to claim bin pages at {:#X} ({} pages): {:?}",
-                            block_start,
-                            block_pages,
-                            err
+                            "Failed to claim bin pages at {block_start:#X} ({block_pages} pages): {err:?}"
                         );
                     }
                 }
@@ -1630,7 +1576,7 @@ pub(crate) unsafe fn reset_allocators() {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
 
     use crate::{
@@ -1639,13 +1585,16 @@ mod tests {
     };
 
     use super::*;
-    use patina::pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
-    use r_efi::efi;
+    use patina::pi::{
+        dxe_services, guid as pi_guids,
+        hob::{GUID_EXTENSION, GuidHob, Hob, HobHeader},
+    };
+    use patina::standard::efi;
 
     enum GcdInit {
-        /// Initializes a simple test GCD (via init_test_gcd()) with the given size.
+        /// Initializes a simple test GCD (via `init_test_gcd()`) with the given size.
         WithSize(usize),
-        /// Initializes a GCD with the given HOB list size (via build_test_hob_list()).
+        /// Initializes a GCD with the given HOB list size (via `build_test_hob_list()`).
         WithHobList(usize),
     }
 
@@ -1654,7 +1603,7 @@ mod tests {
     ///
     /// Cleans up global state after `f` returns.
     fn with_locked_state<F: Fn(*const c_void) + std::panic::RefUnwindSafe>(gcd_init: GcdInit, f: F) {
-        test_support::with_global_lock(|| {
+        test_support::with_clean_global_lock(|| {
             let physical_hob_list = match gcd_init {
                 GcdInit::WithSize(gcd_size) => {
                     // SAFETY: multiple functions modify global state. Functions are
@@ -1683,17 +1632,6 @@ mod tests {
                 }
             };
 
-            let _guard = test_support::StateGuard::new(|| {
-                // SAFETY: Cleanup code runs with global lock held, resetting
-                // global state that was initialized above.
-                unsafe {
-                    GCD.reset();
-                    PROTOCOL_DB.reset();
-                    reset_allocators();
-                    ALLOCATORS.lock().reset();
-                }
-            });
-
             f(physical_hob_list);
         })
         .unwrap();
@@ -1709,7 +1647,7 @@ mod tests {
         let (_, base, max, _) = bins
             .iter()
             .find(|(mt, _, _, _)| *mt == memory_type)
-            .unwrap_or_else(|| panic!("Expected bin for memory type {:#X} not found", memory_type));
+            .unwrap_or_else(|| panic!("Expected bin for memory type {memory_type:#X} not found"));
         (*base, *max)
     }
 
@@ -1726,7 +1664,7 @@ mod tests {
             assert!(bs.free_pool == free_pool);
             assert!(bs.copy_mem == copy_mem);
             assert!(bs.get_memory_map == get_memory_map);
-        })
+        });
     }
 
     #[test]
@@ -1736,7 +1674,7 @@ mod tests {
             hob_list.discover_hobs(physical_hob_list);
 
             let guid_hob = GuidHob {
-                header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
+                header: HobHeader { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
                 name: MEMORY_TYPE_INFO_HOB_GUID,
             };
             hob_list.push(Hob::GuidHob(
@@ -1753,13 +1691,13 @@ mod tests {
             let mut stack_base_address = 0x18B000;
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
+                    name: pi_guids::MEMORY_ALLOC_STACK_HOB_GUID,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -1784,7 +1722,7 @@ mod tests {
 
             let (nvs_base, nvs_max) = find_bin_range(&bins, efi::ACPI_MEMORY_NVS);
             assert_eq!((nvs_max - nvs_base + 1), 0x300 * 0x1000, "ACPI_MEMORY_NVS bin size mismatch");
-        })
+        });
     }
 
     #[test]
@@ -1800,7 +1738,7 @@ mod tests {
 
             // Bin descriptor HOB activates bins for PAL_CODE, ACPI_RECLAIM, ACPI_NVS.
             let guid_hob = GuidHob {
-                header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
+                header: HobHeader { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
                 name: MEMORY_TYPE_INFO_HOB_GUID,
             };
             hob_list.push(Hob::GuidHob(
@@ -1815,13 +1753,13 @@ mod tests {
             // Build a stack HOB to support memory init.
             let stack_base_address = (physical_hob_list as u64).wrapping_add(0x18B000);
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
+                    name: pi_guids::MEMORY_ALLOC_STACK_HOB_GUID,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -1838,13 +1776,13 @@ mod tests {
 
             // Non-matching: MemoryAllocation with a different GUID. Must be ignored.
             let other_guid_alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
+                    name: pi_guids::MEMORY_ALLOC_STACK_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: (16 * UEFI_PAGE_SIZE) as u64,
                     memory_type: efi::PAL_CODE,
@@ -1855,7 +1793,7 @@ mod tests {
 
             // Non-matching HOB type.
             let unrelated_fv = patina::pi::hob::FirmwareVolume {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: patina::pi::hob::FV,
                     length: core::mem::size_of::<patina::pi::hob::FirmwareVolume>() as u16,
                     reserved: 0,
@@ -1867,12 +1805,12 @@ mod tests {
 
             // Matching GUID + CONVENTIONAL_MEMORY should be ignored.
             let conv_alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: (16 * UEFI_PAGE_SIZE) as u64,
@@ -1884,12 +1822,12 @@ mod tests {
 
             // Matching GUID + zero length should be ignored.
             let zero_len_alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: 0,
@@ -1902,12 +1840,12 @@ mod tests {
             // Matching GUID + ACPI_MEMORY_NVS (bin). Should seed 16 pages.
             let nvs_pages: u64 = 16;
             let nvs_alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: nvs_pages * UEFI_PAGE_SIZE as u64,
@@ -1920,19 +1858,19 @@ mod tests {
             // Matching GUID via MemoryAllocationModule for PAL_CODE (bin). Should seed.
             let pal_pages: u64 = 16;
             let pal_alloc_module = patina::pi::hob::MemoryAllocationModule {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocationModule>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: pal_pages * UEFI_PAGE_SIZE as u64,
                     memory_type: efi::PAL_CODE,
                     reserved: Default::default(),
                 },
-                module_name: guids::DXE_CORE,
+                module_name: base_guids::DXE_CORE_ID,
                 entry_point: 0,
             };
             seed_list.push(Hob::MemoryAllocationModule(&pal_alloc_module));
@@ -1940,12 +1878,12 @@ mod tests {
             // Matching GUID but non-bin memory type (BOOT_SERVICES_DATA). Reaches
             // seed_statistics_from_hob but is filtered there by the `special` check.
             let bsdata_alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: (16 * UEFI_PAGE_SIZE) as u64,
@@ -1992,7 +1930,7 @@ mod tests {
                 rt_data_before,
                 "RUNTIME_SERVICES_DATA had no matching HOB and must not be seeded",
             );
-        })
+        });
     }
 
     #[test]
@@ -2005,12 +1943,12 @@ mod tests {
 
             let mut seed_list = HobList::default();
             let alloc = patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
                     name: MEMORY_TYPE_INFO_HOB_GUID,
                     memory_base_address: 0,
                     memory_length: (16 * UEFI_PAGE_SIZE) as u64,
@@ -2024,7 +1962,7 @@ mod tests {
 
             let bm = MEMORY_BIN_MANAGER.lock();
             assert_eq!(bm.current_pages_for_type(efi::ACPI_MEMORY_NVS), 0);
-        })
+        });
     }
 
     #[test]
@@ -2040,13 +1978,13 @@ mod tests {
             let stack_pages = 0x20;
 
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
+                    name: pi_guids::MEMORY_ALLOC_STACK_HOB_GUID,
                     memory_base_address: stack_base_address,
                     memory_length: stack_pages * UEFI_PAGE_SIZE as u64,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -2058,7 +1996,64 @@ mod tests {
             // This should fail to set attributes on the stack because the address
             // is not in the GCD, but should continue processing without panicking
             process_hob_allocations(&hob_list);
-        })
+        });
+    }
+
+    #[test]
+    fn process_hob_allocations_should_not_allocate_fv_in_system_memory() {
+        // Firmware volume HOBs do not claim memory. The pre-DXE phase must describe claimed regions
+        // with memory allocation HOBs instead.
+        with_locked_state(GcdInit::WithHobList(0x1000000), |_physical_hob_list| {
+            // Carve out a page-aligned region of free system memory from the GCD, then free it back so it
+            // becomes free (unallocated) system memory. This is where the FV HOB will point.
+            let fv_len = 0x10000usize; // 64 KiB
+            let fv_base = GCD
+                .allocate_memory_space(
+                    DEFAULT_ALLOCATION_STRATEGY,
+                    GcdMemoryType::SystemMemory,
+                    patina::UEFI_PAGE_SHIFT,
+                    fv_len,
+                    protocol_db::DXE_CORE_HANDLE,
+                    None,
+                )
+                .expect("Failed to reserve system memory for the FV region");
+            GCD.free_memory_space(fv_base, fv_len).expect("Failed to free the FV region back to the GCD");
+
+            // Confirm the region is free system memory before processing the FV HOB.
+            let desc = GCD
+                .get_memory_descriptor_for_address(fv_base as u64, |d, allocated| {
+                    !allocated && d.memory_type == GcdMemoryType::SystemMemory
+                })
+                .unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!(desc.image_handle, INVALID_HANDLE);
+
+            // Build a HOB list containing only the FV HOB pointing at the free system memory region.
+            let fv_hob = patina::pi::hob::FirmwareVolume {
+                header: patina::pi::hob::HobHeader {
+                    r#type: hob::FV,
+                    length: core::mem::size_of::<patina::pi::hob::FirmwareVolume>() as u16,
+                    reserved: 0,
+                },
+                base_address: fv_base as u64,
+                length: fv_len as u64,
+            };
+            let mut hob_list = HobList::default();
+            hob_list.push(Hob::FirmwareVolume(&fv_hob));
+
+            process_hob_allocations(&hob_list);
+
+            // The FV region should remain free system memory.
+            let desc = GCD
+                .get_memory_descriptor_for_address(fv_base as u64, |d, allocated| {
+                    !allocated && d.memory_type != GcdMemoryType::NonExistent
+                })
+                .unwrap();
+            assert_eq!(desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert!(desc.base_address <= fv_base as u64);
+            assert!(desc.base_address + desc.length >= fv_base as u64 + fv_len as u64);
+            assert_eq!(desc.image_handle, INVALID_HANDLE);
+        });
     }
 
     #[test]
@@ -2074,13 +2069,13 @@ mod tests {
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
 
             let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
-                header: patina::pi::hob::header::Hob {
+                header: patina::pi::hob::HobHeader {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
-                    name: guids::HOB_MEMORY_ALLOC_STACK,
+                alloc_descriptor: patina::pi::hob::MemoryAllocationHeader {
+                    name: pi_guids::MEMORY_ALLOC_STACK_HOB_GUID,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
                     memory_type: efi::BOOT_SERVICES_DATA,
@@ -2094,7 +2089,7 @@ mod tests {
             let allocators = ALLOCATORS.lock();
 
             // Verify that the memory allocation HOBs resulted in claimed pages in the allocator.
-            for memory_type in [
+            for memory_type in &[
                 efi::RESERVED_MEMORY_TYPE,
                 efi::LOADER_CODE,
                 efi::LOADER_DATA,
@@ -2105,10 +2100,10 @@ mod tests {
                 efi::ACPI_RECLAIM_MEMORY,
                 efi::ACPI_MEMORY_NVS,
                 efi::PAL_CODE,
-            ]
-            .iter()
-            {
-                let allocator = allocators.get_allocator(*memory_type).unwrap();
+            ] {
+                let allocator = allocators
+                    .get_allocator(*memory_type)
+                    .unwrap_or_else(|| panic!("no allocator for type {memory_type:#x}"));
 
                 let granularity = match *memory_type {
                     efi::RESERVED_MEMORY_TYPE
@@ -2120,31 +2115,34 @@ mod tests {
 
                 let expected_pages = match *memory_type {
                     efi::BOOT_SERVICES_DATA => 3, // Stack + build_test_hob_list allocation
-                    _ => granularity / patina::base::SIZE_4KB,
+                    _ => granularity / patina::SIZE_4KB,
                 };
 
                 let claimed = allocator.stats().claimed_pages;
                 assert_eq!(
                     claimed, expected_pages,
-                    "For memory type {:?}: expected {}, got {}",
-                    memory_type, expected_pages, claimed
+                    "For memory type {memory_type:?}: expected {expected_pages}, got {claimed}"
                 );
             }
 
             // confirm the MMIO memory allocation occurred in the GCD
-            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10000000).unwrap();
+            let mmio_desc = GCD
+                .get_memory_descriptor_for_address(0x10000000, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                .unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10000000);
             assert_eq!(mmio_desc.length, 0x2000);
             assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
 
             // confirm the rest of the MMIO region is not allocated
-            let mmio_desc = GCD.get_existent_memory_descriptor_for_address(0x10002000).unwrap();
+            let mmio_desc = GCD
+                .get_memory_descriptor_for_address(0x10002000, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                .unwrap();
             assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
             assert_eq!(mmio_desc.base_address, 0x10002000);
-            assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+            assert_eq!(mmio_desc.length, 0x2000000 - 0x2000);
             assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
-        })
+        });
     }
 
     #[test]
@@ -2341,6 +2339,7 @@ mod tests {
                 assert!(!buffer_ptr.is_null());
                 assert!(allocator.get_memory_ranges().next().is_some());
 
+                #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
@@ -2361,6 +2360,7 @@ mod tests {
                 assert!(!buffer_ptr.is_null());
                 assert!(allocator.get_memory_ranges().next().is_some());
 
+                #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
@@ -2550,7 +2550,7 @@ mod tests {
                 },
                 efi::Status::SUCCESS
             );
-        })
+        });
     }
 
     #[test]
@@ -2758,7 +2758,7 @@ mod tests {
                 )
             };
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
-        })
+        });
     }
 
     #[test]
@@ -2871,7 +2871,7 @@ mod tests {
                     attribute,
                 })
             );
-            assert!(result.contains(expected), "Expected '{}' in the result for attribute 0x{:X}", expected, attribute);
+            assert!(result.contains(expected), "Expected '{expected}' in the result for attribute 0x{attribute:X}");
         }
     }
 
@@ -2926,8 +2926,7 @@ mod tests {
         // Just verify that the result contains the expected pattern for hex
         assert!(
             result.contains("0X") || result.contains("0x"),
-            "Expected hex representation in result when attributes exceed limit, got: {}",
-            result
+            "Expected hex representation in result when attributes exceed limit, got: {result}"
         );
     }
 
@@ -2996,7 +2995,7 @@ mod tests {
                 })
             );
 
-            assert!(result.contains(expected), "Expected '{}' in result for memory type {}", expected, memory_type);
+            assert!(result.contains(expected), "Expected '{expected}' in result for memory type {memory_type}");
         }
     }
 
@@ -3109,6 +3108,6 @@ mod tests {
             })
         );
         // 3+2+2+2+2 + 4 pipes = 15 characters
-        assert!(result.contains("|"), "Expected pipe-separated format for attributes under the limit");
+        assert!(result.contains('|'), "Expected pipe-separated format for attributes under the limit");
     }
 }

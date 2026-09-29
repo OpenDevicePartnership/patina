@@ -17,8 +17,8 @@ use alloc::vec::Vec;
 use core::mem;
 
 use patina::{
-    boot_services::{BootServices, StandardBootServices},
     component::{Storage, component},
+    uefi::boot_services::{BootServices, StandardBootServices},
     uefi_size_to_pages,
 };
 
@@ -27,8 +27,8 @@ use patina::{
         hob::Hob,
         service::{Service, memory::MemoryManager},
     },
-    efi_types::EfiMemoryType,
     error::EfiError,
+    uefi::memory::EfiMemoryType,
 };
 
 use crate::{
@@ -70,7 +70,7 @@ impl AcpiComponent {
 
     /// Initializes the ACPI system.
     /// Ignore coverage due to the use of `StandardBootServices`.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
         self,
         storage: &mut Storage,

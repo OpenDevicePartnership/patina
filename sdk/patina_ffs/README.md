@@ -67,7 +67,7 @@ use alloc::vec::Vec;
 use patina::pi::fw_fs::ffs;
 use patina_ffs::file::File;
 use patina_ffs::section::{Section, SectionHeader};
-use r_efi::efi;
+use patina::standard::efi;
 
 fn build_driver_section(pe_image: Vec<u8>) -> File {
     let mut file = File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::DRIVER);

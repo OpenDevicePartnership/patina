@@ -36,7 +36,7 @@ impl HobConfig {
             return Err(syn::Error::new(attr.span(), "Expected #[hob = \"GUID\"]"));
         };
 
-        let guid_str = nv.value.to_token_stream().to_string().replace("\"", "");
+        let guid_str = nv.value.to_token_stream().to_string().replace('"', "");
         // Validate the GUID format
         let id = match uuid::Uuid::parse_str(&guid_str) {
             Err(_) => return Err(syn::Error::new(attr.span(), "Invalid GUID format")),
@@ -77,7 +77,7 @@ impl HobConfig {
     /// invalid: `impl SomeTrait for MyStruct<T: Debug> {}`
     fn rhs_generics(&self) -> Generics {
         let mut generics = self.generics();
-        for param in generics.params.iter_mut() {
+        for param in &mut generics.params {
             if let syn::GenericParam::Type(param) = param {
                 param.bounds.clear();
             }
@@ -148,7 +148,7 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
     use proc_macro2::TokenStream;

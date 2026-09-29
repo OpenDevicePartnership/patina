@@ -10,14 +10,103 @@ default_to_workspace = false
 [env]
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --timings"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+# Note: `--profile test` has been set here in the past. Cargo already defaults to test builds
+# with the test profile, so it is removed. cargo-llvm-cov will forward it to `cargo nextest run`
+# where `--profile` is used to incorrectly select a nextest config profile (not a Cargo build profile).
+COV_FLAGS = { value = "--workspace --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
+# Selects the nextest `ci` profile (defined in .config/nextest.toml) automatically when the `CI`
+# variable is set (e.g. GitHub Actions sets this for every job).
+# `NEXTEST_PROFILE` is read natively by `cargo nextest run` and by `cargo llvm-cov ... nextest`.
+# Note: Passing `--profile`/`-P` explicitly on the command line takes precedence over this env var.
+NEXTEST_PROFILE = { value = "ci", condition = { env_set = ["CI"] } }
 
 [env.development]
 RUSTC_PROFILE = "dev"
 
 [env.release]
 RUSTC_PROFILE = "release"
+
+[tasks.install-tools]
+description = """Installs the project tools pinned in the `[tools]` section of
+`rust-toolchain.toml` at their specified versions. Each tool is installed with
+`cargo binstall`, falling back to `cargo install` when a prebuilt binary is not
+available. CI also installs and tests the tools in this section.
+
+`cargo-binstall` (https://github.com/cargo-bins/cargo-binstall) is installed
+automatically with `cargo install` when it is not already present.
+
+Example:
+    `cargo make install-tools`
+"""
+clear = true
+install_crate = false
+script_runner = "@duckscript"
+script = '''
+# cargo-binstall is used to install tools.
+binstall_path = which cargo-binstall
+if is_empty ${binstall_path}
+    echo "==> cargo-binstall not found. Installing it with cargo install..."
+    exec --fail-on-error cargo install cargo-binstall
+end
+
+toolchain_file = readfile rust-toolchain.toml
+lines = split ${toolchain_file} "\n"
+
+# Track whether the current line is inside the `[tools]` section. Parsing runs
+# from the `[tools]` header until the next section header.
+in_tools = set false
+for line in ${lines}
+    trimmed = trim ${line}
+    is_section = starts_with ${trimmed} "["
+    if ${is_section}
+        if eq ${trimmed} "[tools]"
+            in_tools = set true
+        else
+            in_tools = set false
+        end
+    elseif ${in_tools}
+        is_comment = starts_with ${trimmed} "#"
+        is_blank = is_empty ${trimmed}
+        has_assignment = contains ${trimmed} "="
+        # Only process `name = "version"` lines.
+        if not ${is_blank}
+            if not ${is_comment}
+                if ${has_assignment}
+                    kv = split ${trimmed} "="
+                    name = array_get ${kv} 0
+                    name = trim ${name}
+
+                    version = array_get ${kv} 1
+                    version_parts = split ${version} "\""
+                    version = array_get ${version_parts} 1
+
+                    result = exec cargo binstall -y ${name} --version ${version}
+                    output = set "${result.stdout}${result.stderr}"
+                    if not eq ${result.code} "0"
+                        echo "  building ${name} ${version} from source (no prebuilt binary)..."
+                        result = exec cargo install ${name} --version ${version}
+                        output = set "${result.stdout}${result.stderr}"
+                    end
+
+                    if not eq ${result.code} "0"
+                        echo "  FAILED       ${name} ${version}"
+                        echo ${output}
+                        exit 1
+                    end
+
+                    already = contains ${output} "already installed"
+                    if ${already}
+                        echo "  up-to-date   ${name} ${version}"
+                    else
+                        echo "  installed    ${name} ${version}"
+                    end
+                end
+            end
+        end
+    end
+end
+'''
 
 [tasks.individual-package-targets]
 script_runner = "@duckscript"
@@ -88,31 +177,6 @@ command = "cargo"
 args = ["build", "--all-features", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
 dependencies = ["individual-package-targets"]
 
-[tasks.run-bin]
-description = """Runs the standard library DXE core.
-
-Example:
-    `cargo make run-bin`
-    `cargo make -p release run-bin`
-"""
-clear = true
-command = "cargo"
-args = ["run", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
-
-[tasks.build-bin]
-description = """Builds the standard library DXE core.
-
-Customizations:
-    -p [development|release]: Builds in debug or release. Default: development
-
-Example:
-    `cargo make build-bin`
-    `cargo make -p release build-bin`
-"""
-clear = true
-command = "cargo"
-args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
-
 [tasks.check_code_x64]
 description = "Checks rust code for x64 build errors with results."
 private = true
@@ -129,7 +193,7 @@ args = ["check", "--target", "aarch64-unknown-uefi", "--features", "ci_features"
 description = "Checks rust test code for build errors with results."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check-no-default-features-code]
 description = "Checks rust code compiles without default features."
@@ -141,7 +205,7 @@ args = ["check", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 description = "Checks rust test code compiles without default features."
 private = true
 command = "cargo"
-args = ["test", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["nextest", "run", "--no-run", "--no-default-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check-no-default-features]
 description = "Checks rust code and tests compile without default features to catch feature-gate regressions."
@@ -174,18 +238,55 @@ command = "cargo"
 args = ["llvm-cov", "clean", "--workspace"]
 
 [tasks.test]
-description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`"
+description = "Runs tests via cargo-nextest. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`."
 clear = true
 command = "cargo"
-args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+args = ["nextest", "run", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+
+[tasks.test-ignored]
+description = "Runs ignored tests with native cargo test behavior. Example `cargo make test-ignored` or `cargo make test-ignored -p package_name"
+clear = true
+command = "cargo"
+args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--lib", "--tests", "--examples", "--", "--ignored"]
 
 [tasks.test-cov]
 description = "Run tests and collect coverage data without generating reports."
 install_crate = false
 clear = true
+# `coverage_attribute` is deliberately excluded from the default allow-features in
+# .cargo/config.toml so ungated `#[coverage(off)]` fails to compile. Coverage runs set the
+# `coverage` cfg (set by cargo-llvm-cov), which needs the feature, so re-add it here.
+# Note: RUSTFLAGS replaces build.rustflags.
+env = { RUSTFLAGS = "-Z allow-features=c_variadic,allocator_api,coverage_attribute" }
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping test-cov."
+    exit 1
+end
+''']
 command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "--doctests"]
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report", "nextest"]
 dependencies = ["individual-package-targets", "llvm-cov-clean"]
+
+[tasks.test-cov-fallback]
+description = "Runs tests without coverage instrumentation on hosts where test-cov is skipped (currently just aarch64-pc-windows-msvc)."
+clear = true
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if not eq ${target} "aarch64-pc-windows-msvc"
+    exit 1
+end
+''']
+command = "cargo"
+args = ["nextest", "run"]
+dependencies = ["individual-package-targets"]
 
 [tasks.test-asan]
 description = "Run tests with AddressSanitizer enabled. Example `cargo make test-asan`. Use `cargo make test-asan --print-dll-path` to print the ASan runtime DLL directory."
@@ -236,13 +337,27 @@ end
 set_env RUSTFLAGS "-Zsanitizer=address"
 set_env RUSTDOCFLAGS "-Zsanitizer=address"
 target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
-exec --fail-on-error cargo test --target ${target} --workspace --features std
+exec --fail-on-error cargo nextest run --target ${target} --workspace --features std
+# nextest cannot run doctests, so run them separately to keep ASan coverage of doctests too.
+exec --fail-on-error cargo test --doc --target ${target} --workspace --features std
 '''
 
 [tasks.coverage-lcov]
 description = "Generate an LCOV coverage report from collected data."
 install_crate = false
 clear = true
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping coverage-lcov."
+    exit 1
+end
+''']
 command = "cargo"
 args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
 
@@ -250,12 +365,24 @@ args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE
 description = "Generate an HTML coverage report from collected data."
 install_crate = false
 clear = true
+# cargo-llvm-cov is not currently supported on Windows ARM64 hosts.
+# See:
+#   - https://github.com/taiki-e/cargo-llvm-cov/issues/436
+#   - https://github.com/rust-lang/rust/issues/150123
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "cargo-llvm-cov is not supported on aarch64-pc-windows-msvc. Skipping coverage-html."
+    exit 1
+end
+''']
 command = "cargo"
 args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
 
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
-dependencies = ["test-cov", "coverage-lcov", "coverage-html"]
+dependencies = ["test-cov", "test-cov-fallback", "coverage-lcov", "coverage-html"]
 clear = true
 
 [tasks.build-aarch64]
@@ -271,17 +398,25 @@ clear = true
 command = "cargo"
 args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
 dependencies = ["individual-package-targets"]
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "Cross-compiling for x86_64-unknown-uefi from aarch64-pc-windows-msvc is skipped to save build time on Windows ARM64 hosts."
+    exit 1
+end
+''']
 
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--no-deps"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
 clear = true
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--open"]
 
 [tasks.clippy]
 description = "Run cargo clippy for the host target and both UEFI cross-compilation targets."
@@ -353,6 +488,7 @@ doctests link against rlibs built by the same compiler, and points `mdbook test`
 to the mdbook profile `target/mdbook/deps/` directory produced by `build-mdbook-deps`.
 """
 clear = true
+env = { RUSTC_BOOTSTRAP = "1" }
 script_runner = "@duckscript"
 script = '''
 toolchain_file = readfile rust-toolchain.toml
@@ -410,20 +546,24 @@ command = "cargo"
 args = ["vet", "--locked"]
 ignore_errors = false
 
+[tasks.all-preflight]
+private = true
+run_task = [{ name = ["fmt-check", "deny", "cspell"], parallel = true }]
+
 [tasks.all]
 description = "Run all tasks for PR readiness."
-dependencies = [
-    "fmt-check",
-    "deny",
-    "cspell",
-    "clippy",
-    "check-no-default-features",
-    "build",
-    "build-x64",
-    "build-aarch64",
-    "patina-test",
-    "coverage",
-    "doc-test",
-    "doc",
-    "test-mdbook",
-]
+env = { CARGO_INCREMENTAL = "0" }
+run_task = { name = [
+        "all-preflight",
+        "clippy",
+        "check-no-default-features",
+        "build",
+        "build-x64",
+        "build-aarch64",
+        "patina-test",
+        "coverage",
+        "doc-test",
+        "doc",
+        "test-ignored",
+        "test-mdbook",
+    ] }

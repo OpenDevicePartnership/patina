@@ -2,7 +2,7 @@
 //!
 //! This module provides implementation for handling interrupts.
 //!
-//! This module provides implementation for [InterruptManager]. The [Interrupts] struct is the only accessible struct
+//! This module provides implementation for [`InterruptManager`]. The [Interrupts] struct is the only accessible struct
 //! when using this module. The other structs are architecture specific implementations and replace the [Interrupts]
 //! struct at compile time based on the target architecture.
 //!
@@ -16,15 +16,15 @@
 //!
 
 use core::ops::{Deref, DerefMut};
-use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+use patina::{error::EfiError, pi::protocol::cpu_arch::EfiSystemContext, standard};
 
 mod exception_handling;
 
 // The aarch64 module contains all exception handlers and architecture specific code, of little testing value.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 #[cfg(any(target_arch = "aarch64", test))]
 mod aarch64;
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 #[cfg(not(target_os = "uefi"))]
 mod stub;
 #[cfg(any(target_arch = "x86_64", test))]
@@ -39,38 +39,17 @@ cfg_if::cfg_if! {
         /// A stand in implementation of the Interrupts struct. This will be architecture structure defined by the platform
         /// compilation.
         pub type Interrupts = stub::InterruptsStub;
-
-        /// Enables CPU interrupts.
-        #[coverage(off)]
-        pub fn enable_interrupts() {}
-
-        /// Disables CPU interrupts.
-        #[coverage(off)]
-        pub fn disable_interrupts() {}
-
-        /// Gets the current state of CPU interrupts.
-        #[coverage(off)]
-        pub fn get_interrupt_state() -> Result<bool, EfiError> {
-            Ok(false)
-        }
-
     } else if #[cfg(target_arch = "x86_64")] {
         pub type Interrupts = x64::InterruptsX64;
-        pub use x64::enable_interrupts;
-        pub use x64::disable_interrupts;
-        pub use x64::get_interrupt_state;
     } else if #[cfg(target_arch = "aarch64")] {
         pub type Interrupts = aarch64::InterruptsAarch64;
-        pub use aarch64::enable_interrupts;
-        pub use aarch64::disable_interrupts;
-        pub use aarch64::get_interrupt_state;
     }
 }
 
 /// Republished structure for x64 exception context as defined by the UEFI specification.
-pub type ExceptionContextX64 = r_efi::protocols::debug_support::SystemContextX64;
-/// Republished structure for AArch64 exception context as defined by the UEFI specification.
-pub type ExceptionContextAArch64 = r_efi::protocols::debug_support::SystemContextAArch64;
+pub type ExceptionContextX64 = standard::efi::protocols::debug_support::SystemContextX64;
+/// Republished structure for `AArch64` exception context as defined by the UEFI specification.
+pub type ExceptionContextAArch64 = standard::efi::protocols::debug_support::SystemContextAArch64;
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, doc))] {
@@ -154,7 +133,7 @@ macro_rules! log_registers {
 /// Trait for converting the architecture specific context structures into the
 /// UEFI System Context structure.
 pub(crate) trait EfiSystemContextFactory {
-    /// Creates a EfiSystemContext wrapper pointing to the architecture specific context.
+    /// Creates a `EfiSystemContext` wrapper pointing to the architecture specific context.
     fn create_efi_system_context(&mut self) -> EfiSystemContext;
 }
 
@@ -191,7 +170,7 @@ pub enum HandlerType {
     /// No handler is registered.
     None,
     /// Handler is a UEFI compliant routine.
-    UefiRoutine(patina::pi::protocols::cpu_arch::InterruptHandler),
+    UefiRoutine(patina::pi::protocol::cpu_arch::InterruptHandler),
     /// Handler is a implementation of the interrupt handler trait.
     Handler(&'static dyn InterruptHandler),
 }
@@ -219,7 +198,7 @@ pub trait InterruptHandler<T = ExceptionContextArch>: Sync {
     fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext<T>);
 }
 
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 #[cfg(test)]
 mod tests {
     use super::*;

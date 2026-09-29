@@ -1,7 +1,7 @@
 use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
 use patina::pi::fw_fs::{FirmwareVolume, SectionExtractor, SectionMetaData, guid};
-use r_efi::efi;
+use patina::standard::efi;
 use std::{env, error::Error, fmt::Debug, fs, path::Path};
 
 //Rebox and HeapAllocator satisfy BrotliDecompress custom allocation requirement.
@@ -44,7 +44,7 @@ struct BrotliSectionExtractor {}
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &patina::pi::fw_fs::Section) -> Result<Box<[u8]>, efi::Status> {
         if let SectionMetaData::GuidDefined(guid_header, _) = section.meta_data()
-            && guid_header.section_definition_guid == guid::BROTLI_SECTION
+            && guid_header.section_definition_guid == guid::BROTLI_SECTION_GUID
         {
             let data = section.section_data();
             let out_size =
@@ -55,7 +55,7 @@ impl SectionExtractor for BrotliSectionExtractor {
             let mut brotli_state = BrotliState::new(
                 HeapAllocator::<u8> { default_value: 0 },
                 HeapAllocator::<u32> { default_value: 0 },
-                HeapAllocator::<HuffmanCode> { default_value: Default::default() },
+                HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() },
             );
             let in_data = data.get(16..).expect("brotli data follows 16-byte header");
             let mut out_data = vec![0u8; out_size as usize];
@@ -73,9 +73,8 @@ impl SectionExtractor for BrotliSectionExtractor {
 
             if matches!(result, BrotliResult::ResultSuccess) {
                 return Ok(out_data.into_boxed_slice());
-            } else {
-                return Err(efi::Status::VOLUME_CORRUPTED);
             }
+            return Err(efi::Status::VOLUME_CORRUPTED);
         }
         Ok(Box::new([0u8; 0]))
     }
@@ -93,7 +92,7 @@ impl Debug for PrettyMetaData<'_> {
                     &uuid::Uuid::from_bytes(*guid_header.section_definition_guid.as_bytes()),
                 )
                 .finish_non_exhaustive(),
-            section => f.write_fmt(format_args!("{:?}", section)),
+            section => f.write_fmt(format_args!("{section:?}")),
         }
     }
 }

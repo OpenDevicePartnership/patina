@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
+use patina::standard::efi;
 use patina::{
-    base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
         IntoService, Service,
         memory::{
@@ -16,12 +16,11 @@ use patina::{
             PageAllocationStrategy,
         },
     },
-    efi_types::EfiMemoryType,
     error::EfiError,
-    uefi_pages_to_size,
+    uefi::memory::EfiMemoryType,
+    uefi_pages_to_size, {UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
 };
 use patina_test::{patina_test, u_assert, u_assert_eq};
-use r_efi::efi;
 
 use crate::{
     GCD,
@@ -78,12 +77,12 @@ impl MemoryManager for CoreMemoryManager {
     ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages].
+    /// [`Self::allocate_pages`].
     unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
         // SAFETY: The caller must ensure that the provided address is valid.
         let result = unsafe { core_free_pages(address as efi::PhysicalAddress, page_count) };
         match result {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(EfiError::NotFound) => Err(MemoryError::InvalidAddress),
             Err(_) => Err(MemoryError::InternalError),
         }
@@ -91,7 +90,7 @@ impl MemoryManager for CoreMemoryManager {
 
     // Coverage is turned off since this is a simple wrapper function that would necessitate
     // complex mocking to test.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     fn get_allocator(&self, memory_type: EfiMemoryType) -> Result<&'static dyn core::alloc::Allocator, MemoryError> {
         let allocator =
             crate::allocator::core_get_allocator(memory_type.into()).map_err(|_| MemoryError::UnsupportedMemoryType)?;
@@ -216,7 +215,7 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
 }
 
 #[patina_test]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 #[allow(clippy::indexing_slicing)]
 fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
     // Allocate a page, and make sure it is accessible.

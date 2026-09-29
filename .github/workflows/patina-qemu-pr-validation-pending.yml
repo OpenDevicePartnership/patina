@@ -19,7 +19,6 @@ on:
     types: [opened, synchronize, reopened]
     branches:
       - main
-      - major
       - feature/**/*
 
 concurrency:

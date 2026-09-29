@@ -8,19 +8,18 @@
 //!
 use alloc::{vec, vec::Vec};
 use core::{ffi::c_void, mem::size_of};
-use patina::error::EfiError;
-use r_efi::efi;
+use patina::{Char16Str, error::EfiError, standard::efi};
 
 use crate::protocols::PROTOCOL_DB;
 
-/// Provides a wrapper for interacting with SimpleFileSystem
+/// Provides a wrapper for interacting with `SimpleFileSystem`
 pub struct SimpleFile<'a> {
     file: &'a mut efi::protocols::file::Protocol,
 }
 
 impl SimpleFile<'_> {
-    /// Opens the given filename with appropriate mode/attributes and returns a new instance of SimpleFile for it.
-    pub fn open(&mut self, filename: Vec<u16>, mode: u64, attributes: u64) -> Result<Self, EfiError> {
+    /// Opens the given filename with appropriate mode/attributes and returns a new instance of `SimpleFile` for it.
+    pub fn open(&mut self, filename: &Char16Str, mode: u64, attributes: u64) -> Result<Self, EfiError> {
         let mut file_ptr = core::ptr::null_mut();
         // SAFETY: self.file is a valid pointer to a file protocol instance
         // obtained from the protocol database during the construction of this
@@ -29,7 +28,7 @@ impl SimpleFile<'_> {
             (self.file.open)(
                 self.file,
                 core::ptr::addr_of_mut!(file_ptr),
-                filename.as_ptr() as *mut u16,
+                filename.as_ptr().cast_mut(),
                 mode,
                 attributes,
             )
@@ -42,7 +41,7 @@ impl SimpleFile<'_> {
         Ok(Self { file })
     }
 
-    /// Opens the root of a Simple File System and returns a SimpleFile object for it.
+    /// Opens the root of a Simple File System and returns a `SimpleFile` object for it.
     pub fn open_volume(handle: efi::Handle) -> Result<Self, EfiError> {
         // SAFETY: Protocol database returns a valid interface pointer for the handle.
         let sfs = unsafe {
@@ -74,7 +73,7 @@ impl SimpleFile<'_> {
         let status = unsafe {
             (self.file.get_info)(
                 self.file,
-                &efi::protocols::file::INFO_ID as *const efi::Guid as *mut efi::Guid,
+                core::ptr::from_ref::<efi::Guid>(&efi::protocols::file::INFO_ID).cast_mut(),
                 core::ptr::addr_of_mut!(info_size),
                 core::ptr::null_mut(),
             )
@@ -92,13 +91,13 @@ impl SimpleFile<'_> {
         let status = unsafe {
             (self.file.get_info)(
                 self.file,
-                &efi::protocols::file::INFO_ID as *const efi::Guid as *mut efi::Guid,
+                core::ptr::from_ref::<efi::Guid>(&efi::protocols::file::INFO_ID).cast_mut(),
                 core::ptr::addr_of_mut!(info_size),
                 file_info_buffer.as_mut_ptr() as *mut c_void,
             )
         };
 
-        EfiError::status_to_result(status).map(|_| file_info_buffer)
+        EfiError::status_to_result(status).map(|()| file_info_buffer)
     }
 
     /// Returns the size of the file

@@ -46,11 +46,14 @@ This code which `unwrap`s on logger initialization panics unnecessarily:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use patina_adv_logger::{
+    component::AdvancedLoggerComponent,
+    logger::AdvancedLogger,
+};
 use log::LevelFilter;
 use patina::{
-    log::Format,
-    serial::uart::UartNull,
+    debug::log::Format,
+    peripheral::serial::uart::UartNull,
 };
 
 static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
@@ -71,11 +74,14 @@ Consider replacing it with `match` and returning a `Result`:
 # extern crate log;
 # extern crate patina;
 # let hob_list = std::ptr::null();
-# use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+# use patina_adv_logger::{
+#     component::AdvancedLoggerComponent,
+#     logger::AdvancedLogger,
+# };
 # use log::LevelFilter;
 # use patina::{
-#     log::Format,
-#     serial::uart::UartNull,
+#     debug::log::Format,
+#     peripheral::serial::uart::UartNull,
 # };
 # static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
 #     Format::Standard,
@@ -119,8 +125,8 @@ For example, the following excerpt is part of an `extern "efiapi"` function that
 returns an EFI status code, where the status is specific to the error state encountered.
 
 ``` rust
-# extern crate r_efi;
-use r_efi::efi;
+# extern crate patina;
+use patina::standard::efi;
 
 extern "efiapi" fn get_memory_map(
     memory_map_size: *mut usize,
@@ -148,23 +154,23 @@ extern "efiapi" fn get_memory_map(
 }
 ```
 
-In contrast, lets take a look at the patina_internal_collections crate. This crate provides red-black tree and
+In contrast, lets take a look at the `patina_internal_core::collections` module. This module provides red-black tree and
 binary search tree implementations. These implementations have no concept of any other code, so a custom error
-type was created to clearly describe errors that occur if mis-using the crate.
+type was created to clearly describe errors that occur if mis-using the module.
 
-Due to having a custom error type, consumers of patina_internal_collections (such as the GCD) can handle the granular
+Due to having a custom error type, consumers of `patina_internal_core::collections` (such as the GCD) can handle the granular
 errors how it needs, while converting other errors to a higher level error type to be handled by the callers of the
 GCD. This approach allows for detailed logging of issues and handling of more specific errors while also bubbling up
 more generic errors up the chain.
 
-In the example below, we see the chain of errors from a `patina_internal_collections::Error` -> `Gcd::Error` ->
+In the example below, we see the chain of errors from a `patina_internal_core::collections::Error` -> `Gcd::Error` ->
 `EfiError`. At each level, the caller can either handle the specific error, or convert it and pass it up to the
 caller.
 
 ``` rust
-# extern crate patina_internal_collections;
+# extern crate patina_internal_core;
 # extern crate patina;
-use patina_internal_collections::Error as PicError;
+use patina_internal_core::collections::Error as PicError;
 use patina::error::EfiError;
 
 // An error type for working with the GCD
@@ -177,8 +183,8 @@ pub enum Error {
     NotFound,
 }
 
-// The GCD relies on `patina_internal_collections` for allocations, so lets make it easy to convert
-// `patina_internal_collections` errors to our GCD error type.
+// The GCD relies on `patina_internal_core::collections` for allocations, so lets make it easy to convert
+// `patina_internal_core::collections` errors to our GCD error type.
 impl From<PicError> for Error {
     fn from(value: PicError) -> Self {
         match value {

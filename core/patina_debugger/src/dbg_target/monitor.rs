@@ -51,7 +51,7 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
 
         // Check for an offset modifier, and configure the monitor buffer accordingly.
         let cmd = match tokens.next() {
-            Some(token) if token.starts_with("O[") && token.ends_with("]") => {
+            Some(token) if token.starts_with("O[") && token.ends_with(']') => {
                 let offset_str = &token[2..token.len() - 1];
                 let offset: usize = offset_str.parse().ok().unwrap_or(0);
                 buf.set_start_offset(offset);
@@ -66,12 +66,12 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
                 let _ = buf.write_str("External commands:\n");
                 if let Some(state) = self.system_state.try_lock() {
                     state.dump_monitor_commands(&mut buf);
-                };
+                }
             }
             Some("mod") => {
                 self.module_cmd(&mut tokens, &mut buf);
             }
-            Some("reboot") | Some("R") => {
+            Some("reboot" | "R") => {
                 self.reboot = true;
                 let _ = buf.write_str("System will reboot on continue.");
             }
@@ -121,12 +121,11 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
 
 impl PatinaTarget {
     fn module_cmd(&mut self, tokens: &mut SplitWhitespace<'_>, out: &mut dyn Write) {
-        let mut state = match self.system_state.try_lock() {
-            Some(state) => state,
-            None => {
-                let _ = out.write_str("ERROR: Failed to acquire modules lock!");
-                return;
-            }
+        let mut state = if let Some(state) = self.system_state.try_lock() {
+            state
+        } else {
+            let _ = out.write_str("ERROR: Failed to acquire modules lock!");
+            return;
         };
 
         match tokens.next() {
@@ -171,7 +170,7 @@ struct MonitorBuffer<'a, const N: usize> {
 }
 
 impl<'a, const N: usize> MonitorBuffer<'a, N> {
-    /// Creates a new BufferedWriter with the specified log level and writer.
+    /// Creates a new `BufferedWriter` with the specified log level and writer.
     const fn new(out: ConsoleOutput<'a>) -> Self {
         MonitorBuffer { buffer: [0; N], pos: 0, start_offset: 0, out }
     }
@@ -201,12 +200,11 @@ impl<const N: usize> Write for MonitorBuffer<'_, N> {
             if self.start_offset >= len {
                 self.start_offset -= len;
                 return Ok(());
-            } else {
-                // Adjust the data to skip the start offset.
-                data = data.get(self.start_offset..).ok_or(core::fmt::Error)?;
-                len = data.len();
-                self.start_offset = 0; // Reset start offset after using it.
             }
+            // Adjust the data to skip the start offset.
+            data = data.get(self.start_offset..).ok_or(core::fmt::Error)?;
+            len = data.len();
+            self.start_offset = 0; // Reset start offset after using it.
         }
 
         // buffer the message if it will fit.

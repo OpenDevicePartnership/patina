@@ -6,6 +6,8 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Sample components for testing and reference."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true

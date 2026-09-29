@@ -2,8 +2,15 @@
 
 ```admonish tip title="TL;DR"
 - **Cadence:** Update at least once per quarter. Do not jump to a new stable release the day it ships.
-- **Toolchain are specified in:** `rust-toolchain.toml` (nightly channel) and the `rust-version` field in each crate's `Cargo.toml`.
-- **Nightly selection:** Use the "Branched from master" date for the target stable release from [releases.rs](https://releases.rs/).
+- **Toolchain are specified in:** `rust-toolchain.toml` (stable channel) and the `rust-version` field in each crate's
+  `Cargo.toml`.
+- **Stable selection:** Pin the explicit stable release version (for example, `channel = "1.95.0"`) in
+  `rust-toolchain.toml`.
+- **Unstable features:** The pinned stable toolchain builds the unstable feature gates Patina uses via
+  `RUSTC_BOOTSTRAP=1`, set in the `[env]` table of `.cargo/config.toml`. See
+  [Use of Unstable Rust Features in Patina](unstable.md).
+- **MSRV verification:** The `MSRV Check` workflow builds the workspace against the toolchain in the `[msrv]` table of
+  `rust-toolchain.toml`. Keep that table in sync with the `rust-version` field.
 - **Review:** Open the PR against `main`, add the `OpenDevicePartnership/patina-contributors` team, and leave it open for at least three full business days.
 ```
 
@@ -39,26 +46,38 @@ A quick way to check if the minimum supported Rust version needs to change is to
 release in your workspace and then revert the Rust toolchain to the previous version. If the project fails to build,
 then the minimum supported Rust version needs to be updated.
 
-## Choosing a Nightly Version
+### Automated MSRV Verification
 
-Patina currently builds against nightly Rust since the project depends on a small number of unstable features. Unless
-there is a compelling reason to update the nightly version, it is recommended to continue using the same nightly version
-until the next stable release. The project typically takes the nightly version listed as the "Branched from master" date
-for the release on [releases.rs](https://releases.rs/). For example, the [1.97.0](https://releases.rs/docs/1.97.0/)
-release has a "branched from master on" date of "22 May, 2026".
+The minimum supported Rust version is also verified automatically by the `MSRV Check` workflow
+(`.github/workflows/msrv-check.yml`). This workflow builds and tests the workspace against the toolchain declared in the
+`[msrv]` table of `rust-toolchain.toml` (rather than the primary `[toolchain]` channel used for day-to-day development).
 
-````admonish tip
-If you need to find the commit that the stable release was branched from, you can use `git` to find the commit hash
-working within the <https://github.com/rust-lang/rust> repository. For example, `git merge-base main 1.95.0` returns
-`67aec36df76a7b67b71a8ee47684467e16f1847e`. `git show 67aec36df76a7b67b71a8ee47684467e16f1847e` returns:
+The `[msrv]` table pins the stable release that corresponds to the `rust-version` declared in the crates' `Cargo.toml`
+files:
 
-```text
-commit 67aec36df76a7b67b71a8ee47684467e16f1847e
-Merge: 3a70d0349fa 70da8044517
-Author: bors <bors@rust-lang.org>
-Date:   Fri Feb 27 22:04:20 2026 +0000
+```toml
+[msrv]
+channel = "1.89.0"   # matches rust-version = "1.89"
 ```
 
-[releases.rs - 1.95.0](https://releases.rs/docs/1.95.0/) also lists the "Branched from master on" date as
-"27 Feb, 2026".
-````
+The workflow runs on a daily schedule and on any pull request that modifies `rust-toolchain.toml`. This catches cases
+where a change unintentionally relies on functionality newer than the declared minimum. When you raise the minimum
+supported Rust version, update the `[msrv]` table's `channel` to the stable release that matches the new `rust-version`.
+
+## Choosing a Stable Version
+
+Patina builds against a pinned stable Rust release. The small number of unstable features the project still depends on
+are compiled by setting `RUSTC_BOOTSTRAP=1` in the `[env]` table of `.cargo/config.toml`, which lets the stable
+toolchain accept `#![feature(...)]` gates. See [Use of Unstable Rust Features in Patina](unstable.md) for the
+feature policy and the `-Z allow-features` list that restricts which gates are permitted.
+
+Pin the explicit stable release in `rust-toolchain.toml`:
+
+```toml
+[toolchain]
+channel = "1.95.0"
+```
+
+Use an explicit version rather than the floating `stable` channel so builds stay reproducible and each toolchain move is
+an intentional, reviewable change. Available stable releases are listed on [releases.rs](https://releases.rs/)
+and [the Rust release schedule](https://forge.rust-lang.org/).

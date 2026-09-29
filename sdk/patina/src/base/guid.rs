@@ -30,9 +30,9 @@
 //! - Working with zerocopy parsing of binary data
 //! - Storing GUIDs in structures that will be cast from byte buffers
 //!
-//! Unlike the Guid types, BinaryGuid is designed for exact binary compatibility with
+//! Unlike the Guid types, `BinaryGuid` is designed for exact binary compatibility with
 //! C structures and does not provide as many ergonomic features as the more generic
-//! Guid and OwnedGuid types.
+//! Guid and `OwnedGuid` types.
 //!
 //! For example, a structure that has a GUID at offset zero would expect a binary layout of:
 //!
@@ -43,14 +43,13 @@
 //! > `struct offset 0: [discriminant tag] + [16 bytes efi::Guid data]`
 //!
 //! Note that the enum discriminant adds extra bytes, making it incompatible with C layouts. However, the actual
-//! GUID data inside the enum is still binary compatible with the UEFI Specification and `r_efi::efi::Guid`, it is
-//! just the enum wrapper that adds overhead.
+//! GUID data inside the enum is still binary compatible with the UEFI Specification and `patina::standard::efi::Guid`,
+//! it is just the enum wrapper that adds overhead.
 //!
 //! ## Examples
 //!
 //! ```rust
-//! use patina::{Guid, OwnedGuid, GuidError};
-//! use r_efi::efi;
+//! use patina::{standard::efi, Guid, OwnedGuid, GuidError};
 //!
 //! // Creating from existing efi::Guid reference
 //! let efi_guid = efi::Guid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
@@ -83,8 +82,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::error::EfiError;
-use r_efi::efi;
+mod constants;
+pub use constants::*;
+
+use crate::base::error::EfiError;
+use crate::standard::efi;
 
 /// The expected number of hexadecimal characters in a valid GUID string representation
 const EXPECTED_HEX_CHARS: usize = 32;
@@ -164,7 +166,7 @@ pub type OwnedGuid = Guid<'static>;
 
 /// A binary-compatible GUID wrapper for use in `#[repr(C)]` structures.
 ///
-/// This type is a transparent wrapper around `r_efi::efi::Guid` that maintains binary
+/// This type is a transparent wrapper around `patina::standard::efi::Guid` that maintains binary
 /// compatibility with C structures while providing zerocopy safety through derive macros.
 ///
 /// # When to use `BinaryGuid`
@@ -183,7 +185,7 @@ pub type OwnedGuid = Guid<'static>;
 ///
 /// ```rust
 /// use patina::BinaryGuid;
-/// use r_efi::efi;
+/// use patina::standard::efi;
 ///
 /// // In structure definitions
 /// #[repr(C)]
@@ -200,18 +202,21 @@ pub type OwnedGuid = Guid<'static>;
 /// println!("Header GUID: {}", header.guid.as_guid());
 /// ```
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinaryGuid(pub efi::Guid);
 
 impl BinaryGuid {
-    /// Create a BinaryGuid from individual GUID fields.
+    /// A constant representing a GUID with all zero bytes.
+    pub const ZERO: BinaryGuid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+
+    /// Create a `BinaryGuid` from individual GUID fields.
     ///
     /// This is a const function that can be used to create compile-time constants.
     pub const fn from_fields(d1: u32, d2: u16, d3: u16, d4: u8, d5: u8, d6: &[u8; 6]) -> Self {
         Self(efi::Guid::from_fields(d1, d2, d3, d4, d5, d6))
     }
 
-    /// Create a BinaryGuid from a 16-byte array.
+    /// Create a `BinaryGuid` from a 16-byte array.
     pub const fn from_bytes(bytes: &[u8; 16]) -> Self {
         Self(efi::Guid::from_bytes(bytes))
     }
@@ -224,7 +229,7 @@ impl BinaryGuid {
         }
     }
 
-    /// Create a new BinaryGuid from a string representation, panicking on invalid input.
+    /// Create a new `BinaryGuid` from a string representation, panicking on invalid input.
     pub const fn from_string(s: &str) -> BinaryGuid {
         match Self::try_from_string(s) {
             Ok(guid) => guid,
@@ -260,23 +265,23 @@ impl BinaryGuid {
         self.0.as_fields()
     }
 
-    /// Get the underlying `r_efi::efi::Guid` value.
+    /// Get the underlying `patina::standard::efi::Guid` value.
     pub const fn into_inner(&self) -> efi::Guid {
         self.0
     }
 
-    /// Get a reference to the underlying `r_efi::efi::Guid`.
+    /// Get a reference to the underlying `patina::standard::efi::Guid`.
     pub const fn as_efi_guid(&self) -> &efi::Guid {
         &self.0
     }
 
-    /// Get a mutable reference to the underlying `r_efi::efi::Guid`.
+    /// Get a mutable reference to the underlying `patina::standard::efi::Guid`.
     pub fn as_mut_efi_guid(&mut self) -> &mut efi::Guid {
         &mut self.0
     }
 }
 
-// Conversions from r_efi::efi::Guid
+// Conversions from crate::standard::efi::Guid
 impl From<efi::Guid> for BinaryGuid {
     fn from(guid: efi::Guid) -> Self {
         Self(guid)
@@ -289,7 +294,7 @@ impl From<&efi::Guid> for BinaryGuid {
     }
 }
 
-// Conversions to r_efi::efi::Guid
+// Conversions to crate::standard::efi::Guid
 impl From<BinaryGuid> for efi::Guid {
     fn from(guid: BinaryGuid) -> Self {
         guid.0
@@ -356,7 +361,7 @@ impl<'a> PartialEq<Guid<'a>> for BinaryGuid {
     }
 }
 
-impl<'a> PartialEq<BinaryGuid> for Guid<'a> {
+impl PartialEq<BinaryGuid> for Guid<'_> {
     fn eq(&self, other: &BinaryGuid) -> bool {
         self.to_efi_guid() == other.0
     }
@@ -364,6 +369,13 @@ impl<'a> PartialEq<BinaryGuid> for Guid<'a> {
 
 // Display using Guid's implementation
 impl core::fmt::Display for BinaryGuid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_guid().fmt(f)
+    }
+}
+
+// Debug using Guid's implementation
+impl core::fmt::Debug for BinaryGuid {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.as_guid().fmt(f)
     }
@@ -393,7 +405,7 @@ impl<'a> Guid<'a> {
     }
 
     /// Get the GUID fields as individual components for compatibility with the EFI GUID fields.
-    /// Returns: (time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, node)
+    /// Returns: (`time_low`, `time_mid`, `time_hi_and_version`, `clk_seq_hi_res`, `clk_seq_low`, node)
     pub fn as_fields(&self) -> (u32, u16, u16, u8, u8, &[u8; 6]) {
         match self {
             Self::Borrowed(guid) => guid.as_fields(),
@@ -401,10 +413,10 @@ impl<'a> Guid<'a> {
         }
     }
 
-    /// Convert this GUID to an r_efi::efi::Guid for compatibility with code that directly
+    /// Convert this GUID to an `crate::standard::efi::Guid` for compatibility with code that directly
     /// interacts with that interface.
     ///
-    /// Creates a new r_efi::efi::Guid with the same value.
+    /// Creates a new `crate::standard::efi::Guid` with the same value.
     pub fn to_efi_guid(&self) -> efi::Guid {
         match self {
             Self::Borrowed(guid) => **guid,
@@ -438,13 +450,13 @@ impl<'a> Guid<'a> {
 
         // Format each field as uppercase hex
         add_hex(time_low, 8);
-        add_hex(time_mid as u32, 4);
-        add_hex(time_hi_and_version as u32, 4);
-        add_hex(clk_seq_hi_res as u32, 2);
-        add_hex(clk_seq_low as u32, 2);
+        add_hex(u32::from(time_mid), 4);
+        add_hex(u32::from(time_hi_and_version), 4);
+        add_hex(u32::from(clk_seq_hi_res), 2);
+        add_hex(u32::from(clk_seq_low), 2);
 
-        for &byte in node.iter() {
-            add_hex(byte as u32, 2);
+        for &byte in node {
+            add_hex(u32::from(byte), 2);
         }
 
         result
@@ -454,8 +466,8 @@ impl<'a> Guid<'a> {
 impl OwnedGuid {
     /// Create a new GUID from raw field values.
     ///
-    /// This constant method creates GUIDs using the standard GUID fields of time_low, time_mid,
-    /// time_hi_and_version, clk_seq_hi_res, clk_seq_low, and the 6-byte node array.
+    /// This constant method creates GUIDs using the standard GUID fields of `time_low`, `time_mid`,
+    /// `time_hi_and_version`, `clk_seq_hi_res`, `clk_seq_low`, and the 6-byte node array.
     pub const fn from_fields(
         time_low: u32,
         time_mid: u16,
@@ -473,7 +485,7 @@ impl OwnedGuid {
     /// This is useful for placeholder values and comparisons.
     pub const ZERO: OwnedGuid = Self::from_fields(0, 0, 0, 0, 0, [0; 6]);
 
-    /// Create a new OwnedGuid from a string representation.
+    /// Create a new `OwnedGuid` from a string representation.
     pub const fn try_from_string(s: &str) -> core::result::Result<OwnedGuid, GuidError> {
         match guid_from_str(s) {
             Ok(g) => Ok(OwnedGuid::Owned(g)),
@@ -481,7 +493,7 @@ impl OwnedGuid {
         }
     }
 
-    /// Creates a new OwnedGuid from a string representation, panicking on invalid input.
+    /// Creates a new `OwnedGuid` from a string representation, panicking on invalid input.
     pub const fn from_string(s: &str) -> OwnedGuid {
         match Self::try_from_string(s) {
             Ok(guid) => guid,
@@ -498,7 +510,7 @@ impl core::fmt::Display for Guid<'_> {
             if DASH_POSITIONS.contains(&i) {
                 write!(f, "-")?;
             }
-            write!(f, "{}", c)?;
+            write!(f, "{c}")?;
         }
         Ok(())
     }
@@ -507,7 +519,7 @@ impl core::fmt::Display for Guid<'_> {
 impl core::fmt::Debug for Guid<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use the Display format for Debug as well, since this is more useful for GUIDs
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -578,7 +590,7 @@ macro_rules! parse_hex {
 // All byte accesses are guarded by `while i < s.len()` and `char_count < EXPECTED_HEX_CHARS`.
 // .get() cannot be used here because it is not const-stable.
 #[allow(clippy::indexing_slicing)]
-const fn guid_from_str(s: &str) -> core::result::Result<r_efi::efi::Guid, GuidError> {
+const fn guid_from_str(s: &str) -> core::result::Result<crate::standard::efi::Guid, GuidError> {
     let mut chars = [' '; EXPECTED_HEX_CHARS];
     let mut char_count = 0;
     let bytes = s.as_bytes();
@@ -621,7 +633,14 @@ const fn guid_from_str(s: &str) -> core::result::Result<r_efi::efi::Guid, GuidEr
         parse_hex!(chars, 30, 2, u8),
     ];
 
-    Ok(r_efi::efi::Guid::from_fields(time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, &node))
+    Ok(crate::standard::efi::Guid::from_fields(
+        time_low,
+        time_mid,
+        time_hi_and_version,
+        clk_seq_hi_res,
+        clk_seq_low,
+        &node,
+    ))
 }
 
 /// Converts a single hex character (represented as a char) to its corresponding u8 value
@@ -639,11 +658,11 @@ const fn char_to_val(c: char) -> u8 {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::standard::efi as r_efi_base;
     use core::mem::{align_of, size_of};
-    use r_efi::base as r_efi_base;
 
     const TEST_GUID_FIELDS: (u32, u16, u16, u8, u8, &[u8; 6]) =
         (0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
@@ -687,7 +706,7 @@ mod tests {
         // Both variants must produce identical byte representation
         assert_eq!(patina_guid_from_ref.as_bytes(), patina_guid_from_string.as_bytes());
 
-        // Memory layout with r_efi::efi::Guid should be the same
+        // Memory layout with crate::standard::efi::Guid should be the same
         assert_eq!(patina_guid_from_ref.as_bytes(), *r_efi_guid.as_bytes());
         assert_eq!(patina_guid_from_string.as_bytes(), *r_efi_guid.as_bytes());
 
@@ -697,11 +716,11 @@ mod tests {
                 assert_eq!(size_of::<efi::Guid>(), 16);
                 assert_eq!(guid.as_fields(), TEST_GUID_FIELDS);
             }
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         }
 
         let bytes_from_patina = patina_guid_from_ref.as_bytes();
-        let roundtrip_r_efi = r_efi::efi::Guid::from_bytes(&bytes_from_patina);
+        let roundtrip_r_efi = crate::standard::efi::Guid::from_bytes(&bytes_from_patina);
         assert_eq!(roundtrip_r_efi.as_bytes(), r_efi_guid.as_bytes());
     }
 
@@ -711,7 +730,7 @@ mod tests {
         let original_string_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Convert to a string with Display and back to a Patina GUID
-        let display_string = format!("{}", original_string_guid);
+        let display_string = format!("{original_string_guid}");
         let roundtrip_guid = OwnedGuid::from_string(&display_string);
 
         assert_eq!(original_string_guid.as_bytes(), roundtrip_guid.as_bytes());
@@ -720,7 +739,7 @@ mod tests {
         // Test the other direction
         let r_efi_guid = create_test_r_efi_guid();
         let ref_guid = Guid::from_ref(&r_efi_guid);
-        let ref_display = format!("{}", ref_guid);
+        let ref_display = format!("{ref_guid}");
         let bytes_guid = OwnedGuid::from_string(&ref_display);
 
         assert_eq!(ref_guid.as_bytes(), bytes_guid.as_bytes());
@@ -743,8 +762,8 @@ mod tests {
         assert_eq!(bytes_from_string, bytes_from_ref);
 
         // Test Display formatting consistency
-        let display_from_string = format!("{}", test_guid);
-        let display_from_ref = format!("{}", ref_guid);
+        let display_from_string = format!("{test_guid}");
+        let display_from_ref = format!("{ref_guid}");
         assert_eq!(display_from_string, display_from_ref);
         assert_eq!(display_from_string, TEST_GUID_STRING_UPPER);
     }
@@ -771,9 +790,7 @@ mod tests {
         // Allow some overhead for enum discriminant and alignment, but should be minimal
         assert!(
             patina_size <= guid_size + 8,
-            "Patina GUID size ({}) is within expected limits ({})",
-            patina_size,
-            guid_size
+            "Patina GUID size ({patina_size}) is within expected limits ({guid_size})"
         );
     }
 
@@ -784,26 +801,26 @@ mod tests {
         let ref_guid = Guid::from_ref(&r_efi_guid);
         match ref_guid {
             Guid::Borrowed(_) => {}
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         }
 
         let bytes_guid = OwnedGuid::from_string(TEST_GUID_STRING);
         match bytes_guid {
             Guid::Owned(_) => {}
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         }
 
         assert_eq!(ref_guid.as_bytes(), bytes_guid.as_bytes());
         assert_eq!(ref_guid, bytes_guid);
-        assert_eq!(format!("{}", ref_guid), format!("{}", bytes_guid));
+        assert_eq!(format!("{ref_guid}"), format!("{}", bytes_guid));
 
         let ref_guid_clone = ref_guid.clone();
         let bytes_guid_clone = bytes_guid.clone();
         assert_eq!(ref_guid, ref_guid_clone);
         assert_eq!(bytes_guid, bytes_guid_clone);
 
-        let debug_ref = format!("{:?}", ref_guid);
-        let debug_bytes = format!("{:?}", bytes_guid);
+        let debug_ref = format!("{ref_guid:?}");
+        let debug_bytes = format!("{bytes_guid:?}");
         assert_eq!(debug_ref, debug_bytes);
         assert_eq!(debug_ref, TEST_GUID_STRING_UPPER);
     }
@@ -827,7 +844,7 @@ mod tests {
             Guid::Borrowed(guid_ref) => {
                 assert_eq!(guid_ref.as_fields(), TEST_GUID_FIELDS);
             }
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         }
     }
 
@@ -837,11 +854,11 @@ mod tests {
 
         for input in test_cases {
             let result = OwnedGuid::try_from_string(input);
-            assert!(result.is_ok(), "Failed to parse valid GUID string: {}", input);
+            assert!(result.is_ok(), "Failed to parse valid GUID string: {input}");
 
             match result.unwrap() {
                 Guid::Owned(_) => {}
-                _ => panic!("Expected Owned variant"),
+                Guid::Borrowed(_) => panic!("Expected Owned variant"),
             }
         }
     }
@@ -853,11 +870,13 @@ mod tests {
 
         for (input, _expected_count) in invalid_cases {
             let result = OwnedGuid::try_from_string(input);
-            assert!(result.is_err(), "Should have failed for invalid length: {}", input);
+            assert!(result.is_err(), "Should have failed for invalid length: {input}");
 
             match result.unwrap_err() {
                 GuidError::InvalidLength { .. } => {}
-                other => panic!("Expected InvalidLength error for: {}, got: {:?}", input, other),
+                other @ GuidError::InvalidHexCharacter { .. } => {
+                    panic!("Expected InvalidLength error for: {input}, got: {other:?}")
+                }
             }
         }
     }
@@ -868,7 +887,7 @@ mod tests {
 
         for input in invalid_cases {
             let result = OwnedGuid::try_from_string(input);
-            assert!(result.is_err(), "Should have failed for invalid input: {}", input);
+            assert!(result.is_err(), "Should have failed for invalid input: {input}");
         }
     }
 
@@ -879,11 +898,11 @@ mod tests {
 
         for input in invalid_cases {
             let result = OwnedGuid::try_from_string(input);
-            assert!(result.is_err(), "Should have failed for invalid character: {}", input);
+            assert!(result.is_err(), "Should have failed for invalid character: {input}");
 
             match result.unwrap_err() {
                 GuidError::InvalidHexCharacter { .. } => {}
-                _ => panic!("Expected InvalidHexCharacter error for: {}", input),
+                GuidError::InvalidLength { .. } => panic!("Expected InvalidHexCharacter error for: {input}"),
             }
         }
     }
@@ -905,7 +924,7 @@ mod tests {
     fn display_from_ref() {
         let r_efi_guid = create_test_r_efi_guid();
         let guid = Guid::from_ref(&r_efi_guid);
-        let display_string = format!("{}", guid);
+        let display_string = format!("{guid}");
 
         assert_eq!(display_string, TEST_GUID_STRING_UPPER);
     }
@@ -916,7 +935,7 @@ mod tests {
 
         for input in test_cases {
             let guid = OwnedGuid::try_from_string(input).expect("Valid GUID string should parse");
-            let display_string = format!("{}", guid);
+            let display_string = format!("{guid}");
             assert_eq!(display_string, TEST_GUID_STRING_UPPER);
         }
     }
@@ -925,7 +944,7 @@ mod tests {
     fn debug_format() {
         let r_efi_guid = create_test_r_efi_guid();
         let guid = Guid::from_ref(&r_efi_guid);
-        let debug_string = format!("{:?}", guid);
+        let debug_string = format!("{guid:?}");
 
         assert_eq!(debug_string, TEST_GUID_STRING_UPPER);
     }
@@ -953,7 +972,7 @@ mod tests {
 
         for input in test_cases {
             let guid_from_string = OwnedGuid::from_string(input);
-            assert_eq!(guid_from_ref, guid_from_string, "Failed for input: {}", input);
+            assert_eq!(guid_from_ref, guid_from_string, "Failed for input: {input}");
         }
     }
 
@@ -1018,7 +1037,7 @@ mod tests {
     fn whitespace_handling() {
         let spaced_guid = " 550e8400-e29b-41d4-a716-446655440000 ";
         let guid = OwnedGuid::try_from_string(spaced_guid).expect("Should handle whitespace");
-        assert_eq!(format!("{}", guid), TEST_GUID_STRING_UPPER);
+        assert_eq!(format!("{guid}"), TEST_GUID_STRING_UPPER);
     }
 
     #[test]
@@ -1035,11 +1054,11 @@ mod tests {
     #[test]
     fn error_display() {
         let error = GuidError::InvalidLength { expected: 32, actual: 30 };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Invalid GUID length: expected 32 hex characters, found 30");
 
         let error = GuidError::InvalidHexCharacter { position: 5, character: 'z' };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Invalid hex character 'z' at position 5");
     }
 
@@ -1056,17 +1075,17 @@ mod tests {
 
         let patina_fields = match patina_guid {
             Guid::Borrowed(guid) => guid.as_fields(),
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
         let r_efi_fields = r_efi_guid.as_fields();
 
         assert_eq!(patina_fields, r_efi_fields);
         assert_eq!(patina_fields, TEST_GUID_FIELDS);
 
-        let r_efi_ptr = &r_efi_guid as *const r_efi_base::Guid;
+        let r_efi_ptr = &raw const r_efi_guid;
         let patina_ptr = match patina_guid {
-            Guid::Borrowed(guid) => guid as *const efi::Guid,
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Borrowed(guid) => std::ptr::from_ref::<efi::Guid>(guid),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
 
         assert_eq!(r_efi_ptr as *const u8, patina_ptr as *const u8);
@@ -1094,7 +1113,7 @@ mod tests {
 
         let patina_fields = match patina_guid {
             Guid::Owned(ref guid) => guid.as_fields(),
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         };
         let r_efi_fields = r_efi_guid.as_fields();
 
@@ -1103,18 +1122,18 @@ mod tests {
 
         let patina_as_efi = match &patina_guid {
             Guid::Owned(guid) => *guid,
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         };
 
         assert_eq!(core::mem::size_of_val(&patina_as_efi), 16);
         assert_eq!(patina_as_efi.as_bytes(), r_efi_guid.as_bytes());
 
-        let patina_ptr = &patina_as_efi as *const efi::Guid;
+        let patina_ptr = &raw const patina_as_efi;
         // SAFETY: Both pointers reference valid GUID structures of known size (16 bytes).
         // The memory representation is being read to verify binary compatibility.
         unsafe {
             let patina_slice = core::slice::from_raw_parts(patina_ptr as *const u8, 16);
-            let r_efi_slice = core::slice::from_raw_parts(&r_efi_guid as *const _ as *const u8, 16);
+            let r_efi_slice = core::slice::from_raw_parts(&raw const r_efi_guid as *const u8, 16);
             assert_eq!(patina_slice, r_efi_slice);
         }
     }
@@ -1134,11 +1153,11 @@ mod tests {
 
         let ref_fields = match from_ref_guid {
             Guid::Borrowed(guid) => guid.as_fields(),
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
         let bytes_fields = match from_bytes_guid {
             Guid::Owned(ref guid) => guid.as_fields(),
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         };
 
         assert_eq!(ref_fields, bytes_fields);
@@ -1146,11 +1165,11 @@ mod tests {
 
         let ref_c_guid = match from_ref_guid {
             Guid::Borrowed(guid) => guid,
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
         let bytes_c_guid = match &from_bytes_guid {
             Guid::Owned(guid) => *guid,
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         };
 
         assert_eq!(ref_c_guid.as_bytes(), bytes_c_guid.as_bytes());
@@ -1169,15 +1188,15 @@ mod tests {
 
         let ref_c_guid = match from_ref_guid {
             Guid::Borrowed(guid) => guid,
-            _ => panic!("Expected Borrowed variant"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
         let bytes_c_guid = match &from_bytes_guid {
             Guid::Owned(guid) => *guid,
-            _ => panic!("Expected Owned variant"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant"),
         };
 
-        let ref_ptr = ref_c_guid as *const efi::Guid;
-        let bytes_ptr = &bytes_c_guid as *const efi::Guid;
+        let ref_ptr = std::ptr::from_ref::<efi::Guid>(ref_c_guid);
+        let bytes_ptr = &raw const bytes_c_guid;
 
         assert_eq!(ref_ptr as usize % align_of::<efi::Guid>(), 0);
         assert_eq!(bytes_ptr as usize % align_of::<efi::Guid>(), 0);
@@ -1206,10 +1225,10 @@ mod tests {
         assert_eq!(from_bytes_guid.as_bytes(), expected_bytes);
         assert_eq!(r_efi_guid.as_bytes(), &expected_bytes);
 
-        // SAFETY: r_efi_ptr points to a valid r_efi::Guid with a known size of 16 bytes.
+        // SAFETY: r_efi_ptr points to a valid crate::standard::Guid with a known size of 16 bytes.
         // The memory representation is being read to verify it matches the expected bytes.
         unsafe {
-            let r_efi_ptr = &r_efi_guid as *const r_efi_base::Guid;
+            let r_efi_ptr = &raw const r_efi_guid;
             let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr as *const u8, 16);
             assert_eq!(r_efi_slice, expected_bytes);
         }
@@ -1236,7 +1255,7 @@ mod tests {
 
         match guid_from_bytes {
             Guid::Owned(_) => {}
-            _ => panic!("Expected Owned variant from from_bytes"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant from from_bytes"),
         }
 
         // Verify the fields match expected values
@@ -1244,7 +1263,7 @@ mod tests {
         assert_eq!(fields, TEST_GUID_FIELDS);
 
         // Verify display formatting
-        assert_eq!(format!("{}", guid_from_bytes), TEST_GUID_STRING_UPPER);
+        assert_eq!(format!("{guid_from_bytes}"), TEST_GUID_STRING_UPPER);
     }
 
     #[test]
@@ -1262,8 +1281,8 @@ mod tests {
         let binary_guid = BinaryGuid(efi_guid);
 
         // Verify the memory layout is identical
-        let efi_ptr = &efi_guid as *const efi::Guid as *const u8;
-        let binary_ptr = &binary_guid as *const BinaryGuid as *const u8;
+        let efi_ptr = &raw const efi_guid as *const u8;
+        let binary_ptr = &raw const binary_guid as *const u8;
 
         // SAFETY: Both pointers point to valid GUID structures with repr(transparent) layout.
         // 16 bytes is being read to verify binary compatibility.
@@ -1311,7 +1330,7 @@ mod tests {
 
         for input in test_cases {
             let result = BinaryGuid::try_from_string(input);
-            assert!(result.is_ok(), "Failed to parse valid GUID string: {}", input);
+            assert!(result.is_ok(), "Failed to parse valid GUID string: {input}");
 
             let binary_guid = result.unwrap();
             assert_eq!(binary_guid.as_fields(), TEST_GUID_FIELDS);
@@ -1330,12 +1349,12 @@ mod tests {
         // Should create a borrowed Guid
         match guid_ref {
             Guid::Borrowed(_) => {}
-            _ => panic!("Expected Borrowed variant from as_guid()"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant from as_guid()"),
         }
 
         // Should have same fields and display
         assert_eq!(guid_ref.as_fields(), binary_guid.as_fields());
-        assert_eq!(format!("{}", guid_ref), format!("{}", binary_guid));
+        assert_eq!(format!("{guid_ref}"), format!("{}", binary_guid));
     }
 
     #[test]
@@ -1347,12 +1366,12 @@ mod tests {
         // Should create an owned Guid
         match owned_guid {
             Guid::Owned(_) => {}
-            _ => panic!("Expected Owned variant from to_owned_guid()"),
+            Guid::Borrowed(_) => panic!("Expected Owned variant from to_owned_guid()"),
         }
 
         // Should have same fields and display
         assert_eq!(owned_guid.as_fields(), binary_guid.as_fields());
-        assert_eq!(format!("{}", owned_guid), format!("{}", binary_guid));
+        assert_eq!(format!("{owned_guid}"), format!("{}", binary_guid));
     }
 
     #[test]
@@ -1425,7 +1444,7 @@ mod tests {
         // Test round-trip
         let back_to_owned: OwnedGuid = binary_guid_from_owned.into();
         assert_eq!(back_to_owned.as_fields(), TEST_GUID_FIELDS);
-        assert_eq!(format!("{}", back_to_owned), TEST_GUID_STRING_UPPER);
+        assert_eq!(format!("{back_to_owned}"), TEST_GUID_STRING_UPPER);
     }
 
     #[test]
@@ -1437,11 +1456,11 @@ mod tests {
         let guid_from_ref: Guid = (&binary_guid).into();
         match guid_from_ref {
             Guid::Borrowed(_) => {}
-            _ => panic!("Expected Borrowed variant from &BinaryGuid conversion"),
+            Guid::Owned(_) => panic!("Expected Borrowed variant from &BinaryGuid conversion"),
         }
 
         assert_eq!(guid_from_ref.as_fields(), binary_guid.as_fields());
-        assert_eq!(format!("{}", guid_from_ref), format!("{}", binary_guid));
+        assert_eq!(format!("{guid_from_ref}"), format!("{}", binary_guid));
     }
 
     #[test]
@@ -1501,23 +1520,23 @@ mod tests {
     fn binary_guid_display() {
         let binary_guid =
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
-        let display_string = format!("{}", binary_guid);
+        let display_string = format!("{binary_guid}");
 
         assert_eq!(display_string, TEST_GUID_STRING_UPPER);
 
         // Should match the display of equivalent Guid types
         let owned_guid = OwnedGuid::from_string(TEST_GUID_STRING);
-        assert_eq!(format!("{}", binary_guid), format!("{}", owned_guid));
+        assert_eq!(format!("{binary_guid}"), format!("{}", owned_guid));
     }
 
     #[test]
     fn binary_guid_debug() {
         let binary_guid =
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
-        let debug_string = format!("{:?}", binary_guid);
+        let debug_string = format!("{binary_guid:?}");
 
-        // Debug should show the full type and inner value
-        assert!(debug_string.contains("BinaryGuid"));
+        // Defers to Guid's Debug impl
+        assert_eq!(debug_string, TEST_GUID_STRING_UPPER);
     }
 
     #[test]
@@ -1559,7 +1578,7 @@ mod tests {
 
             fn write(&mut self, bytes: &[u8]) {
                 for &byte in bytes {
-                    self.state = self.state.wrapping_mul(31).wrapping_add(byte as u64);
+                    self.state = self.state.wrapping_mul(31).wrapping_add(u64::from(byte));
                 }
             }
         }
@@ -1612,8 +1631,7 @@ mod tests {
                 let guid_ord = a.to_owned_guid().cmp(&b.to_owned_guid());
                 assert_eq!(
                     binary_ord, guid_ord,
-                    "Ordering mismatch at guids[{i}] vs guids[{j}]: BinaryGuid is {:?}, Guid is {:?}",
-                    binary_ord, guid_ord
+                    "Ordering mismatch at guids[{i}] vs guids[{j}]: BinaryGuid is {binary_ord:?}, Guid is {guid_ord:?}"
                 );
             }
         }
@@ -1662,7 +1680,7 @@ mod tests {
         let zero_bytes = ZERO_BINARY_GUID.as_bytes();
         assert_eq!(zero_bytes, &[0; 16]);
 
-        assert_eq!(format!("{}", ZERO_BINARY_GUID), "00000000-0000-0000-0000-000000000000");
+        assert_eq!(format!("{ZERO_BINARY_GUID}"), "00000000-0000-0000-0000-000000000000");
     }
 
     #[test]
@@ -1673,7 +1691,7 @@ mod tests {
 
         // Runtime verification - as_fields() is not const so we test at runtime
         assert_eq!(TEST_BINARY_GUID.as_fields(), TEST_GUID_FIELDS);
-        assert_eq!(format!("{}", TEST_BINARY_GUID), TEST_GUID_STRING_UPPER);
+        assert_eq!(format!("{TEST_BINARY_GUID}"), TEST_GUID_STRING_UPPER);
 
         // Verify that the const creation works by checking the underlying structure
         let runtime_guid =
@@ -1724,23 +1742,23 @@ mod tests {
         //    BinaryGuid should have proper alignment for safe casting
         let binary_guid =
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
-        let guid_ptr = &binary_guid as *const BinaryGuid;
-        let efi_guid_ptr = &binary_guid.0 as *const efi::Guid;
+        let guid_ptr = &raw const binary_guid;
+        let efi_guid_ptr = &raw const binary_guid.0;
 
         // Pointers should be identical
         assert_eq!(guid_ptr as *const u8, efi_guid_ptr as *const u8);
 
         // 6: Check transmutation is as expected
         //    This doesn't perform an actual transmute, but checks that the memory
-        //    representation is identical with `r_efi::efi::Guid`
+        //    representation is identical with `patina::standard::efi::Guid`
         let efi_guid = create_test_r_efi_guid();
         let binary_guid_from_efi = BinaryGuid::from(efi_guid);
 
         // SAFETY: Both pointers reference valid GUID structures. \16 bytes from each to verify that
-        // BinaryGuid maintains binary compatibility with r_efi::efi::Guid.
+        // BinaryGuid maintains binary compatibility with crate::standard::efi::Guid.
         unsafe {
-            let efi_bytes = core::slice::from_raw_parts(&efi_guid as *const _ as *const u8, 16);
-            let binary_bytes = core::slice::from_raw_parts(&binary_guid_from_efi as *const _ as *const u8, 16);
+            let efi_bytes = core::slice::from_raw_parts(&raw const efi_guid as *const u8, 16);
+            let binary_bytes = core::slice::from_raw_parts(&raw const binary_guid_from_efi as *const u8, 16);
             assert_eq!(efi_bytes, binary_bytes);
         }
 
@@ -1811,8 +1829,8 @@ mod tests {
         assert_eq!(efi_guid_ref.as_fields(), TEST_GUID_FIELDS);
         assert_eq!(efi_guid_ref.as_bytes(), binary_guid.as_bytes());
 
-        let ptr1 = &binary_guid.0 as *const efi::Guid;
-        let ptr2 = efi_guid_ref as *const efi::Guid;
+        let ptr1 = &raw const binary_guid.0;
+        let ptr2 = std::ptr::from_ref::<efi::Guid>(efi_guid_ref);
         assert_eq!(ptr1, ptr2);
     }
 

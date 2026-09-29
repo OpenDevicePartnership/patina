@@ -1,7 +1,10 @@
 //! Test that multiple &Storage parameters are allowed (compile-success test).
 //! Note: This should compile successfully.
 
-use patina::{component::{component, Storage}, error::Result};
+use patina::{
+    component::{Storage, component},
+    error::Result,
+};
 
 pub struct TestComponent;
 

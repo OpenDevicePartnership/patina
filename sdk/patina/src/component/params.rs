@@ -3,14 +3,14 @@
 //! This module defines the [Param] trait, which is used to define how data is retrieved from the underlying
 //! [Storage]. Any type that implements [Param] can be used as a parameter to a [Component](super::Component).
 //!
-//! Some custom types exist directly in this module, such as [Config] and [ConfigMut], however this trait is
+//! Some custom types exist directly in this module, such as [Config] and [`ConfigMut`], however this trait is
 //! implemented on many foreign types, so it is recommended to review the [Param] documentation directly,
 //! which will show all types that can be used as parameters.
 //!
 //! ## Registering Access requirements
 //!
 //! It is the responsibility of each [Param] implementation to register it's access requirements with the
-//! parent component's [MetaData]. This is done in the [init_state](Param::init_state) function. This is only
+//! parent component's [`MetaData`]. This is done in the [`init_state`](Param::init_state) function. This is only
 //! necessary for `Params` that can access data in both a mutable and immutable way. If accesses are only ever
 //! immutable, then it is unnecessary.
 //!
@@ -19,11 +19,11 @@
 //! components to execute in parallel if they do not access the same data in a conflicting manner (e.g. one component
 //! reads a value while another writes to it).
 //!
-//! To register access requirements, the [Param] trait has an [init_state](Param::init_state) function that is called
-//! with mutable access to the component's [MetaData] which is used to store read / write access to certain types of
+//! To register access requirements, the [Param] trait has an [`init_state`](Param::init_state) function that is called
+//! with mutable access to the component's [`MetaData`] which is used to store read / write access to certain types of
 //! data as a bitset that must be maintained on a component-by-component basis. As it stands, the only data that can
-//! possibly conflict with eachother are [Config] and [ConfigMut] as they reference the same underlying data in a
-//! immutable and mutable manner. As new `Params` are added, access information in the [MetaData] struct may need to
+//! possibly conflict with eachother are [Config] and [`ConfigMut`] as they reference the same underlying data in a
+//! immutable and mutable manner. As new `Params` are added, access information in the [`MetaData`] struct may need to
 //! be expanded to track more types of data.
 //!
 //! ## Param Function Size and Tuple Support
@@ -74,8 +74,8 @@
 //!
 //! ## `Config` / `ConfigMut`
 //!
-//! A special note needs to be made about the [Config] and [ConfigMut] [Param] types, as they are intertwined.
-//! The [Config] type is only available when the underlying datum is locked, while [ConfigMut] is only available while
+//! A special note needs to be made about the [Config] and [`ConfigMut`] [Param] types, as they are intertwined.
+//! The [Config] type is only available when the underlying datum is locked, while [`ConfigMut`] is only available while
 //! the underlying datum is not locked. All Config datums are locked by default, however if a component is registered
 //! with storage that requires it to be mutable, the datum will be unlocked. This is important because it means that
 //! a component with a [Config] parameter will not be executed until the underlying datum is locked.
@@ -85,7 +85,7 @@
 //! 2. Automatically by the core when all components that can execute, have executed, and components still exist in
 //!    the queue.
 //!
-//! Once a config datum is locked, it cannot be unlocked, and no further components that have a [ConfigMut] parameter
+//! Once a config datum is locked, it cannot be unlocked, and no further components that have a [`ConfigMut`] parameter
 //! will be executed.
 //!
 //! ## License
@@ -103,13 +103,13 @@ use core::{
 use alloc::{borrow::Cow, boxed::Box};
 
 use crate::{
-    boot_services::StandardBootServices,
     component::{
         metadata::MetaData,
         service::IntoService,
         storage::{Deferred, Storage, UnsafeStorageCell},
     },
-    runtime_services::StandardRuntimeServices,
+    uefi::boot_services::StandardBootServices,
+    uefi::runtime_services::StandardRuntimeServices,
 };
 
 use super::storage::ConfigRaw;
@@ -120,12 +120,12 @@ type ParamItem<'w, 'state, P> = <P as Param>::Item<'w, 'state>;
 ///
 /// ## Safety
 ///
-/// - implementor must ensure [init_state](Param::init_state) correctly registers all
-///   [Storage] accesses used by [get_param](Param::get_param) with provided
-///   [MetaData].
-/// - implementor must ensure [init_state](Param::init_state) validates the [Storage]
-///   accesses used by [get_param](Param::get_param) does not conflict with any other
-///   registered accesses found in the [MetaData]. Panics are allowed if this is violated.
+/// - implementor must ensure [`init_state`](Param::init_state) correctly registers all
+///   [Storage] accesses used by [`get_param`](Param::get_param) with provided
+///   [`MetaData`].
+/// - implementor must ensure [`init_state`](Param::init_state) validates the [Storage]
+///   accesses used by [`get_param`](Param::get_param) does not conflict with any other
+///   registered accesses found in the [`MetaData`]. Panics are allowed if this is violated.
 pub unsafe trait Param {
     /// Data for the parameter that persists across component execution attempts.
     type State: Send + Sync + 'static;
@@ -160,7 +160,7 @@ pub unsafe trait Param {
 
     /// Initializes this Parameter's [State](Param::State).
     ///
-    /// This is when the parameter should register its access requirements with the [MetaData]. See this module's
+    /// This is when the parameter should register its access requirements with the [`MetaData`]. See this module's
     /// top level documentation on how to properly register access requirements.
     ///
     /// Returns an error string explaining the reason for failure if initialization fails.
@@ -336,11 +336,8 @@ unsafe impl<P: Param> Param for Option<P> {
         state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        match P::validate(state, storage) {
-            // SAFETY: P::validate returned true, so P::get_param is safe to call with this state and storage.
-            true => Some(unsafe { P::get_param(state, storage) }),
-            false => None,
-        }
+        // SAFETY: P::validate returned true, so P::get_param is safe to call with this state and storage.
+        if P::validate(state, storage) { Some(unsafe { P::get_param(state, storage) }) } else { None }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
@@ -362,10 +359,10 @@ pub struct Config<'c, T: Default + 'static> {
 }
 
 impl<T: Default + 'static> Config<'_, T> {
-    /// Creates an instance of Config by creating a RefCell and leaking it.
+    /// Creates an instance of Config by creating a `RefCell` and leaking it.
     ///
     /// This function is intended for testing purposes only. Dropping the returned value will cause a memory leak as
-    /// the underlying (leaked) RefCell cannot be deallocated.
+    /// the underlying (leaked) `RefCell` cannot be deallocated.
     ///
     /// ## Example
     /// ``` rust
@@ -458,10 +455,10 @@ pub struct ConfigMut<'c, T: Default + 'static> {
 }
 
 impl<T: Default + 'static> ConfigMut<'_, T> {
-    /// Creates an instance of Config by creating a RefCell and leaking it.
+    /// Creates an instance of Config by creating a `RefCell` and leaking it.
     ///
     /// This function is intended for testing purposes only. Dropping the returned value will cause a memory leak as
-    /// the underlying (leaked) RefCell cannot be deallocated.
+    /// the underlying (leaked) `RefCell` cannot be deallocated.
     ///
     /// ## Example
     /// ``` rust
@@ -577,15 +574,15 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
 
 /// A Command queue to apply structural changes to [Storage] sometime after component execution has completed.
 ///
-/// Allows for a non-conflicting way to manipulate [Storage] while also accessing parameters that would be in conflict
-/// with [Storage] access, such as [Config] and [ConfigMut] by deferring structural manipulation of [Storage] until
-/// sometime after the component has executed.
+/// Allows for a non-conflicting way to manipulate [`Storage`] while also accessing parameters that would be in conflict
+/// with [`Storage`] access, such as [`Config`] and [`ConfigMut`] by deferring structural manipulation of [`Storage`]
+/// until sometime after the component has executed.
 ///
 /// **Prefer using this over using [Storage] directly in a component.**
 ///
-/// As an example, a component with the interface ``fn(&mut Storage, Config<i32>) -> Result<()>`` would
-/// normally be in conflict, as it allows for the usage of [Storage::add_config]`, which could invalidate the requested
-/// ``Config<i32>`` parameter.
+/// As an example, a component with the interface `fn(&mut Storage, Config<i32>) -> Result<()>` would
+/// normally be in conflict, as it allows for the usage of [`Storage::add_config`], which could invalidate the requested
+/// `Config<i32>` parameter.
 pub struct Commands<'storage> {
     queue: &'storage mut Deferred,
 }
@@ -719,7 +716,7 @@ unsafe impl Param for StandardRuntimeServices {
 ///
 /// This is commonly used as the parent image handle for `LoadImage()` calls when loading
 /// boot applications. Per the UEFI specification, the parent image handle must be a valid
-/// image handle (one that has the LoadedImage protocol installed).
+/// image handle (one that has the `LoadedImage` protocol installed).
 ///
 /// **Note:** This handle is the DXE Core's image handle, shared across all components. It
 /// should not be used as a `DriverBindingHandle` in `EFI_DRIVER_BINDING_PROTOCOL`, as
@@ -730,7 +727,7 @@ unsafe impl Param for StandardRuntimeServices {
 ///
 /// ```rust,ignore
 /// use patina::component::{component, params::Handle};
-/// use patina::boot_services::BootServices;
+/// use patina::uefi::boot_services::BootServices;
 /// use patina::error::Result;
 ///
 /// struct BootLoader;
@@ -752,19 +749,19 @@ unsafe impl Param for StandardRuntimeServices {
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Handle {
-    handle: r_efi::efi::Handle,
+    handle: crate::standard::efi::Handle,
 }
 
 impl Handle {
     /// Creates a mock Handle for testing purposes.
     #[cfg(any(test, feature = "mockall"))]
-    pub fn mock(handle: r_efi::efi::Handle) -> Self {
+    pub fn mock(handle: crate::standard::efi::Handle) -> Self {
         Self { handle }
     }
 }
 
 impl core::ops::Deref for Handle {
-    type Target = r_efi::efi::Handle;
+    type Target = crate::standard::efi::Handle;
 
     fn deref(&self) -> &Self::Target {
         &self.handle
@@ -849,13 +846,13 @@ impl_component_param_tuple!(T1, T2, T3, T4, T5);
 impl_component_param_tuple!(T1, T2, T3, T4, T5, T6);
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use core::sync::atomic::AtomicBool;
 
     use crate::{
+        base::error::Result,
         component::{IntoComponent, component, storage::Storage},
-        error::Result,
     };
 
     use crate as patina;
@@ -1010,7 +1007,7 @@ mod tests {
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert_eq!(
-            Err(Cow::from("patina::boot_services::StandardBootServices not available.")),
+            Err(Cow::from("patina::uefi::boot_services::StandardBootServices not available.")),
             <StandardBootServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -1020,7 +1017,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+        let mut mock_bs = core::mem::MaybeUninit::<crate::standard::efi::BootServices>::zeroed();
         storage.set_boot_services(StandardBootServices::new(mock_bs.as_mut_ptr()));
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
@@ -1039,7 +1036,7 @@ mod tests {
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert_eq!(
-            Err(Cow::from("patina::runtime_services::StandardRuntimeServices not available.")),
+            Err(Cow::from("patina::uefi::runtime_services::StandardRuntimeServices not available.")),
             <StandardRuntimeServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -1049,7 +1046,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let mut mock_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
+        let mut mock_rt = core::mem::MaybeUninit::<crate::standard::efi::RuntimeServices>::zeroed();
         storage.set_runtime_services(StandardRuntimeServices::new(mock_rt.as_mut_ptr()));
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
@@ -1078,7 +1075,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let mock_handle = 0x1234usize as r_efi::efi::Handle;
+        let mock_handle = 0x1234usize as crate::standard::efi::Handle;
         storage.set_image_handle(mock_handle);
 
         <Handle as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
@@ -1124,7 +1121,7 @@ mod tests {
         // override the next level up, `try_validate`.
         assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
-            Err(Cow::from("patina::boot_services::StandardBootServices")),
+            Err(Cow::from("patina::uefi::boot_services::StandardBootServices")),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }

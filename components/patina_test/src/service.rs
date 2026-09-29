@@ -1,9 +1,9 @@
 //! Patina Testing Service
 //!
 //! This module defines the internal service used by the crate to register and execute tests marked with the
-//! `#[patina_test]` attribute. The [TestRunner](crate::component::TestRunner) component checks for the presence of
+//! `#[patina_test]` attribute. The [`TestRunner`](crate::component::TestRunner) component checks for the presence of
 //! the [Recorder] service, registering a new one if it does not. It then uses the Recorder service to register all
-//! discovered tests based on the filtered list each individual TestRunner is configured to run. The Recorder service
+//! discovered tests based on the filtered list each individual `TestRunner` is configured to run. The Recorder service
 //! is then responsible for executing the tests, recording their results, and logging the results at the appropriate
 //! time during the boot process.
 //!
@@ -18,19 +18,16 @@ use crate::{
     alloc::{boxed::Box, collections::BTreeMap, fmt::Display, string::String, vec::Vec},
 };
 
-use core::{ops::DerefMut, ptr::NonNull};
+use core::ptr::NonNull;
 
 use patina::{
-    boot_services::{
-        BootServices, StandardBootServices,
-        event::{EventTimerType, EventType},
-        tpl::Tpl,
-    },
     component::{Storage, service::IntoService},
+    uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl},
+    uefi::event::{EventTimerType, EventType},
     writelncrlf,
 };
 
-use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
+use patina::standard::efi::EVENT_GROUP_READY_TO_BOOT;
 
 /// A structure containing all necessary data to execute a test at any time.
 #[derive(Clone)]
@@ -51,7 +48,7 @@ pub(crate) struct TestRecord {
 
 #[allow(unused)]
 impl TestRecord {
-    /// Creates a new instance of TestRecord.
+    /// Creates a new instance of `TestRecord`.
     pub fn new(
         debug_mode: bool,
         test_case: &'static TestCase,
@@ -127,8 +124,9 @@ impl TestRecord {
                         EventType::NOTIFY_SIGNAL,
                         Tpl::CALLBACK,
                         Some(Self::disable_timer),
-                        NonNull::from_ref(Box::leak(Box::new((event, storage.boot_services().clone())))).as_ptr()
-                            as *mut core::ffi::c_void,
+                        NonNull::from_ref(Box::leak(Box::new((event, storage.boot_services().clone()))))
+                            .as_ptr()
+                            .cast::<core::ffi::c_void>(),
                         &EVENT_GROUP_READY_TO_BOOT,
                     )?;
 
@@ -147,12 +145,15 @@ impl TestRecord {
             self.test_case.name,
             self.pass,
             self.fail,
-            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{}""#, msg))
+            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{msg}""#))
         )
     }
 
     /// EFIAPI event callback to locate a specific test and run it.
-    extern "efiapi" fn run_test(_: r_efi::efi::Event, &(test, mut storage): &'static (&'static str, NonNull<Storage>)) {
+    extern "efiapi" fn run_test(
+        _: patina::standard::efi::Event,
+        &(test, mut storage): &'static (&'static str, NonNull<Storage>),
+    ) {
         // SAFETY: Storage is a valid pointer as the pointer is generated from a static reference.
         let storage = unsafe { storage.as_mut() };
 
@@ -161,11 +162,12 @@ impl TestRecord {
         }
     }
 
-    #[coverage(off)]
-    /// An EFIAPI compatible event callback to disable a timer event at ReadyToBoot
-    extern "efiapi" fn disable_timer(rtb_event: r_efi::efi::Event, context: *mut core::ffi::c_void) {
+    #[cfg_attr(coverage, coverage(off))]
+    /// An EFIAPI compatible event callback to disable a timer event at `ReadyToBoot`
+    extern "efiapi" fn disable_timer(rtb_event: patina::standard::efi::Event, context: *mut core::ffi::c_void) {
         // SAFETY: We set up the context pointer in `run_tests` to point to a valid tuple of (Event, StandardBootServices).
-        let (timer_event, boot_services) = unsafe { &mut *(context as *mut (r_efi::efi::Event, StandardBootServices)) };
+        let (timer_event, boot_services) =
+            unsafe { &mut *context.cast::<(patina::standard::efi::Event, StandardBootServices)>() };
         let _ = boot_services.set_timer(*timer_event, EventTimerType::Cancel, 0);
         let _ = boot_services.close_event(rtb_event);
     }
@@ -186,7 +188,7 @@ impl Recorder {
         F: FnOnce(&mut BTreeMap<&'static str, TestRecord>) -> R,
     {
         let mut records = self.records.lock();
-        f(records.deref_mut())
+        f(&mut records)
     }
 
     /// Registers UEFI event callbacks to log the test results at specific points in the boot process.
@@ -229,7 +231,7 @@ impl Recorder {
         });
     }
 
-    /// Runs all tests that are triggered by the [TestTrigger::Manual] trigger if they have not been run before.
+    /// Runs all tests that are triggered by the [`TestTrigger::Manual`] trigger if they have not been run before.
     pub(crate) fn run_manual_tests(&self, storage: &mut Storage) {
         self.with_mut(|data| {
             data.values_mut()
@@ -257,7 +259,7 @@ impl Recorder {
     }
 
     /// An EFIAPI compatible event callback to run the manually triggered tests and log the current results of patina-test
-    extern "efiapi" fn run_tests_and_report(event: r_efi::efi::Event, mut storage: NonNull<Storage>) {
+    extern "efiapi" fn run_tests_and_report(event: patina::standard::efi::Event, mut storage: NonNull<Storage>) {
         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
         let storage = unsafe { storage.as_mut() };
 
@@ -305,7 +307,7 @@ impl Display for Recorder {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     extern crate std;
 
@@ -334,7 +336,7 @@ mod tests {
         tr3.pass = 1;
         recorder.update_record(tr3);
 
-        let output = format!("{}", recorder);
+        let output = format!("{recorder}");
         assert!(output.contains("test ... fail (1 fails, 2 passes): Failure 1"));
         assert!(output.contains("test_that_fails ... fail (2 fails, 0 passes): Failure 2"));
         assert!(output.contains("event_triggered_test ... ok (1 passes)"));
@@ -355,7 +357,7 @@ mod tests {
         recorder.update_record(test_data);
 
         let output = format!("{}", *recorder);
-        std::println!("{}", output);
+        std::println!("{output}");
         assert!(output.contains("test ... ok (1 passes)"));
     }
 
@@ -399,13 +401,13 @@ mod tests {
 
     #[test]
     fn test_efiapi_run_tests_and_report() {
-        let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
+        let bs: MaybeUninit<patina::standard::efi::BootServices> = MaybeUninit::uninit();
         // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
         // create_event_ex, and set_timer which we will fill in with no-op functions.
         let mut bs = unsafe { bs.assume_init() };
 
-        extern "efiapi" fn noop_close_event(_: r_efi::efi::Event) -> r_efi::efi::Status {
-            r_efi::efi::Status::SUCCESS
+        extern "efiapi" fn noop_close_event(_: patina::standard::efi::Event) -> patina::standard::efi::Status {
+            patina::standard::efi::Status::SUCCESS
         }
 
         bs.close_event = noop_close_event;
@@ -463,6 +465,6 @@ mod tests {
         assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure 1"}"#));
         assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"err_msg":"Failure 2"}"#));
         assert!(json.starts_with('[') && json.ends_with(']'));
-        assert!(json.contains(","));
+        assert!(json.contains(','));
     }
 }

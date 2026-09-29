@@ -1,0 +1,43 @@
+[package]
+name = "patina_internal_core"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "Common internal library for Patina"
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["alloc"]
+alloc = []
+# All non-std features to test in CI
+ci_features = ["alloc"]
+
+[dependencies]
+log = { workspace=true }
+patina = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+criterion = { workspace = true }
+ruint = { workspace = true }
+
+[[bench]]
+name = "bench_add"
+harness = false
+
+[[bench]]
+name = "bench_search"
+harness = false
+
+[[bench]]
+name = "bench_delete"
+harness = false

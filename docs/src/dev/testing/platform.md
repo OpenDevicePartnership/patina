@@ -36,7 +36,7 @@ This example shows how to use the `skip` attribute paired with `cfg_attr` to ski
 ```rust
 # extern crate patina_test;
 # extern crate patina;
-use patina::boot_services::StandardBootServices;
+use patina::uefi::boot_services::StandardBootServices;
 use patina_test::{error::Result, patina_test};
 
 #[patina_test]
@@ -80,7 +80,7 @@ this, e.g.:
 use patina_test::{error::Result, patina_test};
 
 #[patina_test]
-#[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
+#[on(event = patina::pi::event::END_OF_DXE_EVENT_GROUP_GUID)]
 fn my_test() -> Result { todo!() }
 ```
 

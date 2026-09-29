@@ -20,6 +20,8 @@ pub enum SmbiosError {
     StringTooLong,
     /// String contains null terminator (not allowed - terminators are added during serialization)
     StringContainsNull,
+    /// String contains a character that cannot be represented in Latin-1 (CHAR8)
+    StringNotLatin1,
     /// Empty string in string pool (consecutive null bytes)
     EmptyStringInPool,
 
@@ -67,11 +69,11 @@ pub enum SmbiosError {
 
     // Table integrity errors
     /// Published SMBIOS table was modified directly instead of using protocol APIs
-    /// Use Remove() + Add() to modify records, or UpdateString() for string fields
+    /// Use `Remove()` + `Add()` to modify records, or `UpdateString()` for string fields
     TableDirectlyModified,
 }
 
-impl From<SmbiosError> for r_efi::efi::Status {
+impl From<SmbiosError> for patina::standard::efi::Status {
     fn from(error: SmbiosError) -> Self {
         let efi_error: patina::error::EfiError = error.into();
         efi_error.into()
@@ -90,6 +92,7 @@ impl From<SmbiosError> for patina::error::EfiError {
             // Invalid parameters map to INVALID_PARAMETER
             SmbiosError::StringTooLong
             | SmbiosError::StringContainsNull
+            | SmbiosError::StringNotLatin1
             | SmbiosError::EmptyStringInPool
             | SmbiosError::MalformedRecordHeader
             | SmbiosError::InvalidStringPoolTermination
@@ -125,6 +128,7 @@ mod tests {
         let errors = vec![
             SmbiosError::StringTooLong,
             SmbiosError::StringContainsNull,
+            SmbiosError::StringNotLatin1,
             SmbiosError::EmptyStringInPool,
             SmbiosError::RecordTooSmall,
             SmbiosError::MalformedRecordHeader,
@@ -225,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_smbios_error_to_efi_status_conversion() {
-        use r_efi::efi;
+        use patina::standard::efi;
 
         // Verify the SmbiosError -> efi::Status conversion produces the same result
         // as going through SmbiosError -> EfiError -> efi::Status manually.

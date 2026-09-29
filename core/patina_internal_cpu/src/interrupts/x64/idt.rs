@@ -8,7 +8,7 @@
 //!
 
 use core::{arch::global_asm, cell::UnsafeCell};
-use patina::base::SIZE_4GB;
+use patina::SIZE_4GB;
 
 global_asm!(include_str!("interrupt_handler.asm"));
 // Use efiapi for the consistent calling convention.
@@ -67,9 +67,7 @@ struct Idtr {
 
 /// Gets the address of the assembly entry point for the given vector index.
 fn get_vector_address(index: usize) -> u64 {
-    if index >= 256 {
-        panic!("Invalid vector index! 0x{index:#X?}");
-    }
+    assert!(index < 256, "Invalid vector index! 0x{index:#X?}");
     // SAFETY: Index has been validated to be in [0, 255].
     unsafe { AsmGetVectorAddress(index) }
 }
@@ -77,14 +75,14 @@ fn get_vector_address(index: usize) -> u64 {
 static IDT: StaticIdt = StaticIdt(UnsafeCell::new(Idt { entries: [IdtEntry::empty(); 256] }));
 
 pub fn initialize_idt() {
-    let cs = crate::cpu::x64::gdt::CODE_SELECTOR;
+    let cs = crate::gdt::CODE_SELECTOR;
     // SAFETY: There is only path to access the IDT and it is not possible to have concurrent access.
     let idt = unsafe { &mut *IDT.0.get() };
 
     // Point every vector at its corresponding assembly handler.
     for vector in 0..=255usize {
         // Use IST 1 for double fault (vector 8) and page fault (vector 14) to ensure they have a valid stack.
-        let ist_index = if vector == 8 || vector == 14 { 1 } else { 0 };
+        let ist_index = u8::from(vector == 8 || vector == 14);
         idt.entries.get_mut(vector).expect("vector out of bounds").set_handler(
             get_vector_address(vector),
             cs,
@@ -92,14 +90,12 @@ pub fn initialize_idt() {
         );
     }
 
-    if IDT.0.get() as usize >= SIZE_4GB {
-        panic!("IDT above 4GB, MP services will fail");
-    }
+    assert!((IDT.0.get() as usize) < SIZE_4GB, "IDT above 4GB, MP services will fail");
     #[cfg(target_os = "uefi")]
     {
         let idtr = Idtr { limit: (core::mem::size_of::<Idt>() - 1) as u16, base: IDT.0.get() as u64 };
         // SAFETY: Loading our fully initialized IDT.
-        unsafe { core::arch::asm!("lidt [{}]", in(reg) &idtr, options(nostack)) };
+        unsafe { core::arch::asm!("lidt [{}]", in(reg) core::ptr::addr_of!(idtr), options(nostack)) };
     }
     log::info!("Loaded IDT");
 }

@@ -28,5 +28,5 @@ jobs:
     permissions:
       issues: write
 
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/LabelSyncer.yml@v0.3.12
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/LabelSyncer.yml@37902f7991125091a91ca4054395d2d65576a7f5 # v0.3.16
     secrets: inherit

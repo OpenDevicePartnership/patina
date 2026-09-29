@@ -27,13 +27,12 @@ use core::{
     result::Result,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
+use patina::standard::efi;
 use patina::{
-    base::{UEFI_PAGE_SIZE, align_up, page_shift_from_alignment},
     error::EfiError,
     pi::dxe_services::GcdMemoryType,
-    uefi_pages_to_size, uefi_size_to_pages, writelncrlf,
+    uefi_pages_to_size, uefi_size_to_pages, writelncrlf, {UEFI_PAGE_SIZE, align_up, page_shift_from_alignment},
 };
-use r_efi::efi;
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
@@ -41,7 +40,7 @@ pub enum FixedSizeBlockAllocatorError {
     /// Could not satisfy allocation request, and expansion failed.
     ///
     /// Specifies how much additional memory is required to be added to the allocator through
-    /// [FixedSizeBlockAllocator::expand()] in order to fulfill the attempted allocation.
+    /// [`FixedSizeBlockAllocator::expand()`] in order to fulfill the attempted allocation.
     OutOfMemory(usize),
     /// The provided layout was invalid.
     InvalidLayout,
@@ -126,7 +125,7 @@ pub struct FixedSizeBlockAllocator {
 }
 
 impl FixedSizeBlockAllocator {
-    /// Creates a new empty FixedSizeBlockAllocator
+    /// Creates a new empty `FixedSizeBlockAllocator`
     pub const fn new(memory_type: efi::MemoryType, page_allocation_granularity: usize) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
@@ -157,7 +156,7 @@ impl FixedSizeBlockAllocator {
     /// ## Errors
     ///
     /// Returns [`FixedSizeBlockAllocatorError::InvalidExpansion`] if the new region is not larger than and aligned to
-    /// AllocatorListNode.
+    /// `AllocatorListNode`.
     pub fn expand(&mut self, new_region: NonNull<[u8]>) -> core::result::Result<(), FixedSizeBlockAllocatorError> {
         // Ensure we're expanding enough to fit a new allocator list node
         if new_region.len() <= size_of::<AllocatorListNode>() {
@@ -241,24 +240,21 @@ impl FixedSizeBlockAllocator {
         match list_index(&layout) {
             Some(index) => {
                 let head = self.list_heads.get_mut(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
-                match head.take() {
-                    Some(node) => {
-                        let head = self.list_heads.get_mut(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
-                        *head = node.next.take();
-                        let ptr: NonNull<u8> = NonNull::from(node).cast();
-                        Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
-                    }
-                    None => {
-                        // no block exists in list => allocate new block
-                        let block_size = *BLOCK_SIZES.get(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
-                        // only works if all block sizes are a power of 2
-                        let block_align = block_size;
-                        let layout = match Layout::from_size_align(block_size, block_align) {
-                            Ok(layout) => layout,
-                            Err(_) => return Err(FixedSizeBlockAllocatorError::InvalidLayout),
-                        };
-                        self.fallback_alloc(layout)
-                    }
+                if let Some(node) = head.take() {
+                    let head = self.list_heads.get_mut(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+                    *head = node.next.take();
+                    let ptr: NonNull<u8> = NonNull::from(node).cast();
+                    Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
+                } else {
+                    // no block exists in list => allocate new block
+                    let block_size = *BLOCK_SIZES.get(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+                    // only works if all block sizes are a power of 2
+                    let block_align = block_size;
+                    let layout = match Layout::from_size_align(block_size, block_align) {
+                        Ok(layout) => layout,
+                        Err(_) => return Err(FixedSizeBlockAllocatorError::InvalidLayout),
+                    };
+                    self.fallback_alloc(layout)
                 }
             }
             None => self.fallback_alloc(layout),
@@ -291,11 +287,12 @@ impl FixedSizeBlockAllocator {
                 let new_node = BlockListNode { next: head.take() };
                 let block_size = *BLOCK_SIZES.get(index).expect("list_index guarantees valid index");
                 // verify that block has size and alignment required for storing node
-                if size_of::<BlockListNode>() > block_size || align_of::<BlockListNode>() > block_size {
-                    // Should never reach this statement under normal operation since BlockListNode is a single pointer and all block sizes are >= 8 bytes,
-                    // Failure indicates corruption of the allocator's internal state.
-                    panic!("FSB deallocating block too small to store BlockListNode.");
-                }
+                // Should never reach this statement under normal operation since BlockListNode is a single pointer and all block sizes are >= 8 bytes,
+                // Failure indicates corruption of the allocator's internal state.
+                assert!(
+                    !(size_of::<BlockListNode>() > block_size || align_of::<BlockListNode>() > block_size),
+                    "FSB deallocating block too small to store BlockListNode."
+                );
                 let new_node_ptr = ptr.as_ptr() as *mut BlockListNode;
                 // SAFETY: new_node_ptr points to memory returned by alloc for this layout.
                 unsafe {
@@ -427,8 +424,8 @@ impl Display for FixedSizeBlockAllocator {
 /// A wrapper for [`FixedSizeBlockAllocator`] that allocates additional memory as needed from a GCD
 /// and provides Sync/Send via means of a spin mutex.
 ///
-/// Note: [SpinLockedFixedSizeBlockAllocator::alloc()] and [SpinLockedFixedSizeBlockAllocator::allocate()] will call
-/// alloc() twice when additional memory is required.
+/// Note: [`SpinLockedFixedSizeBlockAllocator::alloc()`] and [`SpinLockedFixedSizeBlockAllocator::allocate()`] will call
+/// `alloc()` twice when additional memory is required.
 pub struct SpinLockedFixedSizeBlockAllocator {
     /// The GCD instance that this allocator uses to allocate additional memory as needed.
     gcd: &'static SpinLockedGcd,
@@ -445,7 +442,7 @@ pub struct SpinLockedFixedSizeBlockAllocator {
 }
 
 impl SpinLockedFixedSizeBlockAllocator {
-    /// Creates a new empty FixedSizeBlockAllocator that will request memory from `gcd` as needed to satisfy
+    /// Creates a new empty `FixedSizeBlockAllocator` that will request memory from `gcd` as needed to satisfy
     /// requests.
     pub const fn new(
         gcd: &'static SpinLockedGcd,
@@ -547,7 +544,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages]
+    /// [`Self::allocate_pages`]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         self.lock().stats.page_free_calls += 1;
 
@@ -560,12 +557,14 @@ impl SpinLockedFixedSizeBlockAllocator {
             return Err(EfiError::InvalidParameter);
         }
 
-        let descriptor =
-            self.gcd.get_existent_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| {
-                match err {
-                    EfiError::NotFound => err,
-                    _ => EfiError::InvalidParameter,
-                }
+        let descriptor = self
+            .gcd
+            .get_memory_descriptor_for_address(address as efi::PhysicalAddress, |d, _| {
+                d.memory_type != GcdMemoryType::NonExistent
+            })
+            .map_err(|err| match err {
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
             })?;
 
         if descriptor.image_handle != self.handle {
@@ -667,14 +666,14 @@ impl SpinLockedFixedSizeBlockAllocator {
     }
 
     /// Returns the reserved memory range, if any.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
         self.inner.lock().reserved_range.clone()
     }
 
     /// Returns the memory type for this allocator.
     #[allow(dead_code)]
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn memory_type(&self) -> efi::MemoryType {
         self.inner.lock().memory_type()
     }
@@ -759,12 +758,11 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 }
 
                 // Try the allocation one more time
-                match self.lock().alloc(layout) {
-                    Ok(alloc) => Ok(alloc),
-                    Err(_) => {
-                        debug_assert!(false);
-                        Err(AllocError)
-                    }
+                if let Ok(alloc) = self.lock().alloc(layout) {
+                    Ok(alloc)
+                } else {
+                    debug_assert!(false);
+                    Err(AllocError)
                 }
             }
             Err(_) => {
@@ -805,7 +803,7 @@ impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
     /// ## Safety
     ///
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages].
+    /// [`Self::allocate_pages`].
     unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         // SAFETY: address/pages must refer to a valid allocation owned by this allocator
         // per the free_pages safety contract.
@@ -838,12 +836,12 @@ impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
 
     #[cfg(test)]
     fn reset(&self) {
-        Self::reset(self)
+        Self::reset(self);
     }
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     extern crate std;
     use crate::{
@@ -857,8 +855,7 @@ mod tests {
     use std::alloc::System;
 
     use patina::{
-        base::{SIZE_64KB, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
-        uefi_pages_to_size,
+        uefi_pages_to_size, {SIZE_64KB, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
     };
 
     use super::*;
@@ -993,7 +990,7 @@ mod tests {
     fn test_construct_empty_fixed_size_block_allocator() {
         with_locked_state(|| {
             let fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
-            assert!(fsb.list_heads.iter().all(|x| x.is_none()));
+            assert!(fsb.list_heads.iter().all(std::option::Option::is_none));
             assert!(fsb.allocators.is_none());
         });
     }
@@ -1301,8 +1298,9 @@ mod tests {
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
-                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
-                    as *mut BlockListNode as *mut u8;
+                let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
+                    fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
+                ) as *mut u8;
                 assert_eq!(free_block_ptr, allocation);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
@@ -1311,8 +1309,9 @@ mod tests {
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
-                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
-                    as *mut BlockListNode as *mut u8;
+                let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
+                    fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
+                ) as *mut u8;
                 assert_eq!(free_block_ptr, allocation);
             });
         });
@@ -1342,8 +1341,9 @@ mod tests {
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
-                    as *mut BlockListNode as *mut u8;
+                let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
+                    fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
+                ) as *mut u8;
                 assert_eq!(free_block_ptr, allocation_ptr);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
@@ -1352,8 +1352,9 @@ mod tests {
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
-                    as *mut BlockListNode as *mut u8;
+                let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
+                    fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
+                ) as *mut u8;
                 assert_eq!(free_block_ptr, allocation_ptr);
             });
         });
@@ -1413,7 +1414,7 @@ mod tests {
                     match fsb.free_pages(0, pages) {
                         Err(EfiError::NotFound) => {}
                         _ => panic!("Expected NOT_FOUND"),
-                    };
+                    }
                 };
 
                 // SAFETY: allocation and page count come from allocate_pages in this test.

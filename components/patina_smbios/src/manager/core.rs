@@ -14,8 +14,8 @@ extern crate alloc;
 
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use core::cell::RefCell;
-use patina::{base::SIZE_64KB, uefi_size_to_pages};
-use r_efi::efi::{Handle, PhysicalAddress};
+use patina::standard::efi::{Handle, PhysicalAddress};
+use patina::{SIZE_64KB, uefi_size_to_pages};
 use zerocopy::{IntoBytes, Ref};
 use zerocopy_derive::*;
 
@@ -29,14 +29,6 @@ use crate::{
 };
 
 use super::record::SmbiosRecord;
-
-/// SMBIOS 3.x Configuration Table GUID: F2FD1544-9794-4A2C-992E-E5BBCF20E394
-///
-/// This GUID identifies the SMBIOS 3.0+ entry point structure in the UEFI Configuration Table.
-/// Used for SMBIOS 3.0 and later versions which support 64-bit table addresses and remove
-/// the 4GB table size limitation of SMBIOS 2.x.
-pub const SMBIOS_3_X_TABLE_GUID: patina::BinaryGuid =
-    patina::BinaryGuid::from_string("F2FD1544-9794-4A2C-992E-E5BBCF20E394");
 
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
@@ -101,9 +93,7 @@ impl SmbiosManager {
     pub fn new(major_version: u8, minor_version: u8) -> Result<Self, SmbiosError> {
         if major_version != 3 {
             log::error!(
-                "SMBIOS version {}.{} is not supported. Only SMBIOS 3.x is supported.",
-                major_version,
-                minor_version
+                "SMBIOS version {major_version}.{minor_version} is not supported. Only SMBIOS 3.x is supported."
             );
             return Err(SmbiosError::UnsupportedVersion);
         }
@@ -145,7 +135,7 @@ impl SmbiosManager {
             return Ok(());
         }
 
-        use patina::{component::service::memory::AllocationOptions, efi_types::EfiMemoryType};
+        use patina::{component::service::memory::AllocationOptions, uefi::memory::EfiMemoryType};
 
         // Allocate table buffer
         let table_pages = uefi_size_to_pages!(self.table_buffer_max_size);
@@ -153,14 +143,14 @@ impl SmbiosManager {
             .allocate_pages(table_pages, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
         let table_slice = table_allocation.into_raw_slice::<u8>();
-        let table_addr = table_slice as *mut u8 as u64;
+        let table_addr = table_slice.cast::<u8>() as u64;
 
         // Allocate entry point buffer (1 page is plenty)
         let ep_allocation = memory_manager
             .allocate_pages(1, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
         let ep_slice = ep_allocation.into_raw_slice::<u8>();
-        let ep_addr = ep_slice as *mut u8 as u64;
+        let ep_addr = ep_slice.cast::<u8>() as u64;
 
         *self.table_buffer_addr.borrow_mut() = Some(table_addr);
         *self.ep_buffer_addr.borrow_mut() = Some(ep_addr);
@@ -180,7 +170,7 @@ impl SmbiosManager {
     /// Validate a string for use in SMBIOS records
     ///
     /// Ensures the string meets SMBIOS specification requirements:
-    /// - Does not exceed SMBIOS_STRING_MAX_LENGTH (64 bytes)
+    /// - Can be encoded as Latin-1 (CHAR8) and does not exceed `SMBIOS_STRING_MAX_LENGTH` (64 bytes)
     /// - Does not contain null terminators (they are added during serialization)
     ///
     /// # Arguments
@@ -191,14 +181,7 @@ impl SmbiosManager {
     ///
     /// Returns `Ok(())` if valid, or an appropriate error if validation fails
     pub(super) fn validate_string(s: &str) -> Result<(), SmbiosError> {
-        if s.len() > SMBIOS_STRING_MAX_LENGTH {
-            return Err(SmbiosError::StringTooLong);
-        }
-        // Strings must NOT contain null terminators - they are added during serialization
-        if s.bytes().any(|b| b == 0) {
-            return Err(SmbiosError::StringContainsNull);
-        }
-        Ok(())
+        crate::smbios_record::validate_smbios_string(s)
     }
 
     /// Efficiently validate string pool format and count strings in a single pass
@@ -219,7 +202,7 @@ impl SmbiosManager {
     ///
     /// Returns `SmbiosError::EmptyStringInPool` if consecutive nulls are found in the middle
     ///
-    /// Returns `SmbiosError::StringTooLong` if any string exceeds SMBIOS_STRING_MAX_LENGTH
+    /// Returns `SmbiosError::StringTooLong` if any string exceeds `SMBIOS_STRING_MAX_LENGTH`
     pub(super) fn validate_and_count_strings(string_pool_area: &[u8]) -> Result<usize, SmbiosError> {
         let len = string_pool_area.len();
 
@@ -269,7 +252,7 @@ impl SmbiosManager {
     /// # Errors
     ///
     /// Returns the same errors as `validate_and_count_strings` if the pool format is invalid.
-    pub(super) fn parse_strings_from_pool(string_pool_area: &[u8]) -> Result<Vec<&str>, SmbiosError> {
+    pub(super) fn parse_strings_from_pool(string_pool_area: &[u8]) -> Result<Vec<String>, SmbiosError> {
         // First validate the pool
         Self::validate_and_count_strings(string_pool_area)?;
 
@@ -283,13 +266,14 @@ impl SmbiosManager {
         // Remove the final double-null terminator and split by null bytes
         let data_without_terminator = &string_pool_area[..len - 2];
 
-        // Split by null bytes and convert to &str slices
-        let strings: Result<Vec<&str>, _> = data_without_terminator
+        // Split by null bytes and decode each segment so every byte maps directly onto its
+        // Unicode scalar value.
+        let strings = data_without_terminator
             .split(|&b| b == 0)
-            .map(|bytes| core::str::from_utf8(bytes).map_err(|_| SmbiosError::MalformedRecordHeader))
+            .map(|bytes| bytes.iter().map(|&b| b as char).collect())
             .collect();
 
-        strings
+        Ok(strings)
     }
 
     /// This function is called when the request handle is NOT FFFE.
@@ -306,8 +290,8 @@ impl SmbiosManager {
     ///
     /// # Errors
     ///
-    /// If the handle is not within valid range, returns SmbiosError::HandleOutOfRange.
-    /// If the handle is already in use, returns SmbiosError::HandleInUse.
+    /// If the handle is not within valid range, returns `SmbiosError::HandleOutOfRange`.
+    /// If the handle is already in use, returns `SmbiosError::HandleInUse`.
     fn add_request_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
         if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(request_handle) {
             log::error!("add_request_handle - HandleOutOfRange");
@@ -336,7 +320,7 @@ impl SmbiosManager {
     ///
     /// # Errors
     ///
-    /// If there is no available handle, return SmbiosError::HandleExhausted.
+    /// If there is no available handle, return `SmbiosError::HandleExhausted`.
     fn alloc_new_smbios_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
         for handle in 0..SMBIOS_HANDLE_PI_RESERVED {
             if self.used_handles.borrow_mut().insert(handle) {
@@ -350,8 +334,8 @@ impl SmbiosManager {
 
     /// Get a SMBIOS handle based on the requested handle
     ///
-    /// Follow PI spec, if the requested handle is FFFEh, then call alloc_new_smbios_handle to
-    /// get a unique handle. Otherwise, call add_request_handle to check if the handle is
+    /// Follow PI spec, if the requested handle is `FFFEh`, then call `alloc_new_smbios_handle` to
+    /// get a unique handle. Otherwise, call `add_request_handle` to check if the handle is
     /// already in use. If it is not, then use the requested handle as is.
     ///
     /// # Arguments
@@ -372,11 +356,11 @@ impl SmbiosManager {
 
     /// Build SMBIOS table data and entry point using pre-allocated buffers
     ///
-    /// Copies table data into pre-allocated buffers without calling allocate_pages.
+    /// Copies table data into pre-allocated buffers without calling `allocate_pages`.
     /// This allows safe republishing during Add/Update/Remove operations.
     ///
-    /// Returns (table_address, ep_address, entry_point) but does NOT install the configuration table.
-    /// The caller must call install_configuration_table separately without holding locks.
+    /// Returns (`table_address`, `ep_address`, `entry_point`) but does NOT install the configuration table.
+    /// The caller must call `install_configuration_table` separately without holding locks.
     ///
     pub fn build_table_data(&self) -> Result<(PhysicalAddress, PhysicalAddress, Smbios30EntryPoint), SmbiosError> {
         // Get pre-allocated buffer addresses
@@ -469,7 +453,7 @@ impl SmbiosManager {
 
     /// Calculate a hash for table data using Xorshift64*
     ///
-    /// Uses Xorshift64starHasher to detect modifications including byte swaps
+    /// Uses `Xorshift64starHasher` to detect modifications including byte swaps
     /// that a simple checksum would miss. Not for cryptographic integrity.
     fn calculate_table_checksum(data: &[u8]) -> u64 {
         use core::hash::Hasher;
@@ -504,10 +488,8 @@ impl SmbiosManager {
 
         if actual_checksum != expected_checksum {
             log::error!(
-                "[SMBIOS] Published table was modified directly (checksum mismatch: expected {:08X}, found {:08X}). \
-                 Use Remove() + Add() to modify records, or UpdateString() for string fields.",
-                expected_checksum,
-                actual_checksum
+                "[SMBIOS] Published table was modified directly (checksum mismatch: expected {expected_checksum:08X}, found {actual_checksum:08X}). \
+                 Use Remove() + Add() to modify records, or UpdateString() for string fields."
             );
             return Err(SmbiosError::TableDirectlyModified);
         }
@@ -669,10 +651,7 @@ impl SmbiosManager {
         // Extract existing strings from the string pool using the helper function
         let string_pool_start = header_length;
         let string_pool = &record.data[string_pool_start..];
-        let existing_strings_refs = Self::parse_strings_from_pool(string_pool)?;
-
-        // Convert to owned strings so we can modify them
-        let mut existing_strings: Vec<String> = existing_strings_refs.iter().map(|s| String::from(*s)).collect();
+        let mut existing_strings = Self::parse_strings_from_pool(string_pool)?;
 
         // Validate that we have enough strings
         if string_number > existing_strings.len() {
@@ -691,7 +670,7 @@ impl SmbiosManager {
 
         // Rebuild the string pool
         for s in &existing_strings {
-            new_data.extend_from_slice(s.as_bytes());
+            new_data.extend_from_slice(&crate::smbios_record::encode_smbios_string(s));
             new_data.push(0); // Null terminator
         }
 
@@ -783,13 +762,13 @@ mod tests {
         error::SmbiosError,
         service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosTableHeader},
     };
-    use r_efi::efi;
+    use patina::standard::efi;
     use zerocopy::IntoBytes;
 
     /// Test helper: Build a simple SMBIOS record with the given header and strings
     ///
     /// This helper manually constructs a minimal SMBIOS record for testing purposes.
-    /// In production code, use structured record types (Type0, Type1, etc.) with to_bytes().
+    /// In production code, use structured record types (Type0, Type1, etc.) with `to_bytes()`.
     fn build_test_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Vec<u8> {
         let mut bytes = Vec::new();
 
@@ -876,12 +855,15 @@ mod tests {
         assert!(SmbiosManager::validate_string("Valid-String_With.Symbols").is_ok());
         let max_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH);
         assert!(SmbiosManager::validate_string(&max_string).is_ok());
+        let max_latin1_string = "é".repeat(SMBIOS_STRING_MAX_LENGTH);
+        assert!(SmbiosManager::validate_string(&max_latin1_string).is_ok());
 
         // Error cases
         let long_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH + 1);
         assert_eq!(SmbiosManager::validate_string(&long_string), Err(SmbiosError::StringTooLong));
         assert_eq!(SmbiosManager::validate_string("test\0string"), Err(SmbiosError::StringContainsNull));
         assert_eq!(SmbiosManager::validate_string("before\0after"), Err(SmbiosError::StringContainsNull));
+        assert_eq!(SmbiosManager::validate_string("emoji \u{1F600}"), Err(SmbiosError::StringNotLatin1));
     }
 
     #[test]
@@ -1125,6 +1107,32 @@ mod tests {
         manager.update_string(handle, 2, "new_second_string").expect("update failed");
         assert!(manager.update_string(handle, 1, "new_first").is_ok());
         assert!(manager.update_string(handle, 3, "new_third").is_ok());
+    }
+
+    #[test]
+    fn test_update_string_latin1_from_string_pool() {
+        // Strings containing Latin-1 supplement characters (U+0080..=U+00FF) must be encoded as
+        // a single byte each (not multi-byte UTF-8), and must be readable back from the string pool.
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+        let mut record_data = vec![1u8, 4, 0, 0];
+        record_data.extend_from_slice(b"placeholder\0\0");
+        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        manager.update_string(handle, 1, "café").expect("update failed");
+
+        let pos = manager.records.borrow().iter().position(|r| r.header.handle == handle).unwrap();
+        let records = manager.records.borrow();
+        let header_length = records[pos].header.length as usize;
+        let string_pool = &records[pos].data[header_length..];
+
+        assert_eq!(string_pool, [b'c', b'a', b'f', 0xE9, 0, 0]);
+
+        // Reading the string backmust decode the extended character correctly.
+        let parsed = SmbiosManager::parse_strings_from_pool(string_pool).expect("parse failed");
+        assert_eq!(parsed, vec!["café"]);
+        drop(records);
+
+        assert!(manager.update_string(handle, 1, "resume").is_ok());
     }
 
     #[test]

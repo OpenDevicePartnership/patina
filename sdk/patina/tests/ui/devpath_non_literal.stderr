@@ -1,0 +1,5 @@
+error: `devpath!` expects exactly one string literal
+ --> tests/ui/devpath_non_literal.rs:6:29
+  |
+6 | const _: [u8; 0] = devpath!(DEVICE_PATH);
+  |                             ^^^^^^^^^^^

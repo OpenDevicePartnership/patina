@@ -118,7 +118,7 @@ impl TestCase {
     }
 }
 
-/// A [ParamFunction] implementation for an on-system unit test.
+/// A [`ParamFunction`] implementation for an on-system unit test.
 ///
 /// note: Once we can unwind a panic, we can remove the `Result` return type in favor of () and wrap the function in a
 /// `catch_unwind` that maps the panic message to a Err(&'static str).
@@ -161,12 +161,12 @@ where
         // from storage using the param_state that was initialized above.
         let param_value = unsafe { Func::Param::get_param(&param_state, storage) };
 
-        self.func.run(&mut Some(()), param_value).map(|_| true)
+        self.func.run(&mut Some(()), param_value).map(|()| true)
     }
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

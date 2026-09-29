@@ -23,14 +23,14 @@ use crate::{Core, PlatformInfo};
 #[service(dyn DxeDispatch)]
 pub(crate) struct CoreDxeDispatch<P: PlatformInfo>(&'static Core<P>);
 
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 impl<P: PlatformInfo> CoreDxeDispatch<P> {
     pub(crate) fn new(core: &'static Core<P>) -> Self {
         Self(core)
     }
 }
 
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 impl<P: PlatformInfo> DxeDispatch for CoreDxeDispatch<P> {
     fn dispatch(&self) -> Result<bool> {
         self.0.pi_dispatcher.dispatch()

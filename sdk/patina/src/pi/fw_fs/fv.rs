@@ -40,7 +40,7 @@ pub enum WritePolicy {
     ReliableWrite = raw::write_policy::RELIABLE_WRITE,
 }
 
-/// EFI_FIRMWARE_VOLUME_HEADER
+/// `EFI_FIRMWARE_VOLUME_HEADER`
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// Firmware volume header structure per PI Specification
@@ -79,7 +79,7 @@ pub struct BlockMapEntry {
     pub length: u32,
 }
 
-/// EFI_FIRMWARE_VOLUME_EXT_HEADER
+/// `EFI_FIRMWARE_VOLUME_EXT_HEADER`
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 /// Extended firmware volume header

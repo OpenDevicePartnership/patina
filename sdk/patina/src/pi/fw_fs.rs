@@ -40,10 +40,12 @@ pub use fv::{
 pub use fvb::attributes::{EfiFvbAttributes2, Fvb2 as Fvb2Attributes, raw::fvb2 as Fvb2RawAttributes};
 use zerocopy::FromBytes;
 
+#[cfg(test)]
+use crate::Char16String;
+use crate::standard::efi;
 use crate::{BinaryGuid, base::align_up};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use num_traits::WrappingSub;
-use r_efi::efi;
 
 /// Well-known GUIDs for firmware file system encapsulation and compression section types.
 ///
@@ -51,20 +53,22 @@ use r_efi::efi;
 /// sections within the Firmware File System. Based on the PI Specification Volume 3.
 pub mod guid {
     /// GUID for Brotli compressed sections.
-    pub const BROTLI_SECTION: crate::BinaryGuid =
+    pub const BROTLI_SECTION_GUID: crate::BinaryGuid =
         crate::BinaryGuid::from_string("3D532050-5CDA-4FD0-879E-0F7F630D5AFB");
     /// GUID for CRC32 checksum sections.
-    pub const CRC32_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("FC1BCDB0-7D31-49AA-936A-A4600D9DD083");
+    pub const CRC32_SECTION_GUID: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("FC1BCDB0-7D31-49AA-936A-A4600D9DD083");
     /// GUID for LZMA compressed sections.
-    pub const LZMA_SECTION: crate::BinaryGuid = crate::BinaryGuid::from_string("EE4E5898-3914-4259-9D6E-DC7BD79403CF");
+    pub const LZMA_SECTION_GUID: crate::BinaryGuid =
+        crate::BinaryGuid::from_string("EE4E5898-3914-4259-9D6E-DC7BD79403CF");
     /// GUID for LZMA F86 compressed sections.
-    pub const LZMA_F86_SECTION: crate::BinaryGuid =
+    pub const LZMA_F86_SECTION_GUID: crate::BinaryGuid =
         crate::BinaryGuid::from_string("D42AE6BD-1352-4BFB-909A-CA72A6EAE889");
     /// GUID for LZMA parallel compressed sections.
-    pub const LZMA_PARALLEL_SECTION: crate::BinaryGuid =
+    pub const LZMA_PARALLEL_SECTION_GUID: crate::BinaryGuid =
         crate::BinaryGuid::from_string("BD9921EA-ED91-404A-8B2F-B4D724747C8C");
     /// GUID for Tiano decompression sections.
-    pub const TIANO_DECOMPRESS_SECTION: crate::BinaryGuid =
+    pub const TIANO_DECOMPRESS_SECTION_GUID: crate::BinaryGuid =
         crate::BinaryGuid::from_string("A31280AD-481E-41B6-95E8-127F4C984779");
 }
 
@@ -74,7 +78,7 @@ pub mod guid {
 ///```
 /// # use std::{env, fs, path::Path, error::Error};
 /// use patina::pi::fw_fs::{FirmwareVolume, Section, SectionExtractor};
-/// use r_efi::efi;
+/// use patina::standard::efi;
 ///
 /// struct ExampleSectionExtractor {}
 /// impl SectionExtractor for ExampleSectionExtractor {
@@ -131,7 +135,7 @@ impl SectionExtractor for NullSectionExtractor {
 /// firmware volume name GUID and extension header data. The extension header
 /// provides additional metadata beyond the standard firmware volume header.
 ///
-/// Based on the PI Specification Volume 3, Section 3.2.2 - EFI_FIRMWARE_VOLUME_EXT_HEADER.
+/// Based on the PI Specification Volume 3, Section 3.2.2 - `EFI_FIRMWARE_VOLUME_EXT_HEADER`.
 #[derive(Clone)]
 pub struct FirmwareVolumeExtHeader<'a> {
     header: fv::ExtHeader,
@@ -174,9 +178,9 @@ pub struct FirmwareVolume<'a> {
 }
 
 impl<'a> FirmwareVolume<'a> {
-    /// Instantiate a new FirmwareVolume.
+    /// Instantiate a new `FirmwareVolume`.
     ///
-    /// Contents of the FirmwareVolume will be cached in this instance.
+    /// Contents of the `FirmwareVolume` will be cached in this instance.
     pub fn new(buffer: &'a [u8]) -> Result<Self, efi::Status> {
         //buffer must be large enough to hold the header structure.
         if buffer.len() < mem::size_of::<fv::Header>() {
@@ -223,7 +227,7 @@ impl<'a> FirmwareVolume<'a> {
         }
 
         // fv_length: must be large enough to hold the header.
-        if fv_header.fv_length < fv_header.header_length as u64 {
+        if fv_header.fv_length < u64::from(fv_header.header_length) {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
@@ -233,7 +237,7 @@ impl<'a> FirmwareVolume<'a> {
         }
 
         //ext_header_offset: must be inside the fv
-        if fv_header.ext_header_offset as u64 > fv_header.fv_length {
+        if u64::from(fv_header.ext_header_offset) > fv_header.fv_length {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
@@ -310,12 +314,12 @@ impl<'a> FirmwareVolume<'a> {
         Ok(Self { data: buffer, attributes: fv_header.attributes, block_map, ext_header, data_offset, erase_byte })
     }
 
-    /// Instantiate a new FirmwareVolume from a base address.
+    /// Instantiate a new `FirmwareVolume` from a base address.
     ///
     /// ## Safety
-    /// Caller must ensure that base_address is the address of the start of a firmware volume.
+    /// Caller must ensure that `base_address` is the address of the start of a firmware volume.
     ///
-    /// Contents of the FirmwareVolume will be cached in this instance.
+    /// Contents of the `FirmwareVolume` will be cached in this instance.
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, efi::Status> {
         // SAFETY: Caller guarantees that the base_address points to a valid FV and signature verified below
         let fv_header = unsafe { &*(base_address as *const fv::Header) };
@@ -347,7 +351,7 @@ impl<'a> FirmwareVolume<'a> {
         )
     }
 
-    /// returns the (linear block offset from FV base, block_size, remaining_blocks) given an LBA.
+    /// returns the (linear block offset from FV base, `block_size`, `remaining_blocks`) given an LBA.
     pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), efi::Status> {
         let block_map = self.block_map();
 
@@ -372,7 +376,7 @@ impl<'a> FirmwareVolume<'a> {
         Ok((offset + lba * block_size, block_size, remaining_blocks))
     }
 
-    /// Returns the attributes for the FirmwareVolume
+    /// Returns the attributes for the `FirmwareVolume`
     pub fn attributes(&self) -> EfiFvbAttributes2 {
         self.attributes
     }
@@ -451,7 +455,7 @@ impl<'a> File<'a> {
                 let mut size_vec = file_header.size.to_vec();
                 size_vec.push(0);
                 let size = u32::from_le_bytes(size_vec.try_into().unwrap());
-                (header_size, size as u64)
+                (header_size, u64::from(size))
             } else {
                 //extended header with 64-bit size
                 let extended_size_length = mem::size_of::<u64>();
@@ -562,7 +566,7 @@ impl<'a> File<'a> {
             (5, false) => 12,
             (6, false) => 15,
             (7, false) => 16,
-            (x @ 0..=7, true) => (17 + x) as u32,
+            (x @ 0..=7, true) => u32::from(17 + x),
             (_, _) => panic!("Invalid data_alignment!"),
         };
         if attributes & FfsRawAttribute::FIXED != 0 {
@@ -843,7 +847,7 @@ impl Section {
         self.section_type
     }
 
-    /// Indicates whether this section is an encapsulation section (i.e. can be expended with a SectionExtractor).
+    /// Indicates whether this section is an encapsulation section (i.e. can be expended with a `SectionExtractor`).
     pub fn is_encapsulation(&self) -> bool {
         self.section_type() == Some(FfsSectionType::Compression)
             || self.section_type() == Some(FfsSectionType::GuidDefined)
@@ -1000,14 +1004,14 @@ mod unit_tests {
         path::Path,
     };
 
+    use crate::standard::efi;
     use core::{mem, sync::atomic::AtomicBool};
-    use r_efi::efi;
     use serde::Deserialize;
     use uuid::Uuid;
 
     use crate::pi::fw_fs::{SectionMetaData, guid};
 
-    use super::{FfsSectionType, FirmwareVolume, NullSectionExtractor, Section, SectionExtractor, fv};
+    use super::{Char16String, FfsSectionType, FirmwareVolume, NullSectionExtractor, Section, SectionExtractor, fv};
 
     #[derive(Debug, Deserialize)]
     struct TargetValues {
@@ -1032,7 +1036,7 @@ mod unit_tests {
     }
 
     fn stringify(error: efi::Status) -> String {
-        format!("efi error: {:x?}", error).to_string()
+        format!("efi error: {error:x?}").to_string()
     }
 
     fn test_firmware_volume_worker(
@@ -1057,7 +1061,7 @@ mod unit_tests {
                     ffs_file.section_iter_with_extractor(extractor).collect();
                 let sections = sections.map_err(stringify)?;
                 for section in sections.iter().enumerate() {
-                    println!("{:x?}", section);
+                    println!("{section:x?}");
                 }
                 assert_eq!(
                     target.number_of_sections,
@@ -1102,9 +1106,7 @@ mod unit_tests {
 
     fn extract_text_from_section(section: &Section) -> Option<String> {
         if section.section_type() == Some(FfsSectionType::UserInterface) {
-            let display_name_chars: Vec<u16> =
-                section.section_data().chunks(2).map(|x| u16::from_le_bytes(x.try_into().unwrap())).collect();
-            Some(String::from_utf16_lossy(&display_name_chars).trim_end_matches(char::from(0)).to_string())
+            Char16String::from_le_bytes_until_nul(section.section_data()).ok().map(|s| s.to_string())
         } else {
             None
         }
@@ -1155,7 +1157,7 @@ mod unit_tests {
                 let SectionMetaData::GuidDefined(metadata, _guid_specific) = section.meta_data() else {
                     panic!("Unexpected section metadata");
                 };
-                assert_eq!(metadata.section_definition_guid, guid::BROTLI_SECTION);
+                assert_eq!(metadata.section_definition_guid, guid::BROTLI_SECTION_GUID);
                 self.invoked.store(true, core::sync::atomic::Ordering::SeqCst);
                 Ok(Box::new([0u8; 0]))
             }
@@ -1235,7 +1237,7 @@ mod unit_tests {
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
-            (*fv_header).fv_length = ((*fv_header).ext_header_offset - 1) as u64;
+            (*fv_header).fv_length = u64::from((*fv_header).ext_header_offset - 1);
         };
         assert_eq!(FirmwareVolume::new(&fv_bytes).unwrap_err(), efi::Status::VOLUME_CORRUPTED);
 
@@ -1264,18 +1266,18 @@ mod unit_tests {
 
         let a = A { foo: 0, bar: 0, baz: 0, block_map: [fv::BlockMapEntry { length: 0, num_blocks: 0 }; 0] };
 
-        let a_ptr = &a as *const A;
+        let a_ptr = &raw const a;
 
         // SAFETY: Test validates pointer offset calculation for zero-size array
         unsafe {
-            assert_eq!((*a_ptr).block_map.as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
+            assert_eq!((*a_ptr).block_map.as_ptr(), a_ptr.add(1) as *const fv::BlockMapEntry);
         }
     }
 
     struct ExampleSectionExtractor {}
     impl SectionExtractor for ExampleSectionExtractor {
         fn extract(&self, section: &Section) -> Result<Box<[u8]>, efi::Status> {
-            println!("Encapsulated section: {:?}", section);
+            println!("Encapsulated section: {section:?}");
             Ok(Box::new([0u8; 0])) //A real section extractor would provide the extracted buffer on return.
         }
     }
@@ -1310,7 +1312,7 @@ mod unit_tests {
                 assert_eq!(length, 0);
                 assert_eq!(header.compression_type, 1);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_guid_defined: [u8; 32] = [
@@ -1335,7 +1337,7 @@ mod unit_tests {
                 assert_eq!(guid_data.to_vec(), &[0x00u8, 0x01, 0x02, 0x03]);
                 assert_eq!(section.section_data(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_version: [u8; 14] =
@@ -1347,7 +1349,7 @@ mod unit_tests {
                 assert_eq!(build_number, 0);
                 assert_eq!(section.section_data(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_freeform_subtype: [u8; 24] = [
@@ -1366,7 +1368,7 @@ mod unit_tests {
                 );
                 assert_eq!(section.section_data(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         Ok(())

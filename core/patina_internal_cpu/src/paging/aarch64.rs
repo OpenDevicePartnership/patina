@@ -1,4 +1,4 @@
-//! AArch64 Paging
+//! `AArch64` Paging
 //!
 //! This module provides an in direction to the external paging crate.
 //!
@@ -10,13 +10,10 @@
 //!
 use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, aarch64::AArch64PageTable};
 
-use crate::{
-    cpu::aarch64::flush_data_cache_range,
-    paging::{CacheAttributeValue, PatinaPageTable},
-};
-use patina::pi::protocols::cpu_arch::CpuFlushType;
+use crate::paging::{CacheAttributeValue, PatinaPageTable};
+use patina::pi::protocol::cpu_arch::CpuFlushType;
+use patina::standard::efi;
 use patina_paging::page_allocator::PageAllocator;
-use r_efi::efi;
 
 /// Memory attributes that indicate cached mappings (writeback or write-through).
 const CACHED_ATTRS: MemoryAttributes = MemoryAttributes::Writeback.union(MemoryAttributes::WriteThrough);
@@ -41,6 +38,16 @@ where
 {
     fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
         self.paging.map_memory_region(address, size, attributes)
+    }
+
+    fn map_aliased_memory_region(
+        &mut self,
+        virtual_address: u64,
+        physical_address: u64,
+        size: u64,
+        attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
+        self.paging.map_aliased_memory_region(virtual_address, physical_address, size, attributes)
     }
 
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
@@ -72,24 +79,24 @@ where
         // clean and invalidate the data cache for the range so that any dirty lines
         // are written back to memory before subsequent accesses bypass the cache.
         if old_cache_attributes.intersects(CACHED_ATTRS) && new_cache_attributes.intersects(UNCACHED_ATTRS) {
-            flush_data_cache_range(address, size, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
+            let _ = patina::arch::flush_data_cache(address, size, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
         }
     }
 }
 
-/// Create an AArch64 paging instance under the general PatinaPageTable trait.
-#[coverage(off)]
+/// Create an `AArch64` paging instance under the general `PatinaPageTable` trait.
+#[cfg_attr(coverage, coverage(off))]
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<impl PatinaPageTable, efi::Status> {
     Ok(EfiCpuPagingAArch64 { paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap() })
 }
 
-/// Open the active AArch64 page table wrapped in the PatinaPageTable trait.
+/// Open the active `AArch64` page table wrapped in the `PatinaPageTable` trait.
 ///
 /// ## Safety
 /// The caller must ensure no other entity is concurrently modifying the page tables.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<impl PatinaPageTable, PtError> {
@@ -99,29 +106,10 @@ pub unsafe fn open_active_cpu_aarch64_paging<A: PageAllocator + 'static>(
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
-
     use super::*;
-    use mockall::mock;
-
-    mock! {
-        PageAllocator {}
-        impl PageAllocator for PageAllocator {
-            fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> Result<u64, PtError>;
-        }
-    }
-
-    mock! {
-        PageTable {}
-        impl PageTable for PageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn install_page_table(&mut self) -> Result<(), PtError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
-        }
-    }
+    use patina_paging::MockPageTable;
 
     #[test]
     fn test_map_memory_region() {
@@ -132,6 +120,31 @@ mod tests {
         let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
         let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncached);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_map_aliased_memory_region() {
+        let mut mock_page_table = MockPageTable::new();
+
+        mock_page_table.expect_map_aliased_memory_region().returning(
+            |virtual_address, physical_address, size, attributes| {
+                assert_eq!(virtual_address, 0x2000);
+                assert_eq!(physical_address, 0x1000);
+                assert_eq!(size, 0x1000);
+                assert_eq!(attributes, MemoryAttributes::Writeback | MemoryAttributes::ReadOnly);
+                Ok(())
+            },
+        );
+
+        let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
+
+        let result = paging.map_aliased_memory_region(
+            0x2000,
+            0x1000,
+            0x1000,
+            MemoryAttributes::Writeback | MemoryAttributes::ReadOnly,
+        );
         assert!(result.is_ok());
     }
 

@@ -11,24 +11,12 @@ As an "internal" Patina crate, it is not intended for direct use by code outside
 
 ## Overview
 
-- Provide a `Cpu` trait and architecture-specific `EfiCpu*` services that provide functionality used to help produce
-  the UEFI CPU Architecture Protocol.
 - Expose an `InterruptManager` abstraction with default fault handlers, exception context translation, and utilities
   (for example the `log_registers!` macro) that higher layers can reuse.
 - Bridge Patina memory management code to the `patina_paging` and `patina_mtrr` crates so that page tables and cache
   attributes can be programmed on supported architectures.
 
 ## Key Modules
-
-### `cpu`
-
-`cpu::Cpu` defines the cache flush, INIT broadcast, and timer query hooks required by the UEFI CPU Architecture
-Protocol.
-
-- `EfiCpuX64` performs tasks like initializing the floating-point unit, installing a GDT, and routing cache maintenance
-  operations to instructions such as `wbinvd`/`invd`.
-- `EfiCpuAarch64` performs cache maintenance operations for Arm.
-- `EfiCpuNull` is available for documentation and host-based unit tests that do not require actual CPU services.
 
 ### `interrupts`
 

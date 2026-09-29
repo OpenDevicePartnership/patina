@@ -1,6 +1,6 @@
 //! Real Component Integration Test Framework
 //!
-//! This framework integrates the actual patina_mm components for comprehensive integration testing.
+//! This framework integrates the actual `patina_mm` components for comprehensive integration testing.
 //! It mocks hardware and other external dependencies while exercising the real communication logic.
 //!
 //! ## Logging
@@ -32,7 +32,7 @@ use patina_mm::{
 
 /// Test MM Executor for integration testing
 ///
-/// Test MM executor that integrates with the real MmCommunicator component
+/// Test MM executor that integrates with the real `MmCommunicator` component
 ///
 /// This executor simulates MM execution by calling test handlers directly, enabling
 /// integration testing of the actual `MmCommunicator` component without requiring
@@ -89,12 +89,12 @@ impl MmExecutor for TestMmExecutor {
                     Ok(())
                 }
                 Err(e) => {
-                    log::error!(target: "test_mm_executor", "Handler execution failed: {:?}", e);
+                    log::error!(target: "test_mm_executor", "Handler execution failed: {e:?}");
                     Err(Status::InvalidDataBuffer)
                 }
             }
         } else {
-            log::warn!(target: "test_mm_executor", "No handler found for recipient: {:?}", recipient);
+            log::warn!(target: "test_mm_executor", "No handler found for recipient: {recipient:?}");
             Err(Status::CommBufferNotFound)
         }
     }
@@ -105,7 +105,7 @@ impl MmExecutor for TestMmExecutor {
 /// This framework orchestrates real MM components while mocking hardware dependencies,
 /// providing integration testing that exercises the actual `MmCommunicator` component
 /// and its dependencies. Unlike the simpler `MmTestFramework`, this framework uses
-/// the complete patina_mm component stack, including real `CommunicateBuffer` operations.
+/// the complete `patina_mm` component stack, including real `CommunicateBuffer` operations.
 pub struct RealComponentMmTestFramework {
     /// Real MM Communicator service using actual communication logic
     mm_communicator: MmCommunicator<TestMmExecutor>,
@@ -126,7 +126,7 @@ impl RealComponentMmTestFramework {
         let result = self.mm_communicator.communicate(0, data, guid.clone());
 
         log::debug!(target: "real_test_framework", "Real component communication result: {:?}",
-                   result.as_ref().map(|r| r.len()).map_err(|e| format!("{:?}", e)));
+                   result.as_ref().map(std::vec::Vec::len).map_err(|e| format!("{e:?}")));
         result
     }
 }

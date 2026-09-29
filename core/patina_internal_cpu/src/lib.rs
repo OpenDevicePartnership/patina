@@ -9,8 +9,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
-pub mod cpu;
+#[cfg(target_arch = "x86_64")]
+pub mod gdt;
 pub mod interrupts;
 pub mod paging;

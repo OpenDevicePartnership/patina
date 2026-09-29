@@ -6,7 +6,7 @@
 )]
 #![cfg_attr(all(not(feature = "std"), not(test), not(doc)), no_std)]
 #![deny(missing_docs)]
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
 #[cfg(any(feature = "alloc", test, doc))]
 extern crate alloc;

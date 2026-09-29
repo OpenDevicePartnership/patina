@@ -22,8 +22,8 @@ use crate::{
     gcd::MemoryProtectionPolicy,
     systemtables,
 };
+use patina::standard::efi;
 use patina::writelncrlf;
-use r_efi::efi;
 
 // create a wrapper struct so that we can create an install method on it. That way, we can have the install function
 // be a no-op until after ReadyToBoot
@@ -40,7 +40,7 @@ impl MemoryAttributesTable {
     ///
     /// Install the Memory Attributes Table
     /// This function is intended to be called by the DXE Core to install the Memory Attributes Table for runtime memory
-    /// allocations/deallocations after ReadyToBoot has occurred. This function will be a no-op until after ReadyToBoot.
+    /// allocations/deallocations after `ReadyToBoot` has occurred. This function will be a no-op until after `ReadyToBoot`.
     /// Callers of the function are not expected to check return status as it is immaterial to the caller whether it
     /// succeeds or not and they will take no different action based on return status.
     ///
@@ -55,7 +55,7 @@ impl MemoryAttributesTable {
     ///
     pub fn install() {
         if POST_RTB.is_completed() {
-            core_install_memory_attributes_table()
+            core_install_memory_attributes_table();
         }
     }
 }
@@ -71,7 +71,7 @@ impl Debug for MemoryAttributesTable {
         writelncrlf!(f, "  version: {:#X}", mat.version)?;
         writelncrlf!(f, "  number_of_entries: {:#X}", mat.number_of_entries)?;
         writelncrlf!(f, "  descriptor_size: {:#X}", mat.descriptor_size)?;
-        writelncrlf!(f, "  reserved: {:#X}", mat.reserved)?;
+        writelncrlf!(f, "  flags: {:#X}", mat.flags)?;
         writelncrlf!(f, "  entries: [")?;
 
         writelncrlf!(f, "{:?}", MemoryDescriptorSlice(entries))?;
@@ -91,7 +91,7 @@ pub fn init_memory_attributes_table_support() {
         None,
         Some(efi::EVENT_GROUP_READY_TO_BOOT),
     ) {
-        log::error!("Failed to register an event at Ready to Boot to create the MAT! Status {status:#X?}");
+        log::error!("Failed to register an event at Ready to Boot to create the MAT! Status {status}");
     }
 }
 
@@ -101,7 +101,7 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
     core_install_memory_attributes_table();
 
     if let Err(status) = EVENT_DB.close_event(event) {
-        log::error!("Failed to close MAT ready to boot event with status {status:#X?}. This should be okay.");
+        log::error!("Failed to close MAT ready to boot event with status {status}. This should be okay.");
     }
 }
 
@@ -120,7 +120,7 @@ pub fn core_install_memory_attributes_table() {
                             version: 0,
                             number_of_entries: 0,
                             descriptor_size: 0,
-                            reserved: 0,
+                            flags: 0,
                             entry: [],
                         };
                         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
@@ -129,15 +129,13 @@ pub fn core_install_memory_attributes_table() {
                         if let Err(status) =
                             core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
                         {
-                            log::error!(
-                                "Failed to create a null MAT table with status {status:#X?}, cannot create MAT"
-                            );
+                            log::error!("Failed to create a null MAT table with status {status}, cannot create MAT");
                             return;
                         }
                     }
                 }
                 Err(err) => {
-                    log::error!("Failed to allocate memory for a null MAT! Status {err:#X?}");
+                    log::error!("Failed to allocate memory for a null MAT! Status {err}");
                     return;
                 }
             }
@@ -194,7 +192,7 @@ pub fn core_install_memory_attributes_table() {
         mat_desc_list.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => {
-            log::error!("Failed to allocate memory for the MAT! Status {err:#X?}");
+            log::error!("Failed to allocate memory for the MAT! Status {err}");
             return;
         }
         Ok(void_ptr) => {
@@ -213,7 +211,7 @@ pub fn core_install_memory_attributes_table() {
                 mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
                 mat.number_of_entries = mat_desc_list.len() as u32;
                 mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
-                mat.reserved = 0;
+                mat.flags = 0;
 
                 let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
 
@@ -228,16 +226,16 @@ pub fn core_install_memory_attributes_table() {
 
                 match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
                     Err(status) => {
-                        log::error!("Failed to install MAT table! Status {status:#X?}");
+                        log::error!("Failed to install MAT table! Status {status}");
                         if let Err(err) = core_free_pool(void_ptr) {
-                            log::error!("Error freeing newly allocated MAT pointer: {err:#X?}");
+                            log::error!("Error freeing newly allocated MAT pointer: {err}");
                         }
                         return;
                     }
                     Ok(Some(current_ptr)) => {
                         // free the old MAT table if we have one
                         if let Err(err) = core_free_pool(current_ptr.as_ptr()) {
-                            log::error!("Error freeing previous MAT pointer: {err:#X?}");
+                            log::error!("Error freeing previous MAT pointer: {err}");
                         }
                     }
                     Ok(None) => (),
@@ -251,7 +249,7 @@ pub fn core_install_memory_attributes_table() {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     extern crate std;
     use super::*;
@@ -262,10 +260,11 @@ mod tests {
         systemtables::init_system_table,
         test_support,
     };
-    use patina::{base::UEFI_PAGE_SIZE, uefi_size_to_pages};
+    use patina::{UEFI_PAGE_SIZE, uefi_size_to_pages};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
+        test_support::with_clean_global_lock(|| {
+            let _post_rtb_guard = test_support::StateGuard::new(|| POST_RTB.reset());
             POST_RTB.reset();
 
             // SAFETY: Test-only initialization under the global lock.
@@ -275,8 +274,6 @@ mod tests {
                 init_system_table();
             }
             f();
-
-            POST_RTB.reset();
         })
         .unwrap();
     }
@@ -362,7 +359,7 @@ mod tests {
 
                 // Validate each of our runtime allocations exists in the MAT with expected values.
                 // We don't assume ordering; find by physical_start and number_of_pages.
-                for page in allocated_pages.iter() {
+                for page in &allocated_pages {
                     let expected_type = page.1.0;
                     let expected_physical_start = page.0;
                     let expected_number_of_pages = page.2 as u64;

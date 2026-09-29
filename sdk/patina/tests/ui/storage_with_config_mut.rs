@@ -1,7 +1,7 @@
 //! Test that &Storage with ConfigMut<T> is rejected at compile time.
 
 use patina::{
-    component::{component, params::ConfigMut, Storage},
+    component::{Storage, component, params::ConfigMut},
     error::Result,
 };
 

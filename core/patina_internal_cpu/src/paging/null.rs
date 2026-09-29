@@ -13,7 +13,6 @@ use patina_paging::{CacheAttributeValue, MemoryAttributes, PtError};
 
 use crate::paging::PatinaPageTable;
 use patina_paging::page_allocator::PageAllocator;
-use r_efi::efi;
 
 #[derive(Default)]
 #[allow(dead_code)]
@@ -29,6 +28,16 @@ where
     A: PageAllocator,
 {
     fn map_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
+        Ok(())
+    }
+
+    fn map_aliased_memory_region(
+        &mut self,
+        _virtual_address: u64,
+        _physical_address: u64,
+        _size: u64,
+        _attributes: MemoryAttributes,
+    ) -> Result<(), PtError> {
         Ok(())
     }
 

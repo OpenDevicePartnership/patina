@@ -1,7 +1,7 @@
 //! Firmware Volume Attributes
 //!
 //! Based on the values defined in the UEFI Platform Initialization (PI) Specification V1.8A Section 3.2.1.1
-//! EFI_FIRMWARE_VOLUME_HEADER.
+//! `EFI_FIRMWARE_VOLUME_HEADER`.
 //!
 //! ## License
 //!
@@ -13,7 +13,7 @@
 /// Type alias for firmware volume attributes (64-bit)
 pub type EfiFvAttributes = u64;
 
-/// EFI_FV_ATTRIBUTES bit definitions
+/// `EFI_FV_ATTRIBUTES` bit definitions
 /// Note: `ALIGNMENT` traditionally has the same value as `ALIGNMENT_2G`. To reduce confusion, only
 ///       `ALIGNMENT_2G` is specified.
 pub mod raw {

@@ -272,8 +272,8 @@ In this example, we will talk about how to configure the loggers provided by Pat
 ```rust
 # extern crate patina;
 # extern crate log;
-use patina::serial::uart::UartNull; // UartPl011 (AARCH64) and Uart16550 (X64) exist
-use patina::log::{Format, SerialLogger};
+use patina::peripheral::serial::uart::UartNull; // UartPl011 (AARCH64) and Uart16550 (X64) exist
+use patina::debug::log::{Format, SerialLogger};
 use log::LevelFilter;
 
 const LOGGER: SerialLogger<UartNull> = SerialLogger::new(
@@ -291,7 +291,7 @@ Modify the `DEBUGGER` static to match your platform's debug serial infrastructur
 ```rust
 # extern crate patina;
 # extern crate patina_debugger;
-use patina::serial::uart::UartNull; // UartPl011 (AARCH64) and Uart16550 (X64) exist
+use patina::peripheral::serial::uart::UartNull; // UartPl011 (AARCH64) and Uart16550 (X64) exist
 
 #[cfg(feature = "enable_debugger")]
 const _ENABLE_DEBUGGER: bool = true;
@@ -325,8 +325,8 @@ use core::ffi::c_void;
 
 use patina_dxe_core::*;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina::log::{Format, SerialLogger};
-use patina::serial::uart::UartNull; // Uart16550 or UartPl011 available for X64 / AARCH64 platforms
+use patina::debug::log::{Format, SerialLogger};
+use patina::peripheral::serial::uart::UartNull; // Uart16550 or UartPl011 available for X64 / AARCH64 platforms
 
 static LOGGER: SerialLogger<UartNull> = SerialLogger::new(
     Format::Standard, // Format to write logs in
@@ -439,29 +439,39 @@ impl CpuInfo for ExamplePlatform {
 
 ### 7.3 Performance Monitoring (Optional)
 
-The
+The DXE core will provide the base implementation for detailed performance measurement, and the
 [`patina_performance`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_performance)
-component provides detailed UEFI performance measurement capabilities:
+component provides the UEFI protocol, coordinates with MM for measurements, and publishes the ACPI table.
+To enable core support, the platform must either publish the
+[performance configuration hob](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/Include/Guid/PatinaPerformanceConfig.h),
+or override the `DEFAULT_PERFORMANCE_CONFIG` implementation in the `PlatformInfo` implementation.
 
-```rust,no_run
-# extern crate patina;
-# extern crate patina_dxe_core;
-# extern crate patina_performance;
+```rust,ignore
+use patina::performance::config::PerformanceConfig;
 use patina_dxe_core::*;
 
 struct ExamplePlatform;
 
+impl PlatformInfo for ExamplePlatform {
+    // Optional override if the platform does not publish the performance configuration HOB.
+    const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new()
+        .with_measurement(patina::performance::Measurement::DriverBindingStart) // Adds driver binding start measurements.
+        .with_measurement(patina::performance::Measurement::DriverBindingStop)  // Adds driver binding stop measurements.
+        .with_measurement(patina::performance::Measurement::LoadImage)          // Adds load image measurements.
+        .with_measurement(patina::performance::Measurement::StartImage);        // Adds start image measurements.
+}
+
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        add.component(patina_performance::component::Performance::new().with_measurements(
-            patina_performance::component::Measurement::DriverBindingStart
-                | patina_performance::component::Measurement::DriverBindingStop
-                | patina_performance::component::Measurement::LoadImage
-                | patina_performance::component::Measurement::StartImage
-        ));
+        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
+        add.component(patina_performance::component::Performance::new());
     }
 }
 ```
+
+for more details on performance measurement implementation, see the
+[performance measurement theory of operation](../dxe_core/performance_measurement.md).
 
 ## 8. Complete Implementation Example
 
@@ -487,8 +497,8 @@ crate when supported by the target architecture.
 use core::{ffi::c_void, panic::PanicInfo};
 use patina_dxe_core::*;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina::log::{Format, SerialLogger};
-use patina::serial::uart::UartNull; // Uart16550 or UartPl011 exist
+use patina::debug::log::{Format, SerialLogger};
+use patina::peripheral::serial::uart::UartNull; // Uart16550 or UartPl011 exist
 use patina_stacktrace::StackTrace;
 extern crate alloc;
 
@@ -541,12 +551,9 @@ impl ComponentInfo for ExamplePlatform {
         add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
         // Platform Mm Init hook
         // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
-        add.component(patina_performance::component::Performance::new().with_measurements(
-            patina_performance::component::Measurement::DriverBindingStart
-                | patina_performance::component::Measurement::DriverBindingStop
-                | patina_performance::component::Measurement::LoadImage
-                | patina_performance::component::Measurement::StartImage
-        ));
+        // The component dispatches only when the DXE Core enables performance measurement, via a performance
+        // config HOB or the platform's `PlatformInfo::DEFAULT_PERFORMANCE_CONFIG` override.
+        add.component(patina_performance::component::Performance::new());
     }
 }
 

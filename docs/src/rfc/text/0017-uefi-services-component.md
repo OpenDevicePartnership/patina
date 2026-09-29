@@ -26,6 +26,7 @@ here, but are not in scope for this RFC.
 - 2025-10-1: Add mocking note to service interfaces section.
 - 2025-12-02: Update examples to reflect new component attribute syntax where `#[component]` is applied to impl
 blocks and entry points are always named `entry_point`.
+- 2026-07-28: Updated renamed end of DXE event.
 
 ## Motivation
 
@@ -152,7 +153,7 @@ boot_services.as_ref().create_event_ex(
     Tpl::CALLBACK,
     Some(event_callback::callback_fn),
     Box::new((BB::clone(&boot_services), RR::clone(&runtime_services), fbpt)),
-    &EVENT_GROUP_END_OF_DXE,
+    &END_OF_DXE_EVENT_GROUP_GUID,
 )?;
 ```
 

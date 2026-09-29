@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 use core::fmt::Display;
 
-use crate::error::EfiError;
+use crate::base::error::EfiError;
 
 /// Macro to assert an expression and return an error if the assertion fails.
 #[doc(hidden)]
@@ -33,7 +33,7 @@ pub enum Error {
     Efi(EfiError),
     /// Generic serialization error while encoding a performance record or table.
     Serialization,
-    /// A performance record exceeded the representable maximum size (u8::MAX bytes).
+    /// A performance record exceeded the representable maximum size (`u8::MAX` bytes).
     RecordTooLarge {
         /// The actual size of the record that exceeded the limit.
         size: usize,
@@ -60,7 +60,7 @@ impl Display for Error {
         match self {
             Error::OutOfResources => write!(f, "FBPT buffer full, can't add more performance records."),
             Error::BufferTooSmall => write!(f, "Buffer to small to allocate FBPT table"),
-            Error::Efi(efi_error) => write!(f, "{efi_error:?}"),
+            Error::Efi(efi_error) => write!(f, "{efi_error}"),
             Error::Serialization => write!(f, "Failed to serialize performance data"),
             Error::RecordTooLarge { size } => write!(f, "Performance record size {size} exceeds u8::MAX"),
             Error::DebugAssert { msg, file, line } => write!(f, "Assertion at {file}:{line}: {msg}"),
@@ -77,42 +77,42 @@ mod tests {
     #[test]
     fn test_out_of_resources_display() {
         let error = Error::OutOfResources;
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "FBPT buffer full, can't add more performance records.");
     }
 
     #[test]
     fn test_buffer_too_small_display() {
         let error = Error::BufferTooSmall;
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Buffer to small to allocate FBPT table");
     }
 
     #[test]
     fn test_efi_error_display() {
         let error = Error::Efi(EfiError::InvalidParameter);
-        let display = format!("{}", error);
-        assert!(display.contains("InvalidParameter"));
+        let display = format!("{error}");
+        assert_eq!(display, "Invalid Parameter");
     }
 
     #[test]
     fn test_serialization_display() {
         let error = Error::Serialization;
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Failed to serialize performance data");
     }
 
     #[test]
     fn test_record_too_large_display() {
         let error = Error::RecordTooLarge { size: 512 };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Performance record size 512 exceeds u8::MAX");
     }
 
     #[test]
     fn test_debug_assert_display() {
         let error = Error::DebugAssert { msg: "test assertion", file: "test.rs", line: 42 };
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert_eq!(display, "Assertion at test.rs:42: test assertion");
     }
 
@@ -129,14 +129,14 @@ mod tests {
     #[test]
     fn test_debug_formatting() {
         let error = Error::OutOfResources;
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("OutOfResources"));
     }
 
     #[test]
     fn test_record_too_large_debug() {
         let error = Error::RecordTooLarge { size: 300 };
-        let debug = format!("{:?}", error);
+        let debug = format!("{error:?}");
         assert!(debug.contains("RecordTooLarge"));
         assert!(debug.contains("300"));
     }

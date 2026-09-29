@@ -1,9 +1,9 @@
 //! Debugger Architecture Module
 //!
 //! This module contains the architecture specific implementations for the debugger.
-//! These implementations are abstracted behind the DebuggerArch trait, which is
+//! These implementations are abstracted behind the `DebuggerArch` trait, which is
 //! the architecture agnostic interface the rest of the debugger uses. The architecture
-//! structs also implement the required GdbStub architecture traits for register
+//! structs also implement the required `GdbStub` architecture traits for register
 //! access.
 //!
 //! ## License
@@ -20,11 +20,11 @@ use crate::ExceptionInfo;
 
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "x86_64")] {
-        #[coverage(off)]
+        #[cfg_attr(coverage, coverage(off))]
         mod x64;
         pub type SystemArch = x64::X64Arch;
     } else if #[cfg(target_arch = "aarch64")] {
-        #[coverage(off)]
+        #[cfg_attr(coverage, coverage(off))]
         mod aarch64;
         pub type SystemArch = aarch64::Aarch64Arch;
     }

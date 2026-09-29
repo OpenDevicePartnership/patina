@@ -33,7 +33,7 @@ pub(crate) fn normalize(name: &str) -> String {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

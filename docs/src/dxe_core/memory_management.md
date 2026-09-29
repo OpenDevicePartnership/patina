@@ -107,7 +107,7 @@ be of this type.
 * Reserving pages for the allocator. This is used to seed the allocator with an initial [bucket](memory_management.md#allocation-buckets)
 of memory.
 * APIs for allocate and free operations of arbitrary sizes, including `impl` for [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
-and [`GloballAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
+and [`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
 traits. See [Rust `Allocator` and `GlobalAlloc` Implementations](memory_management.md#rust-allocator-and-globalalloc-implementations)
 below.
 * APIs for allocating and freeing pages (as distinct from arbitrary sizes). These are pass-throughs to the
@@ -126,7 +126,7 @@ level at which memory attributes (such as `Execute Protect` or `Read Protect`) a
 
 The Patina DXE Core implements the GCD using a Red-Black Tree to track the memory regions within the
 GCD. This gives the best expected performance when the number of elements in the GCD is expected to
-be large. There are alternative storage implementations in the `patina_internal_collections` crate
+be large. There are alternative storage implementations in the `patina_internal_core::collections` module
 within the core that implement the same interface that provide different performance characteristics
 (which may be desirable if different assumptions are used - for example if the number of map entries
 is expected to be small), but the RBT-based implementation is expected to give the best performance
@@ -228,7 +228,7 @@ occurred) then a panic will be generated.
 
 In addition to producing the memory allocation APIs required by the UEFI spec, the memory allocation subsystem also
 produces implementations of the [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html) and
-[`GloballAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html) traits.
+[`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html) traits.
 
 These implementations are used within the core for two purposes:
 
@@ -248,9 +248,8 @@ An example of how the `Allocator` trait can be used in the core to allocate memo
 ```rust
 #![feature(allocator_api)]
 # extern crate patina;
-# extern crate r_efi;
 use patina::{
-    efi_types::EfiMemoryType,
+    uefi::memory::EfiMemoryType,
     component::service::{
       Service,
       memory::{
@@ -298,7 +297,8 @@ auditability and ensuring consistency.
 > **Note:** This section primarily deals with access attributes. Caching attributes are platform and driver driven and
 > outside the scope of this document. The core gets the initial platform specified caching attributes via the Resource
 > Descriptor HOB v2 and persists whatever the GCD entry has on every other call. After this point, drivers (such as
-> the PCI Host Bridge driver) may update memory regions with different caching attributes.
+> the PCI Host Bridge driver) may update memory regions with different caching attributes. The one place Patina
+> is opinionated in caching is that the default caching attribute for system memory is write back.
 
 ### General Flow
 
@@ -344,6 +344,17 @@ update the attributes.
 
 When pages are freed, Patina will unmap the pages in the page table so that any further accesses to them cause page
 faults. This helps to catch use-after-free bugs as well as meeting the cleanliness requirements of Patina.
+
+System memory page allocations will also have the write back caching attribute applied to maintain a consistent state.
+Patina expects that consumers may update system memory attributes and as such it will reset the memory attributes of
+system memory to writeback on free.
+
+### Added Memory
+
+The DXE_SERVICES.ADD_MEMORY_SPACE() PI spec defined API allows for adding new memory to Patina's GCD. Callers are
+expected to call DXE_SERVICES.SET_MEMORY_SPACE_ATTRIBUTES() to set caching and/or protection attributes.
+
+Patina will default system memory to writeback cached upon addition, but it will not be mapped until allocated.
 
 ### Image Memory Protections
 

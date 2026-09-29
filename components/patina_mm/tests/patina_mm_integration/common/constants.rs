@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::base::SIZE_4KB;
+use patina::SIZE_4KB;
 
 /// Standard test buffer size
 pub const TEST_BUFFER_SIZE: usize = SIZE_4KB;
@@ -25,7 +25,7 @@ pub mod mm_supv {
 
 /// Test GUIDs for different handlers
 ///
-/// Provides predefined GUIDs used throughout the patina_mm test framework for registering
+/// Provides predefined GUIDs used throughout the `patina_mm` test framework for registering
 /// and identifying different types of test handlers.
 pub mod test_guids {
     use patina::BinaryGuid;

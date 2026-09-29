@@ -18,7 +18,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use crate::BinaryGuid;
-use r_efi::efi;
+use crate::standard::efi;
 use zerocopy::FromBytes;
 
 /// Signature value for the request header ('MSUP' as little-endian u32).

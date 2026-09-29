@@ -2,7 +2,7 @@
 //!
 //! Contains custom definitions for serializing HOBs to and from JSON format, using `serde`.
 //! This is not required by the UEFI/PI specifications, but is provided for convenience in visualizing and encoding HOBs.
-//! This crate is gated behind the `serde` feature flag. Serialization is only available when the feature is enabled.
+//! This module is gated behind the `serde` feature flag. Serialization is only available when the feature is enabled.
 //!
 //! For information on the standard HOB format, see `hob.rs`.
 //!
@@ -20,12 +20,12 @@ pub mod serializable_fv;
 /// Serializable HOB definitions.
 pub mod serializable_hob;
 
-use r_efi::efi::Guid;
+use crate::standard::efi::Guid;
 
 use alloc::{format, string::String, vec, vec::Vec};
 
 /// Format a GUID as a string in the standard 8-4-4-4-12 format.
-/// This custom implementation is necessary because `r_efi::Guid` has private fields and cannot derive `Serialize` directly.
+/// This custom implementation is necessary because `patina::standard::Guid` has private fields and cannot derive `Serialize` directly.
 ///
 pub fn format_guid(guid: &Guid) -> String {
     let (time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, node) = guid.as_fields();
@@ -56,6 +56,7 @@ pub trait Interval: Clone + Ord {
     fn end(&self) -> u64;
 
     /// Merge two overlapping or adjacent intervals.
+    #[must_use]
     fn merge(&self, other: &Self) -> Self;
 
     /// Length of the interval.
@@ -64,7 +65,7 @@ pub trait Interval: Clone + Ord {
     }
 
     /// Check if this interval fully contains another one.
-    fn contains(&self, other: &Self) -> bool {
+    fn contains<T: Interval>(&self, other: &T) -> bool {
         self.start() <= other.start() && self.end() >= other.end()
     }
 
@@ -77,7 +78,7 @@ pub trait Interval: Clone + Ord {
     /// - [o[]s] - overlapping
     /// - [o] [s] - non overlapping
     /// ```
-    fn overlaps(&self, other: &Self) -> bool {
+    fn overlaps<T: Interval>(&self, other: &T) -> bool {
         self.start() < other.end() && other.start() < self.end()
     }
 
@@ -86,7 +87,7 @@ pub trait Interval: Clone + Ord {
     /// ```ignore
     /// - [s][o] or [o][s] (end of one is exactly the start of the other)
     /// ```
-    fn adjacent(&self, other: &Self) -> bool {
+    fn adjacent<T: Interval>(&self, other: &T) -> bool {
         self.end() == other.start() || other.end() == self.start()
     }
 

@@ -1,24 +1,37 @@
 use crate::tpl_mutex::TplMutex;
 use alloc::{boxed::Box, vec, vec::Vec};
+use patina::standard::efi;
 use patina_internal_cpu::interrupts::{
     ExceptionContext, InterruptHandler, InterruptManager, gic_manager::AArch64InterruptInitializer,
 };
-use r_efi::efi;
 use spin::rwlock::RwLock;
 
-use arm_gic::{
-    Trigger,
-    gicv3::{GicCpuInterface, InterruptGroup},
-};
+use arm_gic::{InterruptGroup, Trigger, gicv3::GicCpuInterface};
 use patina::{
     BinaryGuid,
-    boot_services::{BootServices, StandardBootServices},
     component::{component, service::Service},
-    guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
-    uefi_protocol::ProtocolInterface,
+    protocol::ProtocolInterface,
+    uefi::boot_services::{BootServices, StandardBootServices},
 };
 
 use super::GicBases;
+
+/// Hardware Interrupt protocol GUID.
+///
+/// This protocol provides a means of registering and unregistering interrupt handlers for AARCH64 systems.
+/// It is defined in EDK II `ArmPkg/Include/Protocol/HardwareInterrupt.h`, not in the UEFI/PI specifications,
+/// and is produced solely by the DXE Core on AARCH64 systems.
+///
+/// (`2890B3EA-053D-1643-AD0C-D64808DA3FF1`)
+const HARDWARE_INTERRUPT_PROTOCOL: BinaryGuid = BinaryGuid::from_string("2890B3EA-053D-1643-AD0C-D64808DA3FF1");
+
+/// Hardware Interrupt v2 protocol GUID.
+///
+/// Extends the Hardware Interrupt Protocol to support interrupt type query. Defined in EDK II
+/// `ArmPkg/Include/Protocol/HardwareInterrupt2.h` and produced solely by the DXE Core on AARCH64 systems.
+///
+/// (`32898322-2DA1-474A-BAAA-F3F7CF569470`)
+const HARDWARE_INTERRUPT_PROTOCOL_V2: BinaryGuid = BinaryGuid::from_string("32898322-2DA1-474A-BAAA-F3F7CF569470");
 
 pub type HwInterruptHandler = Option<extern "efiapi" fn(u64, &mut ExceptionContext)>;
 
@@ -405,7 +418,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
                     // The special interrupt do not need to be acknowledged
                 }
                 _ => {
-                    log::error!("Invalid interrupt source: 0x{:x}", raw_value);
+                    log::error!("Invalid interrupt source: 0x{raw_value:x}");
                 }
             }
             return;
@@ -419,11 +432,11 @@ impl InterruptHandler for HwInterruptProtocolHandler {
             .unwrap_or_else(|| panic!("Failed to read lock in exception handler for interrupt ID 0x{:x}", raw_value));
 
         if let Some(handler) = *rw_handler {
-            handler(raw_value as u64, context);
+            handler(u64::from(raw_value), context);
         } else {
             GicCpuInterface::end_interrupt(int_id, InterruptGroup::Group1);
-            log::error!("Unhandled Exception! 0x{:x}", exception_type);
-            log::error!("Exception Context: {:#x?}", context);
+            log::error!("Unhandled Exception! 0x{exception_type:x}");
+            log::error!("Exception Context: {context:#x?}");
             panic! {"Unhandled Exception! 0x{:x}", exception_type};
         }
     }
@@ -480,7 +493,7 @@ impl HwInterruptProtocolHandler {
             if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
                 return err.into();
             }
-        };
+        }
 
         efi::Status::SUCCESS
     }
@@ -495,7 +508,7 @@ pub(crate) struct HwInterruptProtocolInstaller {
 #[component]
 impl HwInterruptProtocolInstaller {
     /// Creates a new `HwInterruptProtocolInstaller` instance.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub fn new(gic_bases: GicBases) -> Self {
         Self { gic_bases }
     }

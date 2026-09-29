@@ -13,8 +13,11 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
-use patina::boot_services::{BootServices, StandardBootServices};
-use r_efi::efi::Handle;
+pub use patina::standard::efi::industry::smbios::{
+    HANDLE_PI_RESERVED as SMBIOS_HANDLE_PI_RESERVED, STRING_MAX_LENGTH as SMBIOS_STRING_MAX_LENGTH,
+};
+use patina::standard::efi::{self, Handle, SMBIOS3_TABLE_GUID};
+use patina::uefi::boot_services::{BootServices, StandardBootServices};
 use zerocopy_derive::*;
 
 #[cfg(any(test, feature = "mockall"))]
@@ -25,12 +28,6 @@ pub type SmbiosHandle = u16;
 
 /// SMBIOS record type
 pub type SmbiosType = u8;
-
-/// Special handle value for automatic assignment
-pub const SMBIOS_HANDLE_PI_RESERVED: SmbiosHandle = 0xFFFE;
-
-/// SMBIOS string maximum length per specification
-pub const SMBIOS_STRING_MAX_LENGTH: usize = 64;
 
 /// SMBIOS table header structure
 ///
@@ -83,7 +80,7 @@ impl<'a> SmbiosRecordsIter<'a> {
     }
 }
 
-impl<'a> Iterator for SmbiosRecordsIter<'a> {
+impl Iterator for SmbiosRecordsIter<'_> {
     type Item = (SmbiosTableHeader, Option<Handle>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -118,21 +115,21 @@ pub trait Smbios {
     ///
     /// # Returns
     ///
-    /// A tuple of (major_version, minor_version).
+    /// A tuple of (`major_version`, `minor_version`).
     fn version(&self) -> (u8, u8);
 
     /// Publishes the SMBIOS table to the UEFI Configuration Table
     ///
     /// # Returns
     ///
-    /// Returns a tuple of (table_address, entry_point_address) on success.
+    /// Returns a tuple of (`table_address`, `entry_point_address`) on success.
     ///
     /// # Errors
     ///
     /// Returns `SmbiosError` if no records, allocation fails, or installation fails.
     fn publish_table(
         &self,
-    ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), crate::error::SmbiosError>;
+    ) -> core::result::Result<(efi::PhysicalAddress, efi::PhysicalAddress), crate::error::SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
     ///
@@ -165,7 +162,7 @@ pub trait Smbios {
     /// * `bytes` - Serialized SMBIOS record bytes
     fn add_from_bytes(
         &self,
-        producer_handle: Option<r_efi::efi::Handle>,
+        producer_handle: Option<efi::Handle>,
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError>;
 }
@@ -192,7 +189,7 @@ pub trait Smbios {
 #[derive(patina::component::service::IntoService)]
 #[service(dyn Smbios)]
 pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
-    pub(crate) manager: patina::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B>,
+    pub(crate) manager: patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B>,
     pub(crate) boot_services: B,
     pub(crate) major_version: u8,
     pub(crate) minor_version: u8,
@@ -201,7 +198,7 @@ pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
 impl<B: BootServices> SmbiosImpl<B> {
     /// Get a reference to the manager for unit tests
     #[allow(dead_code)] // Only used in tests
-    pub(crate) fn manager(&self) -> &patina::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B> {
+    pub(crate) fn manager(&self) -> &patina::uefi::tpl_mutex::TplMutex<crate::manager::SmbiosManager, B> {
         &self.manager
     }
 
@@ -222,8 +219,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
 
     fn publish_table(
         &self,
-    ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), crate::error::SmbiosError>
-    {
+    ) -> core::result::Result<(efi::PhysicalAddress, efi::PhysicalAddress), crate::error::SmbiosError> {
         // Table addresses are stored before calling install_configuration_table.
         // install_configuration_table triggers EVENT_DB.signal_group, which may invoke
         // event handlers that call SMBIOS Add/Update/Remove, triggering republish_table.
@@ -244,10 +240,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
         // SAFETY: We pass a valid GUID and a pointer to ACPI_RECLAIM_MEMORY that remains valid
         unsafe {
             self.boot_services
-                .install_configuration_table(
-                    &crate::manager::SMBIOS_3_X_TABLE_GUID.into_inner(),
-                    ep_addr as *mut core::ffi::c_void,
-                )
+                .install_configuration_table(&SMBIOS3_TABLE_GUID, ep_addr as *mut core::ffi::c_void)
                 .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
         }
 
@@ -279,7 +272,7 @@ impl<B: BootServices> Smbios for SmbiosImpl<B> {
 
     fn add_from_bytes(
         &self,
-        producer_handle: Option<r_efi::efi::Handle>,
+        producer_handle: Option<efi::Handle>,
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
         let handle = {
@@ -325,7 +318,7 @@ pub trait SmbiosExt {
     /// Returns the assigned SMBIOS handle for the newly added record.
     fn add_record<T>(
         &self,
-        producer_handle: Option<r_efi::efi::Handle>,
+        producer_handle: Option<efi::Handle>,
         record: &T,
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError>
     where
@@ -336,7 +329,7 @@ pub trait SmbiosExt {
 impl SmbiosExt for patina::component::service::Service<dyn Smbios> {
     fn add_record<T>(
         &self,
-        producer_handle: Option<r_efi::efi::Handle>,
+        producer_handle: Option<efi::Handle>,
         record: &T,
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError>
     where
@@ -361,9 +354,9 @@ mod tests {
     };
     use mockall::predicate::*;
     use patina::{
-        boot_services::{MockBootServices, tpl::Tpl},
         component::service::{Service, memory::StdMemoryManager},
-        tpl_mutex::TplMutex,
+        uefi::boot_services::{MockBootServices, tpl::Tpl},
+        uefi::tpl_mutex::TplMutex,
     };
 
     #[test]
@@ -386,9 +379,9 @@ mod tests {
     #[test]
     fn test_smbios_table_header_debug() {
         let header = SmbiosTableHeader::new(127, 4, 0xFFFF);
-        let debug_str = format!("{:?}", header);
+        let debug_str = format!("{header:?}");
         assert!(debug_str.contains("127"));
-        assert!(debug_str.contains("4"));
+        assert!(debug_str.contains('4'));
     }
 
     #[test]
@@ -522,8 +515,7 @@ mod tests {
 
         fn publish_table(
             &self,
-        ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), crate::error::SmbiosError>
-        {
+        ) -> core::result::Result<(efi::PhysicalAddress, efi::PhysicalAddress), crate::error::SmbiosError> {
             Ok((0x1000, 0x2000))
         }
 
@@ -542,7 +534,7 @@ mod tests {
 
         fn add_from_bytes(
             &self,
-            _producer_handle: Option<r_efi::efi::Handle>,
+            _producer_handle: Option<efi::Handle>,
             bytes: &[u8],
         ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
             // Verify expected bytes if provided
@@ -775,7 +767,7 @@ mod tests {
 
     // Unit tests for SmbiosImpl using MockBootServices
 
-    /// Creates a MockBootServices configured for TplMutex usage
+    /// Creates a `MockBootServices` configured for `TplMutex` usage
     fn mock_boot_services() -> MockBootServices {
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
@@ -783,7 +775,7 @@ mod tests {
         boot_services
     }
 
-    /// Creates a test SmbiosImpl with MockBootServices
+    /// Creates a test `SmbiosImpl` with `MockBootServices`
     fn create_test_smbios_impl(boot_services: MockBootServices) -> SmbiosImpl<MockBootServices> {
         let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
         manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
@@ -931,7 +923,7 @@ mod tests {
         // We verified it compiles and can be called
     }
 
-    /// Creates a MockBootServices configured for publish_table (includes install_configuration_table)
+    /// Creates a `MockBootServices` configured for `publish_table` (includes `install_configuration_table`)
     fn mock_boot_services_with_config_table() -> MockBootServices {
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);

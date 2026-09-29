@@ -45,9 +45,10 @@ jobs:
           HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
         run: |
           owner="${HEAD_REPO%%/*}"
-          pr_number=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" \
+          pr_json=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" \
             --method GET -f state=open -f head="${owner}:${HEAD_REF}" \
-            --jq '.[0].number')
+            --jq '.[0]')
+          pr_number=$(echo "$pr_json" | jq -r '.number')
 
           if [[ -z "$pr_number" || "$pr_number" == "null" ]]; then
             echo "::notice::No open PR found for head $owner:$HEAD_REF. Checking for closed/merged PRs."
@@ -80,12 +81,24 @@ jobs:
             exit 0
           fi
 
+          base_ref=$(echo "$pr_json" | jq -r '.base.ref')
+
+          # Only run QEMU validation for PRs targeting `main` or a `feature/**/*` branch.
+          if [[ "$base_ref" != "main" && "$base_ref" != feature/* ]]; then
+            echo "::notice::PR #$pr_number targets '$base_ref', which is not a supported branch for QEMU validation. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=unsupported_target_branch" >> "$GITHUB_OUTPUT"
+            echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
           echo "::group::PR Information"
           echo "  - PR Number: $pr_number"
           echo "  - Head SHA:  $HEAD_SHA"
           echo "  - Head Ref:  $HEAD_REF"
+          echo "  - Base Ref:  $base_ref"
           echo "  - Source:    $HEAD_REPO"
           echo "::endgroup::"
 
@@ -110,7 +123,7 @@ jobs:
           EOF
 
       - name: Upload PR Metadata
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: patina-qemu-pr-metadata
           path: metadata/pr-metadata.json

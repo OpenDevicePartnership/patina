@@ -11,15 +11,17 @@ use core::{ffi::c_void, ptr};
 
 use alloc::collections::LinkedList;
 use patina::error::EfiError;
-use r_efi::efi;
+use patina::standard::efi;
 use spin::Mutex;
 
 use crate::{events::EVENT_DB, pecoff::relocation::RelocationBlock, protocols::PROTOCOL_DB};
-use patina::pi::{list_entry, protocols::runtime};
+use patina::pi::{list_entry, protocol::runtime};
 
 struct RuntimeData {
-    runtime_arch_ptr: *mut runtime::Protocol,
+    runtime_arch_ptr: *mut runtime::RuntimeProtocol,
+    #[allow(clippy::linkedlist)]
     runtime_images: LinkedList<runtime::ImageEntry, &'static crate::allocator::UefiAllocatorWithFsb>,
+    #[allow(clippy::linkedlist)]
     runtime_events: LinkedList<runtime::EventEntry, &'static crate::allocator::UefiAllocatorWithFsb>,
 }
 
@@ -51,7 +53,7 @@ impl RuntimeData {
         unsafe {
             // Update the image links
             let mut prev: *mut _ = ptr::addr_of_mut!((*self.runtime_arch_ptr).image_head);
-            for entry in self.runtime_images.iter_mut() {
+            for entry in &mut self.runtime_images {
                 (*prev).forward_link = ptr::addr_of_mut!(entry.link);
                 entry.link.back_link = prev;
                 prev = ptr::addr_of_mut!(entry.link);
@@ -61,7 +63,7 @@ impl RuntimeData {
 
             // Update the event links
             let mut prev: *mut _ = ptr::addr_of_mut!((*self.runtime_arch_ptr).event_head);
-            for entry in self.runtime_events.iter_mut() {
+            for entry in &mut self.runtime_events {
                 (*prev).forward_link = ptr::addr_of_mut!(entry.link);
                 entry.link.back_link = prev;
                 prev = ptr::addr_of_mut!(entry.link);
@@ -96,7 +98,7 @@ extern "efiapi" fn runtime_protocol_notify(_event: efi::Event, _context: *mut c_
     let ptr =
         PROTOCOL_DB.locate_protocol(runtime::PROTOCOL_GUID.into_inner()).expect("Failed to locate runtime protocol.");
     let mut data = RUNTIME_DATA.lock();
-    data.runtime_arch_ptr = ptr as *mut runtime::Protocol;
+    data.runtime_arch_ptr = ptr as *mut runtime::RuntimeProtocol;
     data.update_protocol_lists();
 }
 
@@ -144,9 +146,12 @@ pub fn add_runtime_image(
     relocation_data: &[RelocationBlock],
     handle: efi::Handle,
 ) -> Result<(), EfiError> {
-    let mut data = RUNTIME_DATA.lock();
+    let relocation_data = crate::pecoff::flatten_runtime_relocation_data(relocation_data).map_err(|err| {
+        log::error!("add_runtime_image() failed to flatten relocation data: {err:?}");
+        EfiError::Unsupported
+    })?;
 
-    let relocation_data = crate::pecoff::flatten_runtime_relocation_data(relocation_data);
+    let mut data = RUNTIME_DATA.lock();
     data.runtime_images.push_back(runtime::ImageEntry {
         image_base,
         image_size,
@@ -167,14 +172,14 @@ pub fn remove_runtime_image(image_handle: efi::Handle) -> Result<(), EfiError> {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
     use crate::test_support;
     use core::{ptr, sync::atomic::AtomicBool};
 
     fn setup_protocol_and_data() -> RuntimeData {
-        let protocol = runtime::Protocol {
+        let protocol = runtime::RuntimeProtocol {
             image_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
             event_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
             memory_descriptor_size: 0,
@@ -216,7 +221,7 @@ mod tests {
     }
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
+        test_support::with_clean_global_lock(|| {
             test_support::init_test_logger();
             // SAFETY: Test code only - initializing test infrastructure with the test lock held
             // prevents concurrent access during initialization.
@@ -227,6 +232,21 @@ mod tests {
             f();
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_add_runtime_image_rejects_unsupported_relocation() {
+        with_locked_state(|| {
+            let block = RelocationBlock {
+                block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
+                relocations: alloc::vec![crate::pecoff::relocation::Relocation {
+                    type_and_offset: 0x1 << 12,
+                    value: 0
+                }],
+            };
+            let result = add_runtime_image(ptr::null_mut(), 0, &[block], 0x1 as efi::Handle);
+            assert!(matches!(result, Err(EfiError::Unsupported)), "unexpected result: {result:?}");
+        });
     }
 
     #[test]
@@ -249,16 +269,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 10, "Too many entries in the image list.");
                 }
                 assert_eq!(count, 10, "Not all entries were found in the image list.");
@@ -276,16 +296,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count * 2);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 5, "Too many entries in the image list.");
                 }
                 assert_eq!(count, 5, "Not all entries were found in the image list.");
@@ -313,16 +333,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 10, "Too many entries in the event list.");
                 }
                 assert_eq!(count, 10, "Not all entries were found in the event list.");
@@ -340,16 +360,16 @@ mod tests {
                 // Walk the linked list starting from the head and make sure all entries are present.
                 let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
                 let mut count = 0;
-                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
+                while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
                     let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count * 2);
-                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    assert_eq!(entry.link.back_link, prev.cast_mut());
                     count += 1;
                     protocol_link = entry.link.forward_link;
-                    prev = &entry.link as *const _;
+                    prev = &raw const entry.link;
                     assert!(count <= 5, "Too many entries in the event list.");
                 }
                 assert_eq!(count, 5, "Not all entries were found in the event list.");

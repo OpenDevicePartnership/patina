@@ -1,10 +1,10 @@
-//! A module for defining the [Hob] [Param] type and default implementations for the [FromHob] trait.
+//! A module for defining the [Hob] [Param] type and default implementations for the [`FromHob`] trait.
 //!
-//! This module contains the definitions for [Hob] and the [FromHob] trait. The [Hob] type is a new dependency
+//! This module contains the definitions for [Hob] and the [`FromHob`] trait. The [Hob] type is a new dependency
 //! injectable [Param] implementation that allows components to access read-only HOB (Hand off Block) values. See the
 //! types for more documentation.
 //!
-//! The [FromHob] trait is used to parse guided HOBs as specified in the PI specification.
+//! The [`FromHob`] trait is used to parse guided HOBs as specified in the PI specification.
 //!
 //! ## Example
 //!
@@ -34,7 +34,7 @@
 //! }
 //!
 //! impl FromHob for MyComplexHobStruct {
-//!     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
+//!     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 //!
 //!    fn parse(bytes: &[u8]) -> Self {
 //!        Self::default() // Simple for example
@@ -90,7 +90,7 @@ use super::{
 /// }
 ///
 /// impl FromHob for MyConfig {
-///     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
+///     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 ///
 ///     fn parse(bytes: &[u8]) -> Self {
 ///         // SAFETY: Specification defined requirement that the byte array is this underlying C type.
@@ -121,10 +121,10 @@ pub trait FromHob: Sized + 'static {
 
 pub use patina_macro::FromHob;
 
-/// An immutable Hob value registered with [Storage] via the [FromHob] trait.
+/// An immutable Hob value registered with [Storage] via the [`FromHob`] trait.
 ///
 /// The underlying datum of this type is a slice. The first element of the slice can be directly accessed by
-/// dereferencing the struct. The entire slice can be iterated over using the [Hob::iter] method or the [IntoIterator]
+/// dereferencing the struct. The entire slice can be iterated over using the [`Hob::iter`] method or the [`IntoIterator`]
 /// trait.
 ///
 /// ## Example
@@ -134,7 +134,7 @@ pub use patina_macro::FromHob;
 /// # #[derive(Debug)]
 /// # struct MyStruct{ value: u32 };
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: patina::BinaryGuid = patina::guids::ZERO;
+/// #     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::ZERO;
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct { value: 5 }
 /// #     }
@@ -167,7 +167,7 @@ impl<'h, T: FromHob + 'static> Hob<'h, T> {
     /// struct MyStruct;
     ///
     /// impl FromHob for MyStruct {
-    ///     const HOB_GUID: BinaryGuid = patina::guids::ZERO;
+    ///     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
     ///
     ///    fn parse(bytes: &[u8]) -> Self {
     ///        MyStruct
@@ -251,7 +251,7 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
 /// # use patina::component::hob::{FromHob, Hob};
 /// # struct MyStruct(u32);
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: patina::BinaryGuid = patina::guids::ZERO;
+/// #     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::ZERO;
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct(5)
 /// #     }
@@ -292,13 +292,13 @@ impl<'h, T: FromHob + 'static> IntoIterator for &Hob<'h, T> {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use crate as patina;
     use crate::{
         BinaryGuid,
+        base::error::{EfiError, Result},
         component::{IntoComponent, component},
-        error::{EfiError, Result},
     };
 
     use super::*;
@@ -309,7 +309,7 @@ mod tests {
     }
 
     impl FromHob for MyStruct {
-        const HOB_GUID: BinaryGuid = patina::guids::ZERO;
+        const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 
         fn parse(_bytes: &[u8]) -> Self {
             MyStruct::default()
@@ -346,7 +346,7 @@ mod tests {
         }
 
         for hob in &hobs {
-            assert!([5, 10].contains(&hob.unused))
+            assert!([5, 10].contains(&hob.unused));
         }
     }
 

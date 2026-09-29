@@ -59,15 +59,44 @@ pub enum HobSerDe {
         entries: Vec<MemoryTypeInfoEntrySerDe>,
     },
     FirmwareVolume {
-        #[serde(with = "hex_format")]
-        base_address: u64,
-        length: u64,
+        #[serde(flatten)]
+        fv: FvHobSerDe,
     },
     Cpu {
         size_of_memory_space: u8,
         size_of_io_space: u8,
     },
     UnknownHob,
+}
+
+/// Serializable representation of a firmware volume HOB.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FvHobSerDe {
+    /// The physical memory-mapped base address of the firmware volume.
+    #[serde(with = "hex_format")]
+    pub base_address: u64,
+
+    /// The length of the firmware volume in bytes.
+    pub length: u64,
+}
+
+impl Interval for FvHobSerDe {
+    fn start(&self) -> u64 {
+        self.base_address
+    }
+
+    fn end(&self) -> u64 {
+        self.base_address + self.length
+    }
+
+    /// Merge two firmware volume descriptors into one (including non-overlapping
+    /// intervals).
+    fn merge(&self, other: &Self) -> Self {
+        Self {
+            base_address: core::cmp::min(self.start(), other.start()),
+            length: core::cmp::max(self.end(), other.end()) - core::cmp::min(self.start(), other.start()),
+        }
+    }
 }
 
 /// Serializable representation of one `EFI_MEMORY_TYPE_INFORMATION` entry inside a Memory
@@ -93,7 +122,7 @@ fn parse_memory_type_info_entries(data: &[u8]) -> Vec<MemoryTypeInfoEntrySerDe> 
         };
         let memory_type = u32::from_le_bytes([m0, m1, m2, m3]);
         let number_of_pages = u32::from_le_bytes([p0, p1, p2, p3]);
-        if (memory_type as usize) >= crate::efi_types::EFI_MAX_MEMORY_TYPE {
+        if (memory_type as usize) >= crate::uefi::memory::EFI_MAX_MEMORY_TYPE {
             break;
         }
         entries.push(MemoryTypeInfoEntrySerDe { memory_type, number_of_pages });
@@ -111,7 +140,7 @@ pub struct MemAllocDescriptorSerDe {
     pub memory_base_address: u64,
     /// Length of the memory region in bytes.
     pub memory_length: u64,
-    /// Type of memory (as defined in `r_efi::System::MemoryType`).
+    /// Type of memory (as defined in `patina::standard::efi::MemoryType`).
     pub memory_type: u32,
 }
 
@@ -234,7 +263,15 @@ impl From<&Hob<'_>> for HobSerDe {
                     Self::GuidExtension { name: format_guid(&guid_ext.name) }
                 }
             }
-            Hob::FirmwareVolume(fv) => Self::FirmwareVolume { base_address: fv.base_address, length: fv.length },
+            Hob::FirmwareVolume(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
+            Hob::FirmwareVolume2(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
+            Hob::FirmwareVolume3(fv) => {
+                Self::FirmwareVolume { fv: FvHobSerDe { base_address: fv.base_address, length: fv.length } }
+            }
             Hob::Cpu(cpu) => {
                 Self::Cpu { size_of_memory_space: cpu.size_of_memory_space, size_of_io_space: cpu.size_of_io_space }
             }
@@ -369,9 +406,9 @@ mod tests {
             panic!("Fifth element is not a GuidExtension HOB");
         }
 
-        if let HobSerDe::FirmwareVolume { base_address, length } = &hob_list[5] {
-            assert_eq!(*base_address, 65536);
-            assert_eq!(*length, 987654321);
+        if let HobSerDe::FirmwareVolume { fv } = &hob_list[5] {
+            assert_eq!(fv.base_address, 65536);
+            assert_eq!(fv.length, 987654321);
         } else {
             panic!("Sixth element is not a FirmwareVolume HOB");
         }
@@ -386,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_hoblist_serialization() {
-        let header = hob::header::Hob {
+        let header = hob::HobHeader {
             r#type: hob::HANDOFF,
             length: size_of::<hob::PhaseHandoffInformationTable>() as u16,
             reserved: 0,
@@ -402,12 +439,12 @@ mod tests {
             end_of_hob_list: 0xdeaddeadc0dec0de,
         };
 
-        let header = hob::header::Hob {
+        let header = hob::HobHeader {
             r#type: hob::MEMORY_ALLOCATION,
             length: size_of::<hob::MemoryAllocation>() as u16,
             reserved: 0,
         };
-        let alloc_descriptor = hob::header::MemoryAllocation {
+        let alloc_descriptor = hob::MemoryAllocationHeader {
             name: crate::BinaryGuid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
             memory_base_address: 0,
             memory_length: 0x0123456789abcdef,
@@ -416,7 +453,7 @@ mod tests {
         };
         let memory_alloc_hob = hob::MemoryAllocation { header, alloc_descriptor };
 
-        let header = hob::header::Hob {
+        let header = hob::HobHeader {
             r#type: hob::RESOURCE_DESCRIPTOR,
             length: size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0,
@@ -445,7 +482,7 @@ mod tests {
         let data = [1_u8, 2, 3, 4, 5, 6, 7, 8];
         let guid_hob = (
             hob::GuidHob {
-                header: hob::header::Hob {
+                header: hob::HobHeader {
                     r#type: hob::GUID_EXTENSION,
                     length: (size_of::<hob::GuidHob>() + data.len()) as u16,
                     reserved: 0,
@@ -455,10 +492,10 @@ mod tests {
             data,
         );
 
-        let header = hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume>() as u16, reserved: 0 };
+        let header = hob::HobHeader { r#type: hob::FV, length: size_of::<hob::FirmwareVolume>() as u16, reserved: 0 };
         let fv_hob = hob::FirmwareVolume { header, base_address: 0, length: 0x0123456789abcdef };
 
-        let header = hob::header::Hob { r#type: hob::CPU, length: size_of::<hob::Cpu>() as u16, reserved: 0 };
+        let header = hob::HobHeader { r#type: hob::CPU, length: size_of::<hob::Cpu>() as u16, reserved: 0 };
         let cpu_hob = hob::Cpu { header, size_of_memory_space: 0, size_of_io_space: 0, reserved: [0; 6] };
 
         let hob_list = [
@@ -511,7 +548,7 @@ mod tests {
         data.extend_from_slice(&999_u32.to_le_bytes()); // ignored sentinel pages
 
         let guid_hob = hob::GuidHob {
-            header: hob::header::Hob {
+            header: hob::HobHeader {
                 r#type: hob::GUID_EXTENSION,
                 length: (size_of::<hob::GuidHob>() + data.len()) as u16,
                 reserved: 0,
@@ -536,5 +573,141 @@ mod tests {
 
         assert!(json.contains(r#""type": "memory_type_information""#), "Memory Type Information HOB missing");
         assert!(json.contains(r#""number_of_pages": 200"#), "Entry page count incorrect");
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_bounds() {
+        let a = FvHobSerDe { base_address: 0x1000, length: 0x1000 };
+        assert_eq!(a.start(), 0x1000);
+        assert_eq!(a.end(), 0x2000);
+        assert_eq!(a.length(), 0x1000);
+
+        let empty = FvHobSerDe { base_address: 0x1000, length: 0 };
+        assert_eq!(empty.start(), empty.end());
+        assert_eq!(empty.length(), 0);
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_contains() {
+        let outer = FvHobSerDe { base_address: 0x1000, length: 0x4000 };
+        assert!(outer.contains(&outer));
+        assert!(outer.contains(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }));
+        assert!(outer.contains(&FvHobSerDe { base_address: 0x1000, length: 0x4000 }));
+        assert!(!outer.contains(&FvHobSerDe { base_address: 0x0, length: 0x1000 }));
+        assert!(!outer.contains(&FvHobSerDe { base_address: 0x4000, length: 0x2000 }));
+        assert!(!FvHobSerDe { base_address: 0x2000, length: 0x1000 }.contains(&outer));
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_overlaps() {
+        let a = FvHobSerDe { base_address: 0x1000, length: 0x1000 };
+        assert!(a.overlaps(&a));
+        assert!(a.overlaps(&FvHobSerDe { base_address: 0x1800, length: 0x1000 }));
+        assert!(a.overlaps(&FvHobSerDe { base_address: 0x0800, length: 0x1000 }));
+        assert!(a.overlaps(&FvHobSerDe { base_address: 0x1400, length: 0x0400 }));
+
+        // Touching endpoints are adjacent, not overlapping.
+        assert!(!a.overlaps(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }));
+        assert!(!a.overlaps(&FvHobSerDe { base_address: 0x0000, length: 0x1000 }));
+        assert!(!a.overlaps(&FvHobSerDe { base_address: 0x3000, length: 0x1000 }));
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_adjacent() {
+        let a = FvHobSerDe { base_address: 0x1000, length: 0x1000 };
+        assert!(a.adjacent(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }));
+        assert!(a.adjacent(&FvHobSerDe { base_address: 0x0000, length: 0x1000 }));
+        assert!(!a.adjacent(&FvHobSerDe { base_address: 0x3000, length: 0x1000 }));
+        assert!(!a.adjacent(&FvHobSerDe { base_address: 0x1800, length: 0x1000 }));
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_merge() {
+        // Overlapping.
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .merge(&FvHobSerDe { base_address: 0x1800, length: 0x1000 }),
+            FvHobSerDe { base_address: 0x1000, length: 0x1800 }
+        );
+        // Adjacent.
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .merge(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }),
+            FvHobSerDe { base_address: 0x1000, length: 0x2000 }
+        );
+        // Contained.
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x4000 }
+                .merge(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }),
+            FvHobSerDe { base_address: 0x1000, length: 0x4000 }
+        );
+        // Disjoint intervals are still spanned by `merge`.
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .merge(&FvHobSerDe { base_address: 0x8000, length: 0x1000 }),
+            FvHobSerDe { base_address: 0x1000, length: 0x8000 }
+        );
+        // Order independent.
+        assert_eq!(
+            FvHobSerDe { base_address: 0x8000, length: 0x1000 }
+                .merge(&FvHobSerDe { base_address: 0x1000, length: 0x1000 }),
+            FvHobSerDe { base_address: 0x1000, length: 0x8000 }
+        );
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_try_merge() {
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .try_merge(&FvHobSerDe { base_address: 0x1800, length: 0x1000 }),
+            Some(FvHobSerDe { base_address: 0x1000, length: 0x1800 })
+        );
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .try_merge(&FvHobSerDe { base_address: 0x2000, length: 0x1000 }),
+            Some(FvHobSerDe { base_address: 0x1000, length: 0x2000 })
+        );
+        assert_eq!(
+            FvHobSerDe { base_address: 0x1000, length: 0x1000 }
+                .try_merge(&FvHobSerDe { base_address: 0x8000, length: 0x1000 }),
+            None
+        );
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_merge_intervals() {
+        assert!(FvHobSerDe::merge_intervals(&[]).is_empty());
+
+        let single = FvHobSerDe { base_address: 0x1000, length: 0x1000 };
+        assert_eq!(FvHobSerDe::merge_intervals(&[&single]), alloc::vec![single]);
+
+        // Unsorted input with overlapping, adjacent, and disjoint intervals.
+        let a = FvHobSerDe { base_address: 0x2000, length: 0x1000 };
+        let b = FvHobSerDe { base_address: 0x1000, length: 0x1000 };
+        let c = FvHobSerDe { base_address: 0x2800, length: 0x0800 };
+        let d = FvHobSerDe { base_address: 0x8000, length: 0x1000 };
+        assert_eq!(
+            FvHobSerDe::merge_intervals(&[&a, &b, &c, &d]),
+            alloc::vec![
+                FvHobSerDe { base_address: 0x1000, length: 0x2000 },
+                FvHobSerDe { base_address: 0x8000, length: 0x1000 }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fv_hob_serde_interval_compare_across_types() {
+        let fv_hob = FvHobSerDe { base_address: 0x1000, length: 0x4000 };
+        let alloc_desc = MemAllocDescriptorSerDe {
+            name: String::from("00000000-0000-0000-0000-000000000000"),
+            memory_base_address: 0x2000,
+            memory_length: 0x1000,
+            memory_type: 0,
+        };
+
+        assert!(fv_hob.contains(&alloc_desc));
+        assert!(fv_hob.overlaps(&alloc_desc));
+        assert!(!fv_hob.adjacent(&alloc_desc));
+        assert!(fv_hob.adjacent(&MemAllocDescriptorSerDe { memory_base_address: 0x5000, ..alloc_desc }));
     }
 }

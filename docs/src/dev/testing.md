@@ -80,7 +80,7 @@ which extends standard assertions to create a colorful diff.
 caring about code passing for failing certain requirements, you are instead investigating the performance of certain
 regions of code. Patina uses the [criterion](https://crates.io/crates/criterion) crate for benchmarking, so one should
 follow its documentation when writing benchmarks. Multiple crates (including the
-[patina](https://crates.io/crates/patina) and [patina_internal_collections](https://crates.io/crates/patina_internal_collections)
+[patina](https://crates.io/crates/patina) and [patina_internal_core](https://crates.io/crates/patina_internal_core)
 crates) also have some benchmark examples to follow.
 
 Benchmark results are shown on the command line, but graphics are available in the `target/criterion` folder.

@@ -1,6 +1,7 @@
 //! Patina Performance Component
 //!
-//! This is the primary Patina Performance component, which enables performance analysis in the UEFI boot environment.
+//! Publishes the firmware performance data produced by the DXE Core to the rest of the UEFI environment. This crate
+//! acts as the UEFI/ACPI translation layer for the performance implementation in the DXE Core.
 //!
 //! ## License
 //!
@@ -8,200 +9,123 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::{component::protocol::create_performance_measurement_efiapi, mm};
+use crate::{
+    component::{
+        protocol::{
+            EdkiiPerformanceMeasurementProtocol, create_performance_measurement_efiapi, set_performance_service,
+        },
+        table::find_previous_table_address,
+    },
+    mm,
+};
 use alloc::{boxed::Box, string::String, vec::Vec};
+use core::ffi::c_void;
+use patina::standard::efi::EVENT_GROUP_READY_TO_BOOT;
 use patina::{
-    boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
+    UEFI_PAGE_SIZE,
     component::{
         component,
-        hob::Hob,
-        service::{Service, perf_timer::ArchTimerFunctionality},
+        service::{Service, perf_timer::ArchTimerFunctionality, performance::PerformanceManager},
     },
     error::EfiError,
-    guids::PERFORMANCE_PROTOCOL,
     performance::{
-        globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
-        logging::{perf_cross_module_begin, perf_cross_module_end},
-        measurement::{PerformanceProperty, create_performance_measurement, event_callback},
-        record::{
-            GenericPerformanceRecord, PerformanceRecordHeader,
-            hob::{HobPerformanceData, HobPerformanceDataExtractor},
-            print_record_details, record_type_name,
-        },
-        table::FirmwareBasicBootPerfTable,
+        guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID, PERFORMANCE_PROTOCOL_GUID},
+        measurement::PerformanceProperty,
+        record::{GenericPerformanceRecord, PerformanceRecordHeader, print_record_details, record_type_name},
     },
-    runtime_services::{RuntimeServices, StandardRuntimeServices},
-    tpl_mutex::TplMutex,
-    uefi_protocol::performance_measurement::EdkiiPerformanceMeasurement,
+    pi::{
+        protocol::status_code,
+        status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER},
+    },
+    uefi::{
+        boot_services::{BootServices, StandardBootServices, allocation::AllocType, tpl::Tpl},
+        event::EventType,
+        memory::EfiMemoryType,
+        runtime_services::{RuntimeServices, StandardRuntimeServices},
+    },
 };
 use patina_mm::component::communicator::MmCommunication;
-use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 
-use mu_rust_helpers::function;
+use patina::function;
 
-use patina::guids::EVENT_GROUP_END_OF_DXE;
+use patina::pi::event::END_OF_DXE_EVENT_GROUP_GUID;
 
 /// Context parameter for the Ready-to-Boot event callback that fetches MM performance records.
-type MmPerformanceEventContext<B, F> = Box<(B, &'static TplMutex<F, B>, Service<dyn MmCommunication>)>;
+type MmPerformanceEventContext<B> = Box<(B, Service<dyn PerformanceManager>, Service<dyn MmCommunication>)>;
 
-use patina::component::hob::FromHob;
+/// Context parameter for the End-of-DXE event callback that publishes the FBPT.
+type ReportFbptEventContext<B, R> = Box<(B, R, Service<dyn PerformanceManager>)>;
 
-/// The configuration for the Patina Performance component.
-#[derive(Debug, Clone, Copy, FromHob, zerocopy_derive::FromBytes)]
-#[hob = "fd87f2d8-112d-4640-9c00-d37d2a1fb75d"]
-#[repr(C, packed)]
-struct PerformanceConfig {
-    /// Indicates whether the Patina Performance component is enabled.
-    pub enable_component: u8,
-    /// Bitmask of enabled measurements (see [`patina::performance::Measurement`]).
-    pub enabled_measurements: u32,
-}
-
-impl PerformanceConfig {
-    /// Constant value indicating that the Patina Performance component is enabled.
-    pub const ENABLED: u8 = 1;
-    /// Constant value indicating that the Patina Performance component is disabled.
-    pub const DISABLED: u8 = 0;
-    /// Constant value indicating that no performance measurements are enabled.
-    pub const NO_MEASUREMENTS: u32 = 0;
-}
-
-impl Default for PerformanceConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PerformanceConfig {
-    /// Creates a new `PerformanceConfig` with the specified settings.
-    pub const fn new() -> Self {
-        Self { enable_component: Self::DISABLED, enabled_measurements: Self::NO_MEASUREMENTS }
-    }
-}
-
-/// Performance Component.
+/// Performance component.
 ///
-/// This component provides performance measurement capabilities in the UEFI boot environment. Even when instantiated,
-/// the component is off by default. Using [Self::with_measurements] can enable specific performance measurements,
-/// however a performance config HOB **will override** any settings made during instantiation of this component. This
-/// includes enabling or disabling the component as well as the specific measurements to be collected.
+/// This component provides performance measurement capabilities in the UEFI boot environment, exposing the core
+/// performance functionality exposed by the performance measurement service. This crate will package those function
+/// into a UEFI protocol and provide the necessary event callbacks to publish the performance data to the rest of the
+/// UEFI environment
 ///
 /// ## Example Usage
 ///
 /// ```rust
 /// use patina_performance::component::*;
 ///
-/// // Performance measurements are disabled by default, but can be overridden by a performance config HOB.
 /// let component = Performance::new();
-///
-/// // Performance measurements are enabled by default (with `DriverBindingStart` and `LoadImage` measurements),
-/// // but can be overridden by a performance config HOB.
-/// let enabled_component = Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::LoadImage);
 /// ```
 #[derive(Default)]
-pub struct Performance {
-    config: PerformanceConfig,
-}
+pub struct Performance;
 
 #[component]
 impl Performance {
-    /// Creates a new instance of the Performance component that is off by default.
+    /// Creates a new instance of the Performance component.
     pub const fn new() -> Self {
-        Self { config: PerformanceConfig::new() }
-    }
-
-    /// Enables performance measuring with the specified measurements.
-    pub const fn with_measurements(mut self, measurements: u32) -> Self {
-        self.config.enable_component = PerformanceConfig::ENABLED;
-        self.config.enabled_measurements = measurements;
-        self
+        Self
     }
 
     /// Entry point of [`Performance`]
-    #[coverage(off)] // This is tested via the generic version, see _entry_point.
+    #[cfg_attr(coverage, coverage(off))] // This is tested via the generic version, see _entry_point.
     fn entry_point(
         self,
-        hob: Option<Hob<PerformanceConfig>>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
-        records_buffers_hobs: Option<Hob<HobPerformanceData>>,
         timer: Service<dyn ArchTimerFunctionality>,
+        performance: Service<dyn PerformanceManager>,
         mm_comm_service: Option<Service<dyn MmCommunication>>,
     ) -> Result<(), EfiError> {
-        let config = self.get_config(hob);
-
-        if config.enable_component == PerformanceConfig::DISABLED {
-            log::warn!("Patina Performance Component is not enabled, skipping entry point.");
-            return Ok(());
-        }
-
-        set_perf_measurement_mask(config.enabled_measurements);
-
-        set_static_state(StandardBootServices::clone(&boot_services), timer.clone()).unwrap_or_else(|_| {
+        // Register the service so the EDK II Performance Measurement protocol function can reach it.
+        set_performance_service(performance.clone()).unwrap_or_else(|e| {
             log::error!(
-                "[{}]: Performance static state was set somewhere else. It should only be set here!",
+                "[{}]: Performance service was already registered. It should only be registered here! ({e})",
                 function!()
             );
         });
 
-        let Some((_, fbpt, _)) = get_static_state() else {
-            log::error!("[{}]: Performance static state was not initialized properly.", function!());
-            return Err(EfiError::Aborted);
-        };
-
-        Self::_entry_point(boot_services, runtime_services, records_buffers_hobs, mm_comm_service, fbpt, timer)
+        Self::_entry_point(boot_services, runtime_services, mm_comm_service, performance, timer)
     }
 
     /// Entry point that have generic parameter.
-    fn _entry_point<B, R, P, F>(
+    fn _entry_point<B, R>(
         boot_services: B,
         runtime_services: R,
-        records_buffers_hobs: Option<P>,
         mm_comm_service: Option<Service<dyn MmCommunication>>,
-        fbpt: &'static TplMutex<F, B>,
+        performance: Service<dyn PerformanceManager>,
         timer: Service<dyn ArchTimerFunctionality>,
     ) -> Result<(), EfiError>
     where
         B: BootServices + Clone + 'static,
         R: RuntimeServices + Clone + 'static,
-        P: HobPerformanceDataExtractor,
-        F: FirmwareBasicBootPerfTable,
     {
         // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
         boot_services.create_event_ex(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            Some(event_callback::report_fbpt_record_buffer),
-            Box::new((boot_services.clone(), runtime_services.clone(), fbpt)),
-            &EVENT_GROUP_END_OF_DXE,
+            Some(report_fbpt_event::<B, R>),
+            Box::new((boot_services.clone(), runtime_services.clone(), performance.clone())),
+            &END_OF_DXE_EVENT_GROUP_GUID,
         )?;
-
-        // Handle optional `records_buffers_hobs`
-        if let Some(records_buffers_hobs) = records_buffers_hobs {
-            let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
-                .extract_hob_perf_data()
-                .inspect(|(_, perf_buf)| {
-                    log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
-                })
-                .inspect_err(|_| {
-                    log::error!(
-                        "Performance: Error while trying to insert hob performance records, using default values"
-                    )
-                })
-                .unwrap_or_default();
-
-            // Initialize perf data from hob values.
-
-            set_load_image_count(hob_load_image_count);
-            fbpt.lock().set_perf_records(hob_perf_records);
-        } else {
-            log::info!("Performance: No Hob performance records provided.");
-        }
 
         // Install the protocol interfaces for DXE performance.
         boot_services.install_protocol_interface(
             None,
-            Box::new(EdkiiPerformanceMeasurement {
+            Box::new(EdkiiPerformanceMeasurementProtocol {
                 create_performance_measurement: create_performance_measurement_efiapi,
             }),
         )?;
@@ -214,8 +138,8 @@ impl Performance {
             boot_services.create_event_ex(
                 EventType::NOTIFY_SIGNAL,
                 Tpl::CALLBACK,
-                Some(fetch_and_add_mm_performance_records::<B, F>),
-                Box::new((boot_services.clone(), fbpt, mm_comm_service)),
+                Some(fetch_and_add_mm_performance_records::<B>),
+                Box::new((boot_services.clone(), performance.clone(), mm_comm_service)),
                 &EVENT_GROUP_READY_TO_BOOT,
             )?;
         } else {
@@ -227,36 +151,19 @@ impl Performance {
         log::info!("Performance: Performance component initialized.");
 
         // Install configuration table for performance property.
-        // SAFETY: `install_configuration_table` requires that the data match the GUID; PERFORMANCE_PROTOCOL matches `PerformanceProperty`.
+        // SAFETY: `install_configuration_table` requires that the data match the GUID; PERFORMANCE_PROTOCOL_GUID matches `PerformanceProperty`.
         unsafe {
             boot_services.install_configuration_table(
-                &PERFORMANCE_PROTOCOL,
+                &PERFORMANCE_PROTOCOL_GUID,
                 Box::new(PerformanceProperty::new(
                     timer.perf_frequency(),
                     timer.cpu_count_start(),
                     timer.cpu_count_end(),
                 )),
-            )?
+            )?;
         };
 
-        // This is not ideal. This PEI end and DXE begin are way too late into DXE phase. However, this cannot be
-        // improved without integrating performance earlier, and mostly likely merging into the core.
-        let dxe_core_guid = patina::guids::DXE_CORE.into_inner();
-        perf_cross_module_end("PEI", &dxe_core_guid, create_performance_measurement);
-        perf_cross_module_begin("DXE", &dxe_core_guid, create_performance_measurement);
-
         Ok(())
-    }
-
-    /// Retrieves the performance configuration, with priority given to the HOB configuration if available.
-    fn get_config(&self, hob: Option<Hob<PerformanceConfig>>) -> PerformanceConfig {
-        match hob {
-            Some(hob) => {
-                log::info!("patina_performance: HOB configuration found, overriding component configuration.");
-                *hob
-            }
-            None => self.config,
-        }
     }
 }
 
@@ -268,7 +175,7 @@ enum MmPerformanceError {
     /// Failed to parse response data from MM
     ParseError,
     /// An MM operation returned a non-success EFI status code
-    StatusError(r_efi::efi::Status),
+    StatusError(patina::standard::efi::Status),
     /// An error occurred while processing performance record data
     RecordError(String),
 }
@@ -291,7 +198,7 @@ fn fetch_mm_record_size(comm_service: &Service<dyn MmCommunication>) -> Result<u
     let mut size_req_buf = [0u8; mm::SMM_COMM_HEADER_SIZE];
     mm::GetRecordSize::new()
         .write_into(&mut size_req_buf)
-        .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordSize request".into()))?;
+        .map_err(|()| MmPerformanceError::RecordError("Failed to write GetRecordSize request".into()))?;
 
     let size_resp_bytes = comm_service
         .communicate(1, &size_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
@@ -299,7 +206,7 @@ fn fetch_mm_record_size(comm_service: &Service<dyn MmCommunication>) -> Result<u
 
     let (size_resp, _) = mm::GetRecordSize::read_from(&size_resp_bytes).map_err(|_| MmPerformanceError::ParseError)?;
 
-    if size_resp.return_status != r_efi::efi::Status::SUCCESS {
+    if size_resp.return_status != patina::standard::efi::Status::SUCCESS {
         return Err(MmPerformanceError::StatusError(size_resp.return_status));
     }
 
@@ -320,7 +227,7 @@ fn fetch_mm_record_chunk(
 
     data_req
         .write_into(&mut data_req_buf)
-        .map_err(|_| MmPerformanceError::RecordError("Failed to write GetRecordDataByOffset request".into()))?;
+        .map_err(|()| MmPerformanceError::RecordError("Failed to write GetRecordDataByOffset request".into()))?;
 
     let data_resp_bytes = comm_service
         .communicate(1, &data_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID.as_guid())
@@ -329,7 +236,7 @@ fn fetch_mm_record_chunk(
     let (data_resp, _) =
         mm::GetRecordDataByOffset::read_from_default(&data_resp_bytes).map_err(|_| MmPerformanceError::ParseError)?;
 
-    if data_resp.return_status != r_efi::efi::Status::SUCCESS {
+    if data_resp.return_status != patina::standard::efi::Status::SUCCESS {
         return Err(MmPerformanceError::StatusError(data_resp.return_status));
     }
 
@@ -379,7 +286,7 @@ impl<'a> PerformanceRecordIterator<'a> {
 }
 
 impl<'a> Iterator for PerformanceRecordIterator<'a> {
-    type Item = Result<GenericPerformanceRecord<&'a [u8]>, MmPerformanceError>;
+    type Item = Result<&'a GenericPerformanceRecord, MmPerformanceError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.bytes.len() < PerformanceRecordHeader::SIZE {
@@ -405,20 +312,20 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
         }
 
         if rec_len > self.bytes.len() {
+            let available = self.bytes.len();
             self.bytes = &[];
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
-                "Truncated record (needed {}, had {})",
-                rec_len,
-                self.bytes.len()
+                "Truncated record (needed {rec_len}, had {available})"
             ))));
         }
 
-        let data = self.bytes.get(PerformanceRecordHeader::SIZE..rec_len)?;
-        let record = GenericPerformanceRecord {
-            record_type: header.record_type,
-            length: header.length,
-            revision: header.revision,
-            data,
+        let record_bytes = self.bytes.get(..rec_len)?;
+        let record = match GenericPerformanceRecord::ref_from_bytes(record_bytes) {
+            Ok(record) => record,
+            Err(err) => {
+                self.bytes = &[];
+                return Some(Err(MmPerformanceError::RecordError(alloc::format!("Failed to parse record: {err:?}"))));
+            }
         };
 
         self.bytes = self.bytes.get(rec_len..).unwrap_or(&[]);
@@ -427,14 +334,10 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
 }
 
 /// Processes MM performance records and adds them to the FBPT
-fn process_mm_performance_records<F, B>(
+fn process_mm_performance_records(
     comm_service: &Service<dyn MmCommunication>,
-    fbpt: &TplMutex<F, B>,
-) -> Result<(), MmPerformanceError>
-where
-    F: FirmwareBasicBootPerfTable,
-    B: BootServices + 'static,
-{
+    performance: &Service<dyn PerformanceManager>,
+) -> Result<(), MmPerformanceError> {
     let record_data = fetch_all_mm_record_data(comm_service)?;
 
     if record_data.is_empty() {
@@ -453,74 +356,185 @@ where
             Ok(record) => {
                 record_count += 1;
 
+                // Copy packed header fields into locals to avoid unaligned references.
+                let record_type = record.header.record_type;
+                let length = record.header.length;
+                let revision = record.header.revision;
+
                 log::debug!(
                     "Performance: MM record #{} - type: 0x{:04X} ({}), length: {}, revision: {}, data_len: {}",
                     record_count,
-                    record.record_type,
-                    record_type_name(record.record_type),
-                    record.length,
-                    record.revision,
+                    record_type,
+                    record_type_name(record_type),
+                    length,
+                    revision,
                     record.data.len()
                 );
                 // Print detailed record information based on type
-                print_record_details(record.record_type, record_count, record.data);
+                print_record_details(record_type, record_count, &record.data);
 
-                if let Err(e) = fbpt.lock().add_record(record) {
+                if let Err(e) = performance.add_generic_record(record) {
                     error_count += 1;
-                    log::error!("Performance: Failed adding MM record #{}: {:?}", record_count, e);
+                    log::error!("Performance: Failed adding MM record #{record_count}: {e:?}");
                 } else {
                     success_count += 1;
                 }
             }
             Err(e) => {
-                log::warn!("Performance: {}", e);
-                break;
+                log::warn!("Performance: {e}");
+                continue;
             }
         }
     }
 
     log::debug!(
-        "Performance: MM record summary - total: {}, added: {}, failed: {}",
-        record_count,
-        success_count,
-        error_count
+        "Performance: MM record summary - total: {record_count}, added: {success_count}, failed: {error_count}"
     );
 
     Ok(())
 }
 
 /// Adds MM performance records to the FBPT.
-pub extern "efiapi" fn fetch_and_add_mm_performance_records<B, F>(
-    event: r_efi::efi::Event,
-    ctx: MmPerformanceEventContext<B, F>,
+pub extern "efiapi" fn fetch_and_add_mm_performance_records<B>(
+    event: patina::standard::efi::Event,
+    ctx: MmPerformanceEventContext<B>,
 ) where
     B: BootServices + Clone + 'static,
-    F: FirmwareBasicBootPerfTable,
 {
-    let (boot_services, fbpt, comm_service) = *ctx;
+    let (boot_services, performance, comm_service) = *ctx;
     let _ = boot_services.close_event(event);
 
-    if let Err(e) = process_mm_performance_records(&comm_service, fbpt) {
-        log::error!("Performance: {}", e);
+    if let Err(e) = process_mm_performance_records(&comm_service, &performance) {
+        log::error!("Performance: {e}");
+    }
+}
+
+/// Reports the FBPT at End of DXE: queries the required size from the [`PerformanceMeasurement`] service, allocates the
+/// publishing buffer, has the service serialize the table into it, reports it through a status code, and installs it as
+/// a configuration table.
+pub extern "efiapi" fn report_fbpt_event<B, R>(event: patina::standard::efi::Event, ctx: ReportFbptEventContext<B, R>)
+where
+    B: BootServices + Clone + 'static,
+    R: RuntimeServices + Clone + 'static,
+{
+    let (boot_services, runtime_services, performance) = *ctx;
+    let _ = boot_services.close_event(event);
+
+    // Query the size required to publish the table, then allocate the memory ourselves.
+    let size = match performance.published_table_size() {
+        Ok(size) => size,
+        Err(e) => {
+            log::error!("Performance: Fail to get FBPT size: {e:?}");
+            return;
+        }
+    };
+
+    let Some(buffer) = allocate_fbpt_buffer(&boot_services, find_previous_table_address(&runtime_services), size)
+    else {
+        log::error!("Performance: Fail to allocate FBPT buffer.");
+        return;
+    };
+    let fbpt_address = buffer.as_ptr() as usize;
+
+    // Provide the allocated memory for the service to serialize the table into.
+    if let Err(e) = performance.publish_table(buffer) {
+        log::error!("Performance: Fail to serialize FBPT: {e:?}");
+        free_fbpt_buffer(&boot_services, fbpt_address, size);
+        return;
+    }
+
+    // SAFETY: `p` is the only mutable reference to the `StatusCodeRuntimeProtocol` in this scope.
+    let Ok(p) = (unsafe { boot_services.locate_protocol::<status_code::StatusCodeProtocol>(None) }) else {
+        log::error!("Performance: Fail to find status code protocol.");
+        return;
+    };
+
+    let status = p.report_status_code_with_data(
+        EFI_PROGRESS_CODE,
+        EFI_SOFTWARE_DXE_BS_DRIVER,
+        0,
+        patina::guid::CALLER_ID.as_efi_guid(),
+        *EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID.as_efi_guid(),
+        fbpt_address,
+    );
+    if status.is_err() {
+        log::error!("Performance: Fail to report FBPT status code.");
+    }
+
+    // SAFETY: This operation is valid because the expected configuration type of an entry with guid
+    // `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID` is a usize and the memory address is valid and points to an FBPT.
+    let status = unsafe {
+        boot_services.install_configuration_table_unchecked(
+            &EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID,
+            fbpt_address as *mut c_void,
+        )
+    };
+    if status.is_err() {
+        log::error!("Performance: Fail to install configuration table for FBPT firmware performance.");
+    }
+}
+
+/// Allocates a reserved-memory buffer large enough to publish the FBPT.
+///
+/// The allocation prefers `previous_address` (the location used on the previous boot) so the table can be placed
+/// consistently, falling back to any address below 4 GiB.
+fn allocate_fbpt_buffer<B: BootServices>(
+    boot_services: &B,
+    previous_address: Option<usize>,
+    size: usize,
+) -> Option<&'static mut [u8]> {
+    let pages = size.div_ceil(UEFI_PAGE_SIZE);
+    let alloc_size = pages * UEFI_PAGE_SIZE;
+
+    let address = previous_address
+        .and_then(|address| {
+            boot_services.allocate_pages(AllocType::Address(address), EfiMemoryType::ReservedMemoryType, pages).ok()
+        })
+        .or_else(|| {
+            // `AllocType::MaxAddress` requests any physical address below the given bound (u32::MAX = 4 GiB); the
+            // firmware chooses the actual address.
+            boot_services
+                .allocate_pages(AllocType::MaxAddress(u32::MAX as usize), EfiMemoryType::ReservedMemoryType, pages)
+                .ok()
+        })?;
+
+    // SAFETY: `pages` pages (`alloc_size` bytes) were just allocated at `address` as reserved memory.
+    Some(unsafe { core::slice::from_raw_parts_mut(address as *mut u8, alloc_size) })
+}
+
+/// Frees the FBPT buffer allocated by `allocate_fbpt_buffer`.
+fn free_fbpt_buffer<B: BootServices>(boot_services: &B, buffer: usize, size: usize) {
+    let pages = size.div_ceil(UEFI_PAGE_SIZE);
+    let address = buffer;
+
+    // SAFETY: `buffer` was allocated by `allocate_fbpt_buffer`, which used `boot_services.allocate_pages` to allocate
+    //         this buffer, so it is safe to free using `boot_services.free_pages`.
+    if let Err(e) = unsafe { boot_services.free_pages(address, pages) } {
+        log::error!("Performance: Failed to free FBPT buffer at {address:#x}: {e:?}");
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use core::assert_eq;
-    use r_efi::efi;
+    use crate::component::protocol::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
 
+    use super::*;
+    use core::{
+        assert_eq,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    use patina::standard::efi;
+
+    use alloc::sync::Arc;
     use patina::{
-        boot_services::{MockBootServices, c_ptr::CPtr},
+        c_ptr::{CMutPtr, CPtr},
         component::service::{IntoService, Service},
         performance::{
-            Measurement,
-            record::{PerformanceRecordBuffer, hob::MockHobPerformanceDataExtractor},
-            table::MockFirmwareBasicBootPerfTable,
+            error::Error,
+            measurement::{CallerIdentifier, PerfAttribute},
         },
-        runtime_services::MockRuntimeServices,
-        uefi_protocol::{ProtocolInterface, performance_measurement::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID},
+        protocol::ProtocolInterface,
+        uefi::{boot_services::MockBootServices, runtime_services::MockRuntimeServices},
     };
     use patina_mm::component::communicator::{MmCommunication, Status};
 
@@ -528,7 +542,6 @@ mod tests {
     const TEST_EVENT_HANDLE: efi::Event = 1_usize as efi::Event;
     const TEST_EVENT_HANDLE_2: efi::Event = 2_usize as efi::Event;
     const TEST_EFI_HANDLE: efi::Handle = 1 as efi::Handle;
-    const TEST_HOB_LOAD_IMAGE_COUNT: u32 = 10;
     const TEST_PERFORMANCE_RECORD_TYPE: u16 = 0x1010;
     const TEST_PERFORMANCE_RECORD_LENGTH: u8 = 34;
     const TEST_PERFORMANCE_RECORD_REVISION: u8 = 1;
@@ -593,6 +606,43 @@ mod tests {
         }
     }
 
+    /// Test implementation of the performance service. Counts the records ingested through `add_generic_record` via a
+    /// shared atomic so tests can assert on them, and reports a fixed table address.
+    struct MockPerf {
+        records: Arc<AtomicUsize>,
+    }
+
+    impl MockPerf {
+        fn new(records: Arc<AtomicUsize>) -> Self {
+            Self { records }
+        }
+    }
+
+    impl PerformanceManager for MockPerf {
+        fn create_measurement(
+            &self,
+            _caller_identifier: CallerIdentifier,
+            _guid: Option<&efi::Guid>,
+            _string: Option<&str>,
+            _ticker: u64,
+            _address: usize,
+            _perf_id: u16,
+            _attribute: PerfAttribute,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+        fn add_generic_record(&self, _record: &GenericPerformanceRecord) -> Result<(), Error> {
+            self.records.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+        fn published_table_size(&self) -> Result<usize, Error> {
+            Ok(64)
+        }
+        fn publish_table(&self, _buffer: &'static mut [u8]) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_entry_point() {
         let mut boot_services = MockBootServices::new();
@@ -601,13 +651,13 @@ mod tests {
 
         // Test that the protocol in installed.
         boot_services
-            .expect_install_protocol_interface::<EdkiiPerformanceMeasurement, Box<_>>()
+            .expect_install_protocol_interface::<EdkiiPerformanceMeasurementProtocol, Box<_>>()
             .once()
             .withf_st(|handle, _protocol_interface| {
                 assert_eq!(&None, handle);
                 assert_eq!(
                     EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID.into_inner(),
-                    EdkiiPerformanceMeasurement::PROTOCOL_GUID
+                    EdkiiPerformanceMeasurementProtocol::PROTOCOL_GUID
                 );
                 true
             })
@@ -615,24 +665,16 @@ mod tests {
 
         // Test that an event to report the fbpt at the end of dxe is created.
         boot_services
-            .expect_create_event_ex::<Box<(
-                MockBootServices,
-                MockRuntimeServices,
-                &TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>,
-            )>>()
+            .expect_create_event_ex::<Box<(MockBootServices, MockRuntimeServices, Service<dyn PerformanceManager>)>>()
             .once()
             .withf_st(|event_type, notify_tpl, notify_function, _notify_context, event_group| {
                 assert_eq!(&EventType::NOTIFY_SIGNAL, event_type);
                 assert_eq!(&Tpl::CALLBACK, notify_tpl);
                 assert_eq!(
-                    event_callback::report_fbpt_record_buffer::<
-                        MockBootServices,
-                        MockRuntimeServices,
-                        MockFirmwareBasicBootPerfTable,
-                    > as *const () as usize,
+                    report_fbpt_event::<MockBootServices, MockRuntimeServices> as *const () as usize,
                     notify_function.unwrap() as usize
                 );
-                assert_eq!(&EVENT_GROUP_END_OF_DXE, event_group);
+                assert_eq!(&END_OF_DXE_EVENT_GROUP_GUID, event_group);
                 true
             })
             .return_const_st(Ok(TEST_EVENT_HANDLE));
@@ -640,26 +682,15 @@ mod tests {
         boot_services.expect_install_configuration_table::<Box<PerformanceProperty>>().once().return_const(Ok(()));
 
         let runtime_services = MockRuntimeServices::new();
-        let mut hob_perf_data_extractor = MockHobPerformanceDataExtractor::new();
-        hob_perf_data_extractor
-            .expect_extract_hob_perf_data()
-            .once()
-            .returning(|| Ok((TEST_HOB_LOAD_IMAGE_COUNT, PerformanceRecordBuffer::new())));
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_set_perf_records().once().return_const(());
 
-        // TplMutex owns its own BootServices instance (clone creates a new mock with default TPL expectations)
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
-
-        // Leak the fbpt to create a 'static reference for testing.
-        let fbpt = Box::leak(Box::new(fbpt));
+        let perf: Service<dyn PerformanceManager> =
+            Service::mock(Box::new(MockPerf::new(Arc::new(AtomicUsize::new(0)))));
 
         let _ = Performance::_entry_point(
             boot_services,
             runtime_services,
-            Some(hob_perf_data_extractor),
             None,
-            fbpt,
+            perf,
             Service::mock(Box::new(MockTimer {})),
         );
     }
@@ -678,54 +709,83 @@ mod tests {
             }
         }
 
-        // Mock for TplMutex - no expectations needed since _entry_point doesn't lock the mutex
-        let tpl_mock = MockBootServices::new();
-
         // Mock for _entry_point - handles event creation and protocol installation
         let mut entry_point_mock = MockBootServices::new();
         entry_point_mock
-            .expect_create_event_ex::<Box<(
-                MockBootServices,
-                MockRuntimeServices,
-                &TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>,
-            )>>()
+            .expect_create_event_ex::<Box<(MockBootServices, MockRuntimeServices, Service<dyn PerformanceManager>)>>()
             .once()
             .return_const_st(Ok(TEST_EVENT_HANDLE));
         entry_point_mock
-            .expect_create_event_ex::<MmPerformanceEventContext<MockBootServices, MockFirmwareBasicBootPerfTable>>()
+            .expect_create_event_ex::<MmPerformanceEventContext<MockBootServices>>()
             .once()
             .withf_st(|_, _, f, _, group| {
-                (f.unwrap() as usize)
-                    == fetch_and_add_mm_performance_records::<MockBootServices, MockFirmwareBasicBootPerfTable>
-                        as *const () as usize
+                (f.unwrap() as usize) == fetch_and_add_mm_performance_records::<MockBootServices> as *const () as usize
                     && group == &EVENT_GROUP_READY_TO_BOOT
             })
             .return_const_st(Ok(TEST_EVENT_HANDLE_2));
         entry_point_mock
-            .expect_install_protocol_interface::<EdkiiPerformanceMeasurement, Box<_>>()
+            .expect_install_protocol_interface::<EdkiiPerformanceMeasurementProtocol, Box<_>>()
             .once()
             .returning(|_, protocol_interface| Ok((TEST_EFI_HANDLE, protocol_interface.metadata())));
         entry_point_mock.expect_install_configuration_table::<Box<PerformanceProperty>>().once().return_const(Ok(()));
 
         let runtime_services = MockRuntimeServices::new();
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_set_perf_records().never();
 
-        // Move tpl_mock into TplMutex (no clone needed)
-        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
-        // Use Box::leak for safe 'static reference
-        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
-
+        let perf: Service<dyn PerformanceManager> =
+            Service::mock(Box::new(MockPerf::new(Arc::new(AtomicUsize::new(0)))));
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(FakeComm));
         let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockTimer {}));
-        let _ = Performance::_entry_point(
-            entry_point_mock,
-            runtime_services,
-            Option::<MockHobPerformanceDataExtractor>::None,
-            Some(mm_service),
-            fbpt_ref,
-            timer,
+        let _ = Performance::_entry_point(entry_point_mock, runtime_services, Some(mm_service), perf, timer);
+    }
+
+    #[test]
+    fn test_report_fbpt_event_publishes_table() {
+        static REPORT_STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "efiapi" fn report_status_code(
+            _a: u32,
+            _b: u32,
+            _c: u32,
+            _d: *const efi::Guid,
+            _e: *const patina::pi::protocol::status_code::EfiStatusCodeData,
+        ) -> efi::Status {
+            REPORT_STATUS_CODE_CALLED.store(true, Ordering::Relaxed);
+            efi::Status::SUCCESS
+        }
+        let mut status_code_runtime_protocol =
+            Box::new(patina::pi::protocol::status_code::StatusCodeProtocol { report_status_code });
+        let status_code_runtime_protocol_ptr = status_code_runtime_protocol.as_mut_ptr();
+
+        let mut boot_services = MockBootServices::new();
+        boot_services.expect_close_event().once().return_const(Ok(()));
+
+        // The component allocates the publishing buffer itself; hand back a real leaked page-sized buffer.
+        let leaked_buffer = Box::leak(alloc::vec![0u8; UEFI_PAGE_SIZE].into_boxed_slice());
+        let leaked_buffer_addr = leaked_buffer.as_mut_ptr() as usize;
+        boot_services.expect_allocate_pages().once().returning(move |_, _, _| Ok(leaked_buffer_addr));
+
+        boot_services.expect_install_configuration_table_unchecked().once().return_const(Ok(()));
+        boot_services
+            .expect_locate_protocol()
+            .once()
+            // SAFETY: Test code - creating a mutable reference to test protocol pointer for mocking.
+            .returning_st(move |_| Ok(unsafe { &mut *status_code_runtime_protocol_ptr }));
+
+        let mut runtime_services = MockRuntimeServices::new();
+        runtime_services
+            .expect_get_variable::<crate::component::table::FirmwarePerformanceVariable>()
+            .once()
+            .returning(|_, _, _| Err(efi::Status::NOT_FOUND));
+
+        let perf: Service<dyn PerformanceManager> =
+            Service::mock(Box::new(MockPerf::new(Arc::new(AtomicUsize::new(0)))));
+
+        report_fbpt_event::<MockBootServices, MockRuntimeServices>(
+            TEST_EVENT_HANDLE,
+            Box::new((boot_services, runtime_services, perf)),
         );
+
+        assert!(REPORT_STATUS_CODE_CALLED.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -750,26 +810,20 @@ mod tests {
                 Err(Status::InvalidDataBuffer)
             }
         }
-        // Mock for TplMutex - no TPL expectations needed since zero records means no lock/unlock
-        let tpl_mock = MockBootServices::new();
 
         // Mock for callback - handles close_event
         let mut callback_mock = MockBootServices::new();
         callback_mock.expect_close_event().once().return_const(Ok(()));
 
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_add_record().never();
-
-        // Move tpl_mock into TplMutex (no clone needed)
-        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
-        // Use Box::leak for safe 'static reference
-        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
-
+        let records = Arc::new(AtomicUsize::new(0));
+        let perf: Service<dyn PerformanceManager> = Service::mock(Box::new(MockPerf::new(records.clone())));
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(ZeroSizeComm));
-        fetch_and_add_mm_performance_records::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+        fetch_and_add_mm_performance_records::<MockBootServices>(
             TEST_EVENT_HANDLE,
-            Box::new((callback_mock, fbpt_ref, mm_service)),
+            Box::new((callback_mock, perf, mm_service)),
         );
+
+        assert_eq!(records.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -799,7 +853,7 @@ mod tests {
                     (fid, 0) if fid == TEST_MM_COMM_FUNCTION_ID_SIZE => {
                         // size query
                         self.step.set(1);
-                        Ok(create_size_response!(TEST_PERFORMANCE_RECORD_LENGTH as u64))
+                        Ok(create_size_response!(u64::from(TEST_PERFORMANCE_RECORD_LENGTH)))
                     }
                     (fid, 1) if fid == TEST_MM_COMM_FUNCTION_ID_DATA => {
                         // data query
@@ -811,29 +865,20 @@ mod tests {
                 }
             }
         }
-        // Mock for TplMutex - handles TPL operations during lock/unlock
-        let mut tpl_mock = MockBootServices::new();
-        // TplMutex lock during add_record will invoke raise_tpl/restore_tpl once
-        tpl_mock.expect_raise_tpl().once().return_const(Tpl::APPLICATION);
-        tpl_mock.expect_restore_tpl().once().return_const(());
 
         // Mock for callback - handles close_event
         let mut callback_mock = MockBootServices::new();
         callback_mock.expect_close_event().once().return_const(Ok(()));
 
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_add_record().once().returning(|_| Ok(()));
-
-        // Move tpl_mock into TplMutex (no clone needed)
-        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
-        // Use Box::leak for safe 'static reference
-        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
-
+        let records = Arc::new(AtomicUsize::new(0));
+        let perf: Service<dyn PerformanceManager> = Service::mock(Box::new(MockPerf::new(records.clone())));
         let mm_service: Service<dyn MmCommunication> = Service::mock(Box::new(OneRecordComm::new()));
-        fetch_and_add_mm_performance_records::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+        fetch_and_add_mm_performance_records::<MockBootServices>(
             TEST_EVENT_HANDLE,
-            Box::new((callback_mock, fbpt_ref, mm_service)),
+            Box::new((callback_mock, perf, mm_service)),
         );
+
+        assert_eq!(records.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -893,30 +938,21 @@ mod tests {
                 }
             }
         }
-        // Mock for TplMutex - handles TPL operations during lock/unlock
-        let mut tpl_mock = MockBootServices::new();
-        // TplMutex lock for each add_record will raise/restore TPL; expect TEST_MULTI_CHUNK_RECORD_COUNT times
-        tpl_mock.expect_raise_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(Tpl::APPLICATION);
-        tpl_mock.expect_restore_tpl().times(TEST_MULTI_CHUNK_RECORD_COUNT).return_const(());
 
         // Mock for callback - handles close_event
         let mut callback_mock = MockBootServices::new();
         callback_mock.expect_close_event().once().return_const(Ok(()));
 
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_add_record().times(TEST_MULTI_CHUNK_RECORD_COUNT).returning(|_| Ok(()));
-
-        // Move tpl_mock into TplMutex (no clone needed)
-        let fbpt_mutex = TplMutex::new(tpl_mock, Tpl::NOTIFY, fbpt);
-        // Use Box::leak for safe 'static reference
-        let fbpt_ref: &'static TplMutex<_, _> = Box::leak(Box::new(fbpt_mutex));
-
+        let records = Arc::new(AtomicUsize::new(0));
+        let perf: Service<dyn PerformanceManager> = Service::mock(Box::new(MockPerf::new(records.clone())));
         let mm_service: Service<dyn MmCommunication> =
             Service::mock(Box::new(MultiChunks { buf: all_records, fetches: Cell::new(0) }));
-        fetch_and_add_mm_performance_records::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+        fetch_and_add_mm_performance_records::<MockBootServices>(
             TEST_EVENT_HANDLE,
-            Box::new((callback_mock, fbpt_ref, mm_service)),
+            Box::new((callback_mock, perf, mm_service)),
         );
+
+        assert_eq!(records.load(Ordering::Relaxed), TEST_MULTI_CHUNK_RECORD_COUNT);
     }
 
     /// Verifies that malformed record data doesn't cause infinite loops.
@@ -974,43 +1010,5 @@ mod tests {
 
         assert!(error_occurred, "Expected error for invalid length");
         assert!(iterations <= 5, "Should terminate quickly without infinite loop");
-    }
-
-    #[test]
-    fn test_performance_component_configuration_with_no_hob_override() {
-        let component = Performance::new();
-        let config = component.get_config(None);
-        assert_eq!(config.enable_component, PerformanceConfig::DISABLED);
-        let measurements = config.enabled_measurements;
-        assert_eq!(measurements, 0);
-
-        let component = Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::LoadImage);
-        let config = component.get_config(None);
-        let measurements = config.enabled_measurements;
-        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
-        assert_eq!(measurements, 0b1010u32);
-    }
-
-    #[test]
-    fn test_performance_configuration_with_hob_override() {
-        let test_config =
-            PerformanceConfig { enable_component: PerformanceConfig::ENABLED, enabled_measurements: 0b1010u32 };
-
-        let hob = Hob::mock(vec![test_config]);
-
-        let component = Performance::new();
-        let config = component.get_config(Some(hob));
-        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
-        let measurements = config.enabled_measurements;
-        assert_eq!(measurements, 0b1010u32);
-
-        let hob = Hob::mock(vec![test_config]);
-
-        let component =
-            Performance::new().with_measurements(Measurement::DriverBindingStart | Measurement::DriverBindingStop);
-        let config = component.get_config(Some(hob));
-        assert_eq!(config.enable_component, PerformanceConfig::ENABLED);
-        let measurements = config.enabled_measurements;
-        assert_eq!(measurements, 0b1010u32);
     }
 }

@@ -6,16 +6,15 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Performance measurement infrastructure."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-r-efi = { workspace = true }
 log = { workspace = true }
-uuid = { workspace = true }
 
-mu_rust_helpers = { workspace = true }
 patina = { workspace = true }
 patina_mm = { workspace = true }
 zerocopy = { workspace = true }
@@ -24,7 +23,6 @@ zerocopy-derive = { workspace = true }
 [dev-dependencies]
 patina = { path = "../../sdk/patina", features = ["mockall"] }
 patina_dxe_core = { path = "../../patina_dxe_core"}
-mockall = { workspace = true }
 
 [features]
 # All non-std features to test in CI

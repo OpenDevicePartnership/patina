@@ -8,23 +8,26 @@
 //!
 use alloc::vec::Vec;
 use core::result::Result;
-use patina::pi::fw_fs::guid::LZMA_SECTION;
+use lzma_rust2::{LzmaReader, Read};
+use patina::pi::fw_fs::guid::LZMA_SECTION_GUID;
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{Section, SectionExtractor, SectionHeader},
 };
 
-use patina_lzma_rs::io::Cursor;
+use crate::DECOMPRESSION_MAX_MEMORY_LIMIT;
 
-pub const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+/// Sentinel uncompressed-size value in the `.lzma` (`FORMAT_ALONE`) header that indicates
+/// the uncompressed size is unknown.
+const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
-/// Provides decompression for LZMA GUIDed sections.
+/// Provides decompression for LZMA `GUIDed` sections.
 #[derive(Default, Clone, Copy)]
 pub struct LzmaSectionExtractor;
 
 impl LzmaSectionExtractor {
     /// Creates a new `LzmaSectionExtractor` instance.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub const fn new() -> Self {
         Self {}
     }
@@ -33,22 +36,38 @@ impl LzmaSectionExtractor {
 impl SectionExtractor for LzmaSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-            && guid_header.section_definition_guid == LZMA_SECTION
+            && guid_header.section_definition_guid == LZMA_SECTION_GUID
         {
             let data = section.try_content_as_slice()?;
 
-            // Get unpacked size to pre-allocate vector, if available
+            // Get unpacked size to pre-allocate the output vector, if available.
             // See https://github.com/tukaani-project/xz/blob/dd4a1b259936880e04669b43e778828b60619860/doc/lzma-file-format.txt#L131
             let unpacked_size =
                 u64::from_le_bytes(data.get(5..13).ok_or(FirmwareFileSystemError::DataCorrupt)?.try_into().unwrap());
             let mut decompressed = if unpacked_size == LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE {
                 Vec::<u8>::new()
             } else {
+                if unpacked_size > u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) {
+                    return Err(FirmwareFileSystemError::DataCorrupt);
+                }
                 Vec::<u8>::with_capacity(unpacked_size as usize)
             };
 
-            patina_lzma_rs::lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+            // The section payload is a `.lzma` (FORMAT_ALONE) stream: a 13-byte header
+            // (properties byte, dictionary size, uncompressed size) followed by the
+            // range-coded payload. `LzmaReader::new_mem_limit` parses that header.
+            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT, None)
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+
+            let mut chunk = [0u8; 4096];
+            loop {
+                let read = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                if read == 0 {
+                    break;
+                }
+                let decoded = chunk.get(..read).ok_or(FirmwareFileSystemError::DataCorrupt)?;
+                decompressed.extend_from_slice(decoded);
+            }
 
             return Ok(decompressed);
         }
@@ -57,7 +76,7 @@ impl SectionExtractor for LzmaSectionExtractor {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use crate::tests::create_lzma_section;
 
@@ -97,6 +116,22 @@ mod tests {
 
         // Result depends on whether the compressed data is valid
         assert!(result.is_ok() || matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
+    }
+
+    #[test]
+    fn test_lzma_extractor_unpacked_size_exceeds_limit() {
+        // Declare an unpacked size larger than the 512MB decompression limit (but not the
+        // "unknown size" sentinel); the extractor must reject it before decompressing.
+        let unpacked_size = u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) + 1;
+        let mut lzma_data = vec![0x5D, 0x00, 0x00, 0x80, 0x00]; // LZMA properties
+        lzma_data.extend_from_slice(&unpacked_size.to_le_bytes()); // Oversized unpacked size
+        lzma_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Placeholder payload
+
+        let section = create_lzma_section(&lzma_data);
+        let extractor = LzmaSectionExtractor;
+        let result = extractor.extract(&section);
+
+        assert!(matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
     }
 
     #[test]

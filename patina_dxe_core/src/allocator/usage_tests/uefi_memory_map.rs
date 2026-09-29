@@ -49,12 +49,12 @@
 //! - **GCD Initialization Order**: `init_gcd()` adds the free memory range as system memory
 //!   before processing resource descriptor HOBs.
 //!
-//! ## Example: Using MemoryMapTestScenario
+//! ## Example: Using `MemoryMapTestScenario`
 //!
 //! ```rust
-//! use patina::guids::ZERO;
+//! use patina::BinaryGuid;
 //! use patina::pi::hob;
-//! use r_efi::efi;
+//! use patina::standard::efi;
 //!
 //! let scenario = MemoryMapTestScenario::new("Test Name", 64 * 1024 * 1024) // 64MB
 //!     .with_resource_descriptor(ResourceDescriptorConfig {
@@ -62,13 +62,13 @@
 //!         resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES as u32,
 //!         physical_start: 0x100000,
 //!         resource_length: 32 * 1024 * 1024,
-//!         owner: ZERO,
+//!         owner: BinaryGuid::ZERO,
 //!     })
 //!     .with_memory_allocation(MemoryAllocationConfig {
 //!         memory_type: efi::BOOT_SERVICES_DATA,
 //!         memory_base_address: 0x200000,
 //!         memory_length: 4096,
-//!         name: ZERO,
+//!         name: BinaryGuid::ZERO,
 //!     })
 //!     .with_validation(|descriptors| {
 //!         if descriptors.is_empty() {
@@ -80,13 +80,13 @@
 //! scenario.run_test();
 //! ```
 //!
-//! ## Example: Using MemoryMapValidation
+//! ## Example: Using `MemoryMapValidation`
 //!
 //! The `MemoryMapValidation` helper provides structured validation for memory map tests:
 //!
 //! ```rust
 //! use crate::allocator::memory_map_integration_tests::{MemoryMapTestScenario, MemoryMapValidation};
-//! use r_efi::efi;
+//! use patina::standard::efi;
 //!
 //! // Set up test scenario
 //! let scenario = MemoryMapTestScenario::new("Runtime Services Test", 256 * 1024 * 1024)
@@ -95,19 +95,19 @@
 //!         resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES as u32,
 //!         physical_start: 0x100000,
 //!         resource_length: 64 * 1024 * 1024,
-//!         owner: ZERO,
+//!         owner: BinaryGuid::ZERO,
 //!     })
 //!     .with_memory_allocation(MemoryAllocationConfig {
 //!         memory_type: efi::RUNTIME_SERVICES_CODE,
 //!         memory_base_address: 0x200000,
 //!         memory_length: 1 * 1024 * 1024,
-//!         name: ZERO,
+//!         name: BinaryGuid::ZERO,
 //!     })
 //!     .with_memory_allocation(MemoryAllocationConfig {
 //!         memory_type: efi::RUNTIME_SERVICES_DATA,
 //!         memory_base_address: 0x300000,
 //!         memory_length: 2 * 1024 * 1024,
-//!         name: ZERO,
+//!         name: BinaryGuid::ZERO,
 //!     })
 //!     .with_validation(|descriptors| {
 //!         // Validate the memory map with structured expectations
@@ -146,17 +146,20 @@ mod tests {
         test_support,
     };
     use alloc::vec::Vec;
+    use patina::standard::efi;
     use patina::{
-        base::*,
-        guids::ZERO,
+        BinaryGuid,
         pi::{
             BootMode,
-            hob::{self, HobList, PhaseHandoffInformationTable, ResourceDescriptor, header},
+            hob::{self, HobHeader, HobList, PhaseHandoffInformationTable, ResourceDescriptor},
         },
+        uefi::memory_map,
+        *,
     };
-    use r_efi::efi;
     use serial_test::serial;
     use std::panic::RefUnwindSafe;
+
+    const ZERO: BinaryGuid = BinaryGuid::ZERO;
 
     /// HOB configuration structures to simplify building test scenarios.
     ///
@@ -199,7 +202,7 @@ mod tests {
         validations: Vec<ValidationFn>,
     }
 
-    /// Validation expectations that can be checked against the memory map returned by get_memory_map()
+    /// Validation expectations that can be checked against the memory map returned by `get_memory_map()`
     pub struct MemoryMapValidation {
         pub total_memory_mb: Option<u64>,
         pub expected_types: Option<Vec<u32>>,
@@ -232,7 +235,7 @@ mod tests {
             };
 
             if status != efi::Status::BUFFER_TOO_SMALL {
-                return Err(format!("Expected BUFFER_TOO_SMALL, got {:?}", status));
+                return Err(format!("Expected BUFFER_TOO_SMALL, got {status:?}"));
             }
 
             let descriptor_count = memory_map_size / mem::size_of::<efi::MemoryDescriptor>();
@@ -254,14 +257,14 @@ mod tests {
             };
 
             if status != efi::Status::SUCCESS {
-                return Err(format!("get_memory_map() failed: {:?}", status));
+                return Err(format!("get_memory_map() failed: {status:?}"));
             }
 
             if descriptor_size != mem::size_of::<efi::MemoryDescriptor>() {
-                return Err(format!("Unexpected descriptor size: {}", descriptor_size));
+                return Err(format!("Unexpected descriptor size: {descriptor_size}"));
             }
             if descriptor_version != efi::MEMORY_DESCRIPTOR_VERSION {
-                return Err(format!("Unexpected descriptor version: {}", descriptor_version));
+                return Err(format!("Unexpected descriptor version: {descriptor_version}"));
             }
 
             let actual_descriptor_count = memory_map_size / descriptor_size;
@@ -310,7 +313,7 @@ mod tests {
 
         /// Execute the test scenario and validate results
         pub fn run_test(&self) {
-            test_support::with_global_lock(|| {
+            test_support::with_clean_global_lock(|| {
                 test_support::init_test_logger();
                 let hob_list_ptr = self.build_custom_hob_list();
 
@@ -363,7 +366,7 @@ mod tests {
                 + core::mem::size_of::<hob::MemoryAllocation>()
                 + self.resource_descriptors.len() * core::mem::size_of::<ResourceDescriptor>()
                 + self.memory_allocations.len() * core::mem::size_of::<hob::MemoryAllocation>()
-                + core::mem::size_of::<header::Hob>();
+                + core::mem::size_of::<HobHeader>();
 
             // Calculate free_memory_top as the end of the highest system memory region
             let free_memory_top = self
@@ -375,7 +378,7 @@ mod tests {
                 .unwrap_or(self.memory_size);
 
             let phit = PhaseHandoffInformationTable {
-                header: header::Hob {
+                header: HobHeader {
                     r#type: hob::HANDOFF,
                     length: core::mem::size_of::<PhaseHandoffInformationTable>() as u16,
                     reserved: 0,
@@ -386,11 +389,11 @@ mod tests {
                 memory_bottom: mem_base,
                 free_memory_top: mem_base + free_memory_top,
                 free_memory_bottom: mem_base + hob_size as u64,
-                end_of_hob_list: mem_base + hob_size as u64 - core::mem::size_of::<header::Hob>() as u64,
+                end_of_hob_list: mem_base + hob_size as u64 - core::mem::size_of::<HobHeader>() as u64,
             };
 
             let cpu = hob::Cpu {
-                header: header::Hob { r#type: hob::CPU, length: core::mem::size_of::<hob::Cpu>() as u16, reserved: 0 },
+                header: HobHeader { r#type: hob::CPU, length: core::mem::size_of::<hob::Cpu>() as u16, reserved: 0 },
                 size_of_memory_space: 48,
                 size_of_io_space: 16,
                 reserved: Default::default(),
@@ -419,16 +422,16 @@ mod tests {
                 let stack_size = SIZE_64KB as u64;
                 let stack_base = mem_base + SIZE_1MB as u64;
                 let stack_hob = hob::MemoryAllocation {
-                    header: header::Hob {
+                    header: HobHeader {
                         r#type: hob::MEMORY_ALLOCATION,
                         length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                         reserved: 0,
                     },
-                    alloc_descriptor: hob::header::MemoryAllocation {
-                        name: patina::guids::HOB_MEMORY_ALLOC_STACK,
+                    alloc_descriptor: hob::MemoryAllocationHeader {
+                        name: patina::pi::guid::MEMORY_ALLOC_STACK_HOB_GUID,
                         memory_base_address: stack_base,
                         memory_length: stack_size,
-                        memory_type: r_efi::efi::BOOT_SERVICES_DATA,
+                        memory_type: efi::BOOT_SERVICES_DATA,
                         reserved: Default::default(),
                     },
                 };
@@ -441,7 +444,7 @@ mod tests {
 
                 for resource in &self.resource_descriptors {
                     let resource_hob = ResourceDescriptor {
-                        header: header::Hob {
+                        header: HobHeader {
                             r#type: hob::RESOURCE_DESCRIPTOR,
                             length: core::mem::size_of::<ResourceDescriptor>() as u16,
                             reserved: 0,
@@ -462,12 +465,12 @@ mod tests {
 
                 for allocation in &self.memory_allocations {
                     let alloc_hob = hob::MemoryAllocation {
-                        header: header::Hob {
+                        header: HobHeader {
                             r#type: hob::MEMORY_ALLOCATION,
                             length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                             reserved: 0,
                         },
-                        alloc_descriptor: hob::header::MemoryAllocation {
+                        alloc_descriptor: hob::MemoryAllocationHeader {
                             name: allocation.name,
                             memory_base_address: mem_base + allocation.memory_base_address,
                             memory_length: allocation.memory_length,
@@ -483,15 +486,15 @@ mod tests {
                     offset += core::mem::size_of::<hob::MemoryAllocation>();
                 }
 
-                let end_hob = header::Hob {
+                let end_hob = HobHeader {
                     r#type: hob::END_OF_HOB_LIST,
-                    length: core::mem::size_of::<header::Hob>() as u16,
+                    length: core::mem::size_of::<HobHeader>() as u16,
                     reserved: 0,
                 };
                 core::ptr::copy_nonoverlapping(
                     core::ptr::addr_of!(end_hob).cast::<u8>(),
                     mem.as_mut_ptr().add(offset),
-                    core::mem::size_of::<header::Hob>(),
+                    core::mem::size_of::<HobHeader>(),
                 );
             }
 
@@ -587,26 +590,26 @@ mod tests {
             if let Some(expected) = self.total_memory_mb
                 && total_memory_mb != expected
             {
-                return Err(format!("Expected {} MB total memory, got {} MB", expected, total_memory_mb));
+                return Err(format!("Expected {expected} MB total memory, got {total_memory_mb} MB"));
             }
 
             if let Some(expected) = self.conventional_memory_mb
                 && conventional_memory_mb != expected
             {
-                return Err(format!("Expected {} MB conventional memory, got {} MB", expected, conventional_memory_mb));
+                return Err(format!("Expected {expected} MB conventional memory, got {conventional_memory_mb} MB"));
             }
 
             if let Some(expected) = self.runtime_memory_mb
                 && runtime_memory_mb != expected
             {
-                return Err(format!("Expected {} MB runtime memory, got {} MB", expected, runtime_memory_mb));
+                return Err(format!("Expected {expected} MB runtime memory, got {runtime_memory_mb} MB"));
             }
 
             if let Some(ref expected_types) = self.expected_types {
                 let present_types: std::collections::BTreeSet<u32> = descriptors.iter().map(|d| d.r#type).collect();
                 for &expected_type in expected_types {
                     if !present_types.contains(&expected_type) {
-                        return Err(format!("Expected memory type 0x{:x} not found in memory map", expected_type));
+                        return Err(format!("Expected memory type 0x{expected_type:x} not found in memory map"));
                     }
                 }
             }
@@ -635,7 +638,7 @@ mod tests {
                 memory_type: efi::BOOT_SERVICES_DATA,
                 memory_base_address: SIZE_2MB as u64,
                 memory_length: SIZE_512KB as u64,
-                name: patina::guids::HOB_MEMORY_ALLOC_STACK,
+                name: patina::pi::guid::MEMORY_ALLOC_STACK_HOB_GUID,
             })
             .with_memory_allocation(MemoryAllocationConfig {
                 memory_type: efi::BOOT_SERVICES_CODE,
@@ -889,7 +892,7 @@ mod tests {
                 // The alignment check should have prevented this allocation from being processed
                 let unaligned_relative = SIZE_32MB as u64 + 1;
                 let mut found_unaligned_region = false;
-                for desc in descriptors.iter() {
+                for desc in descriptors {
                     let desc_start = desc.physical_start;
                     let desc_end = desc_start + (desc.number_of_pages * UEFI_PAGE_SIZE as u64);
 
@@ -970,8 +973,7 @@ mod tests {
                         let mmio_count = descriptors.iter().filter(|d| d.r#type == efi::MEMORY_MAPPED_IO).count();
                         if mmio_count > 0 {
                             return Err(format!(
-                                "Non-runtime MMIO should not appear in UEFI memory map, but found {} MMIO descriptor(s)",
-                                mmio_count
+                                "Non-runtime MMIO should not appear in UEFI memory map, but found {mmio_count} MMIO descriptor(s)"
                             ));
                         }
 

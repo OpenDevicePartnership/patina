@@ -6,6 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+use patina::crc32;
 use patina::pi::fw_fs;
 use patina_ffs::{
     FirmwareFileSystemError,
@@ -18,7 +19,7 @@ pub struct Crc32SectionExtractor;
 
 impl Crc32SectionExtractor {
     /// Creates a new `Crc32SectionExtractor` instance.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub const fn new() -> Self {
         Self {}
     }
@@ -27,14 +28,12 @@ impl Crc32SectionExtractor {
 impl SectionExtractor for Crc32SectionExtractor {
     fn extract(&self, section: &patina_ffs::section::Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
         if let SectionHeader::GuidDefined(guid_header, crc_header, _) = section.header()
-            && guid_header.section_definition_guid == fw_fs::guid::CRC32_SECTION
+            && guid_header.section_definition_guid == fw_fs::guid::CRC32_SECTION_GUID
         {
-            if crc_header.len() < 4 {
-                Err(FirmwareFileSystemError::DataCorrupt)?;
-            }
-            let crc32 = u32::from_le_bytes((**crc_header).try_into().unwrap());
+            let crc32_bytes = crc_header.get(..4).ok_or(FirmwareFileSystemError::DataCorrupt)?;
+            let crc32 = u32::from_le_bytes(crc32_bytes.try_into().unwrap());
             let content = section.try_content_as_slice()?;
-            if crc32 != crc32fast::hash(content) {
+            if crc32 != crc32::calculate_crc32(content) {
                 //TODO: in EDK2 C reference implementation, data is returned along with EFI_AUTH_STATUS_TEST_FAILED.
                 //For now, just return an error if the CRC fails to check.
                 Err(FirmwareFileSystemError::DataCorrupt)?;
@@ -46,7 +45,7 @@ impl SectionExtractor for Crc32SectionExtractor {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use crate::tests::create_crc32_section;
 
@@ -57,7 +56,7 @@ mod tests {
     #[test]
     fn test_crc32_extractor_valid() {
         let content = b"Hello, CRC32!";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
@@ -81,13 +80,41 @@ mod tests {
     #[test]
     fn test_crc32_extractor_empty_content() {
         let content = b"";
-        let crc32 = crc32fast::hash(content);
+        let crc32 = crc32::calculate_crc32(content);
         let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
         let result = extractor.extract(&section).expect("Empty content with valid CRC should succeed");
 
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_crc32_extractor_oversized_guid_data() {
+        // A malformed section whose GUID-specific data is larger than the 4-byte CRC32 value
+        // should only have the first 4 bytes interpreted as the checksum.
+        let content = b"Hello, CRC32!";
+        let crc32 = crc32::calculate_crc32(content);
+        let mut guid_data = crc32.to_le_bytes().to_vec();
+        guid_data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]); // give trailing bytes beyond the CRC32
+        let section = create_crc32_section(content, guid_data);
+
+        let extractor = Crc32SectionExtractor;
+        let result = extractor.extract(&section).expect("Oversized GUID data with a valid CRC should succeed");
+
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_crc32_extractor_truncated_guid_data() {
+        // GUID-specific data shorter than 4 bytes should just return a DataCorrupt error.
+        let content = b"Hello, CRC32!";
+        let section = create_crc32_section(content, [0x00, 0x01].to_vec()); // only 2 bytes
+
+        let extractor = Crc32SectionExtractor;
+        let result = extractor.extract(&section);
+
+        assert!(matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
     }
 
     #[test]
@@ -108,7 +135,7 @@ mod tests {
             attributes: 0x01,
         };
 
-        let crc32_bytes = crc32fast::hash(content).to_le_bytes().to_vec();
+        let crc32_bytes = crc32::calculate_crc32(content).to_le_bytes().to_vec();
         let header = SectionHeader::GuidDefined(guid_header, crc32_bytes, content.len() as u32);
         let section =
             Section::new_from_header_with_data(header, content.to_vec()).expect("Failed to create test section");

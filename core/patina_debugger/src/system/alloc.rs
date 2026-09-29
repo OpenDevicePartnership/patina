@@ -142,12 +142,12 @@ struct MonitorCallback {
     /// from the default help listing.
     description: Option<&'static str>,
     /// The callback function that will be invoked when the command is executed.
-    /// See [MonitorCommandFn] for more details on the function signature.
+    /// See [`MonitorCommandFn`] for more details on the function signature.
     callback: Box<MonitorCommandFn>,
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 
@@ -223,7 +223,7 @@ mod tests {
 
         let x = 5;
         let callback: Box<MonitorCommandFn> = Box::new(move |_args, out| {
-            let _ = writeln!(out, "Captured state: {}", x);
+            let _ = writeln!(out, "Captured state: {x}");
         });
         system_state.add_monitor_command(command, Some(description), callback);
 

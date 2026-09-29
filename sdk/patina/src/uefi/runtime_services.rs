@@ -1,0 +1,918 @@
+//! Rust-friendly UEFI Runtime Service Wrappers
+//!
+//! Provides safe and unsafe easy-to-use wrappers for UEFI runtime services, as well as additional
+//! utilities and helper functions.
+//!
+//! ```ignore
+//! pub static RUNTIME_SERVICES: StandardRuntimeServices =
+//!     StandardRuntimeServices::new(&(*runtime_services_ptr));
+//! let variable_services::VariableInfo = RUNTIME_SERVICES.query_variable_info(attributes);
+//! ```
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+
+/// Variable-services-specific structs and utilities
+pub mod variable_services;
+
+#[cfg(any(test, feature = "mockall"))]
+use mockall::automock;
+
+use alloc::vec::Vec;
+use core::{ffi::c_void, fmt::Debug, ptr};
+use spin::Once;
+
+use crate::standard::efi;
+use variable_services::{GetVariableStatus, VariableInfo};
+
+use crate::{Char16Str, Char16String};
+
+/// The UEFI spec runtime services.
+/// Wrapper around [`efi::RuntimeServices`]
+///
+/// UEFI Spec Documentation: [8. Services - RuntimeServices](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html)
+pub struct StandardRuntimeServices {
+    efi_runtime_services: Once<*mut efi::RuntimeServices>,
+}
+
+// SAFETY: efi::RuntimeServices is not Sync/Send automatically due to the use of *mut c_void as part of function signatures
+// within the struct. Those pointers are only used by spec-defined APIs. With respect to the efi_runtime_services pointer
+// itself, that is protected by the Once wrapper and is not expected to change once initialized.
+unsafe impl Sync for StandardRuntimeServices {}
+// SAFETY: See Sync impl above.
+unsafe impl Send for StandardRuntimeServices {}
+
+impl StandardRuntimeServices {
+    /// Create a new `StandardRuntimeServices` with the provided [`efi::RuntimeServices`].
+    pub fn new(efi_runtime_services: *mut efi::RuntimeServices) -> Self {
+        let this = StandardRuntimeServices::new_uninit();
+        this.init(efi_runtime_services);
+        this
+    }
+
+    /// Create a new `StandarRuntimeServices` that is not initialized.
+    pub const fn new_uninit() -> Self {
+        Self { efi_runtime_services: Once::new() }
+    }
+
+    /// Initialized the `StandardRuntimeServices`.
+    pub fn init(&self, efi_runtime_services: *mut efi::RuntimeServices) {
+        assert!(!efi_runtime_services.is_null(), "Cannot initialize StandardRuntimeServices with null pointer!");
+        self.efi_runtime_services.call_once(|| efi_runtime_services);
+    }
+
+    /// Return true if `StandardRuntimeServices` is initialized.
+    pub fn is_init(&self) -> bool {
+        self.efi_runtime_services.is_completed()
+    }
+
+    /// Returns the Runtime Services pointer. Panics if uninitialized.
+    pub fn as_mut_ptr(&self) -> *mut efi::RuntimeServices {
+        // constructors guarantee that if initialized, the pointer is not null.
+        *self.efi_runtime_services.get().expect("Standard Runtime Services is not initialized!")
+    }
+}
+
+impl AsRef<StandardRuntimeServices> for StandardRuntimeServices {
+    fn as_ref(&self) -> &StandardRuntimeServices {
+        self
+    }
+}
+
+impl Clone for StandardRuntimeServices {
+    fn clone(&self) -> Self {
+        if let Some(efi_runtime_services) = self.efi_runtime_services.get() {
+            Self::new(*efi_runtime_services)
+        } else {
+            Self::new_uninit()
+        }
+    }
+}
+
+impl Debug for StandardRuntimeServices {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if !self.is_init() {
+            return f
+                .debug_struct("StandardRuntimeServices")
+                .field("efi_runtime_services", &"Not Initialized")
+                .finish();
+        }
+        // SAFETY: assume that runtime services struct is not being externally modified while static reference is in use
+        // In this case, if the struct is being modified, the debug print may be inaccurate, but it won't cause
+        // undefined behavior beyond that.
+        let rt = unsafe { &*self.as_mut_ptr() };
+        f.debug_struct("StandardRuntimeServices")
+            .field("get_variable", &rt.get_variable)
+            .field("get_next_variable_name", &rt.get_next_variable_name)
+            .field("set_variable", &rt.set_variable)
+            .field("query_variable_info", &rt.query_variable_info)
+            .field("get_time", &rt.get_time)
+            .field("set_time", &rt.set_time)
+            .field("get_wakeup_time", &rt.get_wakeup_time)
+            .field("set_wakeup_time", &rt.set_wakeup_time)
+            .field("set_virtual_address_map", &rt.set_virtual_address_map)
+            .field("convert_pointer", &rt.convert_pointer)
+            .field("reset_system", &rt.reset_system)
+            .field("get_next_high_mono_count", &rt.get_next_high_mono_count)
+            .field("update_capsule", &rt.update_capsule)
+            .finish()
+    }
+}
+
+#[cfg_attr(any(test, feature = "mockall"), automock)]
+#[allow(clippy::needless_lifetimes)] //https://github.com/rust-lang/rust-clippy/issues/6622
+/// Interface for Rust-friendly wrappers of the UEFI Runtime Services
+pub trait RuntimeServices {
+    /// Sets a UEFI variable.
+    ///
+    /// UEFI Spec Documentation: [8.2.3. EFI_RUNTIME_SERVICES.SetVariable()](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#setvariable)
+    ///
+    fn set_variable<T>(
+        &self,
+        name: &Char16Str,
+        namespace: &efi::Guid,
+        attributes: u32,
+        data: &T,
+    ) -> Result<(), efi::Status>
+    where
+        T: AsRef<[u8]> + 'static,
+    {
+        // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
+        let mut name_vec = name.as_units_with_nul().to_vec();
+
+        // SAFETY: name_vec is a valid, null-terminated UCS-2 string because it was derived from a
+        // validated Char16Str. The unchecked variant is called with proper parameters that satisfy
+        // its preconditions.
+        unsafe { self.set_variable_unchecked(name_vec.as_mut_slice(), namespace, attributes, data.as_ref()) }
+    }
+
+    /// Gets a UEFI variable.
+    ///
+    /// Returns a tuple of (data, attributes)
+    ///
+    /// UEFI Spec Documentation: [8.2.1. EFI_RUNTIME_SERVICES.GetVariable()](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#getvariable)
+    ///
+    fn get_variable<T>(
+        &self,
+        name: &Char16Str,
+        namespace: &efi::Guid,
+        size_hint: Option<usize>,
+    ) -> Result<(T, u32), efi::Status>
+    where
+        T: TryFrom<Vec<u8>> + 'static,
+    {
+        // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
+        let mut name_vec = name.as_units_with_nul().to_vec();
+
+        // We can't simply allocate an empty buffer of size T because we can't assume
+        // the TryFrom representation of T will be the same as T
+        let mut data = Vec::<u8>::new();
+        if let Some(size_hint) = size_hint {
+            data.resize(size_hint, 0);
+        }
+
+        // Do at most two calls to get_variable_unchecked.
+        //
+        // If size_hint was provided (and the size is sufficient), then only call to get_variable_unchecked is
+        // needed. Otherwise, the first check will determine the size of the buffer to allocate for the second
+        // call.
+        let mut first_attempt = true;
+        loop {
+            // SAFETY: name_vec is a valid, null-terminated UCS-2 string. The data buffer, when provided,
+            // is properly sized based on either the size_hint or the result from the first call.
+            unsafe {
+                let status = self.get_variable_unchecked(
+                    name_vec.as_mut_slice(),
+                    namespace,
+                    if data.is_empty() { None } else { Some(&mut data) },
+                );
+
+                match status {
+                    GetVariableStatus::Success { data_size: _, attributes } => match T::try_from(data) {
+                        Ok(d) => return Ok((d, attributes)),
+                        Err(_) => return Err(efi::Status::INVALID_PARAMETER),
+                    },
+                    GetVariableStatus::BufferTooSmall { data_size, attributes: _ } => {
+                        if first_attempt {
+                            first_attempt = false;
+                            data.resize(data_size, 10);
+                        } else {
+                            return Err(efi::Status::BUFFER_TOO_SMALL);
+                        }
+                    }
+                    GetVariableStatus::Error(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper function to get a UEFI variable's size and attributes
+    fn get_variable_size_and_attributes(
+        &self,
+        name: &Char16Str,
+        namespace: &efi::Guid,
+    ) -> Result<(usize, u32), efi::Status> {
+        // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
+        let mut name_vec = name.as_units_with_nul().to_vec();
+
+        // SAFETY: name_vec is a valid, null-terminated UCS-2 string because it was derived from a
+        // validated Char16Str. Calling with None buffer is safe and returns size/attributes only.
+        unsafe {
+            match self.get_variable_unchecked(name_vec.as_mut_slice(), namespace, None) {
+                GetVariableStatus::BufferTooSmall { data_size, attributes } => Ok((data_size, attributes)),
+                GetVariableStatus::Error(e) => Err(e),
+                GetVariableStatus::Success { data_size, attributes } => {
+                    debug_assert!(false, "GetVariable call with zero-sized buffer returned Success.");
+                    Ok((data_size, attributes))
+                }
+            }
+        }
+    }
+
+    /// Gets the name and namespace of the UEFI variable after the one provided.
+    ///
+    /// Returns a tuple of (name, namespace)
+    ///
+    /// Note: Unlike `get_variable`, a non-null terminated name will return `INVALID_PARAMETER` per UEFI spec
+    ///
+    /// UEFI Spec Documentation: [8.2.2. EFI_RUNTIME_SERVICES.GetNextVariableName()](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#getnextvariablename)
+    ///
+    fn get_next_variable_name(
+        &self,
+        prev_name: &Char16Str,
+        prev_namespace: &efi::Guid,
+    ) -> Result<(Char16String, efi::Guid), efi::Status> {
+        let mut next_name = Vec::<u16>::new();
+        let mut next_namespace: efi::Guid = efi::Guid::from_bytes(&[0x0; 16]);
+
+        // SAFETY: prev_name is guaranteed non-empty and null-terminated by the Char16Str invariant.
+        // The next_name and next_namespace are valid mutable references that will be populated by
+        // the unchecked call.
+        unsafe {
+            self.get_next_variable_name_unchecked(
+                prev_name.as_units_with_nul(),
+                prev_namespace,
+                &mut next_name,
+                &mut next_namespace,
+            )?;
+        };
+
+        // The firmware call above populates next_name as a valid, null-terminated UCS-2 buffer on
+        // success; treat anything else as a firmware error rather than panicking.
+        let next_name = Char16String::from_units_with_nul(next_name).map_err(|_| efi::Status::DEVICE_ERROR)?;
+
+        Ok((next_name, next_namespace))
+    }
+
+    /// Queries variable information for given UEFI variable attributes.
+    ///
+    /// UEFI Spec Documentation: [8.2.4. EFI_RUNTIME_SERVICES.QueryVariableInfo()](https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#queryvariableinfo)
+    ///
+    fn query_variable_info(&self, attributes: u32) -> Result<VariableInfo, efi::Status>;
+
+    /// Set's a UEFI variable
+    ///
+    /// # Safety
+    ///
+    /// Ensure name is null-terminated
+    unsafe fn set_variable_unchecked(
+        &self,
+        name: &mut [u16],
+        namespace: &efi::Guid,
+        attributes: u32,
+        data: &[u8],
+    ) -> Result<(), efi::Status>;
+
+    /// Gets a UEFI variable
+    ///
+    /// # Safety
+    ///
+    /// Ensure name is null-terminated
+    unsafe fn get_variable_unchecked<'a>(
+        &self,
+        name: &mut [u16],
+        namespace: &efi::Guid,
+        data: Option<&'a mut [u8]>,
+    ) -> GetVariableStatus;
+
+    /// Gets the UEFI variable name after the one provided.
+    ///
+    /// Will populate `next_name` and `next_namespace`.
+    ///
+    /// # Safety
+    ///
+    /// Ensure name slice isn't empty(length == 0). It can be an empty
+    /// string(null terminated slice, length == 1), but there must be some data.
+    ///
+    unsafe fn get_next_variable_name_unchecked(
+        &self,
+        prev_name: &[u16],
+        prev_namespace: &efi::Guid,
+        next_name: &mut Vec<u16>,
+        next_namespace: &mut efi::Guid,
+    ) -> Result<(), efi::Status>;
+}
+
+impl RuntimeServices for StandardRuntimeServices {
+    /// # Safety
+    ///
+    /// `name` must be null-terminated. Passing a non-null-terminated name results in
+    /// undefined behavior at the FFI boundary.
+    unsafe fn set_variable_unchecked(
+        &self,
+        name: &mut [u16],
+        namespace: &efi::Guid,
+        attributes: u32,
+        data: &[u8],
+    ) -> Result<(), efi::Status> {
+        // SAFETY: If this function pointer is modified in an event callback/interrupt while the read is in progress
+        // or if this function is invoked in a callback/interrupt that interrupts an external agent that is modifying
+        // the runtime services struct, then an incorrect function pointer might be returned that is composed of parts
+        // of the pointer from before and after the interrupt. Function pointer read/write operations could consist of
+        // several instructions - not necessarily a single atomic operation. The safety of this code therefore relies on
+        // the assumption that the runtime services struct is not being modified in such a manner, which is true for all
+        // known external modifiers of the struct in EDK2. If this code requires stronger guarantees in the future, then
+        // synchronization with external modifications may be needed, or the table could be copied to local storage and
+        // verified (via CRC) before use with an error returned on mismatch. Present use cases for external modification
+        // of runtime services don't merit such complexity at this time.
+        let set_variable = unsafe { (*self.as_mut_ptr()).set_variable };
+        if set_variable as usize == 0 {
+            debug_assert!(false, "SetVariable has not initialized in the Runtime Services Table.");
+            return Err(efi::Status::NOT_FOUND);
+        }
+
+        // SAFETY: It is the caller's responsibility to ensure that the name is
+        // always null-terminated.
+        let status = unsafe {
+            set_variable(
+                name.as_mut_ptr(),
+                core::ptr::from_ref(namespace).cast_mut(),
+                attributes,
+                data.len(),
+                data.as_ptr() as *mut c_void,
+            )
+        };
+
+        if status.is_error() { Err(status) } else { Ok(()) }
+    }
+
+    /// # Safety
+    ///
+    /// `name` must be null-terminated. Passing a non-null-terminated name results in
+    /// undefined behavior at the FFI boundary.
+    unsafe fn get_variable_unchecked(
+        &self,
+        name: &mut [u16],
+        namespace: &efi::Guid,
+        data: Option<&mut [u8]>,
+    ) -> GetVariableStatus {
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let get_variable = unsafe { (*self.as_mut_ptr()).get_variable };
+        if get_variable as usize == 0 {
+            debug_assert!(false, "GetVariable has not initialized in the Runtime Services Table.");
+            return GetVariableStatus::Error(efi::Status::NOT_FOUND);
+        }
+
+        let mut data_size: usize = match data {
+            Some(ref d) => d.len(),
+            None => 0,
+        };
+        let mut attributes: u32 = 0;
+
+        // SAFETY: It is the caller's responsibility to ensure that the name is
+        // always null-terminated.
+        let status = unsafe {
+            get_variable(
+                name.as_mut_ptr(),
+                core::ptr::from_ref(namespace).cast_mut(),
+                ptr::addr_of_mut!(attributes),
+                ptr::addr_of_mut!(data_size),
+                match data {
+                    Some(d) => d.as_ptr() as *mut c_void,
+                    None => ptr::null_mut(),
+                },
+            )
+        };
+
+        if status == efi::Status::BUFFER_TOO_SMALL {
+            return GetVariableStatus::BufferTooSmall { data_size, attributes };
+        } else if status.is_error() {
+            return GetVariableStatus::Error(status);
+        }
+
+        GetVariableStatus::Success { data_size, attributes }
+    }
+
+    /// # Safety
+    ///
+    /// The null terminator is required by the UEFI firmware; passing a non-null-terminated name
+    /// results in undefined behavior at the FFI boundary.
+    unsafe fn get_next_variable_name_unchecked(
+        &self,
+        prev_name: &[u16],
+        prev_namespace: &efi::Guid,
+        next_name: &mut Vec<u16>,
+        next_namespace: &mut efi::Guid,
+    ) -> Result<(), efi::Status> {
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let get_next_variable_name = unsafe { (*self.as_mut_ptr()).get_next_variable_name };
+        if get_next_variable_name as usize == 0 {
+            debug_assert!(false, "GetNextVariableName has not initialized in the Runtime Services Table.");
+            return Err(efi::Status::NOT_FOUND);
+        }
+
+        // Copy prev_name and namespace into next name and namespace
+        if next_name.len() < prev_name.len() {
+            next_name.resize(prev_name.len(), 0);
+        }
+        next_name.get_mut(..prev_name.len()).ok_or(efi::Status::BAD_BUFFER_SIZE)?.clone_from_slice(prev_name);
+        next_namespace.clone_from(prev_namespace);
+
+        let mut next_name_size: usize = next_name.len();
+
+        // Loop at most two times. If the size of the previous name is sufficient for the next, then only
+        // one call to the EFI function will be made. Otherwise, the first call will be used to determine
+        // the appropriate size that the buffer should be resized to for the second call.
+        let mut first_try: bool = true;
+        loop {
+            // SAFETY: It is the caller's responsibility to ensure that the prev_name is always
+            // null-terminated. Which inturn ensures that next_name is null-terminated on the call
+            // to get_next_variable_name. Otherwise will lead to undefined behavior.
+            let status = unsafe {
+                get_next_variable_name(ptr::addr_of_mut!(next_name_size), next_name.as_mut_ptr(), next_namespace)
+            };
+
+            if status == efi::Status::BUFFER_TOO_SMALL && first_try {
+                first_try = false;
+
+                assert!(
+                    next_name_size > next_name.len(),
+                    "get_next_variable_name requested smaller buffer on BUFFER_TOO_SMALL."
+                );
+
+                // Resize name to be able to fit the size of the next name
+                next_name.resize(next_name_size, 0);
+
+                // Reset fields which may have been overwritten
+                next_name.get_mut(..prev_name.len()).ok_or(efi::Status::BAD_BUFFER_SIZE)?.clone_from_slice(prev_name);
+                next_namespace.clone_from(prev_namespace);
+            } else if status.is_error() {
+                return Err(status);
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    fn query_variable_info(&self, attributes: u32) -> Result<VariableInfo, efi::Status> {
+        // SAFETY: See safety comment in set_variable_unchecked for details on corner cases around external modifications.
+        let query_variable_info = unsafe { (*self.as_mut_ptr()).query_variable_info };
+        if query_variable_info as usize == 0 {
+            debug_assert!(false, "QueryVariableInfo has not initialized in the Runtime Services Table.");
+            return Err(efi::Status::NOT_FOUND);
+        }
+
+        let mut var_info = VariableInfo {
+            maximum_variable_storage_size: 0,
+            remaining_variable_storage_size: 0,
+            maximum_variable_size: 0,
+        };
+
+        // SAFETY: `attributes` is a safe value type. The three output pointers are derived from
+        // fields of the local `var_info` struct via `addr_of_mut!`, so they are guaranteed to be
+        // valid and writable.
+        let status = unsafe {
+            query_variable_info(
+                attributes,
+                ptr::addr_of_mut!(var_info.maximum_variable_storage_size),
+                ptr::addr_of_mut!(var_info.remaining_variable_storage_size),
+                ptr::addr_of_mut!(var_info.maximum_variable_size),
+            )
+        };
+
+        if status.is_error() { Err(status) } else { Ok(var_info) }
+    }
+}
+
+/// Clone implementation for `MockRuntimeServices` that creates a new mock with default expectations.
+#[cfg(any(test, feature = "mockall"))]
+impl Clone for MockRuntimeServices {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+pub(crate) mod test {
+    use super::*;
+    use core::{mem, slice};
+
+    macro_rules! runtime_services {
+        ($($efi_services:ident = $efi_service_fn:ident),*) => {{
+            // SAFETY: This is only used in tests. A zero-initialized RuntimeServices struct is created
+            // and only the specified function pointers are initialized with valid function
+            // implementations. The RuntimeServices wrapper will handle uninitialized fields.
+            let efi_runtime_services = Box::leak(Box::new(unsafe {
+                #[allow(unused_mut)]
+                let mut rs = mem::MaybeUninit::<efi::RuntimeServices>::zeroed();
+                $(
+                rs.assume_init_mut().$efi_services = $efi_service_fn;
+                )*
+                rs.assume_init()
+            }));
+            StandardRuntimeServices::new(efi_runtime_services)
+        }};
+    }
+
+    pub(crate) use runtime_services;
+
+    pub const DUMMY_FIRST_NAME: [u16; 3] = [0x1000, 0x1020, 0x0000];
+    pub const DUMMY_EMPTY_NAME: [u16; 1] = [0x0000];
+    pub const DUMMY_SECOND_NAME: [u16; 5] = [0x1001, 0x1022, 0x1043, 0x1064, 0x0000];
+    pub const DUMMY_UNKNOWN_NAME: [u16; 3] = [0x2000, 0x2020, 0x0000];
+
+    pub const DUMMY_NODE: [u8; 6] = [0x0, 0x0, 0x0, 0x0, 0x0, 0x0];
+    pub const DUMMY_FIRST_NAMESPACE: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &DUMMY_NODE);
+    pub const DUMMY_SECOND_NAMESPACE: efi::Guid = efi::Guid::from_fields(1, 0, 0, 0, 0, &DUMMY_NODE);
+
+    pub const DUMMY_ATTRIBUTES: u32 = 0x1234;
+    pub const DUMMY_INVALID_ATTRIBUTES: u32 = 0x2345;
+
+    pub const DUMMY_DATA: u32 = 0xDEADBEEF;
+    pub const DUMMY_DATA_REPR_SIZE: usize = mem::size_of::<u32>();
+
+    pub const DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE: u64 = 0x11111111_11111111;
+    pub const DUMMY_REMAINING_VARIABLE_STORAGE_SIZE: u64 = 0x22222222_22222222;
+    pub const DUMMY_MAXIMUM_VARIABLE_SIZE: u64 = 0x33333333_33333333;
+
+    #[derive(Debug)]
+    pub struct DummyVariableType {
+        pub value: u32,
+    }
+
+    impl AsRef<[u8]> for DummyVariableType {
+        fn as_ref(&self) -> &[u8] {
+            // SAFETY: Test code - creating a byte slice view of the value field.
+            unsafe { slice::from_raw_parts::<u8>(ptr::addr_of!(self.value) as *mut u8, mem::size_of::<u32>()) }
+        }
+    }
+
+    impl TryFrom<Vec<u8>> for DummyVariableType {
+        type Error = &'static str;
+
+        fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+            assert!(value.len() == mem::size_of::<u32>());
+
+            Ok(DummyVariableType { value: u32::from_ne_bytes(value[0..4].try_into().unwrap()) })
+        }
+    }
+
+    /// Mocks `GetVariable()` from UEFI spec
+    ///
+    /// Expects to be passed `DUMMY_FIRST_NAME`, `DUMMY_FIRST_NAMESPACE`, and to return
+    /// `DUMMY_ATTRIBUTES`, and `DUMMY_DATA`.
+    ///
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
+    ///
+    pub extern "efiapi" fn mock_efi_get_variable(
+        name: *mut u16,
+        namespace: *mut efi::Guid,
+        attributes: *mut u32,
+        data_size: *mut usize,
+        data: *mut c_void,
+    ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable behavior.
+        unsafe {
+            if DUMMY_UNKNOWN_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
+                return efi::Status::NOT_FOUND;
+            }
+
+            // Since name isn't DUMMY_UNKNOWN_NAME, we're assuming DUMMY_FIRST_NAME was passed in.
+            // If name is not equal to DUMMY_FIRST_NAME, then something must have gone wrong.
+            assert!(
+                DUMMY_FIRST_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c),
+                "Variable name does not match expected."
+            );
+
+            assert_eq!(*namespace, DUMMY_FIRST_NAMESPACE);
+
+            *attributes = DUMMY_ATTRIBUTES;
+
+            if *data_size < DUMMY_DATA_REPR_SIZE {
+                *data_size = DUMMY_DATA_REPR_SIZE;
+                return efi::Status::BUFFER_TOO_SMALL;
+            }
+
+            *data_size = DUMMY_DATA_REPR_SIZE;
+            *(data as *mut u32) = DUMMY_DATA;
+        }
+
+        efi::Status::SUCCESS
+    }
+
+    /// Mocks `SetVariable()` from UEFI spec
+    ///
+    /// Expects to be passed `DUMMY_FIRST_NAME`, `DUMMY_FIRST_NAMESPACE`, and `DUMMY_DATA`
+    ///
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
+    ///
+    pub extern "efiapi" fn mock_efi_set_variable(
+        name: *mut u16,
+        namespace: *mut efi::Guid,
+        attributes: u32,
+        data_size: usize,
+        data: *mut c_void,
+    ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable behavior.
+        unsafe {
+            // Invalid parameter is returned if name is empty (first character is 0)
+            if *name == 0 {
+                return efi::Status::INVALID_PARAMETER;
+            }
+
+            if DUMMY_UNKNOWN_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
+                return efi::Status::NOT_FOUND;
+            }
+
+            // Since name isn't DUMMY_UNKNOWN_NAME, we're assuming DUMMY_FIRST_NAME was passed in.
+            // If name is not equal to DUMMY_FIRST_NAME, then something must have gone wrong.
+            assert!(
+                DUMMY_FIRST_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c),
+                "Variable name does not match expected."
+            );
+
+            assert_eq!(*namespace, DUMMY_FIRST_NAMESPACE);
+            assert_eq!(attributes, DUMMY_ATTRIBUTES);
+            assert_eq!(data_size, DUMMY_DATA_REPR_SIZE);
+            assert_eq!(*(data as *mut u32), DUMMY_DATA);
+        }
+
+        efi::Status::SUCCESS
+    }
+
+    /// Mocks `GetNextVariableName()` from UEFI spec
+    ///
+    /// Will mock a list of two variables:
+    ///     1. `DUMMY_FIRST_NAME` (under namespace `DUMMY_FIRST_NAMESPACE`)
+    ///     2. `DUMMY_SECOND_NAME` (under namespace `DUMMY_SECOND_NAME`)
+    ///
+    /// `DUMMY_UNKNOWN_NAME` can be passed in to test searching for non-existant variables.
+    ///
+    pub extern "efiapi" fn mock_efi_get_next_variable_name(
+        name_size: *mut usize,
+        name: *mut u16,
+        namespace: *mut efi::Guid,
+    ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable enumeration.
+        // Ensure the name and namespace are as expected
+        unsafe {
+            // Return invalid parameter if the name isn't null-terminated per UEFI spec
+            if !slice::from_raw_parts(name, *name_size).contains(&0) {
+                return efi::Status::INVALID_PARAMETER;
+            }
+
+            if DUMMY_UNKNOWN_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
+                return efi::Status::NOT_FOUND;
+            }
+
+            // If name is an empty string, return the first variable
+            if *name == 0 {
+                if *name_size < DUMMY_FIRST_NAME.len() {
+                    *name_size = DUMMY_FIRST_NAME.len();
+                    return efi::Status::BUFFER_TOO_SMALL;
+                }
+
+                *name_size = DUMMY_FIRST_NAME.len();
+                ptr::copy_nonoverlapping(DUMMY_FIRST_NAME.as_ptr(), name, DUMMY_FIRST_NAME.len());
+                *namespace = DUMMY_FIRST_NAMESPACE;
+
+                return efi::Status::SUCCESS;
+            }
+
+            // If the first variable is passed in, return the second
+            if DUMMY_FIRST_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
+                assert_eq!(*namespace, DUMMY_FIRST_NAMESPACE);
+
+                if *name_size < DUMMY_SECOND_NAME.len() {
+                    *name_size = DUMMY_SECOND_NAME.len();
+                    return efi::Status::BUFFER_TOO_SMALL;
+                }
+
+                *name_size = DUMMY_SECOND_NAME.len();
+                ptr::copy_nonoverlapping(DUMMY_SECOND_NAME.as_ptr(), name, DUMMY_SECOND_NAME.len());
+                *namespace = DUMMY_SECOND_NAMESPACE;
+
+                return efi::Status::SUCCESS;
+            }
+
+            // If the second (and last) variable is passed in, return NOT_FOUND to indicate the end of the list per
+            // UEFI spec
+            if DUMMY_SECOND_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
+                assert_eq!(*namespace, DUMMY_SECOND_NAMESPACE);
+                return efi::Status::NOT_FOUND;
+            }
+
+            // If we got here, the variable name must have gotten lost or corrupted somehow
+            panic!("Variable name does not match any of expected.");
+        }
+    }
+
+    /// Mocks `QueryVariableInfo()` from UEFI spec
+    ///
+    /// Expects to be passed `DUMMY_ATTRIBUTES`, and to return, `DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE`,
+    /// `DUMMY_REMAINING_VARIABLE_STORAGE_SIZE`, and `DUMMY_MAXIMUM_VARIABLE_SIZE`.
+    ///
+    /// `DUMMY_INVALID_ATTRIBUTES` can be passed in to test querying invalid attributes.
+    ///
+    pub extern "efiapi" fn mock_efi_query_variable_info(
+        attributes: u32,
+        maximum_variable_storage_size: *mut u64,
+        remaining_variable_storage_size: *mut u64,
+        maximum_variable_size: *mut u64,
+    ) -> efi::Status {
+        if attributes == DUMMY_INVALID_ATTRIBUTES {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // Since attributes isn't DUMMY_INVALID_ATTRIBUTES, we're assuming DUMMY_ATTRIBUTES was passed in.
+        // If attributes is not equal to DUMMY_ATTRIBUTES, then something must have gone wrong.
+        assert_eq!(attributes, DUMMY_ATTRIBUTES);
+
+        // SAFETY: Test code - writing test data to output parameters.
+        unsafe {
+            *maximum_variable_storage_size = DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE;
+            *remaining_variable_storage_size = DUMMY_REMAINING_VARIABLE_STORAGE_SIZE;
+            *maximum_variable_size = DUMMY_MAXIMUM_VARIABLE_SIZE;
+        }
+
+        efi::Status::SUCCESS
+    }
+
+    #[test]
+    fn test_debug_print_works_before_init() {
+        let rs: StandardRuntimeServices = StandardRuntimeServices::new_uninit();
+        let output = format!("{rs:?}");
+        assert!(output.contains("Not Initialized"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Standard Runtime Services is not initialized!")]
+    fn test_that_accessing_uninit_runtime_services_should_panic() {
+        let rs = StandardRuntimeServices::new_uninit();
+        rs.as_mut_ptr();
+    }
+
+    #[test]
+    fn test_get_variable() {
+        let rs = runtime_services!(get_variable = mock_efi_get_variable);
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_FIRST_NAME).unwrap();
+        let status = rs.get_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, None);
+
+        assert!(status.is_ok());
+        let (data, attributes) = status.unwrap();
+        assert_eq!(attributes, DUMMY_ATTRIBUTES);
+        assert_eq!(data.value, DUMMY_DATA);
+    }
+
+    #[test]
+    fn test_get_variable_low_size_hint() {
+        let rs = runtime_services!(get_variable = mock_efi_get_variable);
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_FIRST_NAME).unwrap();
+        let status = rs.get_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, Some(1));
+
+        assert!(status.is_ok());
+        let (data, attributes) = status.unwrap();
+        assert_eq!(attributes, DUMMY_ATTRIBUTES);
+        assert_eq!(data.value, DUMMY_DATA);
+    }
+
+    #[test]
+    fn test_get_variable_not_found() {
+        let rs = runtime_services!(get_variable = mock_efi_get_variable);
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_UNKNOWN_NAME).unwrap();
+        let status = rs.get_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, Some(1));
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_get_variable_size_and_attributes() {
+        let rs = runtime_services!(get_variable = mock_efi_get_variable);
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_FIRST_NAME).unwrap();
+        let status = rs.get_variable_size_and_attributes(name, &DUMMY_FIRST_NAMESPACE);
+
+        assert!(status.is_ok());
+        let (size, attributes) = status.unwrap();
+        assert_eq!(size, DUMMY_DATA_REPR_SIZE);
+        assert_eq!(attributes, DUMMY_ATTRIBUTES);
+    }
+
+    #[test]
+    fn test_set_variable() {
+        let rs = runtime_services!(set_variable = mock_efi_set_variable);
+
+        let data = DummyVariableType { value: DUMMY_DATA };
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_FIRST_NAME).unwrap();
+        let status = rs.set_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, DUMMY_ATTRIBUTES, &data);
+
+        assert!(status.is_ok());
+    }
+
+    #[test]
+    fn test_set_variable_empty_name() {
+        let rs = runtime_services!(set_variable = mock_efi_set_variable);
+
+        let data = DummyVariableType { value: DUMMY_DATA };
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_EMPTY_NAME).unwrap();
+        let status = rs.set_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, DUMMY_ATTRIBUTES, &data);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_set_variable_not_found() {
+        let rs = runtime_services!(set_variable = mock_efi_set_variable);
+
+        let data = DummyVariableType { value: DUMMY_DATA };
+
+        let name = Char16Str::from_units_with_nul(&DUMMY_UNKNOWN_NAME).unwrap();
+        let status = rs.set_variable::<DummyVariableType>(name, &DUMMY_FIRST_NAMESPACE, DUMMY_ATTRIBUTES, &data);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_get_next_variable_name() {
+        // Ensure we are testing a growing name buffer
+        assert!(DUMMY_SECOND_NAME.len() > DUMMY_FIRST_NAME.len());
+
+        let rs = runtime_services!(get_next_variable_name = mock_efi_get_next_variable_name);
+
+        let prev_name = Char16Str::from_units_with_nul(&DUMMY_FIRST_NAME).unwrap();
+        let status = rs.get_next_variable_name(prev_name, &DUMMY_FIRST_NAMESPACE);
+
+        assert!(status.is_ok());
+
+        let (next_name, next_guid) = status.unwrap();
+
+        assert_eq!(next_name.as_units_with_nul(), DUMMY_SECOND_NAME);
+        assert_eq!(next_guid, DUMMY_SECOND_NAMESPACE);
+    }
+
+    #[test]
+    fn test_get_next_variable_name_not_found() {
+        let rs = runtime_services!(get_next_variable_name = mock_efi_get_next_variable_name);
+
+        let prev_name = Char16Str::from_units_with_nul(&DUMMY_UNKNOWN_NAME).unwrap();
+        let status = rs.get_next_variable_name(prev_name, &DUMMY_FIRST_NAMESPACE);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_query_variable_info() {
+        let rs = runtime_services!(query_variable_info = mock_efi_query_variable_info);
+
+        let status = rs.query_variable_info(DUMMY_ATTRIBUTES);
+
+        assert!(status.is_ok());
+        let variable_info = status.unwrap();
+        assert_eq!(variable_info.maximum_variable_storage_size, DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE);
+        assert_eq!(variable_info.remaining_variable_storage_size, DUMMY_REMAINING_VARIABLE_STORAGE_SIZE);
+        assert_eq!(variable_info.maximum_variable_size, DUMMY_MAXIMUM_VARIABLE_SIZE);
+    }
+
+    #[test]
+    fn test_query_variable_info_invalid_attributes() {
+        let rs = runtime_services!(query_variable_info = mock_efi_query_variable_info);
+
+        let status = rs.query_variable_info(DUMMY_INVALID_ATTRIBUTES);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_debug_output_should_not_crash() {
+        let runtime_services = runtime_services!();
+        let debug_str = format!("{runtime_services:?}");
+        assert!(!debug_str.is_empty());
+        assert!(debug_str.contains("StandardRuntimeServices"));
+    }
+}

@@ -11,14 +11,14 @@
 extern crate alloc;
 
 use crate::tpl_mutex::TplMutex;
+use patina::standard::efi;
 use patina::{
-    boot_services::StandardBootServices,
     component::{IntoComponent, Storage, service::IntoService},
     log_debug_assert,
     pi::hob::HobList,
-    runtime_services::StandardRuntimeServices,
+    uefi::boot_services::StandardBootServices,
+    uefi::runtime_services::StandardRuntimeServices,
 };
-use r_efi::efi;
 
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
@@ -40,6 +40,7 @@ use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 /// }
 /// ```
 #[cfg_attr(test, mockall::automock)]
+#[allow(clippy::used_underscore_binding)] // Allow underscore bindings to avoid unused variable warnings.
 pub trait ComponentInfo: Sized {
     /// A platform callback to register components with the core.
     #[inline(always)]
@@ -116,26 +117,26 @@ impl Default for ComponentDispatcher {
     }
 }
 
-/// SAFETY: The ComponentDispatcher is `Send` as all data stored within this structure is owned by it, and not shared.
+/// SAFETY: The `ComponentDispatcher` is `Send` as all data stored within this structure is owned by it, and not shared.
 unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {
-    /// Creates a new locked ComponentDispatcher.
+    /// Creates a new locked `ComponentDispatcher`.
     ///
-    /// Uses TPL_APPLICATION so that component entry points can use boot services
+    /// Uses `TPL_APPLICATION` so that component entry points can use boot services
     /// that are restricted at higher TPL levels.
     #[inline(always)]
     pub(crate) const fn new_locked() -> TplMutex<Self> {
         TplMutex::new(efi::TPL_APPLICATION, Self::new(), "ComponentDispatcher")
     }
 
-    /// Creates a new ComponentDispatcher.
+    /// Creates a new `ComponentDispatcher`.
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self { components: Vec::new(), rejected: Vec::new(), storage: Storage::new() }
     }
 
-    /// Applies the component information provided by the given type implementing [ComponentInfo].
+    /// Applies the component information provided by the given type implementing [`ComponentInfo`].
     pub(crate) fn apply_component_info<C: ComponentInfo>(&mut self) {
         C::configs(Add::new(self));
         C::services(Add::new(self));
@@ -144,42 +145,50 @@ impl ComponentDispatcher {
 
     /// Inserts a component at the given index.
     pub(crate) fn insert_component(&mut self, idx: usize, mut component: Box<dyn patina::component::Component>) {
-        match component.initialize(&mut self.storage) {
-            true => self.components.insert(idx, component),
-            false => self.rejected.push(component),
+        if component.initialize(&mut self.storage) {
+            self.components.insert(idx, component);
+        } else {
+            self.rejected.push(component);
         }
     }
 
     /// Adds a service to storage.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]
     pub(crate) fn add_service<S: IntoService + 'static>(&mut self, service: S) {
         self.storage.add_service(service);
     }
 
+    /// Gets a service from storage.
+    #[cfg_attr(coverage, coverage(off))]
+    #[inline(always)]
+    pub(crate) fn get_service<S: IntoService + 'static>(&mut self) -> Option<patina::component::service::Service<S>> {
+        self.storage.get_service::<S>()
+    }
+
     /// Locks the configurations in storage, preventing further modifications.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]
     pub(crate) fn lock_configs(&mut self) {
         self.storage.lock_configs();
     }
 
     /// Sets the Boot Services table in storage.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]
     pub(crate) fn set_boot_services(&mut self, bs: StandardBootServices) {
         self.storage.set_boot_services(bs);
     }
 
     /// Sets the Runtime Services table in storage.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]
     pub(crate) fn set_runtime_services(&mut self, rs: StandardRuntimeServices) {
         self.storage.set_runtime_services(rs);
     }
 
     /// Sets the core Image Handle in storage.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]
     pub(crate) fn set_image_handle(&mut self, handle: efi::Handle) {
         self.storage.set_image_handle(handle);
@@ -226,7 +235,7 @@ impl ComponentDispatcher {
                 Ok(true) => true,
                 Ok(false) => false,
                 Err(err) => {
-                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
+                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err}]");
                     true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
                 }
             }
@@ -235,7 +244,7 @@ impl ComponentDispatcher {
     }
 
     /// Logs all components that were not dispatched, and the parameter that was not satisfied that prevented dispatch.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub(crate) fn display_not_dispatched(&self) {
         if !self.components.is_empty() || !self.rejected.is_empty() {
             let name_len = "name".len();
@@ -245,10 +254,8 @@ impl ComponentDispatcher {
             let max_name_len = not_dispatched.map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
 
             let not_dispatched = self.components.iter().chain(&self.rejected);
-            let max_param_len = not_dispatched
-                .map(|c| c.metadata().error_message().map(|s| s.len()).unwrap_or(0))
-                .max()
-                .unwrap_or(param_len);
+            let max_param_len =
+                not_dispatched.map(|c| c.metadata().error_message().map_or(0, |s| s.len())).max().unwrap_or(param_len);
 
             log::warn!("Components not dispatched:");
             log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
@@ -268,7 +275,7 @@ impl ComponentDispatcher {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use patina::{component::component, pi::hob::GuidHob};
 
@@ -378,7 +385,7 @@ mod tests {
         let hob3_bytes = &hob3.as_bytes();
 
         let guid_hob1 = GuidHob {
-            header: patina::pi::hob::header::Hob {
+            header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::GUID_EXTENSION,
                 length: core::mem::size_of::<TestHob1>() as u16,
                 reserved: 0,
@@ -387,7 +394,7 @@ mod tests {
         };
 
         let guid_hob2 = GuidHob {
-            header: patina::pi::hob::header::Hob {
+            header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::GUID_EXTENSION,
                 length: core::mem::size_of::<TestHob2>() as u16,
                 reserved: 0,
@@ -396,7 +403,7 @@ mod tests {
         };
 
         let guid_hob3 = GuidHob {
-            header: patina::pi::hob::header::Hob {
+            header: patina::pi::hob::HobHeader {
                 r#type: patina::pi::hob::GUID_EXTENSION,
                 length: core::mem::size_of::<TestHob3>() as u16,
                 reserved: 0,
@@ -437,7 +444,7 @@ mod tests {
             with_global_lock(|| {
                 let dispatcher = ComponentDispatcher::new_locked();
                 let _lock = dispatcher.lock();
-                dispatcher.lock();
+                let _reentrant_lock = dispatcher.lock();
             })
             .is_err_and(|e| {
                 e.downcast::<String>().unwrap().contains("Re-entrant locks for \"ComponentDispatcher\" not permitted.")

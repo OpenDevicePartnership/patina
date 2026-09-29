@@ -6,99 +6,21 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::boxed::Box;
-use core::{
-    clone::Clone,
-    ffi::c_void,
-    mem,
-    ops::BitOr,
-    ptr,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{ffi::c_void, mem, ops::BitOr};
 
-use crate::{
-    boot_services::BootServices,
-    component::service::{Service, perf_timer::ArchTimerFunctionality},
-    error::EfiError,
-    guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
-    performance::{
-        self,
-        error::Error,
-        globals::{get_load_image_count, get_static_state, increment_load_image_count},
-        record::{
-            extended::{
-                DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
-                GuidQwordStringEventRecord,
-            },
-            known::KnownPerfId,
-        },
-        table::FirmwareBasicBootPerfTable,
-    },
-    runtime_services::RuntimeServices,
-    tpl_mutex::TplMutex,
-    uefi_protocol::{performance_measurement::PerfAttribute, status_code::StatusCodeRuntimeProtocol},
-};
+use crate::standard::efi;
+use crate::{bit, performance::record::known::KnownPerfId};
 
-use crate::pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
-
-use r_efi::{
-    efi::{self},
-    protocols::device_path::{Media, TYPE_MEDIA},
-};
-
-/// Functions intended to be registered as event callbacks for reporting performance measurements.
-pub mod event_callback {
-
-    use super::*;
-
-    /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
-    pub extern "efiapi" fn report_fbpt_record_buffer<B, R, F>(event: efi::Event, ctx: Box<(B, R, &TplMutex<F, B>)>)
-    where
-        B: BootServices + Clone + 'static,
-        R: RuntimeServices + Clone + 'static,
-        F: FirmwareBasicBootPerfTable,
-    {
-        let (boot_services, runtime_services, fbpt) = *ctx;
-        let _ = boot_services.close_event(event);
-
-        let Ok(fbpt_address) = fbpt
-            .lock()
-            .report_table(performance::table::find_previous_table_address(&runtime_services), &boot_services)
-        else {
-            log::error!("Performance: Fail to report FBPT.");
-            return;
-        };
-
-        // SAFETY: `p` is the only mutable reference to the `StatusCodeRuntimeProtocol` in this scope.
-        let Ok(p) = (unsafe { boot_services.locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
-            log::error!("Performance: Fail to find status code protocol.");
-            return;
-        };
-
-        let status = p.report_status_code_with_data(
-            EFI_PROGRESS_CODE,
-            EFI_SOFTWARE_DXE_BS_DRIVER,
-            0,
-            &mu_rust_helpers::guid::CALLER_ID,
-            efi::Guid::clone(&*EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
-            fbpt_address,
-        );
-        if status.is_err() {
-            log::error!("Performance: Fail to report FBPT status code.");
-        }
-
-        // SAFETY: This operation is valid because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
-        // is a usize and the memory address is a valid and point to an FBPT.
-        let status = unsafe {
-            boot_services.install_configuration_table_unchecked(
-                &EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
-                fbpt_address as *mut c_void,
-            )
-        };
-        if status.is_err() {
-            log::error!("Performance: Fail to install configuration table for FBPT firmware performance.");
-        }
-    }
+/// The attribute of the measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(C)]
+pub enum PerfAttribute {
+    /// A `PERF_START/PERF_START_EX` record.
+    PerfStartEntry,
+    /// A `PERF_END/PERF_END_EX` record.
+    PerfEndEntry,
+    /// A general performance record.
+    PerfEntry,
 }
 
 /// Represents the `caller_identifier` used in performance measurements.
@@ -130,20 +52,20 @@ impl CallerIdentifier {
             // `validate_guid` performs basic validations but cannot guarantee safety.
             Some(CallerIdentifier::Guid(unsafe { *(ptr as *const efi::Guid) }))
         } else {
-            Some(CallerIdentifier::Handle(ptr as efi::Handle))
+            Some(CallerIdentifier::Handle(ptr.cast_mut()))
         }
     }
 
     /// Checks if the `CallerIdentifier` is a GUID pointer.
     ///
     /// This is the case with newly-added performance IDs used for signaling events and callbacks
-    /// that were not backwards-compatible with the existing create_performance_measurement interface.
-    /// These ids are: PerfEvent, PerfEventSignalStart, PerfEventSignalEnd, PerfCallbackStart, PerfCallbackEnd,
-    /// PerfFunctionStart, PerfFunctionEnd, PerfInModuleStart, PerfInModuleEnd, PerfCrossModuleStart, PerfCrossModuleEnd.
+    /// that were not backwards-compatible with the existing `create_performance_measurement` interface.
+    /// These ids are: `PerfEvent`, `PerfEventSignalStart`, `PerfEventSignalEnd`, `PerfCallbackStart`, `PerfCallbackEnd`,
+    /// `PerfFunctionStart`, `PerfFunctionEnd`, `PerfInModuleStart`, `PerfInModuleEnd`, `PerfCrossModuleStart`, `PerfCrossModuleEnd`.
     pub fn perf_id_is_guid(perf_id: u16) -> bool {
         let perf_id = match KnownPerfId::try_from(perf_id) {
             Ok(id) => id,
-            Err(_) => return false,
+            Err(()) => return false,
         };
         matches!(
             perf_id,
@@ -172,186 +94,20 @@ impl CallerIdentifier {
     }
 }
 
-/// Create a performance measurement and add it to the FBPT.
-pub fn create_performance_measurement(
-    caller_identifier: CallerIdentifier,
-    guid: Option<&efi::Guid>,
-    string: Option<&str>,
-    ticker: u64,
-    address: usize,
-    perf_id: u16,
-    attribute: PerfAttribute,
-) -> Result<(), Error> {
-    let (boot_services, fbpt, timer) = get_static_state().ok_or(Error::Efi(EfiError::NotReady))?;
-
-    match _create_performance_measurement(
-        caller_identifier,
-        guid,
-        string,
-        ticker,
-        address,
-        perf_id,
-        attribute,
-        boot_services,
-        fbpt,
-        timer,
-    ) {
-        Ok(()) => Ok(()),
-        Err(Error::OutOfResources) => {
-            static HAS_BEEN_LOGGED: AtomicBool = AtomicBool::new(false);
-            if HAS_BEEN_LOGGED.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-                log::info!("Performance: FBPT is full, can't add more performance records!");
-            }
-            Err(Error::OutOfResources)
-        }
-        Err(e) => {
-            log::error!("Performance: Something went wrong in create_performance_measurement. status_code: {e:?}");
-            Err(e)
-        }
-    }
-}
-
-/// Create a performance measurement and add it to the FBPT.
-#[allow(clippy::too_many_arguments)]
-fn _create_performance_measurement<B, F>(
-    caller_identifier: CallerIdentifier,
-    guid: Option<&efi::Guid>,
-    string: Option<&str>,
-    ticker: u64,
-    address: usize,
-    perf_id: u16,
-    attribute: PerfAttribute,
-    boot_services: &B,
-    fbpt: &TplMutex<F, B>,
-    timer: &Service<dyn ArchTimerFunctionality>,
-) -> Result<(), Error>
-where
-    B: BootServices,
-    F: FirmwareBasicBootPerfTable,
-{
-    let cpu_count = timer.cpu_count();
-    let timestamp = match ticker {
-        0 => (cpu_count as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-        1 => 0,
-        ticker => (ticker as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-    };
-
-    // If the `perf_id` is not a known one, we create a DynamicStringEventRecord.
-    // In this case, `caller_id` can be either an image handle or a guid pointer.
-    let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
-        // PERF_ENTRY must have a matching start and end.
-        // Unknown IDs cannot be matched, so we reject PERF_ENTRY for unknown IDs.
-        if attribute == PerfAttribute::PerfEntry {
-            return Err(EfiError::InvalidParameter.into());
-        }
-
-        let handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
-
-        // SAFETY: The caller of parent function `create_performance_measurement` ensures that `caller_identifier` is a valid image handle or GUID pointer.
-        // Mirroring EDK2 behavior, when the ID is unknown, we treat `caller_identifier` as a handle.
-        let Ok(guid) = get_module_guid_from_handle(boot_services, handle) else {
-            log::error!("Performance: Could not find the guid for module handle: {handle:?}");
-            return Err(EfiError::InvalidParameter.into());
-        };
-        let module_name = string.unwrap_or("unknown name");
-        fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, module_name))?;
-        return Ok(());
-    };
-
-    match known_perf_id {
-        KnownPerfId::ModuleStart | KnownPerfId::ModuleEnd => {
-            let module_handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
-            let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
-                return Err(EfiError::InvalidParameter.into());
-            };
-            let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
-            fbpt.lock().add_record(record)?;
-        }
-        id @ KnownPerfId::ModuleLoadImageStart | id @ KnownPerfId::ModuleLoadImageEnd => {
-            if id == KnownPerfId::ModuleLoadImageStart {
-                increment_load_image_count();
-            }
-            let module_handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
-            let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
-                return Err(EfiError::InvalidParameter.into());
-            };
-            let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, get_load_image_count() as u64);
-            fbpt.lock().add_record(record)?;
-        }
-        KnownPerfId::ModuleDbStart
-        | KnownPerfId::ModuleDbSupportStart
-        | KnownPerfId::ModuleDbSupportEnd
-        | KnownPerfId::ModuleDbStopStart
-        | KnownPerfId::ModuleDbStopEnd => {
-            let module_handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
-            let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
-                return Err(EfiError::InvalidParameter.into());
-            };
-            let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
-            fbpt.lock().add_record(record)?;
-        }
-        KnownPerfId::ModuleDbEnd => {
-            let module_handle = caller_identifier.as_handle().ok_or(EfiError::InvalidParameter)?;
-            let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
-                return Err(EfiError::InvalidParameter.into());
-            };
-            let module_name = "";
-            let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, module_name);
-            fbpt.lock().add_record(record)?;
-        }
-        KnownPerfId::PerfEventSignalStart
-        | KnownPerfId::PerfEventSignalEnd
-        | KnownPerfId::PerfCallbackStart
-        | KnownPerfId::PerfCallbackEnd => {
-            let (Some(function_string), Some(guid)) = (string.as_ref(), guid) else {
-                return Err(EfiError::InvalidParameter.into());
-            };
-            let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
-            let record = DualGuidStringEventRecord::new(
-                perf_id,
-                0,
-                timestamp,
-                (*module_guid).into(),
-                (*guid).into(),
-                function_string,
-            );
-            fbpt.lock().add_record(record)?;
-        }
-
-        KnownPerfId::PerfFunctionStart
-        | KnownPerfId::PerfFunctionEnd
-        | KnownPerfId::PerfInModuleStart
-        | KnownPerfId::PerfInModuleEnd
-        | KnownPerfId::PerfCrossModuleStart
-        | KnownPerfId::PerfCrossModuleEnd
-        | KnownPerfId::PerfEvent => {
-            let module_guid = caller_identifier.as_guid().ok_or(EfiError::InvalidParameter)?;
-            let string = string.unwrap_or("unknown name");
-            let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, (*module_guid).into(), string);
-            fbpt.lock().add_record(record)?;
-        }
-    }
-    Ok(())
-}
-
 /// Measurement enum that represents the different performance measurements that can be enabled.
 #[derive(Debug, PartialEq)]
 #[repr(u32)]
 pub enum Measurement {
     /// Dispatch modules entry point execution
-    StartImage = 1,
+    StartImage = bit!(0),
     /// Load a dispatched module.
-    LoadImage = 1 << 1,
+    LoadImage = bit!(1),
     /// Diver binding support function call.
-    DriverBindingSupport = 1 << 2,
+    DriverBindingSupport = bit!(2),
     /// Diver binding start function call.
-    DriverBindingStart = 1 << 3,
+    DriverBindingStart = bit!(3),
     /// Diver binding stop function call.
-    DriverBindingStop = 1 << 4,
+    DriverBindingStop = bit!(4),
 }
 
 impl Measurement {
@@ -425,332 +181,23 @@ impl PerformanceProperty {
     }
 }
 
-fn get_module_guid_from_handle(
-    boot_services: &impl BootServices,
-    handle: efi::Handle,
-) -> Result<crate::BinaryGuid, efi::Status> {
-    let mut guid = crate::guids::ZERO;
-
-    let loaded_image_protocol = 'find_loaded_image_protocol: {
-        if let Ok(loaded_image_protocol) =
-            // SAFETY: `loaded_image_protocol` is the only reference to the `loaded_image::Protocol` in this scope.
-            unsafe { boot_services.handle_protocol::<efi::protocols::loaded_image::Protocol>(handle) }
-        {
-            break 'find_loaded_image_protocol Some(loaded_image_protocol);
-        }
-
-        // SAFETY: `driver_binding_protocol` is the only reference to the `driver_binding::Protocol` in this scope.
-        unsafe {
-            if let Ok(driver_binding_protocol) = boot_services
-                .open_protocol::<efi::protocols::driver_binding::Protocol>(
-                    handle,
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                    efi::OPEN_PROTOCOL_GET_PROTOCOL,
-                )
-                && let Ok(loaded_image_protocol) = boot_services
-                    .handle_protocol::<efi::protocols::loaded_image::Protocol>(driver_binding_protocol.image_handle)
-            {
-                break 'find_loaded_image_protocol Some(loaded_image_protocol);
-            }
-        }
-        None
-    };
-
-    if let Some(loaded_image) = loaded_image_protocol {
-        // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
-        if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() }
-            && file_path.r#type == TYPE_MEDIA
-            && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE
-        {
-            // The layout of MEDIA_FW_VOL_FILEPATH_DEVICE_PATH in memory is { Protocol (header) | Guid (file name) }.
-            let node_len = u16::from_le_bytes(file_path.length);
-            let expected_len =
-                (mem::size_of::<efi::protocols::device_path::Protocol>() + mem::size_of::<efi::Guid>()) as u16;
-
-            // Sanity check that the header matches the expected size.
-            if node_len != expected_len {
-                return Err(efi::Status::NOT_FOUND);
-            }
-
-            // SAFETY: To be honest there is no way to guarantee the memory read here is valid and owned by us,
-            // but we have at least validated that the type gives a known layout and the layout of the device path matches its claimed length.
-            unsafe {
-                let guid_ptr = (loaded_image.file_path as *const u8)
-                    .add(mem::size_of::<efi::protocols::device_path::Protocol>())
-                    as *const crate::BinaryGuid;
-                guid = ptr::read(guid_ptr);
-            }
-        };
-    }
-
-    Ok(guid)
-}
-
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 
-    use crate::{self as patina, device_path::fv_types::MediaFwVolDevicePath};
+    use alloc::boxed::Box;
+    use core::ptr;
 
-    use core::{
-        mem::MaybeUninit,
-        ptr,
-        sync::atomic::{AtomicBool, Ordering},
+    use crate::performance::record::{
+        PerformanceRecord,
+        extended::{GuidEventRecord, GuidQwordEventRecord, GuidQwordStringEventRecord},
     };
-
-    use mockall::predicate;
-
-    use crate::{
-        boot_services::{MockBootServices, c_ptr::CMutPtr, tpl::Tpl},
-        component::service::IntoService,
-        performance::{
-            globals::set_perf_measurement_mask,
-            logging::*,
-            record::PerformanceRecord,
-            table::{FirmwarePerformanceVariable, MockFirmwareBasicBootPerfTable},
-        },
-        runtime_services::MockRuntimeServices,
-    };
-
-    use crate::guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE;
-
-    #[derive(IntoService)]
-    #[service(dyn ArchTimerFunctionality)]
-    struct MockTimer {}
-
-    impl ArchTimerFunctionality for MockTimer {
-        fn perf_frequency(&self) -> u64 {
-            100
-        }
-        fn cpu_count(&self) -> u64 {
-            200
-        }
-    }
-
-    #[test]
-    fn test_report_fbpt_record_buffer() {
-        static REPORT_STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
-
-        extern "efiapi" fn report_status_code(
-            _a: u32,
-            _b: u32,
-            _c: u32,
-            _d: *const efi::Guid,
-            _e: *const crate::pi::protocols::status_code::EfiStatusCodeData,
-        ) -> efi::Status {
-            REPORT_STATUS_CODE_CALLED.store(true, Ordering::Relaxed);
-            efi::Status::SUCCESS
-        }
-        let mut status_code_runtime_protocol = Box::new(StatusCodeRuntimeProtocol::new(report_status_code));
-        let status_code_runtime_protocol_ptr = status_code_runtime_protocol.as_mut_ptr();
-
-        let mut boot_services = MockBootServices::new();
-        boot_services.expect_raise_tpl().returning(|tpl| tpl);
-        boot_services.expect_restore_tpl().return_const(());
-
-        // Test that the event is close so it run only one time.
-        boot_services.expect_close_event().once().return_const(Ok(()));
-
-        boot_services
-            .expect_install_configuration_table_unchecked()
-            .once()
-            .with(predicate::eq(&*EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE), predicate::always())
-            .return_const(Ok(()));
-
-        boot_services
-            .expect_locate_protocol()
-            .once()
-            // SAFETY: Test code - creating a mutable reference to test protocol pointer for mocking.
-            .returning_st(move |_| Ok(unsafe { &mut *status_code_runtime_protocol_ptr }));
-
-        let mut runtime_services = MockRuntimeServices::new();
-        runtime_services
-            .expect_get_variable::<FirmwarePerformanceVariable>()
-            .once()
-            .returning(|_, _, _| Err(efi::Status::NOT_FOUND));
-
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_report_table::<MockBootServices>().once().returning(|_, _| Ok(1));
-
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
-        // SAFETY: Test code - creating a static reference to the fbpt for callback testing.
-        let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
-
-        event_callback::report_fbpt_record_buffer(
-            1_usize as efi::Event,
-            Box::new((boot_services, runtime_services, fbpt)),
-        );
-
-        assert!(REPORT_STATUS_CODE_CALLED.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn test_create_performance_measurement() {
-        set_perf_measurement_mask(u32::MAX);
-        let mut boot_services = MockBootServices::new();
-
-        let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
-        let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolDevicePath>::zeroed();
-        // SAFETY: Test code - initializing test structures for device path protocol mocking.
-        unsafe {
-            media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
-            media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
-            media_fw_vol_file_path_device_path.assume_init_mut().header.length =
-                (mem::size_of::<MediaFwVolDevicePath>() as u16).to_le_bytes();
-            media_fw_vol_file_path_device_path.assume_init_mut().name = efi::Guid::from_bytes(&[3; 16]);
-
-            loaded_image_protocol.assume_init_mut().file_path =
-                media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
-        }
-        let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
-
-        // SAFETY: Test code - creating mock protocol reference from test address.
-        boot_services.expect_handle_protocol::<efi::protocols::loaded_image::Protocol>().returning(move |_| unsafe {
-            Ok((loaded_image_protocol_address as *mut efi::protocols::loaded_image::Protocol).as_mut().unwrap())
-        });
-        boot_services.expect_raise_tpl().returning(|tpl| tpl);
-        boot_services.expect_restore_tpl().return_const(());
-
-        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_add_record().times(EXPECTED_NUMBER_OF_RECORD).returning(|_| Ok(()));
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, fbpt);
-
-        // These functions call create_performance_measurement with the right arguments.
-        let module_handle = 1_usize as efi::Handle;
-        let controller_handle = 2_usize as efi::Handle;
-        let caller_id = efi::Guid::from_bytes(&[1; 16]);
-        let trigger_guid = efi::Guid::from_bytes(&[2; 16]);
-        let event_guid = efi::Guid::from_bytes(&[3; 16]);
-
-        static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
-
-        // SAFETY: Test code - initializing static variables with test references.
-        unsafe {
-            BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
-            FBPT = Some(&*ptr::addr_of!(fbpt));
-        }
-
-        fn test_create_performance_measurement(
-            caller_identifier: CallerIdentifier,
-            guid: Option<&efi::Guid>,
-            string: Option<&str>,
-            ticker: u64,
-            address: usize,
-            identifier: u16,
-            attribute: PerfAttribute,
-        ) -> Result<(), crate::performance::error::Error> {
-            let perf_id = identifier;
-
-            _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
-                caller_identifier,
-                guid,
-                string,
-                ticker,
-                address,
-                perf_id,
-                attribute,
-                // SAFETY: Test code - unwrapping test statics that were initialized above.
-                unsafe { BOOT_SERVICES.unwrap() },
-                // SAFETY: Test code - unwrapping test statics that were initialized above.
-                unsafe { FBPT.unwrap() },
-                &Service::mock(Box::new(MockTimer {})),
-            )
-            .unwrap();
-            Ok(())
-        }
-
-        const EXPECTED_NUMBER_OF_RECORD: usize = 21;
-
-        perf_image_start_begin(module_handle, test_create_performance_measurement);
-        perf_image_start_end(module_handle, test_create_performance_measurement);
-
-        perf_load_image_begin(module_handle, test_create_performance_measurement);
-        perf_load_image_end(module_handle, test_create_performance_measurement);
-
-        perf_driver_binding_support_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_support_end(module_handle, controller_handle, test_create_performance_measurement);
-
-        perf_driver_binding_start_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_start_end(module_handle, controller_handle, test_create_performance_measurement);
-
-        perf_driver_binding_stop_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_stop_end(module_handle, controller_handle, test_create_performance_measurement);
-
-        perf_event("event_string", &caller_id, test_create_performance_measurement);
-
-        perf_event_signal_begin(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
-        perf_event_signal_end(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
-
-        perf_callback_begin(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
-        perf_callback_end(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
-
-        perf_function_begin("fun_name", &caller_id, test_create_performance_measurement);
-        perf_function_end("fun_name", &caller_id, test_create_performance_measurement);
-
-        perf_in_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
-        perf_in_module_end("measurement_str", &caller_id, test_create_performance_measurement);
-
-        perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
-        perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
-    }
-
-    /// Tests the generic _create_performance_measurement function.
-    #[test]
-    fn test_generic_create_performance_measurement() {
-        let boot_services = MockBootServices::new();
-        let fbpt = TplMutex::new(boot_services.clone(), Tpl::NOTIFY, MockFirmwareBasicBootPerfTable::new());
-        static mut BOOT_SERVICES: Option<&MockBootServices> = None;
-        static mut FBPT: Option<&TplMutex<MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
-        // SAFETY: Test code - initializing static variables with test references.
-        unsafe {
-            BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
-            FBPT = Some(&*ptr::addr_of!(fbpt));
-        }
-
-        // A PerfEntry must have a known perf id.
-        let unknown_perf_id = 0xFFFF;
-        let attribute = PerfAttribute::PerfEntry;
-        let result = _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
-            CallerIdentifier::Handle(0x1_usize as efi::Handle),
-            None,
-            Some("test"),
-            0,
-            0,
-            unknown_perf_id,
-            attribute,
-            // SAFETY: Test code - unwrapping test statics that were initialized above.
-            unsafe { BOOT_SERVICES.unwrap() },
-            // SAFETY: Test code - unwrapping test statics that were initialized above.
-            unsafe { FBPT.unwrap() },
-            &Service::mock(Box::new(MockTimer {})),
-        );
-        assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
-
-        // If the perf id is unknown, the caller identifier must be a handle.
-        let result = _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
-            CallerIdentifier::Guid(efi::Guid::from_bytes(&[1; 16])),
-            None,
-            Some("test"),
-            0,
-            0,
-            unknown_perf_id,
-            PerfAttribute::PerfStartEntry,
-            // SAFETY: Test code - unwrapping test statics that were initialized above.
-            unsafe { BOOT_SERVICES.unwrap() },
-            // SAFETY: Test code - unwrapping test statics that were initialized above.
-            unsafe { FBPT.unwrap() },
-            &Service::mock(Box::new(MockTimer {})),
-        );
-        assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
-    }
 
     #[test]
     fn test_validate_guid_caller_identifier() {
         let valid_guid = efi::Guid::from_bytes(&[1; 16]);
-        let valid_guid_ptr = &valid_guid as *const efi::Guid as *const c_void;
+        let valid_guid_ptr = &raw const valid_guid as *const c_void;
 
         #[allow(clippy::manual_dangling_ptr)]
         let invalid_guid_ptr = 0x1_usize as *const c_void; // Misaligned pointer.
@@ -806,12 +253,12 @@ mod tests {
         assert_eq!(combined, 7);
     }
 
-    /// Validates that each KnownPerfId maps to the FPDT record type expected by the EDK2
+    /// Validates that each `KnownPerfId` maps to the FPDT record type expected by the EDK2
     /// Dp.c parser (ShellPkg/DynamicCommand/DpDynamicCommand/Dp.c). A mismatch causes
     /// ASSERT(FALSE) in the C parser at runtime.
     #[test]
     fn test_known_perf_id_record_types_match_edk2_dp() {
-        let guid = crate::guids::ZERO;
+        let guid = crate::BinaryGuid::ZERO;
 
         // Expected mappings derived from the switch/case in Dp.c:
         //   FPDT_GUID_EVENT_TYPE           (0x1010): MODULE_START_ID, MODULE_END_ID

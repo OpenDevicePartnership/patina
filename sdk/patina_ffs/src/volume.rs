@@ -18,7 +18,7 @@ use core::{
     fmt, iter, mem, ptr,
     slice::{self, from_raw_parts},
 };
-use patina::{BinaryGuid, base::align_up, log_debug_assert};
+use patina::{BinaryGuid, align_up, log_debug_assert};
 
 use patina::pi::fw_fs::{
     ffs::{self, file},
@@ -71,7 +71,7 @@ impl<'a> VolumeRef<'a> {
         }
 
         // SAFETY: buffer is large enough to contain the header.
-        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const fv::Header) };
+        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<fv::Header>()) };
 
         // Signature must be ASCII '_FVH'
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
@@ -121,7 +121,7 @@ impl<'a> VolumeRef<'a> {
         }
 
         //ext_header_offset: must be inside the fv
-        if fv_header.ext_header_offset as u64 > fv_header.fv_length {
+        if u64::from(fv_header.ext_header_offset) > fv_header.fv_length {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
@@ -133,7 +133,7 @@ impl<'a> VolumeRef<'a> {
                     .get(ext_header_offset..ext_header_offset + mem::size_of::<fv::ExtHeader>())
                     .ok_or(FirmwareFileSystemError::InvalidHeader)?;
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
-                let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr() as *const fv::ExtHeader) };
+                let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr().cast::<fv::ExtHeader>()) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -200,13 +200,13 @@ impl<'a> VolumeRef<'a> {
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
 
-    /// Instantiate a new FirmwareVolume from a base address.
+    /// Instantiate a new `FirmwareVolume` from a base address.
     ///
     /// ## Safety
     ///
-    /// Caller must ensure that base_address is the address of the start of a firmware volume.
-    /// Caller must ensure that the lifetime of the buffer at base_address is longer than the
-    /// returned VolumeRef.
+    /// Caller must ensure that `base_address` is the address of the start of a firmware volume.
+    /// Caller must ensure that the lifetime of the buffer at `base_address` is longer than the
+    /// returned `VolumeRef`.
     ///
     /// ## Examples
     ///
@@ -279,7 +279,7 @@ impl<'a> VolumeRef<'a> {
 
     /// Resolve information about a Logical Block Address (LBA).
     ///
-    /// Returns a tuple of (byte_offset_from_fv_start, block_size, remaining_blocks_in_region).
+    /// Returns a tuple of (`byte_offset_from_fv_start`, `block_size`, `remaining_blocks_in_region`).
     /// Errors if `lba` is out of range per the block map.
     ///
     /// ```rust no_run
@@ -403,14 +403,11 @@ impl<'a> Iterator for FileRefIter<'a> {
         if let Ok(ref file) = result {
             // per the PI spec, "Given a file F, the next file FvHeader is located at the next 8-byte aligned firmware volume
             // offset following the last byte the file F"
-            match align_up(self.next_offset as u64 + file.size() as u64, 8) {
-                Ok(next_offset) => {
-                    self.next_offset = next_offset as usize;
-                }
-                Err(_) => {
-                    self.error = true;
-                    return Some(Err(FirmwareFileSystemError::DataCorrupt));
-                }
+            if let Ok(next_offset) = align_up(self.next_offset as u64 + file.size() as u64, 8) {
+                self.next_offset = next_offset as usize;
+            } else {
+                self.error = true;
+                return Some(Err(FirmwareFileSystemError::DataCorrupt));
             }
         } else {
             self.error = true;
@@ -440,7 +437,7 @@ pub struct Volume {
 impl Volume {
     /// Create a new empty Firmware Volume builder with the given block map.
     ///
-    /// Defaults to the FFSv3 filesystem GUID, no extended header, and unbounded capacity.
+    /// Defaults to the `FFSv3` filesystem GUID, no extended header, and unbounded capacity.
     pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
         Self {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
@@ -465,7 +462,7 @@ impl Volume {
     /// use patina_ffs::volume::Volume;
     /// use patina_ffs::file::File;
     /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
     /// fv.files_mut().push(File::new(patina::BinaryGuid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
@@ -479,9 +476,9 @@ impl Volume {
     ///
     /// Produces a correct FV header (including checksum), inserts PAD files to
     /// satisfy file alignment and optional extended header placement, respects
-    /// filesystem capabilities (FFSv2 vs FFSv3), and pads to capacity when set.
+    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to capacity when set.
     /// Errors propagate from serializing files and sections or when constraints
-    /// are violated (e.g., file too large for FFSv2).
+    /// are violated (e.g., file too large for `FFSv2`).
     ///
     /// ## Examples
     ///
@@ -490,7 +487,7 @@ impl Volume {
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader};
     /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     ///
     /// // Create a volume and add several files, each with a RAW section.
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 4, length: 4096 }]);
@@ -534,13 +531,13 @@ impl Volume {
         //Patch the initial header into the output buffer
         // SAFETY: fv_header is repr(C) so it is safe to treat as a byte array for serialization.
         let mut fv_buffer =
-            unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)).to_vec() };
+            unsafe { from_raw_parts((&raw mut fv_header).cast::<u8>(), mem::size_of_val(&fv_header)).to_vec() };
 
         // add the block map
         for block in self.block_map.iter().chain(iter::once(&BlockMapEntry { num_blocks: 0, length: 0 })) {
             // SAFETY: block is repr(C) so it is safe to treat as a byte array for serialization.
             fv_buffer.extend_from_slice(unsafe {
-                from_raw_parts(block as *const BlockMapEntry as *const u8, mem::size_of_val(block))
+                from_raw_parts(core::ptr::from_ref::<BlockMapEntry>(block).cast::<u8>(), mem::size_of_val(block))
             });
         }
 
@@ -551,7 +548,11 @@ impl Volume {
             let offset = fv_buffer.len();
             // SAFETY: ext_header is repr(C) so it is safe to treat as a byte array.
             let mut ext_hdr_data = unsafe {
-                from_raw_parts(ext_header as *const fv::ExtHeader as *const u8, mem::size_of_val(ext_header)).to_vec()
+                from_raw_parts(
+                    core::ptr::from_ref::<fv::ExtHeader>(ext_header).cast::<u8>(),
+                    mem::size_of_val(ext_header),
+                )
+                .to_vec()
             };
             ext_hdr_data.extend(data);
 
@@ -670,7 +671,9 @@ impl Volume {
         fv_buffer
             .get_mut(..mem::size_of_val(&fv_header))
             .ok_or(FirmwareFileSystemError::InvalidHeader)?
-            .copy_from_slice(unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)) });
+            .copy_from_slice(unsafe {
+                from_raw_parts((&raw mut fv_header).cast::<u8>(), mem::size_of_val(&fv_header))
+            });
 
         // verify the checksum
         debug_assert_eq!(
@@ -696,7 +699,7 @@ impl Volume {
     /// use patina_ffs::volume::Volume;
     /// use patina_ffs::section::{Section, SectionComposer, SectionHeader};
     /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     ///
     /// struct Passthrough;
     /// impl SectionComposer for Passthrough {
@@ -774,16 +777,15 @@ impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
 mod test {
     use core::{mem, sync::atomic::AtomicBool};
     use log::{self, Level, LevelFilter, Metadata, Record};
-    use lzma_rs::lzma_decompress;
+    use lzma_rust2::{LzmaOptions, LzmaReader, LzmaWriter, Read, Write};
     use patina::pi::fw_fs::{self, ffs, fv};
-    use r_efi::efi;
+    use patina::standard::efi;
     use serde::Deserialize;
     use std::{
         collections::HashMap,
         env,
         error::Error,
         fs::{self, File},
-        io::Cursor,
         path::Path,
     };
     use uuid::Uuid;
@@ -793,6 +795,7 @@ mod test {
         section::{Section, SectionComposer, SectionExtractor, SectionHeader},
         volume::{Volume, VolumeRef},
     };
+    use patina::Char16String;
 
     #[derive(Debug, Deserialize, Clone)]
     struct TargetValues {
@@ -845,18 +848,12 @@ mod test {
     }
 
     fn stringify(error: FirmwareFileSystemError) -> String {
-        format!("efi error: {:x?}", error).to_string()
+        format!("efi error: {error:x?}").to_string()
     }
 
     fn extract_text_from_section(section: &Section) -> Option<String> {
         if section.section_type() == Some(ffs::section::Type::UserInterface) {
-            let display_name_chars: Vec<u16> = section
-                .try_content_as_slice()
-                .ok()?
-                .chunks(2)
-                .map(|x| u16::from_le_bytes(x.try_into().unwrap()))
-                .collect();
-            Some(String::from_utf16_lossy(&display_name_chars).trim_end_matches(char::from(0)).to_string())
+            Char16String::from_le_bytes_until_nul(section.try_content_as_slice().ok()?).ok().map(|s| s.to_string())
         } else {
             None
         }
@@ -882,7 +879,7 @@ mod test {
                 assert_eq!(target.size, ffs_file.size(), "[{file_name}] Error with the file size (Full size).");
                 let sections = ffs_file.sections_with_extractor(extractor).map_err(stringify)?;
                 for section in sections.iter().enumerate() {
-                    println!("{:x?}", section);
+                    println!("{section:x?}");
                 }
                 assert_eq!(
                     target.number_of_sections,
@@ -935,7 +932,7 @@ mod test {
                 );
                 let sections: Vec<&Section> = ffs_file.section_iter().collect();
                 for section in sections.iter().enumerate() {
-                    println!("{:x?}", section);
+                    println!("{section:x?}");
                 }
                 assert_eq!(
                     target.number_of_sections,
@@ -1022,7 +1019,7 @@ mod test {
                 let SectionHeader::GuidDefined(metadata, _, _) = section.header() else {
                     panic!("Unexpected section metadata");
                 };
-                assert_eq!(metadata.section_definition_guid, fw_fs::guid::BROTLI_SECTION);
+                assert_eq!(metadata.section_definition_guid, fw_fs::guid::BROTLI_SECTION_GUID);
                 self.invoked.store(true, core::sync::atomic::Ordering::SeqCst);
                 Err(FirmwareFileSystemError::Unsupported)
             }
@@ -1046,7 +1043,7 @@ mod test {
 
         // bogus signature.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).signature ^= 0xdeadbeef;
@@ -1055,7 +1052,7 @@ mod test {
 
         // bogus header_length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).header_length = 0;
@@ -1064,7 +1061,7 @@ mod test {
 
         // bogus checksum.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).checksum ^= 0xbeef;
@@ -1073,7 +1070,7 @@ mod test {
 
         // bogus revision.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).revision = 1;
@@ -1082,7 +1079,7 @@ mod test {
 
         // bogus filesystem guid.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         //SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).file_system_guid = patina::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
@@ -1091,7 +1088,7 @@ mod test {
 
         // bogus fv length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
             (*fv_header).fv_length = 0;
@@ -1100,10 +1097,10 @@ mod test {
 
         // bogus ext header offset.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Deliberately corrupting the FV header for test purposes.
         unsafe {
-            (*fv_header).fv_length = ((*fv_header).ext_header_offset - 1) as u64;
+            (*fv_header).fv_length = u64::from((*fv_header).ext_header_offset - 1);
         };
         assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
 
@@ -1133,18 +1130,18 @@ mod test {
 
         let a = A { foo: 0, bar: 0, baz: 0, block_map: [fv::BlockMapEntry { length: 0, num_blocks: 0 }; 0] };
 
-        let a_ptr = &a as *const A;
+        let a_ptr = &raw const a;
 
         // SAFETY: test case for checking pointer math here.
         unsafe {
-            assert_eq!(((*a_ptr).block_map).as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
+            assert_eq!(((*a_ptr).block_map).as_ptr(), a_ptr.add(1).cast::<fv::BlockMapEntry>());
         }
     }
 
     struct ExampleSectionExtractor {}
     impl SectionExtractor for ExampleSectionExtractor {
         fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-            println!("Encapsulated section: {:?}", section);
+            println!("Encapsulated section: {section:?}");
             Ok(Vec::new()) //A real section extractor would provide the extracted buffer on return.
         }
     }
@@ -1166,6 +1163,30 @@ mod test {
     }
 
     #[test]
+    fn section_extract_should_limit_recursion_depth() {
+        set_logger();
+
+        // An empty compression (encapsulation) section.
+        const COMPRESSION_SECTION: [u8; 0x11] =
+            [0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        // Extractor that always gives a fresh, unextracted encapsulation section, that will
+        // keep driving `Section::extract` into unbounded recursion.
+        struct InfiniteExtractor {}
+        impl SectionExtractor for InfiniteExtractor {
+            fn extract(&self, _section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+                Ok(COMPRESSION_SECTION.to_vec())
+            }
+        }
+
+        let mut section = Section::new_from_buffer(&COMPRESSION_SECTION).unwrap();
+        assert_eq!(
+            section.extract(&InfiniteExtractor {}).unwrap_err(),
+            FirmwareFileSystemError::RecursionLimitExceeded
+        );
+    }
+
+    #[test]
     fn section_should_have_correct_metadata() -> Result<(), Box<dyn Error>> {
         set_logger();
         let empty_pe32: [u8; 4] = [0x04, 0x00, 0x00, 0x10];
@@ -1181,7 +1202,7 @@ mod test {
                 assert_eq!(length, 0);
                 assert_eq!(header.compression_type, 1);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_guid_defined: [u8; 32] = [
@@ -1203,10 +1224,10 @@ mod test {
                 );
                 assert_eq!(header.data_offset, 0x1C);
                 assert_eq!(header.attributes, 0x3412);
-                assert_eq!(guid_data.to_vec(), &[0x00u8, 0x01, 0x02, 0x03]);
+                assert_eq!(guid_data.clone(), &[0x00u8, 0x01, 0x02, 0x03]);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_version: [u8; 14] =
@@ -1218,7 +1239,7 @@ mod test {
                 assert_eq!(build_number, 0);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         let empty_freeform_subtype: [u8; 24] = [
@@ -1237,10 +1258,70 @@ mod test {
                 );
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
             }
-            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+            otherwise_bad => panic!("invalid section: {otherwise_bad:x?}"),
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn section_with_undersized_size_field_should_error() {
+        set_logger();
+
+        // For each of these buffers the declared section size is smaller than the header(s) it
+        // must contain. The buffer itself is large enough to hold the headers, so the size/header
+        // checks that only look at buffer length pass, and the content-size computation must not
+        // underflow (or slice a reverse range) but instead return InvalidHeader.
+
+        // Standard (PE32) section with size (2) smaller than the common header (4).
+        let undersized_standard: [u8; 4] = [0x02, 0x00, 0x00, 0x10];
+        assert!(matches!(Section::new_from_buffer(&undersized_standard), Err(FirmwareFileSystemError::InvalidHeader)));
+
+        // Compression section with size (8) smaller than common header + compression header (4 + 5).
+        let undersized_compression: [u8; 9] = [0x08, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            Section::new_from_buffer(&undersized_compression),
+            Err(FirmwareFileSystemError::InvalidHeader)
+        ));
+
+        // GuidDefined section whose data_offset (10) points before the end of the common + guid
+        // header (4 + 20), which would produce a reverse slice range.
+        let reverse_range_guid_defined: [u8; 24] = [
+            0x18, 0x00, 0x00, 0x02, // Header (size = 24)
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD,
+            0xEF, // GUID
+            0x0A, 0x00, // Data offset = 10 (before end of header)
+            0x00, 0x00, // Attributes
+        ];
+        assert!(matches!(
+            Section::new_from_buffer(&reverse_range_guid_defined),
+            Err(FirmwareFileSystemError::InvalidHeader)
+        ));
+
+        // GuidDefined section whose data_offset (24) exceeds the declared section size (20).
+        let undersized_guid_defined: [u8; 24] = [
+            0x14, 0x00, 0x00, 0x02, // Header (size = 20)
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD,
+            0xEF, // GUID
+            0x18, 0x00, // Data offset = 24 (> section size)
+            0x00, 0x00, // Attributes
+        ];
+        assert!(matches!(
+            Section::new_from_buffer(&undersized_guid_defined),
+            Err(FirmwareFileSystemError::InvalidHeader)
+        ));
+
+        // Version section with size (5) smaller than common header + version header (4 + 2).
+        let undersized_version: [u8; 6] = [0x05, 0x00, 0x00, 0x14, 0x00, 0x00];
+        assert!(matches!(Section::new_from_buffer(&undersized_version), Err(FirmwareFileSystemError::InvalidHeader)));
+
+        // FreeformSubtypeGuid section with size (10) smaller than common + freeform header (4 + 16).
+        let undersized_freeform: [u8; 20] = [
+            0x0A, 0x00, 0x00, 0x18, // Header (size = 10)
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD,
+            0xEF, // GUID
+        ];
+        assert!(matches!(Section::new_from_buffer(&undersized_freeform), Err(FirmwareFileSystemError::InvalidHeader)));
     }
 
     #[test]
@@ -1267,7 +1348,7 @@ mod test {
 
             let mismatch = &original_fv_bytes.iter().zip(&serialized_fv_bytes).enumerate().find_map(
                 |(offset, (expected, actual))| {
-                    if *expected != *actual { Some((offset, (*expected, *actual))) } else { None }
+                    if *expected == *actual { None } else { Some((offset, (*expected, *actual))) }
                 },
             );
 
@@ -1286,12 +1367,20 @@ mod test {
         impl SectionExtractor for LzmaExtractorComposer {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
                 if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION_GUID
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decompressed: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+                    let mut reader = LzmaReader::new_mem_limit(data, patina::SIZE_512MB as u32, None)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        if n == 0 {
+                            break;
+                        }
+                        decompressed.extend_from_slice(chunk.get(..n).ok_or(FirmwareFileSystemError::DataCorrupt)?);
+                    }
                     return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
@@ -1345,12 +1434,20 @@ mod test {
         impl SectionExtractor for LzmaExtractorComposer {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
                 if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION_GUID
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decompressed: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
+                    let mut reader = LzmaReader::new_mem_limit(data, patina::SIZE_512MB as u32, None)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = reader.read(&mut chunk).map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        if n == 0 {
+                            break;
+                        }
+                        decompressed.extend_from_slice(chunk.get(..n).ok_or(FirmwareFileSystemError::DataCorrupt)?);
+                    }
                     return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
@@ -1360,7 +1457,7 @@ mod test {
         impl SectionComposer for LzmaExtractorComposer {
             fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
                 if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION_GUID
                 {
                     let mut content = Vec::new();
                     let mut section_iter = section.sub_sections().peekable();
@@ -1377,11 +1474,11 @@ mod test {
                         }
                     }
                     let mut compressed: Vec<u8> = Vec::new();
-                    let options = lzma_rs::compress::Options {
-                        unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
-                    };
-                    lzma_rs::lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
+                    let options = LzmaOptions::with_preset(6);
+                    let mut writer = LzmaWriter::new_use_header(&mut compressed, &options, Some(content.len() as u64))
                         .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+                    writer.write_all(&content).map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+                    writer.finish().map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
 
                     let mut header = section.header().clone();
                     header.set_content_size(compressed.len()).map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
@@ -1405,7 +1502,7 @@ mod test {
         let lzma_section = &mut logo_file.sections_mut()[0];
         match lzma_section.header() {
             SectionHeader::GuidDefined(header, _, _) => {
-                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
+                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION_GUID);
             }
             _ => panic!("Expected LZMA section header"),
         }
@@ -1435,7 +1532,7 @@ mod test {
         let lzma_section = &mut logo_file.sections_mut()[0];
         match lzma_section.header() {
             SectionHeader::GuidDefined(header, _, _) => {
-                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
+                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION_GUID);
             }
             _ => panic!("Expected LZMA section header"),
         }
@@ -1453,8 +1550,8 @@ mod test {
         //re-serialize the FV with the original logo file.
         let serialized_fv_bytes = serialized_fv.serialize().map_err(stringify)?;
 
-        //unfortunately, the lzma-rs encoder isn't robust enough to encode with the expected lzma parameters,
-        //otherwise we could just just compare the original fv bytes to the serialized fv bytes directly.
+        //unfortunately, the lzma-rust2 encoder doesn't encode with the exact lzma parameters used to build the
+        //original FV, otherwise we could just just compare the original fv bytes to the serialized fv bytes directly.
         //instead, we'll compare the contents.
         let serialized_fv_ref = VolumeRef::new(&serialized_fv_bytes).map_err(stringify)?;
 
@@ -1478,8 +1575,8 @@ mod test {
             for (org_section, round_trip_section) in Iterator::zip(org_sections.iter(), round_trip_sections.iter()) {
                 assert_eq!(org_section.section_type(), round_trip_section.section_type());
                 if org_section.section_type() == Some(ffs::section::Type::GuidDefined) {
-                    // the GUID-defined section content is LZMA compressed, but lzma-rs encoder doesn't support the UEFI
-                    // parameter set, so the content won't match because the compression parameters are different.
+                    // the GUID-defined section content is LZMA compressed, but the lzma-rust2 encoder doesn't use the
+                    // exact UEFI parameter set, so the content won't match because the compression parameters differ.
                     // however, the sub-sections will be produced as part of the section iterator, so those will be compared.
                     continue;
                 }

@@ -136,3 +136,15 @@ Patina in a hands-on way, where developers share their screen while walking thro
     allowfullscreen>
   </iframe>
 </div>
+
+## UEFI Forum June 2026 - The State of Rust in UEFI and Q&A
+
+<div style="text-align: center; margin: 20px 0;">
+  <iframe width="853" height="480"
+    src="https://www.youtube.com/embed/KpWeqlWUj2s"
+    title="YouTube: The State of Rust in UEFI and Q&A"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen>
+  </iframe>
+</div>

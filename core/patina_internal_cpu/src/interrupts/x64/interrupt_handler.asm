@@ -22,7 +22,7 @@ AsmIdtVectorBegin:
         sub     rsp, 8
         mov     qword ptr [rsp], vector
         push    rax
-        mov     rax, offset common_interrupt_entry
+        lea     rax, [rip + common_interrupt_entry]
         jmp     rax
         .set vector, vector+1
     .endr
@@ -293,8 +293,8 @@ stack_normalized:
 # This routine only uses volatile registers for the EFI calling convention.
 #
 AsmGetVectorAddress:
-    lea     r10, AsmIdtVectorBegin
-    lea     rax, AsmIdtVectorEnd
+    lea     r10, [rip + AsmIdtVectorBegin]
+    lea     rax, [rip + AsmIdtVectorEnd]
     sub     rax, r10
     shr     rax, 8 # >> 8 == / 256
 

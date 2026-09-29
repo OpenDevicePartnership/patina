@@ -6,14 +6,14 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "System Management BIOS (SMBIOS) support for Patina UEFI components."
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 log = { workspace = true }
 mockall = { workspace = true, optional = true }
 patina = { workspace = true }
 patina_macro = { workspace = true }
-r-efi = { workspace = true }
-spin = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 bitfield-struct = { workspace = true }
@@ -32,4 +32,4 @@ ci_features = []
 undocumented_unsafe_blocks = "warn"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

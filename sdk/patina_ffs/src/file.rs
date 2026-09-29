@@ -47,19 +47,19 @@ impl<'a> FileRef<'a> {
     ///
     /// Errors
     /// - [`FirmwareFileSystemError::InvalidHeader`]: malformed header or size.
-    /// - [`FirmwareFileSystemError::InvalidState`]: file state not DATA_VALID.
+    /// - [`FirmwareFileSystemError::InvalidState`]: file state not `DATA_VALID`.
     /// - [`FirmwareFileSystemError::DataCorrupt`]: data checksum mismatch.
     ///
     /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::file::{File, FileRef};
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     /// use patina::pi::fw_fs::ffs;
     /// use patina_ffs::section::{Section, SectionHeader};
     ///
     /// // Build a file and then parse the resulting bytes back.
-    /// let guid = patina::guids::ZERO;
+    /// let guid = patina::BinaryGuid::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// let section = Section::new_from_header_with_data(
@@ -78,7 +78,7 @@ impl<'a> FileRef<'a> {
         }
 
         // SAFETY: buffer is large enough to contain file header.
-        let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header) };
+        let header = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<file::Header>()) };
 
         // determine actual size and content_offset
         let (size, content_offset) = {
@@ -94,7 +94,7 @@ impl<'a> FileRef<'a> {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // SAFETY: buffer is large enough to contain file header.
-                let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header2) };
+                let header = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<file::Header2>()) };
                 (header.extended_size as usize, mem::size_of::<file::Header2>())
             }
         };
@@ -203,7 +203,7 @@ impl<'a> FileRef<'a> {
             (5, false) => 12,
             (6, false) => 15,
             (7, false) => 16,
-            (x @ 0..=7, true) => (17 + x) as u32,
+            (x @ 0..=7, true) => u32::from(17 + x),
             (_, _) => panic!("Invalid data_alignment!"),
         };
         if attributes & ffs::attributes::raw::FIXED != 0 {
@@ -235,7 +235,7 @@ impl<'a> FileRef<'a> {
     ///
     /// ```rust no_run
     /// use patina::pi::fw_fs::ffs;
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     /// use patina_ffs::file::{File, FileRef};
     /// use patina_ffs::FirmwareFileSystemError;
     /// use patina_ffs::section::{Section, SectionHeader, SectionExtractor};
@@ -249,7 +249,7 @@ impl<'a> FileRef<'a> {
     /// }
     ///
     /// // Build a simple file containing a single RAW section and parse it back.
-    /// let guid = patina::guids::ZERO;
+    /// let guid = patina::BinaryGuid::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// let section = Section::new_from_header_with_data(
@@ -321,11 +321,11 @@ impl File {
     ///
     /// ```rust no_run
     /// use patina::pi::fw_fs::ffs;
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader};
     ///
-    /// let guid = patina::guids::ZERO;
+    /// let guid = patina::BinaryGuid::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// file.set_data_checksum(true);
     ///
@@ -390,7 +390,7 @@ impl File {
         // calculate checksum (excludes state and integrity_check_file, set to zero)
         // SAFETY: file_header is repr(C), safe to represent as byte slice for checksum
         let header_slice =
-            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+            unsafe { from_raw_parts((&raw const file_header).cast::<u8>(), mem::size_of_val(&file_header)) };
         let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
         file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
 
@@ -411,7 +411,7 @@ impl File {
 
         // SAFETY: file_header is repr(C), safe to represent as byte slice for serialization.
         let header_slice =
-            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+            unsafe { from_raw_parts((&raw const file_header).cast::<u8>(), mem::size_of_val(&file_header)) };
         header_slice.to_vec()
     }
 
@@ -432,7 +432,7 @@ impl File {
         // calculate checksum (excludes state and integrity_check_file, set to zero)
         // SAFETY: file_header is repr(C), safe to represent as byte slice for checksum
         let header_slice =
-            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+            unsafe { from_raw_parts((&raw const file_header).cast::<u8>(), mem::size_of_val(&file_header)) };
         let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
         file_header.integrity_check_header = 0u8.wrapping_sub(sum);
 
@@ -453,7 +453,7 @@ impl File {
 
         // SAFETY: file_header is repr(C), safe to represent as byte slice for serialization.
         let header_slice =
-            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+            unsafe { from_raw_parts((&raw const file_header).cast::<u8>(), mem::size_of_val(&file_header)) };
         header_slice.to_vec()
     }
 
@@ -510,7 +510,7 @@ impl File {
 
     /// Run the provided extractor over all sections in-place.
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
-        for section in self.sections.iter_mut() {
+        for section in &mut self.sections {
             section.extract(extractor)?;
         }
         Ok(())
@@ -522,7 +522,7 @@ impl File {
     ///
     /// ```rust no_run
     /// use patina::pi::fw_fs::ffs;
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};
     /// use patina_ffs::section::{SectionHeader as SH};
@@ -536,7 +536,7 @@ impl File {
     ///     }
     /// }
     ///
-    /// let guid = patina::guids::ZERO;
+    /// let guid = patina::BinaryGuid::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// file.sections_mut().push(Section::new_from_header_with_data(
@@ -559,7 +559,7 @@ impl File {
     ///
     /// ```rust no_run
     /// use patina::pi::fw_fs::ffs;
-    /// use r_efi::efi;
+    /// use patina::standard::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};
     /// use patina_ffs::section::SectionHeader as SH;
@@ -572,7 +572,7 @@ impl File {
     ///     }
     /// }
     ///
-    /// let guid = patina::guids::ZERO;
+    /// let guid = patina::BinaryGuid::ZERO;
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
     /// file.sections_mut().push(Section::new_from_header_with_data(
@@ -582,7 +582,7 @@ impl File {
     /// file.compose(&Passthrough).unwrap();
     /// ```
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
-        for section in self.sections.iter_mut() {
+        for section in &mut self.sections {
             section.compose(composer)?;
         }
         Ok(())
@@ -653,8 +653,8 @@ impl TryFrom<(FileRef<'_>, &dyn SectionExtractor)> for File {
     fn try_from(src: (FileRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
         let (src, extractor) = src;
         let mut sections = src.sections()?;
-        for section in sections.iter_mut() {
-            section.extract(extractor)?
+        for section in &mut sections {
+            section.extract(extractor)?;
         }
         Ok(Self {
             name: src.name(),

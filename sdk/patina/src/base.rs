@@ -8,18 +8,20 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use num_traits;
-use r_efi::efi;
+use crate::base::error::EfiError;
+use crate::standard::efi;
 
-use crate::error::EfiError;
-
+pub mod c_ptr;
+pub mod crc32;
+pub mod error;
 pub mod guid;
-#[cfg(any(test, feature = "alloc"))]
-pub mod memory_map;
+pub mod hash;
+pub mod protocol;
+pub mod string;
 
-/// EFI memory allocation functions work in units of EFI_PAGEs that are 4KB.
+/// EFI memory allocation functions work in units of `EFI_PAGEs` that are 4KB.
 /// This should in no way be confused with the page size of the processor.
-/// An EFI_PAGE is just the quanta of memory in EFI.
+/// An `EFI_PAGE` is just the quanta of memory in EFI.
 pub const UEFI_PAGE_SIZE: usize = 0x1000;
 
 /// The mask to apply to an address to get the page offset in UEFI.
@@ -148,6 +150,69 @@ pub const SIZE_256TB: usize = 0x1000000000000;
 /// Patina uses write back as the default cache attribute for memory allocations.
 pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
+/// Converts a size in bytes to the number of UEFI pages required.
+///
+/// Takes a size in bytes and calculates the number of UEFI pages needed to accommodate that size.
+///
+/// # Parameters
+///
+/// - `$size`: The size in bytes that needs to be converted to UEFI pages.
+///
+/// # Returns
+///
+/// The number of UEFI pages required to accommodate the given size.
+///
+/// # Example
+///
+/// ```rust
+/// use patina::UEFI_PAGE_SIZE;
+/// use patina::uefi_size_to_pages;
+///
+/// let size_in_bytes = UEFI_PAGE_SIZE * 3;
+/// let pages = uefi_size_to_pages!(size_in_bytes);
+/// assert_eq!(pages, 3);
+/// ```
+///
+/// In this example, 3 UEFI pages are required.
+#[macro_export]
+macro_rules! uefi_size_to_pages {
+    ($size:expr) => {
+        (($size) + patina::UEFI_PAGE_MASK) / patina::UEFI_PAGE_SIZE
+    };
+}
+
+/// Converts a number of UEFI pages to the corresponding size in bytes.
+///
+/// This macro calculates the total size in bytes by multiplying the given number of UEFI pages
+/// by the size of a UEFI page (`UEFI_PAGE_SIZE`).
+///
+/// # Parameters
+///
+/// - `$pages`: The number of UEFI pages to be converted to bytes.
+///
+/// # Returns
+///
+/// The total size in bytes corresponding to the given number of UEFI pages.
+///
+/// # Example
+///
+/// ```rust
+/// use patina::UEFI_PAGE_SIZE;
+/// use patina::uefi_pages_to_size;
+///
+/// let pages = 3;
+/// let size_in_bytes = uefi_pages_to_size!(pages);
+/// assert_eq!(size_in_bytes, 3 * UEFI_PAGE_SIZE);
+/// ```
+///
+/// In this example, 3 UEFI pages returns the expected size in bytes.
+#[macro_export]
+macro_rules! uefi_pages_to_size {
+    ($pages:expr) => {
+        ($pages) * $crate::UEFI_PAGE_SIZE
+    };
+}
+
 /// A macro to generate a bit mask with the nth bit set.
 ///
 /// This macro should generally be used to simplify bit references in
@@ -190,7 +255,7 @@ where
 /// # Example
 ///
 /// ```rust
-/// use patina::base::align_down;
+/// use patina::align_down;
 ///
 /// let addr: u64 = 1023;
 /// let align: u64 = 512;
@@ -236,7 +301,7 @@ where
 /// # Example
 ///
 /// ```rust
-/// use patina::base::align_up;
+/// use patina::align_up;
 /// use patina::error::EfiError;
 ///
 /// let addr: u64 = 1025;
@@ -289,7 +354,7 @@ where
 ///
 /// # Example
 /// ```rust
-/// use patina::base::align_range;
+/// use patina::align_range;
 /// let base: u64 = 1023;
 /// let length: u64 = 2048;
 /// let align: u64 = 512;
@@ -354,7 +419,7 @@ pub const fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiErr
 ///
 /// # Note
 /// This macro is typically used to create signatures for UEFI structures
-/// and is the equivalent of the SIGNATURE_16, SIGNATURE_32 and SIGNATURE_64
+/// and is the equivalent of the `SIGNATURE_16`, `SIGNATURE_32` and `SIGNATURE_64`
 /// macros from EDK2.
 #[allow(unused_macros)]
 #[macro_export]
@@ -426,7 +491,7 @@ macro_rules! writelncrlf {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

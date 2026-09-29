@@ -19,7 +19,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 
@@ -44,18 +44,22 @@ pub use composite::CompositeSectionExtractor;
 mod null;
 pub use null::NullSectionExtractor;
 
+#[cfg(any(feature = "brotli", feature = "lzma"))]
+/// Maximum memory limit for compressed section decompression. This is set to 512MB as a reasonable upper limit.
+const DECOMPRESSION_MAX_MEMORY_LIMIT: u32 = patina::SIZE_512MB as u32;
+
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use alloc::{vec, vec::Vec};
     use patina::pi::fw_fs::{
         ffs::section::header::GuidDefined,
-        guid::{BROTLI_SECTION, CRC32_SECTION, LZMA_SECTION},
+        guid::{BROTLI_SECTION_GUID, CRC32_SECTION_GUID, LZMA_SECTION_GUID},
     };
     use patina_ffs::section::{Section, SectionHeader};
 
     /// Constructs a section with the specified GUID and payload, prepending
-    /// the required 16-byte header (out_size + scratch_size) for Brotli sections.
+    /// the required 16-byte header (`out_size` + `scratch_size`) for Brotli sections.
     pub(crate) fn create_brotli_section(payload: &[u8], out_size: u64) -> Section {
         // Brotli section payload format: [out_size: u64, scratch_size: u64, compressed_data...]
         let scratch_size = 0u64;
@@ -66,7 +70,7 @@ mod tests {
         content.extend_from_slice(payload);
 
         let guid_header = GuidDefined {
-            section_definition_guid: BROTLI_SECTION,
+            section_definition_guid: BROTLI_SECTION_GUID,
             data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
             attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
         };
@@ -79,7 +83,7 @@ mod tests {
     /// Constructs a section with the LZMA GUID and the provided compressed payload.
     pub(crate) fn create_lzma_section(compressed_data: &[u8]) -> Section {
         let guid_header = GuidDefined {
-            section_definition_guid: LZMA_SECTION,
+            section_definition_guid: LZMA_SECTION_GUID,
             data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
             attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
         };
@@ -91,7 +95,7 @@ mod tests {
     /// Helper to create a GUID-defined section for testing.
     pub(crate) fn create_crc32_section(content: &[u8], guid_data: Vec<u8>) -> Section {
         let guid_header = GuidDefined {
-            section_definition_guid: CRC32_SECTION,
+            section_definition_guid: CRC32_SECTION_GUID,
             data_offset: (core::mem::size_of::<GuidDefined>() + 4 + guid_data.len()) as u16,
             attributes: 0x01,
         };

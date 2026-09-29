@@ -1,6 +1,6 @@
 //! Linked List Entry
 //!
-//! Defined in the PI Specification as an EFI Linked List entry (EfiListEntry). See Related Definitions for the
+//! Defined in the PI Specification as an EFI Linked List entry (`EfiListEntry`). See Related Definitions for the
 //! Runtime Architectural Protocol.
 //!
 //! Represents a doubly linked list where with forward and back links.

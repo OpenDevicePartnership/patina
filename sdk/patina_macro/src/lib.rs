@@ -7,13 +7,93 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
+mod device_path_encoder;
+mod device_path_macro;
+mod device_path_nodes;
+mod device_path_parser;
 mod hob_macro;
 mod service_macro;
 mod smbios_record_macro;
 mod test_macro;
 mod validate_params_macro;
+
+/// Encodes a UEFI text device path as an owned byte array at compile time.
+///
+/// The input is normally one string literal using the UEFI 2.11 Device Path
+/// From Text syntax. Nodes are separated by `/`; backslashes are preserved in
+/// file path nodes. A top-level comma separates device path instances. The
+/// macro inserts an End Instance node between instances and an End Entire node
+/// after the final instance.
+///
+/// An optional `vendor-defined { ... };` registry may precede the literal to
+/// define invocation-local vendor hardware, messaging, or media shortcuts. Each schema
+/// selects `type: hardware` ([`VenHw`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-device-path))
+/// or `type: messaging` ([`VenMsg`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path))
+/// or `type: media` ([`VenMedia`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path))
+/// and supplies a GUID and a list of required payload fields. Supported field types are `u8`,
+/// `u16le`, `u32le`, `u64le`, `guid` (EFI byte order), `uuid` (RFC byte
+/// order), and `bytes` (hexadecimal byte data). Schema and field names are
+/// case-sensitive and must contain only alphanumeric characters. Built-in node
+/// names cannot be redefined.
+///
+/// The expanded expression has type `[u8; N]` and requires no runtime parser,
+/// allocation, or device-path feature.
+///
+/// Compilation fails when the input shape or vendor schema is invalid, or when
+/// the device path contains invalid syntax, an unknown node, an invalid field,
+/// or a value that cannot be represented by the UEFI binary format.
+///
+/// ## Examples
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path: [u8; 22] = devpath!("PciRoot(0)/Pci(0x11,0)");
+/// assert_eq!(
+///     path,
+///     [
+///         0x02, 0x01, 0x0c, 0x00, 0xd0, 0x41, 0x03, 0x0a, 0x00, 0x00, 0x00,
+///         0x00, 0x01, 0x01, 0x06, 0x00, 0x00, 0x11, 0x7f, 0xff, 0x04, 0x00,
+///     ],
+/// );
+/// ```
+///
+/// A top-level comma creates multiple device path instances:
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path: [u8; 20] = devpath!("Pci(1,0),USB(2,1)");
+/// assert_eq!(&path[6..10], &[0x7f, 0x01, 0x04, 0x00]);
+/// assert_eq!(&path[16..20], &[0x7f, 0xff, 0x04, 0x00]);
+/// ```
+///
+/// Vendor-defined shortcuts encode their fields after the vendor GUID:
+///
+/// ```
+/// use patina::devpath;
+///
+/// let path = devpath!(
+///     vendor-defined {
+///         AcmeController {
+///             type: hardware,
+///             guid: "00112233-4455-6677-8899-aabbccddeeff",
+///             fields: [port: u8, flags: u16le],
+///         },
+///     };
+///     "AcmeController(port=3,flags=0x1234)"
+/// );
+/// assert_eq!(
+///     path,
+///     devpath!("VenHw(00112233-4455-6677-8899-aabbccddeeff,033412)")
+/// );
+/// ```
+#[proc_macro]
+pub fn devpath(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    device_path_macro::devpath2(input.into()).into()
+}
 
 /// Derive Macro for implementing the `IntoService` trait for a type.
 ///
@@ -64,7 +144,7 @@ pub fn service(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Derive Macro for implementing the `HobConfig` trait for a type.
 ///
 /// This macro uses the [zerocopy::FromBytes](https://docs.rs/zerocopy/latest/zerocopy/trait.FromBytes.html)
-/// implementation to safely create an instance of the type from a byte slice. If FromBytes is not implemented on the
+/// implementation to safely create an instance of the type from a byte slice. If `FromBytes` is not implemented on the
 /// type, a compile time error will be produced.
 ///
 /// ## Macro Attribute
@@ -88,10 +168,10 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     hob_macro::hob_config2(item.into()).into()
 }
 
-/// A proc-macro that registers the annotated function as a test case to be run by patina_test component.
+/// A proc-macro that registers the annotated function as a test case to be run by `patina_test` component.
 ///
-/// There is a distinct difference between doing a #[cfg_attr(..., skip)] and a
-/// #[cfg_attr(..., patina_test)]. The first still compiles the test case, but skips it at runtime. The second does not
+/// There is a distinct difference between doing a #[`cfg_attr`(..., skip)] and a
+/// #[`cfg_attr`(..., `patina_test`)]. The first still compiles the test case, but skips it at runtime. The second does not
 /// compile the test case at all.
 ///
 /// ## Attributes
@@ -143,7 +223,7 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// #[patina_test]
 /// #[on(timer = 1000000)]
-/// #[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
+/// #[on(event = patina::pi::event::END_OF_DXE_EVENT_GROUP_GUID)]
 /// fn multi_triggered_test_case() -> Result {
 ///  todo!()
 /// }
@@ -216,7 +296,7 @@ pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// The macro automatically:
 /// - Verifies an `entry_point` method exists
-/// - Validates the entry_point parameters at compile time
+/// - Validates the `entry_point` parameters at compile time
 /// - Generates the `IntoComponent` trait implementation
 ///
 /// ## Usage
@@ -254,7 +334,7 @@ pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ## Validation Rules
 ///
 /// - Impl block must contain an `entry_point` method
-/// - Entry point must have `self`, `mut self``, `&self`, or `&mut self` as the first parameter
+/// - Entry point must have `self`, `mut self`, `&self`, or `&mut self` as the first parameter
 /// - No duplicate `ConfigMut<T>` parameters with the same type T
 /// - Cannot have both `Config<T>` and `ConfigMut<T>` for the same type T
 /// - Cannot use `&mut Storage` with `Config<T>` or `ConfigMut<T>`

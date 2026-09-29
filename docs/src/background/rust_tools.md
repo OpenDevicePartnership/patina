@@ -95,6 +95,28 @@ cargo binstall cargo-llvm-cov
 
 It is recommended to use `cargo-binstall` when possible to minimize setup time.
 
+**Automated Installation of Project Tools**:
+
+Patina maintains a pinned set of tool versions in the `[tools]` section of `rust-toolchain.toml`:
+
+```toml
+[tools]
+cargo-deny = "^0.18"
+cargo-llvm-cov = "0.6.18"
+cargo-make = "0.37.21"
+# ...
+```
+
+Run the `install-tools` task to install every tool at its specified version so a local environment matches CI:
+
+```bash
+cargo make install-tools
+```
+
+The task reads the `[tools]` section and installs each entry with `cargo binstall`, falling back to `cargo install`
+when a pre-built binary is unavailable. If `cargo-binstall` is not already present, the task installs it first. Because
+the versions come from `rust-toolchain.toml`, this is the recommended way to keep local tooling in sync with CI.
+
 ### Tool Discovery and Version Management
 
 `cargo-binstall` streamlines discovery and version control for external tooling by downloading pre-built binaries when
@@ -333,11 +355,11 @@ pub fn process_buffer(buffer: &mut [u8]) {
 # Makefile.toml - Documentation generation
 [tasks.doc]
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )"]
 
 [tasks.doc-open]
 command = "cargo"
-args = ["doc", "--features", "doc", "--open"]
+args = ["doc", "--open"]
 
 # Environment variables for strict documentation
 [env]

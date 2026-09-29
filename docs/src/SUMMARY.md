@@ -20,6 +20,7 @@
 - [Dependency Management](dev/principles/dependency-management.md)
 - [Error Handling](dev/principles/error-handling.md)
 - [FFI Authoring](dev/principles/ffi.md)
+- [UEFI Strings](dev/principles/strings.md)
 - [Unsafe Guidance](dev/principles/unsafe.md)
 
 # Developer Guides
@@ -60,6 +61,7 @@
 - [Patina DXE Core Requirements Checklist](integrate/patina_dxe_core_requirements_checklist.md)
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
+  - [Confidential Compute Integration](integrate/confidential_compute.md)
 
 # Patina DXE Core Subsystems
 
@@ -73,11 +75,13 @@
   - [Image Loading and Execution](dxe_core/images.md)
   - [Memory Management](dxe_core/memory_management.md)
   - [Memory Bins](dxe_core/memory_bins.md)
+  - [Performance Measurement](dxe_core/performance_measurement.md)
   - [Protocol Database](dxe_core/protocol_database.md)
   - [Synchronization](dxe_core/synchronization.md)
   - [Testing](dxe_core/testing.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
 
 -----------
+
 - [Contributors](misc/contributors.md)
 - [License](misc/license_history.md)

@@ -12,7 +12,7 @@
 use alloc::slice;
 use bitfield_struct::bitfield;
 use core::arch::asm;
-use patina::base::{SIZE_1GB, SIZE_2MB, SIZE_4KB, UEFI_PAGE_SHIFT};
+use patina::{SIZE_1GB, SIZE_2MB, SIZE_4KB, UEFI_PAGE_SHIFT};
 use patina_paging::MemoryAttributes;
 
 pub(super) struct PteInfo {
@@ -98,7 +98,7 @@ pub(super) fn flush_tlb() {
         0x4 =>
         // SAFETY: We are simply invalidating the TLB, which is a safe operation
         unsafe {
-            asm!("tlbi alle1", "dsb nsh", "isb sy", options(nostack));
+            asm!("tlbi vmalle1", "dsb nsh", "isb sy", options(nostack));
         },
         _ => panic!("Unsupported Exception Level for TLB flush"),
     }
@@ -268,10 +268,9 @@ pub(super) fn is_mapped(addr: u64) -> bool {
         if pte_state.points_to_pa {
             // we are identity mapped
             return true;
-        } else {
-            // continue down the page table levels
-            next_addr = pte_state.next_address;
         }
+        // continue down the page table levels
+        next_addr = pte_state.next_address;
     }
     unreachable!()
 }

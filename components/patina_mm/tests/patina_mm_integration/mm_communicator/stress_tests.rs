@@ -12,8 +12,7 @@ use crate::patina_mm_integration::common::{constants::*, framework::*};
 
 use core::pin::Pin;
 use patina::{
-    Guid,
-    base::SIZE_4KB,
+    Guid, SIZE_4KB,
     component::{Storage, service::Service},
 };
 use patina_mm::{
@@ -159,6 +158,9 @@ fn test_framework_trigger_counting_basic() {
 
 /// Test MM communication stress with 1000 calls
 #[test]
+// Clippy lint is disabled since this is test code where the values never approach a point where
+// an f64 conversion would lose accuracy.
+#[allow(clippy::cast_precision_loss)]
 fn test_mm_communication_stress_thousand_calls() {
     const NUM_ITERATIONS: usize = 1000;
 
@@ -186,7 +188,7 @@ fn test_mm_communication_stress_thousand_calls() {
         stress_guids::COMPUTATION_TEST, // Computation tests
     ];
 
-    println!("Starting stress test with {} iterations...", NUM_ITERATIONS);
+    println!("Starting stress test with {NUM_ITERATIONS} iterations...");
 
     for i in 0..NUM_ITERATIONS {
         // Cycle through different GUIDs and buffer IDs
@@ -205,13 +207,13 @@ fn test_mm_communication_stress_thousand_calls() {
                 if guid == &TEST_COMMUNICATION_GUID {
                     // Echo handler should return the same data for non-empty inputs
                     if !test_data.is_empty() {
-                        assert_eq!(response, test_data, "Echo handler should return input data at iteration {}", i);
+                        assert_eq!(response, test_data, "Echo handler should return input data at iteration {i}");
                     }
                 }
             }
             Err(status) => {
                 error_count += 1;
-                *various_errors.entry(format!("{:?}", status)).or_insert(0) += 1;
+                *various_errors.entry(format!("{status:?}")).or_insert(0) += 1;
             }
         }
 
@@ -229,18 +231,17 @@ fn test_mm_communication_stress_thousand_calls() {
     // Trigger count should be <= total attempted (since some may fail early validation)
     assert!(
         trigger_count <= total_attempted,
-        "Framework trigger count ({}) should not exceed total attempted communications ({})",
-        trigger_count,
-        total_attempted
+        "Framework trigger count ({trigger_count}) should not exceed total attempted communications ({total_attempted})"
     );
 
     // Most communications should reach the framework (at least 80% for this test)
+    // `total_attempted` is a `usize`, so the `f64` product will not be negative and casting back
+    // to a `usize` will not lose a sign.
+    #[allow(clippy::cast_sign_loss)]
     let min_expected = (total_attempted as f64 * 0.8) as usize;
     assert!(
         trigger_count >= min_expected,
-        "Framework trigger count ({}) should be at least 80% of attempted communications ({})",
-        trigger_count,
-        min_expected
+        "Framework trigger count ({trigger_count}) should be at least 80% of attempted communications ({min_expected})"
     );
 
     // Ensure we had a reasonable mix of successes and errors
@@ -253,24 +254,24 @@ fn test_mm_communication_stress_thousand_calls() {
 
     // Print final statistics
     println!("Stress test completed!");
-    println!("Total iterations: {}", NUM_ITERATIONS);
-    println!("Successful communications: {}", success_count);
-    println!("Error communications: {}", error_count);
-    println!("Communications that reached framework: {}", trigger_count);
-    println!("Early validation failures: {}", early_failures);
+    println!("Total iterations: {NUM_ITERATIONS}");
+    println!("Successful communications: {success_count}");
+    println!("Error communications: {error_count}");
+    println!("Communications that reached framework: {trigger_count}");
+    println!("Early validation failures: {early_failures}");
     println!(
         "Trigger count validation: Framework correctly tracked {} out of {} communications ({:.1}%)",
         trigger_count,
         total_attempted,
         (trigger_count as f64 / total_attempted as f64) * 100.0
     );
-    println!("Failed communications: {}", error_count);
+    println!("Failed communications: {error_count}");
     println!("Success rate: {:.2}%", (success_count as f64 / NUM_ITERATIONS as f64) * 100.0);
 
     if !various_errors.is_empty() {
         println!("Error breakdown:");
         for (error_type, count) in various_errors {
-            println!("  {}: {}", error_type, count);
+            println!("  {error_type}: {count}");
         }
     }
 
@@ -280,5 +281,5 @@ fn test_mm_communication_stress_thousand_calls() {
     // Verify the framework handled all our requests
     assert!(trigger_count > 0, "Trigger count should be greater than 0");
 
-    println!("Stress test passed with {} successful communications out of {}", success_count, NUM_ITERATIONS);
+    println!("Stress test passed with {success_count} successful communications out of {NUM_ITERATIONS}");
 }

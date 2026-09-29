@@ -107,7 +107,7 @@ pub enum Type {
     MmDepex = raw_type::MM_DEPEX,
 }
 
-/// EFI_COMMON_SECTION_HEADER per PI spec 1.8A 3.2.4.1
+/// `EFI_COMMON_SECTION_HEADER` per PI spec 1.8A 3.2.4.1
 #[repr(C, packed)]
 #[derive(Debug, FromBytes, KnownLayout, Unaligned)]
 pub struct Header {
@@ -131,7 +131,7 @@ pub mod header {
         pub section_type: u8,
     }
 
-    /// EFI_COMMON_SECTION_HEADER2 per PI spec 1.8A 3.2.4.1
+    /// `EFI_COMMON_SECTION_HEADER2` per PI spec 1.8A 3.2.4.1
     #[repr(C, packed)]
     #[derive(Debug, FromBytes, KnownLayout, Unaligned)]
     /// Extended common section header for sections larger than 16MB
@@ -144,7 +144,7 @@ pub mod header {
         pub extended_size: u32,
     }
 
-    /// EFI_COMPRESSION_SECTION per PI spec 1.8A 3.2.5.2
+    /// `EFI_COMPRESSION_SECTION` per PI spec 1.8A 3.2.5.2
     #[repr(C, packed)]
     #[derive(Debug, Clone, Copy, FromBytes, KnownLayout, Unaligned)]
     /// Compression section header
@@ -159,7 +159,7 @@ pub mod header {
     /// Standard compression (typically LZMA)
     pub const STANDARD_COMPRESSION: u8 = 0x01;
 
-    /// EFI_GUID_DEFINED_SECTION per PI spec 1.8A 3.2.5.7
+    /// `EFI_GUID_DEFINED_SECTION` per PI spec 1.8A 3.2.5.7
     /// Zerocopy traits cannot be derived because r-efi's Guid does not implement them
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -174,7 +174,7 @@ pub mod header {
         // Guid-specific header fields.
     }
 
-    /// EFI_VERSION_SECTION per PI spec 1.8A 3.2.5.15
+    /// `EFI_VERSION_SECTION` per PI spec 1.8A 3.2.5.15
     #[repr(C, packed)]
     #[derive(Debug, Clone, Copy, FromBytes, KnownLayout, Unaligned)]
     /// Version section header
@@ -183,7 +183,7 @@ pub mod header {
         pub build_number: u16,
     }
 
-    /// EFI_FREEFORM_SUBTYPE_GUID_SECTION per PI spec 1.8A 3.2.5.6
+    /// `EFI_FREEFORM_SUBTYPE_GUID_SECTION` per PI spec 1.8A 3.2.5.6
     /// Zerocopy traits cannot be derived because r-efi's Guid does not implement them
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]

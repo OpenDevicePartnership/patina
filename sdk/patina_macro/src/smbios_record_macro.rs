@@ -74,12 +74,12 @@ impl Parse for SmbiosRecord {
         let mut string_pool_count = 0;
 
         if let Fields::Named(fields) = &item.fields {
-            for field in fields.named.iter() {
+            for field in &fields.named {
                 let has_string_pool = field.attrs.iter().any(|attr| attr.path().is_ident("string_pool"));
 
                 if has_string_pool {
                     string_pool_count += 1;
-                    string_pool_field = field.ident.clone();
+                    string_pool_field.clone_from(&field.ident);
                 }
             }
         }
@@ -95,13 +95,13 @@ impl Parse for SmbiosRecord {
     }
 }
 
-/// Generate the SmbiosRecordStructure trait implementation
+/// Generate the `SmbiosRecordStructure` trait implementation
 ///
-/// This macro generates a complete SmbiosRecordStructure implementation including:
-/// - RECORD_TYPE constant
-/// - to_bytes() serialization
-/// - validate() string length checking
-/// - string_pool() and string_pool_mut() accessors
+/// This macro generates a complete `SmbiosRecordStructure` implementation including:
+/// - `RECORD_TYPE` constant
+/// - `to_bytes()` serialization
+/// - `validate()` string length checking
+/// - `string_pool()` and `string_pool_mut()` accessors
 pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
     let record = match syn::parse2::<SmbiosRecord>(item) {
         Ok(r) => r,
@@ -130,7 +130,7 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
     let mut structured_size_calc = quote! { core::mem::size_of::<SmbiosTableHeader>() };
 
     if let Fields::Named(fields) = &record.item.fields {
-        for field in fields.named.iter() {
+        for field in &fields.named {
             let field_name = field.ident.as_ref().unwrap();
             let field_ty = &field.ty;
 
@@ -186,9 +186,7 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
             quote! {
                 fn validate(&self) -> core::result::Result<(), #crate_path::error::SmbiosError> {
                     for string in &self.#pool_field {
-                        if string.len() > #crate_path::service::SMBIOS_STRING_MAX_LENGTH {
-                            return Err(#crate_path::error::SmbiosError::StringTooLong);
-                        }
+                        #crate_path::smbios_record::validate_smbios_string(string)?;
                     }
                     Ok(())
                 }
@@ -212,7 +210,7 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
             } else {
                 for string in &self.#pool_field {
                     if !string.is_empty() {
-                        string_bytes.extend_from_slice(string.as_bytes());
+                        string_bytes.extend_from_slice(&#crate_path::smbios_record::encode_smbios_string(string));
                     }
                     string_bytes.push(0);
                 }

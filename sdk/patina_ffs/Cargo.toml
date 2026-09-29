@@ -6,20 +6,21 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
 patina = {workspace = true}
-r-efi = {workspace = true}
 log = {workspace = true}
 
 [dev-dependencies]
 serde = {workspace = true}
 uuid = {workspace = true}
 serde_yaml = {workspace = true}
-lzma-rs = {workspace = true}
+lzma-rust2 = { workspace = true, features = ["encoder"] }
 
 [features]
 # All non-std features to test in CI

@@ -6,18 +6,18 @@ license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "CPU support."
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [package.metadata.docs.rs]
-features = ["doc", "std"]
+features = ["std"]
 
 [dependencies]
-lazy_static = { workspace = true, features = ["spin_no_std"] }
 log = { workspace = true }
-r-efi = { workspace = true }
-patina = { workspace = true }
+patina = { workspace = true, features = ["core"] }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 cfg-if = { workspace = true }
@@ -31,11 +31,14 @@ arm-gic = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
+patina_paging = { workspace = true, features = ["mockall"] }
 serial_test = { workspace = true }
+
+[target.'cfg(all(target_arch="x86_64"))'.dev-dependencies]
+patina_mtrr = { workspace = true, features = ["mockall"] }
 
 [features]
 default = []
 std = []
-doc = []
 # All non-std features to test in CI
 ci_features = []

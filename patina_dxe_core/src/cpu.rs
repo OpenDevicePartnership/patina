@@ -8,25 +8,30 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+#[cfg(any(test, feature = "confidential_compute"))]
+mod aliased_memory_map_protocol;
 mod cpu_arch_protocol;
+mod efi_cpu;
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 mod hw_interrupt_protocol;
 mod perf_timer;
 
-pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeCpu, DxeInterruptManager};
+pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeInterruptManager};
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use perf_timer::PerfTimer;
 
-use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
+use efi_cpu::EfiCpu;
+pub use patina_internal_cpu::interrupts::{ExceptionContext, ExceptionContextX64, ExceptionType, InterruptHandler};
+use patina_internal_cpu::interrupts::{HandlerType, InterruptManager, Interrupts};
 
-/// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
+/// A configuration struct containing the GIC bases (`gic_d`, `gic_r`) for AARCH64 systems.
 ///
 /// ## Invariants
 ///
 /// - `self.0` (GIC Distributor Base) points to the GIC Distributor register space.
 /// - `self.1` (GIC Redistributor Base) points to the GIC Redistributor register space.
-/// - Access to these registers are exclusive to this GicBases instance.
+/// - Access to these registers are exclusive to this `GicBases` instance.
 ///
 /// ## Example
 ///
@@ -62,7 +67,7 @@ pub struct GicBases {
 }
 
 impl GicBases {
-    /// Creates a new instance of the GicBases struct with the provided GIC Distributor and Redistributor base addresses.
+    /// Creates a new instance of the `GicBases` struct with the provided GIC Distributor and Redistributor base addresses.
     ///
     /// ## Safety
     ///
@@ -70,10 +75,10 @@ impl GicBases {
     ///
     /// `gicr_base` must point to the GIC Redistributor register space.
     ///
-    /// Access to these registers are exclusive to this GicBases instance.
+    /// Access to these registers are exclusive to this `GicBases` instance.
     ///
-    /// Caller must guarantee that access to these registers is exclusive to this GicBases instance.
-    #[coverage(off)]
+    /// Caller must guarantee that access to these registers is exclusive to this `GicBases` instance.
+    #[cfg_attr(coverage, coverage(off))]
     pub unsafe fn new(gicd_base: u64, gicr_base: u64) -> Self {
         GicBases { gicd: gicd_base, gicr: gicr_base }
     }
@@ -111,25 +116,46 @@ pub trait CpuInfo {
     fn perf_timer_frequency() -> Option<u64> {
         None
     }
+
+    /// Returns the exception handlers supplied by the platform as exception vector and handler pairs.
+    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
+        &[]
+    }
 }
 
-#[coverage(off)]
-pub fn initialize_cpu_subsystem() -> crate::error::Result<(EfiCpu, Interrupts)> {
+#[cfg_attr(coverage, coverage(off))]
+pub fn initialize_cpu_subsystem(
+    exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
+) -> crate::error::Result<Interrupts> {
     let mut cpu = EfiCpu::default();
+    let log_level = log::max_level();
+
+    // Confidential VMs cannot log between GDT install and IDT install because this creates a #VE/#VC exception
+    // which cannot be handled until the IDT is installed. Disable logging globally through this transition.
+    #[cfg(feature = "confidential_compute")]
+    log::set_max_level(log::LevelFilter::Off);
+
     cpu.initialize().inspect_err(|err| {
-        log::error!("Failed to initialize CPU subsystem: {:?}", err);
+        log::error!("Failed to initialize CPU subsystem: {err}");
     })?;
 
     let mut interrupt_manager = Interrupts::new();
     interrupt_manager.initialize().inspect_err(|err| {
-        log::error!("Failed to initialize Interrupt Manager: {:?}", err);
+        log::error!("Failed to initialize Interrupt Manager: {err}");
     })?;
 
-    Ok((cpu, interrupt_manager))
+    for &(exception_type, handler) in exception_handlers {
+        interrupt_manager.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+    }
+
+    // Restore logging
+    log::set_max_level(log_level);
+
+    Ok(interrupt_manager)
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 
@@ -148,5 +174,6 @@ mod tests {
         }
 
         assert!(<TestPlatform as CpuInfo>::perf_timer_frequency().is_none());
+        assert!(<TestPlatform as CpuInfo>::exception_handlers().is_empty());
     }
 }

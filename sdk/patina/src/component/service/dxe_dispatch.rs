@@ -12,7 +12,7 @@
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
-use crate::error::Result;
+use crate::base::error::Result;
 
 /// Service interface for DXE driver dispatch.
 ///

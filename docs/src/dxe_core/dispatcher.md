@@ -173,7 +173,7 @@ firmware volume file is discovered while processing the files in a firmware volu
 file also has a DEPEX section, then then associated DEPEX must evaluate to TRUE before the modules within the nested
 firmware volume will be processed.
 
-The core dispatcher uses the `patina_internal_depex` library crate to support DEPEX parsing and
+The core dispatcher uses the `patina_internal_core::depex` module to support DEPEX parsing and
 evaluation, which implements all of the DEPEX operators and capabilities specified in the UEFI
 Platform Initialization Spec.
 

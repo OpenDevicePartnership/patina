@@ -3,19 +3,21 @@
 extern crate alloc;
 
 use alloc::vec;
-use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
-use patina::pi::fw_fs::{self, ffs};
+use patina::{
+    pi::fw_fs::{self, ffs},
+    uefi::decompress::{DecompressionAlgorithm, decompress_into_with_algo},
+};
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{SectionExtractor, SectionHeader},
 };
 
-/// Section extractor that provides UEFI decompression, with an optional additional [SectionExtractor] implementation.
+/// Section extractor that provides UEFI decompression, with an optional additional [`SectionExtractor`] implementation.
 #[derive(Default)]
 pub(super) struct CoreExtractor<E: SectionExtractor>(E);
 
 impl<E: SectionExtractor> CoreExtractor<E> {
-    /// Creates a new [CoreExtractor] with the specified additional extractor.
+    /// Creates a new [`CoreExtractor`] with the specified additional extractor.
     pub const fn new(e: E) -> Self {
         Self(e)
     }
@@ -26,7 +28,7 @@ impl<E: SectionExtractor> CoreExtractor<E> {
     ) -> Result<vec::Vec<u8>, FirmwareFileSystemError> {
         let (src, algo) = match section.header() {
             SectionHeader::GuidDefined(guid_header, _, _)
-                if guid_header.section_definition_guid == fw_fs::guid::TIANO_DECOMPRESS_SECTION =>
+                if guid_header.section_definition_guid == fw_fs::guid::TIANO_DECOMPRESS_SECTION_GUID =>
             {
                 (section.try_content_as_slice()?, DecompressionAlgorithm::TianoDecompress)
             }

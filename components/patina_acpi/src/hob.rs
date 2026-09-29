@@ -14,7 +14,7 @@ use patina::component::hob::FromHob;
 #[derive(Copy, Clone, zerocopy_derive::FromBytes, FromHob)]
 #[hob = "9f9a9506-5597-4515-bab6-8bcde784ba87"]
 pub struct AcpiMemoryHob {
-    /// Unused fields from UNIVERSAL_PAYLOAD_GENERIC_HEADER (see <https://universalscalablefirmware.github.io/documentation/2_universal_payload.html>).
+    /// Unused fields from `UNIVERSAL_PAYLOAD_GENERIC_HEADER` (see <https://universalscalablefirmware.github.io/documentation/2_universal_payload.html>).
     /// In this ACPI implementation, these fields are not used.
     _revision: u8,
     _reserved: u8,

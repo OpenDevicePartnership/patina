@@ -97,7 +97,7 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
         map.insert(KEY_TRIGGER, trigger_tokens);
     }
 
-    result.map(|_| map)
+    result.map(|()| map)
 }
 
 /// Adds an `#[allow(dead_code)]` attribute to the function to prevent warnings.
@@ -203,7 +203,7 @@ fn generate_expanded_test_case(
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

@@ -1,4 +1,4 @@
-# @file .markdownlint.yml
+# @file .markdownlint.yaml
 #
 # Patina markdownlint configuration file
 #
@@ -9,5 +9,5 @@
 {
     "default": true,
     "MD013": {"line_length": 120, "code_blocks": false, "tables": false},
-    "MD033": {"allowed_elements": ["br", "center", "div", "iframe"]}
+    "MD033": {"allowed_elements": ["b", "br", "center", "div", "iframe", "small"]}
 }

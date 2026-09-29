@@ -1,4 +1,4 @@
-#![feature(coverage_attribute)]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 //! A tool that resolves raw stack traces using offline PDB parsing. It reads
 //! symbols for each frame and prints the resolved stack trace showing source
 //! file locations, demangled function names, and instruction offsets.
@@ -35,7 +35,7 @@ struct StackFrame {
 /// Look up debug info for each parsed stack frame and attach file, line, and
 /// symbol data. Coverage is off because this function depends on external PDB
 /// files
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn resolve_stack_frames(pdb_directory: &Path, mut stack_frames: Vec<StackFrame>) -> Vec<StackFrame> {
     for stack_frame in &mut stack_frames {
         let mut pdb_path: PathBuf = pdb_directory.join(&stack_frame.module_name);
@@ -120,7 +120,7 @@ fn create_stack_frame(line: &str) -> Option<StackFrame> {
 
 /// Collect the PDB directory and stack trace text from stdin. Coverage is off
 /// because this is I/O code.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn read_inputs() -> Result<(PathBuf, Vec<String>), String> {
     let mut pdb_directory = String::new();
     print!("Enter the PDB directory path (leave empty to use STACKTRACE_PDB_DIR env): ");
@@ -190,7 +190,7 @@ fn create_stack_frames(stack_frames: Vec<String>) -> Vec<StackFrame> {
 
 /// Render the resolved stack frames as a formatted table for display. Coverage
 /// is off because this function do not return a value.
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 fn dump_stack_frames(stack_frames: Vec<StackFrame>) {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL).set_content_arrangement(ContentArrangement::DynamicFullWidth).set_header(vec![
@@ -232,7 +232,7 @@ fn main() -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

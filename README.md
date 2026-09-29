@@ -17,17 +17,51 @@ contributing to its development.
 
 ---
 
-<center>
 <div align="center">
 
 Unsafe Code<br />
 
-[![overall_unsafe_code]][_overall_unsafe_code] [![fn_unsafe_code]][_fn_unsafe_code] [![expr_unsafe_code]][_expr_unsafe_code]
+[![overall_unsafe_code]][_overall_unsafe_code] [![fn_unsafe_code]][_fn_unsafe_code]
+[![expr_unsafe_code]][_expr_unsafe_code]
 
-[![impl_unsafe_code]][_impl_unsafe_code] [![traits_unsafe_code]][_traits_unsafe_code] [![methods_unsafe_code]][_methods_unsafe_code]
+[![impl_unsafe_code]][_impl_unsafe_code] [![traits_unsafe_code]][_traits_unsafe_code]
+[![methods_unsafe_code]][_methods_unsafe_code]
 
 </div>
-</center>
+
+---
+
+<div>
+Patina is deployed in production environments and runs on both virtual machines and physical hardware, ranging from
+laptops to servers. Every Patina pull request is validated by booting to the EFI Shell on both AArch64 and x64 QEMU
+emulators before it can be merged. In addition, automated daily testing verifies successful booting of a selected set
+of operating systems. The latest operating system boot results are shown below.
+</div>
+
+---
+
+<div align="center">
+<b>Latest OS Boot Results</b><br />
+
+<small>Versions Tested</small>
+
+[![patina_sdk_version]][_patina_sdk_version] [![patina_dxe_core_qemu_version]][_patina_dxe_core_qemu_version]
+[![patina_qemu_commit]][_patina_qemu_commit] [![last_run]][_last_run]
+
+<small>Boot Results</small>
+
+| Platform                                                                                                    | OS                                                                                                                         | Bootloader                         | DEBUG                                                                                  | RELEASE                                                                                    |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [Q35](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/q35_dxe_core.rs)          | [Ubuntu](https://cloud-images.ubuntu.com/) ![ubuntu_x64_image_os_version] (x64)                                            | ![ubuntu_x64_image_bootloader]     | [![q35_debug_ssd_ubuntu_x64_image]][_q35_debug_ssd_ubuntu_x64_image]                   | [![q35_release_ssd_ubuntu_x64_image]][_q35_release_ssd_ubuntu_x64_image]                   |
+| [Q35](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/q35_dxe_core.rs)          | [Windows Validation OS](https://learn.microsoft.com/windows-hardware/manufacture/desktop/validation-os-overview) (x64)     | —                                  | [![q35_debug_ssd_windows_x64_image]][_q35_debug_ssd_windows_x64_image]                 | [![q35_release_ssd_windows_x64_image]][_q35_release_ssd_windows_x64_image]                 |
+| [ArmVirt](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/arm_virt_dxe_core.rs) | [Ubuntu](https://cloud-images.ubuntu.com/) ![ubuntu_aarch64_image_os_version] (aarch64)                                    | ![ubuntu_aarch64_image_bootloader] | [![armvirt_debug_ssd_ubuntu_aarch64_image]][_armvirt_debug_ssd_ubuntu_aarch64_image]   | [![armvirt_release_ssd_ubuntu_aarch64_image]][_armvirt_release_ssd_ubuntu_aarch64_image]   |
+| [ArmVirt](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/bin/arm_virt_dxe_core.rs) | [Windows Validation OS](https://learn.microsoft.com/windows-hardware/manufacture/desktop/validation-os-overview) (aarch64) | —                                  | [![armvirt_debug_ssd_windows_aarch64_image]][_armvirt_debug_ssd_windows_aarch64_image] | [![armvirt_release_ssd_windows_aarch64_image]][_armvirt_release_ssd_windows_aarch64_image] |
+
+To request a new operating system to be included in Patina's daily OS boot testing, please open a feature request
+(GitHub issue) in the
+[patina-qemu GitHub repository](https://github.com/OpenDevicePartnership/patina-qemu/issues/new?template=feature_request.yml).
+
+</div>
 
 ## Background
 
@@ -267,3 +301,47 @@ directory.
 [_traits_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_traits.json
 [methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json
 [_methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json
+[patina_sdk_version]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/env/patina-sdk.json
+[_patina_sdk_version]: https://github.com/OpenDevicePartnership/patina
+[patina_dxe_core_qemu_version]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/env/patina-dxe-core-qemu.json
+[_patina_dxe_core_qemu_version]: https://github.com/OpenDevicePartnership/patina-dxe-core-qemu
+[patina_qemu_commit]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/env/patina-qemu-commit.json
+[_patina_qemu_commit]: https://github.com/OpenDevicePartnership/patina-qemu/commits/main
+[last_run]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/env/last-run.json
+[_last_run]: .github/workflows/nightly-os-boot.yml
+[ubuntu_x64_image_os_version]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/images/ubuntu-x64-image-os-version.json
+[ubuntu_x64_image_bootloader]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/images/ubuntu-x64-image-bootloader.json
+[q35_debug_ssd_ubuntu_x64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/q35-debug-ssd-ubuntu-x64-image.json
+[_q35_debug_ssd_ubuntu_x64_image]: .github/workflows/nightly-os-boot.yml
+[q35_release_ssd_ubuntu_x64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/q35-release-ssd-ubuntu-x64-image.json
+[_q35_release_ssd_ubuntu_x64_image]: .github/workflows/nightly-os-boot.yml
+[q35_debug_ssd_windows_x64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/q35-debug-ssd-windows-x64-image.json
+[_q35_debug_ssd_windows_x64_image]: .github/workflows/nightly-os-boot.yml
+[q35_release_ssd_windows_x64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/q35-release-ssd-windows-x64-image.json
+[_q35_release_ssd_windows_x64_image]: .github/workflows/nightly-os-boot.yml
+[ubuntu_aarch64_image_os_version]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/images/ubuntu-aarch64-image-os-version.json
+[ubuntu_aarch64_image_bootloader]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/images/ubuntu-aarch64-image-bootloader.json
+[armvirt_debug_ssd_ubuntu_aarch64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/armvirt-debug-ssd-ubuntu-aarch64-image.json
+[_armvirt_debug_ssd_ubuntu_aarch64_image]: .github/workflows/nightly-os-boot.yml
+[armvirt_release_ssd_ubuntu_aarch64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/armvirt-release-ssd-ubuntu-aarch64-image.json
+[_armvirt_release_ssd_ubuntu_aarch64_image]: .github/workflows/nightly-os-boot.yml
+[armvirt_debug_ssd_windows_aarch64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/armvirt-debug-ssd-windows-aarch64-image.json
+[_armvirt_debug_ssd_windows_aarch64_image]: .github/workflows/nightly-os-boot.yml
+[armvirt_release_ssd_windows_aarch64_image]:
+  https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina-qemu/badges/badges/result/armvirt-release-ssd-windows-aarch64-image.json
+[_armvirt_release_ssd_windows_aarch64_image]: .github/workflows/nightly-os-boot.yml

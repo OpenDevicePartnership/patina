@@ -15,6 +15,8 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
+use crate::DECOMPRESSION_MAX_MEMORY_LIMIT;
+
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.
 struct Rebox<T>(Box<[T]>);
@@ -50,13 +52,13 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
     fn free_cell(self: &mut HeapAllocator<T>, _data: Rebox<T>) {}
 }
 
-/// Provides decompression for Brotli GUIDed sections.
+/// Provides decompression for Brotli `GUIDed` sections.
 #[derive(Default, Clone, Copy)]
 pub struct BrotliSectionExtractor;
 
 impl BrotliSectionExtractor {
     /// Creates a new `BrotliSectionExtractor` instance.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub const fn new() -> Self {
         Self {}
     }
@@ -65,7 +67,7 @@ impl BrotliSectionExtractor {
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
-            && guid_header.section_definition_guid == fw_fs::guid::BROTLI_SECTION
+            && guid_header.section_definition_guid == fw_fs::guid::BROTLI_SECTION_GUID
         {
             let data = section.try_content_as_slice()?;
             let out_size = u64::from_le_bytes(
@@ -74,6 +76,10 @@ impl SectionExtractor for BrotliSectionExtractor {
                     .try_into()
                     .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
             );
+            if out_size > u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) {
+                return Err(FirmwareFileSystemError::DataCorrupt);
+            }
+
             let _scratch_size = u64::from_le_bytes(
                 data.get(8..16)
                     .ok_or(FirmwareFileSystemError::DataCorrupt)?
@@ -84,7 +90,7 @@ impl SectionExtractor for BrotliSectionExtractor {
             let mut brotli_state = BrotliState::new(
                 HeapAllocator::<u8> { default_value: 0 },
                 HeapAllocator::<u32> { default_value: 0 },
-                HeapAllocator::<HuffmanCode> { default_value: Default::default() },
+                HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() },
             );
             let in_data = data.get(16..).ok_or(FirmwareFileSystemError::DataCorrupt)?;
             let mut out_data = vec![0u8; out_size as usize];
@@ -102,16 +108,15 @@ impl SectionExtractor for BrotliSectionExtractor {
 
             if matches!(result, BrotliResult::ResultSuccess) {
                 return Ok(out_data);
-            } else {
-                return Err(FirmwareFileSystemError::DataCorrupt);
             }
+            return Err(FirmwareFileSystemError::DataCorrupt);
         }
         Err(FirmwareFileSystemError::Unsupported)
     }
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use crate::tests::create_brotli_section;
 
@@ -129,5 +134,16 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result, b"Hello, World!");
+    }
+
+    #[test]
+    fn test_brotli_extractor_out_size_exceeds_limit() {
+        // Declare an uncompressed size larger than the 512MB decompression limit; the
+        // extractor must reject it before attempting to allocate the output buffer.
+        let out_size = u64::from(DECOMPRESSION_MAX_MEMORY_LIMIT) + 1;
+        let section = create_brotli_section(&[0u8; 4], out_size);
+        let extractor = BrotliSectionExtractor;
+        let result = extractor.extract(&section);
+        assert!(matches!(result, Err(FirmwareFileSystemError::DataCorrupt)));
     }
 }

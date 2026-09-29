@@ -26,17 +26,24 @@
 //! content. These details will be documented and managed using appropriately versioned releases of the crate to
 //! reflect the degree of change.
 //!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
 
 mod boot_mode;
 
 pub mod dxe_services;
 pub mod error_codes;
+pub mod event;
 #[cfg(any(test, feature = "alloc"))]
 pub mod fw_fs;
+pub mod guid;
 pub mod hob;
 pub mod list_entry;
 pub mod mm_cis;
-pub mod protocols;
+pub mod protocol;
 #[cfg(feature = "serde")]
 pub mod serializable;
 pub mod spec_version;

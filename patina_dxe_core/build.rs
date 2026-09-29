@@ -1,4 +1,4 @@
-//! Build script for patina_dxe_core to verify toolchain configuration.
+//! Build script for `patina_dxe_core` to verify toolchain configuration.
 //!
 //! ## License
 //!
@@ -15,12 +15,12 @@ fn main() {
     let version = env::var_os("PATINA_CONFIG_VERSION").unwrap_or_default();
 
     let rustflags = env::var_os("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    eprintln!("CARGO_ENCODED_RUSTFLAGS={rustflags:?}");
+    eprintln!("CARGO_ENCODED_RUSTFLAGS={}", rustflags.display());
 
     if version != PATINA_CONFIG_VERSION {
         eprintln!(
-            "error: Incorrect PATINA_CONFIG_VERSION, expected version \"{}\", got version {:?}",
-            PATINA_CONFIG_VERSION, version
+            "error: Incorrect PATINA_CONFIG_VERSION, expected version \"{PATINA_CONFIG_VERSION}\", got version {}",
+            version.display()
         );
         eprintln!(
             "Use Patina's latest config.toml. See https://opendevicepartnership.github.io/patina/dev/toolchain_configuration.html"

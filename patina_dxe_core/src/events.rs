@@ -11,11 +11,10 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
-use r_efi::efi;
+use patina::standard::efi;
 
-use patina::pi::protocols::timer;
-
-use patina_internal_cpu::{cpu::EfiCpu, interrupts};
+use patina::arch;
+use patina::pi::protocol::timer;
 
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
@@ -44,7 +43,7 @@ unsafe extern "efiapi" fn create_event(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let notify_context = if !notify_context.is_null() { Some(notify_context) } else { None };
+    let notify_context = if notify_context.is_null() { None } else { Some(notify_context) };
 
     let (event_type, event_group) = match event_type {
         efi::EVT_SIGNAL_EXIT_BOOT_SERVICES => (efi::EVT_NOTIFY_SIGNAL, Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES)),
@@ -80,7 +79,7 @@ unsafe extern "efiapi" fn create_event_ex(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let notify_context = if !notify_context.is_null() { Some(notify_context as *mut c_void) } else { None };
+    let notify_context = if notify_context.is_null() { None } else { Some(notify_context.cast_mut()) };
 
     match event_type {
         efi::EVT_SIGNAL_EXIT_BOOT_SERVICES | efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE => {
@@ -90,7 +89,7 @@ unsafe extern "efiapi" fn create_event_ex(
     }
 
     // SAFETY: caller must ensure that event_group is a valid pointer if not null.
-    let event_group = if !event_group.is_null() { Some(unsafe { event_group.read_unaligned() }) } else { None };
+    let event_group = if event_group.is_null() { None } else { Some(unsafe { event_group.read_unaligned() }) };
 
     match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
@@ -148,7 +147,12 @@ unsafe extern "efiapi" fn wait_for_event(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION {
+    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION || !arch::interrupts_enabled() {
+        debug_assert!(
+            CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION,
+            "wait_for_event called at TPL_APPLICATION"
+        );
+        debug_assert!(!arch::interrupts_enabled(), "wait_for_event called with interrupts disabled");
         return efi::Status::UNSUPPORTED;
     }
 
@@ -177,10 +181,11 @@ unsafe extern "efiapi" fn wait_for_event(
 
         // EDK2 core signals an idle event here to notify an event group of the "idle" state. The only consumers of that
         // event are the CPU architectural drivers which use it to enter a low power state until the next interrupt.
-        // Patina implements CPU architectural support as part of the core, so directly call the sleep() method to avoid
-        // exposing the idle event to outside consumers (this event group is not specified in UEFI or PI specs). In the
-        // event that a need arises to expose the idle event to consumers outside of Patina, it can be signaled here.
-        EfiCpu::sleep();
+        // Patina implements CPU architectural support in the SDK, so directly call the enable_interrupts_and_sleep()
+        // function to avoid exposing the idle event to outside consumers (this event group is not specified in UEFI or
+        // PI specs). In the event that a need arises to expose the idle event to consumers outside of Patina, it can be
+        // signaled here.
+        arch::enable_interrupts_and_sleep();
     }
 }
 
@@ -261,18 +266,17 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
 /// current TPL, panicking on violation. No incoming parameters are dereferenced,
 /// so this is not marked `unsafe`.
 pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
-    if new_tpl > efi::TPL_HIGH_LEVEL {
-        panic!("Invalid attempt to raise TPL above TPL_HIGH_LEVEL: {new_tpl:#x?}");
-    }
+    assert!(new_tpl <= efi::TPL_HIGH_LEVEL, "Invalid attempt to raise TPL above TPL_HIGH_LEVEL: {new_tpl:#x?}");
 
     let prev_tpl = CURRENT_TPL.fetch_max(new_tpl, Ordering::SeqCst);
 
-    if new_tpl < prev_tpl {
-        panic!("Invalid attempt to raise TPL to lower value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}");
-    }
+    assert!(
+        new_tpl >= prev_tpl,
+        "Invalid attempt to raise TPL to lower value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
+    );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        interrupts::disable_interrupts();
+        arch::disable_interrupts();
     }
     prev_tpl
 }
@@ -286,9 +290,10 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
 pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     let prev_tpl = CURRENT_TPL.fetch_min(new_tpl, Ordering::SeqCst);
 
-    if new_tpl > prev_tpl {
-        panic!("Invalid attempt to restore TPL to higher value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}");
-    }
+    assert!(
+        new_tpl <= prev_tpl,
+        "Invalid attempt to restore TPL to higher value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
+    );
 
     if new_tpl < prev_tpl {
         // loop over any pending event notifications. Note: more notifications can be queued in the course of servicing
@@ -315,9 +320,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
                 break; /* no pending events */
             };
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                interrupts::enable_interrupts();
+                arch::enable_interrupts();
             } else {
-                interrupts::disable_interrupts();
+                arch::disable_interrupts();
             }
             CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = event.notify_context.unwrap_or(core::ptr::null_mut());
@@ -337,7 +342,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        interrupts::enable_interrupts();
+        arch::enable_interrupts();
     }
 }
 
@@ -352,15 +357,15 @@ extern "efiapi" fn timer_tick(time: u64) {
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID.into_inner()) {
         Ok(timer_arch_ptr) => {
-            let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
+            let timer_arch_ptr = timer_arch_ptr as *mut timer::TimerProtocol;
             // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for timer_available_callback due to error {status_err:?}");
+                log::warn!("Could not close event for timer_available_callback due to error {status_err}");
             }
         }
-        Err(err) => panic!("Unable to locate timer arch: {err:?}"),
+        Err(err) => panic!("Unable to locate timer arch: {err}"),
     }
 }
 
@@ -400,14 +405,14 @@ pub fn init_events_support(st: &mut EfiSystemTable) {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
     use crate::test_support;
     use std::{ptr, sync::atomic::Ordering};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
+        test_support::with_clean_global_lock(|| {
             test_support::init_test_logger();
             // SAFETY: Test-only initialization of global services under the global lock.
             unsafe {
@@ -415,16 +420,6 @@ mod tests {
                 crate::test_support::reset_allocators();
                 crate::test_support::init_test_protocol_db();
             }
-
-            let _guard = test_support::StateGuard::new(|| {
-                // SAFETY: Cleanup code runs with global lock held, resetting
-                // global state that was initialized above.
-                unsafe {
-                    crate::GCD.reset();
-                    crate::PROTOCOL_DB.reset();
-                    crate::allocator::reset_allocators();
-                }
-            });
 
             f();
         })
@@ -454,7 +449,7 @@ mod tests {
         with_locked_state(|| {
             let mut event: efi::Event = ptr::null_mut();
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-            let result = unsafe { create_event(0, efi::TPL_APPLICATION, None, ptr::null_mut(), &mut event) };
+            let result = unsafe { create_event(0, efi::TPL_APPLICATION, None, ptr::null_mut(), &raw mut event) };
 
             assert_eq!(result, efi::Status::SUCCESS);
         });
@@ -466,7 +461,7 @@ mod tests {
             let mut event: efi::Event = ptr::null_mut();
             let context = Box::into_raw(Box::new(42)) as *mut c_void;
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-            let result = unsafe { create_event(0, efi::TPL_APPLICATION, None, context, &mut event) };
+            let result = unsafe { create_event(0, efi::TPL_APPLICATION, None, context, &raw mut event) };
 
             assert_eq!(result, efi::Status::SUCCESS);
         });
@@ -479,7 +474,7 @@ mod tests {
             let notify_fn: Option<efi::EventNotify> = Some(test_notify);
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
             let result = unsafe {
-                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_CALLBACK, notify_fn, ptr::null_mut(), &mut event)
+                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_CALLBACK, notify_fn, ptr::null_mut(), &raw mut event)
             };
 
             assert_eq!(result, efi::Status::SUCCESS);
@@ -500,7 +495,7 @@ mod tests {
                     efi::TPL_CALLBACK,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
 
@@ -522,7 +517,7 @@ mod tests {
                     efi::TPL_CALLBACK,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
 
@@ -554,8 +549,8 @@ mod tests {
                     efi::TPL_CALLBACK,
                     notify_fn,
                     ptr::null(),
-                    &event_guid,
-                    &mut event,
+                    &raw const event_guid,
+                    &raw mut event,
                 )
             };
 
@@ -576,7 +571,7 @@ mod tests {
                     Some(test_notify),
                     ptr::null(),
                     ptr::null(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
 
@@ -597,7 +592,7 @@ mod tests {
                     Some(test_notify),
                     ptr::null(),
                     ptr::null(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
 
@@ -617,7 +612,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
 
@@ -640,7 +635,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             let result = signal_event(event);
@@ -657,7 +652,7 @@ mod tests {
             let mut event: efi::Event = ptr::null_mut();
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
             unsafe {
-                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event)
+                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &raw mut event)
             };
             signal_event(event);
 
@@ -666,7 +661,7 @@ mod tests {
 
             let mut test_wait = || {
                 // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-                let status = unsafe { wait_for_event(1, events.as_ptr() as *mut efi::Event, &mut index as *mut usize) };
+                let status = unsafe { wait_for_event(1, events.as_ptr().cast_mut(), &raw mut index) };
                 assert_eq!(status, efi::Status::SUCCESS);
                 assert_eq!(index, 0);
             };
@@ -690,7 +685,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -701,7 +696,7 @@ mod tests {
             let wait_time = 500u64;
             let result = set_timer(event, 1 /* TimerDelay::Relative */, wait_time);
             assert_eq!(result, efi::Status::SUCCESS);
-        })
+        });
     }
 
     #[test]
@@ -726,7 +721,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -755,7 +750,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -786,7 +781,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     notify_fn,
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -817,7 +812,7 @@ mod tests {
                     efi::TPL_CALLBACK,
                     Some(tracking_notify),
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -858,7 +853,7 @@ mod tests {
                     efi::TPL_CALLBACK,
                     Some(tracking_notify),
                     ptr::null_mut(),
-                    &mut event,
+                    &raw mut event,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -871,7 +866,7 @@ mod tests {
                     efi::TPL_NOTIFY,
                     Some(test_tpl_switching_notify),
                     ptr::null_mut(),
-                    &mut event2,
+                    &raw mut event2,
                 )
             };
             assert_eq!(result, efi::Status::SUCCESS);
@@ -911,12 +906,12 @@ mod tests {
 
             // Test null event array
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-            let status = unsafe { wait_for_event(1, ptr::null_mut(), &mut index as *mut usize) };
+            let status = unsafe { wait_for_event(1, ptr::null_mut(), &raw mut index) };
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
             // Test zero events
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-            let status = unsafe { wait_for_event(0, events.as_ptr() as *mut efi::Event, &mut index as *mut usize) };
+            let status = unsafe { wait_for_event(0, events.as_ptr().cast_mut(), &raw mut index) };
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -931,7 +926,7 @@ mod tests {
             CURRENT_TPL.store(efi::TPL_NOTIFY, Ordering::SeqCst);
 
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
-            let status = unsafe { wait_for_event(1, events.as_ptr() as *mut efi::Event, &mut index as *mut usize) };
+            let status = unsafe { wait_for_event(1, events.as_ptr().cast_mut(), &raw mut index) };
             assert_eq!(status, efi::Status::UNSUPPORTED);
 
             CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
@@ -955,7 +950,13 @@ mod tests {
             // Create a notification signal event
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
             let result = unsafe {
-                create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event)
+                create_event(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_NOTIFY,
+                    Some(test_notify),
+                    ptr::null_mut(),
+                    &raw mut event,
+                )
             };
             assert_eq!(result, efi::Status::SUCCESS);
 
@@ -975,7 +976,7 @@ mod tests {
             // Create a wait event
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
             let result = unsafe {
-                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event)
+                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &raw mut event)
             };
             assert_eq!(result, efi::Status::SUCCESS);
 
@@ -1024,7 +1025,7 @@ mod tests {
             // Restore original TPL
             CURRENT_TPL.store(original_tpl, Ordering::SeqCst);
             // Re-enable interrupts if we left them disabled
-            interrupts::enable_interrupts();
+            arch::enable_interrupts();
         });
     }
 
@@ -1098,7 +1099,7 @@ mod tests {
 
             // Set known starting TPL
             CURRENT_TPL.store(efi::TPL_HIGH_LEVEL, Ordering::SeqCst);
-            interrupts::disable_interrupts();
+            arch::disable_interrupts();
 
             // Test restoring from HIGH_LEVEL to NOTIFY
             restore_tpl(efi::TPL_NOTIFY);

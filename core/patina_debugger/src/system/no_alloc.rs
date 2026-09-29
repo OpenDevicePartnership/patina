@@ -63,7 +63,7 @@ impl SystemStateTrait for SystemState {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     extern crate alloc;
     use alloc::string::String;

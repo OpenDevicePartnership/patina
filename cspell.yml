@@ -40,9 +40,11 @@ words:
   - anstyle
   - antras
   - armasm
+  - armvirt
   - athlon
   - autocfg
   - bitvec
+  - blkio
   - bootx
   - bsdata
   - bucketize
@@ -60,6 +62,7 @@ words:
   - coverity
   - cpuid
   - csodimm
+  - ctable
   - ctypes
   - cudimm
   - cuviper
@@ -85,6 +88,8 @@ words:
   - eficall
   - efierror
   - eflags
+  - elidable
+  - entrantly
   - epage
   - eprom
   - expressx
@@ -112,7 +117,6 @@ words:
   - htons
   - icfgr
   - impls
-  - indoc
   - inmodule
   - intid
   - irouter
@@ -132,6 +136,7 @@ words:
   - lrdimm
   - lrpair
   - lzmatest
+  - maxnp
   - mdbook
   - mdscr
   - mmiport
@@ -169,6 +174,7 @@ words:
   - powerfmt
   - pread
   - psapi
+  - ptable
   - pterror
   - pwrite
   - pyserial
@@ -177,10 +183,12 @@ words:
   - rdmsr
   - rdram
   - rdtsc
+  - reborrow
   - reentrancy
   - regsvr
   - relia
   - reloc
+  - reowned
   - riscv
   - rlibs
   - rposition
@@ -218,12 +226,17 @@ words:
   - unrecovered
   - unreg
   - unregisters
+  - unrepresentable
   - unspec
   - unsynchronized
   - variadics
   - vcvarsamd
   - vcvarsarm
+  - virtio
+  - virtq
+  - virtqueue
   - vlvesa
+  - vring
   - vtable
   - wakeup
   - wasip
@@ -235,6 +248,7 @@ words:
   - wrmsr
   - xdata
   - xtask
+  - xxxxxxxxxb
   - zbuild
   - zeroize
   - zunstable

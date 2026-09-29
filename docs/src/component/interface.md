@@ -205,8 +205,8 @@ component execution, the changes are queued and applied after the component fini
 ```rust
 # extern crate patina;
 use patina::{
-    component::{component, params::Commands},
     error::Result,
+    component::{component, params::Commands},
 };
 
 # struct MyServiceImpl;
@@ -239,7 +239,7 @@ This handle is the DXE Core's image handle, shared across all components. It sho
 conflict with protocol open/close tracking in the UEFI driver model.
 ```
 
-`Handle` implements `Deref` to the underlying `r_efi::efi::Handle`, so it can be dereferenced directly.
+`Handle` implements `Deref` to the underlying `patina::standard::efi::Handle`, so it can be dereferenced directly.
 
 This type comes with a `mock(...)` method to make unit testing simple.
 
@@ -251,9 +251,9 @@ have been initialized. Each component receives its own cloned instance.
 ```rust
 # extern crate patina;
 use patina::{
-    boot_services::StandardBootServices,
-    component::component,
     error::Result,
+    component::component,
+    uefi::boot_services::StandardBootServices,
 };
 
 pub struct MyComponent;
@@ -316,12 +316,12 @@ usage models for components and their parameters.
 ```rust
 # extern crate patina;
 use patina::{
-    boot_services::StandardBootServices,
+    error::{EfiError, Result},
     component::{
         component,
         params::{Config, ConfigMut},
     },
-    error::{EfiError, Result},
+    uefi::boot_services::StandardBootServices,
 };
 
 // Basic component with configuration

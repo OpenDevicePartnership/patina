@@ -19,10 +19,10 @@
 //!
 //! ```powershell```
 //! # Run all Patina MM tests with debug logging
-//! $env:RUST_LOG="debug"; cargo make test --package patina_mm
+//! $`env:RUST_LOG="debug`"; cargo make test --package `patina_mm`
 //!
 //! # Run the main integration test suite
-//! $env:RUST_LOG="debug"; cargo make test --package patina_mm --test patina_mm_integration
+//! $`env:RUST_LOG="debug`"; cargo make test --package `patina_mm` --test `patina_mm_integration`
 //! ```
 //!
 //! ## License

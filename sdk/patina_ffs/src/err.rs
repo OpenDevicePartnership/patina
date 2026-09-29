@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use patina::error::EfiError;
-use r_efi::efi;
+use patina::standard::efi;
 
 /// Error definitions for Firmware File System
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,8 @@ pub enum FirmwareFileSystemError {
     NotLeaf,
     /// Composing the FFS structure failed.
     ComposeFailed,
+    /// The maximum supported nesting depth of encapsulation sections was exceeded.
+    RecursionLimitExceeded,
 }
 
 impl From<FirmwareFileSystemError> for EfiError {
@@ -45,7 +47,8 @@ impl From<FirmwareFileSystemError> for EfiError {
             FirmwareFileSystemError::InvalidHeader
             | FirmwareFileSystemError::InvalidBlockMap
             | FirmwareFileSystemError::InvalidState
-            | FirmwareFileSystemError::DataCorrupt => EfiError::VolumeCorrupted,
+            | FirmwareFileSystemError::DataCorrupt
+            | FirmwareFileSystemError::RecursionLimitExceeded => EfiError::VolumeCorrupted,
             FirmwareFileSystemError::ComposeFailed => EfiError::DeviceError,
         }
     }

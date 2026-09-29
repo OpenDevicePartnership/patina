@@ -15,7 +15,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::service::SmbiosTableHeader;
-use r_efi::efi::Handle;
+use patina::standard::efi::Handle;
 
 /// Internal SMBIOS record representation
 ///
@@ -43,7 +43,7 @@ mod tests {
     extern crate std;
     use std::vec;
 
-    use r_efi::efi;
+    use patina::standard::efi;
 
     #[test]
     fn test_smbios_record_new() {

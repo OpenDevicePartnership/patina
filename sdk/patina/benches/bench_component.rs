@@ -28,9 +28,9 @@
 //!
 use criterion::{Bencher, Criterion, criterion_group, criterion_main};
 use patina::{
-    boot_services::StandardBootServices,
-    component::{Component, IntoComponent, Storage, component, params::*},
+    component::{Component, IntoComponent, Storage, component, params::Config},
     error::Result,
+    uefi::boot_services::StandardBootServices,
 };
 
 struct TestComponent;
@@ -84,11 +84,11 @@ fn add_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
             }
         },
         criterion::BatchSize::SmallInput,
-    )
+    );
 }
 
 fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+    let mut mock_bs = core::mem::MaybeUninit::<patina::standard::efi::BootServices>::zeroed();
 
     let mut init = |count: usize| -> Scheduler {
         let mut core = Scheduler::new();
@@ -106,11 +106,11 @@ fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
             core.run();
         },
         criterion::BatchSize::SmallInput,
-    )
+    );
 }
 
 fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
-    let mut mock_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
+    let mut mock_bs = core::mem::MaybeUninit::<patina::standard::efi::BootServices>::zeroed();
 
     let init = || -> Scheduler {
         let mut core = Scheduler::new();
@@ -128,7 +128,7 @@ fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
             core.run();
         },
         criterion::BatchSize::SmallInput,
-    )
+    );
 }
 
 pub fn benchmark_add_component(c: &mut Criterion) {
@@ -141,7 +141,7 @@ pub fn benchmark_add_component(c: &mut Criterion) {
     group.bench_with_input("add_component_0500", &500_usize, add_component_abstracted);
     group.bench_with_input("add_component_1000", &1000_usize, add_component_abstracted);
 
-    group.finish()
+    group.finish();
 }
 
 pub fn benchmark_run_component(c: &mut Criterion) {

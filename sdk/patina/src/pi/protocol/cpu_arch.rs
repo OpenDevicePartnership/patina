@@ -1,0 +1,146 @@
+//! CPU Architectural Protocol
+//!
+//! Abstracts the processor services that are required to implement some of the DXE services.
+//!
+//! See <https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#cpu-architectural-protocol>
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
+use crate::standard::efi;
+
+/// CPU Architectrural Protocol GUID
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.1
+pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("26BACCB1-6F42-11D4-BCE7-0080C73C8881");
+
+#[repr(C)]
+/// CPU cache flush types.
+pub enum CpuFlushType {
+    /// Write-back and invalidate cache.
+    EfiCpuFlushTypeWriteBackInvalidate,
+    /// Write-back cache only.
+    EfiCpuFlushTypeWriteBack,
+    /// Invalidate cache only.
+    EfiCpuFlushTypeInvalidate,
+}
+
+/// Flushes a range of the processor's data cache. If the processor does not contain a data cache or the data cache is
+/// fully coherent, this function returns success.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.2
+pub type FlushDataCache =
+    extern "efiapi" fn(*const CpuArchProtocol, efi::PhysicalAddress, u64, CpuFlushType) -> efi::Status;
+
+/// Enables interrupt processing by the processor.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.3
+pub type EnableInterrupt = extern "efiapi" fn(*const CpuArchProtocol) -> efi::Status;
+
+/// Disables interrupt processing by the processor.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.4
+pub type DisableInterrupt = extern "efiapi" fn(*const CpuArchProtocol) -> efi::Status;
+
+/// Retrieves the processor's current interrupt state. Returns `TRUE` if interrupts are enabled, `FALSE` if disabled.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.5
+pub type GetInterruptState = extern "efiapi" fn(*const CpuArchProtocol, *mut bool) -> efi::Status;
+
+#[repr(C)]
+/// CPU initialization types.
+pub enum CpuInitType {
+    /// Standard CPU initialization.
+    EfiCpuInit,
+}
+
+/// Generates an INIT on the processor. If successful, the processor is reset and control does not return. Returns
+/// unsupported if the processor cannot programmatically generate an INIT without external hardware.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.6
+pub type Init = extern "efiapi" fn(*const CpuArchProtocol, CpuInitType) -> efi::Status;
+
+/// Specifies which processor exception to hook.
+///
+/// # Documentation
+/// UEFI Specification version 2.10, Section 18.2.5
+pub type EfiExceptionType = isize;
+
+/// Pointer to system context structure.
+///
+/// # Documentation
+/// UEFI Specification version 2.10, Section 18.2.4
+pub type EfiSystemContext = efi::protocols::debug_support::SystemContext;
+
+/// Function type definition for interrupt handler.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.7
+pub type InterruptHandler = extern "efiapi" fn(EfiExceptionType, EfiSystemContext);
+
+/// Registers and enables a handler for a processor interrupt or exception. The handler is called once for each
+/// interrupt or exception. Pass `NULL` to uninstall a handler. Used by the timer architecture and debuggers.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.7
+pub type RegisterInterruptHandler =
+    extern "efiapi" fn(*const CpuArchProtocol, EfiExceptionType, InterruptHandler) -> efi::Status;
+
+/// Returns a timer value from one of the processor's internal timers. Optionally returns the timer period in
+/// femtoseconds for each increment. Returns unsupported if the processor contains no readable timers.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.8
+pub type GetTimerValue = extern "efiapi" fn(*const CpuArchProtocol, u32, *mut u64, *mut u64) -> efi::Status;
+
+/// Changes memory region attributes to support specified memory attributes. Used by DXE Service
+/// `SetMemorySpaceAttributes()` to modify memory region properties visible to the processor.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.9
+pub type SetMemoryAttributes =
+    extern "efiapi" fn(*const CpuArchProtocol, efi::PhysicalAddress, u64, u64) -> efi::Status;
+
+/// Abstracts the processor services that are required to implement some of the DXE services.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.1
+#[repr(C)]
+pub struct CpuArchProtocol {
+    /// Flushes the CPU data cache.
+    pub flush_data_cache: FlushDataCache,
+    /// Enables CPU interrupts.
+    pub enable_interrupt: EnableInterrupt,
+    /// Disables CPU interrupts.
+    pub disable_interrupt: DisableInterrupt,
+    /// Gets the current interrupt state.
+    pub get_interrupt_state: GetInterruptState,
+    /// Initializes the CPU.
+    pub init: Init,
+    /// Registers an interrupt handler.
+    pub register_interrupt_handler: RegisterInterruptHandler,
+    /// Gets the CPU timer value.
+    pub get_timer_value: GetTimerValue,
+    /// Sets memory attributes for a range.
+    pub set_memory_attributes: SetMemoryAttributes,
+    /// The number of timers that are available in a processor. The value in this field is a constant that must not be
+    /// modified after the CPU Architectural Protocol is installed. All consumers must treat this as a read-only field.
+    pub number_of_timers: u32,
+    /// The size, in bytes, of the alignment required for DMA buffer allocations. This is typically the size of the
+    /// largest data cache line in the platform. This value can be determined by looking at the data cache line sizes of
+    /// all the caches present in the platform, and returning the largest. This is used by the root bridge I/O abstraction
+    /// protocols to guarantee that no two DMA buffers ever share the same cache line. The value in this field is a
+    /// constant that must not be modified after the CPU Architectural Protocol is installed. All consumers must treat
+    /// this as a read-only field.
+    pub dma_buffer_alignment: u32,
+}

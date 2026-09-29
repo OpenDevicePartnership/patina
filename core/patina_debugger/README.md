@@ -2,8 +2,9 @@
 
 The Patina Debugger provides a `no_std` GDB Remote client that is intended to be installed in a Patina boot-time core
 environment, such as the DXE Core (the [`patina_dxe_core`](https://crates.io/crates/patina_dxe_core) crate). It
-consumes a [patina::serial::SerialIO](https://docs.rs/patina/latest/patina/serial/trait.SerialIO.html) transport,
-registers architecture-specific exception handlers through
+consumes a
+[patina::peripheral::serial::SerialIO](https://docs.rs/patina/latest/patina/peripheral/serial/trait.SerialIO.html)
+transport, registers architecture-specific exception handlers through
 [patina_internal_cpu::interrupts](https://docs.rs/patina_internal_cpu/latest/patina_internal_cpu/interrupts/index.html),
 and exposes a policy-driven interface for bringing up interactive debugging.
 
@@ -43,7 +44,8 @@ The self-hosted debugger is lightweight and tightly integrated with Patina, offe
 
 ## Platform Integration
 
-1. Instantiate a `PatinaDebugger` with the platform UART configuration (for example, `Uart16550::Io { base: 0x3F8 }`).
+1. Instantiate a `PatinaDebugger` with the platform UART configuration (for example,
+   `unsafe { Uart16550::new_io(0x3F8) }`).
 2. Apply any policy overrides such as `.with_force_enable`, `.with_log_policy`, or `.with_transport_init` when
    if the debugger must initialize the transport.
 3. Register the debugger using `patina_debugger::set_debugger(&DEBUGGER)` before the Patina DXE Core starts dispatching

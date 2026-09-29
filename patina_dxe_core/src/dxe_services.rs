@@ -12,11 +12,12 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina::crc32;
 use patina::error::EfiError;
 use patina_ffs::volume::VolumeRef;
 
 use patina::pi::dxe_services;
-use r_efi::efi;
+use patina::standard::efi;
 
 use crate::{Core, GCD, PlatformInfo, allocator::core_allocate_pool, config_tables, gcd, systemtables::EfiSystemTable};
 
@@ -67,7 +68,7 @@ extern "efiapi" fn allocate_memory_space(
             let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::TopDown(Some(limit as usize))
         }
-        _ => return efi::Status::INVALID_PARAMETER,
+        dxe_services::GcdAllocateType::MaxAllocateType => return efi::Status::INVALID_PARAMETER,
     };
 
     let result = GCD.allocate_memory_space(
@@ -93,7 +94,7 @@ extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length:
     let result = GCD.free_memory_space(base_address as usize, length as usize);
 
     match result {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(err) => efi::Status::from(err),
     }
 }
@@ -101,7 +102,7 @@ extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length:
 extern "efiapi" fn remove_memory_space(base_address: efi::PhysicalAddress, length: u64) -> efi::Status {
     let result = GCD.remove_memory_space(base_address as usize, length as usize);
     match result {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(err) => efi::Status::from(err),
     }
 }
@@ -128,7 +129,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-    GCD.get_memory_descriptor_for_address(base_address)
+    GCD.get_memory_descriptor_for_address(base_address, |_, _| true)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -137,7 +138,7 @@ extern "efiapi" fn set_memory_space_attributes(
     attributes: u64,
 ) -> efi::Status {
     match core_set_memory_space_attributes(base_address, length, attributes) {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(err) => err.into(),
     }
 }
@@ -164,6 +165,23 @@ pub fn core_set_memory_space_attributes(
     }
 }
 
+#[cfg_attr(coverage, coverage(off))]
+#[cfg(any(test, feature = "confidential_compute"))]
+pub fn core_map_aliased_memory_region(
+    virtual_address: efi::VirtualAddress,
+    physical_address: efi::PhysicalAddress,
+    length: u64,
+    attributes: u64,
+) -> Result<(), EfiError> {
+    GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes)
+}
+
+#[cfg_attr(coverage, coverage(off))]
+#[cfg(any(test, feature = "confidential_compute"))]
+pub fn core_unmap_aliased_memory_region(virtual_address: efi::VirtualAddress, length: u64) -> Result<(), EfiError> {
+    GCD.unmap_aliased_memory_region(virtual_address, length)
+}
+
 extern "efiapi" fn set_memory_space_capabilities(
     base_address: efi::PhysicalAddress,
     length: u64,
@@ -171,7 +189,7 @@ extern "efiapi" fn set_memory_space_capabilities(
 ) -> efi::Status {
     match core_set_memory_space_capabilities(base_address, length, capabilities) {
         Err(err) => err.into(),
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
     }
 }
 
@@ -195,7 +213,7 @@ extern "efiapi" fn get_memory_space_map(
     //that extra descriptors come into being after creation but before usage.
     let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
         Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-    let result = GCD.get_memory_descriptors(&mut descriptors, crate::gcd::DescriptorFilter::All);
+    let result = GCD.get_memory_descriptors(&mut descriptors, |_, _| true);
 
     if let Err(err) = result {
         return efi::Status::from(err);
@@ -261,7 +279,7 @@ extern "efiapi" fn allocate_io_space(
             let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::TopDown(Some(limit as usize))
         }
-        _ => return efi::Status::INVALID_PARAMETER,
+        dxe_services::GcdAllocateType::MaxAllocateType => return efi::Status::INVALID_PARAMETER,
     };
 
     let result = GCD.allocate_io_space(
@@ -287,7 +305,7 @@ extern "efiapi" fn free_io_space(base_address: efi::PhysicalAddress, length: u64
     let result = GCD.free_io_space(base_address as usize, length as usize);
 
     match result {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(err) => efi::Status::from(err),
     }
 }
@@ -295,7 +313,7 @@ extern "efiapi" fn free_io_space(base_address: efi::PhysicalAddress, length: u64
 extern "efiapi" fn remove_io_space(base_address: efi::PhysicalAddress, length: u64) -> efi::Status {
     let result = GCD.remove_io_space(base_address as usize, length as usize);
     match result {
-        Ok(_) => efi::Status::SUCCESS,
+        Ok(()) => efi::Status::SUCCESS,
         Err(err) => efi::Status::from(err),
     }
 }
@@ -394,10 +412,10 @@ impl<P: PlatformInfo> Core<P> {
             process_firmware_volume: Self::process_firmware_volume_efiapi,
             set_memory_space_capabilities,
         };
-        let dxe_services_system_table_ptr = &dxe_services_system_table as *const dxe_services::DxeServicesTable;
+        let dxe_services_system_table_ptr = &raw const dxe_services_system_table;
         // SAFETY: dxe_services_system_table is a local value, its byte representation is valid for hashing.
         let crc32 = unsafe {
-            crc32fast::hash(from_raw_parts(
+            crc32::calculate_crc32(from_raw_parts(
                 dxe_services_system_table_ptr as *const u8,
                 mem::size_of::<dxe_services::DxeServicesTable>(),
             ))
@@ -445,7 +463,7 @@ impl<P: PlatformInfo> Core<P> {
         efi::Status::SUCCESS
     }
 
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     extern "efiapi" fn dispatch_efiapi() -> efi::Status {
         match Self::instance().pi_dispatcher.dispatcher() {
             Err(err) => err.into(),
@@ -465,7 +483,7 @@ impl<P: PlatformInfo> Core<P> {
 
         match Self::instance().pi_dispatcher.schedule(firmware_volume_handle, &file_name) {
             Err(status) => status.into(),
-            Ok(_) => efi::Status::SUCCESS,
+            Ok(()) => efi::Status::SUCCESS,
         }
     }
 
@@ -478,13 +496,13 @@ impl<P: PlatformInfo> Core<P> {
 
         match Self::instance().pi_dispatcher.trust(firmware_volume_handle, &file_name) {
             Err(status) => status.into(),
-            Ok(_) => efi::Status::SUCCESS,
+            Ok(()) => efi::Status::SUCCESS,
         }
     }
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
     use crate::{MockCore, test_support};
@@ -597,7 +615,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,      // 4KB alignment (2^12 = 4096)
                 0x10000, // 64KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -633,7 +651,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment (2^12 = 4096)
                 0x1000, // 4KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -654,7 +672,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -674,7 +692,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -694,7 +712,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -716,7 +734,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -749,7 +767,7 @@ mod tests {
                     *mem_type,
                     12,     // 4KB alignment
                     0x1000, // 4KB length
-                    &mut base_address,
+                    &raw mut base_address,
                     1 as _,
                     core::ptr::null_mut(),
                 );
@@ -768,7 +786,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12, // 4KB alignment
                 0,  // Zero length
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -787,7 +805,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 63, // Excessive alignment (2^63 would overflow)
                 0x1000,
-                &mut base_address,
+                &raw mut base_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -813,7 +831,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut allocated_address,
+                &raw mut allocated_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -871,7 +889,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut allocated_address,
+                &raw mut allocated_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -903,7 +921,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x2000, // 8KB length
-                &mut allocated_address,
+                &raw mut allocated_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -929,7 +947,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut allocated_address,
+                &raw mut allocated_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -973,7 +991,7 @@ mod tests {
                     GcdMemoryType::SystemMemory,
                     12,     // 4KB alignment
                     0x1000, // 4KB length
-                    &mut allocated_address,
+                    &raw mut allocated_address,
                     1 as _,
                     core::ptr::null_mut(),
                 );
@@ -1101,7 +1119,7 @@ mod tests {
                 GcdMemoryType::SystemMemory,
                 12,     // 4KB alignment
                 0x1000, // 4KB length
-                &mut allocated_address,
+                &raw mut allocated_address,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1239,13 +1257,13 @@ mod tests {
             ];
 
             // Add different memory types
-            for (mem_type, base) in memory_types.iter() {
+            for (mem_type, base) in &memory_types {
                 let result = add_memory_space(*mem_type, *base, 0x10000, efi::MEMORY_WB);
                 assert_eq!(result, efi::Status::SUCCESS, "Should add memory space for type {mem_type:?}");
             }
 
             // Verify each memory type can be retrieved correctly
-            for (expected_type, base) in memory_types.iter() {
+            for (expected_type, base) in &memory_types {
                 let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
                 let result = get_memory_space_descriptor(*base, descriptor.as_mut_ptr());
 
@@ -1271,7 +1289,7 @@ mod tests {
             ];
 
             // Add memory spaces with different capabilities
-            for (base, capabilities) in capabilities_tests.iter() {
+            for (base, capabilities) in &capabilities_tests {
                 let result = add_memory_space(GcdMemoryType::SystemMemory, *base, 0x10000, *capabilities);
                 assert_eq!(
                     result,
@@ -1281,7 +1299,7 @@ mod tests {
             }
 
             // Verify capabilities are preserved (may have additional flags)
-            for (base, expected_capabilities) in capabilities_tests.iter() {
+            for (base, expected_capabilities) in &capabilities_tests {
                 let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
                 let result = get_memory_space_descriptor(*base, descriptor.as_mut_ptr());
 
@@ -1425,10 +1443,10 @@ mod tests {
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
 
-            let s = get_memory_space_map(core::ptr::null_mut(), &mut out_ptr);
+            let s = get_memory_space_map(core::ptr::null_mut(), &raw mut out_ptr);
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
 
-            let s = get_memory_space_map(&mut out_count, core::ptr::null_mut());
+            let s = get_memory_space_map(&raw mut out_count, core::ptr::null_mut());
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -1442,7 +1460,7 @@ mod tests {
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
 
-            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            let s = get_memory_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is uninitialized");
         });
     }
@@ -1457,13 +1475,12 @@ mod tests {
 
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
-                .expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(!expected.is_empty());
 
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
-            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            let s = get_memory_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::SUCCESS);
             assert_eq!(out_count, expected.len());
             assert!(!out_ptr.is_null());
@@ -1493,14 +1510,13 @@ mod tests {
             // Fetch expected
             let expected_count = GCD.memory_descriptor_count();
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
-            GCD.get_memory_descriptors(&mut expected, crate::gcd::DescriptorFilter::All)
-                .expect("get_memory_descriptors failed");
+            GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(expected.len() >= 3);
 
             // Call API
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
-            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            let s = get_memory_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::SUCCESS);
             assert_eq!(out_count, expected.len());
 
@@ -1520,10 +1536,10 @@ mod tests {
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
 
-            let s = get_io_space_map(core::ptr::null_mut(), &mut out_ptr);
+            let s = get_io_space_map(core::ptr::null_mut(), &raw mut out_ptr);
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
 
-            let s = get_io_space_map(&mut out_count, core::ptr::null_mut());
+            let s = get_io_space_map(&raw mut out_count, core::ptr::null_mut());
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -1537,7 +1553,7 @@ mod tests {
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
 
-            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            let s = get_io_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is uninitialized");
         });
     }
@@ -1557,7 +1573,7 @@ mod tests {
 
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
-            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            let s = get_io_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::SUCCESS);
             assert_eq!(out_count, expected.len());
             assert!(!out_ptr.is_null());
@@ -1590,7 +1606,7 @@ mod tests {
 
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
-            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            let s = get_io_space_map(&raw mut out_count, &raw mut out_ptr);
             assert_eq!(s, efi::Status::SUCCESS);
             assert_eq!(out_count, expected.len());
 
@@ -1614,8 +1630,9 @@ mod tests {
                 efi::Status::SUCCESS
             );
 
-            // Set a combination of reasonable capabilities
-            let caps = efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP;
+            // Set a combination of reasonable capabilities. SystemMemory blocks carry a WB attribute by default, so
+            // the new capabilities must continue to support WB.
+            let caps = efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB;
             let s = set_memory_space_capabilities(base, length, caps);
             assert_eq!(s, efi::Status::SUCCESS);
 
@@ -1791,7 +1808,7 @@ mod tests {
                 GcdIoType::Io,
                 3,
                 0x10,
-                &mut out,
+                &raw mut out,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1810,7 +1827,7 @@ mod tests {
                 GcdIoType::Io,
                 3,
                 0,
-                &mut out,
+                &raw mut out,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1828,7 +1845,7 @@ mod tests {
                 GcdIoType::Io,
                 3,
                 0x20,
-                &mut out,
+                &raw mut out,
                 core::ptr::null_mut(), // null image handle should be invalid
                 core::ptr::null_mut(),
             );
@@ -1848,7 +1865,7 @@ mod tests {
                 GcdIoType::Io,
                 3,    // 8-byte alignment
                 0x20, // 32 bytes
-                &mut out,
+                &raw mut out,
                 1 as _, // valid image handle
                 core::ptr::null_mut(),
             );
@@ -1869,7 +1886,7 @@ mod tests {
                 GcdIoType::Io,
                 4,    // 16-byte alignment
                 0x40, // 64 bytes
-                &mut out,
+                &raw mut out,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1890,7 +1907,7 @@ mod tests {
                 GcdIoType::Io,
                 0,    // no extra alignment
                 0x20, // 32 bytes
-                &mut desired,
+                &raw mut desired,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1908,7 +1925,7 @@ mod tests {
                 GcdIoType::Io,
                 0,
                 0x200,
-                &mut desired,
+                &raw mut desired,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1927,7 +1944,7 @@ mod tests {
                 GcdIoType::Io,
                 3,
                 0x20,
-                &mut limit,
+                &raw mut limit,
                 1 as _,
                 core::ptr::null_mut(),
             );
@@ -1950,7 +1967,7 @@ mod tests {
                     GcdIoType::Io,
                     0,
                     len,
-                    &mut desired,
+                    &raw mut desired,
                     1 as _,
                     core::ptr::null_mut(),
                 ),
@@ -2009,7 +2026,7 @@ mod tests {
                     GcdIoType::Io,
                     0,
                     0x40,
-                    &mut desired,
+                    &raw mut desired,
                     1 as _,
                     core::ptr::null_mut(),
                 ),
@@ -2035,7 +2052,7 @@ mod tests {
                     GcdIoType::Io,
                     0,
                     0x80,
-                    &mut desired,
+                    &raw mut desired,
                     1 as _,
                     core::ptr::null_mut(),
                 ),
@@ -2162,8 +2179,8 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
             // Any GUID is fine; there are no pending drivers in this test harness
-            let guid: efi::Guid = patina::guids::ZERO.into();
-            let s = MockCore::schedule_efiapi(core::ptr::null_mut(), &guid);
+            let guid: efi::Guid = patina::BinaryGuid::ZERO.into();
+            let s = MockCore::schedule_efiapi(core::ptr::null_mut(), &raw const guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2187,7 +2204,7 @@ mod tests {
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
             let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());
-            let s = MockCore::schedule_efiapi(handle, &file_guid);
+            let s = MockCore::schedule_efiapi(handle, &raw const file_guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2209,7 +2226,7 @@ mod tests {
             CORE.override_instance();
             // Any GUID and handle are fine; there are no pending drivers in this harness
             let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[1, 2, 3, 4, 5, 6]);
-            let s = MockCore::trust_efiapi(core::ptr::null_mut(), &guid);
+            let s = MockCore::trust_efiapi(core::ptr::null_mut(), &raw const guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2222,7 +2239,7 @@ mod tests {
             let mut out_handle: efi::Handle = core::ptr::null_mut();
 
             // Null header
-            let s = MockCore::process_firmware_volume_efiapi(core::ptr::null(), 0, &mut out_handle);
+            let s = MockCore::process_firmware_volume_efiapi(core::ptr::null(), 0, &raw mut out_handle);
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
 
             // Null output handle pointer
@@ -2243,7 +2260,7 @@ mod tests {
             let s = MockCore::process_firmware_volume_efiapi(
                 bad_buf.as_ptr() as *const core::ffi::c_void,
                 bad_buf.len(),
-                &mut out_handle,
+                &raw mut out_handle,
             );
             assert_eq!(s, efi::Status::VOLUME_CORRUPTED);
         });
@@ -2265,7 +2282,7 @@ mod tests {
             let s = MockCore::process_firmware_volume_efiapi(
                 fv.as_ptr() as *const core::ffi::c_void,
                 fv.len(),
-                &mut out_handle,
+                &raw mut out_handle,
             );
 
             assert_eq!(s, efi::Status::SUCCESS);
@@ -2319,9 +2336,9 @@ mod tests {
             let mut copy = unsafe { core::ptr::read(dxe_tbl) };
             copy.header.crc32 = 0;
             // SAFETY: copy is a local value. Creating a slice from its pointer and size is valid.
-            let crc = crc32fast::hash(unsafe {
+            let crc = patina::crc32::calculate_crc32(unsafe {
                 core::slice::from_raw_parts(
-                    (&copy as *const dxe_services::DxeServicesTable) as *const u8,
+                    (&raw const copy) as *const u8,
                     core::mem::size_of::<dxe_services::DxeServicesTable>(),
                 )
             });

@@ -21,10 +21,7 @@ use core::{
     ops::Range,
 };
 
-use r_efi::{
-    efi::{Guid, Handle, PhysicalAddress, Status},
-    system::TableHeader,
-};
+use crate::standard::efi::{Guid, Handle, PhysicalAddress, Status, TableHeader};
 
 /// DXE Services Table GUID identifier
 ///
@@ -49,7 +46,7 @@ pub type AddMemorySpace = extern "efiapi" fn(GcdMemoryType, PhysicalAddress, u64
 ///
 /// This service allocates nonexistent memory, reserved memory, system memory,
 /// or memory-mapped I/O resources from the Global Coherency Domain of the processor.
-/// The allocation strategy is determined by the GcdAllocateType parameter.
+/// The allocation strategy is determined by the `GcdAllocateType` parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
@@ -129,7 +126,7 @@ pub type AddIoSpace = extern "efiapi" fn(GcdIoType, PhysicalAddress, u64) -> Sta
 ///
 /// This service allocates nonexistent I/O, reserved I/O, or I/O resources
 /// from the Global Coherency Domain of the processor. The allocation strategy
-/// is determined by the GcdAllocateType parameter.
+/// is determined by the `GcdAllocateType` parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.10
@@ -291,13 +288,13 @@ pub struct MemorySpaceDescriptor {
     pub attributes: u64,
     /// Type of the memory region.
     pub memory_type: GcdMemoryType,
-    /// The image handle of the agent that allocated the memory resource described by PhysicalStart and NumberOfBytes.
+    /// The image handle of the agent that allocated the memory resource described by `PhysicalStart` and `NumberOfBytes`.
     ///
     /// If this field is NULL, then the memory resource is not currently allocated.
     pub image_handle: Handle,
     /// The device handle for which the memory resource has been allocated.
     ///
-    /// If ImageHandle is NULL, then the memory resource is not currently allocated.
+    /// If `ImageHandle` is NULL, then the memory resource is not currently allocated.
     ///
     /// If this field is NULL, then the memory resource is not associated with a device that is described by a device handle.
     pub device_handle: Handle,
@@ -319,60 +316,6 @@ impl MemorySpaceDescriptor {
         let overlap_end = min(desc_end, range.end);
 
         overlap_start..overlap_end
-    }
-
-    /// Determines if this memory descriptor should be included in the EFI memory map.
-    ///
-    /// Only descriptors that meet UEFI requirements and represent allocatable or special memory
-    /// types are included in the EFI memory map.
-    ///
-    /// # Returns
-    /// * `Some(memory_type)` if the descriptor should be included in the EFI memory map
-    /// * `None` if the descriptor should be excluded
-    pub fn is_efi_memory_map_descriptor(&self) -> Option<r_efi::efi::MemoryType> {
-        use crate::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
-
-        // Validate page alignment and size
-        let number_of_pages = ((self.length as usize + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE) as u64;
-        if number_of_pages == 0 {
-            debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
-            return None; // skip entries for things smaller than a page
-        }
-        if !self.base_address.is_multiple_of(UEFI_PAGE_SIZE as u64) {
-            debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
-            return None; // skip entries not page aligned
-        }
-
-        // Note: For allocator-tracked memory types, this should be called by the DXE core
-        // after checking memory_type_for_handle(self.image_handle)
-        match self.memory_type {
-            // Free memory not tracked by any allocator.
-            GcdMemoryType::SystemMemory => Some(r_efi::efi::CONVENTIONAL_MEMORY),
-
-            // Note: there could also be MMIO tracked by the allocators which would not hit this case.
-            GcdMemoryType::MemoryMappedIo => {
-                // we should only be returning runtime MMIO here
-                if self.attributes & r_efi::efi::MEMORY_RUNTIME == 0 {
-                    None
-                } else {
-                    Some(r_efi::efi::MEMORY_MAPPED_IO)
-                }
-            }
-
-            // Persistent. Note: this type is not allocatable, but might be created by agents other than the core directly
-            // in the GCD.
-            GcdMemoryType::Persistent => Some(r_efi::efi::PERSISTENT_MEMORY),
-
-            // Unaccepted. Note: this type is not allocatable, but might be created by agents other than the core directly
-            // in the GCD.
-            GcdMemoryType::Unaccepted => Some(r_efi::efi::UNACCEPTED_MEMORY_TYPE),
-
-            // Reserved.
-            GcdMemoryType::Reserved => Some(r_efi::efi::RESERVED_MEMORY_TYPE),
-
-            // Other memory types are ignored for purposes of the memory map
-            _ => None,
-        }
     }
 }
 
@@ -399,7 +342,7 @@ pub enum GcdIoType {
     /// An I/O region currently being decoded by a system component that produces
     /// I/O ports that can be used to access I/O devices.
     Io,
-    /// Maximum value for GcdIoType enumeration
+    /// Maximum value for `GcdIoType` enumeration
     Maximum,
 }
 
@@ -413,13 +356,13 @@ pub struct IoSpaceDescriptor {
     pub length: u64,
     /// Type of the I/O region.
     pub io_type: GcdIoType,
-    /// The image handle of the agent that allocated the I/O resource described by PhysicalStart and NumberOfBytes.
+    /// The image handle of the agent that allocated the I/O resource described by `PhysicalStart` and `NumberOfBytes`.
     ///
     /// If this field is NULL, then the I/O resource is not currently allocated.
     pub image_handle: Handle,
     /// The device handle for which the I/O resource has been allocated.
     ///
-    /// If ImageHandle is NULL , then the I/O resource is not currently allocated.
+    /// If `ImageHandle` is NULL , then the I/O resource is not currently allocated.
     ///
     /// If this field is NULL, then the I/O resource is not associated with a device that is described by a device handle.
     pub device_handle: Handle,
@@ -494,7 +437,7 @@ impl Default for MemorySpaceDescriptor {
             length: Default::default(),
             capabilities: Default::default(),
             attributes: Default::default(),
-            memory_type: Default::default(),
+            memory_type: GcdMemoryType::default(),
             image_handle: 0 as Handle,
             device_handle: 0 as Handle,
         }
@@ -506,7 +449,7 @@ impl Default for IoSpaceDescriptor {
         Self {
             base_address: Default::default(),
             length: Default::default(),
-            io_type: Default::default(),
+            io_type: GcdIoType::default(),
             image_handle: 0 as Handle,
             device_handle: 0 as Handle,
         }
@@ -514,7 +457,7 @@ impl Default for IoSpaceDescriptor {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 

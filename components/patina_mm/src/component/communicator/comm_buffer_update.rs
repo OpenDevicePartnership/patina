@@ -12,9 +12,11 @@
 
 use crate::config::CommunicateBuffer;
 use patina::{
-    base::UEFI_PAGE_SIZE,
-    boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
+    UEFI_PAGE_SIZE,
     management_mode::protocol::mm_comm_buffer_update::{self, MmCommBufferUpdateProtocol},
+    standard::efi,
+    uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl},
+    uefi::event::EventType,
 };
 use zerocopy::FromBytes;
 
@@ -24,14 +26,14 @@ use alloc::boxed::Box;
 
 /// Context for the MM Comm Buffer Update Protocol notify callback
 ///
-/// This context is shared between the protocol callback and the communicate() method.
+/// This context is shared between the protocol callback and the `communicate()` method.
 /// When a protocol callback triggers, it stores the pending buffer update atomically.
-/// The next communicate() call will apply the pending update.
+/// The next `communicate()` call will apply the pending update.
 #[repr(C)]
 pub(super) struct ProtocolNotifyContext {
     pub(super) boot_services: StandardBootServices,
     pub(super) updatable_buffer_id: u8,
-    /// Pending buffer update - set by protocol callback, consumed by communicate()
+    /// Pending buffer update - set by protocol callback, consumed by `communicate()`
     pub(super) pending_buffer: AtomicPtr<CommunicateBuffer>,
     /// Flag indicating if a buffer update is pending
     pub(super) has_pending_update: AtomicBool,
@@ -56,7 +58,7 @@ pub(super) fn register_buffer_update_notify(
     boot_services: StandardBootServices,
     updatable_buffer_id: u8,
 ) -> patina::error::Result<&'static ProtocolNotifyContext> {
-    log::trace!(target: "mm_comm", "Setting up protocol notify callback for buffer ID {}", updatable_buffer_id);
+    log::trace!(target: "mm_comm", "Setting up protocol notify callback for buffer ID {updatable_buffer_id}");
 
     let context = Box::leak(Box::new(ProtocolNotifyContext {
         boot_services: boot_services.clone(),
@@ -73,11 +75,11 @@ pub(super) fn register_buffer_update_notify(
     )?;
 
     log::trace!(target: "mm_comm", "Registering protocol notify - callback may fire synchronously");
-    context.boot_services.register_protocol_notify(mm_comm_buffer_update::GUID.as_efi_guid(), event)?;
+    context.boot_services.register_protocol_notify(mm_comm_buffer_update::PROTOCOL_GUID.as_efi_guid(), event)?;
     log::debug!(
         target: "mm_comm",
         "Registered protocol notify on {} with updatable_buffer_id={}",
-        mm_comm_buffer_update::GUID,
+        mm_comm_buffer_update::PROTOCOL_GUID,
         updatable_buffer_id
     );
 
@@ -87,7 +89,7 @@ pub(super) fn register_buffer_update_notify(
 /// Apply any pending buffer update if available
 ///
 /// This function checks if a pending buffer update is available (set by the protocol callback)
-/// and applies it if needed. It should be called from communicate() before processing
+/// and applies it if needed. It should be called from `communicate()` before processing
 /// the communication request.
 ///
 /// # Parameters
@@ -140,7 +142,7 @@ pub(super) fn apply_pending_buffer_update(
         new_buffer.len()
     );
     comm_buffers.push(new_buffer);
-    log::info!(target: "mm_comm", "Successfully applied pending comm buffer {} update", updatable_buffer_id);
+    log::info!(target: "mm_comm", "Successfully applied pending comm buffer {updatable_buffer_id} update");
 
     // Clear the pending flag
     context.has_pending_update.store(false, Ordering::Release);
@@ -151,36 +153,36 @@ pub(super) fn apply_pending_buffer_update(
 ///
 /// This callback is triggered when the MM Communication Buffer Update Protocol is installed.
 /// It reads the protocol data, validates the communication buffer information, and stores
-/// the buffer update. The update will be applied by communicate().
+/// the buffer update. The update will be applied by `communicate()`.
 ///
 /// ## Coverage
 ///
-/// Note: register_buffer_update_notify() and protocol_notify_callback() are difficult to unit test because they
+/// Note: `register_buffer_update_notify()` and `protocol_notify_callback()` are difficult to unit test because they
 /// require:
 ///
 /// 1. UEFI boot services with working event creation and protocol notification services
 /// 2. A protocol database with functional protocol lookup
 /// 3. Raw pointer manipulation of protocol data
 ///
-/// ELements of the protocol update process are unit tested but the notification function as a whole is not.
-#[coverage(off)]
-extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: &'static ProtocolNotifyContext) {
+/// `ELements` of the protocol update process are unit tested but the notification function as a whole is not.
+#[cfg_attr(coverage, coverage(off))]
+extern "efiapi" fn protocol_notify_callback(_event: efi::Event, context: &'static ProtocolNotifyContext) {
     log::trace!(target: "mm_comm", "=== Protocol callback ENTRY ===");
-    log::info!(target: "mm_comm", "Protocol notify callback triggered for {}", mm_comm_buffer_update::GUID);
+    log::info!(target: "mm_comm", "Protocol notify callback triggered for {}", mm_comm_buffer_update::PROTOCOL_GUID);
 
     let updatable_buffer_id = context.updatable_buffer_id;
-    log::debug!(target: "mm_comm", "Updatable buffer ID: {}", updatable_buffer_id);
+    log::debug!(target: "mm_comm", "Updatable buffer ID: {updatable_buffer_id}");
 
     // SAFETY: The boot_services pointer is passed in via ProtocolNotifyContext construction. A valid GUID reference
     // is used.
     let protocol_ptr = match unsafe {
         context
             .boot_services
-            .locate_protocol_unchecked(mm_comm_buffer_update::GUID.as_efi_guid(), core::ptr::null_mut())
+            .locate_protocol_unchecked(mm_comm_buffer_update::PROTOCOL_GUID.as_efi_guid(), core::ptr::null_mut())
     } {
         Ok(ptr) => ptr,
         Err(status) => {
-            log::error!(target: "mm_comm", "Failed to locate protocol: status={:?}", status);
+            log::error!(target: "mm_comm", "Failed to locate protocol: status={status}");
             return;
         }
     };
@@ -199,7 +201,7 @@ extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: 
         match MmCommBufferUpdateProtocol::read_from_bytes(protocol_bytes) {
             Ok(data) => data,
             Err(e) => {
-                log::error!(target: "mm_comm", "Failed to parse protocol data: {:?}", e);
+                log::error!(target: "mm_comm", "Failed to parse protocol data: {e:?}");
                 return;
             }
         }
@@ -214,12 +216,7 @@ extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: 
 
     log::info!(
         target: "mm_comm",
-        "Received MM comm buffer update: version={}, addr=0x{:X}, size={} pages (0x{:X} bytes), status=0x{:X}",
-        version,
-        physical_start,
-        size_pages,
-        size_bytes,
-        status_address
+        "Received MM comm buffer update: version={version}, addr=0x{physical_start:X}, size={size_pages} pages (0x{size_bytes:X} bytes), status=0x{status_address:X}"
     );
 
     // Validate and create the new buffer from the protocol
@@ -243,7 +240,7 @@ extern "efiapi" fn protocol_notify_callback(_event: r_efi::efi::Event, context: 
             buffer
         }
         Err(err) => {
-            log::error!(target: "mm_comm", "Failed to validate comm buffer from protocol data: {:?}", err);
+            log::error!(target: "mm_comm", "Failed to validate comm buffer from protocol data: {err:?}");
             return;
         }
     };
@@ -278,14 +275,14 @@ mod tests {
         pin::Pin,
         sync::atomic::{AtomicBool, AtomicPtr, Ordering},
     };
-    use patina::boot_services::StandardBootServices;
+    use patina::uefi::boot_services::StandardBootServices;
 
     use alloc::boxed::Box;
 
     /// Helper to create a test protocol notify context without boot services
     fn create_test_context(updatable_buffer_id: u8) -> Box<ProtocolNotifyContext> {
-        let mock_bs = Box::leak(Box::new([0u8; core::mem::size_of::<r_efi::system::BootServices>()]));
-        let bs_ptr = mock_bs.as_mut_ptr() as *mut r_efi::system::BootServices;
+        let mock_bs = Box::leak(Box::new([0u8; core::mem::size_of::<patina::standard::efi::BootServices>()]));
+        let bs_ptr = mock_bs.as_mut_ptr().cast::<patina::standard::efi::BootServices>();
         let bs = StandardBootServices::new(bs_ptr);
 
         Box::new(ProtocolNotifyContext {

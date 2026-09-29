@@ -16,10 +16,10 @@ use crate::{
 };
 use alloc::boxed::Box;
 use patina::{
-    boot_services::tpl::Tpl,
     component::{Storage, component, service::memory::MemoryManager},
     error::Result,
-    tpl_mutex::TplMutex,
+    uefi::boot_services::tpl::Tpl,
+    uefi::tpl_mutex::TplMutex,
 };
 
 /// Internal configuration for SMBIOS service
@@ -36,7 +36,7 @@ impl SmbiosConfiguration {
     ///
     /// # Errors
     ///
-    /// Returns `SmbiosError::UnsupportedVersion` if major_version != 3
+    /// Returns `SmbiosError::UnsupportedVersion` if `major_version` != 3
     fn new(major_version: u8, minor_version: u8) -> core::result::Result<Self, SmbiosError> {
         // Only SMBIOS 3.x is supported
         if major_version != 3 {
@@ -55,7 +55,7 @@ impl SmbiosConfiguration {
 /// - Record management: `update_string()`, `remove()`
 /// - Table management: `version()`, `publish_table()`
 ///
-/// The provider creates an SMBIOS manager instance protected by a TplMutex
+/// The provider creates an SMBIOS manager instance protected by a `TplMutex`
 /// and installs the SMBIOS protocol for C/EDKII driver compatibility.
 ///
 /// # Example
@@ -94,7 +94,7 @@ impl SmbiosProvider {
     }
 
     /// Initialize the SMBIOS provider and register it as a service
-    #[coverage(off)] // Component integration - tested via integration tests
+    #[cfg_attr(coverage, coverage(off))] // Component integration - tested via integration tests
     pub fn entry_point(self, storage: &mut Storage) -> Result<()> {
         let cfg = self.config;
 

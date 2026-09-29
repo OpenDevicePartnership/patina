@@ -8,15 +8,13 @@
 //!
 
 pub mod extended;
-pub mod hob;
 pub mod known;
 
-use crate::{BinaryGuid, performance::error::Error, performance_debug_assert};
+use crate::{BinaryGuid, Char8Str, performance::error::Error, performance_debug_assert};
 use alloc::vec::Vec;
 use core::{fmt, fmt::Debug, mem};
-use scroll::Pread;
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy_derive::*;
+use zerocopy_derive::{Immutable, KnownLayout};
 
 /// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
@@ -43,6 +41,7 @@ impl PerformanceRecordHeader {
     }
 
     /// Convert the header to little-endian format.
+    #[must_use]
     pub fn to_le(self) -> Self {
         Self { record_type: self.record_type.to_le(), length: self.length, revision: self.revision }
     }
@@ -124,52 +123,72 @@ pub trait PerformanceRecord {
     }
 }
 
-/// Performance record used to store any specific type of record.
-#[derive(Debug)]
-pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
-    /// This value depicts the format and contents of the performance record.
-    pub record_type: u16,
-    /// This value depicts the length of the performance record, in bytes.
-    pub length: u8,
-    /// This value is updated if the format of the record type is extended.
-    /// Any changes to a performance record layout must be backwards-compatible
-    /// in that all previously defined fields must be maintained if still applicable,
-    /// but newly defined fields allow the length of the performance record to be increased.
-    /// Previously defined record fields must not be redefined, but are permitted to be deprecated.
-    pub revision: u8,
-    /// The underlying data of the specific performance record.
-    pub data: T,
-}
-
-impl<T: AsRef<[u8]>> GenericPerformanceRecord<T> {
-    /// Create a new generic performance record.
-    pub fn new(record_type: u16, length: u8, revision: u8, data: T) -> Self {
-        Self { record_type, length, revision, data }
-    }
-
-    /// Get the header as a structured type.
-    pub fn header(&self) -> PerformanceRecordHeader {
-        PerformanceRecordHeader::new(self.record_type, self.length, self.revision)
-    }
-}
-
-impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
+/// Blanket implementation so that a shared reference to any performance record
+/// (including the unsized [`GenericPerformanceRecord`]) can be used wherever an owned
+/// [`PerformanceRecord`] value is expected.
+impl<T: PerformanceRecord + ?Sized> PerformanceRecord for &T {
     fn record_type(&self) -> u16 {
-        self.record_type
+        (**self).record_type()
     }
 
     fn revision(&self) -> u8 {
-        self.revision
+        (**self).revision()
+    }
+
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        (**self).write_data_into(buff, offset)
+    }
+}
+
+/// A generic performance record type with an opaque payload. Structured as a
+/// [`PerformanceRecordHeader`] immediately followed by the variable-length payload.
+///
+/// Implemented using [`zerocopy`] to allow safe zero-copy parsing of the header and payload from a byte slice.
+#[repr(C, packed)]
+#[derive(FromBytes, IntoBytes, KnownLayout, Immutable)]
+pub struct GenericPerformanceRecord {
+    /// The fixed record header: type, length (header + payload), and revision.
+    pub header: PerformanceRecordHeader,
+    /// The payload of the specific performance record (everything after the header).
+    pub data: [u8],
+}
+
+impl Debug for GenericPerformanceRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GenericPerformanceRecord").field("header", &self.header).field("data", &&self.data).finish()
+    }
+}
+
+impl GenericPerformanceRecord {
+    /// Borrows `bytes` in place as a single performance record.
+    ///
+    /// `bytes` must contain exactly one record: the [`PerformanceRecordHeader`] followed by
+    /// its payload. The trailing bytes after the header become [`GenericPerformanceRecord::data`].
+    ///
+    /// ## Errors
+    ///
+    /// Returns [`Error::Serialization`] if `bytes` is smaller than the record header.
+    pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, Error> {
+        <Self as FromBytes>::ref_from_bytes(bytes).map_err(|_| Error::Serialization)
+    }
+}
+
+impl PerformanceRecord for GenericPerformanceRecord {
+    fn record_type(&self) -> u16 {
+        self.header.record_type
+    }
+
+    fn revision(&self) -> u8 {
+        self.header.revision
     }
 
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
         let remaining = buff.len().saturating_sub(*offset);
-        let data = self.data.as_ref();
-        if data.len() > remaining {
+        if self.data.len() > remaining {
             return Err(Error::Serialization);
         }
-        buff.get_mut(*offset..*offset + data.len()).ok_or(Error::Serialization)?.copy_from_slice(data);
-        *offset += data.len();
+        buff.get_mut(*offset..*offset + self.data.len()).ok_or(Error::Serialization)?.copy_from_slice(&self.data);
+        *offset += self.data.len();
         Ok(())
     }
 }
@@ -285,20 +304,17 @@ impl<'a> Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = GenericPerformanceRecord<&'a [u8]>;
+    type Item = &'a GenericPerformanceRecord;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.buffer.is_empty() {
             return None;
         }
-        let mut offset = 0;
-        let record_type = self.buffer.gread::<u16>(&mut offset).unwrap();
-        let length = self.buffer.gread::<u8>(&mut offset).unwrap();
-        let revision = self.buffer.gread::<u8>(&mut offset).unwrap();
-
-        let data = self.buffer.get(offset..length as usize)?;
-        self.buffer = self.buffer.get(length as usize..)?;
-        Some(GenericPerformanceRecord::new(record_type, length, revision, data))
+        // The `length` field (total record size) is the third byte of the header.
+        let length = self.buffer.get(2).copied()? as usize;
+        let record = GenericPerformanceRecord::ref_from_bytes(self.buffer.get(..length)?).ok()?;
+        self.buffer = self.buffer.get(length..)?;
+        Some(record)
     }
 }
 
@@ -312,13 +328,13 @@ impl<'a> Iterator for Iter<'a> {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct GuidEventRecordData {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     pub progress_id: u16,
     /// APIC ID for the processor in the system used as a timestamp clock source.
     pub apic_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: [u8; 16],
 }
 
@@ -334,7 +350,7 @@ impl fmt::Display for GuidEventRecordData {
         let apic_id = self.apic_id;
         let timestamp = self.timestamp;
         let guid = BinaryGuid::from_bytes(&self.guid);
-        write!(f, "progress_id={}, apic_id={}, timestamp={}, guid={}", progress_id, apic_id, timestamp, guid)
+        write!(f, "progress_id={progress_id}, apic_id={apic_id}, timestamp={timestamp}, guid={guid}")
     }
 }
 
@@ -345,13 +361,13 @@ impl fmt::Display for GuidEventRecordData {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct DynamicStringEventRecordData {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     pub progress_id: u16,
     /// APIC ID for the processor in the system used as a timestamp clock source.
     pub apic_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: [u8; 16],
     // String data follows but is not a part of this fixed structure
 }
@@ -361,12 +377,11 @@ impl DynamicStringEventRecordData {
     pub const NAME: &'static str = "Dynamic String Event";
 
     /// Get the string portion from the full record data
-    pub fn extract_string(full_data: &[u8]) -> &str {
+    pub fn extract_string(full_data: &[u8]) -> &Char8Str {
         let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
-            return "";
+            return Char8Str::EMPTY;
         };
-        let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
+        Char8Str::from_bytes_until_nul(string_bytes).unwrap_or(Char8Str::EMPTY)
     }
 }
 
@@ -377,7 +392,7 @@ impl fmt::Display for DynamicStringEventRecordData {
         let apic_id = self.apic_id;
         let timestamp = self.timestamp;
         let guid = BinaryGuid::from_bytes(&self.guid);
-        write!(f, "progress_id: 0x{:04X}, apic_id: {}, timestamp: {}, guid: {}", progress_id, apic_id, timestamp, guid)
+        write!(f, "progress_id: 0x{progress_id:04X}, apic_id: {apic_id}, timestamp: {timestamp}, guid: {guid}")
     }
 }
 
@@ -387,7 +402,7 @@ impl fmt::Display for DynamicStringEventRecordData {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct DualGuidStringEventRecordData {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     pub progress_id: u16,
     /// APIC ID for the processor in the system used as a timestamp clock source.
     pub apic_id: u32,
@@ -405,12 +420,11 @@ impl DualGuidStringEventRecordData {
     pub const NAME: &'static str = "Dual GUID String Event";
 
     /// Get the string portion from the full record data
-    pub fn extract_string(full_data: &[u8]) -> &str {
+    pub fn extract_string(full_data: &[u8]) -> &Char8Str {
         let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
-            return "";
+            return Char8Str::EMPTY;
         };
-        let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
+        Char8Str::from_bytes_until_nul(string_bytes).unwrap_or(Char8Str::EMPTY)
     }
 }
 
@@ -424,8 +438,7 @@ impl fmt::Display for DualGuidStringEventRecordData {
         let guid_2 = BinaryGuid::from_bytes(&self.guid_2);
         write!(
             f,
-            "progress_id: 0x{:04X}, apic_id: {}, timestamp: {}, guid_1: {}, guid_2: {}",
-            progress_id, apic_id, timestamp, guid_1, guid_2
+            "progress_id: 0x{progress_id:04X}, apic_id: {apic_id}, timestamp: {timestamp}, guid_1: {guid_1}, guid_2: {guid_2}"
         )
     }
 }
@@ -436,13 +449,13 @@ impl fmt::Display for DualGuidStringEventRecordData {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct GuidQwordEventRecordData {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     pub progress_id: u16,
     /// APIC ID for the processor in the system used as a timestamp clock source.
     pub apic_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: [u8; 16],
     /// Event-specific QWORD value.
     pub qword: u64,
@@ -463,8 +476,7 @@ impl fmt::Display for GuidQwordEventRecordData {
         let qword = self.qword;
         write!(
             f,
-            "progress_id: 0x{:04X}, apic_id: {}, timestamp: {}, guid: {}, qword: 0x{:016X}",
-            progress_id, apic_id, timestamp, guid, qword
+            "progress_id: 0x{progress_id:04X}, apic_id: {apic_id}, timestamp: {timestamp}, guid: {guid}, qword: 0x{qword:016X}"
         )
     }
 }
@@ -475,13 +487,13 @@ impl fmt::Display for GuidQwordEventRecordData {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct GuidQwordStringEventRecordData {
-    /// ProgressID < 0x10 are reserved for core performance entries.
+    /// `ProgressID` < 0x10 are reserved for core performance entries.
     pub progress_id: u16,
     /// APIC ID for the processor in the system used as a timestamp clock source.
     pub apic_id: u32,
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
-    /// If ProgressID < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
+    /// If `ProgressID` < 0x10, GUID of the referenced module; otherwise, GUID of the module logging the event.
     pub guid: [u8; 16],
     /// Event-specific QWORD value.
     pub qword: u64,
@@ -493,12 +505,11 @@ impl GuidQwordStringEventRecordData {
     pub const NAME: &'static str = "GUID QWORD String Event";
 
     /// Get the string portion from the full record data
-    pub fn extract_string(full_data: &[u8]) -> &str {
+    pub fn extract_string(full_data: &[u8]) -> &Char8Str {
         let Some(string_bytes) = full_data.get(core::mem::size_of::<Self>()..) else {
-            return "";
+            return Char8Str::EMPTY;
         };
-        let string_len = string_bytes.iter().position(|&b| b == 0).unwrap_or(string_bytes.len());
-        core::str::from_utf8(string_bytes.get(..string_len).unwrap_or(string_bytes)).unwrap_or("<invalid UTF-8>")
+        Char8Str::from_bytes_until_nul(string_bytes).unwrap_or(Char8Str::EMPTY)
     }
 }
 
@@ -512,8 +523,7 @@ impl fmt::Display for GuidQwordStringEventRecordData {
         let qword = self.qword;
         write!(
             f,
-            "progress_id: 0x{:04X}, apic_id: {}, timestamp: {}, guid: {}, qword: 0x{:016X}",
-            progress_id, apic_id, timestamp, guid, qword
+            "progress_id: 0x{progress_id:04X}, apic_id: {apic_id}, timestamp: {timestamp}, guid: {guid}, qword: 0x{qword:016X}"
         )
     }
 }
@@ -526,31 +536,31 @@ pub trait PerformanceRecordDetails {
 
 impl PerformanceRecordDetails for GuidEventRecordData {
     fn print_details(&self, record_number: usize) {
-        log::debug!("  Record #{}: {}", record_number, self);
+        log::debug!("  Record #{record_number}: {self}");
     }
 }
 
 impl PerformanceRecordDetails for DynamicStringEventRecordData {
     fn print_details(&self, record_number: usize) {
-        log::debug!("  Record #{}: {}", record_number, self);
+        log::debug!("  Record #{record_number}: {self}");
     }
 }
 
 impl PerformanceRecordDetails for DualGuidStringEventRecordData {
     fn print_details(&self, record_number: usize) {
-        log::debug!("  Record #{}: {}", record_number, self);
+        log::debug!("  Record #{record_number}: {self}");
     }
 }
 
 impl PerformanceRecordDetails for GuidQwordEventRecordData {
     fn print_details(&self, record_number: usize) {
-        log::debug!("  Record #{}: {}", record_number, self);
+        log::debug!("  Record #{record_number}: {self}");
     }
 }
 
 impl PerformanceRecordDetails for GuidQwordStringEventRecordData {
     fn print_details(&self, record_number: usize) {
-        log::debug!("  Record #{}: {}", record_number, self);
+        log::debug!("  Record #{record_number}: {self}");
     }
 }
 
@@ -571,7 +581,7 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
                 record.print_details(record_number);
                 let string_data = DynamicStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {
-                    log::debug!("    String: \"{}\"", string_data);
+                    log::debug!("    String: \"{string_data}\"");
                 }
             }
         }
@@ -582,7 +592,7 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
                 record.print_details(record_number);
                 let string_data = DualGuidStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {
-                    log::debug!("    String: \"{}\"", string_data);
+                    log::debug!("    String: \"{string_data}\"");
                 }
             }
         }
@@ -600,12 +610,12 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
                 record.print_details(record_number);
                 let string_data = GuidQwordStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {
-                    log::debug!("    String: \"{}\"", string_data);
+                    log::debug!("    String: \"{string_data}\"");
                 }
             }
         }
         _ => {
-            log::debug!("  Record #{}: Unknown type 0x{:04X}", record_number, record_type);
+            log::debug!("  Record #{record_number}: Unknown type 0x{record_type:04X}");
         }
     }
 }
@@ -623,7 +633,7 @@ pub fn record_type_name(record_type: u16) -> &'static str {
 }
 
 #[cfg(test)]
-#[coverage(off)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
     use core::{assert_eq, slice, unreachable};
@@ -642,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_push_record() {
-        let guid = crate::guids::ZERO;
+        let guid = crate::BinaryGuid::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
         let mut size = 0;
 
@@ -667,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_iter() {
-        let guid = crate::guids::ZERO;
+        let guid = crate::BinaryGuid::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
         performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
@@ -677,27 +687,19 @@ mod tests {
         performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
 
         for (i, record) in performance_record_buffer.iter().enumerate() {
+            let actual = (record.header.record_type, record.header.revision);
             match i {
-                _ if i == 0 => assert_eq!(
-                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 1 => assert_eq!(
-                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 2 => assert_eq!(
-                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 3 => assert_eq!(
-                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 4 => assert_eq!(
-                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
+                _ if i == 0 => assert_eq!((GuidEventRecord::TYPE, GuidEventRecord::REVISION), actual),
+                _ if i == 1 => {
+                    assert_eq!((DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION), actual);
+                }
+                _ if i == 2 => {
+                    assert_eq!((DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION), actual);
+                }
+                _ if i == 3 => assert_eq!((GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION), actual),
+                _ if i == 4 => {
+                    assert_eq!((GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION), actual);
+                }
                 _ => unreachable!(),
             }
         }
@@ -705,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_performance_record_buffer_reported_table() {
-        let guid = crate::guids::ZERO;
+        let guid = crate::BinaryGuid::ZERO;
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
         performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
@@ -722,27 +724,19 @@ mod tests {
         performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
 
         for (i, record) in performance_record_buffer.iter().enumerate() {
+            let actual = (record.header.record_type, record.header.revision);
             match i {
-                _ if i == 0 => assert_eq!(
-                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 1 => assert_eq!(
-                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 2 => assert_eq!(
-                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 3 => assert_eq!(
-                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
-                _ if i == 4 => assert_eq!(
-                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
-                    (record.record_type, record.revision)
-                ),
+                _ if i == 0 => assert_eq!((GuidEventRecord::TYPE, GuidEventRecord::REVISION), actual),
+                _ if i == 1 => {
+                    assert_eq!((DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION), actual);
+                }
+                _ if i == 2 => {
+                    assert_eq!((DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION), actual);
+                }
+                _ if i == 3 => assert_eq!((GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION), actual),
+                _ if i == 4 => {
+                    assert_eq!((GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION), actual);
+                }
                 _ => unreachable!(),
             }
         }
@@ -864,7 +858,7 @@ mod tests {
             guid: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10],
         };
 
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
         assert!(display_str.contains("progress_id=4660"));
         assert!(display_str.contains("apic_id=42"));
         assert!(display_str.contains("timestamp=1000000"));
@@ -879,7 +873,7 @@ mod tests {
             guid: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20],
         };
 
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
         assert!(display_str.contains("progress_id: 0x5678"));
         assert!(display_str.contains("apic_id: 99"));
         assert!(display_str.contains("timestamp: 2000000"));
@@ -903,12 +897,13 @@ mod tests {
     }
 
     #[test]
-    fn test_dynamic_string_event_record_data_extract_string_invalid_utf8() {
+    fn test_dynamic_string_event_record_data_extract_string_latin1_high_bytes() {
+        // Note: CHAR8 is ASCII/ISO-Latin-1, so bytes above 0x7F are valid characters rather than an error.
         let mut data = vec![0u8; core::mem::size_of::<DynamicStringEventRecordData>()];
-        data.extend_from_slice(&[0xFF, 0xFE, 0xFD, 0x00]); // Invalid UTF-8
+        data.extend_from_slice(&[0xFF, 0xFE, 0xFD, 0x00]);
 
         let extracted = DynamicStringEventRecordData::extract_string(&data);
-        assert_eq!(extracted, "<invalid UTF-8>");
+        assert_eq!(extracted, "\u{FF}\u{FE}\u{FD}");
     }
 
     #[test]
@@ -916,8 +911,10 @@ mod tests {
         let mut data = vec![0u8; core::mem::size_of::<DynamicStringEventRecordData>()];
         data.extend_from_slice(b"NoNull");
 
+        // Note: Unterminated data cannot be represented as a valid `Char8Str`, so extraction falls back
+        // to an empty string.
         let extracted = DynamicStringEventRecordData::extract_string(&data);
-        assert_eq!(extracted, "NoNull");
+        assert_eq!(extracted, "");
     }
 
     #[test]
@@ -930,7 +927,7 @@ mod tests {
             guid_2: [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40],
         };
 
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
         assert!(display_str.contains("progress_id: 0xABCD"));
         assert!(display_str.contains("apic_id: 123"));
         assert!(display_str.contains("timestamp: 3000000"));
@@ -965,7 +962,7 @@ mod tests {
             qword: 0x123456789ABCDEF0,
         };
 
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
         assert!(display_str.contains("progress_id: 0xEF01"));
         assert!(display_str.contains("apic_id: 200"));
         assert!(display_str.contains("timestamp: 4000000"));
@@ -982,7 +979,7 @@ mod tests {
             qword: 0xFEDCBA9876543210,
         };
 
-        let display_str = format!("{}", record);
+        let display_str = format!("{record}");
         assert!(display_str.contains("progress_id: 0x2345"));
         assert!(display_str.contains("apic_id: 77"));
         assert!(display_str.contains("timestamp: 5000000"));

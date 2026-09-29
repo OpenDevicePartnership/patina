@@ -13,10 +13,12 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+extern crate alloc;
+
 use core::ffi::c_char;
 
-use patina::{tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
-use r_efi::efi;
+use alloc::string::ToString;
+use patina::{Char8Str, protocol::ProtocolInterface, standard::efi, uefi::tpl_mutex::TplMutex};
 
 use crate::service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosHandle, SmbiosTableHeader, SmbiosType};
 
@@ -39,16 +41,16 @@ pub(super) struct SmbiosProtocolInternal {
     pub(super) protocol: SmbiosProtocol,
 
     // Internal component access only! Does not exist in C definition
-    pub(super) manager: &'static TplMutex<SmbiosManager, patina::boot_services::StandardBootServices>,
+    pub(super) manager: &'static TplMutex<SmbiosManager, patina::uefi::boot_services::StandardBootServices>,
 
     // Boot services needed for table republishing after Add/Update/Remove
-    pub(super) boot_services: &'static patina::boot_services::StandardBootServices,
+    pub(super) boot_services: &'static patina::uefi::boot_services::StandardBootServices,
 }
 
 // SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
 // must match the SMBIOS protocol interface with function pointers in the correct order.
 unsafe impl ProtocolInterface for SmbiosProtocol {
-    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
+    const PROTOCOL_GUID: patina::BinaryGuid = patina::BinaryGuid(efi::protocols::smbios::PROTOCOL_GUID);
 }
 
 type SmbiosAdd =
@@ -85,12 +87,12 @@ impl SmbiosProtocolInternal {
     ///
     /// This constructor is tested via integration (Q35 platform component)
     /// as it requires 'static boot services which cannot be mocked in unit tests.
-    #[coverage(off)]
+    #[cfg_attr(coverage, coverage(off))]
     pub(super) fn new(
         major_version: u8,
         minor_version: u8,
-        manager: &'static TplMutex<SmbiosManager, patina::boot_services::StandardBootServices>,
-        boot_services: &'static patina::boot_services::StandardBootServices,
+        manager: &'static TplMutex<SmbiosManager, patina::uefi::boot_services::StandardBootServices>,
+        boot_services: &'static patina::uefi::boot_services::StandardBootServices,
     ) -> Self {
         Self { protocol: SmbiosProtocol::new(major_version, minor_version), manager, boot_services }
     }
@@ -103,7 +105,7 @@ impl SmbiosProtocol {
     ///
     /// This function is only safe to call from the C UEFI protocol layer where the
     /// caller guarantees that `record` points to a complete, valid SMBIOS record.
-    #[coverage(off)] // FFI function - tested via integration tests
+    #[cfg_attr(coverage, coverage(off))] // FFI function - tested via integration tests
     extern "efiapi" fn add_ext(
         protocol: *const SmbiosProtocol,
         producer_handle: efi::Handle,
@@ -117,7 +119,7 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS Add] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS Add] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -125,11 +127,11 @@ impl SmbiosProtocol {
         // Cast from protocol pointer to internal struct pointer is safe due to repr(C) layout:
         // SmbiosProtocolInternal has SmbiosProtocol as its first field, so a pointer to
         // SmbiosProtocol is also a valid pointer to the containing SmbiosProtocolInternal.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
 
         let manager = match internal.manager.try_lock() {
             Ok(guard) => guard,
-            Err(_) => {
+            Err(()) => {
                 debug_assert!(false, "[SMBIOS Add] ERROR: try_lock FAILED - mutex already locked!");
                 return efi::Status::DEVICE_ERROR;
             }
@@ -147,7 +149,7 @@ impl SmbiosProtocol {
             }
 
             // Scan for the string pool terminator (double null)
-            let base_ptr = record as *const u8;
+            let base_ptr = record.cast::<u8>();
 
             // Scan for double null terminator
             let mut consecutive_nulls = 0;
@@ -199,7 +201,7 @@ impl SmbiosProtocol {
         }
     }
 
-    #[coverage(off)] // FFI function - tested via integration tests
+    #[cfg_attr(coverage, coverage(off))] // FFI function - tested via integration tests
     extern "efiapi" fn update_string_ext(
         protocol: *const SmbiosProtocol,
         smbios_handle: *mut SmbiosHandle,
@@ -213,12 +215,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS UpdateString] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS UpdateString] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
         let manager = internal.manager.lock();
 
         // SAFETY: The pointers are checked for being null above and guaranteed valid by caller
@@ -226,17 +228,13 @@ impl SmbiosProtocol {
             let handle = smbios_handle.read_unaligned();
             let str_num = string_number.read_unaligned();
 
-            // Convert C string to Rust str
-            let c_str = core::ffi::CStr::from_ptr(string);
-            let rust_str = match c_str.to_str() {
-                Ok(s) => s,
-                Err(_) => return efi::Status::INVALID_PARAMETER,
-            };
+            // `string` is a NUL-terminated CHAR8 string, per the SMBIOS Protocol's `UpdateString()` interface.
+            let rust_str = Char8Str::from_ptr(string.cast()).to_string();
 
             (handle, str_num, rust_str)
         };
 
-        match manager.update_string(handle, str_num, rust_str) {
+        match manager.update_string(handle, str_num, &rust_str) {
             Ok(()) => {
                 if manager.republish_table().is_err() {
                     log::error!("[SMBIOS UpdateString] Failed to rebuild table");
@@ -249,7 +247,7 @@ impl SmbiosProtocol {
         }
     }
 
-    #[coverage(off)] // FFI function - tested via integration tests
+    #[cfg_attr(coverage, coverage(off))] // FFI function - tested via integration tests
     extern "efiapi" fn remove_ext(protocol: *const SmbiosProtocol, smbios_handle: SmbiosHandle) -> efi::Status {
         // Safety check: validate protocol pointer before dereferencing
         if protocol.is_null() {
@@ -258,12 +256,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS Remove] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS Remove] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
         let manager = internal.manager.lock();
 
         match manager.remove(smbios_handle) {
@@ -279,7 +277,7 @@ impl SmbiosProtocol {
         }
     }
 
-    #[coverage(off)] // FFI function - tested via integration tests
+    #[cfg_attr(coverage, coverage(off))] // FFI function - tested via integration tests
     extern "efiapi" fn get_next_ext(
         protocol: *const SmbiosProtocol,
         smbios_handle: *mut SmbiosHandle,
@@ -294,12 +292,12 @@ impl SmbiosProtocol {
 
         // Check protocol pointer alignment
         if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
-            debug_assert!(false, "[SMBIOS GetNext] Protocol pointer misaligned: {:p}", protocol);
+            debug_assert!(false, "[SMBIOS GetNext] Protocol pointer misaligned: {protocol:p}");
             return efi::Status::INVALID_PARAMETER;
         }
 
         // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+        let internal = unsafe { &*protocol.cast::<SmbiosProtocolInternal>() };
 
         let found_handle = {
             let manager = internal.manager.lock();
@@ -352,7 +350,7 @@ impl SmbiosProtocol {
             }
             efi::Status::SUCCESS
         } else {
-            debug_assert!(false, "[SMBIOS GetNext] Record handle {:04X} not found in second lookup", found_handle);
+            debug_assert!(false, "[SMBIOS GetNext] Record handle {found_handle:04X} not found in second lookup");
             efi::Status::NOT_FOUND
         }
     }
@@ -470,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_protocol_guid() {
-        use patina::uefi_protocol::ProtocolInterface;
+        use patina::protocol::ProtocolInterface;
 
         // Verify the GUID matches the EDK2 SMBIOS protocol GUID
         let expected_guid = patina::BinaryGuid::from_string("03583FF6-CB36-4940-947E-B9B39F4AFAF7");
@@ -500,7 +498,7 @@ mod tests {
         // Since protocol is at offset 0, any properly aligned SmbiosProtocolInternal pointer
         // is also a properly aligned SmbiosProtocol pointer (and vice versa when protocol is first field)
         let protocol = SmbiosProtocol::new(3, 9);
-        let protocol_ptr = &protocol as *const SmbiosProtocol;
+        let protocol_ptr = &raw const protocol;
         let protocol_addr = protocol_ptr as usize;
 
         // This pointer should be valid for casting to SmbiosProtocolInternal alignment
