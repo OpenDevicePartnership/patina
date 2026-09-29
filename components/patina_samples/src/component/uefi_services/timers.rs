@@ -3,9 +3,11 @@
 //! This component demonstrates [`TimerEventServicesExt`] timers. [`TimerEventServices`] is only
 //! registered by the DXE Core once the Timer Architectural Protocol, the protocol backing the
 //! `SetTimer()` boot service, is installed, so this component is simply not dispatched until
-//! timers can be used. It shows a **one-shot** timer that fires once after a delay and a
-//! **periodic** timer that fires repeatedly. Notifications are ordinary Rust closures. The
-//! closure is owned by the event and dropped when the event is closed.
+//! timers can be used. It shows a **one-shot** timer, created with
+//! [`TimerEventServicesExt::on_timer_event_self_managed`], whose closure owns its event
+//! exclusively and closes it once it fires, since a relative timer never fires again. It also
+//! shows a **periodic** timer, created with [`TimerEventServicesExt::on_timer_event`], whose
+//! event is instead owned by the caller and left running to demonstrate a long-lived event.
 //!
 //! Because a timer closure runs asynchronously at a raised task priority level, it communicates
 //! with the rest of the component through `'static` atomics rather than captured borrows.
@@ -62,14 +64,24 @@ impl TimerSample {
         timing: Service<dyn TimingServices>,
         events: Service<dyn EventServices>,
     ) -> Result<()> {
-        // Fire once, 50 ms from now. `TimerType::Relative` schedules a single fire.
-        let one_shot = timer_events.on_timer_event(Tpl::Callback, || {
-            ONE_SHOT_FIRED.store(true, Ordering::Relaxed);
-            log::info!("Logged from the one-shot timer event");
-        })?;
-        timer_events.set_timer(one_shot, TimerType::Relative(Duration::from_millis(5)))?;
+        // Fire once, 50 ms from now. `TimerType::Relative` schedules a single fire, so the
+        // closure closes its own event (the one it is passed) once it runs. This is the only way
+        // to arm a self-managed timer, since creation and arming happen in one call, nothing is
+        // returned to the caller, as the closure is the event's sole owner from here on.
+        timer_events.on_timer_event_self_managed(
+            Tpl::Callback,
+            TimerType::Relative(Duration::from_millis(5)),
+            move |event| {
+                ONE_SHOT_FIRED.store(true, Ordering::Relaxed);
+                log::info!("Logged from the one-shot timer event");
+                if let Err(e) = events.close_event(event) {
+                    log::error!("Failed to close one-shot timer event: {e:?}");
+                }
+            },
+        )?;
 
-        // Fire every 10 ms until cancelled. `TimerType::Periodic` re-arms automatically.
+        // Fire every 10 ms until cancelled. `TimerType::Periodic` re-arms automatically. The
+        // caller owns the returned event and is responsible for arming and eventually closing it.
         let periodic = timer_events.on_timer_event(Tpl::Callback, || {
             PERIODIC_TICKS.fetch_add(1, Ordering::Relaxed);
             log::info!("Logged from the periodic timer event");
@@ -78,16 +90,10 @@ impl TimerSample {
 
         log::info!("Armed one-shot (50 ms) and periodic (10 ms) timers");
 
-        // Give the one shot timer enough time to fire before cancelling it.
-        // There should be at least 5 ticks of the periodic timer during this time,
-        // as well but the exact number is not guaranteed.
+        // Give the one-shot timer enough time to fire and close itself. There should be at
+        // least 5 ticks of the periodic timer during this time as well, but the exact number is
+        // not guaranteed.
         timing.stall(Duration::from_millis(50))?;
-
-        // A component that only needed the one-shot would cancel and close it once done. Here we
-        // close the one-shot event to show the cleanup path; closing drops its closure. The
-        // periodic timer is left running to demonstrate a long-lived event.
-        timer_events.set_timer(one_shot, TimerType::Cancel)?;
-        events.close_event(one_shot)?;
 
         // A polling timer can be setup without a notification callback, the caller checks it using
         // `EventServices::check_event` instead of a closure running asynchronously.
@@ -98,6 +104,9 @@ impl TimerSample {
         }
         log::info!("Polling timer fired");
         events.close_event(poll_timer)?;
+
+        // The periodic timer is left running to demonstrate a long-lived event. A real component
+        // would cancel and close it once its work is done.
 
         Ok(())
     }

@@ -4,6 +4,30 @@
 //! supplied as Rust closures rather than C function pointers with an opaque context argument, and
 //! events are represented by the opaque [`Event`] handle rather than a raw pointer.
 //!
+//! ## Ownership Model
+//!
+//! APIs are split into "caller-managed" and "self-managed" functions where the closure is responsible
+//! for managing the event in "self-managed" mode.
+//!
+//! ### Caller-Managed
+//!
+//! The goal is to constrain an event to a single owner at a time. [`EventServicesExt::on_event`]/
+//! [`EventServicesExt::on_event_group`] return the [`Event`] to the caller, who is responsible for
+//! signaling, checking, and closing it. Their callback does not receive it.
+//!
+//! ### Self-Managed
+//!
+//! [`EventServicesExt::on_event_group_self_managed`] hands the event to the callback and
+//! returns nothing to the caller, for groups that are always signaled by something other than the
+//! code that registered the listener (for example, BDS/platform code signaling
+//! [`crate::pi::event::END_OF_DXE_EVENT_GROUP_GUID`]), the callback can then close its own event
+//! once its job is done, with nobody else left holding a copy. There is intentionally not a
+//! non-group self-managed function, since if the caller receives nothing in return and the callback
+//! doesn't signal itself, nothing could signal it.
+//!
+//! It is safe for an event to be closed from within its own callback (or an ancestor's, if closed from a nested
+//! notification).
+//!
 //! Timer events are handled separately by [`TimerEventServices`](super::timer_event::TimerEventServices),
 //! since arming a timer depends on the Timer Architectural Protocol.
 //!
@@ -29,8 +53,9 @@ use mockall::automock;
 /// The callback is supplied to [`EventServices::create_event`],
 /// [`EventServices::create_event_for_group`], and
 /// [`TimerEventServices::create_timer_event`](super::timer_event::TimerEventServices::create_timer_event),
-/// and is owned by the event until the event is closed.
-pub type EventNotifyCallback = Box<dyn FnMut() + 'static>;
+/// and is owned by the event until the event is closed. It is passed the [`Event`] that fired,
+/// which can be used to signal, check, or close the event from within its own callback.
+pub type EventNotifyCallback = Box<dyn FnMut(Event) + 'static>;
 
 /// An opaque handle to a created event.
 ///
@@ -154,6 +179,11 @@ pub trait EventServices {
 
     /// Closes an event, releasing it and dropping its notification callback.
     ///
+    /// It is safe to call this from within the event's own notification callback (or an
+    /// ancestor's, if closed from a nested notification). Once an event is closed,
+    /// whether from within its own callback or by the code that created it, any further
+    /// operation on it returns [`EventError::InvalidParameter`].
+    ///
     /// # Errors
     ///
     /// Returns [`EventError::InvalidParameter`] if `event` is not a valid event.
@@ -170,6 +200,9 @@ pub trait EventServices {
 ///
 /// # Examples
 ///
+/// A callback registered on an event. The caller owns the returned [`Event`] and is
+/// responsible for signaling, checking, and closing it; the callback does not receive it:
+///
 /// ```rust,no_run
 /// use patina::component::service::{Service, uefi_services::event::{EventServices, EventServicesExt, Tpl}};
 /// use patina::error::Result;
@@ -181,23 +214,47 @@ pub trait EventServices {
 ///     Ok(())
 /// }
 /// ```
+///
+/// A group listener that closes its own event once it has run. Nothing is returned to the
+/// caller, since the callback is the event's only owner:
+///
+/// ```rust,no_run
+/// use patina::component::service::{Service, uefi_services::event::{EventServices, EventServicesExt, Tpl}};
+/// use patina::error::Result;
+/// use patina::pi::event::END_OF_DXE_EVENT_GROUP_GUID;
+///
+/// fn entry_point(events: Service<dyn EventServices>) -> Result<()> {
+///     let closing_events = events.clone();
+///     events.on_event_group_self_managed(END_OF_DXE_EVENT_GROUP_GUID, Tpl::Callback, move |event| {
+///         log::info!("signaled once");
+///         closing_events.close_event(event).expect("failed to close event");
+///     })?;
+///     Ok(())
+/// }
+/// ```
 pub trait EventServicesExt: EventServices {
     /// Creates an event with a notification callback that runs when the event is signaled.
     ///
     /// Equivalent to [`EventServices::create_event`], but takes a plain closure instead of a
-    /// pre-boxed [`EventNotifyCallback`].
+    /// pre-boxed [`EventNotifyCallback`]. The callback does not receive the event. The caller
+    /// owns the returned [`Event`] and is responsible for signaling, checking, and closing
+    /// it. Use [`Self::on_event_group_self_managed`] instead if the callback itself needs to act
+    /// on its own event.
     ///
     /// # Errors
     ///
     /// Returns [`EventError::InvalidParameter`] if the event could not be created.
-    fn on_event(&self, notify_tpl: Tpl, callback: impl FnMut() + 'static) -> Result<Event, EventError> {
-        self.create_event(notify_tpl, Box::new(callback))
+    fn on_event(&self, notify_tpl: Tpl, mut callback: impl FnMut() + 'static) -> Result<Event, EventError> {
+        self.create_event(notify_tpl, Box::new(move |_event| callback()))
     }
 
     /// Creates an event with a notification callback that runs whenever `group` is signaled.
     ///
     /// Equivalent to [`EventServices::create_event_for_group`], but takes a plain closure instead
-    /// of a pre-boxed [`EventNotifyCallback`].
+    /// of a pre-boxed [`EventNotifyCallback`]. The callback does not receive the event. The
+    /// caller owns the returned [`Event`] and is responsible for signaling, checking, and
+    /// closing it. Use [`Self::on_event_group_self_managed`] instead if the callback itself needs
+    /// to act on its own event.
     ///
     /// # Errors
     ///
@@ -206,9 +263,29 @@ pub trait EventServicesExt: EventServices {
         &self,
         group: BinaryGuid,
         notify_tpl: Tpl,
-        callback: impl FnMut() + 'static,
+        mut callback: impl FnMut() + 'static,
     ) -> Result<Event, EventError> {
-        self.create_event_for_group(group, notify_tpl, Box::new(callback))
+        self.create_event_for_group(group, notify_tpl, Box::new(move |_event| callback()))
+    }
+
+    /// Creates an event with a notification callback that runs whenever `group` is signaled,
+    /// giving the callback its own event instead of returning it to the caller.
+    ///
+    /// Nothing is returned on success. The callback is the event's only owner, so there is
+    /// nothing left for the caller to signal, check, or close. This is for a listener that only
+    /// needs to act from within its own notification. For example, closing itself once it
+    /// has done its job, for a group signaled by external (BDS/platform) code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EventError::InvalidParameter`] if the event could not be created.
+    fn on_event_group_self_managed(
+        &self,
+        group: BinaryGuid,
+        notify_tpl: Tpl,
+        callback: impl FnMut(Event) + 'static,
+    ) -> Result<(), EventError> {
+        self.create_event_for_group(group, notify_tpl, Box::new(callback)).map(|_event| ())
     }
 }
 
@@ -251,7 +328,7 @@ mod tests {
             .returning(|_, _, _| Ok(Event::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()));
         mock.expect_close_event().times(1).returning(|_| Ok(()));
 
-        let event = mock.create_event_for_group(BinaryGuid::ZERO, Tpl::Callback, Box::new(|| {})).unwrap();
+        let event = mock.create_event_for_group(BinaryGuid::ZERO, Tpl::Callback, Box::new(|_event| {})).unwrap();
         assert!(mock.close_event(event).is_ok());
     }
 
@@ -266,6 +343,23 @@ mod tests {
     }
 
     #[test]
+    fn test_event_services_ext_on_event_ignores_its_own_event() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let mut mock = MockEventServices::new();
+        mock.expect_create_event().times(1).returning(|_, mut callback| {
+            callback(dummy_event());
+            Ok(dummy_event())
+        });
+
+        let ran: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let ran_in_callback = ran.clone();
+        assert!(mock.on_event(Tpl::Callback, move || ran_in_callback.set(true)).is_ok());
+        assert!(ran.get());
+    }
+
+    #[test]
     fn test_event_services_ext_on_event_group() {
         let mut mock = MockEventServices::new();
         mock.expect_create_event_for_group()
@@ -273,5 +367,41 @@ mod tests {
             .returning(|_, _, _| Ok(Event::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()));
 
         assert!(mock.on_event_group(BinaryGuid::ZERO, Tpl::Callback, || {}).is_ok());
+    }
+
+    #[test]
+    fn test_event_services_ext_on_event_group_self_managed() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let mut mock = MockEventServices::new();
+        mock.expect_create_event_for_group().times(1).returning(|_, _, mut callback| {
+            callback(dummy_event());
+            Ok(dummy_event())
+        });
+
+        let received: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+        let received_in_callback = received.clone();
+        let result = mock.on_event_group_self_managed(BinaryGuid::ZERO, Tpl::Callback, move |event| {
+            received_in_callback.set(Some(event));
+        });
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(received.get(), Some(dummy_event()));
+    }
+
+    #[test]
+    fn test_event_notify_callback_receives_its_own_event() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let event = dummy_event();
+        let received: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+        let received_in_callback = received.clone();
+        let mut callback: EventNotifyCallback = Box::new(move |e| received_in_callback.set(Some(e)));
+
+        callback(event);
+
+        assert_eq!(received.get(), Some(event));
     }
 }

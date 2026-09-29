@@ -64,10 +64,11 @@ impl UefiServicesSample {
         timing.stall(Duration::from_millis(1))?;
 
         // Create a periodic timer whose Rust closure runs on each tick. The closure is
-        // owned by the event and dropped when the event is closed.
+        // owned by the event and dropped when the event is closed. The timer is left
+        // running after the entry point returns to demonstrate the periodic timer functionality.
         let timer = timer_events.create_timer_event(
             Tpl::Callback,
-            Box::new(|| {
+            Box::new(|_event| {
                 TICK_COUNT.fetch_add(1, Ordering::Relaxed);
             }),
         )?;
