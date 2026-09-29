@@ -21,7 +21,6 @@ use scroll::{
 device_path_node! {
     /// An ATAPI device and its logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
-    @[DevicePathNodeValidate(Self::validate_fields)]
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
@@ -30,17 +29,6 @@ device_path_node! {
         pub slave_master: u8,
         /// Logical unit number.
         pub lun: u16,
-    }
-}
-
-impl Atapi {
-    fn validate_fields(&self) -> Result<(), scroll::Error> {
-        let node = self;
-
-        if node.primary_secondary > 1 || node.slave_master > 1 {
-            return Err(invalid("invalid ATAPI channel or master/slave selector"));
-        }
-        Ok(())
     }
 }
 
@@ -54,7 +42,9 @@ impl TryFromCtx<'_, scroll::Endian> for Atapi {
             slave_master: data.gread_with::<u8>(&mut offset, endian)?,
             lun: data.gread_with::<u16>(&mut offset, endian)?,
         };
-        node.validate()?;
+        if node.primary_secondary > 1 || node.slave_master > 1 {
+            return Err(invalid("invalid ATAPI channel or master/slave selector"));
+        }
         Ok((node, offset))
     }
 }
@@ -63,7 +53,9 @@ impl TryIntoCtx<scroll::Endian> for Atapi {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.primary_secondary > 1 || self.slave_master > 1 {
+            return Err(invalid("invalid ATAPI channel or master/slave selector"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.primary_secondary, &mut offset, endian)?;
         data.gwrite_with(self.slave_master, &mut offset, endian)?;
@@ -81,7 +73,6 @@ impl Display for Atapi {
 device_path_node! {
     /// A target and logical unit on a SCSI bus.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
@@ -100,7 +91,6 @@ impl Display for Scsi {
 device_path_node! {
     /// A Fibre Channel device using numeric WWN and LUN fields.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -124,7 +114,6 @@ device_path_node! {
     /// The 24-byte layout includes the reserved field, as specified in UEFI 2.11
     /// Table 10.16 and EDK II, rather than the inconsistent 20-byte example.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -145,7 +134,6 @@ impl Display for FiberChannelEx {
 device_path_node! {
     /// An IEEE 1394 device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -164,7 +152,6 @@ impl Display for Ieee1394 {
 device_path_node! {
     /// A USB port and interface.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
@@ -183,7 +170,6 @@ impl Display for Usb {
 device_path_node! {
     /// An I2O random block storage target.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
@@ -200,7 +186,6 @@ impl Display for I2oRandomBlockStorageClass {
 device_path_node! {
     /// A network interface's MAC address.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct MacAddress {
         /// Address bytes in wire order; producers pad unused bytes with zero.
@@ -219,7 +204,6 @@ impl Display for MacAddress {
 device_path_node! {
     /// An IPv6 network connection.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
-    @[DevicePathNodeValidate(Self::validate_fields)]
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct IpV6 {
         /// Local IPv6 address octets in network order.
@@ -241,17 +225,6 @@ device_path_node! {
     }
 }
 
-impl IpV6 {
-    fn validate_fields(&self) -> Result<(), scroll::Error> {
-        let node = self;
-
-        if node.ip_address_origin > 2 || node.prefix_length > 128 {
-            return Err(invalid("invalid IPv6 address origin or prefix length"));
-        }
-        Ok(())
-    }
-}
-
 impl TryFromCtx<'_, scroll::Endian> for IpV6 {
     type Error = scroll::Error;
 
@@ -267,7 +240,9 @@ impl TryFromCtx<'_, scroll::Endian> for IpV6 {
             prefix_length: data.gread_with::<u8>(&mut offset, endian)?,
             gateway_ip_address: data.gread_with::<[u8; 16]>(&mut offset, scroll::LE)?,
         };
-        node.validate()?;
+        if node.ip_address_origin > 2 || node.prefix_length > 128 {
+            return Err(invalid("invalid IPv6 address origin or prefix length"));
+        }
         Ok((node, offset))
     }
 }
@@ -276,7 +251,9 @@ impl TryIntoCtx<scroll::Endian> for IpV6 {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.ip_address_origin > 2 || self.prefix_length > 128 {
+            return Err(invalid("invalid IPv6 address origin or prefix length"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.local_ip_address.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.remote_ip_address.as_slice(), &mut offset, ())?;
@@ -299,22 +276,10 @@ impl Display for IpV6 {
 device_path_node! {
     /// An IEEE 802.1Q virtual LAN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
-    @[DevicePathNodeValidate(Self::validate_fields)]
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
         pub vlan_id: u16,
-    }
-}
-
-impl Vlan {
-    fn validate_fields(&self) -> Result<(), scroll::Error> {
-        let node = self;
-
-        if node.vlan_id > 4094 {
-            return Err(invalid("invalid VLAN identifier"));
-        }
-        Ok(())
     }
 }
 
@@ -324,7 +289,9 @@ impl TryFromCtx<'_, scroll::Endian> for Vlan {
     fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
         let mut offset = 0;
         let node = Self { vlan_id: data.gread_with::<u16>(&mut offset, endian)? };
-        node.validate()?;
+        if node.vlan_id > 4094 {
+            return Err(invalid("invalid VLAN identifier"));
+        }
         Ok((node, offset))
     }
 }
@@ -333,7 +300,9 @@ impl TryIntoCtx<scroll::Endian> for Vlan {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.vlan_id > 4094 {
+            return Err(invalid("invalid VLAN identifier"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.vlan_id, &mut offset, endian)?;
         Ok(offset)
@@ -349,7 +318,6 @@ impl Display for Vlan {
 device_path_node! {
     /// An InfiniBand fabric endpoint.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
         /// Resource flags; producers clear reserved bits above bit 4.
@@ -374,7 +342,6 @@ impl Display for InfiniBand {
 device_path_node! {
     /// A UART connection and its serial configuration.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
-    @[DevicePathNodeValidate(Self::validate_fields)]
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct Uart {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -390,17 +357,6 @@ device_path_node! {
     }
 }
 
-impl Uart {
-    fn validate_fields(&self) -> Result<(), scroll::Error> {
-        let node = self;
-
-        if node.parity > 5 || node.stop_bits > 3 {
-            return Err(invalid("invalid UART parity or stop bits"));
-        }
-        Ok(())
-    }
-}
-
 impl TryFromCtx<'_, scroll::Endian> for Uart {
     type Error = scroll::Error;
 
@@ -413,7 +369,9 @@ impl TryFromCtx<'_, scroll::Endian> for Uart {
             parity: data.gread_with::<u8>(&mut offset, endian)?,
             stop_bits: data.gread_with::<u8>(&mut offset, endian)?,
         };
-        node.validate()?;
+        if node.parity > 5 || node.stop_bits > 3 {
+            return Err(invalid("invalid UART parity or stop bits"));
+        }
         Ok((node, offset))
     }
 }
@@ -422,7 +380,9 @@ impl TryIntoCtx<scroll::Endian> for Uart {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.parity > 5 || self.stop_bits > 3 {
+            return Err(invalid("invalid UART parity or stop bits"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.reserved, &mut offset, endian)?;
         data.gwrite_with(self.baud_rate, &mut offset, endian)?;
@@ -446,7 +406,6 @@ device_path_node! {
     /// port follow the header without gaps. UEFI 2.11 Table 10.36 inconsistently
     /// gives a 32-byte length and leaves an eight-byte hole before the LUN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
@@ -469,7 +428,6 @@ impl Display for SasEx {
 device_path_node! {
     /// A Universal Flash Storage target and logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
@@ -488,7 +446,6 @@ impl Display for Ufs {
 device_path_node! {
     /// A Secure Digital card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
@@ -505,7 +462,6 @@ impl Display for Sd {
 device_path_node! {
     /// A Bluetooth device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
@@ -522,7 +478,6 @@ impl Display for Bluetooth {
 device_path_node! {
     /// A wireless network identified by its SSID.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
@@ -539,7 +494,6 @@ impl Display for WiFi {
 device_path_node! {
     /// An embedded Multi-Media Card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
@@ -556,24 +510,12 @@ impl Display for Emmc {
 device_path_node! {
     /// A Bluetooth Low Energy device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
-    @[DevicePathNodeValidate(Self::validate_fields)]
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
         /// Address type: zero for public, one for random.
         pub address_type: u8,
-    }
-}
-
-impl BluetoothLE {
-    fn validate_fields(&self) -> Result<(), scroll::Error> {
-        let node = self;
-
-        if node.address_type > 1 {
-            return Err(invalid("invalid Bluetooth LE address type"));
-        }
-        Ok(())
     }
 }
 
@@ -586,7 +528,9 @@ impl TryFromCtx<'_, scroll::Endian> for BluetoothLE {
             address: data.gread_with::<[u8; 6]>(&mut offset, scroll::LE)?,
             address_type: data.gread_with::<u8>(&mut offset, endian)?,
         };
-        node.validate()?;
+        if node.address_type > 1 {
+            return Err(invalid("invalid Bluetooth LE address type"));
+        }
         Ok((node, offset))
     }
 }
@@ -595,7 +539,9 @@ impl TryIntoCtx<scroll::Endian> for BluetoothLE {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.address_type > 1 {
+            return Err(invalid("invalid Bluetooth LE address type"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.address.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.address_type, &mut offset, endian)?;
@@ -612,7 +558,6 @@ impl Display for BluetoothLE {
 device_path_node! {
     /// A persistent memory namespace (messaging node, not the ACPI physical device).
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
         /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -629,7 +574,6 @@ impl Display for Nvdimm {
 device_path_node! {
     /// A logical unit appended to an interface's device path.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
@@ -646,7 +590,6 @@ impl Display for DeviceLogicalUnit {
 device_path_node! {
     /// A USB class matching pattern.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
@@ -686,21 +629,20 @@ impl DevicePathNode for MessagingVendor {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Vendor as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -711,7 +653,7 @@ impl TryFromCtx<'_, scroll::Endian> for MessagingVendor {
         let guid = data.gread_with(&mut offset, scroll::LE)?;
         let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
         let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        node.validate()?;
+        check_length(node.header().length - 4)?;
         Ok((node, consumed))
     }
 }
@@ -719,7 +661,7 @@ impl TryFromCtx<'_, scroll::Endian> for MessagingVendor {
 impl TryIntoCtx<scroll::Endian> for MessagingVendor {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
         let mut offset = 0;
         data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.data.as_slice(), &mut offset, ())?;
@@ -757,26 +699,20 @@ impl DevicePathNode for UsbWwid {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::UsbWwid as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.serial_number.len() > 64
-            || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
-        {
-            return Err(invalid("USB WWID requires at most 64 valid UTF-16 code units"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -795,7 +731,12 @@ impl TryFromCtx<'_, scroll::Endian> for UsbWwid {
             serial_number.push(data.gread_with(&mut offset, endian)?);
         }
         let (node, consumed) = (Self { interface, vendor_id, product_id, serial_number }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if node.serial_number.len() > 64
+            || core::char::decode_utf16(node.serial_number.iter().copied()).any(|c| c.is_err())
+        {
+            return Err(invalid("USB WWID requires at most 64 valid UTF-16 code units"));
+        }
         Ok((node, consumed))
     }
 }
@@ -803,7 +744,12 @@ impl TryFromCtx<'_, scroll::Endian> for UsbWwid {
 impl TryIntoCtx<scroll::Endian> for UsbWwid {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if self.serial_number.len() > 64
+            || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
+        {
+            return Err(invalid("USB WWID requires at most 64 valid UTF-16 code units"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.interface, &mut offset, endian)?;
         data.gwrite_with(self.vendor_id, &mut offset, endian)?;
@@ -862,24 +808,20 @@ impl DevicePathNode for IpV4 {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::IpV4 as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.static_ip > 1 {
-            return Err(invalid("invalid IPv4 address origin"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -903,7 +845,10 @@ impl TryFromCtx<'_, scroll::Endian> for IpV4 {
         };
         let (node, consumed) =
             (Self { local_ip, remote_ip, local_port, remote_port, protocol, static_ip, network }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if node.static_ip > 1 {
+            return Err(invalid("invalid IPv4 address origin"));
+        }
         Ok((node, consumed))
     }
 }
@@ -911,7 +856,10 @@ impl TryFromCtx<'_, scroll::Endian> for IpV4 {
 impl TryIntoCtx<scroll::Endian> for IpV4 {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if self.static_ip > 1 {
+            return Err(invalid("invalid IPv4 address origin"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.local_ip.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.remote_ip.as_slice(), &mut offset, ())?;
@@ -957,25 +905,20 @@ impl DevicePathNode for Iscsi {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Iscsi as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.target_name)?;
-        if self.target_name.is_empty() || self.target_name.len() > 223 || self.protocol != 0 {
-            return Err(invalid("invalid iSCSI target name or network protocol"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -989,7 +932,11 @@ impl TryFromCtx<'_, scroll::Endian> for Iscsi {
         let portal_group = data.gread_with(&mut offset, endian)?;
         let target_name = read_ascii(data, &mut offset)?;
         let (node, consumed) = (Self { protocol, options, lun, portal_group, target_name }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        ascii(&node.target_name)?;
+        if node.target_name.is_empty() || node.target_name.len() > 223 || node.protocol != 0 {
+            return Err(invalid("invalid iSCSI target name or network protocol"));
+        }
         Ok((node, consumed))
     }
 }
@@ -997,7 +944,11 @@ impl TryFromCtx<'_, scroll::Endian> for Iscsi {
 impl TryIntoCtx<scroll::Endian> for Iscsi {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        ascii(&self.target_name)?;
+        if self.target_name.is_empty() || self.target_name.len() > 223 || self.protocol != 0 {
+            return Err(invalid("invalid iSCSI target name or network protocol"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.protocol, &mut offset, endian)?;
         data.gwrite_with(self.options, &mut offset, endian)?;
@@ -1031,21 +982,20 @@ impl DevicePathNode for Uri {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Uri as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.uri)
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1054,7 +1004,8 @@ impl TryFromCtx<'_, scroll::Endian> for Uri {
     fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
         let uri = core::str::from_utf8(data).map_err(|_| invalid("URI must be ASCII"))?;
         let (node, consumed) = (Self { uri: String::from(uri) }, data.len());
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        ascii(&node.uri)?;
         Ok((node, consumed))
     }
 }
@@ -1062,7 +1013,8 @@ impl TryFromCtx<'_, scroll::Endian> for Uri {
 impl TryIntoCtx<scroll::Endian> for Uri {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        ascii(&self.uri)?;
         data.pwrite_with(self.uri.as_bytes(), 0, ())
     }
 }
@@ -1091,24 +1043,20 @@ impl DevicePathNode for Dns {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Dns as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.addresses.is_empty() {
-            return Err(invalid("DNS node requires at least one address"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1125,7 +1073,10 @@ impl TryFromCtx<'_, scroll::Endian> for Dns {
             addresses.push(data.gread_with(&mut offset, scroll::LE)?);
         }
         let (node, consumed) = (Self { is_ipv6: family == 1, addresses }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if node.addresses.is_empty() {
+            return Err(invalid("DNS node requires at least one address"));
+        }
         Ok((node, consumed))
     }
 }
@@ -1133,7 +1084,10 @@ impl TryFromCtx<'_, scroll::Endian> for Dns {
 impl TryIntoCtx<scroll::Endian> for Dns {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if self.addresses.is_empty() {
+            return Err(invalid("DNS node requires at least one address"));
+        }
         let mut offset = 0;
         data.gwrite_with(u8::from(self.is_ipv6), &mut offset, scroll::LE)?;
         for address in &self.addresses {
@@ -1190,24 +1144,20 @@ impl DevicePathNode for RestService {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::RestService as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if !matches!(self.access_mode, 1 | 2) {
-            return Err(invalid("invalid REST access mode"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1229,7 +1179,10 @@ impl TryFromCtx<'_, scroll::Endian> for RestService {
             _ => return Err(invalid("unknown REST service type")),
         };
         let (node, consumed) = (Self { service, access_mode }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if !matches!(node.access_mode, 1 | 2) {
+            return Err(invalid("invalid REST access mode"));
+        }
         Ok((node, consumed))
     }
 }
@@ -1237,7 +1190,10 @@ impl TryFromCtx<'_, scroll::Endian> for RestService {
 impl TryIntoCtx<scroll::Endian> for RestService {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if !matches!(self.access_mode, 1 | 2) {
+            return Err(invalid("invalid REST access mode"));
+        }
         let mut offset = 0;
         let kind: u8 = match self.service {
             RestServiceType::Redfish => 1,
@@ -1280,29 +1236,20 @@ impl DevicePathNode for NvmeOf {
         kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::NvmeOf as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if !matches!(self.identifier_type, 1..=3)
-            || self.subsystem_nqn.is_empty()
-            || self.subsystem_nqn.len() > 223
-            || self.subsystem_nqn.as_bytes().contains(&0)
-            || (self.identifier_type == 1 && self.identifier[8..].iter().any(|byte| *byte != 0))
-        {
-            return Err(invalid("invalid NVMe over Fabrics namespace identity"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1319,7 +1266,15 @@ impl TryFromCtx<'_, scroll::Endian> for NvmeOf {
         offset += length + 1;
         let (node, consumed) =
             (Self { identifier_type, identifier, subsystem_nqn: String::from(subsystem_nqn) }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if !matches!(node.identifier_type, 1..=3)
+            || node.subsystem_nqn.is_empty()
+            || node.subsystem_nqn.len() > 223
+            || node.subsystem_nqn.as_bytes().contains(&0)
+            || (node.identifier_type == 1 && node.identifier[8..].iter().any(|byte| *byte != 0))
+        {
+            return Err(invalid("invalid NVMe over Fabrics namespace identity"));
+        }
         Ok((node, consumed))
     }
 }
@@ -1327,7 +1282,15 @@ impl TryFromCtx<'_, scroll::Endian> for NvmeOf {
 impl TryIntoCtx<scroll::Endian> for NvmeOf {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if !matches!(self.identifier_type, 1..=3)
+            || self.subsystem_nqn.is_empty()
+            || self.subsystem_nqn.len() > 223
+            || self.subsystem_nqn.as_bytes().contains(&0)
+            || (self.identifier_type == 1 && self.identifier[8..].iter().any(|byte| *byte != 0))
+        {
+            return Err(invalid("invalid NVMe over Fabrics namespace identity"));
+        }
         let mut offset = 0;
         data.gwrite_with(self.identifier_type, &mut offset, scroll::LE)?;
         data.gwrite_with(self.identifier.as_slice(), &mut offset, ())?;
@@ -1384,22 +1347,20 @@ impl DevicePathNode for Sata {
         r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::Sata as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        if self.hba_port == u16::MAX {
-            return Err(invalid("SATA HBA port 0xffff is reserved"));
-        }
-        Ok(())
-    }
-
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
         let header = self.header();
-        let mut offset = 0;
-        buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.hba_port, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.port_multiplier_port, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.lun, &mut offset, scroll::Endian::Little)?;
-        Ok(offset)
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
+        }
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1423,7 +1384,9 @@ impl TryIntoCtx<scroll::Endian> for Sata {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.hba_port == u16::MAX {
+            return Err(invalid("SATA HBA port 0xffff is reserved"));
+        }
         let mut offset = 0;
         dest.gwrite_with(self.hba_port, &mut offset, ctx)?;
         dest.gwrite_with(self.port_multiplier_port, &mut offset, ctx)?;
@@ -1441,7 +1404,9 @@ impl TryFromCtx<'_, scroll::Endian> for Sata {
         let port_multiplier_port = buffer.gread_with(&mut offset, ctx)?;
         let lun = buffer.gread_with(&mut offset, ctx)?;
         let node = Self { hba_port, port_multiplier_port, lun };
-        node.validate()?;
+        if node.hba_port == u16::MAX {
+            return Err(invalid("SATA HBA port 0xffff is reserved"));
+        }
         Ok((node, offset))
     }
 }
@@ -1484,21 +1449,20 @@ impl parse_node::DevicePathNode for NvmExpress {
         r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::NvmExpress as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        if matches!(self.namespace_id, 0 | u32::MAX) {
-            return Err(invalid("NVMe namespace ID is reserved"));
-        }
-        Ok(())
-    }
-
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
         let header = self.header();
-        let mut offset = 0;
-        buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.namespace_id, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.eui64, &mut offset, scroll::Endian::Little)?;
-        Ok(offset)
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
+        }
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -1518,7 +1482,9 @@ impl TryIntoCtx<scroll::Endian> for NvmExpress {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if matches!(self.namespace_id, 0 | u32::MAX) {
+            return Err(invalid("NVMe namespace ID is reserved"));
+        }
         let mut offset = 0;
         dest.gwrite_with(self.namespace_id, &mut offset, ctx)?;
         dest.gwrite_with(self.eui64, &mut offset, ctx)?;
@@ -1534,7 +1500,9 @@ impl TryFromCtx<'_, scroll::Endian> for NvmExpress {
         let namespace_id = buffer.gread_with(&mut offset, ctx)?;
         let eui64 = buffer.gread_with(&mut offset, ctx)?;
         let node = Self { namespace_id, eui64 };
-        node.validate()?;
+        if matches!(node.namespace_id, 0 | u32::MAX) {
+            return Err(invalid("NVMe namespace ID is reserved"));
+        }
         Ok((node, offset))
     }
 }

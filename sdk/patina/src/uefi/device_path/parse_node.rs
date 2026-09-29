@@ -84,23 +84,15 @@ pub trait DevicePathNode: Debug + Display {
     /// Return the header of the device path node.
     fn header(&self) -> Header;
 
-    /// Validate the node before encoding it.
-    ///
-    /// Implementations should check field constraints in addition to the wire length.
-    fn validate(&self) -> Result<(), scroll::Error> {
-        let length = self.header().length;
-        if !(Header::size_of_header()..=usize::from(u16::MAX)).contains(&length) {
-            return Err(scroll::Error::BadInput { size: length, msg: "invalid device path node length" });
-        }
-        Ok(())
-    }
-
     /// Return true if this device path node has the same type and `sub_type`.
     fn is_type(r#type: u8, sub_type: u8) -> bool
     where
         Self: Sized;
 
     /// Write the device path node into the buffer and return the number of bytes written.
+    ///
+    /// Implementations check wire lengths and applicable field constraints while
+    /// encoding, returning an error when the node cannot be serialized.
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
 }
 
@@ -126,26 +118,12 @@ impl DevicePathNode for UnknownDevicePathNode<'_> {
         self.header
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        if self.header.length != 4 + self.data.len() || self.header.length > usize::from(u16::MAX) {
-            return Err(scroll::Error::BadInput {
-                size: self.header.length,
-                msg: "inconsistent device path node length",
-            });
-        }
-        if self.header.r#type == 0x7f && (self.header.length != 4 || !matches!(self.header.sub_type, 1 | 0xff)) {
-            return Err(scroll::Error::BadInput { size: self.header.length, msg: "invalid end device path node" });
-        }
-        Ok(())
-    }
-
     fn is_type(_type: u8, _sub_type: u8) -> bool {
         // An unknown device type can represent every type so it always return true.
         true
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
         let mut offset = 0;
         buffer.gwrite_with(self, &mut offset, Endian::Little)?;
         Ok(offset)
@@ -156,7 +134,15 @@ impl TryIntoCtx<scroll::Endian> for UnknownDevicePathNode<'_> {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if self.header.length != 4 + self.data.len() || self.header.length > usize::from(u16::MAX) {
+            return Err(scroll::Error::BadInput {
+                size: self.header.length,
+                msg: "inconsistent device path node length",
+            });
+        }
+        if self.header.r#type == 0x7f && (self.header.length != 4 || !matches!(self.header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: self.header.length, msg: "invalid end device path node" });
+        }
         let mut offset = 0;
         dest.gwrite_with(self.header, &mut offset, scroll::Endian::Little)?;
         dest.gwrite_with(self.data, &mut offset, ())?;
@@ -178,6 +164,9 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for UnknownDevicePathNode<'a> {
         }
         if header.length > from.len() {
             return Err(scroll::Error::TooBig { size: header.length, len: from.len() });
+        }
+        if header.r#type == 0x7f && (header.length != 4 || !matches!(header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: header.length, msg: "invalid end device path node" });
         }
         let this = UnknownDevicePathNode {
             header,
@@ -205,11 +194,6 @@ impl Display for UnknownDevicePathNode<'_> {
 ///
 /// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
 /// Currently supported traits are: Debug and Display.
-///
-/// Fixed-size nodes can supply `@[DevicePathNodeValidate(Self::validate_fields)]`.
-/// The validator receives `&Self` and returns `Result<(), scroll::Error>`. It runs
-/// after the wire-length check in [`DevicePathNode::validate`]. Custom payload
-/// conversions should also call `validate` when field checks are required.
 #[macro_export]
 macro_rules! device_path_node {
     // match a struct with fields.
@@ -217,7 +201,6 @@ macro_rules! device_path_node {
         $(#[$struct_attr_1:meta])*
         @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
         $(@[DevicePathNodeDerive( $($derive_trait:ident),* )])?
-        $(@[DevicePathNodeValidate($validator:path)])?
         $(#[$struct_attr_2:meta])*
         $struct_vis:vis struct $struct_name:ident {
             $(
@@ -236,7 +219,7 @@ macro_rules! device_path_node {
         }
 
         device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name,
-            0 $(+ core::mem::size_of::<$field_type>())* $(, $validator)?);
+            0 $(+ core::mem::size_of::<$field_type>())*);
         device_path_node!(@Derive; $struct_name, $($field_name),*; $($($derive_trait),*)?);
     };
     // Match an empty struct.
@@ -255,7 +238,7 @@ macro_rules! device_path_node {
         device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
     };
     // Internal Matching to implement the device path node trait.
-    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr $(, $validator:path)?) => {
+    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr) => {
         impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
         {
             fn header(&self) -> $crate::uefi::device_path::parse_node::Header {
@@ -271,29 +254,24 @@ macro_rules! device_path_node {
                 r#type == $device_path_type as u8 && sub_type == $device_path_sub_type as u8
             }
 
-            $(
-                fn validate(&self) -> Result<(), scroll::Error> {
-                    let length = self.header().length;
-                    if !($crate::uefi::device_path::parse_node::Header::size_of_header()
-                        ..=usize::from(u16::MAX)).contains(&length)
-                    {
-                        return Err(scroll::Error::BadInput { size: length, msg: "invalid device path node length" });
-                    }
-                    $validator(self)
-                }
-            )?
-
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-                self.validate()?;
                 let header = self.header();
+                let mut header_bytes = [0u8; 4];
+                header_bytes.pwrite_with(header, 0, scroll::LE)?;
                 if buffer.len() < header.length {
                     return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
                 }
-
-                let mut offset = 0;
-                buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
-                buffer.gwrite_with(self, &mut offset, scroll::Endian::Little)?;
-                Ok(offset)
+                let payload = buffer.get_mut(4..header.length).ok_or(scroll::Error::BadInput {
+                    size: header.length, msg: "invalid device path output range",
+                })?;
+                let written = payload.pwrite_with(self, 0, scroll::LE)?;
+                if written != header.length - 4 {
+                    return Err(scroll::Error::BadInput {
+                        size: written, msg: "encoded node length differs from header",
+                    });
+                }
+                buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+                Ok(header.length)
             }
         }
     };

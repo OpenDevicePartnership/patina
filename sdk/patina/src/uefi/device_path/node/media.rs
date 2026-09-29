@@ -21,7 +21,6 @@ use scroll::{
 device_path_node! {
     /// A CD-ROM system partition.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct CdRom {
         /// Boot catalog entry number; zero denotes the initial/default entry.
@@ -42,7 +41,6 @@ impl Display for CdRom {
 device_path_node! {
     /// A protocol used at a location in a media device path.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct MediaProtocol {
         /// Protocol identifier as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -59,7 +57,6 @@ impl Display for MediaProtocol {
 device_path_node! {
     /// A firmware file in a PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareFile {
         /// File name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -76,7 +73,6 @@ impl Display for PiwgFirmwareFile {
 device_path_node! {
     /// A PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareVolume {
         /// Volume name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -93,7 +89,6 @@ impl Display for PiwgFirmwareVolume {
 device_path_node! {
     /// A range of offsets within a media device.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct RelativeOffsetRange {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -114,7 +109,6 @@ impl Display for RelativeOffsetRange {
 device_path_node! {
     /// A memory-backed disk.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct RamDisk {
         /// Starting physical memory address.
@@ -152,21 +146,20 @@ impl DevicePathNode for MediaVendor {
         kind == DevicePathType::Media as u8 && subtype == MediaSubType::Vendor as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -177,7 +170,7 @@ impl TryFromCtx<'_, scroll::Endian> for MediaVendor {
         let guid = data.gread_with(&mut offset, scroll::LE)?;
         let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
         let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        node.validate()?;
+        check_length(node.header().length - 4)?;
         Ok((node, consumed))
     }
 }
@@ -185,7 +178,7 @@ impl TryFromCtx<'_, scroll::Endian> for MediaVendor {
 impl TryIntoCtx<scroll::Endian> for MediaVendor {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
         let mut offset = 0;
         data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.data.as_slice(), &mut offset, ())?;
@@ -282,32 +275,20 @@ impl parse_node::DevicePathNode for HardDrive {
         r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::HardDrive as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        if !matches!(self.partition_format, 1 | 2) || self.signature_type > 2 {
-            return Err(invalid("invalid hard drive partition format or signature type"));
-        }
-        if (self.signature_type == 0 && self.partition_signature != [0; 16])
-            || (self.signature_type == 1 && self.partition_signature[4..].iter().any(|byte| *byte != 0))
-        {
-            return Err(invalid("invalid hard drive signature padding"));
-        }
-        Ok(())
-    }
-
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
         let header = self.header();
-        let mut offset = 0;
-        buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.partition_number, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.partition_start, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.partition_size, &mut offset, scroll::Endian::Little)?;
-        for byte in &self.partition_signature {
-            buffer.gwrite_with(*byte, &mut offset, scroll::Endian::Little)?;
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        buffer.gwrite_with(self.partition_format, &mut offset, scroll::Endian::Little)?;
-        buffer.gwrite_with(self.signature_type, &mut offset, scroll::Endian::Little)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -334,7 +315,14 @@ impl TryIntoCtx<scroll::Endian> for HardDrive {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        if !matches!(self.partition_format, 1 | 2) || self.signature_type > 2 {
+            return Err(invalid("invalid hard drive partition format or signature type"));
+        }
+        if (self.signature_type == 0 && self.partition_signature != [0; 16])
+            || (self.signature_type == 1 && self.partition_signature[4..].iter().any(|byte| *byte != 0))
+        {
+            return Err(invalid("invalid hard drive signature padding"));
+        }
         let mut offset = 0;
         dest.gwrite_with(self.partition_number, &mut offset, ctx)?;
         dest.gwrite_with(self.partition_start, &mut offset, ctx)?;
@@ -370,7 +358,14 @@ impl TryFromCtx<'_, scroll::Endian> for HardDrive {
             partition_format,
             signature_type,
         };
-        node.validate()?;
+        if !matches!(node.partition_format, 1 | 2) || node.signature_type > 2 {
+            return Err(invalid("invalid hard drive partition format or signature type"));
+        }
+        if (node.signature_type == 0 && node.partition_signature != [0; 16])
+            || (node.signature_type == 1 && node.partition_signature[4..].iter().any(|byte| *byte != 0))
+        {
+            return Err(invalid("invalid hard drive signature padding"));
+        }
         Ok((node, offset))
     }
 }
@@ -412,24 +407,20 @@ impl parse_node::DevicePathNode for FilePath {
         r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::FilePath as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.utf16_size())?;
-        Char16String::try_from_str(&self.path).map_err(|_| invalid("file path is not valid UCS-2"))?;
-        Ok(())
-    }
-
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
         let header = self.header();
-        let mut offset = 0;
-        buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
-        // Write the path as UCS-2 (UEFI CHAR16), including the trailing NUL terminator.
-        let encoded = Char16String::try_from_str(&self.path)
-            .map_err(|_| scroll::Error::BadInput { size: offset, msg: "file path is not valid UCS-2" })?;
-        for unit in encoded.as_units_with_nul() {
-            buffer.gwrite_with(*unit, &mut offset, scroll::LE)?;
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -449,7 +440,8 @@ impl TryIntoCtx<scroll::Endian> for FilePath {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        self.validate()?;
+        check_length(self.utf16_size())?;
+        Char16String::try_from_str(&self.path).map_err(|_| invalid("file path is not valid UCS-2"))?;
         let mut offset = 0;
         // Write the path as UCS-2 (UEFI CHAR16), including the trailing NUL terminator.
         let encoded = Char16String::try_from_str(&self.path)
@@ -487,6 +479,7 @@ impl TryFromCtx<'_, scroll::Endian> for FilePath {
             .chars()
             .collect();
 
+        check_length(offset)?;
         Ok((Self { path }, offset))
     }
 }

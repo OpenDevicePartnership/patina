@@ -21,7 +21,6 @@ use scroll::{
 device_path_node! {
     /// An ACPI physical NVDIMM device, distinct from a messaging namespace node.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-
     #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
@@ -67,23 +66,20 @@ impl DevicePathNode for ExtendedAcpi {
         kind == DevicePathType::Acpi as u8 && subtype == AcpiSubType::ExtendedAcpi as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.hid_string)?;
-        ascii(&self.uid_string)?;
-        ascii(&self.cid_string)
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -98,7 +94,10 @@ impl TryFromCtx<'_, scroll::Endian> for ExtendedAcpi {
         let uid_string = read_ascii(data, &mut offset)?;
         let cid_string = read_ascii(data, &mut offset)?;
         let (node, consumed) = (Self { hid, uid, cid, hid_string, uid_string, cid_string }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        ascii(&node.hid_string)?;
+        ascii(&node.uid_string)?;
+        ascii(&node.cid_string)?;
         Ok((node, consumed))
     }
 }
@@ -106,7 +105,10 @@ impl TryFromCtx<'_, scroll::Endian> for ExtendedAcpi {
 impl TryIntoCtx<scroll::Endian> for ExtendedAcpi {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        ascii(&self.hid_string)?;
+        ascii(&self.uid_string)?;
+        ascii(&self.cid_string)?;
         let mut offset = 0;
         data.gwrite_with(self.hid, &mut offset, endian)?;
         data.gwrite_with(self.uid, &mut offset, endian)?;
@@ -141,24 +143,20 @@ impl DevicePathNode for AcpiAdr {
         kind == DevicePathType::Acpi as u8 && subtype == AcpiSubType::Adr as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.addresses.is_empty() {
-            return Err(invalid("ACPI address node requires at least one address"));
-        }
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -174,7 +172,10 @@ impl TryFromCtx<'_, scroll::Endian> for AcpiAdr {
             addresses.push(data.gread_with(&mut offset, endian)?);
         }
         let (node, consumed) = (Self { addresses }, offset);
-        node.validate()?;
+        check_length(node.header().length - 4)?;
+        if node.addresses.is_empty() {
+            return Err(invalid("ACPI address node requires at least one address"));
+        }
         Ok((node, consumed))
     }
 }
@@ -182,7 +183,10 @@ impl TryFromCtx<'_, scroll::Endian> for AcpiAdr {
 impl TryIntoCtx<scroll::Endian> for AcpiAdr {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
+        if self.addresses.is_empty() {
+            return Err(invalid("ACPI address node requires at least one address"));
+        }
         let mut offset = 0;
         for address in &self.addresses {
             data.gwrite_with(*address, &mut offset, endian)?;

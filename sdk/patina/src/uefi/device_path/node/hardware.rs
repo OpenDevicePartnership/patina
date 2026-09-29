@@ -35,21 +35,20 @@ impl DevicePathNode for HardwareVendor {
         kind == DevicePathType::Hardware as u8 && subtype == HardwareSubType::Vendor as u8
     }
 
-    fn validate(&self) -> Result<(), scroll::Error> {
-        check_length(self.header().length - 4)?;
-        Ok(())
-    }
-
-    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
-        self.validate()?;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let header = self.header();
-        if data.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
         }
-        let mut offset = 0;
-        data.gwrite_with(header, &mut offset, scroll::LE)?;
-        data.gwrite_with(self, &mut offset, scroll::LE)?;
-        Ok(offset)
+        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - 4 {
+            return Err(invalid("encoded node length differs from header"));
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
     }
 }
 
@@ -60,7 +59,7 @@ impl TryFromCtx<'_, scroll::Endian> for HardwareVendor {
         let guid = data.gread_with(&mut offset, scroll::LE)?;
         let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
         let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        node.validate()?;
+        check_length(node.header().length - 4)?;
         Ok((node, consumed))
     }
 }
@@ -68,7 +67,7 @@ impl TryFromCtx<'_, scroll::Endian> for HardwareVendor {
 impl TryIntoCtx<scroll::Endian> for HardwareVendor {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        self.validate()?;
+        check_length(self.header().length - 4)?;
         let mut offset = 0;
         data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.data.as_slice(), &mut offset, ())?;

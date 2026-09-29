@@ -52,9 +52,11 @@ impl DevicePathBuf {
     where
         T: DevicePathNode + Sized,
     {
-        node.validate()?;
         let writing_start_offset = self.buffer.len();
         let header = node.header();
+        if !(4..=usize::from(u16::MAX)).contains(&header.length) {
+            return Err(scroll::Error::BadInput { size: header.length, msg: "invalid device path node length" });
+        }
         let new_length = writing_start_offset
             .checked_add(header.length)
             .ok_or(scroll::Error::BadInput { size: header.length, msg: "device path length overflow" })?;
@@ -103,7 +105,6 @@ impl DevicePathBuf {
             let mut offset = 0;
             while offset < path.len() {
                 let node = path.gread_with::<UnknownDevicePathNode>(&mut offset, scroll::LE)?;
-                node.validate()?;
                 if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
                     if offset == path.len() {
                         return Ok(());

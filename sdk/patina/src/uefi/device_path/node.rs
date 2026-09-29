@@ -95,7 +95,10 @@ pub fn try_cast_to_dyn_device_path_node(
     if unknown.header.length != 4 + unknown.data.len() {
         return Err(invalid("device path header and payload lengths differ"));
     }
-    unknown.validate()?;
+    check_length(unknown.data.len())?;
+    if unknown.header.r#type == 0x7f && (unknown.header.length != 4 || !matches!(unknown.header.sub_type, 1 | 0xff)) {
+        return Err(invalid("invalid end device path node"));
+    }
     macro_rules! cast {
         ($unknown:expr, $($ty:ty),*) => {
             match unknown.header {
@@ -105,7 +108,6 @@ pub fn try_cast_to_dyn_device_path_node(
                         if consumed != unknown.data.len() {
                             return Err(invalid("unexpected trailing device path payload"));
                         }
-                        node.validate()?;
                         Some(Box::new(node) as Box<dyn DevicePathNode>)
                     }
                 )*,
@@ -180,6 +182,13 @@ pub fn try_cast_to_dyn_device_path_node(
         Some(n) => Ok(n),
         None => Ok(Box::new(unknown)),
     }
+}
+
+#[cfg(test)]
+fn encode_node<T: DevicePathNode>(node: T) -> Result<Vec<u8>, scroll::Error> {
+    let mut bytes = alloc::vec![0; node.header().length];
+    node.write_into(&mut bytes)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -389,7 +398,7 @@ mod fixed_tests {
         T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
         T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
-        node.validate().unwrap();
+        encode_node(node.clone()).unwrap();
         assert_eq!(node.header().length, wire.len());
         assert!(T::is_type(wire[0], wire[1]));
         assert!(!T::is_type(wire[0] ^ 0x80, wire[1]));
@@ -452,7 +461,7 @@ mod fixed_tests {
         T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
         T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
-        assert!(node.validate().is_err());
+        assert!(encode_node(node.clone()).is_err());
         let mut output = vec![0xa5; node.header().length];
         assert!(node.clone().write_into(&mut output).is_err());
         assert!(output.iter().all(|byte| *byte == 0xa5));
@@ -670,7 +679,7 @@ mod fixed_tests {
     fn test_device_path_atapi_selectors() {
         for primary_secondary in 0..=1 {
             for slave_master in 0..=1 {
-                Atapi { primary_secondary, slave_master, lun: u16::MAX }.validate().unwrap();
+                encode_node(Atapi { primary_secondary, slave_master, lun: u16::MAX }).unwrap();
             }
         }
         for invalid in [2, u8::MAX] {
@@ -681,8 +690,8 @@ mod fixed_tests {
 
     #[test]
     fn test_device_path_vlan_range() {
-        Vlan { vlan_id: 0 }.validate().unwrap();
-        Vlan { vlan_id: 4094 }.validate().unwrap();
+        encode_node(Vlan { vlan_id: 0 }).unwrap();
+        encode_node(Vlan { vlan_id: 4094 }).unwrap();
         check_invalid(Vlan { vlan_id: 4095 }, &[0xff, 0x0f]);
         check_invalid(Vlan { vlan_id: u16::MAX }, &[0xff, 0xff]);
     }
@@ -701,7 +710,7 @@ mod fixed_tests {
         };
         for ip_address_origin in 0..=2 {
             for prefix_length in [0, 64, 128] {
-                IpV6 { ip_address_origin, prefix_length, ..node.clone() }.validate().unwrap();
+                encode_node(IpV6 { ip_address_origin, prefix_length, ..node.clone() }).unwrap();
             }
         }
         for ip_address_origin in [3, u8::MAX] {
@@ -721,7 +730,7 @@ mod fixed_tests {
         let node = Uart { reserved: 0, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 };
         for parity in 0..=5 {
             for stop_bits in 0..=3 {
-                Uart { parity, stop_bits, ..node.clone() }.validate().unwrap();
+                encode_node(Uart { parity, stop_bits, ..node.clone() }).unwrap();
             }
         }
         for parity in [6, u8::MAX] {
@@ -739,7 +748,7 @@ mod fixed_tests {
     #[test]
     fn test_device_path_bluetooth_le_address_type() {
         for address_type in 0..=1 {
-            BluetoothLE { address: [0; 6], address_type }.validate().unwrap();
+            encode_node(BluetoothLE { address: [0; 6], address_type }).unwrap();
         }
         for address_type in [2, u8::MAX] {
             check_invalid(BluetoothLE { address: [0; 6], address_type }, &[0, 0, 0, 0, 0, 0, address_type]);
@@ -970,34 +979,36 @@ mod binary_tests {
 
     #[test]
     fn test_device_path_invalid_variable_payloads() {
-        assert!(AcpiAdr { addresses: vec![] }.validate().is_err());
-        assert!(Dns { is_ipv6: false, addresses: vec![] }.validate().is_err());
-        assert!(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0; 65] }.validate().is_err());
-        assert!(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0xd800] }.validate().is_err());
-        assert!(RestService { service: RestServiceType::Redfish, access_mode: 3 }.validate().is_err());
-        assert!(Uri { uri: "a\0b".into() }.validate().is_err());
-        assert!(Uri { uri: "\u{e9}".into() }.validate().is_err());
-        assert!(Uri { uri: "a".repeat(65532) }.validate().is_err());
-        assert!(Bios { device_type: 0, status_flag: 0, description_str: "a\0b".into() }.validate().is_err());
+        assert!(encode_node(AcpiAdr { addresses: vec![] }).is_err());
+        assert!(encode_node(Dns { is_ipv6: false, addresses: vec![] }).is_err());
         assert!(
-            ExtendedAcpi {
+            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0; 65] }).is_err()
+        );
+        assert!(
+            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0xd800] }).is_err()
+        );
+        assert!(encode_node(RestService { service: RestServiceType::Redfish, access_mode: 3 }).is_err());
+        assert!(encode_node(Uri { uri: "a\0b".into() }).is_err());
+        assert!(encode_node(Uri { uri: "\u{e9}".into() }).is_err());
+        assert!(encode_node(Uri { uri: "a".repeat(65532) }).is_err());
+        assert!(encode_node(Bios { device_type: 0, status_flag: 0, description_str: "a\0b".into() }).is_err());
+        assert!(
+            encode_node(ExtendedAcpi {
                 hid: 0,
                 uid: 0,
                 cid: 0,
                 hid_string: "\u{e9}".into(),
                 uid_string: "".into(),
                 cid_string: "".into()
-            }
-            .validate()
+            })
             .is_err()
         );
         assert!(
-            Iscsi { protocol: 1, options: 0, lun: [0; 8], portal_group: 0, target_name: "iqn".into() }
-                .validate()
+            encode_node(Iscsi { protocol: 1, options: 0, lun: [0; 8], portal_group: 0, target_name: "iqn".into() })
                 .is_err()
         );
-        assert!(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }.validate().is_err());
-        assert!(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }.validate().is_err());
+        assert!(encode_node(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }).is_err());
+        assert!(encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).is_err());
         assert!(FilePath::try_from_ctx(&[b'A', 0], scroll::LE).is_err());
         assert!(FilePath::try_from_ctx(&[b'A'], scroll::LE).is_err());
         assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());
@@ -1009,17 +1020,43 @@ mod binary_tests {
 
     #[test]
     fn test_device_path_existing_validation() {
-        assert!(Sata::new(u16::MAX, 0, 0).validate().is_err());
+        assert!(encode_node(Sata::new(u16::MAX, 0, 0)).is_err());
         for id in [0, u32::MAX] {
-            assert!(NvmExpress::new(id, 0).validate().is_err());
+            assert!(encode_node(NvmExpress::new(id, 0)).is_err());
         }
-        assert!(FilePath::new("a\0b").validate().is_err());
-        assert!(FilePath::new("\u{1f600}").validate().is_err());
+        assert!(encode_node(FilePath::new("a\0b")).is_err());
+        assert!(encode_node(FilePath::new("\u{1f600}")).is_err());
         for hid in ["", "PNP", "1NP0A03", "PNPZZZZ", "\u{e9}NP0A03"] {
             assert!(Acpi::try_eisa_id(hid).is_err());
         }
         assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
         assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
+    }
+
+    #[test]
+    fn test_device_path_invalid_end_nodes_are_rejected_at_io_boundaries() {
+        for (sub_type, length) in [(1, 5), (0xff, 5), (2, 4)] {
+            let wire = [0x7f, sub_type, length, 0, 0];
+            assert!(wire.pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
+            let node = UnknownDevicePathNode {
+                header: Header::new(0x7f, sub_type, usize::from(length)),
+                data: &wire[4..usize::from(length)],
+            };
+            assert!(try_cast_to_dyn_device_path_node(node.clone()).is_err());
+            let mut output = [0xa5; 5];
+            assert!(node.write_into(&mut output).is_err());
+            assert_eq!(output, [0xa5; 5]);
+        }
+    }
+
+    #[test]
+    fn test_device_path_invalid_string_writer_preserves_output() {
+        for path in ["a\0b", "\u{1f600}"] {
+            let node = FilePath::new(path);
+            let mut output = vec![0xa5; node.header().length];
+            assert!(node.write_into(&mut output).is_err());
+            assert!(output.iter().all(|byte| *byte == 0xa5));
+        }
     }
 
     #[test]
