@@ -47,10 +47,18 @@ impl TryIntoCtx<scroll::Endian> for Header {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        let length = u16::try_from(self.length)
+            .map_err(|_| scroll::Error::BadInput { size: self.length, msg: "device path node is too large" })?;
+        if self.length < Self::size_of_header() {
+            return Err(scroll::Error::BadInput {
+                size: self.length,
+                msg: "device path node is shorter than its header",
+            });
+        }
         let mut offset = 0;
         dest.gwrite_with(self.r#type, &mut offset, ctx)?;
         dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        dest.gwrite_with(self.length as u16, &mut offset, ctx)?;
+        dest.gwrite_with(length, &mut offset, ctx)?;
         Ok(offset)
     }
 }
@@ -75,6 +83,17 @@ impl TryFromCtx<'_, scroll::Endian> for Header {
 pub trait DevicePathNode: Debug + Display {
     /// Return the header of the device path node.
     fn header(&self) -> Header;
+
+    /// Validate the node before encoding it.
+    ///
+    /// Implementations should check field constraints in addition to the wire length.
+    fn validate(&self) -> Result<(), scroll::Error> {
+        let length = self.header().length;
+        if !(Header::size_of_header()..=usize::from(u16::MAX)).contains(&length) {
+            return Err(scroll::Error::BadInput { size: length, msg: "invalid device path node length" });
+        }
+        Ok(())
+    }
 
     /// Return true if this device path node has the same type and `sub_type`.
     fn is_type(r#type: u8, sub_type: u8) -> bool
@@ -107,12 +126,26 @@ impl DevicePathNode for UnknownDevicePathNode<'_> {
         self.header
     }
 
+    fn validate(&self) -> Result<(), scroll::Error> {
+        if self.header.length != 4 + self.data.len() || self.header.length > usize::from(u16::MAX) {
+            return Err(scroll::Error::BadInput {
+                size: self.header.length,
+                msg: "inconsistent device path node length",
+            });
+        }
+        if self.header.r#type == 0x7f && (self.header.length != 4 || !matches!(self.header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: self.header.length, msg: "invalid end device path node" });
+        }
+        Ok(())
+    }
+
     fn is_type(_type: u8, _sub_type: u8) -> bool {
         // An unknown device type can represent every type so it always return true.
         true
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
         let mut offset = 0;
         buffer.gwrite_with(self, &mut offset, Endian::Little)?;
         Ok(offset)
@@ -123,6 +156,7 @@ impl TryIntoCtx<scroll::Endian> for UnknownDevicePathNode<'_> {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.validate()?;
         let mut offset = 0;
         dest.gwrite_with(self.header, &mut offset, scroll::Endian::Little)?;
         dest.gwrite_with(self.data, &mut offset, ())?;
@@ -136,6 +170,12 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for UnknownDevicePathNode<'a> {
     fn try_from_ctx(from: &'a [u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
         let mut offset = 0;
         let header = from.gread_with::<Header>(&mut offset, ctx)?;
+        if header.length < Header::size_of_header() {
+            return Err(scroll::Error::BadInput {
+                size: header.length,
+                msg: "device path node is shorter than its header",
+            });
+        }
         if header.length > from.len() {
             return Err(scroll::Error::TooBig { size: header.length, len: from.len() });
         }
@@ -189,7 +229,8 @@ macro_rules! device_path_node {
             ),*
         }
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name,
+            0 $(+ core::mem::size_of::<$field_type>())*);
         device_path_node!(@Derive; $struct_name, $($field_name),*; $($($derive_trait),*)?);
     };
     // Match an empty struct.
@@ -204,18 +245,18 @@ macro_rules! device_path_node {
         $(#[$struct_attr_2])*
         $struct_vis struct $struct_name; $($empty_field),* // no empty field expected, the variable is there because we need it to be empty.
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name, 0);
         device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
     };
     // Internal Matching to implement the device path node trait.
-    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
+    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr) => {
         impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
         {
             fn header(&self) -> $crate::uefi::device_path::parse_node::Header {
                 $crate::uefi::device_path::parse_node::Header {
                     r#type: $device_path_type as u8,
                     sub_type: $device_path_sub_type as u8,
-                    length: $crate::uefi::device_path::parse_node::Header::size_of_header() + core::mem::size_of::<$struct_name>()
+                    length: $crate::uefi::device_path::parse_node::Header::size_of_header() + $data_size
 
                 }
             }
@@ -225,8 +266,11 @@ macro_rules! device_path_node {
             }
 
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+                self.validate()?;
                 let header = self.header();
-                debug_assert!(header.length >= buffer.len(), "Buffer to small, can write the device path node.");
+                if buffer.len() < header.length {
+                    return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
+                }
 
                 let mut offset = 0;
                 buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;

@@ -1,5 +1,10 @@
 //! Spec-defined device path node types defined in this module.
 //!
+//! Node definitions, binary conversions, and their unit tests are kept together
+//! here. Binary conversions use [`DevicePathNode`], [`TryFromCtx`], and
+//! [`TryIntoCtx`] directly. Display implementations are diagnostic and do not
+//! yet provide complete canonical UEFI text conversion.
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -12,11 +17,7 @@ use core::{
     iter::Iterator,
 };
 
-use alloc::{
-    boxed::Box,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 use scroll::{
     Pread, Pwrite,
@@ -25,7 +26,7 @@ use scroll::{
 
 use crate::{
     Char16Str, Char16String, device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, UnknownDevicePathNode},
+    uefi::device_path::parse_node::{self, DevicePathNode, Header, UnknownDevicePathNode},
 };
 
 /// Device path type values as defined in UEFI specification.
@@ -184,20 +185,72 @@ pub enum EndSubType {
     Instance = 0x01,
 }
 
-/// Function used to cast an unknown device path to a known one based on the type and sub type in the header.
+fn invalid(msg: &'static str) -> scroll::Error {
+    scroll::Error::BadInput { size: 0, msg }
+}
+
+fn check_length(size: usize) -> Result<(), scroll::Error> {
+    if size > usize::from(u16::MAX) - 4 {
+        return Err(invalid("device path payload exceeds the 16-bit node length"));
+    }
+    Ok(())
+}
+
+fn ascii(value: &str) -> Result<(), scroll::Error> {
+    if !value.is_ascii() || value.as_bytes().contains(&0) {
+        return Err(invalid("device path string must be ASCII without embedded NUL"));
+    }
+    Ok(())
+}
+
+fn read_ascii(data: &[u8], offset: &mut usize) -> Result<String, scroll::Error> {
+    let remaining = data.get(*offset..).ok_or_else(|| invalid("missing ASCII string"))?;
+    let len = remaining.iter().position(|byte| *byte == 0).ok_or_else(|| invalid("missing ASCII terminator"))?;
+    let bytes = remaining.get(..len).ok_or_else(|| invalid("invalid ASCII string bounds"))?;
+    let value = core::str::from_utf8(bytes).map_err(|_| invalid("invalid ASCII string"))?;
+    ascii(value)?;
+    *offset += len + 1;
+    Ok(String::from(value))
+}
+
+/// Decode a node using its type and subtype, preserving unsupported nodes.
+///
+/// Malformed recognized nodes are logged and preserved for diagnostic display.
+/// Use [`try_cast_to_dyn_device_path_node`] when decoding errors must be propagated.
 pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<dyn DevicePathNode + '_> {
+    match try_cast_to_dyn_device_path_node(unknown.clone()) {
+        Ok(node) => node,
+        Err(error) => {
+            log::warn!("Invalid device path node {}/{}: {error}", unknown.header.r#type, unknown.header.sub_type);
+            Box::new(unknown)
+        }
+    }
+}
+
+/// Decode a recognized node, preserving unsupported type/subtype combinations.
+///
+/// # Errors
+///
+/// Returns an error for inconsistent lengths, invalid payloads, or trailing bytes
+/// in a recognized node. Unknown payloads are retained without interpretation.
+pub fn try_cast_to_dyn_device_path_node(
+    unknown: UnknownDevicePathNode<'_>,
+) -> Result<Box<dyn DevicePathNode + '_>, scroll::Error> {
+    if unknown.header.length != 4 + unknown.data.len() {
+        return Err(invalid("device path header and payload lengths differ"));
+    }
+    unknown.validate()?;
     macro_rules! cast {
         ($unknown:expr, $($ty:ty),*) => {
             match unknown.header {
                 $(
                     h if <$ty>::is_type(h.r#type, h.sub_type) => {
-                        match unknown.data.pread_with::<$ty>(0, scroll::LE) {
-                            Ok(n) => Some(Box::new(n) as Box<dyn DevicePathNode>),
-                            Err(_) => {
-                                debug_assert!(false);
-                                None
-                            }
+                        let (node, consumed) = <$ty>::try_from_ctx(unknown.data, scroll::LE)?;
+                        if consumed != unknown.data.len() {
+                            return Err(invalid("unexpected trailing device path payload"));
                         }
+                        node.validate()?;
+                        Some(Box::new(node) as Box<dyn DevicePathNode>)
                     }
                 )*,
                 _ => None
@@ -217,16 +270,18 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
         Acpi,
         // Messaging nodes.
         NvmExpress,
+        Sata,
         // Media nodes.
         FilePath,
+        HardDrive,
         // BIOS nodes.
         Bios,
         // End nodes
         EndEntire,
         EndInstance
     ) {
-        Some(n) => n,
-        None => Box::new(unknown),
+        Some(n) => Ok(n),
+        None => Ok(Box::new(unknown)),
     }
 }
 
@@ -317,28 +372,48 @@ impl Acpi {
         Self { hid: Acpi::PCI_ROOT_HID, uid }
     }
 
-    /// Converts and compresses the 7-character text argument into its corresponding 4-byte numeric EISA ID encoding.
-    /// <https://uefi.org/specs/ACPI/6.5_A/19_ASL_Reference.html#asl-macros>
-    // bytes[] indexing is safe: EISA IDs are always exactly 7 ASCII characters.
-    #[allow(clippy::indexing_slicing)]
+    /// Compress a seven-character identifier using UEFI device path byte order.
+    ///
+    /// # Panics
+    ///
+    /// Panics for an invalid identifier. Use [`Self::try_eisa_id`] for external input.
     pub const fn eisa_id(hid: &str) -> u32 {
+        match Self::try_eisa_id(hid) {
+            Ok(id) => id,
+            Err(_) => panic!("invalid EISA device path identifier"),
+        }
+    }
+
+    /// Compress a seven-character EISA identifier in UEFI device path byte order.
+    ///
+    /// # Errors
+    ///
+    /// Rejects identifiers without three ASCII letters followed by four hex digits.
+    #[allow(clippy::indexing_slicing)]
+    pub const fn try_eisa_id(hid: &str) -> Result<u32, &'static str> {
         let bytes = hid.as_bytes();
-
-        let c1 = (bytes[0] - 0x40) & 0x1F;
-        let c2 = (bytes[1] - 0x40) & 0x1F;
-        let c3 = (bytes[2] - 0x40) & 0x1F;
-
-        let h1 = (bytes[3] as char).to_digit(16).unwrap() as u8;
-        let h2 = (bytes[4] as char).to_digit(16).unwrap() as u8;
-        let h3 = (bytes[5] as char).to_digit(16).unwrap() as u8;
-        let h4 = (bytes[6] as char).to_digit(16).unwrap() as u8;
-
-        let byte_0 = (c1 << 2) | (c2 >> 3);
-        let byte_1 = (c2 << 5) | c3;
-        let byte_2 = (h1 << 4) | h2;
-        let byte_3 = (h3 << 4) | h4;
-
-        u32::from_le_bytes([byte_3, byte_2, byte_1, byte_0])
+        if bytes.len() != 7 {
+            return Err("EISA identifier must contain seven ASCII characters");
+        }
+        let mut vendor = 0u32;
+        let mut index = 0;
+        while index < 3 {
+            if !bytes[index].is_ascii_alphabetic() {
+                return Err("EISA vendor must contain ASCII letters");
+            }
+            vendor = (vendor << 5) | (bytes[index].to_ascii_uppercase() - b'A' + 1) as u32;
+            index += 1;
+        }
+        let mut product = 0u32;
+        while index < 7 {
+            let digit = match (bytes[index] as char).to_digit(16) {
+                Some(digit) => digit,
+                None => return Err("EISA product must contain hex digits"),
+            };
+            product = (product << 4) | digit;
+            index += 1;
+        }
+        Ok((product << 16) | vendor)
     }
 }
 
@@ -351,51 +426,77 @@ impl Display for Acpi {
     }
 }
 
-device_path_node! {
-    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
-    @[DevicePathNode(DevicePathType::Bios, BiosSubType::BiosBootSpecification)]
-    @[DevicePathNodeDerive(Debug, Display)]
-    pub struct Bios {
-        /// BIOS device type.
-        pub device_type: u16,
-        /// Status flags.
-        pub status_flag: u16,
-        /// Description string.
-        pub description_str: String,
-    }
+/// BIOS Boot Specification device path with a NUL-terminated ASCII description.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Bios {
+    /// BIOS device type.
+    pub device_type: u16,
+    /// Status flags.
+    pub status_flag: u16,
+    /// Description string without the wire terminator.
+    pub description_str: String,
 }
 
-impl TryIntoCtx<scroll::Endian> for Bios {
-    type Error = scroll::Error;
+impl DevicePathNode for Bios {
+    fn header(&self) -> Header {
+        Header::new(
+            DevicePathType::Bios as u8,
+            BiosSubType::BiosBootSpecification as u8,
+            9 + self.description_str.len(),
+        )
+    }
 
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+    fn is_type(kind: u8, subtype: u8) -> bool {
+        kind == DevicePathType::Bios as u8 && subtype == BiosSubType::BiosBootSpecification as u8
+    }
+
+    fn validate(&self) -> Result<(), scroll::Error> {
+        check_length(self.header().length - 4)?;
+        ascii(&self.description_str)
+    }
+
+    fn write_into(self, data: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
+        let header = self.header();
+        if data.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: data.len() });
+        }
         let mut offset = 0;
-        dest.gwrite_with(self.device_type, &mut offset, ctx)?;
-        dest.gwrite_with(self.status_flag, &mut offset, ctx)?;
-        dest.gwrite_with(self.description_str.as_bytes(), &mut offset, ())?;
-        dest.gwrite_with(0, &mut offset, ctx)?; // End of string
+        data.gwrite_with(header, &mut offset, scroll::LE)?;
+        data.gwrite_with(self, &mut offset, scroll::LE)?;
         Ok(offset)
     }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Bios {
     type Error = scroll::Error;
-
-    fn try_from_ctx(buffer: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(buffer: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), scroll::Error> {
         let mut offset = 0;
         let device_type = buffer.gread_with::<u16>(&mut offset, ctx)?;
         let status_flag = buffer.gread_with::<u16>(&mut offset, ctx)?;
-        let remaining =
-            buffer.get(offset..).ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?;
-        let end_str_idx = remaining
-            .iter()
-            .position(|c| c == &0)
-            .ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?;
-        let description_str = String::from_utf8_lossy(
-            remaining.get(..end_str_idx).ok_or(scroll::Error::TooBig { size: buffer.len() + 1, len: buffer.len() })?,
-        )
-        .to_string();
-        Ok((Self { device_type, status_flag, description_str }, offset))
+        let description_str = read_ascii(buffer, &mut offset)?;
+        let (node, consumed) = (Self { device_type, status_flag, description_str }, offset);
+        node.validate()?;
+        Ok((node, consumed))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for Bios {
+    type Error = scroll::Error;
+    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, scroll::Error> {
+        self.validate()?;
+        let mut offset = 0;
+        dest.gwrite_with(self.device_type, &mut offset, ctx)?;
+        dest.gwrite_with(self.status_flag, &mut offset, ctx)?;
+        dest.gwrite_with(self.description_str.as_bytes(), &mut offset, ())?;
+        dest.gwrite_with(0u8, &mut offset, ctx)?;
+        Ok(offset)
+    }
+}
+
+impl core::fmt::Display for Bios {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(self, formatter)
     }
 }
 
@@ -500,7 +601,15 @@ impl DevicePathNode for Sata {
         r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::Sata as u8
     }
 
+    fn validate(&self) -> Result<(), scroll::Error> {
+        if self.hba_port == u16::MAX {
+            return Err(invalid("SATA HBA port 0xffff is reserved"));
+        }
+        Ok(())
+    }
+
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
         let header = self.header();
         let mut offset = 0;
         buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
@@ -531,6 +640,7 @@ impl TryIntoCtx<scroll::Endian> for Sata {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.validate()?;
         let mut offset = 0;
         dest.gwrite_with(self.hba_port, &mut offset, ctx)?;
         dest.gwrite_with(self.port_multiplier_port, &mut offset, ctx)?;
@@ -547,7 +657,9 @@ impl TryFromCtx<'_, scroll::Endian> for Sata {
         let hba_port = buffer.gread_with(&mut offset, ctx)?;
         let port_multiplier_port = buffer.gread_with(&mut offset, ctx)?;
         let lun = buffer.gread_with(&mut offset, ctx)?;
-        Ok((Self { hba_port, port_multiplier_port, lun }, offset))
+        let node = Self { hba_port, port_multiplier_port, lun };
+        node.validate()?;
+        Ok((node, offset))
     }
 }
 
@@ -589,7 +701,15 @@ impl parse_node::DevicePathNode for NvmExpress {
         r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::NvmExpress as u8
     }
 
+    fn validate(&self) -> Result<(), scroll::Error> {
+        if matches!(self.namespace_id, 0 | u32::MAX) {
+            return Err(invalid("NVMe namespace ID is reserved"));
+        }
+        Ok(())
+    }
+
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
         let header = self.header();
         let mut offset = 0;
         buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
@@ -615,6 +735,7 @@ impl TryIntoCtx<scroll::Endian> for NvmExpress {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.validate()?;
         let mut offset = 0;
         dest.gwrite_with(self.namespace_id, &mut offset, ctx)?;
         dest.gwrite_with(self.eui64, &mut offset, ctx)?;
@@ -629,7 +750,9 @@ impl TryFromCtx<'_, scroll::Endian> for NvmExpress {
         let mut offset = 0;
         let namespace_id = buffer.gread_with(&mut offset, ctx)?;
         let eui64 = buffer.gread_with(&mut offset, ctx)?;
-        Ok((Self { namespace_id, eui64 }, offset))
+        let node = Self { namespace_id, eui64 };
+        node.validate()?;
+        Ok((node, offset))
     }
 }
 
@@ -716,7 +839,20 @@ impl parse_node::DevicePathNode for HardDrive {
         r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::HardDrive as u8
     }
 
+    fn validate(&self) -> Result<(), scroll::Error> {
+        if !matches!(self.partition_format, 1 | 2) || self.signature_type > 2 {
+            return Err(invalid("invalid hard drive partition format or signature type"));
+        }
+        if (self.signature_type == 0 && self.partition_signature != [0; 16])
+            || (self.signature_type == 1 && self.partition_signature[4..].iter().any(|byte| *byte != 0))
+        {
+            return Err(invalid("invalid hard drive signature padding"));
+        }
+        Ok(())
+    }
+
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
         let header = self.header();
         let mut offset = 0;
         buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
@@ -755,6 +891,7 @@ impl TryIntoCtx<scroll::Endian> for HardDrive {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.validate()?;
         let mut offset = 0;
         dest.gwrite_with(self.partition_number, &mut offset, ctx)?;
         dest.gwrite_with(self.partition_start, &mut offset, ctx)?;
@@ -782,17 +919,16 @@ impl TryFromCtx<'_, scroll::Endian> for HardDrive {
         }
         let partition_format = buffer.gread_with(&mut offset, ctx)?;
         let signature_type = buffer.gread_with(&mut offset, ctx)?;
-        Ok((
-            Self {
-                partition_number,
-                partition_start,
-                partition_size,
-                partition_signature,
-                partition_format,
-                signature_type,
-            },
-            offset,
-        ))
+        let node = Self {
+            partition_number,
+            partition_start,
+            partition_size,
+            partition_signature,
+            partition_format,
+            signature_type,
+        };
+        node.validate()?;
+        Ok((node, offset))
     }
 }
 
@@ -833,7 +969,14 @@ impl parse_node::DevicePathNode for FilePath {
         r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::FilePath as u8
     }
 
+    fn validate(&self) -> Result<(), scroll::Error> {
+        check_length(self.utf16_size())?;
+        Char16String::try_from_str(&self.path).map_err(|_| invalid("file path is not valid UCS-2"))?;
+        Ok(())
+    }
+
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+        self.validate()?;
         let header = self.header();
         let mut offset = 0;
         buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
@@ -863,6 +1006,7 @@ impl TryIntoCtx<scroll::Endian> for FilePath {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.validate()?;
         let mut offset = 0;
         // Write the path as UCS-2 (UEFI CHAR16), including the trailing NUL terminator.
         let encoded = Char16String::try_from_str(&self.path)
@@ -884,7 +1028,7 @@ impl TryFromCtx<'_, scroll::Endian> for FilePath {
         // Read UCS-2 code units until the null terminator.
         loop {
             if offset + 2 > buffer.len() {
-                break;
+                return Err(invalid("file path is missing its NUL terminator"));
             }
             let code_unit: u16 = buffer.gread_with(&mut offset, scroll::LE)?;
             if code_unit == 0 {
@@ -1091,5 +1235,99 @@ mod tests {
         // Null terminator
         assert_eq!(buf[2], 0x00);
         assert_eq!(buf[3], 0x00);
+    }
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::*;
+    use crate::uefi::device_path::parse_node::Header;
+    use alloc::{format, vec};
+
+    fn check_node<T>(node: T, expected: &[u8])
+    where
+        T: DevicePathNode + Clone + for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+    {
+        assert_eq!(node.header().length, expected.len());
+        let mut encoded = vec![0xa5; expected.len() + 3];
+        assert_eq!(node.clone().write_into(&mut encoded).unwrap(), expected.len());
+        assert_eq!(&encoded[..expected.len()], expected);
+        assert_eq!(&encoded[expected.len()..], &[0xa5; 3]);
+        for len in 0..expected.len() {
+            assert!(node.clone().write_into(&mut vec![0; len]).is_err(), "short output {len}");
+            assert!(expected[..len].pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
+        }
+        let (parsed, consumed) = T::try_from_ctx(&expected[4..], scroll::LE).unwrap();
+        assert_eq!(consumed + 4, expected.len());
+        let mut roundtrip = vec![0; expected.len()];
+        parsed.write_into(&mut roundtrip).unwrap();
+        assert_eq!(roundtrip, expected);
+        let raw = expected.pread_with::<UnknownDevicePathNode>(0, scroll::LE).unwrap();
+        let decoded = try_cast_to_dyn_device_path_node(raw).unwrap();
+        assert_eq!(decoded.header().length, expected.len());
+        assert!(!format!("{decoded:?}").starts_with("UnknownDevicePathNode"));
+    }
+
+    #[test]
+    fn test_device_path_existing_wire_sizes() {
+        check_node(Pci { function: 1, device: 2 }, &[1, 1, 6, 0, 1, 2]);
+        check_node(PcCard { function_number: 3 }, &[1, 2, 5, 0, 3]);
+        check_node(Controller { number: 0x12345678 }, &[1, 5, 8, 0, 0x78, 0x56, 0x34, 0x12]);
+        check_node(
+            MemoryMapped { memory_type: 3, start_address: 0x1234, end_address: 0x5678 },
+            &[1, 3, 24, 0, 3, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0x78, 0x56, 0, 0, 0, 0, 0, 0],
+        );
+        check_node(Bmc { interface_type: 1, base_address: 0x1234 }, &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+        check_node(Acpi::new_pci_root(0), &[2, 1, 12, 0, 0xd0, 0x41, 3, 0x0a, 0, 0, 0, 0]);
+        check_node(
+            Bios { device_type: 2, status_flag: 1, description_str: "foo".into() },
+            &[5, 1, 12, 0, 2, 0, 1, 0, b'f', b'o', b'o', 0],
+        );
+        check_node(EndEntire, &[0x7f, 0xff, 4, 0]);
+        check_node(EndInstance, &[0x7f, 1, 4, 0]);
+        check_node(Sata::new(1, 0xffff, 2), &[3, 18, 10, 0, 1, 0, 255, 255, 2, 0]);
+        check_node(NvmExpress::new(1, 0x1234), &[3, 23, 16, 0, 1, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+        check_node(FilePath::new("A"), &[4, 4, 8, 0, b'A', 0, 0, 0]);
+        let mut expected = vec![4, 1, 42, 0, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0];
+        expected.extend_from_slice(&[0x11; 16]);
+        expected.extend_from_slice(&[2, 2]);
+        check_node(HardDrive::new_gpt(1, 2048, 4096, [0x11; 16]), &expected);
+    }
+
+    #[test]
+    fn test_device_path_checked_lengths_and_dispatch_errors() {
+        let mut output = [0u8; 4];
+        assert!(Header::new(1, 1, 65536).try_into_ctx(&mut output, scroll::LE).is_err());
+        assert!(Header::new(1, 1, 3).try_into_ctx(&mut output, scroll::LE).is_err());
+        for length in 0..4 {
+            assert!([1, 1, length, 0].pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
+        }
+        for data in [&[1u8][..], &[1, 2, 3][..]] {
+            let raw = UnknownDevicePathNode { header: Header::new(1, 1, data.len() + 4), data };
+            assert!(try_cast_to_dyn_device_path_node(raw).is_err());
+        }
+        let unknown = UnknownDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] };
+        assert!(
+            format!("{:?}", try_cast_to_dyn_device_path_node(unknown.clone()).unwrap())
+                .starts_with("UnknownDevicePathNode")
+        );
+        let mut encoded = [0; 6];
+        unknown.write_into(&mut encoded).unwrap();
+        assert_eq!(encoded, [6, 1, 6, 0, 1, 2]);
+    }
+
+    #[test]
+    fn test_device_path_existing_validation() {
+        assert!(Sata::new(u16::MAX, 0, 0).validate().is_err());
+        for id in [0, u32::MAX] {
+            assert!(NvmExpress::new(id, 0).validate().is_err());
+        }
+        assert!(FilePath::new("a\0b").validate().is_err());
+        assert!(FilePath::new("\u{1f600}").validate().is_err());
+        for hid in ["", "PNP", "1NP0A03", "PNPZZZZ", "\u{e9}NP0A03"] {
+            assert!(Acpi::try_eisa_id(hid).is_err());
+        }
+        assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
+        assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
     }
 }
