@@ -205,6 +205,11 @@ impl Display for UnknownDevicePathNode<'_> {
 ///
 /// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
 /// Currently supported traits are: Debug and Display.
+///
+/// Fixed-size nodes can supply `@[DevicePathNodeValidate(Self::validate_fields)]`.
+/// The validator receives `&Self` and returns `Result<(), scroll::Error>`. It runs
+/// after the wire-length check in [`DevicePathNode::validate`]. Custom payload
+/// conversions should also call `validate` when field checks are required.
 #[macro_export]
 macro_rules! device_path_node {
     // match a struct with fields.
@@ -212,6 +217,7 @@ macro_rules! device_path_node {
         $(#[$struct_attr_1:meta])*
         @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
         $(@[DevicePathNodeDerive( $($derive_trait:ident),* )])?
+        $(@[DevicePathNodeValidate($validator:path)])?
         $(#[$struct_attr_2:meta])*
         $struct_vis:vis struct $struct_name:ident {
             $(
@@ -230,7 +236,7 @@ macro_rules! device_path_node {
         }
 
         device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name,
-            0 $(+ core::mem::size_of::<$field_type>())*);
+            0 $(+ core::mem::size_of::<$field_type>())* $(, $validator)?);
         device_path_node!(@Derive; $struct_name, $($field_name),*; $($($derive_trait),*)?);
     };
     // Match an empty struct.
@@ -249,7 +255,7 @@ macro_rules! device_path_node {
         device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
     };
     // Internal Matching to implement the device path node trait.
-    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr) => {
+    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident, $data_size:expr $(, $validator:path)?) => {
         impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
         {
             fn header(&self) -> $crate::uefi::device_path::parse_node::Header {
@@ -264,6 +270,18 @@ macro_rules! device_path_node {
             fn is_type(r#type: u8, sub_type: u8) -> bool {
                 r#type == $device_path_type as u8 && sub_type == $device_path_sub_type as u8
             }
+
+            $(
+                fn validate(&self) -> Result<(), scroll::Error> {
+                    let length = self.header().length;
+                    if !($crate::uefi::device_path::parse_node::Header::size_of_header()
+                        ..=usize::from(u16::MAX)).contains(&length)
+                    {
+                        return Err(scroll::Error::BadInput { size: length, msg: "invalid device path node length" });
+                    }
+                    $validator(self)
+                }
+            )?
 
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
                 self.validate()?;
