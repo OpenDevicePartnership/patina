@@ -14,6 +14,7 @@ use alloc::boxed::Box;
 use patina::standard::efi;
 use patina::{component::component, crc32, pi::error_codes::EFI_NOT_AVAILABLE_YET, uefi::boot_services::BootServices};
 
+use crate::SystemTableVersion;
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
 
 pub static SYSTEM_TABLE: tpl_mutex::TplMutex<Option<EfiSystemTable>> =
@@ -696,8 +697,9 @@ impl EfiSystemTable {
     /// Allocates a new EFI System Table with default contents in the Runtime Services Data allocator. Includes creation
     /// of default Runtime and Boot services tables in the Runtime Services Data allocator and Boot Services Data
     /// allocator respectively.
-    pub fn allocate_new_table() -> Self {
+    pub fn allocate_new_table(system_table_version: SystemTableVersion) -> Self {
         let mut st = Self::default_system_table();
+        st.hdr.revision = system_table_version.into();
 
         st.runtime_services = EfiRuntimeServicesTable::allocate_new_table().as_mut_ptr();
         st.boot_services = EfiBootServicesTable::allocate_new_table().as_mut_ptr();
@@ -868,8 +870,8 @@ impl EfiSystemTable {
     }
 }
 
-pub fn init_system_table() {
-    *SYSTEM_TABLE.lock() = Some(EfiSystemTable::allocate_new_table());
+pub fn init_system_table(system_table_version: SystemTableVersion) {
+    *SYSTEM_TABLE.lock() = Some(EfiSystemTable::allocate_new_table(system_table_version));
 }
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
@@ -938,7 +940,7 @@ mod tests {
     #[test]
     fn test_checksum_changes_on_edit() {
         with_locked_state(|| {
-            let mut table = EfiSystemTable::allocate_new_table();
+            let mut table = EfiSystemTable::allocate_new_table(SystemTableVersion::V2_70);
             table.checksum();
 
             let system_table_crc32 = table.get().hdr.crc32;
