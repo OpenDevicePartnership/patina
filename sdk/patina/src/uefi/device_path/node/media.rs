@@ -21,7 +21,8 @@ use scroll::{
 device_path_node! {
     /// A CD-ROM system partition.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct CdRom {
         /// Boot catalog entry number; zero denotes the initial/default entry.
         pub boot_entry: u32,
@@ -32,64 +33,44 @@ device_path_node! {
     }
 }
 
-impl Display for CdRom {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A protocol used at a location in a media device path.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MediaProtocol {
         /// Protocol identifier as 16 EFI GUID wire bytes, without additional byte swapping.
         pub protocol: [u8; 16],
     }
 }
 
-impl Display for MediaProtocol {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A firmware file in a PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareFile {
         /// File name as 16 EFI GUID wire bytes, without additional byte swapping.
         pub fv_file_name: [u8; 16],
     }
 }
 
-impl Display for PiwgFirmwareFile {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A PI firmware volume.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareVolume {
         /// Volume name as 16 EFI GUID wire bytes, without additional byte swapping.
         pub fv_name: [u8; 16],
     }
 }
 
-impl Display for PiwgFirmwareVolume {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A range of offsets within a media device.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RelativeOffsetRange {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -100,16 +81,11 @@ device_path_node! {
     }
 }
 
-impl Display for RelativeOffsetRange {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A memory-backed disk.
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RamDisk {
         /// Starting physical memory address.
         pub starting_address: u64,
@@ -119,12 +95,6 @@ device_path_node! {
         pub type_guid: [u8; 16],
         /// Disk instance number, or zero if unsupported.
         pub instance: u16,
-    }
-}
-
-impl Display for RamDisk {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
     }
 }
 

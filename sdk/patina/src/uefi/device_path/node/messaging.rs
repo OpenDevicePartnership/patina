@@ -21,7 +21,8 @@ use scroll::{
 device_path_node! {
     /// An ATAPI device and its logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
         pub primary_secondary: u8,
@@ -64,16 +65,11 @@ impl TryIntoCtx<scroll::Endian> for Atapi {
     }
 }
 
-impl Display for Atapi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A target and logical unit on a SCSI bus.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
         pub pun: u16,
@@ -82,16 +78,11 @@ device_path_node! {
     }
 }
 
-impl Display for Scsi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Fibre Channel device using numeric WWN and LUN fields.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -102,19 +93,14 @@ device_path_node! {
     }
 }
 
-impl Display for FiberChannel {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Fibre Channel device with byte-oriented port name and SCSI LUN.
     ///
     /// The 24-byte layout includes the reserved field, as specified in UEFI 2.11
     /// Table 10.16 and EDK II, rather than the inconsistent 20-byte example.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -125,16 +111,11 @@ device_path_node! {
     }
 }
 
-impl Display for FiberChannelEx {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An IEEE 1394 device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -143,16 +124,11 @@ device_path_node! {
     }
 }
 
-impl Display for Ieee1394 {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A USB port and interface.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
         pub parent_port_number: u8,
@@ -161,32 +137,22 @@ device_path_node! {
     }
 }
 
-impl Display for Usb {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An I2O random block storage target.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
         pub tid: u32,
     }
 }
 
-impl Display for I2oRandomBlockStorageClass {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A network interface's MAC address.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MacAddress {
         /// Address bytes in wire order; producers pad unused bytes with zero.
         pub mac_address: [u8; 32],
@@ -195,16 +161,11 @@ device_path_node! {
     }
 }
 
-impl Display for MacAddress {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An IPv6 network connection.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct IpV6 {
         /// Local IPv6 address octets in network order.
         pub local_ip_address: [u8; 16],
@@ -267,16 +228,11 @@ impl TryIntoCtx<scroll::Endian> for IpV6 {
     }
 }
 
-impl Display for IpV6 {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An IEEE 802.1Q virtual LAN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
         pub vlan_id: u16,
@@ -309,16 +265,11 @@ impl TryIntoCtx<scroll::Endian> for Vlan {
     }
 }
 
-impl Display for Vlan {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An InfiniBand fabric endpoint.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
         /// Resource flags; producers clear reserved bits above bit 4.
         pub resource_flags: u32,
@@ -333,16 +284,11 @@ device_path_node! {
     }
 }
 
-impl Display for InfiniBand {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A UART connection and its serial configuration.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct Uart {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -393,12 +339,6 @@ impl TryIntoCtx<scroll::Endian> for Uart {
     }
 }
 
-impl Display for Uart {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An extended serial-attached SCSI endpoint.
     ///
@@ -406,7 +346,8 @@ device_path_node! {
     /// port follow the header without gaps. UEFI 2.11 Table 10.36 inconsistently
     /// gives a 32-byte length and leaves an eight-byte hole before the LUN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
         pub sas_address: [u8; 8],
@@ -419,16 +360,11 @@ device_path_node! {
     }
 }
 
-impl Display for SasEx {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Universal Flash Storage target and logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
         pub pun: u8,
@@ -437,80 +373,55 @@ device_path_node! {
     }
 }
 
-impl Display for Ufs {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Secure Digital card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
         pub slot_number: u8,
     }
 }
 
-impl Display for Sd {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Bluetooth device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
     }
 }
 
-impl Display for Bluetooth {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A wireless network identified by its SSID.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
         pub ssid: [u8; 32],
     }
 }
 
-impl Display for WiFi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// An embedded Multi-Media Card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
         pub slot_number: u8,
     }
 }
 
-impl Display for Emmc {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A Bluetooth Low Energy device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
-    #[derive(Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
@@ -549,48 +460,33 @@ impl TryIntoCtx<scroll::Endian> for BluetoothLE {
     }
 }
 
-impl Display for BluetoothLE {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A persistent memory namespace (messaging node, not the ACPI physical device).
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
         /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
         pub uuid: [u8; 16],
     }
 }
 
-impl Display for Nvdimm {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A logical unit appended to an interface's device path.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
         pub lun: u8,
     }
 }
 
-impl Display for DeviceLogicalUnit {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 device_path_node! {
     /// A USB class matching pattern.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
         pub vendor_id: u16,
@@ -602,12 +498,6 @@ device_path_node! {
         pub device_subclass: u8,
         /// USB protocol code; `0xff` matches any protocol.
         pub device_protocol: u8,
-    }
-}
-
-impl Display for UsbClass {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
     }
 }
 

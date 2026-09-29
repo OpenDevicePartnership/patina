@@ -21,16 +21,11 @@ use scroll::{
 device_path_node! {
     /// An ACPI physical NVDIMM device, distinct from a messaging namespace node.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-    #[derive(Pread, Pwrite, Debug, Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
         pub nfit_device_handle: u32,
-    }
-}
-
-impl Display for NvdimmAcpi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
     }
 }
 

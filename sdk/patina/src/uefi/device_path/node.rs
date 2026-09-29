@@ -415,6 +415,7 @@ mod fixed_tests {
         let debug = format!("{dynamic:?}");
         assert!(debug.starts_with(&format!("{type_name} {{")), "unexpected decoded type: {debug}");
         assert_eq!(debug, format!("{node:?}"));
+        assert!(format!("{node}").starts_with(&format!("{type_name}(")));
         let decoded: T = wire.pread_with(4, scroll::LE).unwrap();
         assert_eq!(decoded, node);
         let mut offset = 0;
@@ -668,6 +669,13 @@ mod fixed_tests {
             27, 28, 29, 30, 31, 32, 33, 34,
         ]
     );
+
+    #[test]
+    fn test_device_path_derived_nvdimm_formatting() {
+        let node = NvdimmAcpi { nfit_device_handle: 42 };
+        assert_eq!(format!("{node}"), "NvdimmAcpi(42)");
+        assert_eq!(format!("{node:?}"), "NvdimmAcpi { type: 2, sub_type: 4, length: 8, nfit_device_handle: 42 }",);
+    }
 
     #[test]
     fn test_device_path_atapi_selectors() {
