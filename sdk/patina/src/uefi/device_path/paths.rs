@@ -14,7 +14,7 @@ use core::{
     borrow::Borrow,
     clone::Clone,
     convert::{AsRef, From},
-    debug_assert, debug_assert_eq,
+    debug_assert,
     fmt::{Debug, Display, Write},
     format_args,
     iter::Iterator,
@@ -43,47 +43,100 @@ impl DevicePathBuf {
 
     /// Append a node to the device path.
     /// This function does not ensure that the device path is valid, the `EndEntire` node must be manually added to the device path.
-    pub fn append<T>(&mut self, node: T)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid nodes, allocation failure, or serialization
+    /// failure. The existing bytes remain unchanged on failure.
+    pub fn append<T>(&mut self, node: T) -> Result<(), scroll::Error>
     where
         T: DevicePathNode + Sized,
     {
+        node.validate()?;
         let writing_start_offset = self.buffer.len();
         let header = node.header();
-
-        let nb_additional_byte = (writing_start_offset + header.length).saturating_sub(self.buffer.capacity());
-
-        if let Err(e) = self.buffer.try_reserve_exact(nb_additional_byte) {
-            debug_assert!(false, "Device Path: Cannot allocate enough memory to append a device path node. {e:?}");
-            return;
-        }
+        let new_length = writing_start_offset
+            .checked_add(header.length)
+            .ok_or(scroll::Error::BadInput { size: header.length, msg: "device path length overflow" })?;
+        self.buffer
+            .try_reserve_exact(header.length)
+            .map_err(|_| scroll::Error::BadInput { size: header.length, msg: "cannot allocate device path node" })?;
 
         // No allocation will be done here, handled by the `try_reserve`.
-        self.buffer.resize(writing_start_offset + header.length, 0);
+        self.buffer.resize(new_length, 0);
 
         let writing_buffer =
             self.buffer.as_mut_slice().get_mut(writing_start_offset..).expect("buffer was just resized to fit");
-        match node.write_into(writing_buffer) {
-            Ok(nb_byte_written) => debug_assert_eq!(header.length, nb_byte_written),
-            Err(_) => debug_assert!(false, "Unexpected error, buffer should be large enough at that point."),
+        let result = match node.write_into(writing_buffer) {
+            Ok(written) if written == header.length => Ok(()),
+            Ok(written) => {
+                Err(scroll::Error::BadInput { size: written, msg: "encoded node length differs from header" })
+            }
+            Err(error) => Err(error),
+        };
+        if result.is_err() {
+            self.buffer.truncate(writing_start_offset);
         }
+        result
     }
 
     /// Append a device path to this device path, the `EndEntire` node of self will be removed when appending the other path.
-    pub fn append_device_path(&mut self, device_path: &DevicePath) {
-        self.buffer.truncate(self.buffer.len() - EndEntire.header().length);
-        self.buffer.extend_from_slice(&device_path.buffer[..]);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unterminated paths or allocation failure.
+    pub fn append_device_path(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
+        self.append_path(device_path, false)
     }
 
     /// Append a device path to this device path, the `EndEntire` node of self will be replaced with an end instance.
-    pub fn append_device_path_instances(&mut self, device_path: &DevicePath) {
-        self.buffer.truncate(self.buffer.len() - EndEntire.header().length);
-        self.append(EndInstance);
-        self.buffer.extend_from_slice(&device_path.buffer[..]);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unterminated paths or allocation failure.
+    pub fn append_device_path_instances(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
+        self.append_path(device_path, true)
+    }
+
+    fn append_path(&mut self, other: &DevicePath, instance: bool) -> Result<(), scroll::Error> {
+        fn check(path: &[u8]) -> Result<(), scroll::Error> {
+            let mut offset = 0;
+            while offset < path.len() {
+                let node = path.gread_with::<UnknownDevicePathNode>(&mut offset, scroll::LE)?;
+                node.validate()?;
+                if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
+                    if offset == path.len() {
+                        return Ok(());
+                    }
+                    break;
+                }
+            }
+            Err(scroll::Error::BadInput { size: path.len(), msg: "path is not terminated by EndEntire" })
+        }
+        check(&self.buffer)?;
+        check(other.as_bytes())?;
+        self.buffer
+            .try_reserve_exact(other.size())
+            .map_err(|_| scroll::Error::BadInput { size: other.size(), msg: "cannot allocate appended device path" })?;
+        if instance {
+            let subtype_offset = self.buffer.len() - 3;
+            *self.buffer.get_mut(subtype_offset).expect("validated path has an end node") =
+                node_defs::EndSubType::Instance as u8;
+        } else {
+            self.buffer.truncate(self.buffer.len() - 4);
+        }
+        self.buffer.extend_from_slice(other.as_bytes());
+        Ok(())
     }
 
     /// Create a device path from an iterator of device path nodes.
     /// If the iterator does not end with an `EndEntire` node, it will be added to the device path.
-    pub fn from_device_path_node_iter<I, T>(iter: I) -> DevicePathBuf
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a node cannot be encoded, allocation fails, or nodes
+    /// occur after `EndEntire`.
+    pub fn from_device_path_node_iter<I, T>(iter: I) -> Result<DevicePathBuf, scroll::Error>
     where
         I: Iterator<Item = T>,
         T: DevicePathNode,
@@ -91,14 +144,19 @@ impl DevicePathBuf {
         let mut device_path = DevicePathBuf::new_empty();
         let mut last_node_header = None;
         for n in iter {
+            if last_node_header
+                .is_some_and(|h: crate::uefi::device_path::parse_node::Header| EndEntire::is_type(h.r#type, h.sub_type))
+            {
+                return Err(scroll::Error::BadInput { size: 0, msg: "node follows EndEntire" });
+            }
             last_node_header.replace(n.header());
-            device_path.append(n);
+            device_path.append(n)?;
         }
         match last_node_header {
             Some(h) if EndEntire::is_type(h.r#type, h.sub_type) => (),
-            _ => device_path.append(EndEntire),
+            _ => device_path.append(EndEntire)?,
         }
-        device_path
+        Ok(device_path)
     }
 
     /// Convert the device path to a boxed [`DevicePath`].
@@ -313,18 +371,22 @@ pub struct IterInstance<'a> {
 }
 
 impl Iterator for IterInstance<'_> {
-    type Item = DevicePathBuf;
+    type Item = Result<DevicePathBuf, scroll::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut item = None;
         for node in self.node_iterator.by_ref() {
             if node.header().r#type == DevicePathType::End as u8 {
-                item.get_or_insert(DevicePathBuf::new_empty()).append(EndEntire);
+                if let Err(error) = item.get_or_insert(DevicePathBuf::new_empty()).append(EndEntire) {
+                    return Some(Err(error));
+                }
                 break;
             }
-            item.get_or_insert(DevicePathBuf::new_empty()).append(node);
+            if let Err(error) = item.get_or_insert(DevicePathBuf::new_empty()).append(node) {
+                return Some(Err(error));
+            }
         }
-        item
+        item.map(Ok)
     }
 }
 
@@ -399,8 +461,8 @@ mod tests {
     #[test]
     fn test_device_path_as_bytes() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
 
         let device_path: &DevicePath = device_path_buf.as_ref();
         assert_eq!(device_path.as_bytes(), device_path_buf.buffer.as_slice());
@@ -410,8 +472,8 @@ mod tests {
     #[test]
     fn test_append_node() {
         let mut device_path = DevicePathBuf::new_empty();
-        device_path.append(Acpi::new_pci_root(0));
-        device_path.append(EndEntire);
+        device_path.append(Acpi::new_pci_root(0)).unwrap();
+        device_path.append(EndEntire).unwrap();
 
         let expected_data = [
             DevicePathType::Acpi as u8,
@@ -438,19 +500,19 @@ mod tests {
     #[test]
     fn test_append_device_path() {
         let mut device_path = DevicePathBuf::new_empty();
-        device_path.append(Acpi::new_pci_root(0));
-        device_path.append(EndEntire);
+        device_path.append(Acpi::new_pci_root(0)).unwrap();
+        device_path.append(EndEntire).unwrap();
 
         let mut device_path_to_add = DevicePathBuf::new_empty();
-        device_path_to_add.append(Pci { function: 1, device: 2 });
-        device_path_to_add.append(EndEntire);
+        device_path_to_add.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_to_add.append(EndEntire).unwrap();
 
         let mut expected_device_path = DevicePathBuf::new_empty();
-        expected_device_path.append(Acpi::new_pci_root(0));
-        expected_device_path.append(Pci { function: 1, device: 2 });
-        expected_device_path.append(EndEntire);
+        expected_device_path.append(Acpi::new_pci_root(0)).unwrap();
+        expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
+        expected_device_path.append(EndEntire).unwrap();
 
-        device_path.append_device_path(&device_path_to_add);
+        device_path.append_device_path(&device_path_to_add).unwrap();
 
         assert_eq!(expected_device_path, device_path);
     }
@@ -458,20 +520,20 @@ mod tests {
     #[test]
     fn test_append_device_path_instance() {
         let mut device_path = DevicePathBuf::new_empty();
-        device_path.append(Acpi::new_pci_root(0));
-        device_path.append(EndEntire);
+        device_path.append(Acpi::new_pci_root(0)).unwrap();
+        device_path.append(EndEntire).unwrap();
 
         let mut device_path_to_add = DevicePathBuf::new_empty();
-        device_path_to_add.append(Pci { function: 1, device: 2 });
-        device_path_to_add.append(EndEntire);
+        device_path_to_add.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_to_add.append(EndEntire).unwrap();
 
         let mut expected_device_path = DevicePathBuf::new_empty();
-        expected_device_path.append(Acpi::new_pci_root(0));
-        expected_device_path.append(EndInstance);
-        expected_device_path.append(Pci { function: 1, device: 2 });
-        expected_device_path.append(EndEntire);
+        expected_device_path.append(Acpi::new_pci_root(0)).unwrap();
+        expected_device_path.append(EndInstance).unwrap();
+        expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
+        expected_device_path.append(EndEntire).unwrap();
 
-        device_path.append_device_path_instances(&device_path_to_add);
+        device_path.append_device_path_instances(&device_path_to_add).unwrap();
 
         assert_eq!(expected_device_path, device_path);
     }
@@ -479,11 +541,11 @@ mod tests {
     #[test]
     fn test_device_path_buff_from_node_iter() {
         let mut expected_device_path = DevicePathBuf::new_empty();
-        expected_device_path.append(Acpi::new_pci_root(0));
-        expected_device_path.append(Pci { function: 1, device: 2 });
-        expected_device_path.append(EndEntire);
+        expected_device_path.append(Acpi::new_pci_root(0)).unwrap();
+        expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
+        expected_device_path.append(EndEntire).unwrap();
 
-        let device_path = DevicePathBuf::from_device_path_node_iter(expected_device_path.iter());
+        let device_path = DevicePathBuf::from_device_path_node_iter(expected_device_path.iter()).unwrap();
 
         assert_eq!(expected_device_path, device_path);
     }
@@ -491,9 +553,9 @@ mod tests {
     #[test]
     fn test_device_path_buff_to_boxed_device_path() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(Pci { function: 1, device: 2 });
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
 
         let device_path = DevicePathBuf::clone(&device_path_buf).into_box_device_path();
 
@@ -503,9 +565,9 @@ mod tests {
     #[test]
     fn test_device_path_from_ptr() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(Pci { function: 1, device: 2 });
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
         let buffer_ptr = device_path_buf.buffer.as_slice().as_ptr();
 
         // SAFETY: Test code - creating DevicePath from a valid buffer pointer for testing.
@@ -518,11 +580,11 @@ mod tests {
     fn test_device_path_size() {
         let mut device_path_buf = DevicePathBuf::new_empty();
         assert_eq!(0, device_path_buf.size());
-        device_path_buf.append(Acpi::new_pci_root(0));
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
         assert_eq!(12, device_path_buf.size());
-        device_path_buf.append(Pci { function: 1, device: 2 });
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
         assert_eq!(18, device_path_buf.size());
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(EndEntire).unwrap();
         assert_eq!(22, device_path_buf.size());
     }
 
@@ -530,29 +592,29 @@ mod tests {
     fn test_device_path_node_count() {
         let mut device_path_buf = DevicePathBuf::new_empty();
         assert_eq!(0, device_path_buf.node_count());
-        device_path_buf.append(Acpi::new_pci_root(0));
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
         assert_eq!(1, device_path_buf.node_count());
-        device_path_buf.append(Pci { function: 1, device: 2 });
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
         assert_eq!(2, device_path_buf.node_count());
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(EndEntire).unwrap();
         assert_eq!(3, device_path_buf.node_count());
     }
 
     #[test]
     fn test_device_path_is_multi_instances() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(Pci { function: 1, device: 2 });
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
 
         let mut device_path_buf_2 = DevicePathBuf::new_empty();
-        device_path_buf_2.append(Acpi::new_pci_root(0));
-        device_path_buf_2.append(Pci { function: 1, device: 2 });
-        device_path_buf_2.append(EndEntire);
+        device_path_buf_2.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf_2.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf_2.append(EndEntire).unwrap();
 
         assert!(!device_path_buf.is_multi_instance());
 
-        device_path_buf.append_device_path_instances(&device_path_buf_2);
+        device_path_buf.append_device_path_instances(&device_path_buf_2).unwrap();
 
         assert!(device_path_buf.is_multi_instance());
     }
@@ -560,13 +622,13 @@ mod tests {
     #[test]
     fn test_device_path_slice_end() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(Pci { function: 1, device: 2 });
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
 
         let mut expected_device_path = DevicePathBuf::new_empty();
-        expected_device_path.append(Pci { function: 1, device: 2 });
-        expected_device_path.append(EndEntire);
+        expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
+        expected_device_path.append(EndEntire).unwrap();
 
         assert_eq!(expected_device_path.as_ref(), device_path_buf.slice_end(2));
     }
@@ -574,19 +636,19 @@ mod tests {
     #[test]
     fn test_device_path_start_with() {
         let mut device_path_buf = DevicePathBuf::new_empty();
-        device_path_buf.append(Acpi::new_pci_root(0));
-        device_path_buf.append(Pci { function: 1, device: 2 });
-        device_path_buf.append(EndEntire);
+        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
+        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
+        device_path_buf.append(EndEntire).unwrap();
 
         let mut start = DevicePathBuf::new_empty();
-        start.append(Acpi::new_pci_root(0));
-        start.append(EndEntire);
+        start.append(Acpi::new_pci_root(0)).unwrap();
+        start.append(EndEntire).unwrap();
 
         assert!(device_path_buf.starts_with(&start));
 
         let mut start = DevicePathBuf::new_empty();
-        start.append(Acpi::new_pci_root(1));
-        start.append(EndEntire);
+        start.append(Acpi::new_pci_root(1)).unwrap();
+        start.append(EndEntire).unwrap();
 
         assert!(!device_path_buf.starts_with(&start));
     }

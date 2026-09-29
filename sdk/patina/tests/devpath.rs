@@ -91,7 +91,7 @@ mod runtime_cross_checks {
     where
         T: patina::uefi::device_path::parse_node::DevicePathNode,
     {
-        DevicePathBuf::from_device_path_node_iter(core::iter::once(node))
+        DevicePathBuf::from_device_path_node_iter(core::iter::once(node)).unwrap()
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod runtime_cross_checks {
     fn test_devpath_matches_runtime_composed_path() {
         let mut runtime = runtime_path(Pci { function: 0, device: 0x11 });
         let controller = runtime_path(Controller { number: 7 });
-        runtime.append_device_path(&controller);
+        runtime.append_device_path(&controller).unwrap();
 
         assert_eq!(devpath!("Pci(0x11,0)/Ctrl(7)"), runtime.as_bytes());
     }

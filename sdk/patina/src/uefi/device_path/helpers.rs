@@ -111,7 +111,10 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
     if let Ok(remaining) = remaining_path {
         // Only append if there's a meaningful remaining path (not just EndEntire)
         if remaining.iter().any(|node| node.header.r#type != DevicePathType::End as u8) {
-            result.append_device_path(&DevicePathBuf::from(remaining));
+            result.append_device_path(remaining).map_err(|error| {
+                log::error!("Cannot append remaining device path: {error}");
+                EfiError::DeviceError
+            })?;
         }
     }
 
@@ -132,17 +135,19 @@ mod tests {
 
     /// Helper to build a partial device path starting with HD node.
     fn build_partial_hd_path(guid: [u8; 16]) -> DevicePathBuf {
-        DevicePathBuf::from_device_path_node_iter([HardDrive::new_gpt(1, 2048, 1000000, guid)].into_iter())
+        DevicePathBuf::from_device_path_node_iter([HardDrive::new_gpt(1, 2048, 1000000, guid)].into_iter()).unwrap()
     }
 
     /// Helper to build a full device path starting with ACPI root.
     fn build_full_path_with_hd(guid: [u8; 16]) -> DevicePathBuf {
-        let mut path = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter());
-        let pci_path = DevicePathBuf::from_device_path_node_iter([Pci { function: 0, device: 0x1D }].into_iter());
-        path.append_device_path(&pci_path);
+        let mut path = DevicePathBuf::from_device_path_node_iter([Acpi::new_pci_root(0)].into_iter()).unwrap();
+        let pci_path =
+            DevicePathBuf::from_device_path_node_iter([Pci { function: 0, device: 0x1D }].into_iter()).unwrap();
+        path.append_device_path(&pci_path).unwrap();
         let hd_path =
-            DevicePathBuf::from_device_path_node_iter([HardDrive::new_gpt(1, 2048, 1000000, guid)].into_iter());
-        path.append_device_path(&hd_path);
+            DevicePathBuf::from_device_path_node_iter([HardDrive::new_gpt(1, 2048, 1000000, guid)].into_iter())
+                .unwrap();
+        path.append_device_path(&hd_path).unwrap();
         path
     }
 
@@ -160,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_is_partial_empty_path() {
-        let empty = DevicePathBuf::from_device_path_node_iter([EndEntire].into_iter());
+        let empty = DevicePathBuf::from_device_path_node_iter([EndEntire].into_iter()).unwrap();
         // EndEntire is type 0x7F (End) - an end-only path is not a meaningful partial path
         assert!(!is_partial_device_path(&empty));
     }
@@ -185,15 +190,15 @@ mod tests {
         // Create the partial path: HD(1,GPT,<guid>)/File(\EFI\BOOT\BOOTX64.EFI)
         let mut partial = build_partial_hd_path(guid);
         let file_path =
-            DevicePathBuf::from_device_path_node_iter([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")].into_iter());
-        partial.append_device_path(&file_path);
+            DevicePathBuf::from_device_path_node_iter([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")].into_iter()).unwrap();
+        partial.append_device_path(&file_path).unwrap();
 
         // Create the full path that the handle will have (ACPI/PCI/HD)
         let full_handle_path = build_full_path_with_hd(guid);
 
         // Expected result: ACPI/PCI/HD/File (full path + remaining file path)
         let mut expected = full_handle_path.clone();
-        expected.append_device_path(&file_path);
+        expected.append_device_path(&file_path).unwrap();
 
         // Clone the device path bytes into a Vec and leak it so we can return a pointer
         let path_ref: &DevicePath = full_handle_path.as_ref();

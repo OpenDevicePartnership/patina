@@ -1241,7 +1241,7 @@ mod tests {
 #[cfg(test)]
 mod binary_tests {
     use super::*;
-    use crate::uefi::device_path::parse_node::Header;
+    use crate::uefi::device_path::{parse_node::Header, paths::DevicePathBuf};
     use alloc::{format, vec};
 
     fn check_node<T>(node: T, expected: &[u8])
@@ -1329,5 +1329,17 @@ mod binary_tests {
         }
         assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
         assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
+    }
+
+    #[test]
+    fn test_device_path_builder_propagates_errors() {
+        let mut path = DevicePathBuf::from_device_path_node_iter([EndEntire].into_iter()).unwrap();
+        let expected = path.as_bytes().to_vec();
+        assert!(path.append(Sata::new(u16::MAX, 0, 0)).is_err());
+        assert_eq!(path.as_bytes(), expected);
+        assert!(path.append(FilePath::new("bad\0path")).is_err());
+        assert_eq!(path.as_bytes(), expected);
+        assert!(DevicePathBuf::from_device_path_node_iter([Sata::new(u16::MAX, 0, 0)].into_iter()).is_err());
+        assert!(DevicePathBuf::from_device_path_node_iter([EndEntire, EndEntire].into_iter()).is_err());
     }
 }
