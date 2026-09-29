@@ -165,6 +165,43 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 #[used]
 static DXE_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[repr(u32)]
+pub enum SystemTableVersion {
+    V2_00 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_00,
+    V2_10 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_10,
+    V2_20 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_20,
+    V2_30 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_30,
+    V2_40 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_40,
+    V2_50 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_50,
+    V2_60 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_60,
+    V2_70 = patina::standard::efi::SYSTEM_TABLE_REVISION_2_70,
+    V2_80 = (2 << 16) | (80),
+    V2_90 = (2 << 16) | (90),
+    V2_100 = (2 << 16) | (100),
+    V2_110 = (2 << 16) | (110),
+    Custom(u32)
+}
+
+impl Into<u32> for SystemTableVersion {
+    fn into(self) -> u32 {
+        match self {
+            SystemTableVersion::V2_00 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_00,
+            SystemTableVersion::V2_10 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_10,
+            SystemTableVersion::V2_20 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_20,
+            SystemTableVersion::V2_30 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_30,
+            SystemTableVersion::V2_40 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_40,
+            SystemTableVersion::V2_50 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_50,
+            SystemTableVersion::V2_60 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_60,
+            SystemTableVersion::V2_70 => patina::standard::efi::SYSTEM_TABLE_REVISION_2_70,
+            SystemTableVersion::V2_80 => (2 << 16) | (80),
+            SystemTableVersion::V2_90 => (2 << 16) | (90),
+            SystemTableVersion::V2_100 => (2 << 16) | (100),
+            SystemTableVersion::V2_110 => (2 << 16) | (110),
+            SystemTableVersion::Custom(val) => val,
+        }
+    }
+}
+
 /// A trait to be implemented by the platform to provide configuration values and types related to memory management
 /// to be used directly by the Patina DXE Core.
 ///
@@ -239,6 +276,8 @@ pub trait PlatformInfo: 'static {
 
     /// The platform's section extractor type, used when extracting sections from firmware volumes.
     type Extractor: SectionExtractor;
+
+    const SYSTEM_TABLE_VERSION: SystemTableVersion = SystemTableVersion::V2_70;
 
     /// The performance measurement configuration used when no performance configuration HOB is present.
     ///
@@ -541,7 +580,7 @@ impl<P: PlatformInfo> Core<P> {
 
     fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
-        systemtables::init_system_table();
+        systemtables::init_system_table(P::SYSTEM_TABLE_VERSION);
 
         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
         let st = st_guard.as_mut().expect("System Table not initialized!");
