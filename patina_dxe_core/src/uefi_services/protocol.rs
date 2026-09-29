@@ -96,6 +96,18 @@ impl ProtocolServices for CoreProtocolServices {
             .map_err(ProtocolError::from)
     }
 
+    fn install_marker(&self, handle: Option<Handle>, protocol: BinaryGuid) -> Result<Handle, ProtocolError> {
+        let caller_handle = handle.map(|handle| handle.as_raw());
+        let installed = core_install_protocol_interface(caller_handle, protocol.into_inner(), core::ptr::null_mut())
+            .map_err(ProtocolError::from)?;
+        Handle::from_raw(installed).ok_or(ProtocolError::Internal)
+    }
+
+    fn uninstall_marker(&self, handle: Handle, protocol: BinaryGuid) -> Result<(), ProtocolError> {
+        core_uninstall_protocol_interface(handle.as_raw(), protocol.into_inner(), core::ptr::null_mut())
+            .map_err(ProtocolError::from)
+    }
+
     fn locate_interface(&self, protocol: BinaryGuid) -> Result<ProtocolPtr, ProtocolError> {
         let interface = PROTOCOL_DB.locate_protocol(protocol.into_inner()).map_err(ProtocolError::from)?;
         ProtocolPtr::from_raw(interface).ok_or(ProtocolError::NotFound)
@@ -294,6 +306,43 @@ mod tests {
     }
 
     #[test]
+    fn test_protocol_services_install_marker_creates_new_handle() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("17171717-1717-1717-1717-171717171717");
+
+            let handle = service.install_marker(None, guid).unwrap();
+
+            assert!(!handle.as_raw().is_null());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_install_marker_is_discoverable_via_locate_handles() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("18181818-1818-1818-1818-181818181818");
+
+            let handle = service.install_marker(None, guid).unwrap();
+
+            assert_eq!(service.locate_handles(guid).unwrap(), vec![handle]);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_uninstall_marker_removes_it() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("19191919-1919-1919-1919-191919191919");
+
+            let handle = service.install_marker(None, guid).unwrap();
+            service.uninstall_marker(handle, guid).unwrap();
+
+            assert!(service.locate_handles(guid).unwrap().is_empty());
+        });
+    }
+
+    #[test]
     fn test_protocol_services_locate_interface_not_found() {
         with_locked_state(|| {
             let service = CoreProtocolServices;
@@ -469,6 +518,50 @@ mod tests {
             assert!(seen.borrow().is_empty());
 
             let handle = service.install_interface(None, guid, fake_interface(0x7000)).unwrap();
+
+            assert_eq!(seen.borrow().len(), 1);
+            assert_eq!(seen.borrow()[0], handle);
+
+            service.cancel_install_notify(registration).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_register_install_notify_fires_for_already_installed_marker() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("20202020-2020-2020-2020-202020202020");
+            let handle = service.install_marker(None, guid).unwrap();
+
+            let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
+            let recorder = Rc::clone(&seen);
+            let registration = service
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .unwrap();
+
+            // Note: A marker protocol works the same way as a regular protocol for install notifications.
+            assert_eq!(seen.borrow().len(), 1);
+            assert_eq!(seen.borrow()[0], handle);
+
+            service.cancel_install_notify(registration).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_register_install_notify_fires_for_future_marker_install() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("21212121-2121-2121-2121-212121212121");
+
+            let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
+            let recorder = Rc::clone(&seen);
+            let registration = service
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .unwrap();
+
+            assert!(seen.borrow().is_empty());
+
+            let handle = service.install_marker(None, guid).unwrap();
 
             assert_eq!(seen.borrow().len(), 1);
             assert_eq!(seen.borrow()[0], handle);
