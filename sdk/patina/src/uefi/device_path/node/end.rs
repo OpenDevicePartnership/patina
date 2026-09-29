@@ -7,12 +7,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{DevicePathType, EndSubType};
-use crate::{device_path_node, uefi::device_path::parse_node::DevicePathNode};
+use crate::device_path_node;
 use core::fmt::{Display, Write};
-use scroll::{
-    Pwrite,
-    ctx::{TryFromCtx, TryIntoCtx},
-};
+use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
 device_path_node! {
     /// End of entire device path node.

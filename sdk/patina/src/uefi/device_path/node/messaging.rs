@@ -9,7 +9,10 @@
 use super::{DevicePathType, MessagingSubType, ascii, check_length, invalid, read_ascii};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, MeasureSize},
+    uefi::device_path::{
+        encoding::Remaining,
+        parse_node::{DevicePathNode, MeasureSize},
+    },
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -501,13 +504,18 @@ device_path_node! {
     }
 }
 
-/// Vendor-defined messaging node.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct MessagingVendor {
-    /// Vendor GUID in EFI wire byte order.
-    pub guid: [u8; 16],
-    /// Opaque vendor-defined bytes following the GUID.
-    pub data: Vec<u8>,
+device_path_node! {
+    /// Vendor-defined messaging node.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vendor)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
+    pub struct MessagingVendor {
+        /// Vendor GUID in EFI wire byte order.
+        pub guid: [u8; 16],
+        /// Opaque vendor-defined bytes following the GUID.
+        #[scroll(ctx = Remaining)]
+        pub data: Vec<u8>,
+    }
 }
 
 impl MeasureSize for MessagingVendor {
@@ -516,74 +524,23 @@ impl MeasureSize for MessagingVendor {
     }
 }
 
-impl DevicePathNode for MessagingVendor {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
+device_path_node! {
+    /// USB identity node using a serial-number suffix.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbWwid)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct UsbWwid {
+        /// USB interface number.
+        pub interface: u16,
+        /// USB vendor identifier.
+        pub vendor_id: u16,
+        /// USB product identifier.
+        pub product_id: u16,
+        /// Serial suffix as at most 64 UTF-16 code units, preserved verbatim.
+        ///
+        /// The wire length, rather than a required NUL, bounds this field.
+        pub serial_number: Vec<u16>,
     }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::Vendor as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for MessagingVendor {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let guid = data.gread_with(&mut offset, scroll::LE)?;
-        let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
-        let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        check_length(node.header().length - 4)?;
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for MessagingVendor {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        let mut offset = 0;
-        data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.data.as_slice(), &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
-impl core::fmt::Display for MessagingVendor {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
-/// USB identity node using a serial-number suffix.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct UsbWwid {
-    /// USB interface number.
-    pub interface: u16,
-    /// USB vendor identifier.
-    pub vendor_id: u16,
-    /// USB product identifier.
-    pub product_id: u16,
-    /// Serial suffix as at most 64 UTF-16 code units, preserved verbatim.
-    ///
-    /// The wire length, rather than a required NUL, bounds this field.
-    pub serial_number: Vec<u16>,
 }
 
 impl MeasureSize for UsbWwid {
@@ -592,32 +549,6 @@ impl MeasureSize for UsbWwid {
             + size_of_val(&self.vendor_id)
             + size_of_val(&self.product_id)
             + size_of_val(self.serial_number.as_slice())
-    }
-}
-
-impl DevicePathNode for UsbWwid {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::UsbWwid as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -666,12 +597,6 @@ impl TryIntoCtx<scroll::Endian> for UsbWwid {
     }
 }
 
-impl core::fmt::Display for UsbWwid {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 /// Gateway and subnet fields added to the original IPv4 node.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct IpV4Network {
@@ -681,23 +606,27 @@ pub struct IpV4Network {
     pub subnet_mask: [u8; 4],
 }
 
-/// IPv4 messaging node, preserving both the 19-byte legacy and 27-byte current form.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct IpV4 {
-    /// Local address in network byte order.
-    pub local_ip: [u8; 4],
-    /// Remote address in network byte order.
-    pub remote_ip: [u8; 4],
-    /// Local port, encoded as a UEFI little-endian integer.
-    pub local_port: u16,
-    /// Remote port, encoded as a UEFI little-endian integer.
-    pub remote_port: u16,
-    /// IP protocol number.
-    pub protocol: u16,
-    /// Zero for DHCP, one for a static address.
-    pub static_ip: u8,
-    /// Absent only for the original 19-byte node.
-    pub network: Option<IpV4Network>,
+device_path_node! {
+    /// IPv4 messaging node, preserving both the 19-byte legacy and 27-byte current form.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV4)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct IpV4 {
+        /// Local address in network byte order.
+        pub local_ip: [u8; 4],
+        /// Remote address in network byte order.
+        pub remote_ip: [u8; 4],
+        /// Local port, encoded as a UEFI little-endian integer.
+        pub local_port: u16,
+        /// Remote port, encoded as a UEFI little-endian integer.
+        pub remote_port: u16,
+        /// IP protocol number.
+        pub protocol: u16,
+        /// Zero for DHCP, one for a static address.
+        pub static_ip: u8,
+        /// Absent only for the original 19-byte node.
+        pub network: Option<IpV4Network>,
+    }
 }
 
 impl MeasureSize for IpV4 {
@@ -712,32 +641,6 @@ impl MeasureSize for IpV4 {
                 .network
                 .as_ref()
                 .map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
-    }
-}
-
-impl DevicePathNode for IpV4 {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::IpV4 as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -791,25 +694,23 @@ impl TryIntoCtx<scroll::Endian> for IpV4 {
     }
 }
 
-impl core::fmt::Display for IpV4 {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+device_path_node! {
+    /// iSCSI target and login parameters.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Iscsi)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Iscsi {
+        /// Network protocol; zero identifies TCP.
+        pub protocol: u16,
+        /// Login option bit field.
+        pub options: u16,
+        /// SCSI LUN bytes in SAM-defined order.
+        pub lun: [u8; 8],
+        /// Target portal group tag.
+        pub portal_group: u16,
+        /// ASCII target name without its NUL terminator, at most 223 bytes.
+        pub target_name: String,
     }
-}
-
-/// iSCSI target and login parameters.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Iscsi {
-    /// Network protocol; zero identifies TCP.
-    pub protocol: u16,
-    /// Login option bit field.
-    pub options: u16,
-    /// SCSI LUN bytes in SAM-defined order.
-    pub lun: [u8; 8],
-    /// Target portal group tag.
-    pub portal_group: u16,
-    /// ASCII target name without its NUL terminator, at most 223 bytes.
-    pub target_name: String,
 }
 
 impl MeasureSize for Iscsi {
@@ -820,32 +721,6 @@ impl MeasureSize for Iscsi {
             + size_of_val(&self.portal_group)
             + self.target_name.len()
             + size_of::<u8>() // NUL terminator
-    }
-}
-
-impl DevicePathNode for Iscsi {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::Iscsi as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -887,48 +762,20 @@ impl TryIntoCtx<scroll::Endian> for Iscsi {
     }
 }
 
-impl core::fmt::Display for Iscsi {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+device_path_node! {
+    /// URI node whose ASCII payload is bounded by the node length, not a terminator.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uri)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Uri {
+        /// URI text, including an empty URI when appropriate.
+        pub uri: String,
     }
-}
-
-/// URI node whose ASCII payload is bounded by the node length, not a terminator.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Uri {
-    /// URI text, including an empty URI when appropriate.
-    pub uri: String,
 }
 
 impl MeasureSize for Uri {
     fn measure_size(&self) -> usize {
         self.uri.len()
-    }
-}
-
-impl DevicePathNode for Uri {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::Uri as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -952,50 +799,22 @@ impl TryIntoCtx<scroll::Endian> for Uri {
     }
 }
 
-impl core::fmt::Display for Uri {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+device_path_node! {
+    /// DNS server list with addresses stored as `EFI_IP_ADDRESS` byte arrays.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Dns)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Dns {
+        /// True for IPv6 addresses; false for IPv4 addresses in the first four bytes.
+        pub is_ipv6: bool,
+        /// One or more 16-byte addresses, with unused IPv4 bytes preserved.
+        pub addresses: Vec<[u8; 16]>,
     }
-}
-
-/// DNS server list with addresses stored as `EFI_IP_ADDRESS` byte arrays.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Dns {
-    /// True for IPv6 addresses; false for IPv4 addresses in the first four bytes.
-    pub is_ipv6: bool,
-    /// One or more 16-byte addresses, with unused IPv4 bytes preserved.
-    pub addresses: Vec<[u8; 16]>,
 }
 
 impl MeasureSize for Dns {
     fn measure_size(&self) -> usize {
         size_of_val(&self.is_ipv6) + size_of_val(self.addresses.as_slice())
-    }
-}
-
-impl DevicePathNode for Dns {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::Dns as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -1036,12 +855,6 @@ impl TryIntoCtx<scroll::Endian> for Dns {
     }
 }
 
-impl core::fmt::Display for Dns {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
 /// Service-specific data carried by a REST device path.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RestServiceType {
@@ -1058,13 +871,17 @@ pub enum RestServiceType {
     },
 }
 
-/// REST service node, including its vendor-specific form.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct RestService {
-    /// Standard service or vendor payload.
-    pub service: RestServiceType,
-    /// One for in-band access, two for out-of-band access.
-    pub access_mode: u8,
+device_path_node! {
+    /// REST service node, including its vendor-specific form.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::RestService)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct RestService {
+        /// Standard service or vendor payload.
+        pub service: RestServiceType,
+        /// One for in-band access, two for out-of-band access.
+        pub access_mode: u8,
+    }
 }
 
 impl MeasureSize for RestService {
@@ -1076,32 +893,6 @@ impl MeasureSize for RestService {
         size_of::<u8>() // service type, encoded as one byte
             + size_of_val(&self.access_mode)
             + vendor
-    }
-}
-
-impl DevicePathNode for RestService {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::RestService as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -1154,52 +945,24 @@ impl TryIntoCtx<scroll::Endian> for RestService {
     }
 }
 
-impl core::fmt::Display for RestService {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+device_path_node! {
+    /// `NVMe` over Fabrics namespace identity.
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmeOf)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct NvmeOf {
+        /// Namespace identifier type: 1 for EUI-64, 2 for NGUID, 3 for UUID.
+        pub identifier_type: u8,
+        /// Identifier bytes; EUI-64 uses the first eight bytes, UUID uses RFC byte order.
+        pub identifier: [u8; 16],
+        /// UTF-8 subsystem NQN without its wire NUL terminator, at most 223 bytes.
+        pub subsystem_nqn: String,
     }
-}
-
-/// `NVMe` over Fabrics namespace identity.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct NvmeOf {
-    /// Namespace identifier type: 1 for EUI-64, 2 for NGUID, 3 for UUID.
-    pub identifier_type: u8,
-    /// Identifier bytes; EUI-64 uses the first eight bytes, UUID uses RFC byte order.
-    pub identifier: [u8; 16],
-    /// UTF-8 subsystem NQN without its wire NUL terminator, at most 223 bytes.
-    pub subsystem_nqn: String,
 }
 
 impl MeasureSize for NvmeOf {
     fn measure_size(&self) -> usize {
         size_of_val(&self.identifier_type) + size_of_val(&self.identifier) + self.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
-    }
-}
-
-impl DevicePathNode for NvmeOf {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::NvmeOf as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -1250,23 +1013,21 @@ impl TryIntoCtx<scroll::Endian> for NvmeOf {
     }
 }
 
-impl core::fmt::Display for NvmeOf {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
+device_path_node! {
+    /// SATA Device Path.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata)]
+    @[DevicePathNodeDerive(MeasureSize)]
+    #[derive(Clone)]
+    pub struct Sata {
+        /// HBA Port Number.
+        pub hba_port: u16,
+        /// Port Multiplier Port Number.
+        pub port_multiplier_port: u16,
+        /// Logical Unit Number.
+        pub lun: u16,
     }
-}
-
-/// SATA Device Path.
-///
-/// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
-#[derive(Clone)]
-pub struct Sata {
-    /// HBA Port Number.
-    pub hba_port: u16,
-    /// Port Multiplier Port Number.
-    pub port_multiplier_port: u16,
-    /// Logical Unit Number.
-    pub lun: u16,
 }
 
 impl Sata {
@@ -1278,38 +1039,6 @@ impl Sata {
     /// * `lun` - Logical unit number
     pub fn new(hba_port: u16, port_multiplier_port: u16, lun: u16) -> Self {
         Self { hba_port, port_multiplier_port, lun }
-    }
-}
-
-impl MeasureSize for Sata {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.hba_port) + size_of_val(&self.port_multiplier_port) + size_of_val(&self.lun)
-    }
-}
-
-impl DevicePathNode for Sata {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::Sata as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -1360,15 +1089,19 @@ impl TryFromCtx<'_, scroll::Endian> for Sata {
     }
 }
 
-/// NVM Express Namespace Device Path.
-///
-/// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-namespace-device-path>
-#[derive(Clone)]
-pub struct NvmExpress {
-    /// Namespace Identifier (NSID).
-    pub namespace_id: u32,
-    /// IEEE Extended Unique Identifier (EUI-64).
-    pub eui64: u64,
+device_path_node! {
+    /// NVM Express Namespace Device Path.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-namespace-device-path>
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmExpress)]
+    @[DevicePathNodeDerive(MeasureSize)]
+    #[derive(Clone)]
+    pub struct NvmExpress {
+        /// Namespace Identifier (NSID).
+        pub namespace_id: u32,
+        /// IEEE Extended Unique Identifier (EUI-64).
+        pub eui64: u64,
+    }
 }
 
 impl NvmExpress {
@@ -1379,38 +1112,6 @@ impl NvmExpress {
     /// * `eui64` - The IEEE Extended Unique Identifier (can be 0 if not specified)
     pub fn new(namespace_id: u32, eui64: u64) -> Self {
         Self { namespace_id, eui64 }
-    }
-}
-
-impl MeasureSize for NvmExpress {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.namespace_id) + size_of_val(&self.eui64)
-    }
-}
-
-impl parse_node::DevicePathNode for NvmExpress {
-    fn r#type() -> u8 {
-        DevicePathType::Messaging as u8
-    }
-
-    fn sub_type() -> u8 {
-        MessagingSubType::NvmExpress as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 

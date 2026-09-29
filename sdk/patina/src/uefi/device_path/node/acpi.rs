@@ -71,42 +71,20 @@ impl MeasureSize for ExtendedAcpi {
     }
 }
 
-/// ACPI address node containing one or more display device addresses.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct AcpiAdr {
-    /// ACPI `_ADR` values, in their original order.
-    pub addresses: Vec<u32>,
+device_path_node! {
+    /// ACPI address node containing one or more display device addresses.
+    @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Adr)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct AcpiAdr {
+        /// ACPI `_ADR` values, in their original order.
+        pub addresses: Vec<u32>,
+    }
 }
 
 impl MeasureSize for AcpiAdr {
     fn measure_size(&self) -> usize {
         size_of_val(self.addresses.as_slice())
-    }
-}
-
-impl DevicePathNode for AcpiAdr {
-    fn r#type() -> u8 {
-        DevicePathType::Acpi as u8
-    }
-
-    fn sub_type() -> u8 {
-        AcpiSubType::Adr as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -142,12 +120,6 @@ impl TryIntoCtx<scroll::Endian> for AcpiAdr {
             data.gwrite_with(*address, &mut offset, endian)?;
         }
         Ok(offset)
-    }
-}
-
-impl core::fmt::Display for AcpiAdr {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
     }
 }
 

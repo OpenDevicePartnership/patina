@@ -325,7 +325,9 @@ macro_rules! device_path_node {
             }
 
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-                let header = self.header();
+                use scroll::Pwrite as _;
+
+                let header = $crate::uefi::device_path::parse_node::DevicePathNode::header(&self);
                 let mut header_bytes = [0u8; 4];
                 header_bytes.pwrite_with(header, 0, scroll::LE)?;
                 if buffer.len() < header.length {
@@ -349,7 +351,7 @@ macro_rules! device_path_node {
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Debug) => {
         impl core::fmt::Debug for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                let header = self.header();
+                let header = $crate::uefi::device_path::parse_node::DevicePathNode::header(self);
                 f.debug_struct(stringify!($struct_name))
                     .field("type", &header.r#type)
                     .field("sub_type", &header.sub_type)

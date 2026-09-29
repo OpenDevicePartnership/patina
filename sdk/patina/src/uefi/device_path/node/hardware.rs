@@ -6,84 +6,31 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, HardwareSubType, check_length, invalid};
+use super::{DevicePathType, HardwareSubType};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{DevicePathNode, MeasureSize},
+    uefi::device_path::{encoding::Remaining, parse_node::MeasureSize},
 };
 use alloc::vec::Vec;
-use scroll::{
-    Endian, Pread, Pwrite,
-    ctx::{TryFromCtx, TryIntoCtx},
-};
+use scroll::{Pread, Pwrite};
 
-/// Vendor-defined hardware node.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct HardwareVendor {
-    /// Vendor GUID in EFI wire byte order.
-    pub guid: [u8; 16],
-    /// Opaque vendor-defined bytes following the GUID.
-    pub data: Vec<u8>,
+device_path_node! {
+    /// Vendor-defined hardware node.
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
+    pub struct HardwareVendor {
+        /// Vendor GUID in EFI wire byte order.
+        pub guid: [u8; 16],
+        /// Opaque vendor-defined bytes following the GUID.
+        #[scroll(ctx = Remaining)]
+        pub data: Vec<u8>,
+    }
 }
 
 impl MeasureSize for HardwareVendor {
     fn measure_size(&self) -> usize {
         size_of_val(&self.guid) + size_of_val(self.data.as_slice())
-    }
-}
-
-impl DevicePathNode for HardwareVendor {
-    fn r#type() -> u8 {
-        DevicePathType::Hardware as u8
-    }
-
-    fn sub_type() -> u8 {
-        HardwareSubType::Vendor as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for HardwareVendor {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let guid = data.gread_with(&mut offset, scroll::LE)?;
-        let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
-        let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        check_length(node.header().length - 4)?;
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for HardwareVendor {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        let mut offset = 0;
-        data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.data.as_slice(), &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
-impl core::fmt::Display for HardwareVendor {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
     }
 }
 

@@ -6,15 +6,18 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, MediaSubType, check_length, invalid};
+use super::{DevicePathType, MediaSubType, invalid};
 use crate::{
-    Char16Str, Char16String, device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, MeasureSize},
+    device_path_node,
+    uefi::device_path::{
+        encoding::{Char16Nul, Remaining},
+        parse_node::{self, MeasureSize},
+    },
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
 use scroll::{
-    Endian, Pread, Pwrite,
+    Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
 
@@ -98,13 +101,18 @@ device_path_node! {
     }
 }
 
-/// Vendor-defined media node.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct MediaVendor {
-    /// Vendor GUID in EFI wire byte order.
-    pub guid: [u8; 16],
-    /// Opaque vendor-defined bytes following the GUID.
-    pub data: Vec<u8>,
+device_path_node! {
+    /// Vendor-defined media node.
+    @[DevicePathNode(DevicePathType::Media, MediaSubType::Vendor)]
+    @[DevicePathNodeDerive(Debug, Display)]
+    #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
+    pub struct MediaVendor {
+        /// Vendor GUID in EFI wire byte order.
+        pub guid: [u8; 16],
+        /// Opaque vendor-defined bytes following the GUID.
+        #[scroll(ctx = Remaining)]
+        pub data: Vec<u8>,
+    }
 }
 
 impl MeasureSize for MediaVendor {
@@ -113,79 +121,28 @@ impl MeasureSize for MediaVendor {
     }
 }
 
-impl DevicePathNode for MediaVendor {
-    fn r#type() -> u8 {
-        DevicePathType::Media as u8
+device_path_node! {
+    /// Hard Drive Media Device Path.
+    ///
+    /// Represents a partition on a hard drive or similar storage device.
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive-media-device-path>
+    @[DevicePathNode(DevicePathType::Media, MediaSubType::HardDrive)]
+    @[DevicePathNodeDerive(MeasureSize)]
+    #[derive(Clone)]
+    pub struct HardDrive {
+        /// Partition number (1-based).
+        pub partition_number: u32,
+        /// Starting LBA of the partition.
+        pub partition_start: u64,
+        /// Size of the partition in blocks.
+        pub partition_size: u64,
+        /// Partition signature (GUID for GPT, 4-byte signature for MBR).
+        pub partition_signature: [u8; 16],
+        /// Partition format: 0x01 = PC-AT MBR, 0x02 = GPT.
+        pub partition_format: u8,
+        /// Signature type: 0x00 = None, 0x01 = 32-bit MBR, 0x02 = GUID.
+        pub signature_type: u8,
     }
-
-    fn sub_type() -> u8 {
-        MediaSubType::Vendor as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for MediaVendor {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let guid = data.gread_with(&mut offset, scroll::LE)?;
-        let payload = data.get(offset..).ok_or_else(|| invalid("missing vendor payload"))?;
-        let (node, consumed) = (Self { guid, data: payload.to_vec() }, data.len());
-        check_length(node.header().length - 4)?;
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for MediaVendor {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        let mut offset = 0;
-        data.gwrite_with(self.guid.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.data.as_slice(), &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
-impl core::fmt::Display for MediaVendor {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, formatter)
-    }
-}
-
-/// Hard Drive Media Device Path.
-///
-/// Represents a partition on a hard drive or similar storage device.
-/// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive-media-device-path>
-#[derive(Clone)]
-pub struct HardDrive {
-    /// Partition number (1-based).
-    pub partition_number: u32,
-    /// Starting LBA of the partition.
-    pub partition_start: u64,
-    /// Size of the partition in blocks.
-    pub partition_size: u64,
-    /// Partition signature (GUID for GPT, 4-byte signature for MBR).
-    pub partition_signature: [u8; 16],
-    /// Partition format: 0x01 = PC-AT MBR, 0x02 = GPT.
-    pub partition_format: u8,
-    /// Signature type: 0x00 = None, 0x01 = 32-bit MBR, 0x02 = GUID.
-    pub signature_type: u8,
 }
 
 impl HardDrive {
@@ -232,43 +189,6 @@ impl HardDrive {
             partition_format: Self::FORMAT_GPT,
             signature_type: Self::SIGNATURE_TYPE_GUID,
         }
-    }
-}
-
-impl MeasureSize for HardDrive {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.partition_number)
-            + size_of_val(&self.partition_start)
-            + size_of_val(&self.partition_size)
-            + size_of_val(&self.partition_signature)
-            + size_of_val(&self.partition_format)
-            + size_of_val(&self.signature_type)
-    }
-}
-
-impl parse_node::DevicePathNode for HardDrive {
-    fn r#type() -> u8 {
-        DevicePathType::Media as u8
-    }
-
-    fn sub_type() -> u8 {
-        MediaSubType::HardDrive as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
     }
 }
 
@@ -350,14 +270,18 @@ impl TryFromCtx<'_, scroll::Endian> for HardDrive {
     }
 }
 
-/// File Path Media Device Path.
-///
-/// The file path is a null-terminated string that describes a file path.
-/// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
-#[derive(Clone)]
-pub struct FilePath {
-    /// The file path string (stored as UTF-8, serialized as UTF-16).
-    pub path: String,
+device_path_node! {
+    /// File Path Media Device Path.
+    ///
+    /// The file path is a null-terminated string that describes a file path.
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
+    @[DevicePathNode(DevicePathType::Media, MediaSubType::FilePath)]
+    #[derive(Clone, Pread, Pwrite)]
+    pub struct FilePath {
+        /// The file path string (stored as UTF-8, serialized as UTF-16).
+        #[scroll(ctx = Char16Nul)]
+        pub path: String,
+    }
 }
 
 impl FilePath {
@@ -379,32 +303,6 @@ impl MeasureSize for FilePath {
     }
 }
 
-impl parse_node::DevicePathNode for FilePath {
-    fn r#type() -> u8 {
-        DevicePathType::Media as u8
-    }
-
-    fn sub_type() -> u8 {
-        MediaSubType::FilePath as u8
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-        let header = self.header();
-        let mut header_bytes = [0u8; 4];
-        header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-        }
-        let payload = buffer.get_mut(4..header.length).ok_or_else(|| invalid("invalid device path output range"))?;
-        let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - 4 {
-            return Err(invalid("encoded node length differs from header"));
-        }
-        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
-    }
-}
-
 impl core::fmt::Debug for FilePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FilePath").field("path", &self.path).finish()
@@ -414,53 +312,5 @@ impl core::fmt::Debug for FilePath {
 impl Display for FilePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.path)
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for FilePath {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        check_length(self.utf16_size())?;
-        Char16String::try_from_str(&self.path).map_err(|_| invalid("file path is not valid UCS-2"))?;
-        let mut offset = 0;
-        // Write the path as UCS-2 (UEFI CHAR16), including the trailing NUL terminator.
-        let encoded = Char16String::try_from_str(&self.path)
-            .map_err(|_| scroll::Error::BadInput { size: offset, msg: "file path is not valid UCS-2" })?;
-        for unit in encoded.as_units_with_nul() {
-            dest.gwrite_with(*unit, &mut offset, scroll::LE)?;
-        }
-        Ok(offset)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for FilePath {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(buffer: &[u8], _ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let mut units = Vec::new();
-
-        // Read UCS-2 code units until the null terminator.
-        loop {
-            if offset + 2 > buffer.len() {
-                return Err(invalid("file path is missing its NUL terminator"));
-            }
-            let code_unit: u16 = buffer.gread_with(&mut offset, scroll::LE)?;
-            if code_unit == 0 {
-                break;
-            }
-            units.push(code_unit);
-        }
-        units.push(0);
-
-        // Validate the collected code units as UCS-2 before decoding.
-        let path = Char16Str::from_units_with_nul(&units)
-            .map_err(|_| scroll::Error::BadInput { size: offset, msg: "file path is not valid UCS-2" })?
-            .chars()
-            .collect();
-
-        check_length(offset)?;
-        Ok((Self { path }, offset))
     }
 }
