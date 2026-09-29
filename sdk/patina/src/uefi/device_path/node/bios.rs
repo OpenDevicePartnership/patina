@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{BiosSubType, DevicePathType, ascii, check_length, invalid, read_ascii};
-use crate::uefi::device_path::parse_node::{DevicePathNode, Header, MeasureSize};
+use crate::uefi::device_path::parse_node::{DevicePathNode, MeasureSize};
 use alloc::string::String;
 use scroll::{
     Pread, Pwrite,
@@ -32,16 +32,12 @@ impl MeasureSize for Bios {
 }
 
 impl DevicePathNode for Bios {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Bios as u8,
-            BiosSubType::BiosBootSpecification as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Bios as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Bios as u8 && subtype == BiosSubType::BiosBootSpecification as u8
+    fn sub_type() -> u8 {
+        BiosSubType::BiosBootSpecification as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {

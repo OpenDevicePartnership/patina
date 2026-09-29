@@ -9,7 +9,7 @@
 use super::{DevicePathType, MessagingSubType, ascii, check_length, invalid, read_ascii};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, Header, MeasureSize},
+    uefi::device_path::parse_node::{self, DevicePathNode, MeasureSize},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -517,16 +517,12 @@ impl MeasureSize for MessagingVendor {
 }
 
 impl DevicePathNode for MessagingVendor {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::Vendor as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Vendor as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::Vendor as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -600,16 +596,12 @@ impl MeasureSize for UsbWwid {
 }
 
 impl DevicePathNode for UsbWwid {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::UsbWwid as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::UsbWwid as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::UsbWwid as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -724,16 +716,12 @@ impl MeasureSize for IpV4 {
 }
 
 impl DevicePathNode for IpV4 {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::IpV4 as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::IpV4 as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::IpV4 as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -836,16 +824,12 @@ impl MeasureSize for Iscsi {
 }
 
 impl DevicePathNode for Iscsi {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::Iscsi as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Iscsi as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::Iscsi as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -923,16 +907,12 @@ impl MeasureSize for Uri {
 }
 
 impl DevicePathNode for Uri {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::Uri as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Uri as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::Uri as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -994,16 +974,12 @@ impl MeasureSize for Dns {
 }
 
 impl DevicePathNode for Dns {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::Dns as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::Dns as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::Dns as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -1104,16 +1080,12 @@ impl MeasureSize for RestService {
 }
 
 impl DevicePathNode for RestService {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::RestService as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::RestService as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::RestService as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -1206,16 +1178,12 @@ impl MeasureSize for NvmeOf {
 }
 
 impl DevicePathNode for NvmeOf {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Messaging as u8,
-            MessagingSubType::NvmeOf as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Messaging as u8 && subtype == MessagingSubType::NvmeOf as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::NvmeOf as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -1320,16 +1288,12 @@ impl MeasureSize for Sata {
 }
 
 impl DevicePathNode for Sata {
-    fn header(&self) -> parse_node::Header {
-        parse_node::Header {
-            r#type: DevicePathType::Messaging as u8,
-            sub_type: MessagingSubType::Sata as u8,
-            length: parse_node::Header::size_of_header() + self.measure_size(),
-        }
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(r#type: u8, sub_type: u8) -> bool {
-        r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::Sata as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::Sata as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -1425,16 +1389,12 @@ impl MeasureSize for NvmExpress {
 }
 
 impl parse_node::DevicePathNode for NvmExpress {
-    fn header(&self) -> crate::uefi::device_path::parse_node::Header {
-        parse_node::Header {
-            r#type: DevicePathType::Messaging as u8,
-            sub_type: MessagingSubType::NvmExpress as u8,
-            length: parse_node::Header::size_of_header() + self.measure_size(),
-        }
+    fn r#type() -> u8 {
+        DevicePathType::Messaging as u8
     }
 
-    fn is_type(r#type: u8, sub_type: u8) -> bool {
-        r#type == DevicePathType::Messaging as u8 && sub_type == MessagingSubType::NvmExpress as u8
+    fn sub_type() -> u8 {
+        MessagingSubType::NvmExpress as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {

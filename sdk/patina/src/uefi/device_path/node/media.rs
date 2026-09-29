@@ -9,7 +9,7 @@
 use super::{DevicePathType, MediaSubType, check_length, invalid};
 use crate::{
     Char16Str, Char16String, device_path_node,
-    uefi::device_path::parse_node::{self, DevicePathNode, Header, MeasureSize},
+    uefi::device_path::parse_node::{self, DevicePathNode, MeasureSize},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -114,16 +114,12 @@ impl MeasureSize for MediaVendor {
 }
 
 impl DevicePathNode for MediaVendor {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Media as u8,
-            MediaSubType::Vendor as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Media as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Media as u8 && subtype == MediaSubType::Vendor as u8
+    fn sub_type() -> u8 {
+        MediaSubType::Vendor as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -251,16 +247,12 @@ impl MeasureSize for HardDrive {
 }
 
 impl parse_node::DevicePathNode for HardDrive {
-    fn header(&self) -> parse_node::Header {
-        parse_node::Header {
-            r#type: DevicePathType::Media as u8,
-            sub_type: MediaSubType::HardDrive as u8,
-            length: parse_node::Header::size_of_header() + self.measure_size(),
-        }
+    fn r#type() -> u8 {
+        DevicePathType::Media as u8
     }
 
-    fn is_type(r#type: u8, sub_type: u8) -> bool {
-        r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::HardDrive as u8
+    fn sub_type() -> u8 {
+        MediaSubType::HardDrive as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
@@ -388,16 +380,12 @@ impl MeasureSize for FilePath {
 }
 
 impl parse_node::DevicePathNode for FilePath {
-    fn header(&self) -> parse_node::Header {
-        parse_node::Header {
-            r#type: DevicePathType::Media as u8,
-            sub_type: MediaSubType::FilePath as u8,
-            length: parse_node::Header::size_of_header() + self.measure_size(),
-        }
+    fn r#type() -> u8 {
+        DevicePathType::Media as u8
     }
 
-    fn is_type(r#type: u8, sub_type: u8) -> bool {
-        r#type == DevicePathType::Media as u8 && sub_type == MediaSubType::FilePath as u8
+    fn sub_type() -> u8 {
+        MediaSubType::FilePath as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {

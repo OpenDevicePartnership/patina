@@ -93,15 +93,56 @@ pub trait MeasureSize {
     fn measure_size(&self) -> usize;
 }
 
-/// Trait that every device path node must implement.
-pub trait DevicePathNode: Debug + Display + MeasureSize {
-    /// Return the header of the device path node.
-    fn header(&self) -> Header;
+/// Instance access to a node's type and sub-type.
+///
+/// This is implemented automatically for every sized [`DevicePathNode`] from its
+/// `r#type()` and `sub_type()` functions. It lets [`DevicePathNode::header`] have a
+/// default implementation that still works through `dyn DevicePathNode`.
+pub trait DevicePathNodeKind {
+    /// Return the device path type of this node.
+    fn node_type(&self) -> u8;
 
-    /// Return true if this device path node has the same type and `sub_type`.
-    fn is_type(r#type: u8, sub_type: u8) -> bool
+    /// Return the device path sub-type of this node.
+    fn node_sub_type(&self) -> u8;
+}
+
+impl<T: DevicePathNode> DevicePathNodeKind for T {
+    fn node_type(&self) -> u8 {
+        T::r#type()
+    }
+
+    fn node_sub_type(&self) -> u8 {
+        T::sub_type()
+    }
+}
+
+/// Trait that every device path node must implement.
+pub trait DevicePathNode: Debug + Display + MeasureSize + DevicePathNodeKind {
+    /// Return the device path type identifying this node kind.
+    fn r#type() -> u8
     where
         Self: Sized;
+
+    /// Return the device path sub-type identifying this node kind.
+    fn sub_type() -> u8
+    where
+        Self: Sized;
+
+    /// Return the header of the device path node.
+    ///
+    /// The default combines the node's type, sub-type, and
+    /// [`MeasureSize::measure_size`].
+    fn header(&self) -> Header {
+        Header::new(self.node_type(), self.node_sub_type(), Header::size_of_header() + self.measure_size())
+    }
+
+    /// Return true if `r#type` and `sub_type` identify this node kind.
+    fn is_type(r#type: u8, sub_type: u8) -> bool
+    where
+        Self: Sized,
+    {
+        r#type == Self::r#type() && sub_type == Self::sub_type()
+    }
 
     /// Write the device path node into the buffer and return the number of bytes written.
     ///
@@ -134,6 +175,17 @@ impl MeasureSize for UnknownDevicePathNode<'_> {
 }
 
 impl DevicePathNode for UnknownDevicePathNode<'_> {
+    /// Unknown nodes have no fixed type. This placeholder is unused because
+    /// `header()` and `is_type()` are overridden.
+    fn r#type() -> u8 {
+        0
+    }
+
+    /// Unknown nodes have no fixed sub-type; see `r#type()`.
+    fn sub_type() -> u8 {
+        0
+    }
+
     fn header(&self) -> Header {
         self.header
     }
@@ -264,17 +316,12 @@ macro_rules! device_path_node {
     (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
         impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
         {
-            fn header(&self) -> $crate::uefi::device_path::parse_node::Header {
-                $crate::uefi::device_path::parse_node::Header {
-                    r#type: $device_path_type as u8,
-                    sub_type: $device_path_sub_type as u8,
-                    length: $crate::uefi::device_path::parse_node::Header::size_of_header()
-                        + $crate::uefi::device_path::parse_node::MeasureSize::measure_size(self),
-                }
+            fn r#type() -> u8 {
+                $device_path_type as u8
             }
 
-            fn is_type(r#type: u8, sub_type: u8) -> bool {
-                r#type == $device_path_type as u8 && sub_type == $device_path_sub_type as u8
+            fn sub_type() -> u8 {
+                $device_path_sub_type as u8
             }
 
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {

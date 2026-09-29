@@ -11,7 +11,7 @@ use crate::{
     device_path_node,
     uefi::device_path::{
         encoding::AsciiNul,
-        parse_node::{DevicePathNode, Header, MeasureSize},
+        parse_node::{DevicePathNode, MeasureSize},
     },
 };
 use alloc::{string::String, vec::Vec};
@@ -85,12 +85,12 @@ impl MeasureSize for AcpiAdr {
 }
 
 impl DevicePathNode for AcpiAdr {
-    fn header(&self) -> Header {
-        Header::new(DevicePathType::Acpi as u8, AcpiSubType::Adr as u8, Header::size_of_header() + self.measure_size())
+    fn r#type() -> u8 {
+        DevicePathType::Acpi as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Acpi as u8 && subtype == AcpiSubType::Adr as u8
+    fn sub_type() -> u8 {
+        AcpiSubType::Adr as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {

@@ -9,7 +9,7 @@
 use super::{DevicePathType, HardwareSubType, check_length, invalid};
 use crate::{
     device_path_node,
-    uefi::device_path::parse_node::{DevicePathNode, Header, MeasureSize},
+    uefi::device_path::parse_node::{DevicePathNode, MeasureSize},
 };
 use alloc::vec::Vec;
 use scroll::{
@@ -33,16 +33,12 @@ impl MeasureSize for HardwareVendor {
 }
 
 impl DevicePathNode for HardwareVendor {
-    fn header(&self) -> Header {
-        Header::new(
-            DevicePathType::Hardware as u8,
-            HardwareSubType::Vendor as u8,
-            Header::size_of_header() + self.measure_size(),
-        )
+    fn r#type() -> u8 {
+        DevicePathType::Hardware as u8
     }
 
-    fn is_type(kind: u8, subtype: u8) -> bool {
-        kind == DevicePathType::Hardware as u8 && subtype == HardwareSubType::Vendor as u8
+    fn sub_type() -> u8 {
+        HardwareSubType::Vendor as u8
     }
 
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
