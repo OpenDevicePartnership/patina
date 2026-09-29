@@ -28,6 +28,17 @@
 //!   for each present and future install of the protocol. Useful when another component installs the
 //!   protocol later.
 //!
+//! # Marker protocols
+//!
+//! Some UEFI protocols exist only as a signal, with no interface data. These are marked by a NULL
+//! interface pointer.
+//!
+//! If you need to install such a protocol, implement [`MarkerProtocol`] (in addition to
+//! [`ProtocolInterface`]) for a zero-sized type bound to the marker's GUID, then install it with
+//! [`install_marker_protocol`](ProtocolServicesExt::install_marker_protocol). Implementing
+//! [`MarkerProtocol`] for a type that is not zero-sized fails to compile. You can check whether a
+//! marker is installed with [`is_marker_protocol_installed`](ProtocolServicesExt::is_marker_protocol_installed).
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -43,7 +54,7 @@ use core::ptr::NonNull;
 
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
-use crate::base::protocol::ProtocolInterface;
+use crate::base::protocol::{MarkerProtocol, ProtocolInterface};
 #[cfg(feature = "unstable-device-path")]
 use crate::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
@@ -264,6 +275,23 @@ pub trait ProtocolServices {
         interface: ProtocolPtr,
     ) -> Result<(), ProtocolError>;
 
+    /// Installs `protocol` as a marker on a handle, with no associated interface data.
+    ///
+    /// If `handle` is `None`, a new handle is created. The (possibly new) handle is returned. Internally,
+    /// the protocol will have a null interface pointer, representing a marker protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::InvalidParameter`] if the marker could not be installed.
+    fn install_marker(&self, handle: Option<Handle>, protocol: BinaryGuid) -> Result<Handle, ProtocolError>;
+
+    /// Uninstalls the marker for `protocol` previously installed with [`Self::install_marker`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if `handle` does not have a marker for `protocol` installed.
+    fn uninstall_marker(&self, handle: Handle, protocol: BinaryGuid) -> Result<(), ProtocolError>;
+
     /// Locates the first interface installed for `protocol`, from any handle.
     ///
     /// # Errors
@@ -439,11 +467,48 @@ pub trait ProtocolServicesExt: ProtocolServices {
         Ok(handle)
     }
 
-    /// Returns all handles that have protocol `P` installed.
+    /// Installs protocol `P` as a marker on a handle, creating a new handle if `handle` is `None`.
+    ///
+    /// A marker has no interface data. It is represented with a NULL interface pointer. This is
+    /// occassionally used to signal through the protocol database that a capability or condition holds
+    /// without publishing callable functions or data. `P` must implement [`MarkerProtocol`], which
+    /// requires a zero-sized type.
     ///
     /// # Errors
     ///
-    /// Returns [`ProtocolError::NotFound`] if no handle has protocol `P` installed.
+    /// Returns [`ProtocolError::InvalidParameter`] if the marker could not be installed.
+    fn install_marker_protocol<P: MarkerProtocol>(&self, handle: Option<Handle>) -> Result<Handle, ProtocolError> {
+        const { P::ASSERT_ZERO_SIZED };
+        self.install_marker(handle, P::PROTOCOL_GUID)
+    }
+
+    /// Uninstalls the marker for protocol `P` previously installed with [`Self::install_marker_protocol`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if `handle` does not have a marker for `P` installed.
+    fn uninstall_marker_protocol<P: MarkerProtocol>(&self, handle: Handle) -> Result<(), ProtocolError> {
+        const { P::ASSERT_ZERO_SIZED };
+        self.uninstall_marker(handle, P::PROTOCOL_GUID)
+    }
+
+    /// Returns whether protocol `P` is installed as a marker on any handle.
+    ///
+    /// A marker has no interface data, so use this rather than the typed accessors, which
+    /// validate the `&P` interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if the underlying query  fails. A marker that is simply not
+    /// installed is reported as `Ok(false)`, not an error.
+    fn is_marker_protocol_installed<P: MarkerProtocol>(&self) -> Result<bool, ProtocolError> {
+        const { P::ASSERT_ZERO_SIZED };
+        Ok(!self.locate_handles(P::PROTOCOL_GUID)?.is_empty())
+    }
+
+    /// Returns all handles that have protocol `P` installed.
+    ///
+    /// Returns an empty list if no handle has protocol `P` installed.
     fn locate_handles_for<P: ProtocolInterface>(&self) -> Result<Vec<Handle>, ProtocolError> {
         self.locate_handles(P::PROTOCOL_GUID)
     }
@@ -581,6 +646,16 @@ mod tests {
     }
 
     static FAKE_INSTANCE: FakeProtocol = FakeProtocol { value: 42 };
+
+    #[repr(C)]
+    struct FakeMarker;
+
+    // SAFETY: This test-only marker type is zero-sized and never has data read through it.
+    unsafe impl ProtocolInterface for FakeMarker {
+        const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("99998888-7777-6666-5555-444433332222");
+    }
+
+    impl MarkerProtocol for FakeMarker {}
 
     #[test]
     fn test_protocol_services_error_to_efi() {
@@ -766,5 +841,52 @@ mod tests {
 
         let registration = mock.on_protocol_installed::<FakeProtocol>(Tpl::Callback, |_handle| {}).unwrap();
         assert!(mock.cancel(registration).is_ok());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_marker_protocol() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_marker().times(1).returning(|handle, guid| {
+            assert!(handle.is_none());
+            assert_eq!(guid, FakeMarker::PROTOCOL_GUID);
+            Ok(fake_handle())
+        });
+
+        let handle = mock.install_marker_protocol::<FakeMarker>(None).unwrap();
+        assert_eq!(handle, fake_handle());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_uninstall_marker_protocol() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_uninstall_marker().times(1).returning(|handle, guid| {
+            assert_eq!(handle, fake_handle());
+            assert_eq!(guid, FakeMarker::PROTOCOL_GUID);
+            Ok(())
+        });
+
+        assert!(mock.uninstall_marker_protocol::<FakeMarker>(fake_handle()).is_ok());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_is_marker_protocol_installed_true() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_locate_handles().times(1).returning(|guid| {
+            assert_eq!(guid, FakeMarker::PROTOCOL_GUID);
+            Ok(alloc::vec![fake_handle()])
+        });
+
+        assert!(mock.is_marker_protocol_installed::<FakeMarker>().unwrap());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_is_marker_protocol_installed_false() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_locate_handles().times(1).returning(|guid| {
+            assert_eq!(guid, FakeMarker::PROTOCOL_GUID);
+            Ok(Vec::new())
+        });
+
+        assert!(!mock.is_marker_protocol_installed::<FakeMarker>().unwrap());
     }
 }
