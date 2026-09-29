@@ -14,7 +14,7 @@ use crate::{
     base::error::{EfiError, Result},
     uefi::boot_services::BootServices,
     uefi::device_path::{
-        node_defs::DevicePathType,
+        node::DevicePathType,
         paths::{DevicePath, DevicePathBuf},
     },
 };
@@ -129,7 +129,7 @@ mod tests {
     use super::*;
     use crate::{
         uefi::boot_services::MockBootServices,
-        uefi::device_path::node_defs::{Acpi, EndEntire, FilePath, HardDrive, Pci},
+        uefi::device_path::node::{Acpi, EndEntire, FilePath, HardDrive, Pci},
     };
     use alloc::boxed::Box;
 

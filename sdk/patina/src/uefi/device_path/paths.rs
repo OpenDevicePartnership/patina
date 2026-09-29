@@ -25,7 +25,7 @@ use core::{
 use scroll::Pread;
 
 use crate::uefi::device_path::{
-    node_defs::{self, DevicePathType, EndEntire, EndInstance},
+    node::{self, DevicePathType, EndEntire, EndInstance},
     parse_node::{DevicePathNode, UnknownDevicePathNode},
 };
 
@@ -121,7 +121,7 @@ impl DevicePathBuf {
         if instance {
             let subtype_offset = self.buffer.len() - 3;
             *self.buffer.get_mut(subtype_offset).expect("validated path has an end node") =
-                node_defs::EndSubType::Instance as u8;
+                node::EndSubType::Instance as u8;
         } else {
             self.buffer.truncate(self.buffer.len() - 4);
         }
@@ -424,7 +424,7 @@ impl<'a> Iterator for Iter<'a> {
 
 impl Display for DevicePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut nodes = self.iter().map(node_defs::cast_to_dyn_device_path_node).peekable();
+        let mut nodes = self.iter().map(node::cast_to_dyn_device_path_node).peekable();
 
         while let Some(node) = nodes.next() {
             f.write_fmt(format_args!("{node}"))?;
@@ -448,7 +448,7 @@ mod tests {
     use core::assert_eq;
 
     use crate::uefi::device_path::{
-        node_defs::{Acpi, AcpiSubType, EndSubType, Pci},
+        node::{Acpi, AcpiSubType, EndSubType, Pci},
         paths::{DevicePath, DevicePathBuf},
     };
 

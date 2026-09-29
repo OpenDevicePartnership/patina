@@ -82,7 +82,7 @@ mod runtime_cross_checks {
     use patina::{
         devpath,
         uefi::device_path::{
-            node_defs::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
+            node::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
             paths::DevicePathBuf,
         },
     };

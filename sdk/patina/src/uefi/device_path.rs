@@ -16,9 +16,9 @@ pub mod fv_types;
 /// Module for device path helper functions such as partial device path detection and expansion.
 #[cfg(feature = "unstable-device-path")]
 pub mod helpers;
-/// Module for spec-defined device path node types defined in this module.
+/// Device path node definitions.
 #[cfg(feature = "unstable-device-path")]
-pub mod node_defs;
+pub mod node;
 /// Module for defining device path nodes and methods for creating and parsing them.
 #[cfg(feature = "unstable-device-path")]
 pub mod parse_node;

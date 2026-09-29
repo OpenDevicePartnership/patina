@@ -117,7 +117,7 @@ pub struct UnknownDevicePathNode<'a> {
 impl<'a> UnknownDevicePathNode<'a> {
     /// Cast the Unknown device path to a dyn `DevicePathNode` of the right type.
     pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
-        crate::uefi::device_path::node_defs::cast_to_dyn_device_path_node(self)
+        crate::uefi::device_path::node::cast_to_dyn_device_path_node(self)
     }
 }
 
