@@ -72,7 +72,7 @@ mod tests {
     }
 
     fn create_timer_event() -> Event {
-        CoreTimerEventServices.create_timer_event(Tpl::Notify, Box::new(|| {})).unwrap()
+        CoreTimerEventServices.create_timer_event(Tpl::Notify, Box::new(|_event| {})).unwrap()
     }
 
     #[test]
