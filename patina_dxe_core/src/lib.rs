@@ -428,8 +428,8 @@ impl<P: PlatformInfo> Core<P> {
         let mut hob_list = HobList::new();
         hob_list.discover_hobs(physical_hob_list);
 
-        log::trace!("HOB list discovered is:");
-        log::trace!("{hob_list:#x?}");
+        log::info!("HOB list discovered is:");
+        log::info!("{hob_list:#x?}");
 
         //make sure that well-known handles exist.
         PROTOCOL_DB.init_protocol_db();
