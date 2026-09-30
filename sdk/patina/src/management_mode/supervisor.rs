@@ -21,6 +21,12 @@ pub const MM_SUPERVISOR_USER_GUID: crate::BinaryGuid =
 pub const MM_SUPERVISOR_CORE_GUID: crate::BinaryGuid =
     crate::BinaryGuid::from_string("4e4c89dc-a452-4b6b-b183-f16a2a223733");
 
+// GUID for gMmSupervisorInitGuid
+// { 0xA41AD2F6, 0x78D4, 0x47C9, { 0xAE, 0xF1, 0xB6, 0x23, 0xD0, 0x73, 0x4D, 0x63 }}
+/// GUID identifying the MM Supervisor Init module.
+pub const MM_SUPERVISOR_INIT_GUID: crate::BinaryGuid =
+    crate::BinaryGuid::from_string("A41AD2F6-78D4-47C9-AEF1-B623D0734D63");
+
 /// Command types passed from the supervisor to the user core via `invoke_demoted_routine`.
 ///
 /// Discriminant values are part of the supervisor↔user ABI and must not change.

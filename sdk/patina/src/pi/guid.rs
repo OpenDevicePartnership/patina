@@ -42,3 +42,16 @@ pub const HOB_LIST_TABLE_GUID: BinaryGuid = BinaryGuid::from_string("7739F24C-93
 /// # assert_eq!("4ED4BF27-4092-42E9-807D-527B1D00C9BD", format!("{}", MEMORY_ALLOC_STACK_HOB_GUID));
 /// ```
 pub const MEMORY_ALLOC_STACK_HOB_GUID: BinaryGuid = BinaryGuid::from_string("4ED4BF27-4092-42E9-807D-527B1D00C9BD");
+
+/// `EFI_HOB_MEMORY_ALLOC_MODULE_GUID`
+///
+/// GUID for HOB memory allocation module entries.
+///
+/// Defined in PI Version 1.0.
+///
+/// (`f8e21975-0899-4f58-a4be-5525a9c6d77a`)
+/// ```
+/// # use patina::pi::guid::HOB_MEMORY_ALLOC_MODULE_GUID;
+/// # assert_eq!("F8E21975-0899-4F58-A4BE-5525A9C6D77A", format!("{}", HOB_MEMORY_ALLOC_MODULE_GUID));
+/// ```
+pub const HOB_MEMORY_ALLOC_MODULE_GUID: BinaryGuid = BinaryGuid::from_string("f8e21975-0899-4f58-a4be-5525a9c6d77a");

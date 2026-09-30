@@ -18,9 +18,15 @@ use patina::{
     management_mode::{
         MmCommBufferStatus,
         comm_buffer_hob::{MM_COMM_BUFFER_HOB_GUID, MmCommonBufferHobData},
-        supervisor::{MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_USER_GUID},
+        supervisor::{
+            MM_SUPERVISOR_CORE_GUID, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID,
+            MM_SUPERVISOR_USER_GUID,
+        },
     },
-    pi::hob::{self, Hob, PhaseHandoffInformationTable},
+    pi::{
+        guid::HOB_MEMORY_ALLOC_MODULE_GUID,
+        hob::{self, Hob, PhaseHandoffInformationTable},
+    },
 };
 use patina_paging::{
     MemoryAttributes, PageTable, PagingType,
@@ -680,6 +686,67 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             }
             None => log::warn!("MM User module entry point not found in HOB list"),
         }
+    }
+
+    /// Finds and frees the MM Init module on the first runtime SMI.
+    ///
+    /// We look for `EFI_HOB_TYPE_MEMORY_ALLOCATION` HOBs whose
+    /// `MemoryAllocationHeader.Name` is `gEfiHobMemoryAllocModuleGuid`
+    /// and whose `ModuleName` is `gMmSupervisorInitGuid`.
+    ///
+    /// ## Safety
+    ///
+    /// Call only on the BSP with a valid HOB list until the init image has been freed.
+    pub(crate) unsafe fn free_init_module(&self, hob_list: *const c_void, state: &crate::state::InitState) {
+        if state.is_init_module_freed() {
+            return;
+        }
+        let (init_region, core_region) = with_user_access(|| {
+            // SAFETY: the caller provides a valid HOB list, and SMAP is lifted for its user-owned pages.
+            let handoff = unsafe { (hob_list as *const PhaseHandoffInformationTable).as_ref() }
+                .expect("MM Init cleanup requires a non-null HOB list");
+            let hobs = Hob::Handoff(handoff);
+            (
+                find_module_region(&hobs, HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID),
+                find_module_region(&hobs, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID),
+            )
+        });
+
+        let Some((base, size)) = init_region else {
+            log::warn!("MM Init module not found in HOB list");
+            return;
+        };
+        assert!(
+            size != 0 && base.is_multiple_of(UEFI_PAGE_SIZE as u64) && size.is_multiple_of(UEFI_PAGE_SIZE as u64),
+            "MM Init module must describe a non-empty, page-aligned allocation"
+        );
+        assert!(is_buffer_inside_mmram(base, size), "MM Init module is outside MMRAM");
+        let core_region = core_region.expect("MM Supervisor Core module not found in HOB list");
+        assert!(core_region.1 != 0, "MM Supervisor Core module has an empty allocation");
+        assert!(
+            !hob_validation::ranges_overlap((base, size), core_region),
+            "MM Init module overlaps the MM Supervisor Core"
+        );
+
+        // Wrap in a block to drop the lock automatically
+        {
+            let page_table = security_state().lock_page_table();
+            let page_table = page_table.as_ref().expect("Page table required to validate MM Init module");
+            let end = base.checked_add(size).expect("MM Init module allocation overflows");
+            for address in (base..end).step_by(UEFI_PAGE_SIZE) {
+                let attributes = page_table
+                    .query_memory_region(address, UEFI_PAGE_SIZE as u64)
+                    .expect("Failed to query MM Init module page");
+                validate_init_code_page(address, attributes);
+            }
+        }
+
+        security_state()
+            .page_allocator()
+            .free_pages_checked(base, size as usize / UEFI_PAGE_SIZE, AllocationType::Supervisor)
+            .expect("Failed to free MM Init module");
+        state.mark_init_module_freed();
+        log::info!("Freed MM Init module at 0x{base:016x} (0x{size:x} bytes)");
     }
 
     /// Initializes the policy gate from the `PassDown` HOB and runs an initial
@@ -1345,6 +1412,34 @@ fn find_user_module_entry<'a>(hobs: impl IntoIterator<Item = Hob<'a>>) -> Option
     }
 
     None
+}
+
+fn find_module_region<'a>(
+    hobs: impl IntoIterator<Item = Hob<'a>>,
+    allocation_name: patina::BinaryGuid,
+    module_name: patina::BinaryGuid,
+) -> Option<(u64, u64)> {
+    for current_hob in hobs {
+        if let Hob::MemoryAllocationModule(module) = current_hob
+            && module.alloc_descriptor.name == allocation_name
+            && module.module_name == module_name
+        {
+            return Some((module.alloc_descriptor.memory_base_address, module.alloc_descriptor.memory_length));
+        }
+    }
+
+    None
+}
+
+fn validate_init_code_page(address: u64, attributes: MemoryAttributes) {
+    if attributes.contains(MemoryAttributes::ExecuteProtect) {
+        return;
+    }
+    assert!(
+        attributes.contains(MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly)
+            && !attributes.contains(MemoryAttributes::ReadProtect),
+        "MM Init code page at 0x{address:016x} must be supervisor-only, read-only and executable: {attributes:?}"
+    );
 }
 
 /// Finds the first GUID HOB matching `target_guid` and returns its data slice.
@@ -2558,6 +2653,59 @@ mod tests {
         }));
 
         assert!(result.is_err(), "a user-accessible communication buffer was adopted");
+    }
+
+    #[test]
+    fn test_free_init_module_does_not_mark_missing_image_as_freed() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let state = InitState::new();
+        let hob_list = RawHobList::new().finish();
+
+        // SAFETY: the list is readable host memory and contains no module allocations.
+        unsafe { supervisor.free_init_module(hob_list.as_ptr(), &state) };
+
+        assert!(!state.is_init_module_freed());
+    }
+
+    #[test]
+    fn test_free_init_module_skips_hob_lookup_after_freeing() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let state = InitState::new();
+        state.mark_init_module_freed();
+
+        // SAFETY: completed cleanup must not access the HOB list again.
+        unsafe { supervisor.free_init_module(core::ptr::null(), &state) };
+    }
+
+    #[test]
+    fn test_find_module_region_copies_matching_allocation() {
+        let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x10_1234);
+        let mut core =
+            allocation_module(MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID, 0x20_1234);
+        core.alloc_descriptor.memory_base_address = 0x20_0000;
+        let hobs = [Hob::MemoryAllocationModule(&core), Hob::MemoryAllocationModule(&init)];
+
+        assert_eq!(
+            find_module_region(hobs.clone(), HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID),
+            Some((0x10_0000, 0x20_000))
+        );
+        assert_eq!(
+            find_module_region(hobs.clone(), MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID),
+            Some((0x20_0000, 0x20_000))
+        );
+        assert_eq!(find_module_region(hobs, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID), None);
+    }
+
+    #[test]
+    fn test_validate_init_code_page_requires_supervisor_readonly_executable() {
+        let code = MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly;
+        validate_init_code_page(0x1000, code);
+        validate_init_code_page(0x2000, MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect);
+        for attributes in
+            [MemoryAttributes::Supervisor, MemoryAttributes::ReadOnly, code | MemoryAttributes::ReadProtect]
+        {
+            assert!(catch_unwind(|| validate_init_code_page(0x1000, attributes)).is_err());
+        }
     }
 
     #[test]

@@ -86,6 +86,12 @@ The entry point is executed on all cores simultaneously:
    - Wait for BSP initialization to complete
    - Enter a holding pen and poll mailboxes for commands
 
+On the first post-initialization SMI, before entering runtime dispatch, the BSP finds the MM Init image in the incoming
+HOB list and frees its pages.
+Before freeing, the BSP checks that Init lies inside MMRAM, does not overlap the Core, and that its executable pages
+are supervisor-only and read-only.
+The HOB list must remain valid through this first runtime entry.
+
 ### Mailbox System
 
 The mailbox system provides inter-processor communication:

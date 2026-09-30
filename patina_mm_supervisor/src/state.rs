@@ -58,6 +58,8 @@ pub(crate) struct InitState {
     per_core_init_count: AtomicU32,
     /// User module entry point discovered from the HOB list.
     user_entry_point: Once<u64>,
+    /// Set after the init image has been freed.
+    init_module_freed: AtomicBool,
     /// MSEG base address discovered from the MSEG SMRAM HOB, if the platform
     /// publishes one. Programmed into `IA32_SMM_MONITOR_CTL` during per-core init.
     mseg_base: Once<u64>,
@@ -79,6 +81,7 @@ impl InitState {
             mm_initialized_buffer: Once::new(),
             per_core_init_count: AtomicU32::new(0),
             user_entry_point: Once::new(),
+            init_module_freed: AtomicBool::new(false),
             mseg_base: Once::new(),
             ap_startup_fn: Once::new(),
             at_runtime: Once::new(),
@@ -147,6 +150,16 @@ impl InitState {
     /// Returns the user module entry point, if set.
     pub(crate) fn user_entry_point(&self) -> Option<u64> {
         self.user_entry_point.get().copied()
+    }
+
+    /// Returns whether the init image has been freed.
+    pub(crate) fn is_init_module_freed(&self) -> bool {
+        self.init_module_freed.load(Ordering::Acquire)
+    }
+
+    /// Marks successful completion of init image cleanup.
+    pub(crate) fn mark_init_module_freed(&self) {
+        self.init_module_freed.store(true, Ordering::Release);
     }
 
     /// Stores the MSEG base address discovered from the MSEG SMRAM HOB (one-time).
@@ -355,10 +368,19 @@ mod tests {
         assert!(state.mm_initialized_buffer().is_none());
         assert_eq!(state.per_core_init_count(), 0);
         assert!(state.user_entry_point().is_none());
+        assert!(!state.is_init_module_freed());
         assert!(state.mseg_base().is_none());
         assert!(state.ap_startup_fn().is_none());
         assert!(!state.is_at_runtime());
         assert!(state.smrr_range().is_none());
+    }
+
+    #[test]
+    fn test_init_module_freed_flag() {
+        let state = InitState::new();
+        assert!(!state.is_init_module_freed());
+        state.mark_init_module_freed();
+        assert!(state.is_init_module_freed());
     }
 
     #[test]

@@ -338,6 +338,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// This function is unsafe because it is called from the MM entry point and assumes the environment
     /// is properly set up. The function will perform basic sanity checks against the incoming parameters
     /// but does not validate the entire system state.
+    /// `hob_list` must remain valid through the first runtime SMI, when the init image is reclaimed.
     pub unsafe fn entry_point(&'static self, cpu_index: usize, hob_list: *const c_void) {
         // Get the current CPU's APIC ID, EBX[31:24] contains the initial APIC ID
         let cpu_id = current_apic_id();
@@ -351,6 +352,10 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             // Subsequent entry: go directly to request loop or holding pen (does not return)
             log::trace!("CPU {cpu_id} (index {cpu_index}) re-entering MM Supervisor Core, skipping initialization.");
             smrr_enable();
+            if is_bsp {
+                // SAFETY: the caller provides a valid HOB list through the first runtime SMI.
+                unsafe { self.free_init_module(hob_list, init_state()) };
+            }
             self.enter_runtime(cpu_id, cpu_index);
 
             return;

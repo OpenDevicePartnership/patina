@@ -334,7 +334,7 @@ fn checked_range_end(kind: &'static str, base: u64, length: u64) -> Result<u64, 
 }
 
 /// Returns whether the two `[base, base + size)` ranges overlap.
-fn ranges_overlap(a: (u64, u64), b: (u64, u64)) -> bool {
+pub(crate) fn ranges_overlap(a: (u64, u64), b: (u64, u64)) -> bool {
     let (a_base, a_size) = a;
     let (b_base, b_size) = b;
     if a_size == 0 || b_size == 0 {
