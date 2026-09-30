@@ -366,14 +366,15 @@ mod tests {
     fn test_fbpt_publisher_report_fbpt_publishes_table_once() {
         let mut events = MockEventServices::new();
         events.expect_create_event_for_group().once().returning(|_, _, mut callback| {
-            // Signal the event group twice. Only the first signal should publish the table (enforced by the
-            // `.once()` expectations on the mocks below).
-            callback();
-            callback();
-            Ok(patina::component::service::uefi_services::event::Event::from_raw(
+            let event = patina::component::service::uefi_services::event::Event::from_raw(
                 core::ptr::NonNull::<c_void>::dangling().as_ptr(),
             )
-            .unwrap())
+            .unwrap();
+            // Signal the event group twice. Only the first signal should publish the table (enforced by the
+            // `.once()` expectations on the mocks below).
+            callback(event);
+            callback(event);
+            Ok(event)
         });
 
         let mut performance = MockPerformanceManager::new();
