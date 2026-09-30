@@ -350,7 +350,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         // Check if this core has already completed initialization (per-core check)
         if is_core_initialized(cpu_index) {
             // Subsequent entry: go directly to request loop or holding pen (does not return)
-            log::info!("CPU {cpu_id} (index {cpu_index}) re-entering MM Supervisor Core, skipping initialization {hob_list:?}.");
+            log::trace!("CPU {cpu_id} (index {cpu_index}) re-entering MM Supervisor Core, skipping initialization.");
             smrr_enable();
             if is_bsp {
                 self.free_init_module(init_state());
