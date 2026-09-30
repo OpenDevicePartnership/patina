@@ -1408,5 +1408,9 @@ mod tests {
                 crate::component::type_name::normalized::<Service<S6>>()
             )))
         );
+
+        storage.add_service(S6);
+        assert_eq!(component.run(&mut storage), Ok(true));
+        assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
     }
 }
