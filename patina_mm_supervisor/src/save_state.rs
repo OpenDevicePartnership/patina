@@ -1387,6 +1387,20 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_save_state_read_phase1_stages_against_the_initialized_cpu_count() {
+        crate::test_support::init_test_logger();
+        let smram = FakeSmram::new(2);
+        security_state().set_save_state_info(smram.info());
+
+        // Phase 1 bounds the request against the CPU count the PassDown HOB supplied, so a CPU
+        // index inside it stages and one past it is refused.
+        assert_eq!(save_state_read_phase1(0x1000, 38, 0), Ok(0));
+        assert!(security_state().lock_save_state_access().take().is_some());
+        assert_eq!(save_state_read_phase1(0x1000, 38, 2), Err(Status::INVALID_PARAMETER));
+    }
+
+    #[test]
+    #[serial]
     fn test_stage_read_request_validates_and_stores_request() {
         assert_eq!(stage_read_request(7, 0x1000, 38, 0, 4), Ok(0));
 

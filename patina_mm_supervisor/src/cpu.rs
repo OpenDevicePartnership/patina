@@ -523,4 +523,19 @@ mod tests {
         // spinning forever on a core running code the supervisor does not control.
         assert_eq!(manager.wait_for_ap_exit_acks(2, 1), 1);
     }
+
+    #[test]
+    fn test_exit_barrier_returns_immediately_when_there_is_nothing_to_wait_for() {
+        let manager: CpuManager<4> = CpuManager::new();
+
+        // A BSP running alone has no acknowledgements to collect, so the barrier must not spin
+        // for the whole exit window.
+        manager.register_cpu(0, 0, true);
+        assert_eq!(manager.wait_for_ap_exit_acks(0, u64::MAX), 0);
+
+        // Without a registered BSP there is no semaphore the APs could have signaled, so the
+        // barrier reports a short count instead of waiting on one that can never be posted.
+        let unregistered: CpuManager<4> = CpuManager::new();
+        assert_eq!(unregistered.wait_for_ap_exit_acks(2, u64::MAX), 0);
+    }
 }

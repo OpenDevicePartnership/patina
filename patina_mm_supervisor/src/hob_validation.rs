@@ -1006,9 +1006,9 @@ mod tests {
 
     use patina::pi::BootMode;
     use patina::pi::hob::{
-        CPU, Capsule, EFI_RESOURCE_SYSTEM_MEMORY, FV, FV2, FV3, FirmwareVolume, FirmwareVolume2, FirmwareVolume3,
-        GUID_EXTENSION, GuidHob, HANDOFF, HobHeader, MEMORY_ALLOCATION, MemoryAllocation, MemoryAllocationHeader,
-        MemoryAllocationModule, RESOURCE_DESCRIPTOR, ResourceDescriptorV2, UEFI_CAPSULE,
+        CPU, Capsule, EFI_RESOURCE_SYSTEM_MEMORY, END_OF_HOB_LIST, FV, FV2, FV3, FirmwareVolume, FirmwareVolume2,
+        FirmwareVolume3, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader, MEMORY_ALLOCATION, MemoryAllocation,
+        MemoryAllocationHeader, MemoryAllocationModule, RESOURCE_DESCRIPTOR, ResourceDescriptorV2, UEFI_CAPSULE,
     };
 
     fn region(base: u64, size: u64) -> SmramRegion {
@@ -1192,6 +1192,50 @@ mod tests {
         ] {
             dump_hob(hob);
         }
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_pre_paging_accepts_a_complete_hob_list() {
+        /// A HOB list holding just the PHIT and the `PassDown` HOB the supervisor requires.
+        #[repr(C, align(8))]
+        struct PassDownHobList {
+            handoff: PhaseHandoffInformationTable,
+            guid: GuidHob,
+            pass_down: MmSupvPassDownHobData,
+            end: HobHeader,
+        }
+
+        let list = PassDownHobList {
+            handoff: PhaseHandoffInformationTable {
+                header: HobHeader {
+                    r#type: HANDOFF,
+                    length: size_of::<PhaseHandoffInformationTable>() as u16,
+                    reserved: 0,
+                },
+                version: 1,
+                boot_mode: BootMode::BootWithFullConfiguration,
+                memory_top: 0x9000,
+                memory_bottom: 0x1000,
+                free_memory_top: 0x8000,
+                free_memory_bottom: 0x2000,
+                end_of_hob_list: 0,
+            },
+            guid: guid_hob(crate::MM_SUPV_PASS_DOWN_HOB_GUID, size_of::<MmSupvPassDownHobData>()),
+            pass_down: pass_down(),
+            end: HobHeader { r#type: END_OF_HOB_LIST, length: size_of::<HobHeader>() as u16, reserved: 0 },
+        };
+        let regions = [region(0x1000, 0x8000)];
+
+        // Everything the producer named resolves inside the scanned regions, so the whole
+        // pre-paging sequence runs to completion.
+        assert_eq!(validate_incoming_hobs_pre_paging_init(&list.handoff, &regions, |_, _| true), Ok(()));
+
+        // The HOB list itself is a buffer at an address the producer chose, so it is rejected
+        // when it falls outside the regions it described.
+        assert!(matches!(
+            validate_incoming_hobs_pre_paging_init(&list.handoff, &regions, |_, _| false),
+            Err(HobValidationError::HobListOutsideMmram { .. })
+        ));
     }
 
     #[test]
@@ -1875,6 +1919,7 @@ mod tests {
             HobValidationError::PassDownHobTooSmall,
             HobValidationError::PassDownInvalidRevision { found: 3, expected: 2 },
             HobValidationError::PassDownPointerOutsideMmram { field: "sm_base", addr: 0x1000, size: 8 },
+            HobValidationError::HobListOutsideMmram { base: 0x1000, size: 0x40 },
             HobValidationError::PageTableUnavailable,
             HobValidationError::PageAttributeQueryFailed { addr: 0x1000 },
             HobValidationError::PageMissingAttribute { addr: 0x1000, desired: 0x1, found: 0 },

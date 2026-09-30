@@ -1605,6 +1605,8 @@ mod tests {
         panic::{AssertUnwindSafe, catch_unwind},
     };
 
+    use serial_test::serial;
+
     use patina::{
         management_mode::supervisor::MM_SUPERVISOR_CORE_GUID,
         pi::BootMode,
@@ -2298,6 +2300,264 @@ mod tests {
         unsafe { supervisor.discover_and_store_user_entry(hob_list.as_ptr(), &state) };
 
         assert_eq!(state.user_entry_point(), None);
+    }
+
+    /// A HOB list padded out to at least `extra` bytes of payload, so it spans whole pages.
+    fn padded_hob_list(extra: usize) -> RawHobList {
+        let mut list = RawHobList::new();
+        list.push_guid_hob(MM_SUPERVISOR_CORE_GUID, &vec![0xcd_u8; extra]);
+        list.finish()
+    }
+
+    /// Commits `memory` to the process-wide allocators and installs a page table over it, as
+    /// `bsp_init` does before anything reaches `security_state()`.
+    ///
+    /// The root is a zeroed page drawn from the same pool, which stands in for the inherited CR3
+    /// that `init_page_table` adopts on hardware.
+    fn init_global_state_over(memory: &PageAlignedMemory) {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let hob_list = smram_hob_list(memory);
+        let scanned = scan_regions(&hob_list);
+
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe {
+            supervisor.init_page_allocators(
+                &scanned,
+                security_state().page_allocator(),
+                security_state().paging_allocator(),
+            );
+        }
+
+        let root = security_state().page_allocator().allocate_pages(1).expect("page table root page");
+        // SAFETY: `root` is a live, page-aligned allocation nothing else references yet.
+        unsafe { core::ptr::write_bytes(root as *mut u8, 0, UEFI_PAGE_SIZE) };
+        let allocator = SharedPagingAllocator::new(security_state().paging_allocator());
+        // SAFETY: `root` is a zeroed, page-aligned table that stays allocated for the whole test.
+        let page_table = unsafe { X64PageTable::from_existing(root, allocator, PagingType::Paging4Level) }
+            .expect("page table rooted at the test page");
+        *security_state().lock_page_table() = Some(page_table);
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_copies_the_list_and_reclaims_whole_pages() {
+        crate::test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // The producer's list starts mid-page, so only the whole pages inside it can be reclaimed.
+        let staging = security_state().page_allocator().allocate_pages(6).expect("staging pages");
+        let producer = staging + UEFI_PAGE_SIZE as u64 / 2;
+        let source = padded_hob_list(3 * UEFI_PAGE_SIZE);
+        // SAFETY: `source` is a valid HOB list and `producer` is inside a live six-page
+        // allocation that comfortably holds it.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), producer as *mut u8, size) };
+
+        let page = UEFI_PAGE_SIZE as u64;
+        let reclaimed = ((producer + size as u64) / page - producer.div_ceil(page)) as usize;
+        assert_eq!(reclaimed, 2, "the producer's list must span whole pages for the reclaim to run");
+
+        let free_before = security_state().page_allocator().free_page_count();
+        // SAFETY: `producer` now holds a valid HOB list inside the committed MMRAM region.
+        let copy = unsafe { supervisor.publish_hob_list_to_user(producer as *const c_void) };
+
+        assert_ne!(copy, 0);
+        assert_eq!(security_state().page_allocator().get_allocation_type(copy), Some(AllocationType::User));
+
+        // SAFETY: `copy` is a live allocation of at least `size` bytes the supervisor just filled.
+        let published = unsafe { core::slice::from_raw_parts(copy as *const u8, size) };
+        // SAFETY: `source` is still live and holds the bytes the copy was taken from.
+        let original = unsafe { core::slice::from_raw_parts(source.as_ptr().cast::<u8>(), size) };
+        assert_eq!(published, original, "the published copy does not match the producer's list");
+
+        let copy_pages = size.div_ceil(UEFI_PAGE_SIZE);
+        let tail = copy_pages * UEFI_PAGE_SIZE - size;
+        // SAFETY: the allocation is page-granular, so the slack after the list is live memory.
+        let slack = unsafe { core::slice::from_raw_parts((copy + size as u64) as *const u8, tail) };
+        assert!(slack.iter().all(|byte| *byte == 0), "the tail Ring 3 can read was not zeroed");
+
+        // The whole pages of the producer's list went back to the pool, offsetting the copy.
+        assert_eq!(security_state().page_allocator().free_page_count(), free_before - copy_pages + reclaimed);
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_reports_a_failed_reclaim() {
+        crate::test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // A user-owned staging range makes the supervisor-typed reclaim fail, which is reported
+        // rather than fatal: the copy the user core needs has already been published.
+        let staging =
+            security_state().page_allocator().allocate_pages_with_type(4, AllocationType::User).expect("staging pages");
+        let source = padded_hob_list(2 * UEFI_PAGE_SIZE);
+        // SAFETY: `source` is a valid HOB list.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), staging as *mut u8, size) };
+
+        // SAFETY: `staging` now holds a valid HOB list inside the committed MMRAM region.
+        let copy = unsafe { supervisor.publish_hob_list_to_user(staging as *const c_void) };
+
+        assert_ne!(copy, 0);
+        // The reclaim was refused, so the producer's pages are still marked user-allocated.
+        assert_eq!(security_state().page_allocator().get_allocation_type(staging), Some(AllocationType::User));
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_rejects_a_list_outside_mmram() {
+        crate::test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&memory);
+
+        // A list the producer placed outside the regions it described is refused before it is read.
+        let outside = padded_hob_list(0);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // SAFETY: `outside` is a valid HOB list; it is simply not inside MMRAM.
+            unsafe { supervisor.publish_hob_list_to_user(outside.as_ptr()) }
+        }));
+
+        assert!(result.is_err(), "a HOB list outside MMRAM was published to Ring 3");
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_refuses_to_publish_without_a_page_table() {
+        crate::test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        let memory = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe {
+            supervisor.init_page_allocators(
+                &scanned,
+                security_state().page_allocator(),
+                security_state().paging_allocator(),
+            );
+        }
+
+        // Without a page table the copy cannot be made read-only, so it must not be handed to
+        // Ring 3 writable instead.
+        let staging = security_state().page_allocator().allocate_pages(2).expect("staging pages");
+        let source = padded_hob_list(0);
+        // SAFETY: `source` is a valid HOB list.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), staging as *mut u8, size) };
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // SAFETY: `staging` holds a valid HOB list inside the committed MMRAM region.
+            unsafe { supervisor.publish_hob_list_to_user(staging as *const c_void) }
+        }));
+
+        assert!(result.is_err(), "the HOB list copy was published without being mapped read-only");
+    }
+
+    /// Maps `memory` supervisor-only in the installed page table, as the MM IPL's communication
+    /// buffers are expected to be mapped when the supervisor adopts them.
+    fn map_supervisor_only(memory: &PageAlignedMemory) {
+        let attrs = MemoryAttributes::ExecuteProtect | MemoryAttributes::Supervisor;
+        let mut pt_guard = security_state().lock_page_table();
+        let pt = pt_guard.as_mut().expect("a page table is installed");
+        pt.map_memory_region(memory.base(), memory.size(), attrs).expect("map the external buffer");
+    }
+
+    #[test]
+    #[serial]
+    fn test_init_supv_comm_buffer_adopts_a_supervisor_mapped_buffer_outside_mmram() {
+        crate::test_support::init_test_logger();
+        let mmram = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&mmram);
+
+        // The MM IPL's buffer lives outside MMRAM and is mapped supervisor-only.
+        let external = PageAlignedMemory::new(3);
+        map_supervisor_only(&external);
+        let status = external.base() + 2 * UEFI_PAGE_SIZE as u64;
+        let data = supv_comm_buffer_hob_data(external.base(), 2, status);
+
+        let (address, size, internal, status_address) = init_supv_comm_buffer(&data).expect("adopt the buffer");
+
+        assert_eq!(address, external.base());
+        assert_eq!(size, 2 * UEFI_PAGE_SIZE as u64);
+        assert_eq!(status_address, status);
+        // Ring 3 works on the internal copy, so it comes from supervisor-owned MMRAM.
+        assert_eq!(security_state().page_allocator().get_allocation_type(internal), Some(AllocationType::Supervisor));
+    }
+
+    #[test]
+    #[serial]
+    fn test_init_supv_comm_buffer_rejects_a_buffer_inside_mmram() {
+        crate::test_support::init_test_logger();
+        let mmram = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&mmram);
+
+        // A buffer the MM IPL placed inside MMRAM turns the supervisor's response copy into an
+        // MMRAM write with a payload chosen outside MM.
+        let data = supv_comm_buffer_hob_data(mmram.base(), 1, mmram.base());
+
+        let result = catch_unwind(|| init_supv_comm_buffer(&data));
+
+        assert!(result.is_err(), "a communication buffer inside MMRAM was adopted");
+    }
+
+    #[test]
+    #[serial]
+    fn test_init_user_comm_buffer_redirects_the_hob_to_the_internal_copy() {
+        crate::test_support::init_test_logger();
+        let mmram = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&mmram);
+
+        let external = PageAlignedMemory::new(3);
+        map_supervisor_only(&external);
+        let status = external.base() + 2 * UEFI_PAGE_SIZE as u64;
+        let mut data = user_comm_buffer_hob_data(external.base(), 2, status);
+
+        // SAFETY: `data` is a live, writable payload of exactly one `MmCommonBufferHobData`, and
+        // no references into it are held across the call.
+        let (address, size, internal, status_address) =
+            unsafe { init_user_comm_buffer(data.as_mut_ptr(), data.len()) }.expect("adopt the buffer");
+
+        assert_eq!(address, external.base());
+        assert_eq!(size, 2 * UEFI_PAGE_SIZE as u64);
+        assert_eq!(status_address, status);
+        assert_eq!(security_state().page_allocator().get_allocation_type(internal), Some(AllocationType::User));
+        // The user module reads the HOB after demotion, so it must name the internal copy.
+        assert_eq!(u64::from_ne_bytes(data[0..8].try_into().expect("eight bytes")), internal);
+    }
+
+    #[test]
+    #[serial]
+    fn test_init_user_comm_buffer_rejects_a_user_mapped_buffer() {
+        crate::test_support::init_test_logger();
+        let mmram = PageAlignedMemory::new(mem::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&mmram);
+
+        // A user-accessible buffer would let a demoted driver rewrite a request while it is
+        // being serviced.
+        let external = PageAlignedMemory::new(2);
+        {
+            let mut pt_guard = security_state().lock_page_table();
+            let pt = pt_guard.as_mut().expect("a page table is installed");
+            pt.map_memory_region(external.base(), external.size(), MemoryAttributes::ExecuteProtect)
+                .expect("map the external buffer");
+        }
+        let mut data = user_comm_buffer_hob_data(external.base(), 1, external.base() + UEFI_PAGE_SIZE as u64);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            // SAFETY: `data` is a live, writable payload of exactly one `MmCommonBufferHobData`.
+            unsafe { init_user_comm_buffer(data.as_mut_ptr(), data.len()) }
+        }));
+
+        assert!(result.is_err(), "a user-accessible communication buffer was adopted");
     }
 
     #[test]

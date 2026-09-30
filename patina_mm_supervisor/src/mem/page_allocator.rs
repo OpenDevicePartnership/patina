@@ -1361,6 +1361,7 @@ impl PageAllocator {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use std::panic::catch_unwind;
 
     /// Smallest region size `coalesced_smrr_range` will accept (256 KiB - 4 KiB).
     const MIN_SMRR_SIZE: u64 = SIZE_256KB as u64 - UEFI_PAGE_SIZE as u64;
@@ -1931,6 +1932,26 @@ mod tests {
         // A range whose end overflows fails closed.
         assert_eq!(classify_mmram_in_regions(&regions, u64::MAX, 0x1000), MmramPlacement::PartlyInside);
         assert_eq!(classify_mmram_in_regions(&[], 0x1000, 0x1000), MmramPlacement::Outside);
+    }
+
+    #[test]
+    fn test_page_allocator_mmram_placement_resolves_to_containment() {
+        assert!(MmramPlacement::Inside.is_inside(0x1000, 0x1000));
+        assert!(!MmramPlacement::Outside.is_inside(0x1000, 0x1000));
+    }
+
+    #[test]
+    fn test_page_allocator_mmram_placement_rejects_a_range_crossing_the_boundary() {
+        crate::test_support::init_test_logger();
+
+        // A range that is neither wholly in nor wholly out of MMRAM has no safe reading, so it is
+        // reported as the configuration error it is rather than resolved either way.
+        let result = catch_unwind(|| MmramPlacement::PartlyInside.is_inside(0x1000, 0x1000));
+        assert!(result.is_err());
+
+        // A size that overflows the end address still produces a message rather than a second panic.
+        let result = catch_unwind(|| MmramPlacement::PartlyInside.is_inside(u64::MAX, 0x1000));
+        assert!(result.is_err());
     }
 
     #[test]

@@ -1090,6 +1090,19 @@ mod tests {
     }
 
     #[test]
+    fn test_gate_rejects_a_buffer_too_small_for_a_header() {
+        crate::test_support::init_test_logger();
+
+        // The producer's reported size is what bounds every offset the blob carries, so a buffer
+        // that cannot even hold the header is refused before the header is read.
+        let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![])).build();
+        // SAFETY: `policy` keeps an aligned, live buffer alive; the undersized length is rejected
+        // before anything is dereferenced.
+        let result = unsafe { PolicyGate::new(policy.as_ptr(), core::mem::size_of::<SecurePolicyDataV1_0>() - 1) };
+        assert_eq!(result.err(), Some(PolicyError::MalformedPolicy));
+    }
+
+    #[test]
     fn test_gate_rejects_a_policy_that_declares_no_size() {
         let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![])).declared_size(0).build();
         assert_eq!(policy.try_gate().err(), Some(PolicyError::MalformedPolicy));

@@ -542,6 +542,14 @@ mod tests {
     }
 
     #[test]
+    fn test_buffer_overlaps_mmram_fails_closed_before_allocator_initialization() {
+        // Nothing can be shown to lie outside MMRAM before the regions are known, so a buffer the
+        // supervisor is asked to treat as non-MM memory is reported as overlapping instead.
+        assert!(buffer_overlaps_mmram(0x1000, 0x1000));
+        assert!(buffer_overlaps_mmram(u64::MAX, 1));
+    }
+
+    #[test]
     #[serial]
     fn test_core_initialization_functions_handle_state_values_and_bounds() {
         static SLOTS: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
