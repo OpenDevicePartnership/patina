@@ -168,8 +168,6 @@ impl GenericDevicePathNode {
     }
 }
 
-/// Generic payloads are not interpreted, so the default `validate`, which accepts
-/// every value, applies.
 impl DevicePathNode for &GenericDevicePathNode {
     /// Generic nodes have no fixed type. This placeholder is unused because
     /// `header()` and `is_type()` are overridden.
@@ -184,6 +182,11 @@ impl DevicePathNode for &GenericDevicePathNode {
 
     fn measure_size(&self) -> usize {
         self.data.len()
+    }
+
+    /// Generic payloads are not interpreted, so there are no field rules to check.
+    fn validate(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     fn header(&self) -> Header {
@@ -1089,6 +1092,10 @@ mod binary_tests {
 
         fn measure_size(&self) -> usize {
             usize::from(u16::MAX)
+        }
+
+        fn validate(&self) -> Result<(), &'static str> {
+            Ok(())
         }
     }
 

@@ -28,8 +28,10 @@ device_path_node! {
     /// NUL-terminated ASCII description.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
-    @[DevicePathNode(DevicePathType::Bios, BiosSubType::BiosBootSpecification)]
-    @[DevicePathNodeOverride(measure_size = bios_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Bios, BiosSubType::BiosBootSpecification,
+        measure_size = bios_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct Bios {

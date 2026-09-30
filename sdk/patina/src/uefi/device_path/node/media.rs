@@ -138,8 +138,10 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path>
-    @[DevicePathNode(DevicePathType::Media, MediaSubType::Vendor)]
-    @[DevicePathNodeOverride(measure_size = media_vendor_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Media, MediaSubType::Vendor,
+        measure_size = media_vendor_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MediaVendor {
@@ -162,8 +164,10 @@ device_path_node! {
     /// Partition number zero represents the entire device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive>
-    @[DevicePathNode(DevicePathType::Media, MediaSubType::HardDrive)]
-    @[DevicePathNodeOverride(validate = hard_drive_validate)]
+    @[DevicePathNode(
+        DevicePathType::Media, MediaSubType::HardDrive,
+        validate = hard_drive_validate,
+    )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct HardDrive {
@@ -258,8 +262,10 @@ device_path_node! {
     /// which are concatenated to form the complete path.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
-    @[DevicePathNode(DevicePathType::Media, MediaSubType::FilePath)]
-    @[DevicePathNodeOverride(measure_size = file_path_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Media, MediaSubType::FilePath,
+        measure_size = file_path_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Pread, Pwrite)]
     pub struct FilePath {

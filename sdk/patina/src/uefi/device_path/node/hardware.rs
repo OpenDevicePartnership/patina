@@ -27,8 +27,10 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-device-path>
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
-    @[DevicePathNodeOverride(measure_size = hardware_vendor_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Hardware, HardwareSubType::Vendor,
+        measure_size = hardware_vendor_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct HardwareVendor {

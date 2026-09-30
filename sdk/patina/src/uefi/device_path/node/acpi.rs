@@ -50,8 +50,10 @@ device_path_node! {
     /// forms. A nonempty string supersedes its corresponding numeric identifier.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
-    @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::ExtendedAcpi)]
-    @[DevicePathNodeOverride(measure_size = extended_acpi_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
+        measure_size = extended_acpi_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct ExtendedAcpi {
@@ -90,8 +92,11 @@ device_path_node! {
     /// Output Protocol. At least one `_ADR` value is required.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-adr-device-path>
-    @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Adr)]
-    @[DevicePathNodeOverride(measure_size = acpi_adr_measure_size, validate = acpi_adr_validate)]
+    @[DevicePathNode(
+        DevicePathType::Acpi, AcpiSubType::Adr,
+        measure_size = acpi_adr_measure_size,
+        validate = acpi_adr_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct AcpiAdr {

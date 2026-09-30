@@ -34,8 +34,7 @@ device_path_node! {
     /// of an ATAPI device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
-    @[DevicePathNodeOverride(validate = atapi_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = atapi_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
@@ -188,8 +187,7 @@ device_path_node! {
     /// length, and gateway address.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
-    @[DevicePathNodeOverride(validate = ip_v6_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
@@ -225,8 +223,7 @@ device_path_node! {
     /// An IEEE 802.1Q VLAN identifier.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vlan-device-path-node>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
-    @[DevicePathNodeOverride(validate = vlan_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = vlan_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Vlan {
@@ -273,8 +270,7 @@ device_path_node! {
     /// selects the device default.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
-    @[DevicePathNodeOverride(validate = uart_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = uart_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uart {
@@ -407,8 +403,10 @@ device_path_node! {
     /// The 48-bit address of a Bluetooth Low Energy device and its address type.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
-    @[DevicePathNodeOverride(validate = bluetooth_le_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::BluetoothLE,
+        validate = bluetooth_le_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
@@ -488,8 +486,10 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vendor)]
-    @[DevicePathNodeOverride(measure_size = messaging_vendor_measure_size)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Vendor,
+        measure_size = messaging_vendor_measure_size,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MessagingVendor {
@@ -512,8 +512,11 @@ device_path_node! {
     /// last 64 or fewer UTF-16 characters of its serial number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths-wwid>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbWwid)]
-    @[DevicePathNodeOverride(measure_size = usb_wwid_measure_size, validate = usb_wwid_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::UsbWwid,
+        measure_size = usb_wwid_measure_size,
+        validate = usb_wwid_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbWwid {
@@ -563,8 +566,11 @@ device_path_node! {
     /// without the gateway and subnet mask; both forms are supported.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv4-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV4)]
-    @[DevicePathNodeOverride(measure_size = ip_v4_measure_size, validate = ip_v4_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::IpV4,
+        measure_size = ip_v4_measure_size,
+        validate = ip_v4_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct IpV4 {
@@ -649,8 +655,11 @@ device_path_node! {
     /// tag, and target name of an iSCSI target.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#iscsi-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Iscsi)]
-    @[DevicePathNodeOverride(measure_size = iscsi_measure_size, validate = iscsi_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Iscsi,
+        measure_size = iscsi_measure_size,
+        validate = iscsi_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Iscsi {
@@ -691,8 +700,11 @@ device_path_node! {
     /// terminator, and an empty URI is allowed.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uniform-resource-identifiers-uri-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uri)]
-    @[DevicePathNodeOverride(measure_size = uri_measure_size, validate = uri_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Uri,
+        measure_size = uri_measure_size,
+        validate = uri_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Uri {
@@ -734,8 +746,11 @@ device_path_node! {
     /// `EFI_IP_ADDRESS`.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#dns-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Dns)]
-    @[DevicePathNodeOverride(measure_size = dns_measure_size, validate = dns_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Dns,
+        measure_size = dns_measure_size,
+        validate = dns_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Dns {
@@ -808,8 +823,11 @@ device_path_node! {
     /// access mode. The vendor-specific form adds a GUID and vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#rest-service-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::RestService)]
-    @[DevicePathNodeOverride(measure_size = rest_service_measure_size, validate = rest_service_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::RestService,
+        measure_size = rest_service_measure_size,
+        validate = rest_service_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct RestService {
@@ -884,8 +902,11 @@ device_path_node! {
     /// value and the NVM subsystem NQN.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-over-fabric-nvme-of-namespace-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmeOf)]
-    @[DevicePathNodeOverride(measure_size = nvme_of_measure_size, validate = nvme_of_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::NvmeOf,
+        measure_size = nvme_of_measure_size,
+        validate = nvme_of_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmeOf {
@@ -920,8 +941,7 @@ device_path_node! {
     /// The HBA port, port multiplier port, and logical unit number of a SATA device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata)]
-    @[DevicePathNodeOverride(validate = sata_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct Sata {
@@ -960,8 +980,10 @@ device_path_node! {
     /// (EUI-64).
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvm-express-namespace-messaging-device-path-node>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmExpress)]
-    @[DevicePathNodeOverride(validate = nvm_express_validate)]
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::NvmExpress,
+        validate = nvm_express_validate,
+    )]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct NvmExpress {
