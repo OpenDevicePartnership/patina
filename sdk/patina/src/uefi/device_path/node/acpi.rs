@@ -21,10 +21,7 @@
 use super::{AcpiSubType, DevicePathType};
 use crate::{
     device_path_node,
-    uefi::device_path::{
-        encoding::{AsciiNul, Vector},
-        parse_node::{MeasureSize, Validate},
-    },
+    uefi::device_path::encoding::{AsciiNul, Vector},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -38,7 +35,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
@@ -54,7 +51,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::ExtendedAcpi)]
-    @[DevicePathNodeDerive(Debug, Display, Validate)]
+    @[DevicePathNodeOverride(measure_size = extended_acpi_measure_size)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct ExtendedAcpi {
         /// Numeric hardware identifier.
@@ -75,16 +73,14 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for ExtendedAcpi {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.hid)
-            + size_of_val(&self.uid)
-            + size_of_val(&self.cid)
-            + [&self.hid_string, &self.uid_string, &self.cid_string]
-                .iter()
-                .map(|value| value.len() + size_of::<u8>()) // NUL terminator
-                .sum::<usize>()
-    }
+fn extended_acpi_measure_size(node: &ExtendedAcpi) -> usize {
+    size_of_val(&node.hid)
+        + size_of_val(&node.uid)
+        + size_of_val(&node.cid)
+        + [&node.hid_string, &node.uid_string, &node.cid_string]
+            .iter()
+            .map(|value| value.len() + size_of::<u8>()) // NUL terminator
+            .sum::<usize>()
 }
 
 device_path_node! {
@@ -95,6 +91,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-adr-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Adr)]
+    @[DevicePathNodeOverride(measure_size = acpi_adr_measure_size, validate = acpi_adr_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct AcpiAdr {
@@ -104,19 +101,15 @@ device_path_node! {
     }
 }
 
-impl Validate for AcpiAdr {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.addresses.is_empty() {
-            return Err("ACPI address node requires at least one address");
-        }
-        Ok(())
-    }
+fn acpi_adr_measure_size(node: &AcpiAdr) -> usize {
+    size_of_val(node.addresses.as_slice())
 }
 
-impl MeasureSize for AcpiAdr {
-    fn measure_size(&self) -> usize {
-        size_of_val(self.addresses.as_slice())
+fn acpi_adr_validate(node: &AcpiAdr) -> Result<(), &'static str> {
+    if node.addresses.is_empty() {
+        return Err("ACPI address node requires at least one address");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -127,7 +120,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
-    @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Acpi {
         /// _HID

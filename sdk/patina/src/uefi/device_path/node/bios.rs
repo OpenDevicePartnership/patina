@@ -17,10 +17,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{BiosSubType, DevicePathType};
-use crate::{
-    device_path_node,
-    uefi::device_path::{encoding::AsciiNul, parse_node::MeasureSize},
-};
+use crate::{device_path_node, uefi::device_path::encoding::AsciiNul};
 use alloc::string::String;
 use scroll::{Pread, Pwrite};
 
@@ -32,7 +29,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
     @[DevicePathNode(DevicePathType::Bios, BiosSubType::BiosBootSpecification)]
-    @[DevicePathNodeDerive(Debug, Display, Validate)]
+    @[DevicePathNodeOverride(measure_size = bios_measure_size)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct Bios {
         /// BIOS device type.
@@ -45,8 +43,6 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for Bios {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.device_type) + size_of_val(&self.status_flag) + self.description_str.len() + size_of::<u8>() // NUL terminator
-    }
+fn bios_measure_size(node: &Bios) -> usize {
+    size_of_val(&node.device_type) + size_of_val(&node.status_flag) + node.description_str.len() + size_of::<u8>() // NUL terminator
 }

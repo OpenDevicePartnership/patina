@@ -21,39 +21,13 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
 };
 
-/// Reports the encoded payload size of a device path node.
-///
-/// The size excludes the four-byte node header and is used to compute the header
-/// length. It must equal the number of bytes written by the node's payload encoder.
-///
-/// Nodes defined with [`device_path_node!`](crate::device_path_node) can derive it
-/// with `@[DevicePathNodeDerive(MeasureSize)]`, which sums the fields' Rust sizes.
-/// That is only correct for fixed-width integer and byte-array fields; nodes with
-/// variable-length or encoded fields must implement it manually.
-pub trait MeasureSize {
-    /// Return the encoded payload size in bytes, excluding the node header.
-    fn measure_size(&self) -> usize;
-}
-
-/// Checks the UEFI specification rules on a device path node's field values.
-///
-/// Scroll conversions only encode and decode bytes. Device path read and write
-/// entry points call `validate` so that nodes breaking a specification rule, such
-/// as a reserved value, are rejected.
-///
-/// Nodes whose fields have no specification rules derive it with
-/// `@[DevicePathNodeDerive(Validate)]`, which always succeeds.
-pub trait Validate {
-    /// Check the node's field values against the UEFI specification.
-    ///
-    /// # Errors
-    ///
-    /// Returns a description of the first rule the node breaks.
-    fn validate(&self) -> Result<(), &'static str>;
-}
-
 /// Trait that every device path node must implement.
-pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
+///
+/// Nodes defined with [`device_path_node!`](crate::device_path_node) get this impl
+/// from the macro, which can override [`measure_size`](Self::measure_size),
+/// [`validate`](Self::validate), and [`header`](Self::header) with
+/// `@[DevicePathNodeOverride(...)]`.
+pub trait DevicePathNode: Debug + Display {
     /// Return the device path type identifying this node kind.
     fn r#type() -> u8
     where
@@ -64,10 +38,30 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     where
         Self: Sized;
 
+    /// Return the encoded payload size in bytes, excluding the four-byte node header.
+    ///
+    /// It is used to compute the header length, so it must equal the number of bytes
+    /// written by the node's payload encoder.
+    fn measure_size(&self) -> usize;
+
+    /// Check the node's field values against the UEFI specification.
+    ///
+    /// Scroll conversions only encode and decode bytes. Device path read and write
+    /// entry points call `validate` so that nodes breaking a specification rule, such
+    /// as a reserved value, are rejected. The default accepts every value, for nodes
+    /// whose fields have no specification rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description of the first rule the node breaks.
+    fn validate(&self) -> Result<(), &'static str> {
+        Ok(())
+    }
+
     /// Return the header of the device path node.
     ///
     /// The default combines the node's type, sub-type, and
-    /// [`MeasureSize::measure_size`]. If the node is too large for a 16-bit
+    /// [`measure_size`](Self::measure_size). If the node is too large for a 16-bit
     /// length, the length saturates at `u16::MAX` and [`write_into`](Self::write_into) fails.
     fn header(&self) -> Header
     where
@@ -88,13 +82,13 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     /// Write the device path node, header included, into the buffer.
     ///
     /// Returns the number of bytes written, which is the header length. The node is
-    /// checked with [`Validate::validate`] first.
+    /// checked with [`validate`](Self::validate) first.
     ///
     /// # Errors
     ///
     /// Returns an error if the node fails validation, the buffer is too small, the
     /// header length does not fit in 16 bits, or the encoded payload size differs
-    /// from [`MeasureSize::measure_size`].
+    /// from [`measure_size`](Self::measure_size).
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>
     where
         Self: Sized + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
@@ -139,7 +133,7 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     ///
     /// Returns an error if the header is malformed or longer than the buffer, the
     /// header does not identify this node kind, the payload cannot be decoded or has
-    /// trailing bytes, or the node fails [`Validate::validate`].
+    /// trailing bytes, or the node fails [`validate`](Self::validate).
     fn read_from<'a>(buffer: &'a [u8]) -> Result<(Self, usize), scroll::Error>
     where
         Self: Sized + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
@@ -155,7 +149,7 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
 /// Decode and validate a node payload that must be consumed completely.
 pub(crate) fn decode_payload<'a, T>(data: &'a [u8]) -> Result<T, scroll::Error>
 where
-    T: Validate + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+    T: DevicePathNode + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
 {
     let (node, consumed) = T::try_from_ctx(data, scroll::LE)?;
     if consumed != data.len() {
@@ -165,22 +159,47 @@ where
     Ok(node)
 }
 
-/// This macro is used to define a device path node struct and implement device path node traits for it.
-/// To configure the type and subtype of this node, use an attribute `@[DevicePathNode(DevicePathType::Type, SubType::MySubtype)]`
-/// where the Type and subtype are enum paths where the value can be expressed as u8.a
+/// Define a device path node struct and implement [`DevicePathNode`] for it.
 ///
-/// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
-/// Currently supported traits are: Debug, Display, [`MeasureSize`], and [`Validate`].
+/// - `@[DevicePathNode(DevicePathType::Type, SubType::MySubType)]` sets the node's type
+///   and sub-type. Both are enum paths whose values convert to `u8`.
+/// - `@[DevicePathNodeOverride(method = path, ...)]` is optional. Each listed
+///   [`DevicePathNode`] method calls the named function, which takes the node by reference, instead of using its default.
+///   The methods that can be overridden are `measure_size`, `validate`, and `header`.
+///   Without an override, `measure_size` is the sum of the fields' Rust sizes, which is
+///   only correct for fixed-width integer and byte-array fields; the other methods use
+///   the trait defaults.
+/// - `@[DevicePathNodeDerive(...)]` is optional and implements `Debug` and `Display`.
 ///
-/// The header length is computed from the node's [`MeasureSize`] implementation.
-/// Derive it for nodes containing only fixed-width integer and byte-array fields;
-/// implement it manually for nodes with variable-length or encoded fields.
+/// # Example
+///
+/// ```ignore
+/// device_path_node! {
+///     /// VLAN device path node.
+///     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
+///     @[DevicePathNodeOverride(validate = vlan_validate)]
+///     @[DevicePathNodeDerive(Debug, Display)]
+///     #[derive(Pread, Pwrite, Clone)]
+///     pub struct Vlan {
+///         /// VLAN identifier, from 0 through 4094.
+///         pub vlan_id: u16,
+///     }
+/// }
+///
+/// fn vlan_validate(node: &Vlan) -> Result<(), &'static str> {
+///     if node.vlan_id > 4094 {
+///         return Err("invalid VLAN identifier");
+///     }
+///     Ok(())
+/// }
+/// ```
 #[macro_export]
 macro_rules! device_path_node {
-    // match a struct with fields.
+    // Match a struct with fields.
     (
         $(#[$struct_attr_1:meta])*
-        @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
+        @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path )]
+        $(@[DevicePathNodeOverride( $($method:ident = $func:path),* $(,)? )])?
         $(@[DevicePathNodeDerive( $($derive_trait:ident),* )])?
         $(#[$struct_attr_2:meta])*
         $struct_vis:vis struct $struct_name:ident {
@@ -199,13 +218,18 @@ macro_rules! device_path_node {
             ),*
         }
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(
+            @ImplDevicePathNode $struct_name, $device_path_type, $device_path_sub_type,
+            fields [$($field_type),*],
+            overrides [$($($method = $func),*)?]
+        );
         device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $($($derive_trait),*)?);
     };
-    // Match an empty struct.
+    // Match a unit struct.
     (
         $(#[$struct_attr_1:meta])*
-        @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
+        @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path )]
+        $(@[DevicePathNodeOverride( $($method:ident = $func:path),* $(,)? )])?
         $(@[DevicePathNodeDerive( $($derive_trait:ident),* )])?
         $(#[$struct_attr_2:meta])*
         $struct_vis:vis struct $struct_name:ident;
@@ -214,13 +238,21 @@ macro_rules! device_path_node {
         $(#[$struct_attr_2])*
         $struct_vis struct $struct_name;
 
-        device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
+        device_path_node!(
+            @ImplDevicePathNode $struct_name, $device_path_type, $device_path_sub_type,
+            fields [],
+            overrides [$($($method = $func),*)?]
+        );
         device_path_node!(@Derive; $struct_name, ; $($($derive_trait),*)?);
     };
-    // Internal Matching to implement the device path node trait.
-    (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
-        impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name
-        {
+    // Implement DevicePathNode: type and sub-type, the listed overrides, then the default
+    // measure_size unless it is overridden.
+    (
+        @ImplDevicePathNode $struct_name:ident, $device_path_type:path, $device_path_sub_type:path,
+        fields [$($field_type:ty),*],
+        overrides [$($method:ident = $func:path),*]
+    ) => {
+        impl $crate::uefi::device_path::parse_node::DevicePathNode for $struct_name {
             fn r#type() -> u8 {
                 $device_path_type as u8
             }
@@ -228,9 +260,46 @@ macro_rules! device_path_node {
             fn sub_type() -> u8 {
                 $device_path_sub_type as u8
             }
+
+            $(device_path_node!(@Override $method = $func);)*
+
+            device_path_node!(@DefaultMeasureSize [$($field_type),*] $($method)*);
         }
     };
-    // Internal Matching to implement the debug trait.
+    // Overridable DevicePathNode methods. Each one calls the named function.
+    (@Override measure_size = $func:path) => {
+        fn measure_size(&self) -> usize {
+            $func(self)
+        }
+    };
+    (@Override validate = $func:path) => {
+        fn validate(&self) -> Result<(), &'static str> {
+            $func(self)
+        }
+    };
+    (@Override header = $func:path) => {
+        fn header(&self) -> $crate::uefi::device_path::node::Header
+        where
+            Self: Sized,
+        {
+            $func(self)
+        }
+    };
+    (@Override $other:ident = $func:path) => {
+        compile_error!(concat!("`", stringify!($other), "` cannot be overridden in device_path_node!"));
+    };
+    // Default measure_size: the sum of the fields' Rust sizes, unless `measure_size` is
+    // one of the overridden methods.
+    (@DefaultMeasureSize [$($field_type:ty),*] measure_size $($rest:ident)*) => {};
+    (@DefaultMeasureSize [$($field_type:ty),*] $other:ident $($rest:ident)*) => {
+        device_path_node!(@DefaultMeasureSize [$($field_type),*] $($rest)*);
+    };
+    (@DefaultMeasureSize [$($field_type:ty),*]) => {
+        fn measure_size(&self) -> usize {
+            0 $(+ core::mem::size_of::<$field_type>())*
+        }
+    };
+    // Implement Debug.
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Debug) => {
         impl core::fmt::Debug for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -247,7 +316,7 @@ macro_rules! device_path_node {
             }
         }
     };
-    // Internal Matching to implement the display trait.
+    // Implement Display.
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Display) => {
         impl core::fmt::Display for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -259,31 +328,106 @@ macro_rules! device_path_node {
             }
         }
     };
-    // Internal Matching to implement the measure size trait from the fields' Rust sizes.
-    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; MeasureSize) => {
-        impl $crate::uefi::device_path::parse_node::MeasureSize for $struct_name {
-            fn measure_size(&self) -> usize {
-                0 $(+ core::mem::size_of::<$field_type>())*
-            }
-        }
-    };
-    // Internal Matching to implement the validate trait for nodes without field rules.
-    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Validate) => {
-        impl $crate::uefi::device_path::parse_node::Validate for $struct_name {
-            fn validate(&self) -> Result<(), &'static str> {
-                Ok(())
-            }
-        }
-    };
-    // Internal matching to add a compilation error in case of an unsupported derive trait.
+    // Reject unsupported derive traits.
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; $trait:ident) => {
         compile_error!("An unsupported derive trait was specified.");
     };
-    // Internal matching to call all the derive to add their impl to the struct.
+    // Apply each derive trait in turn.
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; $head:ident, $($derive_trait:ident),+) => {
         device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $head);
         device_path_node!(@Derive; $struct_name, $($field_name: $field_type),*; $($derive_trait),+);
     };
-    // Internal matching: do nothing if no derive specified.
+    // No derive traits.
     (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; ) => {};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DevicePathNode;
+    use crate::uefi::device_path::node::{DevicePathType, HardwareSubType, Header};
+    use scroll::{Pread, Pwrite};
+
+    device_path_node! {
+        @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
+        @[DevicePathNodeDerive(Debug, Display)]
+        #[derive(Pread, Pwrite, Clone)]
+        struct Plain {
+            value: u16,
+            flags: u8,
+        }
+    }
+
+    device_path_node! {
+        @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
+        @[DevicePathNodeOverride(validate = checked_validate)]
+        @[DevicePathNodeDerive(Debug, Display)]
+        #[derive(Pread, Pwrite, Clone)]
+        struct Checked {
+            value: u16,
+        }
+    }
+
+    fn checked_validate(node: &Checked) -> Result<(), &'static str> {
+        if node.value == 0 {
+            return Err("value must not be zero");
+        }
+        Ok(())
+    }
+
+    device_path_node! {
+        @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
+        @[DevicePathNodeOverride(
+            header = overridden_header,
+            validate = overridden_validate,
+            measure_size = overridden_measure_size
+        )]
+        @[DevicePathNodeDerive(Debug, Display)]
+        #[derive(Pread, Pwrite, Clone)]
+        struct Overridden {
+            value: u16,
+        }
+    }
+
+    fn overridden_measure_size(_node: &Overridden) -> usize {
+        7
+    }
+
+    fn overridden_validate(_node: &Overridden) -> Result<(), &'static str> {
+        Err("always rejected")
+    }
+
+    fn overridden_header(_node: &Overridden) -> Header {
+        Header::new(0x42, 0x24, 11)
+    }
+
+    #[test]
+    fn test_device_path_node_macro_defaults() {
+        let node = Plain { value: 0x1234, flags: 5 };
+        assert_eq!(node.measure_size(), 3);
+        assert_eq!(node.validate(), Ok(()));
+
+        let mut bytes = [0; 7];
+        assert_eq!(node.write_into(&mut bytes).unwrap(), 7);
+        assert_eq!(bytes, [1, 4, 7, 0, 0x34, 0x12, 5]);
+    }
+
+    #[test]
+    fn test_device_path_node_macro_validate_override() {
+        assert_eq!(Checked { value: 1 }.validate(), Ok(()));
+        assert_eq!(Checked { value: 1 }.measure_size(), 2);
+
+        let invalid = Checked { value: 0 };
+        assert_eq!(invalid.validate(), Err("value must not be zero"));
+        let mut bytes = [0xa5; 6];
+        assert!(invalid.write_into(&mut bytes).is_err());
+        assert_eq!(bytes, [0xa5; 6]);
+    }
+
+    #[test]
+    fn test_device_path_node_macro_overrides_in_any_order() {
+        let node = Overridden { value: 1 };
+        assert_eq!(node.measure_size(), 7);
+        assert_eq!(node.validate(), Err("always rejected"));
+        assert_eq!(node.header(), Header::new(0x42, 0x24, 11));
+    }
 }

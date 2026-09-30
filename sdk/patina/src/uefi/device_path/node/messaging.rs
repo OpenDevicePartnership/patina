@@ -19,10 +19,7 @@
 use super::{DevicePathType, MessagingSubType, invalid};
 use crate::{
     device_path_node,
-    uefi::device_path::{
-        encoding::{AsciiNul, Utf8Nul, Vector},
-        parse_node::{MeasureSize, Validate},
-    },
+    uefi::device_path::encoding::{AsciiNul, Utf8Nul, Vector},
 };
 use alloc::{string::String, vec::Vec};
 use scroll::{
@@ -38,7 +35,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = atapi_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
@@ -50,13 +48,11 @@ device_path_node! {
     }
 }
 
-impl Validate for Atapi {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.primary_secondary > 1 || self.slave_master > 1 {
-            return Err("invalid ATAPI channel or master/slave selector");
-        }
-        Ok(())
+fn atapi_validate(node: &Atapi) -> Result<(), &'static str> {
+    if node.primary_secondary > 1 || node.slave_master > 1 {
+        return Err("invalid ATAPI channel or master/slave selector");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -66,7 +62,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#scsi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
@@ -83,7 +79,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -106,7 +102,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -125,7 +121,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -142,7 +138,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
@@ -159,7 +155,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#i-2-o-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
@@ -175,7 +171,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#mac-address-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MacAddress {
         /// Address bytes in wire order; producers pad unused bytes with zero.
@@ -193,7 +189,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = ip_v6_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
         /// Local IPv6 address octets in network order.
@@ -215,13 +212,11 @@ device_path_node! {
     }
 }
 
-impl Validate for IpV6 {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.ip_address_origin > 2 || self.prefix_length > 128 {
-            return Err("invalid IPv6 address origin or prefix length");
-        }
-        Ok(())
+fn ip_v6_validate(node: &IpV6) -> Result<(), &'static str> {
+    if node.ip_address_origin > 2 || node.prefix_length > 128 {
+        return Err("invalid IPv6 address origin or prefix length");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -231,7 +226,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vlan-device-path-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = vlan_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
@@ -239,13 +235,11 @@ device_path_node! {
     }
 }
 
-impl Validate for Vlan {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.vlan_id > 4094 {
-            return Err("invalid VLAN identifier");
-        }
-        Ok(())
+fn vlan_validate(node: &Vlan) -> Result<(), &'static str> {
+    if node.vlan_id > 4094 {
+        return Err("invalid VLAN identifier");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -256,7 +250,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#infiniband-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
         /// Resource flags; producers clear reserved bits above bit 4.
@@ -280,7 +274,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = uart_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uart {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -296,13 +291,11 @@ device_path_node! {
     }
 }
 
-impl Validate for Uart {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.parity > 5 || self.stop_bits > 3 {
-            return Err("invalid UART parity or stop bits");
-        }
-        Ok(())
+fn uart_validate(node: &Uart) -> Result<(), &'static str> {
+    if node.parity > 5 || node.stop_bits > 3 {
+        return Err("invalid UART parity or stop bits");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -317,7 +310,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-extended-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
@@ -338,7 +331,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ufs-universal-flash-storage-device-messaging-devicepath-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
@@ -355,7 +348,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sd-secure-digital-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
@@ -370,7 +363,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetooth-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
@@ -385,7 +378,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#wireless-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
@@ -400,7 +393,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#emmc-embedded-multi-media-card-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
@@ -415,7 +408,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = bluetooth_le_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
@@ -425,13 +419,11 @@ device_path_node! {
     }
 }
 
-impl Validate for BluetoothLE {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.address_type > 1 {
-            return Err("invalid Bluetooth LE address type");
-        }
-        Ok(())
+fn bluetooth_le_validate(node: &BluetoothLE) -> Result<(), &'static str> {
+    if node.address_type > 1 {
+        return Err("invalid Bluetooth LE address type");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -442,7 +434,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-namespace-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
         /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -458,7 +450,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
@@ -474,7 +466,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
@@ -497,7 +489,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vendor)]
-    @[DevicePathNodeDerive(Debug, Display, Validate)]
+    @[DevicePathNodeOverride(measure_size = messaging_vendor_measure_size)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MessagingVendor {
         /// Vendor GUID in EFI wire byte order.
@@ -508,10 +501,8 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for MessagingVendor {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
-    }
+fn messaging_vendor_measure_size(node: &MessagingVendor) -> usize {
+    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
 }
 
 device_path_node! {
@@ -522,6 +513,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths-wwid>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbWwid)]
+    @[DevicePathNodeOverride(measure_size = usb_wwid_measure_size, validate = usb_wwid_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbWwid {
@@ -539,24 +531,19 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for UsbWwid {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.interface)
-            + size_of_val(&self.vendor_id)
-            + size_of_val(&self.product_id)
-            + size_of_val(self.serial_number.as_slice())
-    }
+fn usb_wwid_measure_size(node: &UsbWwid) -> usize {
+    size_of_val(&node.interface)
+        + size_of_val(&node.vendor_id)
+        + size_of_val(&node.product_id)
+        + size_of_val(node.serial_number.as_slice())
 }
 
-impl Validate for UsbWwid {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.serial_number.len() > 64
-            || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
-        {
-            return Err("USB WWID requires at most 64 valid UTF-16 code units");
-        }
-        Ok(())
+fn usb_wwid_validate(node: &UsbWwid) -> Result<(), &'static str> {
+    if node.serial_number.len() > 64 || core::char::decode_utf16(node.serial_number.iter().copied()).any(|c| c.is_err())
+    {
+        return Err("USB WWID requires at most 64 valid UTF-16 code units");
     }
+    Ok(())
 }
 
 /// Gateway and subnet fields added to the original IPv4 node.
@@ -577,6 +564,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv4-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV4)]
+    @[DevicePathNodeOverride(measure_size = ip_v4_measure_size, validate = ip_v4_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct IpV4 {
@@ -597,28 +585,21 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for IpV4 {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.local_ip)
-            + size_of_val(&self.remote_ip)
-            + size_of_val(&self.local_port)
-            + size_of_val(&self.remote_port)
-            + size_of_val(&self.protocol)
-            + size_of_val(&self.static_ip)
-            + self
-                .network
-                .as_ref()
-                .map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
-    }
+fn ip_v4_measure_size(node: &IpV4) -> usize {
+    size_of_val(&node.local_ip)
+        + size_of_val(&node.remote_ip)
+        + size_of_val(&node.local_port)
+        + size_of_val(&node.remote_port)
+        + size_of_val(&node.protocol)
+        + size_of_val(&node.static_ip)
+        + node.network.as_ref().map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
 }
 
-impl Validate for IpV4 {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.static_ip > 1 {
-            return Err("invalid IPv4 address origin");
-        }
-        Ok(())
+fn ip_v4_validate(node: &IpV4) -> Result<(), &'static str> {
+    if node.static_ip > 1 {
+        return Err("invalid IPv4 address origin");
     }
+    Ok(())
 }
 
 impl TryFromCtx<'_, scroll::Endian> for IpV4 {
@@ -669,6 +650,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#iscsi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Iscsi)]
+    @[DevicePathNodeOverride(measure_size = iscsi_measure_size, validate = iscsi_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Iscsi {
@@ -686,24 +668,20 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for Iscsi {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.protocol)
-            + size_of_val(&self.options)
-            + size_of_val(&self.lun)
-            + size_of_val(&self.portal_group)
-            + self.target_name.len()
-            + size_of::<u8>() // NUL terminator
-    }
+fn iscsi_measure_size(node: &Iscsi) -> usize {
+    size_of_val(&node.protocol)
+        + size_of_val(&node.options)
+        + size_of_val(&node.lun)
+        + size_of_val(&node.portal_group)
+        + node.target_name.len()
+        + size_of::<u8>() // NUL terminator
 }
 
-impl Validate for Iscsi {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.target_name.is_empty() || self.target_name.len() > 223 || self.protocol != 0 {
-            return Err("invalid iSCSI target name or network protocol");
-        }
-        Ok(())
+fn iscsi_validate(node: &Iscsi) -> Result<(), &'static str> {
+    if node.target_name.is_empty() || node.target_name.len() > 223 || node.protocol != 0 {
+        return Err("invalid iSCSI target name or network protocol");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -714,6 +692,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uniform-resource-identifiers-uri-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uri)]
+    @[DevicePathNodeOverride(measure_size = uri_measure_size, validate = uri_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Uri {
@@ -722,19 +701,15 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for Uri {
-    fn measure_size(&self) -> usize {
-        self.uri.len()
-    }
+fn uri_measure_size(node: &Uri) -> usize {
+    node.uri.len()
 }
 
-impl Validate for Uri {
-    fn validate(&self) -> Result<(), &'static str> {
-        if !self.uri.is_ascii() || self.uri.contains('\0') {
-            return Err("URI must be ASCII without embedded NUL");
-        }
-        Ok(())
+fn uri_validate(node: &Uri) -> Result<(), &'static str> {
+    if !node.uri.is_ascii() || node.uri.contains('\0') {
+        return Err("URI must be ASCII without embedded NUL");
     }
+    Ok(())
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Uri {
@@ -760,6 +735,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#dns-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Dns)]
+    @[DevicePathNodeOverride(measure_size = dns_measure_size, validate = dns_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Dns {
@@ -770,19 +746,15 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for Dns {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.is_ipv6) + size_of_val(self.addresses.as_slice())
-    }
+fn dns_measure_size(node: &Dns) -> usize {
+    size_of_val(&node.is_ipv6) + size_of_val(node.addresses.as_slice())
 }
 
-impl Validate for Dns {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.addresses.is_empty() {
-            return Err("DNS node requires at least one address");
-        }
-        Ok(())
+fn dns_validate(node: &Dns) -> Result<(), &'static str> {
+    if node.addresses.is_empty() {
+        return Err("DNS node requires at least one address");
     }
+    Ok(())
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Dns {
@@ -837,6 +809,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#rest-service-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::RestService)]
+    @[DevicePathNodeOverride(measure_size = rest_service_measure_size, validate = rest_service_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct RestService {
@@ -847,25 +820,21 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for RestService {
-    fn measure_size(&self) -> usize {
-        let vendor = match &self.service {
-            RestServiceType::Vendor { guid, data } => size_of_val(guid) + size_of_val(data.as_slice()),
-            _ => 0,
-        };
-        size_of::<u8>() // service type, encoded as one byte
-            + size_of_val(&self.access_mode)
-            + vendor
-    }
+fn rest_service_measure_size(node: &RestService) -> usize {
+    let vendor = match &node.service {
+        RestServiceType::Vendor { guid, data } => size_of_val(guid) + size_of_val(data.as_slice()),
+        _ => 0,
+    };
+    size_of::<u8>() // service type, encoded as one byte
+        + size_of_val(&node.access_mode)
+        + vendor
 }
 
-impl Validate for RestService {
-    fn validate(&self) -> Result<(), &'static str> {
-        if !matches!(self.access_mode, 1 | 2) {
-            return Err("invalid REST access mode");
-        }
-        Ok(())
+fn rest_service_validate(node: &RestService) -> Result<(), &'static str> {
+    if !matches!(node.access_mode, 1 | 2) {
+        return Err("invalid REST access mode");
     }
+    Ok(())
 }
 
 impl TryFromCtx<'_, scroll::Endian> for RestService {
@@ -916,6 +885,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-over-fabric-nvme-of-namespace-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmeOf)]
+    @[DevicePathNodeOverride(measure_size = nvme_of_measure_size, validate = nvme_of_validate)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmeOf {
@@ -929,23 +899,19 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for NvmeOf {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.identifier_type) + size_of_val(&self.identifier) + self.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
-    }
+fn nvme_of_measure_size(node: &NvmeOf) -> usize {
+    size_of_val(&node.identifier_type) + size_of_val(&node.identifier) + node.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
 }
 
-impl Validate for NvmeOf {
-    fn validate(&self) -> Result<(), &'static str> {
-        if !matches!(self.identifier_type, 1..=3)
-            || self.subsystem_nqn.is_empty()
-            || self.subsystem_nqn.len() > 223
-            || (self.identifier_type == 1 && self.identifier[8..].iter().any(|byte| *byte != 0))
-        {
-            return Err("invalid NVMe over Fabrics namespace identity");
-        }
-        Ok(())
+fn nvme_of_validate(node: &NvmeOf) -> Result<(), &'static str> {
+    if !matches!(node.identifier_type, 1..=3)
+        || node.subsystem_nqn.is_empty()
+        || node.subsystem_nqn.len() > 223
+        || (node.identifier_type == 1 && node.identifier[8..].iter().any(|byte| *byte != 0))
+    {
+        return Err("invalid NVMe over Fabrics namespace identity");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -955,7 +921,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = sata_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct Sata {
         /// HBA Port Number.
@@ -979,13 +946,11 @@ impl Sata {
     }
 }
 
-impl Validate for Sata {
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.hba_port == u16::MAX {
-            return Err("SATA HBA port 0xffff is reserved");
-        }
-        Ok(())
+fn sata_validate(node: &Sata) -> Result<(), &'static str> {
+    if node.hba_port == u16::MAX {
+        return Err("SATA HBA port 0xffff is reserved");
     }
+    Ok(())
 }
 
 device_path_node! {
@@ -996,7 +961,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvm-express-namespace-messaging-device-path-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmExpress)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeOverride(validate = nvm_express_validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct NvmExpress {
         /// Namespace Identifier (NSID).
@@ -1017,11 +983,9 @@ impl NvmExpress {
     }
 }
 
-impl Validate for NvmExpress {
-    fn validate(&self) -> Result<(), &'static str> {
-        if matches!(self.namespace_id, 0 | u32::MAX) {
-            return Err("NVMe namespace ID is reserved");
-        }
-        Ok(())
+fn nvm_express_validate(node: &NvmExpress) -> Result<(), &'static str> {
+    if matches!(node.namespace_id, 0 | u32::MAX) {
+        return Err("NVMe namespace ID is reserved");
     }
+    Ok(())
 }

@@ -27,7 +27,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
-    @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]
     pub struct EndEntire;
 }
@@ -62,7 +62,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
-    @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]
     pub struct EndInstance;
 }

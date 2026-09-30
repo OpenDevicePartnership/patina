@@ -17,10 +17,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{DevicePathType, HardwareSubType};
-use crate::{
-    device_path_node,
-    uefi::device_path::{encoding::Vector, parse_node::MeasureSize},
-};
+use crate::{device_path_node, uefi::device_path::encoding::Vector};
 use alloc::vec::Vec;
 use scroll::{Pread, Pwrite};
 
@@ -31,7 +28,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
-    @[DevicePathNodeDerive(Debug, Display, Validate)]
+    @[DevicePathNodeOverride(measure_size = hardware_vendor_measure_size)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct HardwareVendor {
         /// Vendor GUID in EFI wire byte order.
@@ -42,10 +40,8 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for HardwareVendor {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
-    }
+fn hardware_vendor_measure_size(node: &HardwareVendor) -> usize {
+    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
 }
 
 device_path_node! {
@@ -56,7 +52,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Pci {
         /// PCI Function Number.
@@ -73,7 +69,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pccard-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct PcCard {
         /// Function Number, 0 is the first one.
@@ -88,7 +84,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#memory-mapped-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct MemoryMapped {
         /// EFI memory type.
@@ -107,7 +103,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Controller {
         /// Controller Number.
@@ -123,7 +119,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bmc-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Bmc {
         /// BMC interface type.

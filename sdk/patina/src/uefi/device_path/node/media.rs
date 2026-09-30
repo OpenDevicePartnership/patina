@@ -20,7 +20,7 @@ use crate::{
     device_path_node,
     uefi::device_path::{
         encoding::{Char16Nul, Vector},
-        parse_node::{self, MeasureSize, Validate},
+        parse_node,
     },
 };
 use alloc::{string::String, vec::Vec};
@@ -34,7 +34,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#cd-rom-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct CdRom {
         /// Boot catalog entry number; zero denotes the initial/default entry.
@@ -53,7 +53,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#media-protocol-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MediaProtocol {
         /// Protocol identifier as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -68,7 +68,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-file>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareFile {
         /// File name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -83,7 +83,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-volume>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareVolume {
         /// Volume name as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -99,7 +99,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#relative-offset-range>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RelativeOffsetRange {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -118,7 +118,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RamDisk {
         /// Starting physical memory address.
@@ -139,7 +139,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::Vendor)]
-    @[DevicePathNodeDerive(Debug, Display, Validate)]
+    @[DevicePathNodeOverride(measure_size = media_vendor_measure_size)]
+    @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MediaVendor {
         /// Vendor GUID in EFI wire byte order.
@@ -150,10 +151,8 @@ device_path_node! {
     }
 }
 
-impl MeasureSize for MediaVendor {
-    fn measure_size(&self) -> usize {
-        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
-    }
+fn media_vendor_measure_size(node: &MediaVendor) -> usize {
+    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
 }
 
 device_path_node! {
@@ -164,7 +163,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::HardDrive)]
-    @[DevicePathNodeDerive(Debug, MeasureSize)]
+    @[DevicePathNodeOverride(validate = hard_drive_validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct HardDrive {
         /// Partition number (1-based).
@@ -197,7 +197,7 @@ impl HardDrive {
     ///
     /// Returns `None` if the node's type/subtype does not identify a
     /// `HardDrive` node, if the node data is not exactly one `HardDrive`
-    /// payload, or if the node fails [`parse_node::Validate::validate`].
+    /// payload, or if the node fails [`validate`](parse_node::DevicePathNode::validate).
     ///
     /// Useful when walking a device path with
     /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
@@ -235,22 +235,20 @@ impl Display for HardDrive {
     }
 }
 
-impl Validate for HardDrive {
-    fn validate(&self) -> Result<(), &'static str> {
-        if !matches!(self.partition_format, Self::FORMAT_MBR | Self::FORMAT_GPT) || self.signature_type > 2 {
-            return Err("invalid hard drive partition format or signature type");
-        }
-        if self.partition_format == Self::FORMAT_MBR && self.partition_number > 4 {
-            return Err("MBR partition number must be at most 4");
-        }
-        if (self.signature_type == 0 && self.partition_signature != [0; 16])
-            || (self.signature_type == Self::SIGNATURE_TYPE_MBR
-                && self.partition_signature[4..].iter().any(|byte| *byte != 0))
-        {
-            return Err("invalid hard drive signature padding");
-        }
-        Ok(())
+fn hard_drive_validate(node: &HardDrive) -> Result<(), &'static str> {
+    if !matches!(node.partition_format, HardDrive::FORMAT_MBR | HardDrive::FORMAT_GPT) || node.signature_type > 2 {
+        return Err("invalid hard drive partition format or signature type");
     }
+    if node.partition_format == HardDrive::FORMAT_MBR && node.partition_number > 4 {
+        return Err("MBR partition number must be at most 4");
+    }
+    if (node.signature_type == 0 && node.partition_signature != [0; 16])
+        || (node.signature_type == HardDrive::SIGNATURE_TYPE_MBR
+            && node.partition_signature[4..].iter().any(|byte| *byte != 0))
+    {
+        return Err("invalid hard drive signature padding");
+    }
+    Ok(())
 }
 
 device_path_node! {
@@ -261,7 +259,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::FilePath)]
-    @[DevicePathNodeDerive(Debug, Validate)]
+    @[DevicePathNodeOverride(measure_size = file_path_measure_size)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Pread, Pwrite)]
     pub struct FilePath {
         /// The file path string (stored as UTF-8, serialized as UTF-16).
@@ -283,10 +282,8 @@ impl FilePath {
     }
 }
 
-impl MeasureSize for FilePath {
-    fn measure_size(&self) -> usize {
-        self.utf16_size()
-    }
+fn file_path_measure_size(node: &FilePath) -> usize {
+    node.utf16_size()
 }
 
 impl Display for FilePath {

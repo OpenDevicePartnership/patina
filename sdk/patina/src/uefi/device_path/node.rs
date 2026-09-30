@@ -42,7 +42,7 @@ pub use messaging::*;
 pub use node_types::*;
 
 use super::encoding::invalid;
-use crate::uefi::device_path::parse_node::{DevicePathNode, MeasureSize, Validate, decode_payload};
+use crate::uefi::device_path::parse_node::{DevicePathNode, decode_payload};
 use alloc::boxed::Box;
 use core::fmt::{Display, Write};
 use scroll::{
@@ -168,19 +168,8 @@ impl GenericDevicePathNode {
     }
 }
 
-impl MeasureSize for &GenericDevicePathNode {
-    fn measure_size(&self) -> usize {
-        self.data.len()
-    }
-}
-
-impl Validate for &GenericDevicePathNode {
-    /// Generic payloads are not interpreted, so there are no field rules to check.
-    fn validate(&self) -> Result<(), &'static str> {
-        Ok(())
-    }
-}
-
+/// Generic payloads are not interpreted, so the default `validate`, which accepts
+/// every value, applies.
 impl DevicePathNode for &GenericDevicePathNode {
     /// Generic nodes have no fixed type. This placeholder is unused because
     /// `header()` and `is_type()` are overridden.
@@ -191,6 +180,10 @@ impl DevicePathNode for &GenericDevicePathNode {
     /// Generic nodes have no fixed sub-type; see `r#type()`.
     fn sub_type() -> u8 {
         0
+    }
+
+    fn measure_size(&self) -> usize {
+        self.data.len()
     }
 
     fn header(&self) -> Header {
@@ -404,7 +397,6 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::uefi::device_path::parse_node::Validate;
     use scroll::{Pread, Pwrite};
 
     #[test]
@@ -1031,7 +1023,7 @@ mod fixed_tests {
 #[cfg(test)]
 mod binary_tests {
     use super::*;
-    use crate::uefi::device_path::{parse_node::MeasureSize, paths::DevicePathBuf};
+    use crate::uefi::device_path::paths::DevicePathBuf;
     use alloc::{format, vec};
     use core::{fmt, mem};
 
@@ -1086,18 +1078,6 @@ mod binary_tests {
         }
     }
 
-    impl MeasureSize for HugeNode {
-        fn measure_size(&self) -> usize {
-            usize::from(u16::MAX)
-        }
-    }
-
-    impl Validate for HugeNode {
-        fn validate(&self) -> Result<(), &'static str> {
-            Ok(())
-        }
-    }
-
     impl DevicePathNode for HugeNode {
         fn r#type() -> u8 {
             6
@@ -1105,6 +1085,10 @@ mod binary_tests {
 
         fn sub_type() -> u8 {
             1
+        }
+
+        fn measure_size(&self) -> usize {
+            usize::from(u16::MAX)
         }
     }
 
