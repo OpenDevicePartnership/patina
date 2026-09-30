@@ -58,6 +58,8 @@ pub(crate) struct InitState {
     per_core_init_count: AtomicU32,
     /// User module entry point discovered from the HOB list.
     user_entry_point: Once<u64>,
+    /// Validated Init image base and length, copied before the producer's HOBs are reclaimed.
+    init_module_region: Once<(u64, u64)>,
     /// Set after the init image has been freed.
     init_module_freed: AtomicBool,
     /// MSEG base address discovered from the MSEG SMRAM HOB, if the platform
@@ -81,6 +83,7 @@ impl InitState {
             mm_initialized_buffer: Once::new(),
             per_core_init_count: AtomicU32::new(0),
             user_entry_point: Once::new(),
+            init_module_region: Once::new(),
             init_module_freed: AtomicBool::new(false),
             mseg_base: Once::new(),
             ap_startup_fn: Once::new(),
@@ -150,6 +153,16 @@ impl InitState {
     /// Returns the user module entry point, if set.
     pub(crate) fn user_entry_point(&self) -> Option<u64> {
         self.user_entry_point.get().copied()
+    }
+
+    /// Records the validated Init image allocation once.
+    pub(crate) fn set_init_module_region(&self, base: u64, size: u64) {
+        self.init_module_region.call_once(|| (base, size));
+    }
+
+    /// Returns the saved Init image base and length without accessing the HOB list.
+    pub(crate) fn init_module_region(&self) -> Option<(u64, u64)> {
+        self.init_module_region.get().copied()
     }
 
     /// Returns whether the init image has been freed.
@@ -368,6 +381,7 @@ mod tests {
         assert!(state.mm_initialized_buffer().is_none());
         assert_eq!(state.per_core_init_count(), 0);
         assert!(state.user_entry_point().is_none());
+        assert!(state.init_module_region().is_none());
         assert!(!state.is_init_module_freed());
         assert!(state.mseg_base().is_none());
         assert!(state.ap_startup_fn().is_none());
@@ -381,6 +395,15 @@ mod tests {
         assert!(!state.is_init_module_freed());
         state.mark_init_module_freed();
         assert!(state.is_init_module_freed());
+    }
+
+    #[test]
+    fn test_init_module_region_is_recorded_once() {
+        let state = InitState::new();
+        state.set_init_module_region(0x1000, 0x3000);
+        state.set_init_module_region(0x8000, 0x9000);
+        assert_eq!(state.init_module_region(), Some((0x1000, 0x3000)));
+        assert!(!state.is_init_module_freed());
     }
 
     #[test]

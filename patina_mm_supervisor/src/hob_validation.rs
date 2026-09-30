@@ -13,9 +13,9 @@
 //! 1. The scanned MMRAM regions form a single contiguous, non-overlapping span.
 //! 2. No `EFI_HOB_TYPE_MEMORY_ALLOCATION` HOB overlaps MMRAM (these describe
 //!    allocations outside of MMRAM).
-//! 3. Every `MemoryAllocationModule` HOB lies inside MMRAM, the modules do not
-//!    overlap each other, and each module's entry point lies within its own
-//!    allocation range.
+//! 3. The supervisor's module HOBs, including the standard PI Init module HOB, lie inside MMRAM,
+//!    do not overlap each other, and have entry points inside their allocations. The Init
+//!    allocation is page-aligned, and both the Init and Core modules must be present.
 //! 4. Resource descriptor HOBs (v1 and v2) do not overlap within the same
 //!    version and address space (memory vs I/O). Descriptors owned by the
 //!    Memory Type Information GUID are skipped, since the PEI memory bin HOB is
@@ -49,8 +49,10 @@
 use core::fmt;
 
 use patina::management_mode::supervisor::{
-    MM_SUPERVISOR_CORE_GUID, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_USER_GUID,
+    MM_SUPERVISOR_CORE_GUID, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID,
+    MM_SUPERVISOR_USER_GUID,
 };
+use patina::pi::guid::HOB_MEMORY_ALLOC_MODULE_GUID;
 use patina::pi::hob::{
     EFI_RESOURCE_IO, EFI_RESOURCE_IO_RESERVED, Hob, MEMORY_TYPE_INFO_HOB_GUID, PhaseHandoffInformationTable,
     ResourceDescriptor, get_pi_hob_list_size,
@@ -117,6 +119,20 @@ pub enum HobValidationError {
         base: u64,
         /// Length of the module allocation in bytes.
         length: u64,
+    },
+    /// The Init allocation cannot be reclaimed as whole pages.
+    InitModuleNotPageAligned {
+        /// Base address of the Init allocation.
+        base: u64,
+        /// Length of the Init allocation in bytes.
+        length: u64,
+    },
+    /// One or more required module allocations were not described.
+    MissingModule {
+        /// Whether the Init module HOB was present.
+        has_init: bool,
+        /// Whether the Supervisor Core module HOB was present.
+        has_supv_core: bool,
     },
     /// Two memory allocation module HOBs overlap each other.
     AllocationModulesOverlap {
@@ -267,6 +283,12 @@ impl fmt::Display for HobValidationError {
             Self::AllocationModuleOutsideMmram { base, length } => {
                 write!(f, "allocation module HOB [0x{base:x}, +0x{length:x}) is outside MMRAM")
             }
+            Self::InitModuleNotPageAligned { base, length } => {
+                write!(f, "MM Init allocation [0x{base:x}, +0x{length:x}) is not page aligned")
+            }
+            Self::MissingModule { has_init, has_supv_core } => {
+                write!(f, "required MM module missing: has_init={has_init}, has_supv_core={has_supv_core}")
+            }
             Self::AllocationModulesOverlap { base_a, size_a, base_b, size_b } => write!(
                 f,
                 "allocation module HOBs overlap: [0x{base_a:x}, +0x{size_a:x}) and [0x{base_b:x}, +0x{size_b:x})"
@@ -334,7 +356,7 @@ fn checked_range_end(kind: &'static str, base: u64, length: u64) -> Result<u64, 
 }
 
 /// Returns whether the two `[base, base + size)` ranges overlap.
-pub(crate) fn ranges_overlap(a: (u64, u64), b: (u64, u64)) -> bool {
+fn ranges_overlap(a: (u64, u64), b: (u64, u64)) -> bool {
     let (a_base, a_size) = a;
     let (b_base, b_size) = b;
     if a_size == 0 || b_size == 0 {
@@ -489,24 +511,33 @@ fn validate_memory_allocations<'a>(
     Ok(())
 }
 
-/// Validates that every allocation module HOB lies inside MMRAM and that the
-/// modules do not overlap each other.
+/// Validates supervisor module allocations, including the standard PI Init allocation.
 fn validate_allocation_modules<'a>(
     hobs: impl IntoIterator<Item = Hob<'a>>,
     is_inside_mmram: impl Fn(u64, u64) -> bool,
 ) -> Result<(), HobValidationError> {
     let mut modules: [(u64, u64); MAX_ALLOC_MODULES] = [(0, 0); MAX_ALLOC_MODULES];
     let mut count = 0usize;
+    let mut has_init = false;
+    let mut has_supv_core = false;
 
     for current in hobs {
         if let Hob::MemoryAllocationModule(module) = current {
-            // Only the MM Supervisor's own module allocations are validated here.
-            if module.alloc_descriptor.name != MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID {
+            let is_init = module.alloc_descriptor.name == HOB_MEMORY_ALLOC_MODULE_GUID
+                && module.module_name == MM_SUPERVISOR_INIT_GUID;
+            if module.alloc_descriptor.name != MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID && !is_init {
                 continue;
             }
+            has_init |= is_init;
+            has_supv_core |= module.alloc_descriptor.name == MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID
+                && module.module_name == MM_SUPERVISOR_CORE_GUID;
             let base = module.alloc_descriptor.memory_base_address;
             let length = module.alloc_descriptor.memory_length;
             checked_range_end("allocation module HOB", base, length)?;
+            if is_init && (!base.is_multiple_of(UEFI_PAGE_SIZE as u64) || !length.is_multiple_of(UEFI_PAGE_SIZE as u64))
+            {
+                return Err(HobValidationError::InitModuleNotPageAligned { base, length });
+            }
             if !is_inside_mmram(base, length) {
                 return Err(HobValidationError::AllocationModuleOutsideMmram { base, length });
             }
@@ -520,6 +551,10 @@ fn validate_allocation_modules<'a>(
             *slot = (base, length);
             count += 1;
         }
+    }
+
+    if !has_init || !has_supv_core {
+        return Err(HobValidationError::MissingModule { has_init, has_supv_core });
     }
 
     if let Some((a, b)) = find_overlap(modules.get_mut(..count).unwrap_or(&mut [])) {
@@ -1196,16 +1231,18 @@ mod tests {
 
     #[test]
     fn test_mm_supervisor_hob_validation_pre_paging_accepts_a_complete_hob_list() {
-        /// A HOB list holding just the PHIT and the `PassDown` HOB the supervisor requires.
+        /// A HOB list with Init, Core, and the required `PassDown` HOB.
         #[repr(C, align(8))]
         struct PassDownHobList {
             handoff: PhaseHandoffInformationTable,
+            core: MemoryAllocationModule,
+            init: MemoryAllocationModule,
             guid: GuidHob,
             pass_down: MmSupvPassDownHobData,
             end: HobHeader,
         }
 
-        let list = PassDownHobList {
+        let mut list = PassDownHobList {
             handoff: PhaseHandoffInformationTable {
                 header: HobHeader {
                     r#type: HANDOFF,
@@ -1220,6 +1257,14 @@ mod tests {
                 free_memory_bottom: 0x2000,
                 end_of_hob_list: 0,
             },
+            core: allocation_module(
+                MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                MM_SUPERVISOR_CORE_GUID,
+                0x1000,
+                0x1000,
+                0x1000,
+            ),
+            init: allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x2000, 0x2000, 0x2100),
             guid: guid_hob(crate::MM_SUPV_PASS_DOWN_HOB_GUID, size_of::<MmSupvPassDownHobData>()),
             pass_down: pass_down(),
             end: HobHeader { r#type: END_OF_HOB_LIST, length: size_of::<HobHeader>() as u16, reserved: 0 },
@@ -1229,6 +1274,11 @@ mod tests {
         // Everything the producer named resolves inside the scanned regions, so the whole
         // pre-paging sequence runs to completion.
         assert_eq!(validate_incoming_hobs_pre_paging_init(&list.handoff, &regions, |_, _| true), Ok(()));
+        list.init.alloc_descriptor.memory_base_address = 0x1000;
+        assert!(matches!(
+            validate_incoming_hobs_pre_paging_init(&list.handoff, &regions, |_, _| true),
+            Err(HobValidationError::AllocationModulesOverlap { .. })
+        ));
 
         // The HOB list itself is a buffer at an address the producer chose, so it is rejected
         // when it falls outside the regions it described.
@@ -1371,10 +1421,15 @@ mod tests {
             0x1000,
             0x2800,
         );
+        let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x3000, 0x1000, 0x3000);
         assert_eq!(
             validate_allocation_modules(
-                [Hob::MemoryAllocationModule(&first), Hob::MemoryAllocationModule(&second)],
-                |base, length| base >= 0x1000 && base.checked_add(length).is_some_and(|end| end <= 0x3000)
+                [
+                    Hob::MemoryAllocationModule(&first),
+                    Hob::MemoryAllocationModule(&second),
+                    Hob::MemoryAllocationModule(&init)
+                ],
+                |base, length| base >= 0x1000 && base.checked_add(length).is_some_and(|end| end <= 0x4000)
             ),
             Ok(())
         );
@@ -1424,9 +1479,14 @@ mod tests {
             0x1000,
             0x2000,
         );
+        let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x4000, 0x1000, 0x4000);
         assert!(matches!(
             validate_allocation_modules(
-                [Hob::MemoryAllocationModule(&first), Hob::MemoryAllocationModule(&second)],
+                [
+                    Hob::MemoryAllocationModule(&first),
+                    Hob::MemoryAllocationModule(&second),
+                    Hob::MemoryAllocationModule(&init)
+                ],
                 |_, _| true
             ),
             Err(HobValidationError::AllocationModulesOverlap { .. })
@@ -1449,7 +1509,134 @@ mod tests {
     #[test]
     fn test_mm_supervisor_hob_validation_ignores_unrelated_allocation_modules() {
         let module = allocation_module(MM_SUPERVISOR_CORE_GUID, MM_SUPERVISOR_CORE_GUID, u64::MAX, 1, u64::MAX);
-        assert_eq!(validate_allocation_modules([Hob::MemoryAllocationModule(&module)], |_, _| false), Ok(()));
+        let core = allocation_module(
+            MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+            MM_SUPERVISOR_CORE_GUID,
+            0x1000,
+            0x1000,
+            0x1000,
+        );
+        let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x2000, 0x1000, 0x2000);
+        assert_eq!(
+            validate_allocation_modules(
+                [
+                    Hob::MemoryAllocationModule(&module),
+                    Hob::MemoryAllocationModule(&core),
+                    Hob::MemoryAllocationModule(&init)
+                ],
+                |_, _| true,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_requires_init_module() {
+        let core = allocation_module(
+            MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+            MM_SUPERVISOR_CORE_GUID,
+            0x1000,
+            0x1000,
+            0x1000,
+        );
+        let wrong_allocation = allocation_module(
+            MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+            MM_SUPERVISOR_INIT_GUID,
+            0x2000,
+            0x1000,
+            0x2000,
+        );
+        for (hobs, has_supv_core) in [
+            (vec![], false),
+            (vec![Hob::MemoryAllocationModule(&core)], true),
+            (vec![Hob::MemoryAllocationModule(&core), Hob::MemoryAllocationModule(&wrong_allocation)], true),
+        ] {
+            assert_eq!(
+                validate_allocation_modules(hobs, |_, _| true),
+                Err(HobValidationError::MissingModule { has_init: false, has_supv_core })
+            );
+        }
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_init_allocation_ranges() {
+        let core = allocation_module(
+            MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+            MM_SUPERVISOR_CORE_GUID,
+            0x1000,
+            0x1000,
+            0x1000,
+        );
+        for (base, length, expected) in [
+            (
+                0x4000,
+                0,
+                HobValidationError::InvalidAddressRange { kind: "allocation module HOB", base: 0x4000, length: 0 },
+            ),
+            (0x4001, 0x2000, HobValidationError::InitModuleNotPageAligned { base: 0x4001, length: 0x2000 }),
+            (0x4000, 0x2001, HobValidationError::InitModuleNotPageAligned { base: 0x4000, length: 0x2001 }),
+            (0, 0x2000, HobValidationError::AllocationModuleOutsideMmram { base: 0, length: 0x2000 }),
+            (
+                u64::MAX - 0xfff,
+                0x1000,
+                HobValidationError::InvalidAddressRange {
+                    kind: "allocation module HOB",
+                    base: u64::MAX - 0xfff,
+                    length: 0x1000,
+                },
+            ),
+        ] {
+            let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, base, length, base);
+            assert_eq!(
+                validate_allocation_modules(
+                    [Hob::MemoryAllocationModule(&init), Hob::MemoryAllocationModule(&core)],
+                    |base, size| base >= 0x1000 && base.checked_add(size).is_some_and(|end| end <= 0x9000),
+                ),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn test_mm_supervisor_hob_validation_init_requires_core_and_rejects_overlap() {
+        let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x4000, 0x2000, 0x4100);
+        assert_eq!(
+            validate_allocation_modules([Hob::MemoryAllocationModule(&init)], |_, _| true),
+            Err(HobValidationError::MissingModule { has_init: true, has_supv_core: false })
+        );
+        for (base, length) in [(0x4000, 0x2000), (0x3000, 0x2000), (0x5000, 0x2000), (0x4000, 0x1000), (0x3000, 0x4000)]
+        {
+            let core = allocation_module(
+                MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                MM_SUPERVISOR_CORE_GUID,
+                base,
+                length,
+                base,
+            );
+            assert!(matches!(
+                validate_allocation_modules(
+                    [Hob::MemoryAllocationModule(&core), Hob::MemoryAllocationModule(&init)],
+                    |_, _| true,
+                ),
+                Err(HobValidationError::AllocationModulesOverlap { .. })
+            ));
+        }
+        for (base, length) in [(0x1000, 0), (u64::MAX - 0xfff, 0x1000)] {
+            let core = allocation_module(
+                MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                MM_SUPERVISOR_CORE_GUID,
+                base,
+                length,
+                base,
+            );
+            assert!(matches!(
+                validate_allocation_modules(
+                    [Hob::MemoryAllocationModule(&core), Hob::MemoryAllocationModule(&init)],
+                    |_, _| true,
+                ),
+                Err(HobValidationError::InvalidAddressRange { .. })
+            ));
+        }
     }
 
     #[test]
@@ -1897,6 +2084,10 @@ mod tests {
             HobValidationError::MmramNotContiguous { covered: 0x1000, span: 0x2000 },
             HobValidationError::MemoryAllocationInsideMmram { base: 0x1000, length: 0x1000 },
             HobValidationError::AllocationModuleOutsideMmram { base: 0x1000, length: 0x1000 },
+            HobValidationError::InitModuleNotPageAligned { base: 0x1001, length: 0x1000 },
+            HobValidationError::MissingModule { has_init: false, has_supv_core: false },
+            HobValidationError::MissingModule { has_init: false, has_supv_core: true },
+            HobValidationError::MissingModule { has_init: true, has_supv_core: false },
             HobValidationError::AllocationModulesOverlap { base_a: 0, size_a: 0x1000, base_b: 0x800, size_b: 0x1000 },
             HobValidationError::TooManyAllocationModules { limit: MAX_ALLOC_MODULES },
             HobValidationError::AllocationModuleEntryPointOutOfRange {
