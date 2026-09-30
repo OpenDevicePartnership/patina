@@ -23,6 +23,39 @@ pub unsafe trait ProtocolInterface {
     const PROTOCOL_GUID: BinaryGuid;
 }
 
+/// A marker protocol is a protocol installed with no interface data. Its presence in the protocol database
+/// is often used as a signal.
+///
+/// This trait should be implemented for a zero-sized [`ProtocolInterface`] type that is intended to serve
+/// as a marker protocol.
+///
+/// A marker carries no data, so `Self` must be a zero-sized type.
+///
+/// # Examples
+///
+/// ```rust
+/// use patina::protocol::{MarkerProtocol, ProtocolInterface};
+/// use patina::BinaryGuid;
+///
+/// struct MyMarker;
+///
+/// // SAFETY: `MyMarker` has no data, so any correctly-aligned pointer is a valid interface for it.
+/// unsafe impl ProtocolInterface for MyMarker {
+///     const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("2b7c1c1e-6b5e-4b7b-9d9d-2c3b8e2f6a11");
+/// }
+///
+/// impl MarkerProtocol for MyMarker {}
+/// ```
+pub trait MarkerProtocol: ProtocolInterface + Sized {
+    /// Compile-time proof that `Self` is zero-sized.
+    ///
+    /// Marker-specific methods evaluate this to enforce the invariant this trait declares.
+    /// Do not reference it directly.
+    #[doc(hidden)]
+    const ASSERT_ZERO_SIZED: () =
+        assert!(core::mem::size_of::<Self>() == 0, "a marker protocol must be a zero-sized type");
+}
+
 macro_rules! impl_r_efi_protocol {
     ($protocol:ident) => {
         // SAFETY: This macro implements ProtocolInterface for r_efi protocol types. The PROTOCOL_GUID constant
