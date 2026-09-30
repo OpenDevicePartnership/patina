@@ -701,16 +701,20 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         if state.is_init_module_freed() {
             return;
         }
-        let (init_region, core_region) = with_user_access(|| {
-            // SAFETY: the caller provides a valid HOB list, and SMAP is lifted for its user-owned pages.
-            let handoff = unsafe { (hob_list as *const PhaseHandoffInformationTable).as_ref() }
-                .expect("MM Init cleanup requires a non-null HOB list");
-            let hobs = Hob::Handoff(handoff);
-            (
-                find_module_region(&hobs, HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID),
-                find_module_region(&hobs, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID),
-            )
-        });
+        // SAFETY: the caller provides a valid HOB list. This non-nested scope only reads it
+        // and copies the allocation ranges; no borrowed user memory escapes the SMAP guard.
+        let (init_region, core_region) = unsafe {
+            with_user_access(|| {
+                let handoff = (hob_list as *const PhaseHandoffInformationTable)
+                    .as_ref()
+                    .expect("MM Init cleanup requires a non-null HOB list");
+                let hobs = Hob::Handoff(handoff);
+                (
+                    find_module_region(&hobs, HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID),
+                    find_module_region(&hobs, MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID),
+                )
+            })
+        };
 
         let Some((base, size)) = init_region else {
             log::warn!("MM Init module not found in HOB list");
@@ -2694,7 +2698,7 @@ mod tests {
             let paging_allocator = security_state().paging_allocator();
             // SAFETY: both pools are distinct, page-aligned, writable and remain live.
             unsafe {
-                allocator.init_from_hob_list(smram_hobs.as_ptr()).unwrap();
+                allocator.init_from_regions(&scan_regions(&smram_hobs)).unwrap();
                 paging_allocator.init(paging_memory.base(), 16).unwrap();
             }
             let core_base = allocator.allocate_pages(1).unwrap();
@@ -2771,7 +2775,7 @@ mod tests {
 
         assert!(fixture.state.is_init_module_freed());
         assert_eq!(allocator.free_page_count(), free_pages + 3);
-        assert!(bytes.iter().all(|&byte| byte == 0xA5), "freeing must not zero the image");
+        assert!(bytes.iter().all(|&byte| byte == 0), "the page allocator must scrub the freed image");
         {
             let page_table = security_state().lock_page_table();
             let page_table = page_table.as_ref().unwrap();
@@ -2833,7 +2837,7 @@ mod tests {
             (base + 1, size, "non-empty, page-aligned allocation"),
             (base, size - 1, "non-empty, page-aligned allocation"),
             (0, size, "outside MMRAM"),
-            (u64::MAX - UEFI_PAGE_SIZE as u64 + 1, UEFI_PAGE_SIZE as u64, "outside MMRAM"),
+            (u64::MAX - UEFI_PAGE_SIZE as u64 + 1, UEFI_PAGE_SIZE as u64, "crosses an MMRAM boundary"),
         ] {
             fixture.init_module.alloc_descriptor.memory_base_address = address;
             fixture.init_module.alloc_descriptor.memory_length = length;
