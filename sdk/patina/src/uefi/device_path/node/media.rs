@@ -18,10 +18,7 @@
 use super::{DevicePathType, MediaSubType};
 use crate::{
     device_path_node,
-    uefi::device_path::{
-        encoding::{Char16Nul, Vector},
-        parse_node,
-    },
+    uefi::device_path::encoding::{Char16Nul, Vector},
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
@@ -201,17 +198,17 @@ impl HardDrive {
     ///
     /// Returns `None` if the node's type/subtype does not identify a
     /// `HardDrive` node, if the node data is not exactly one `HardDrive`
-    /// payload, or if the node fails [`validate`](parse_node::DevicePathNode::validate).
+    /// payload, or if the node fails [`validate`](super::DevicePathNode::validate).
     ///
     /// Useful when walking a device path with
-    /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
+    /// [`crate::uefi::device_path::DevicePath`] to recover the typed
     /// `HardDrive` payload from each node without doing the
     /// type/subtype check at the call site.
     pub fn try_from_node(node: &super::GenericDevicePathNode) -> Option<Self> {
-        if !<Self as parse_node::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
+        if !<Self as super::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
             return None;
         }
-        parse_node::decode_payload(&node.data).ok()
+        super::decode_payload(&node.data).ok()
     }
 
     /// Create a new `HardDrive` device path node for a GPT partition.

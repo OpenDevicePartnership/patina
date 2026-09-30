@@ -82,14 +82,14 @@ mod runtime_cross_checks {
     use patina::{
         devpath,
         uefi::device_path::{
+            DevicePathBuf,
             node::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
-            paths::DevicePathBuf,
         },
     };
 
     fn runtime_path<T>(node: T) -> DevicePathBuf
     where
-        T: patina::uefi::device_path::parse_node::DevicePathNode
+        T: patina::uefi::device_path::node::DevicePathNode
             + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         DevicePathBuf::from_device_path_node_iter(core::iter::once(node)).unwrap()
