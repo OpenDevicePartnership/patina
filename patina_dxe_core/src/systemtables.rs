@@ -11,10 +11,10 @@
 use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::boxed::Box;
+use patina::UefiSpecVersion;
 use patina::standard::efi;
 use patina::{component::component, crc32, pi::error_codes::EFI_NOT_AVAILABLE_YET, uefi::boot_services::BootServices};
 
-use crate::SystemTableVersion;
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
 
 pub static SYSTEM_TABLE: tpl_mutex::TplMutex<Option<EfiSystemTable>> =
@@ -25,7 +25,8 @@ pub struct EfiRuntimeServicesTable {
 }
 
 impl EfiRuntimeServicesTable {
-    /// Allocates a new Runtime Services table initialized to default stub functions in the Runtime Services Data allocator.
+    /// Allocates a new Runtime Services table initialized to default stub functions in the Runtime Services Data
+    /// allocator.
     pub fn allocate_new_table() -> Self {
         let rt = Self::default_runtime_services_table();
         let (runtime_services, _alloc) =
@@ -697,9 +698,8 @@ impl EfiSystemTable {
     /// Allocates a new EFI System Table with default contents in the Runtime Services Data allocator. Includes creation
     /// of default Runtime and Boot services tables in the Runtime Services Data allocator and Boot Services Data
     /// allocator respectively.
-    pub fn allocate_new_table(system_table_version: SystemTableVersion) -> Self {
+    pub fn allocate_new_table() -> Self {
         let mut st = Self::default_system_table();
-        st.hdr.revision = system_table_version.into();
 
         st.runtime_services = EfiRuntimeServicesTable::allocate_new_table().as_mut_ptr();
         st.boot_services = EfiBootServicesTable::allocate_new_table().as_mut_ptr();
@@ -870,8 +870,23 @@ impl EfiSystemTable {
     }
 }
 
-pub fn init_system_table(system_table_version: SystemTableVersion) {
-    *SYSTEM_TABLE.lock() = Some(EfiSystemTable::allocate_new_table(system_table_version));
+pub fn init_system_table(uefi_spec_version: UefiSpecVersion) {
+    let revision = u32::from(uefi_spec_version);
+    let mut table = EfiSystemTable::allocate_new_table();
+
+    let mut runtime_services = table.runtime_services().get();
+    runtime_services.hdr.revision = revision;
+    table.runtime_services().set(runtime_services);
+
+    let mut boot_services = table.boot_services().get();
+    boot_services.hdr.revision = revision;
+    table.boot_services().set(boot_services);
+
+    let mut system_table = table.get();
+    system_table.hdr.revision = revision;
+    table.set(system_table);
+
+    *SYSTEM_TABLE.lock() = Some(table);
 }
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
@@ -940,7 +955,7 @@ mod tests {
     #[test]
     fn test_checksum_changes_on_edit() {
         with_locked_state(|| {
-            let mut table = EfiSystemTable::allocate_new_table(SystemTableVersion::V2_70);
+            let mut table = EfiSystemTable::allocate_new_table();
             table.checksum();
 
             let system_table_crc32 = table.get().hdr.crc32;
@@ -989,6 +1004,23 @@ mod tests {
                 table.clear_boot_time_services();
                 assert_eq!((*table.system_table).boot_services, core::ptr::null_mut());
             };
+        });
+    }
+
+    #[test]
+    fn test_standard_table_revisions_match_selected_uefi_spec_version() {
+        with_locked_state(|| {
+            for version in [UefiSpecVersion::V2_00, UefiSpecVersion::V2_70, UefiSpecVersion::V2_110] {
+                let expected_revision = u32::from(version);
+                init_system_table(version);
+
+                let table_guard = SYSTEM_TABLE.lock();
+                let table = table_guard.as_ref().expect("System Table should be initialized");
+
+                assert_eq!(table.get().hdr.revision, expected_revision);
+                assert_eq!(table.boot_services().get().hdr.revision, expected_revision);
+                assert_eq!(table.runtime_services().get().hdr.revision, expected_revision);
+            }
         });
     }
 }
