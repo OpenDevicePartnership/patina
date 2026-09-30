@@ -22,7 +22,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use scroll::Pread;
+use scroll::{Pread, ctx::TryIntoCtx};
 
 use crate::uefi::device_path::{
     node::{self, DevicePathType, EndEntire, EndInstance},
@@ -50,7 +50,7 @@ impl DevicePathBuf {
     /// failure. The existing bytes remain unchanged on failure.
     pub fn append<T>(&mut self, node: T) -> Result<(), scroll::Error>
     where
-        T: DevicePathNode + Sized,
+        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         let writing_start_offset = self.buffer.len();
         let header = node.header();
@@ -140,7 +140,7 @@ impl DevicePathBuf {
     pub fn from_device_path_node_iter<I, T>(iter: I) -> Result<DevicePathBuf, scroll::Error>
     where
         I: Iterator<Item = T>,
-        T: DevicePathNode,
+        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         let mut device_path = DevicePathBuf::new_empty();
         let mut last_node_header = None;
@@ -425,14 +425,15 @@ impl<'a> Iterator for Iter<'a> {
 
 impl Display for DevicePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut nodes = self.iter().map(node::cast_to_dyn_device_path_node).peekable();
+        let mut nodes = self.iter().peekable();
 
         while let Some(node) = nodes.next() {
-            f.write_fmt(format_args!("{node}"))?;
+            let is_end = node.header.r#type == DevicePathType::End as u8;
+            f.write_fmt(format_args!("{}", node::cast_to_dyn_device_path_node(node)))?;
 
             if let Some(next) = nodes.peek()
-                && node.header().r#type != DevicePathType::End as u8
-                && next.header().r#type != DevicePathType::End as u8
+                && !is_end
+                && next.header.r#type != DevicePathType::End as u8
             {
                 f.write_char('/')?;
             }

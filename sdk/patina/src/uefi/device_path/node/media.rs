@@ -156,8 +156,8 @@ impl HardDrive {
     /// Try to parse a `HardDrive` from a raw device path node.
     ///
     /// Returns `None` if the node's type/subtype does not identify a
-    /// `HardDrive` node, or if the node data is shorter than its fixed
-    /// payload and so cannot be decoded.
+    /// `HardDrive` node, if the node data is not exactly one `HardDrive`
+    /// payload, or if the node fails [`parse_node::Validate::validate`].
     ///
     /// Useful when walking a device path with
     /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
@@ -167,9 +167,7 @@ impl HardDrive {
         if !<Self as parse_node::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
             return None;
         }
-        let node: Self = node.data.pread_with(0, scroll::LE).ok()?;
-        node.validate().ok()?;
-        Some(node)
+        parse_node::decode_payload(node.data).ok()
     }
 
     /// Create a new `HardDrive` device path node for a GPT partition.

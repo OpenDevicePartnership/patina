@@ -7,6 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use super::encoding::invalid;
 use alloc::boxed::Box;
 use core::{
     clone::Clone,
@@ -110,31 +111,8 @@ pub trait Validate {
     fn validate(&self) -> Result<(), &'static str>;
 }
 
-/// Instance access to a node's type and sub-type.
-///
-/// This is implemented automatically for every sized [`DevicePathNode`] from its
-/// `r#type()` and `sub_type()` functions. It lets [`DevicePathNode::header`] have a
-/// default implementation that still works through `dyn DevicePathNode`.
-pub trait DevicePathNodeKind {
-    /// Return the device path type of this node.
-    fn node_type(&self) -> u8;
-
-    /// Return the device path sub-type of this node.
-    fn node_sub_type(&self) -> u8;
-}
-
-impl<T: DevicePathNode> DevicePathNodeKind for T {
-    fn node_type(&self) -> u8 {
-        T::r#type()
-    }
-
-    fn node_sub_type(&self) -> u8 {
-        T::sub_type()
-    }
-}
-
 /// Trait that every device path node must implement.
-pub trait DevicePathNode: Debug + Display + MeasureSize + Validate + DevicePathNodeKind {
+pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     /// Return the device path type identifying this node kind.
     fn r#type() -> u8
     where
@@ -149,8 +127,11 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate + DevicePathN
     ///
     /// The default combines the node's type, sub-type, and
     /// [`MeasureSize::measure_size`].
-    fn header(&self) -> Header {
-        Header::new(self.node_type(), self.node_sub_type(), Header::size_of_header() + self.measure_size())
+    fn header(&self) -> Header
+    where
+        Self: Sized,
+    {
+        Header::new(Self::r#type(), Self::sub_type(), Header::size_of_header() + self.measure_size())
     }
 
     /// Return true if `r#type` and `sub_type` identify this node kind.
@@ -161,11 +142,71 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate + DevicePathN
         r#type == Self::r#type() && sub_type == Self::sub_type()
     }
 
-    /// Write the device path node into the buffer and return the number of bytes written.
+    /// Write the device path node, header included, into the buffer.
     ///
-    /// Implementations validate the node with [`Validate::validate`] and check wire
-    /// lengths, returning an error when the node cannot be serialized.
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
+    /// Returns the number of bytes written, which is the header length. The node is
+    /// checked with [`Validate::validate`] first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node fails validation, the buffer is too small, the
+    /// header length does not fit in 16 bits, or the encoded payload size differs
+    /// from [`MeasureSize::measure_size`].
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>
+    where
+        Self: Sized + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+    {
+        self.validate().map_err(invalid)?;
+        let header = self.header();
+        let mut header_bytes = [0u8; 4];
+        header_bytes.pwrite_with(header, 0, scroll::LE)?;
+        if buffer.len() < header.length {
+            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
+        }
+        let payload = buffer
+            .get_mut(Header::size_of_header()..header.length)
+            .ok_or(scroll::Error::BadInput { size: header.length, msg: "invalid device path output range" })?;
+        let written = payload.pwrite_with(self, 0, scroll::LE)?;
+        if written != header.length - Header::size_of_header() {
+            return Err(scroll::Error::BadInput { size: written, msg: "encoded node length differs from header" });
+        }
+        buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
+        Ok(header.length)
+    }
+
+    /// Read a device path node, header included, from the start of the buffer.
+    ///
+    /// Returns the node and the number of bytes read, which is the header length.
+    /// Bytes after the node are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header is malformed or longer than the buffer, the
+    /// header does not identify this node kind, the payload cannot be decoded or has
+    /// trailing bytes, or the node fails [`Validate::validate`].
+    fn read_from<'a>(buffer: &'a [u8]) -> Result<(Self, usize), scroll::Error>
+    where
+        Self: Sized + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+    {
+        let unknown: UnknownDevicePathNode<'a> = buffer.pread_with(0, scroll::LE)?;
+        if !Self::is_type(unknown.header.r#type, unknown.header.sub_type) {
+            return Err(invalid("device path node type does not match"));
+        }
+        Ok((decode_payload(unknown.data)?, unknown.header.length))
+    }
+}
+
+/// Decode and validate a node payload that must be consumed completely.
+pub(crate) fn decode_payload<'a, T>(data: &'a [u8]) -> Result<T, scroll::Error>
+where
+    T: Validate + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+{
+    let (node, consumed) = T::try_from_ctx(data, scroll::LE)?;
+    if consumed != data.len() {
+        return Err(invalid("unexpected trailing device path payload"));
+    }
+    node.validate().map_err(invalid)?;
+    Ok(node)
 }
 
 /// `UnknownDevicePathNode` represents device path nodes that have not been cast to a more specific associated type
@@ -219,10 +260,20 @@ impl DevicePathNode for UnknownDevicePathNode<'_> {
         true
     }
 
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>
+    where
+        Self: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+    {
         let mut offset = 0;
         buffer.gwrite_with(self, &mut offset, Endian::Little)?;
         Ok(offset)
+    }
+
+    fn read_from<'b>(buffer: &'b [u8]) -> Result<(Self, usize), scroll::Error>
+    where
+        Self: TryFromCtx<'b, scroll::Endian, Error = scroll::Error>,
+    {
+        Self::try_from_ctx(buffer, scroll::LE)
     }
 }
 
@@ -346,30 +397,6 @@ macro_rules! device_path_node {
 
             fn sub_type() -> u8 {
                 $device_path_sub_type as u8
-            }
-
-            fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
-                use scroll::Pwrite as _;
-
-                $crate::uefi::device_path::parse_node::Validate::validate(&self)
-                    .map_err(|msg| scroll::Error::BadInput { size: 0, msg })?;
-                let header = $crate::uefi::device_path::parse_node::DevicePathNode::header(&self);
-                let mut header_bytes = [0u8; 4];
-                header_bytes.pwrite_with(header, 0, scroll::LE)?;
-                if buffer.len() < header.length {
-                    return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
-                }
-                let payload = buffer.get_mut(4..header.length).ok_or(scroll::Error::BadInput {
-                    size: header.length, msg: "invalid device path output range",
-                })?;
-                let written = payload.pwrite_with(self, 0, scroll::LE)?;
-                if written != header.length - 4 {
-                    return Err(scroll::Error::BadInput {
-                        size: written, msg: "encoded node length differs from header",
-                    });
-                }
-                buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-                Ok(header.length)
             }
         }
     };

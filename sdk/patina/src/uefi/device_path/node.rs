@@ -33,7 +33,7 @@ pub use messaging::*;
 pub use node_types::*;
 
 use super::encoding::invalid;
-use crate::uefi::device_path::parse_node::{DevicePathNode, UnknownDevicePathNode};
+use crate::uefi::device_path::parse_node::{DevicePathNode, UnknownDevicePathNode, decode_payload};
 use alloc::boxed::Box;
 use scroll::ctx::TryFromCtx;
 
@@ -76,12 +76,7 @@ pub fn try_cast_to_dyn_device_path_node(
     where
         T: DevicePathNode + TryFromCtx<'a, scroll::Endian, Error = scroll::Error> + 'a,
     {
-        let (node, consumed) = T::try_from_ctx(data, scroll::LE)?;
-        if consumed != data.len() {
-            return Err(invalid("unexpected trailing device path payload"));
-        }
-        node.validate().map_err(invalid)?;
-        Ok(Box::new(node))
+        Ok(Box::new(decode_payload::<T>(data)?))
     }
 
     if unknown.header.length != 4 + unknown.data.len() {
@@ -160,7 +155,9 @@ pub fn try_cast_to_dyn_device_path_node(
 }
 
 #[cfg(test)]
-fn encode_node<T: DevicePathNode>(node: T) -> Result<Vec<u8>, scroll::Error> {
+fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
+    node: T,
+) -> Result<Vec<u8>, scroll::Error> {
     let mut bytes = alloc::vec![0; node.header().length];
     node.write_into(&mut bytes)?;
     Ok(bytes)
@@ -422,8 +419,14 @@ mod fixed_tests {
 
         let unknown: UnknownDevicePathNode<'_> = wire.pread_with(0, scroll::LE).unwrap();
         assert_eq!(unknown.header, node.header());
+        let mut trailing = wire.to_vec();
+        trailing.extend_from_slice(&[0x7f, 0xff, 4, 0]);
+        assert_eq!(T::read_from(&trailing).unwrap(), (node.clone(), wire.len()));
+        assert_eq!(UnknownDevicePathNode::read_from(wire).unwrap(), (unknown.clone(), wire.len()));
+        let mut mismatched = wire.to_vec();
+        mismatched[1] ^= 0x80;
+        assert!(T::read_from(&mismatched).is_err());
         let dynamic = try_cast_to_dyn_device_path_node(unknown.clone()).unwrap();
-        assert_eq!(dynamic.header(), node.header());
         let type_name = core::any::type_name::<T>().rsplit("::").next().unwrap();
         let debug = format!("{dynamic:?}");
         assert!(debug.starts_with(&format!("{type_name} {{")), "unexpected decoded type: {debug}");
@@ -444,6 +447,7 @@ mod fixed_tests {
                 wire[..length].pread_with::<UnknownDevicePathNode<'_>>(0, scroll::LE).is_err(),
                 "accepted truncated node at {length}"
             );
+            assert!(T::read_from(&wire[..length]).is_err(), "read truncated node at {length}");
             let mut short = vec![0xa5; length];
             assert!(node.clone().write_into(&mut short).is_err(), "accepted short destination at {length}");
             assert!(short.iter().all(|byte| *byte == 0xa5), "modified short destination at {length}");
@@ -463,7 +467,12 @@ mod fixed_tests {
         assert_eq!(big_endian.pread_with::<T>(0, scroll::BE).unwrap(), node);
     }
 
-    fn check_invalid<T: DevicePathNode + Clone>(node: T, payload: &[u8]) {
+    fn check_invalid<T>(node: T, payload: &[u8])
+    where
+        T: DevicePathNode + Clone,
+        T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+        T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+    {
         assert!(node.validate().is_err());
         assert!(encode_node(node.clone()).is_err());
         let mut output = vec![0xa5; node.header().length];
@@ -471,6 +480,10 @@ mod fixed_tests {
         assert!(output.iter().all(|byte| *byte == 0xa5));
 
         assert_eq!(payload.len() + 4, node.header().length);
+        let mut wire = vec![0; 4];
+        wire.pwrite_with(node.header(), 0, scroll::LE).unwrap();
+        wire.extend_from_slice(payload);
+        assert!(T::read_from(&wire).is_err());
         let unknown = UnknownDevicePathNode { header: node.header(), data: payload };
         assert!(try_cast_to_dyn_device_path_node(unknown).is_err());
     }
@@ -809,6 +822,7 @@ mod binary_tests {
     fn check_node<T>(node: T, expected: &[u8])
     where
         T: DevicePathNode + Clone + for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
+        T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         assert_eq!(node.measure_size() + 4, expected.len());
         assert_eq!(node.header().length, expected.len());
@@ -827,7 +841,6 @@ mod binary_tests {
         assert_eq!(roundtrip, expected);
         let raw = expected.pread_with::<UnknownDevicePathNode>(0, scroll::LE).unwrap();
         let decoded = try_cast_to_dyn_device_path_node(raw).unwrap();
-        assert_eq!(decoded.header().length, expected.len());
         assert!(!format!("{decoded:?}").starts_with("UnknownDevicePathNode"));
     }
 

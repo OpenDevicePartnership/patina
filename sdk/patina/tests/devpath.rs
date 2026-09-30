@@ -89,7 +89,8 @@ mod runtime_cross_checks {
 
     fn runtime_path<T>(node: T) -> DevicePathBuf
     where
-        T: patina::uefi::device_path::parse_node::DevicePathNode,
+        T: patina::uefi::device_path::parse_node::DevicePathNode
+            + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         DevicePathBuf::from_device_path_node_iter(core::iter::once(node)).unwrap()
     }
