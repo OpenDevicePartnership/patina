@@ -1,4 +1,16 @@
-//! ACPI device path nodes.
+//! ACPI device path nodes (UEFI 2.10 Section 10.3.3, type `0x02`).
+//!
+//! An ACPI device path describes a device whose enumeration is not defined in an
+//! industry-standard fashion. The device is described with ACPI AML in the ACPI
+//! namespace, and the device path links to it, so the stored identifiers must match
+//! the ACPI namespace exactly.
+//!
+//! The ACPI node holds numeric `_HID` and `_UID` values and should be used when
+//! possible because it is smaller. The Expanded ACPI node is required when `_HID` or
+//! `_UID` is a string, or when a `_CID` is needed. A PCI root bridge uses the
+//! `PNP0A03` ID, in `_HID` or in the expanded node's `_CID` (Section 10.4.2).
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
 //!
 //! ## License
 //!
@@ -19,7 +31,12 @@ use core::fmt::Display;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
-    /// An ACPI physical NVDIMM device, distinct from a messaging namespace node.
+    /// ACPI NVDIMM device path node (UEFI 2.10 Table 10.12).
+    ///
+    /// An NVDIMM device identified by its ACPI NFIT device handle. This is distinct from
+    /// the messaging [`Nvdimm`](super::Nvdimm) namespace node.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -30,10 +47,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// Expanded ACPI identifiers, with optional ASCII string overrides.
+    /// Expanded ACPI device path node (UEFI 2.10 Table 10.10).
     ///
-    /// A nonempty string supersedes its corresponding numeric identifier. Each string
-    /// is stored as NUL-terminated ASCII, as specified by UEFI 2.11 Table 10.10.
+    /// Numeric `_HID`, `_UID`, and `_CID` values with NUL-terminated ASCII string
+    /// forms. A nonempty string supersedes its corresponding numeric identifier.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::ExtendedAcpi)]
     @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -69,7 +88,12 @@ impl MeasureSize for ExtendedAcpi {
 }
 
 device_path_node! {
-    /// ACPI address node containing one or more display device addresses.
+    /// ACPI `_ADR` device path node (UEFI 2.10 Table 10.11).
+    ///
+    /// One or more ACPI `_ADR` values for video output devices used by the Graphics
+    /// Output Protocol. At least one `_ADR` value is required.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-adr-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Adr)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -96,10 +120,15 @@ impl MeasureSize for AcpiAdr {
 }
 
 device_path_node! {
+    /// ACPI device path node (UEFI 2.10 Table 10.9).
+    ///
+    /// Numeric 32-bit `_HID` and `_UID` values that must match the ACPI namespace. This
+    /// node is smaller than [`ExtendedAcpi`] and should be used when possible.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
     @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
     #[derive(Pwrite, Pread, Clone)]
-    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     pub struct Acpi {
         /// _HID
         pub hid: u32,

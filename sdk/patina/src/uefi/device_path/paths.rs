@@ -25,8 +25,8 @@ use core::{
 use scroll::{Pread, ctx::TryIntoCtx};
 
 use crate::uefi::device_path::{
-    node::{self, DevicePathType, EndEntire, EndInstance},
-    parse_node::{DevicePathNode, UnknownDevicePathNode},
+    node::{self, DevicePathType, EndEntire, EndInstance, GenericDevicePathNode},
+    parse_node::DevicePathNode,
 };
 
 /// `DevicePathBuf` is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
@@ -104,7 +104,7 @@ impl DevicePathBuf {
         fn check(path: &[u8]) -> Result<(), scroll::Error> {
             let mut offset = 0;
             while offset < path.len() {
-                let node = path.gread_with::<UnknownDevicePathNode>(&mut offset, scroll::LE)?;
+                let node = path.gread_with::<GenericDevicePathNode>(&mut offset, scroll::LE)?;
                 if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
                     if offset == path.len() {
                         return Ok(());
@@ -146,7 +146,7 @@ impl DevicePathBuf {
         let mut last_node_header = None;
         for n in iter {
             if last_node_header
-                .is_some_and(|h: crate::uefi::device_path::parse_node::Header| EndEntire::is_type(h.r#type, h.sub_type))
+                .is_some_and(|h: crate::uefi::device_path::node::Header| EndEntire::is_type(h.r#type, h.sub_type))
             {
                 return Err(scroll::Error::BadInput { size: 0, msg: "node follows EndEntire" });
             }
@@ -244,13 +244,12 @@ impl DevicePath {
 
         // SAFETY: The caller contract requires that the buffer pointer is valid and points to at least
         // Header::size_of_header() bytes.
-        let mut buffer = unsafe {
-            core::slice::from_raw_parts(buffer, crate::uefi::device_path::parse_node::Header::size_of_header())
-        };
+        let mut buffer =
+            unsafe { core::slice::from_raw_parts(buffer, crate::uefi::device_path::node::Header::size_of_header()) };
         let mut offset = 0;
         loop {
             let header = buffer
-                .pread_with::<crate::uefi::device_path::parse_node::Header>(offset, scroll::LE)
+                .pread_with::<crate::uefi::device_path::node::Header>(offset, scroll::LE)
                 .map_err(|_| "Error while trying to read header.")?;
             if EndEntire::is_type(header.r#type, header.sub_type) {
                 break;
@@ -301,8 +300,7 @@ impl DevicePath {
         let nb_skip = count - n;
         let mut idx = 0;
         for _ in 0..nb_skip {
-            let header =
-                self.buffer.pread_with::<crate::uefi::device_path::parse_node::Header>(idx, scroll::LE).unwrap();
+            let header = self.buffer.pread_with::<crate::uefi::device_path::node::Header>(idx, scroll::LE).unwrap();
             idx += header.length;
         }
         let end_buffer = self.buffer.get(idx..).expect("idx is within device path bounds");
@@ -404,7 +402,7 @@ impl<'a> Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = UnknownDevicePathNode<'a>;
+    type Item = GenericDevicePathNode<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // No more byte to read in the device path.
@@ -413,7 +411,7 @@ impl<'a> Iterator for Iter<'a> {
         }
 
         let Ok(unknown_device_path) =
-            self.device_path.buffer.gread_with::<UnknownDevicePathNode>(&mut self.offset, scroll::LE)
+            self.device_path.buffer.gread_with::<GenericDevicePathNode>(&mut self.offset, scroll::LE)
         else {
             debug_assert!(false, "The buffer is corrupted, could not read the device path node.");
             return None;

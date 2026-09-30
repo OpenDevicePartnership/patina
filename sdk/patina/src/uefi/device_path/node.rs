@@ -1,4 +1,20 @@
-//! UEFI device path node definitions, grouped by category.
+//! UEFI device path node definitions, grouped by category (UEFI 2.10 Section 10.3).
+//!
+//! A device path is a series of variable-length nodes. Each node starts at the end
+//! of the previous one, so nodes are byte-packed and their fields are unaligned.
+//! Every node has a length field in a known place, which makes it possible to skip
+//! nodes of an unknown type. The six node types are hardware, ACPI, messaging,
+//! media, BIOS Boot Specification, and end of hardware device path.
+//!
+//! Every node starts with the same 4-byte [`Header`]: a type, a sub-type whose
+//! meaning depends on the type, and the length of the node in bytes, including the
+//! header. The specific device path data follows. [`GenericDevicePathNode`] holds a
+//! node with its data kept as raw bytes (Section 10.3.1, Table 10.1).
+//!
+//! [`Header`]: crate::uefi::device_path::node::Header
+//! [`GenericDevicePathNode`]: crate::uefi::device_path::node::GenericDevicePathNode
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path-nodes>
 //!
 //! Binary conversions use `DevicePathNode` and the `scroll` conversion traits.
 //! Diagnostic display is not a complete canonical UEFI text conversion API.
@@ -9,19 +25,12 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-/// ACPI device path nodes.
 pub mod acpi;
-/// BIOS Boot Specification device path nodes.
 pub mod bios;
-/// Device path end markers.
 pub mod end;
-/// Hardware device path nodes.
 pub mod hardware;
-/// Media device path nodes.
 pub mod media;
-/// Messaging device path nodes.
 pub mod messaging;
-/// Device path type and subtype identifiers.
 pub mod node_types;
 
 pub use acpi::*;
@@ -33,14 +42,209 @@ pub use messaging::*;
 pub use node_types::*;
 
 use super::encoding::invalid;
-use crate::uefi::device_path::parse_node::{DevicePathNode, UnknownDevicePathNode, decode_payload};
+use crate::uefi::device_path::parse_node::{DevicePathNode, MeasureSize, Validate, decode_payload};
 use alloc::boxed::Box;
-use scroll::ctx::TryFromCtx;
+use core::{
+    fmt::{Display, Write},
+    mem,
+};
+use scroll::{
+    Endian, Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
+};
 
 #[cfg(test)]
 use alloc::{string::String, vec::Vec};
-#[cfg(test)]
-use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
+
+/// Header common to every device path node (UEFI 2.10 Table 10.1).
+///
+/// The type, the sub-type whose meaning depends on the type, and the node length.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct Header {
+    /// Type of the device path node.
+    pub r#type: u8,
+    /// Subtype of the device path node.
+    pub sub_type: u8,
+    /// Total length in bytes of the device path node, including the header.
+    pub length: usize,
+}
+
+impl Header {
+    /// Creates a new [`Header`].
+    pub const fn new(r#type: u8, sub_type: u8, length: usize) -> Self {
+        Self { r#type, sub_type, length }
+    }
+
+    /// Return the size of the header in bytes
+    pub const fn size_of_header() -> usize {
+        mem::size_of::<u8>() + mem::size_of::<u8>() + mem::size_of::<u16>()
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for Header {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        let length = u16::try_from(self.length)
+            .map_err(|_| scroll::Error::BadInput { size: self.length, msg: "device path node is too large" })?;
+        if self.length < Self::size_of_header() {
+            return Err(scroll::Error::BadInput {
+                size: self.length,
+                msg: "device path node is shorter than its header",
+            });
+        }
+        let mut offset = 0;
+        dest.gwrite_with(self.r#type, &mut offset, ctx)?;
+        dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
+        dest.gwrite_with(length, &mut offset, ctx)?;
+        Ok(offset)
+    }
+}
+
+impl TryFromCtx<'_, scroll::Endian> for Header {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let mut offset = 0;
+        Ok((
+            Header {
+                r#type: from.gread_with(&mut offset, ctx)?,
+                sub_type: from.gread_with(&mut offset, ctx)?,
+                length: from.gread_with::<u16>(&mut offset, ctx)? as usize,
+            },
+            offset,
+        ))
+    }
+}
+
+/// Generic device path node (UEFI 2.10 Table 10.1).
+///
+/// A node whose payload is kept as raw bytes: the specific device path data that its
+/// type and sub-type define. It represents any node, including nodes that are not
+/// decoded into a specific type or whose type is not defined by the specification.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct GenericDevicePathNode<'a> {
+    /// Header of the device path node.
+    pub header: Header,
+    /// Data of the device path node, could be anything depending on the header.
+    pub data: &'a [u8],
+}
+
+impl<'a> GenericDevicePathNode<'a> {
+    /// Decode the node into a dyn `DevicePathNode` of the type its header identifies.
+    pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
+        crate::uefi::device_path::node::cast_to_dyn_device_path_node(self)
+    }
+}
+
+impl MeasureSize for GenericDevicePathNode<'_> {
+    fn measure_size(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl Validate for GenericDevicePathNode<'_> {
+    /// Generic payloads are not interpreted, so there are no field rules to check.
+    fn validate(&self) -> Result<(), &'static str> {
+        Ok(())
+    }
+}
+
+impl DevicePathNode for GenericDevicePathNode<'_> {
+    /// Generic nodes have no fixed type. This placeholder is unused because
+    /// `header()` and `is_type()` are overridden.
+    fn r#type() -> u8 {
+        0
+    }
+
+    /// Generic nodes have no fixed sub-type; see `r#type()`.
+    fn sub_type() -> u8 {
+        0
+    }
+
+    fn header(&self) -> Header {
+        self.header
+    }
+
+    fn is_type(_type: u8, _sub_type: u8) -> bool {
+        // A generic node can represent every type, so it always returns true.
+        true
+    }
+
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>
+    where
+        Self: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+    {
+        let mut offset = 0;
+        buffer.gwrite_with(self, &mut offset, Endian::Little)?;
+        Ok(offset)
+    }
+
+    fn read_from<'b>(buffer: &'b [u8]) -> Result<(Self, usize), scroll::Error>
+    where
+        Self: TryFromCtx<'b, scroll::Endian, Error = scroll::Error>,
+    {
+        Self::try_from_ctx(buffer, scroll::LE)
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for GenericDevicePathNode<'_> {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        if self.header.length != 4 + self.data.len() || self.header.length > usize::from(u16::MAX) {
+            return Err(scroll::Error::BadInput {
+                size: self.header.length,
+                msg: "inconsistent device path node length",
+            });
+        }
+        if self.header.r#type == 0x7f && (self.header.length != 4 || !matches!(self.header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: self.header.length, msg: "invalid end device path node" });
+        }
+        let mut offset = 0;
+        dest.gwrite_with(self.header, &mut offset, scroll::Endian::Little)?;
+        dest.gwrite_with(self.data, &mut offset, ())?;
+        Ok(offset)
+    }
+}
+
+impl<'a> TryFromCtx<'a, scroll::Endian> for GenericDevicePathNode<'a> {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let mut offset = 0;
+        let header = from.gread_with::<Header>(&mut offset, ctx)?;
+        if header.length < Header::size_of_header() {
+            return Err(scroll::Error::BadInput {
+                size: header.length,
+                msg: "device path node is shorter than its header",
+            });
+        }
+        if header.length > from.len() {
+            return Err(scroll::Error::TooBig { size: header.length, len: from.len() });
+        }
+        if header.r#type == 0x7f && (header.length != 4 || !matches!(header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: header.length, msg: "invalid end device path node" });
+        }
+        let this = GenericDevicePathNode {
+            header,
+            data: from
+                .get(offset..header.length)
+                .ok_or(scroll::Error::TooBig { size: header.length, len: from.len() })?,
+        };
+        Ok((this, header.length))
+    }
+}
+
+impl Display for GenericDevicePathNode<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("Path({}, {},", &self.header.r#type, &self.header.sub_type))?;
+        for b in self.data {
+            f.write_fmt(format_args!(" {b:02X}"))?;
+        }
+        f.write_char(')')
+    }
+}
 
 fn check_length(size: usize) -> Result<(), scroll::Error> {
     if size > usize::from(u16::MAX) - 4 {
@@ -53,7 +257,7 @@ fn check_length(size: usize) -> Result<(), scroll::Error> {
 ///
 /// Malformed recognized nodes are logged and preserved for diagnostic display.
 /// Use [`try_cast_to_dyn_device_path_node`] when decoding errors must be propagated.
-pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<dyn DevicePathNode + '_> {
+pub fn cast_to_dyn_device_path_node(unknown: GenericDevicePathNode<'_>) -> Box<dyn DevicePathNode + '_> {
     match try_cast_to_dyn_device_path_node(unknown.clone()) {
         Ok(node) => node,
         Err(error) => {
@@ -70,7 +274,7 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
 /// Returns an error for inconsistent lengths, invalid payloads, or trailing bytes
 /// in a recognized node. Unknown payloads are retained without interpretation.
 pub fn try_cast_to_dyn_device_path_node(
-    unknown: UnknownDevicePathNode<'_>,
+    unknown: GenericDevicePathNode<'_>,
 ) -> Result<Box<dyn DevicePathNode + '_>, scroll::Error> {
     fn decode_node<'a, T>(data: &'a [u8]) -> Result<Box<dyn DevicePathNode + 'a>, scroll::Error>
     where
@@ -168,7 +372,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::uefi::device_path::parse_node::{self, Validate};
+    use crate::uefi::device_path::parse_node::Validate;
     use scroll::{Pread, Pwrite};
 
     #[test]
@@ -268,11 +472,11 @@ mod tests {
         let hd = HardDrive::new_gpt(3, 0x1000, 0x4000, guid);
         let mut data = [0u8; 38];
         data.pwrite_with(hd, 0, scroll::LE).unwrap();
-        let node = parse_node::UnknownDevicePathNode {
-            header: parse_node::Header {
+        let node = GenericDevicePathNode {
+            header: Header {
                 r#type: DevicePathType::Media as u8,
                 sub_type: MediaSubType::HardDrive as u8,
-                length: parse_node::Header::size_of_header() + 38,
+                length: Header::size_of_header() + 38,
             },
             data: &data,
         };
@@ -288,11 +492,11 @@ mod tests {
     #[test]
     fn test_hard_drive_try_from_node_wrong_type() {
         let data = [0u8; 38];
-        let node = parse_node::UnknownDevicePathNode {
-            header: parse_node::Header {
+        let node = GenericDevicePathNode {
+            header: Header {
                 r#type: DevicePathType::Messaging as u8, // not Media
                 sub_type: MediaSubType::HardDrive as u8,
-                length: parse_node::Header::size_of_header() + 38,
+                length: Header::size_of_header() + 38,
             },
             data: &data,
         };
@@ -323,8 +527,8 @@ mod tests {
 
         let mut data = [0u8; 38];
         data.pwrite_with(mbr(5, signature), 0, scroll::LE).unwrap();
-        let node = parse_node::UnknownDevicePathNode {
-            header: parse_node::Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42),
+        let node = GenericDevicePathNode {
+            header: Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42),
             data: &data,
         };
         assert!(HardDrive::try_from_node(&node).is_none());
@@ -334,11 +538,11 @@ mod tests {
     #[test]
     fn test_hard_drive_try_from_node_short_data() {
         let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
-        let node = parse_node::UnknownDevicePathNode {
-            header: parse_node::Header {
+        let node = GenericDevicePathNode {
+            header: Header {
                 r#type: DevicePathType::Media as u8,
                 sub_type: MediaSubType::HardDrive as u8,
-                length: parse_node::Header::size_of_header() + 16,
+                length: Header::size_of_header() + 16,
             },
             data: &data,
         };
@@ -389,10 +593,7 @@ mod tests {
 #[cfg(test)]
 mod fixed_tests {
     use super::*;
-    use crate::uefi::device_path::{
-        node::try_cast_to_dyn_device_path_node,
-        parse_node::{DevicePathNode, UnknownDevicePathNode},
-    };
+    use crate::uefi::device_path::{node::try_cast_to_dyn_device_path_node, parse_node::DevicePathNode};
     use alloc::{format, vec};
     use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
@@ -417,12 +618,12 @@ mod fixed_tests {
         assert_eq!(&oversized[..wire.len()], wire);
         assert_eq!(&oversized[wire.len()..], &[0xa5; 7]);
 
-        let unknown: UnknownDevicePathNode<'_> = wire.pread_with(0, scroll::LE).unwrap();
+        let unknown: GenericDevicePathNode<'_> = wire.pread_with(0, scroll::LE).unwrap();
         assert_eq!(unknown.header, node.header());
         let mut trailing = wire.to_vec();
         trailing.extend_from_slice(&[0x7f, 0xff, 4, 0]);
         assert_eq!(T::read_from(&trailing).unwrap(), (node.clone(), wire.len()));
-        assert_eq!(UnknownDevicePathNode::read_from(wire).unwrap(), (unknown.clone(), wire.len()));
+        assert_eq!(GenericDevicePathNode::read_from(wire).unwrap(), (unknown.clone(), wire.len()));
         let mut mismatched = wire.to_vec();
         mismatched[1] ^= 0x80;
         assert!(T::read_from(&mismatched).is_err());
@@ -444,7 +645,7 @@ mod fixed_tests {
 
         for length in 0..wire.len() {
             assert!(
-                wire[..length].pread_with::<UnknownDevicePathNode<'_>>(0, scroll::LE).is_err(),
+                wire[..length].pread_with::<GenericDevicePathNode<'_>>(0, scroll::LE).is_err(),
                 "accepted truncated node at {length}"
             );
             assert!(T::read_from(&wire[..length]).is_err(), "read truncated node at {length}");
@@ -484,7 +685,7 @@ mod fixed_tests {
         wire.pwrite_with(node.header(), 0, scroll::LE).unwrap();
         wire.extend_from_slice(payload);
         assert!(T::read_from(&wire).is_err());
-        let unknown = UnknownDevicePathNode { header: node.header(), data: payload };
+        let unknown = GenericDevicePathNode { header: node.header(), data: payload };
         assert!(try_cast_to_dyn_device_path_node(unknown).is_err());
     }
 
@@ -813,10 +1014,7 @@ mod fixed_tests {
 #[cfg(test)]
 mod binary_tests {
     use super::*;
-    use crate::uefi::device_path::{
-        parse_node::{Header, MeasureSize},
-        paths::DevicePathBuf,
-    };
+    use crate::uefi::device_path::{parse_node::MeasureSize, paths::DevicePathBuf};
     use alloc::{format, vec};
 
     fn check_node<T>(node: T, expected: &[u8])
@@ -832,16 +1030,16 @@ mod binary_tests {
         assert_eq!(&encoded[expected.len()..], &[0xa5; 3]);
         for len in 0..expected.len() {
             assert!(node.clone().write_into(&mut vec![0; len]).is_err(), "short output {len}");
-            assert!(expected[..len].pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
+            assert!(expected[..len].pread_with::<GenericDevicePathNode>(0, scroll::LE).is_err());
         }
         let (parsed, consumed) = T::try_from_ctx(&expected[4..], scroll::LE).unwrap();
         assert_eq!(consumed + 4, expected.len());
         let mut roundtrip = vec![0; expected.len()];
         parsed.write_into(&mut roundtrip).unwrap();
         assert_eq!(roundtrip, expected);
-        let raw = expected.pread_with::<UnknownDevicePathNode>(0, scroll::LE).unwrap();
+        let raw = expected.pread_with::<GenericDevicePathNode>(0, scroll::LE).unwrap();
         let decoded = try_cast_to_dyn_device_path_node(raw).unwrap();
-        assert!(!format!("{decoded:?}").starts_with("UnknownDevicePathNode"));
+        assert!(!format!("{decoded:?}").starts_with("GenericDevicePathNode"));
     }
 
     #[test]
@@ -899,7 +1097,7 @@ mod binary_tests {
             assert_eq!(node.header().length, size + 4);
         }
 
-        let unknown = UnknownDevicePathNode { header: Header::new(6, 1, 7), data: &[1, 2, 3] };
+        let unknown = GenericDevicePathNode { header: Header::new(6, 1, 7), data: &[1, 2, 3] };
         assert_eq!(unknown.measure_size(), 3);
     }
 
@@ -1014,21 +1212,21 @@ mod binary_tests {
     #[test]
     fn test_device_path_decoder_errors_and_unknown_nodes() {
         for unknown in [
-            UnknownDevicePathNode { header: Header::new(1, 1, 4), data: &[1] },
-            UnknownDevicePathNode { header: Header::new(1, 1, 5), data: &[1] },
-            UnknownDevicePathNode { header: Header::new(1, 1, 7), data: &[1, 2, 3] },
-            UnknownDevicePathNode { header: Header::new(3, 18, 10), data: &[255, 255, 255, 255, 0, 0] },
-            UnknownDevicePathNode { header: Header::new(3, 23, 16), data: &[0; 12] },
-            UnknownDevicePathNode { header: Header::new(4, 4, 6), data: &[b'A', 0] },
-            UnknownDevicePathNode { header: Header::new(0x7f, 2, 4), data: &[] },
-            UnknownDevicePathNode { header: Header::new(0x7f, 1, 5), data: &[0] },
-            UnknownDevicePathNode { header: Header::new(0x7f, 0xff, 5), data: &[0] },
+            GenericDevicePathNode { header: Header::new(1, 1, 4), data: &[1] },
+            GenericDevicePathNode { header: Header::new(1, 1, 5), data: &[1] },
+            GenericDevicePathNode { header: Header::new(1, 1, 7), data: &[1, 2, 3] },
+            GenericDevicePathNode { header: Header::new(3, 18, 10), data: &[255, 255, 255, 255, 0, 0] },
+            GenericDevicePathNode { header: Header::new(3, 23, 16), data: &[0; 12] },
+            GenericDevicePathNode { header: Header::new(4, 4, 6), data: &[b'A', 0] },
+            GenericDevicePathNode { header: Header::new(0x7f, 2, 4), data: &[] },
+            GenericDevicePathNode { header: Header::new(0x7f, 1, 5), data: &[0] },
+            GenericDevicePathNode { header: Header::new(0x7f, 0xff, 5), data: &[0] },
         ] {
             assert!(try_cast_to_dyn_device_path_node(unknown).is_err());
         }
         for unknown in [
-            UnknownDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] },
-            UnknownDevicePathNode { header: Header::new(1, 0xff, 6), data: &[1, 2] },
+            GenericDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] },
+            GenericDevicePathNode { header: Header::new(1, 0xff, 6), data: &[1, 2] },
         ] {
             let expected = format!("{unknown:?}");
             let decoded = try_cast_to_dyn_device_path_node(unknown).unwrap();
@@ -1036,7 +1234,7 @@ mod binary_tests {
         }
         let oversized = vec![0; usize::from(u16::MAX) - 3];
         assert!(
-            try_cast_to_dyn_device_path_node(UnknownDevicePathNode {
+            try_cast_to_dyn_device_path_node(GenericDevicePathNode {
                 header: Header::new(6, 1, 4 + oversized.len()),
                 data: &oversized,
             })
@@ -1050,16 +1248,16 @@ mod binary_tests {
         assert!(Header::new(1, 1, 65536).try_into_ctx(&mut output, scroll::LE).is_err());
         assert!(Header::new(1, 1, 3).try_into_ctx(&mut output, scroll::LE).is_err());
         for length in 0..4 {
-            assert!([1, 1, length, 0].pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
+            assert!([1, 1, length, 0].pread_with::<GenericDevicePathNode>(0, scroll::LE).is_err());
         }
         for data in [&[1u8][..], &[1, 2, 3][..]] {
-            let raw = UnknownDevicePathNode { header: Header::new(1, 1, data.len() + 4), data };
+            let raw = GenericDevicePathNode { header: Header::new(1, 1, data.len() + 4), data };
             assert!(try_cast_to_dyn_device_path_node(raw).is_err());
         }
-        let unknown = UnknownDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] };
+        let unknown = GenericDevicePathNode { header: Header::new(6, 1, 6), data: &[1, 2] };
         assert!(
             format!("{:?}", try_cast_to_dyn_device_path_node(unknown.clone()).unwrap())
-                .starts_with("UnknownDevicePathNode")
+                .starts_with("GenericDevicePathNode")
         );
         let mut encoded = [0; 6];
         unknown.write_into(&mut encoded).unwrap();
@@ -1129,8 +1327,8 @@ mod binary_tests {
     fn test_device_path_invalid_end_nodes_are_rejected_at_io_boundaries() {
         for (sub_type, length) in [(1, 5), (0xff, 5), (2, 4)] {
             let wire = [0x7f, sub_type, length, 0, 0];
-            assert!(wire.pread_with::<UnknownDevicePathNode>(0, scroll::LE).is_err());
-            let node = UnknownDevicePathNode {
+            assert!(wire.pread_with::<GenericDevicePathNode>(0, scroll::LE).is_err());
+            let node = GenericDevicePathNode {
                 header: Header::new(0x7f, sub_type, usize::from(length)),
                 data: &wire[4..usize::from(length)],
             };

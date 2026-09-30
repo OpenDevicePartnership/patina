@@ -7,78 +7,19 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use super::encoding::invalid;
-use alloc::boxed::Box;
+use super::{
+    encoding::invalid,
+    node::{GenericDevicePathNode, Header},
+};
 use core::{
-    clone::Clone,
-    fmt::{Debug, Display, Write},
+    fmt::{Debug, Display},
     marker::Sized,
-    mem,
 };
 
 use scroll::{
-    self, Endian, Pread, Pwrite,
+    self, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
-
-/// Common header of device path nodes.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct Header {
-    /// Type of the device path node.
-    pub r#type: u8,
-    /// Subtype of the device path node.
-    pub sub_type: u8,
-    /// Total length in bytes of the device path node, including the header.
-    pub length: usize,
-}
-
-impl Header {
-    /// Creates a new [`Header`].
-    pub const fn new(r#type: u8, sub_type: u8, length: usize) -> Self {
-        Self { r#type, sub_type, length }
-    }
-
-    /// Return the size of the header in bytes
-    pub const fn size_of_header() -> usize {
-        mem::size_of::<u8>() + mem::size_of::<u8>() + mem::size_of::<u16>()
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Header {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let length = u16::try_from(self.length)
-            .map_err(|_| scroll::Error::BadInput { size: self.length, msg: "device path node is too large" })?;
-        if self.length < Self::size_of_header() {
-            return Err(scroll::Error::BadInput {
-                size: self.length,
-                msg: "device path node is shorter than its header",
-            });
-        }
-        let mut offset = 0;
-        dest.gwrite_with(self.r#type, &mut offset, ctx)?;
-        dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        dest.gwrite_with(length, &mut offset, ctx)?;
-        Ok(offset)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for Header {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        Ok((
-            Header {
-                r#type: from.gread_with(&mut offset, ctx)?,
-                sub_type: from.gread_with(&mut offset, ctx)?,
-                length: from.gread_with::<u16>(&mut offset, ctx)? as usize,
-            },
-            offset,
-        ))
-    }
-}
 
 /// Reports the encoded payload size of a device path node.
 ///
@@ -188,7 +129,7 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     where
         Self: Sized + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
     {
-        let unknown: UnknownDevicePathNode<'a> = buffer.pread_with(0, scroll::LE)?;
+        let unknown: GenericDevicePathNode<'a> = buffer.pread_with(0, scroll::LE)?;
         if !Self::is_type(unknown.header.r#type, unknown.header.sub_type) {
             return Err(invalid("device path node type does not match"));
         }
@@ -207,132 +148,6 @@ where
     }
     node.validate().map_err(invalid)?;
     Ok(node)
-}
-
-/// `UnknownDevicePathNode` represents device path nodes that have not been cast to a more specific associated type
-/// or that are undefined in the spec.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct UnknownDevicePathNode<'a> {
-    /// Header of the device path node.
-    pub header: Header,
-    /// Data of the device path node, could be anything depending on the header.
-    pub data: &'a [u8],
-}
-
-impl<'a> UnknownDevicePathNode<'a> {
-    /// Cast the Unknown device path to a dyn `DevicePathNode` of the right type.
-    pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
-        crate::uefi::device_path::node::cast_to_dyn_device_path_node(self)
-    }
-}
-
-impl MeasureSize for UnknownDevicePathNode<'_> {
-    fn measure_size(&self) -> usize {
-        self.data.len()
-    }
-}
-
-impl Validate for UnknownDevicePathNode<'_> {
-    /// Unknown payloads are not interpreted, so there are no field rules to check.
-    fn validate(&self) -> Result<(), &'static str> {
-        Ok(())
-    }
-}
-
-impl DevicePathNode for UnknownDevicePathNode<'_> {
-    /// Unknown nodes have no fixed type. This placeholder is unused because
-    /// `header()` and `is_type()` are overridden.
-    fn r#type() -> u8 {
-        0
-    }
-
-    /// Unknown nodes have no fixed sub-type; see `r#type()`.
-    fn sub_type() -> u8 {
-        0
-    }
-
-    fn header(&self) -> Header {
-        self.header
-    }
-
-    fn is_type(_type: u8, _sub_type: u8) -> bool {
-        // An unknown device type can represent every type so it always return true.
-        true
-    }
-
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>
-    where
-        Self: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
-    {
-        let mut offset = 0;
-        buffer.gwrite_with(self, &mut offset, Endian::Little)?;
-        Ok(offset)
-    }
-
-    fn read_from<'b>(buffer: &'b [u8]) -> Result<(Self, usize), scroll::Error>
-    where
-        Self: TryFromCtx<'b, scroll::Endian, Error = scroll::Error>,
-    {
-        Self::try_from_ctx(buffer, scroll::LE)
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for UnknownDevicePathNode<'_> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        if self.header.length != 4 + self.data.len() || self.header.length > usize::from(u16::MAX) {
-            return Err(scroll::Error::BadInput {
-                size: self.header.length,
-                msg: "inconsistent device path node length",
-            });
-        }
-        if self.header.r#type == 0x7f && (self.header.length != 4 || !matches!(self.header.sub_type, 1 | 0xff)) {
-            return Err(scroll::Error::BadInput { size: self.header.length, msg: "invalid end device path node" });
-        }
-        let mut offset = 0;
-        dest.gwrite_with(self.header, &mut offset, scroll::Endian::Little)?;
-        dest.gwrite_with(self.data, &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
-impl<'a> TryFromCtx<'a, scroll::Endian> for UnknownDevicePathNode<'a> {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &'a [u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let header = from.gread_with::<Header>(&mut offset, ctx)?;
-        if header.length < Header::size_of_header() {
-            return Err(scroll::Error::BadInput {
-                size: header.length,
-                msg: "device path node is shorter than its header",
-            });
-        }
-        if header.length > from.len() {
-            return Err(scroll::Error::TooBig { size: header.length, len: from.len() });
-        }
-        if header.r#type == 0x7f && (header.length != 4 || !matches!(header.sub_type, 1 | 0xff)) {
-            return Err(scroll::Error::BadInput { size: header.length, msg: "invalid end device path node" });
-        }
-        let this = UnknownDevicePathNode {
-            header,
-            data: from
-                .get(offset..header.length)
-                .ok_or(scroll::Error::TooBig { size: header.length, len: from.len() })?,
-        };
-        Ok((this, header.length))
-    }
-}
-
-impl Display for UnknownDevicePathNode<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("Path({}, {},", self.header.r#type, self.header.sub_type))?;
-        for b in self.data {
-            f.write_fmt(format_args!(" {b:02X}"))?;
-        }
-        f.write_char(')')
-    }
 }
 
 /// This macro is used to define a device path node struct and implement device path node traits for it.

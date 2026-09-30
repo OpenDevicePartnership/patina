@@ -1,4 +1,13 @@
-//! Media device path nodes.
+//! Media device path nodes (UEFI 2.10 Section 10.3.5, type `0x04`).
+//!
+//! A media device path describes the portion of a medium that a boot service
+//! abstracts, such as the partition of a hard drive or an El Torito boot partition
+//! of a CD-ROM. It also describes the location of a file in a file system.
+//!
+//! The device path of a partition is the device path of its raw device followed by
+//! a media node that identifies the partition (Section 10.4.5).
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#media-device-path>
 //!
 //! ## License
 //!
@@ -19,7 +28,11 @@ use core::fmt::Display;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
-    /// A CD-ROM system partition.
+    /// CD-ROM media device path node (UEFI 2.10 Table 10.55).
+    ///
+    /// A system partition on an El Torito CD-ROM, identified by its boot catalog entry.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#cd-rom-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -34,7 +47,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A protocol used at a location in a media device path.
+    /// Media protocol device path node (UEFI 2.10 Table 10.58).
+    ///
+    /// The GUID of the protocol used at this location in the device path.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#media-protocol-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -45,7 +62,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A firmware file in a PI firmware volume.
+    /// PIWG firmware file device path node (UEFI 2.10 Table 10.59).
+    ///
+    /// A firmware file, whose contents are defined by the UEFI PI Specification.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-file>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -56,7 +77,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A PI firmware volume.
+    /// PIWG firmware volume device path node (UEFI 2.10 Table 10.60).
+    ///
+    /// A firmware volume, whose contents are defined by the UEFI PI Specification.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-volume>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -67,7 +92,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A range of offsets within a media device.
+    /// Relative offset range device path node (UEFI 2.10 Table 10.61).
+    ///
+    /// A range of byte offsets relative to the parent device node. The ending offset is
+    /// the last byte of the range.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#relative-offset-range>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -82,7 +112,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A memory-backed disk.
+    /// RAM disk device path node (UEFI 2.10 Table 10.62).
+    ///
+    /// The memory range, disk type GUID, and instance number of a RAM disk.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -99,7 +133,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// Vendor-defined media node.
+    /// Vendor-defined media device path node (UEFI 2.10 Table 10.56).
+    ///
+    /// A vendor-assigned GUID defines the contents of the vendor-defined data.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::Vendor)]
     @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -119,10 +157,12 @@ impl MeasureSize for MediaVendor {
 }
 
 device_path_node! {
-    /// Hard Drive Media Device Path.
+    /// Hard drive media device path node (UEFI 2.10 Table 10.54).
     ///
-    /// Represents a partition on a hard drive or similar storage device.
-    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive-media-device-path>
+    /// A partition from an MBR or GPT partition table, with its disk signature.
+    /// Partition number zero represents the entire device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::HardDrive)]
     @[DevicePathNodeDerive(Debug, MeasureSize)]
     #[derive(Pread, Pwrite, Clone)]
@@ -163,7 +203,7 @@ impl HardDrive {
     /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
     /// `HardDrive` payload from each node without doing the
     /// type/subtype check at the call site.
-    pub fn try_from_node(node: &parse_node::UnknownDevicePathNode<'_>) -> Option<Self> {
+    pub fn try_from_node(node: &super::GenericDevicePathNode<'_>) -> Option<Self> {
         if !<Self as parse_node::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
             return None;
         }
@@ -214,9 +254,11 @@ impl Validate for HardDrive {
 }
 
 device_path_node! {
-    /// File Path Media Device Path.
+    /// File path media device path node (UEFI 2.10 Table 10.57).
     ///
-    /// The file path is a null-terminated string that describes a file path.
+    /// A NUL-terminated path name. A device path can contain several of these nodes,
+    /// which are concatenated to form the complete path.
+    ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::FilePath)]
     @[DevicePathNodeDerive(Debug, Validate)]

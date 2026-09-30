@@ -1,4 +1,13 @@
-//! Device path end markers.
+//! End of hardware device path nodes (UEFI 2.10 Section 10.3.1, type `0x7F`).
+//!
+//! Every device path ends with an End Entire Device Path node (sub-type `0xFF`).
+//! When a device path describes several devices, such as a console output variable
+//! that sends output to both a VGA and a serial console, an End This Instance node
+//! (sub-type `0x01`) ends each instance and starts the next one.
+//!
+//! End nodes have no payload; their length is 4 bytes.
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
 //!
 //! ## License
 //!
@@ -12,7 +21,11 @@ use core::fmt::{Display, Write};
 use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
 device_path_node! {
-    /// End of entire device path node.
+    /// End Entire Device Path node (UEFI 2.10 Table 10.2).
+    ///
+    /// Terminates an entire device path. Every device path ends with this node.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
     @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
     #[derive(Clone, Copy)]
@@ -42,7 +55,12 @@ impl TryFromCtx<'_, scroll::Endian> for EndEntire {
 }
 
 device_path_node! {
-    /// End of device path instance node.
+    /// End This Instance of a Device Path node (UEFI 2.10 Table 10.2).
+    ///
+    /// Terminates one device path instance and starts another, when a device path
+    /// describes several devices.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
     @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
     #[derive(Clone, Copy)]

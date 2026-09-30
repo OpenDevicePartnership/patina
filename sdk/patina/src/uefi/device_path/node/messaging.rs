@@ -1,4 +1,14 @@
-//! Messaging device path nodes.
+//! Messaging device path nodes (UEFI 2.10 Section 10.3.4, type `0x03`).
+//!
+//! A messaging device path describes the connection of devices outside the resource
+//! domain of the system. It can describe physical messaging information, such as a
+//! SCSI ID, or abstract information, such as networking protocol IP addresses.
+//!
+//! Messaging nodes are used for buses that have a standard enumeration algorithm but
+//! are outside the coherency domain of the system, such as SCSI and Fibre Channel,
+//! and for virtual connections over network-style devices (Section 10.4.4).
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#messaging-device-path>
 //!
 //! ## License
 //!
@@ -21,7 +31,12 @@ use scroll::{
 };
 
 device_path_node! {
-    /// An ATAPI device and its logical unit.
+    /// ATAPI device path node (UEFI 2.10 Table 10.13).
+    ///
+    /// The primary or secondary channel, master or slave mode, and logical unit number
+    /// of an ATAPI device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -45,7 +60,11 @@ impl Validate for Atapi {
 }
 
 device_path_node! {
-    /// A target and logical unit on a SCSI bus.
+    /// SCSI device path node (UEFI 2.10 Table 10.14).
+    ///
+    /// The target ID (PUN) and logical unit number on a SCSI bus.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#scsi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -58,7 +77,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Fibre Channel device using numeric WWN and LUN fields.
+    /// Fibre Channel device path node (UEFI 2.10 Table 10.15).
+    ///
+    /// The Fibre Channel World Wide Name and logical unit number.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -73,10 +96,15 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Fibre Channel device with byte-oriented port name and SCSI LUN.
+    /// Fibre Channel Ex device path node (UEFI 2.10 Table 10.16).
     ///
-    /// The 24-byte layout includes the reserved field, as specified in UEFI 2.11
-    /// Table 10.16 and EDK II, rather than the inconsistent 20-byte example.
+    /// The World Wide Name and logical unit number as 8-byte arrays. The logical unit
+    /// number follows the SCSI Architecture Model 4 (SAM-4).
+    ///
+    /// The 24-byte layout includes the reserved field, as specified in Table 10.16 and
+    /// EDK II, rather than the inconsistent 20-byte example in Table 10.17.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -91,7 +119,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// An IEEE 1394 device.
+    /// 1394 device path node (UEFI 2.10 Table 10.18).
+    ///
+    /// The 64-bit IEEE 1394 global unique ID, which is not an EFI GUID.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -104,7 +136,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A USB port and interface.
+    /// USB device path node (UEFI 2.10 Table 10.19).
+    ///
+    /// The USB parent port number and interface number.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -117,7 +153,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// An I2O random block storage target.
+    /// I2O device path node (UEFI 2.10 Table 10.26).
+    ///
+    /// The target ID (TID) of an I2O random block storage device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#i-2-o-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -128,7 +168,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A network interface's MAC address.
+    /// MAC address device path node (UEFI 2.10 Table 10.27).
+    ///
+    /// The MAC address of a network interface, padded with zeros, and its interface
+    /// type.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#mac-address-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -141,7 +186,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// An IPv6 network connection.
+    /// IPv6 device path node (UEFI 2.10 Table 10.29).
+    ///
+    /// Local and remote IPv6 addresses and ports, protocol, address origin, prefix
+    /// length, and gateway address.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -175,7 +225,11 @@ impl Validate for IpV6 {
 }
 
 device_path_node! {
-    /// An IEEE 802.1Q virtual LAN.
+    /// VLAN device path node (UEFI 2.10 Table 10.30).
+    ///
+    /// An IEEE 802.1Q VLAN identifier.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vlan-device-path-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -195,7 +249,12 @@ impl Validate for Vlan {
 }
 
 device_path_node! {
-    /// An InfiniBand fabric endpoint.
+    /// InfiniBand device path node (UEFI 2.10 Table 10.31).
+    ///
+    /// The remote fabric port, IOC or service, target port, and device of an InfiniBand
+    /// connection.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#infiniband-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -214,7 +273,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A UART connection and its serial configuration.
+    /// UART device path node (UEFI 2.10 Table 10.32).
+    ///
+    /// The baud rate, data bits, parity, and stop bits of a UART. A value of zero
+    /// selects the device default.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -242,11 +306,16 @@ impl Validate for Uart {
 }
 
 device_path_node! {
-    /// An extended serial-attached SCSI endpoint.
+    /// SAS extended device path node (UEFI 2.10 Table 10.36).
     ///
-    /// Uses EDK II's packed 24-byte layout: address, LUN, topology, and relative
-    /// port follow the header without gaps. UEFI 2.11 Table 10.36 inconsistently
-    /// gives a 32-byte length and leaves an eight-byte hole before the LUN.
+    /// The SAS target port address and logical unit number as 8-byte arrays, with
+    /// device topology information and the relative target port.
+    ///
+    /// Uses EDK II's packed 24-byte layout: address, LUN, topology, and relative port
+    /// follow the header without gaps. Table 10.36 inconsistently gives a 32-byte length
+    /// and leaves an eight-byte hole before the LUN.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-extended-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -263,7 +332,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Universal Flash Storage target and logical unit.
+    /// UFS device path node (UEFI 2.10 Table 10.42).
+    ///
+    /// The target ID (PUN) and logical unit number of a Universal Flash Storage device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ufs-universal-flash-storage-device-messaging-devicepath-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -276,7 +349,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Secure Digital card slot.
+    /// SD device path node (UEFI 2.10 Table 10.43).
+    ///
+    /// The slot number of a Secure Digital card.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sd-secure-digital-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -287,7 +364,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Bluetooth device.
+    /// Bluetooth device path node (UEFI 2.10 Table 10.44).
+    ///
+    /// The 48-bit address of a Bluetooth device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetooth-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -298,7 +379,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A wireless network identified by its SSID.
+    /// Wi-Fi device path node (UEFI 2.10 Table 10.45).
+    ///
+    /// The SSID of a wireless network as a 32-byte octet string.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#wireless-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -309,7 +394,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// An embedded Multi-Media Card slot.
+    /// eMMC device path node (UEFI 2.10 Table 10.46).
+    ///
+    /// The slot number of an embedded Multi-Media Card.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#emmc-embedded-multi-media-card-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -320,7 +409,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A Bluetooth Low Energy device.
+    /// Bluetooth LE device path node (UEFI 2.10 Table 10.47).
+    ///
+    /// The 48-bit address of a Bluetooth Low Energy device and its address type.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -342,7 +435,12 @@ impl Validate for BluetoothLE {
 }
 
 device_path_node! {
-    /// A persistent memory namespace (messaging node, not the ACPI physical device).
+    /// NVDIMM namespace device path node (UEFI 2.10 Table 10.49).
+    ///
+    /// A bootable NVDIMM namespace identified by its label UUID. This is distinct from
+    /// the ACPI [`NvdimmAcpi`](super::NvdimmAcpi) device node.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-namespace-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -353,7 +451,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A logical unit appended to an interface's device path.
+    /// Device logical unit device path node (UEFI 2.10 Table 10.24).
+    ///
+    /// The logical unit number, appended to the device path of a device with several
+    /// logical units, such as a USB mass storage device.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -364,7 +467,12 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// A USB class matching pattern.
+    /// USB class device path node (UEFI 2.10 Table 10.25).
+    ///
+    /// Matches USB devices by vendor ID, product ID, class, subclass, and protocol. A
+    /// value of `0xFFFF` or `0xFF` matches any value.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -383,7 +491,11 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// Vendor-defined messaging node.
+    /// Vendor-defined messaging device path node (UEFI 2.10 Table 10.33).
+    ///
+    /// A vendor-assigned GUID defines the contents of the vendor-defined data.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vendor)]
     @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -403,7 +515,12 @@ impl MeasureSize for MessagingVendor {
 }
 
 device_path_node! {
-    /// USB identity node using a serial-number suffix.
+    /// USB WWID device path node (UEFI 2.10 Table 10.23).
+    ///
+    /// A USB device identified by its interface number, vendor and product IDs, and the
+    /// last 64 or fewer UTF-16 characters of its serial number.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths-wwid>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbWwid)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -452,7 +569,13 @@ pub struct IpV4Network {
 }
 
 device_path_node! {
-    /// IPv4 messaging node, preserving both the 19-byte legacy and 27-byte current form.
+    /// IPv4 device path node (UEFI 2.10 Table 10.28).
+    ///
+    /// Local and remote IPv4 addresses and ports, protocol, and address origin, with the
+    /// gateway and subnet mask. Earlier specification versions defined a 19-byte node
+    /// without the gateway and subnet mask; both forms are supported.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv4-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV4)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
@@ -539,7 +662,12 @@ impl TryIntoCtx<scroll::Endian> for IpV4 {
 }
 
 device_path_node! {
-    /// iSCSI target and login parameters.
+    /// iSCSI device path node (UEFI 2.10 Table 10.37).
+    ///
+    /// The network protocol, login options, logical unit number, target portal group
+    /// tag, and target name of an iSCSI target.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#iscsi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Iscsi)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -579,7 +707,12 @@ impl Validate for Iscsi {
 }
 
 device_path_node! {
-    /// URI node whose ASCII payload is bounded by the node length, not a terminator.
+    /// URI device path node (UEFI 2.10 Table 10.41).
+    ///
+    /// A URI as defined by RFC 3986. The node length bounds the URI; there is no
+    /// terminator, and an empty URI is allowed.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uniform-resource-identifiers-uri-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uri)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
@@ -620,7 +753,12 @@ impl TryIntoCtx<scroll::Endian> for Uri {
 }
 
 device_path_node! {
-    /// DNS server list with addresses stored as `EFI_IP_ADDRESS` byte arrays.
+    /// DNS device path node (UEFI 2.10 Table 10.48).
+    ///
+    /// One or more DNS server addresses, all IPv4 or all IPv6, each stored as a 16-byte
+    /// `EFI_IP_ADDRESS`.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#dns-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Dns)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
@@ -692,7 +830,12 @@ pub enum RestServiceType {
 }
 
 device_path_node! {
-    /// REST service node, including its vendor-specific form.
+    /// REST service device path node (UEFI 2.10 Tables 10.50 and 10.51).
+    ///
+    /// A Redfish, `OData`, or vendor-specific REST service and its in-band or out-of-band
+    /// access mode. The vendor-specific form adds a GUID and vendor-defined data.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#rest-service-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::RestService)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Clone, Eq, PartialEq)]
@@ -766,7 +909,12 @@ impl TryIntoCtx<scroll::Endian> for RestService {
 }
 
 device_path_node! {
-    /// `NVMe` over Fabrics namespace identity.
+    /// `NVMe` over Fabrics namespace device path node (UEFI 2.10 Table 10.52).
+    ///
+    /// A bootable NVMe-oF namespace identified by its namespace identifier type and
+    /// value and the NVM subsystem NQN.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-over-fabric-nvme-of-namespace-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmeOf)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -801,7 +949,9 @@ impl Validate for NvmeOf {
 }
 
 device_path_node! {
-    /// SATA Device Path.
+    /// SATA device path node (UEFI 2.10 Table 10.22).
+    ///
+    /// The HBA port, port multiplier port, and logical unit number of a SATA device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata)]
@@ -839,9 +989,12 @@ impl Validate for Sata {
 }
 
 device_path_node! {
-    /// NVM Express Namespace Device Path.
+    /// NVM Express namespace device path node (UEFI 2.10 Table 10.40).
     ///
-    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-namespace-device-path>
+    /// An NVM Express namespace identifier (NSID) and IEEE Extended Unique Identifier
+    /// (EUI-64).
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvm-express-namespace-messaging-device-path-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmExpress)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
     #[derive(Pread, Pwrite, Clone)]

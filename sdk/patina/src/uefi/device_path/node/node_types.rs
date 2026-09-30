@@ -1,4 +1,11 @@
-//! UEFI device path type and subtype identifiers.
+//! Device path type and sub-type identifiers (UEFI 2.10 Section 10.3.1, Table 10.1).
+//!
+//! Every device path node starts with a 4-byte header: a type, a sub-type whose
+//! meaning depends on the type, and the node length including the header. All
+//! undefined types and sub-types are reserved. Extensions must use a vendor-defined
+//! node with the vendor's own GUID (Section 10.4.6).
+//!
+//! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
 //!
 //! ## License
 //!
