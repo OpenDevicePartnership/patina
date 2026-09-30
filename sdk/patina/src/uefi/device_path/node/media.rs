@@ -203,11 +203,11 @@ impl HardDrive {
     /// [`crate::uefi::device_path::paths::DevicePath`] to recover the typed
     /// `HardDrive` payload from each node without doing the
     /// type/subtype check at the call site.
-    pub fn try_from_node(node: &super::GenericDevicePathNode<'_>) -> Option<Self> {
+    pub fn try_from_node(node: &super::GenericDevicePathNode) -> Option<Self> {
         if !<Self as parse_node::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
             return None;
         }
-        parse_node::decode_payload(node.data).ok()
+        parse_node::decode_payload(&node.data).ok()
     }
 
     /// Create a new `HardDrive` device path node for a GPT partition.

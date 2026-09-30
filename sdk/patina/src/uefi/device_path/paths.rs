@@ -25,7 +25,7 @@ use core::{
 use scroll::{Pread, ctx::TryIntoCtx};
 
 use crate::uefi::device_path::{
-    node::{self, DevicePathType, EndEntire, EndInstance, GenericDevicePathNode},
+    node::{self, DevicePathType, EndEntire, EndInstance, GenericDevicePathNode, Header},
     parse_node::DevicePathNode,
 };
 
@@ -53,16 +53,23 @@ impl DevicePathBuf {
         T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         let writing_start_offset = self.buffer.len();
+        let expected_length = Header::size_of_header()
+            .checked_add(node.measure_size())
+            .ok_or(scroll::Error::BadInput { size: usize::MAX, msg: "device path node length overflow" })?;
+        if expected_length > usize::from(u16::MAX) {
+            return Err(scroll::Error::BadInput { size: expected_length, msg: "device path node is too large" });
+        }
         let header = node.header();
-        if !(4..=usize::from(u16::MAX)).contains(&header.length) {
-            return Err(scroll::Error::BadInput { size: header.length, msg: "invalid device path node length" });
+        let header_length = usize::from(header.length);
+        if header_length != expected_length || header_length < Header::size_of_header() {
+            return Err(scroll::Error::BadInput { size: header_length, msg: "invalid device path node length" });
         }
         let new_length = writing_start_offset
-            .checked_add(header.length)
-            .ok_or(scroll::Error::BadInput { size: header.length, msg: "device path length overflow" })?;
+            .checked_add(header_length)
+            .ok_or(scroll::Error::BadInput { size: header_length, msg: "device path length overflow" })?;
         self.buffer
-            .try_reserve_exact(header.length)
-            .map_err(|_| scroll::Error::BadInput { size: header.length, msg: "cannot allocate device path node" })?;
+            .try_reserve_exact(header_length)
+            .map_err(|_| scroll::Error::BadInput { size: header_length, msg: "cannot allocate device path node" })?;
 
         // No allocation will be done here, handled by the `try_reserve`.
         self.buffer.resize(new_length, 0);
@@ -70,7 +77,7 @@ impl DevicePathBuf {
         let writing_buffer =
             self.buffer.as_mut_slice().get_mut(writing_start_offset..).expect("buffer was just resized to fit");
         let result = match node.write_into(writing_buffer) {
-            Ok(written) if written == header.length => Ok(()),
+            Ok(written) if written == header_length => Ok(()),
             Ok(written) => {
                 Err(scroll::Error::BadInput { size: written, msg: "encoded node length differs from header" })
             }
@@ -104,7 +111,7 @@ impl DevicePathBuf {
         fn check(path: &[u8]) -> Result<(), scroll::Error> {
             let mut offset = 0;
             while offset < path.len() {
-                let node = path.gread_with::<GenericDevicePathNode>(&mut offset, scroll::LE)?;
+                let node = path.gread_with::<&GenericDevicePathNode>(&mut offset, scroll::LE)?;
                 if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
                     if offset == path.len() {
                         return Ok(());
@@ -255,8 +262,9 @@ impl DevicePath {
                 break;
             }
 
-            let new_length = buffer.len() + header.length;
-            offset += header.length;
+            let header_length = usize::from(header.length);
+            let new_length = buffer.len() + header_length;
+            offset += header_length;
             // SAFETY: The buffer slice is extended based on the length field from the device path header.
             // The caller guarantees that the buffer points to valid device path data for the entire lifetime.
             buffer = unsafe { core::slice::from_raw_parts(buffer.as_ptr(), new_length) };
@@ -301,7 +309,7 @@ impl DevicePath {
         let mut idx = 0;
         for _ in 0..nb_skip {
             let header = self.buffer.pread_with::<crate::uefi::device_path::node::Header>(idx, scroll::LE).unwrap();
-            idx += header.length;
+            idx += usize::from(header.length);
         }
         let end_buffer = self.buffer.get(idx..).expect("idx is within device path bounds");
         // SAFETY: The slice `end_buffer` is a valid trailing portion of the device path that contains
@@ -402,7 +410,7 @@ impl<'a> Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = GenericDevicePathNode<'a>;
+    type Item = &'a GenericDevicePathNode;
 
     fn next(&mut self) -> Option<Self::Item> {
         // No more byte to read in the device path.
@@ -411,7 +419,7 @@ impl<'a> Iterator for Iter<'a> {
         }
 
         let Ok(unknown_device_path) =
-            self.device_path.buffer.gread_with::<GenericDevicePathNode>(&mut self.offset, scroll::LE)
+            self.device_path.buffer.gread_with::<&GenericDevicePathNode>(&mut self.offset, scroll::LE)
         else {
             debug_assert!(false, "The buffer is corrupted, could not read the device path node.");
             return None;

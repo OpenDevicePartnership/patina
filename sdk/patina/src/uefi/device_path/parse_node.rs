@@ -17,7 +17,7 @@ use core::{
 };
 
 use scroll::{
-    self, Pread, Pwrite,
+    self, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
 
@@ -67,12 +67,14 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     /// Return the header of the device path node.
     ///
     /// The default combines the node's type, sub-type, and
-    /// [`MeasureSize::measure_size`].
+    /// [`MeasureSize::measure_size`]. If the node is too large for a 16-bit
+    /// length, the length saturates at `u16::MAX` and [`write_into`](Self::write_into) fails.
     fn header(&self) -> Header
     where
         Self: Sized,
     {
-        Header::new(Self::r#type(), Self::sub_type(), Header::size_of_header() + self.measure_size())
+        let length = Header::size_of_header() + self.measure_size();
+        Header::new(Self::r#type(), Self::sub_type(), u16::try_from(length).unwrap_or(u16::MAX))
     }
 
     /// Return true if `r#type` and `sub_type` identify this node kind.
@@ -98,21 +100,34 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
         Self: Sized + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
         self.validate().map_err(invalid)?;
+        let expected_length = Header::size_of_header()
+            .checked_add(self.measure_size())
+            .ok_or(scroll::Error::BadInput { size: usize::MAX, msg: "device path node length overflow" })?;
+        if expected_length > usize::from(u16::MAX) {
+            return Err(scroll::Error::BadInput { size: expected_length, msg: "device path node is too large" });
+        }
         let header = self.header();
+        let header_length = usize::from(header.length);
+        if header_length != expected_length {
+            return Err(scroll::Error::BadInput {
+                size: header_length,
+                msg: "encoded node length differs from header",
+            });
+        }
         let mut header_bytes = [0u8; 4];
         header_bytes.pwrite_with(header, 0, scroll::LE)?;
-        if buffer.len() < header.length {
-            return Err(scroll::Error::TooBig { size: header.length, len: buffer.len() });
+        if buffer.len() < header_length {
+            return Err(scroll::Error::TooBig { size: header_length, len: buffer.len() });
         }
         let payload = buffer
-            .get_mut(Header::size_of_header()..header.length)
-            .ok_or(scroll::Error::BadInput { size: header.length, msg: "invalid device path output range" })?;
+            .get_mut(Header::size_of_header()..header_length)
+            .ok_or(scroll::Error::BadInput { size: header_length, msg: "invalid device path output range" })?;
         let written = payload.pwrite_with(self, 0, scroll::LE)?;
-        if written != header.length - Header::size_of_header() {
+        if written != header_length - Header::size_of_header() {
             return Err(scroll::Error::BadInput { size: written, msg: "encoded node length differs from header" });
         }
         buffer.pwrite_with(header_bytes.as_slice(), 0, ())?;
-        Ok(header.length)
+        Ok(header_length)
     }
 
     /// Read a device path node, header included, from the start of the buffer.
@@ -129,11 +144,11 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + Validate {
     where
         Self: Sized + TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
     {
-        let unknown: GenericDevicePathNode<'a> = buffer.pread_with(0, scroll::LE)?;
+        let unknown = GenericDevicePathNode::from_bytes(buffer)?.0;
         if !Self::is_type(unknown.header.r#type, unknown.header.sub_type) {
             return Err(invalid("device path node type does not match"));
         }
-        Ok((decode_payload(unknown.data)?, unknown.header.length))
+        Ok((decode_payload(&unknown.data)?, usize::from(unknown.header.length)))
     }
 }
 
@@ -220,10 +235,11 @@ macro_rules! device_path_node {
         impl core::fmt::Debug for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 let header = $crate::uefi::device_path::parse_node::DevicePathNode::header(self);
+                let length = header.length;
                 f.debug_struct(stringify!($struct_name))
                     .field("type", &header.r#type)
                     .field("sub_type", &header.sub_type)
-                    .field("length", &header.length)
+                    .field("length", &length)
                     $(
                         .field(stringify!($field_name), &self.$field_name)
                     )*
