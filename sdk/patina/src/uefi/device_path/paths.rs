@@ -24,9 +24,18 @@ use core::{
 
 use scroll::{Pread, ctx::TryIntoCtx};
 
-use crate::uefi::device_path::{
-    node::{self, DevicePathType, EndEntire, EndInstance, GenericDevicePathNode, Header},
-    parse_node::DevicePathNode,
+use crate::{
+    base::error::EfiError,
+    standard::efi,
+    uefi::{
+        boot_services::{BootServices, protocol_handler::HandleSearchType},
+        device_path::{
+            node::{
+                self, DevicePathType, EndEntire, EndInstance, GenericDevicePathNode, HardDrive, Header, MediaSubType,
+            },
+            parse_node::DevicePathNode,
+        },
+    },
 };
 
 /// `DevicePathBuf` is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
@@ -341,6 +350,125 @@ impl DevicePath {
     /// Iterate through every instance of a device path.
     pub fn iter_instances(&self) -> IterInstance<'_> {
         IterInstance { node_iterator: self.iter() }
+    }
+
+    /// Return true if this is a shorthand device path, which the specification calls a
+    /// short-form device path (UEFI 2.10 Section 3.1.2).
+    ///
+    /// A full device path starts at the system root, with a hardware or ACPI node. A
+    /// shorthand device path starts with another node, such as a hard drive or file path
+    /// media node, and must be expanded with [`expand_shorthand`](Self::expand_shorthand)
+    /// before the image it points to can be loaded. Paths that start with a PIWG firmware volume or
+    /// firmware file node are complete, because `LoadImage` resolves them directly. An
+    /// empty path is not a shorthand device path.
+    pub fn is_shorthand_notation(&self) -> bool {
+        let Some(first_node) = self.iter().next() else {
+            return false;
+        };
+        let (node_type, node_sub_type) = (first_node.header.r#type, first_node.header.sub_type);
+        if node_type == DevicePathType::Media as u8
+            && (node_sub_type == MediaSubType::PiwgFirmwareFile as u8
+                || node_sub_type == MediaSubType::PiwgFirmwareVolume as u8)
+        {
+            return false;
+        }
+        node_type != DevicePathType::Hardware as u8
+            && node_type != DevicePathType::Acpi as u8
+            && node_type != DevicePathType::End as u8
+    }
+
+    /// Expand a shorthand device path into the full device path of the matching device
+    /// (UEFI 2.10 Section 3.1.2).
+    ///
+    /// A full device path is returned unchanged. A shorthand device path must contain a
+    /// [`HardDrive`] node. Every handle with a device path is searched for a hard drive
+    /// node with the same partition number, partition format, signature type, and
+    /// signature. The result is the matching handle's device path up to and including
+    /// that node, followed by the nodes after the hard drive node in the shorthand path.
+    ///
+    /// The specification lets the boot manager pick any device when several match.
+    /// This function instead rejects an ambiguous match, so the device it returns does
+    /// not depend on handle enumeration order.
+    ///
+    /// # Errors
+    ///
+    /// - [`EfiError::InvalidParameter`] if the path is empty, or is a shorthand path with
+    ///   no hard drive node.
+    /// - [`EfiError::NotFound`] if no device matches the hard drive node.
+    /// - [`EfiError::SecurityViolation`] if several devices match the hard drive node.
+    /// - [`EfiError::DeviceError`] if the expanded device path cannot be built.
+    /// - Any error returned by `LocateHandleBuffer`.
+    pub fn expand_shorthand<B: BootServices>(&self, boot_services: &B) -> Result<DevicePathBuf, EfiError> {
+        if self.iter().next().is_none_or(|node| node.header.r#type == DevicePathType::End as u8) {
+            log::error!("Cannot expand an empty device path");
+            return Err(EfiError::InvalidParameter);
+        }
+        if !self.is_shorthand_notation() {
+            return Ok(self.into());
+        }
+
+        let mut shorthand_nodes = self.iter().filter(|node| node.header.r#type != DevicePathType::End as u8);
+        let Some(target) = shorthand_nodes.by_ref().find_map(HardDrive::try_from_node) else {
+            log::error!("Shorthand device path has no hard drive node to expand");
+            return Err(EfiError::InvalidParameter);
+        };
+        let remaining_path = DevicePathBuf::from_device_path_node_iter(shorthand_nodes).map_err(|error| {
+            log::error!("Cannot build the rest of the shorthand device path: {error}");
+            EfiError::DeviceError
+        })?;
+
+        let handles = boot_services
+            .locate_handle_buffer(HandleSearchType::ByProtocol(&efi::protocols::device_path::PROTOCOL_GUID))
+            .map_err(EfiError::from)?;
+
+        let mut matched_path: Option<DevicePathBuf> = None;
+        for &handle in handles.iter() {
+            // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is the device path protocol.
+            let Ok(device_path) =
+                (unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) })
+            else {
+                continue;
+            };
+            // SAFETY: The pointer comes from a device path protocol interface installed on the handle.
+            let Ok(handle_path) = (unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(device_path) as *const u8) })
+            else {
+                continue;
+            };
+
+            let mut prefix_nodes = Vec::new();
+            let mut found = false;
+            for node in handle_path.iter().take_while(|node| node.header.r#type != DevicePathType::End as u8) {
+                prefix_nodes.push(node);
+                if HardDrive::try_from_node(node).is_some_and(|hard_drive| {
+                    hard_drive.partition_number == target.partition_number
+                        && hard_drive.partition_format == target.partition_format
+                        && hard_drive.signature_type == target.signature_type
+                        && hard_drive.partition_signature == target.partition_signature
+                }) {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                continue;
+            }
+
+            let expanded = DevicePathBuf::from_device_path_node_iter(prefix_nodes.into_iter())
+                .and_then(|mut path| path.append_device_path(&remaining_path).map(|()| path))
+                .map_err(|error| {
+                    log::error!("Cannot build the expanded device path: {error}");
+                    EfiError::DeviceError
+                })?;
+            if matched_path.replace(expanded).is_some() {
+                log::error!("Shorthand device path matches several devices");
+                return Err(EfiError::SecurityViolation);
+            }
+        }
+
+        matched_path.ok_or_else(|| {
+            log::error!("No device matches the shorthand device path");
+            EfiError::NotFound
+        })
     }
 }
 
@@ -659,5 +787,140 @@ mod tests {
         start.append(EndEntire).unwrap();
 
         assert!(!device_path_buf.starts_with(&start));
+    }
+
+    mod shorthand {
+        extern crate std;
+
+        use super::*;
+        use crate::uefi::{
+            boot_services::{MockBootServices, boxed::BootServicesBox},
+            device_path::node::{FilePath, HardDrive, PiwgFirmwareVolume},
+        };
+
+        fn path<T>(nodes: impl IntoIterator<Item = T>) -> DevicePathBuf
+        where
+            T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+        {
+            DevicePathBuf::from_device_path_node_iter(nodes.into_iter()).unwrap()
+        }
+
+        fn hard_drive(guid: [u8; 16]) -> HardDrive {
+            HardDrive::new_gpt(1, 2048, 1_000_000, guid)
+        }
+
+        /// `HD(1,GPT,<guid>)/File(\EFI\BOOT\BOOTX64.EFI)`.
+        fn shorthand_path(guid: [u8; 16]) -> DevicePathBuf {
+            let mut shorthand = path([hard_drive(guid)]);
+            shorthand.append_device_path(&path([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")])).unwrap();
+            shorthand
+        }
+
+        /// `PciRoot(0)/Pci(0x1D,0)/HD(1,GPT,<guid>)`.
+        fn disk_path(guid: [u8; 16]) -> DevicePathBuf {
+            let mut disk = path([Acpi::new_pci_root(0)]);
+            disk.append_device_path(&path([Pci { function: 0, device: 0x1D }])).unwrap();
+            disk.append_device_path(&path([hard_drive(guid)])).unwrap();
+            disk
+        }
+
+        /// A mock whose `LocateHandleBuffer` returns one handle per device path, and whose
+        /// `HandleProtocol` returns the device path of that handle. `None` entries model
+        /// handles without a device path.
+        fn mock_devices(paths: &[Option<&DevicePathBuf>]) -> MockBootServices {
+            let addresses: Vec<Option<usize>> = paths
+                .iter()
+                .map(|path| {
+                    path.map(|path| {
+                        std::boxed::Box::leak(path.as_bytes().to_vec().into_boxed_slice()).as_ptr() as usize
+                    })
+                })
+                .collect();
+            let count = addresses.len();
+            let free_pool: &'static MockBootServices = std::boxed::Box::leak(std::boxed::Box::new({
+                let mut mock = MockBootServices::new();
+                mock.expect_free_pool().returning(|_| Ok(()));
+                mock
+            }));
+
+            let mut mock = MockBootServices::new();
+            mock.expect_locate_handle_buffer().returning(move |_| {
+                let handles: Vec<efi::Handle> = (1..=count).map(|index| index as efi::Handle).collect();
+                let handles = handles.leak();
+                // SAFETY: Test code - the leaked handle buffer outlives the returned box, and free_pool is a no-op.
+                Ok(unsafe { BootServicesBox::from_raw_parts_mut(handles.as_mut_ptr(), handles.len(), free_pool) })
+            });
+            mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>().returning(move |handle| {
+                match addresses.get(handle as usize - 1).copied().flatten() {
+                    // SAFETY: Test code - the address points to a leaked, valid device path.
+                    Some(address) => Ok(unsafe { &mut *(address as *mut efi::protocols::device_path::Protocol) }),
+                    None => Err(efi::Status::UNSUPPORTED),
+                }
+            });
+            mock
+        }
+
+        #[test]
+        fn test_device_path_is_shorthand_notation() {
+            assert!(shorthand_path([0xaa; 16]).is_shorthand_notation());
+            assert!(path([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")]).is_shorthand_notation());
+            assert!(!disk_path([0xaa; 16]).is_shorthand_notation());
+            assert!(!path([Pci { function: 0, device: 0x1D }]).is_shorthand_notation());
+            assert!(!path([PiwgFirmwareVolume { fv_name: [0x11; 16] }]).is_shorthand_notation());
+            assert!(!path([EndEntire]).is_shorthand_notation());
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_full_path_is_unchanged() {
+            let full = disk_path([0xaa; 16]);
+            assert_eq!(full.expand_shorthand(&MockBootServices::new()).unwrap(), full);
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_rejects_empty_and_missing_hard_drive() {
+            let mock = MockBootServices::new();
+            assert_eq!(path([EndEntire]).expand_shorthand(&mock), Err(EfiError::InvalidParameter));
+            let file_only = path([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")]);
+            assert_eq!(file_only.expand_shorthand(&mock), Err(EfiError::InvalidParameter));
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_matches_hard_drive() {
+            let guid = [0xaa; 16];
+            let other_disk = disk_path([0xbb; 16]);
+            let mut file_system = disk_path(guid);
+            file_system.append_device_path(&path([FilePath::new("\\ignored")])).unwrap();
+            let mock = mock_devices(&[None, Some(&other_disk), Some(&file_system)]);
+
+            let mut expected = disk_path(guid);
+            expected.append_device_path(&path([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")])).unwrap();
+            assert_eq!(shorthand_path(guid).expand_shorthand(&mock).unwrap(), expected);
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_requires_full_identity() {
+            let guid = [0xaa; 16];
+            let mut other_partition = path([Acpi::new_pci_root(0)]);
+            other_partition.append_device_path(&path([HardDrive::new_gpt(2, 2048, 1_000_000, guid)])).unwrap();
+            let mock = mock_devices(&[Some(&other_partition)]);
+            assert_eq!(shorthand_path(guid).expand_shorthand(&mock), Err(EfiError::NotFound));
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_rejects_ambiguous_match() {
+            let guid = [0xaa; 16];
+            let first = disk_path(guid);
+            let mut second = path([Acpi::new_pci_root(1)]);
+            second.append_device_path(&path([hard_drive(guid)])).unwrap();
+            let mock = mock_devices(&[Some(&first), Some(&second)]);
+            assert_eq!(shorthand_path(guid).expand_shorthand(&mock), Err(EfiError::SecurityViolation));
+        }
+
+        #[test]
+        fn test_device_path_expand_shorthand_reports_locate_errors() {
+            let mut mock = MockBootServices::new();
+            mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
+            assert_eq!(shorthand_path([0xaa; 16]).expand_shorthand(&mock), Err(EfiError::NotFound));
+        }
     }
 }
