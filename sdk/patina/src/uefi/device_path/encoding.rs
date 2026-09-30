@@ -198,40 +198,41 @@ impl TryIntoCtx<EfiGuid> for &efi::Guid {
     }
 }
 
-/// A scroll context for a trailing payload bounded by the node length.
+/// A scroll context for a vector that fills the rest of the node payload.
 ///
-/// Reading consumes every remaining byte in the source, so the field must be last
+/// The wire format has no element count; the node length bounds the vector. Reading consumes every remaining byte in the source, so the field must be last
 /// in its structure. Supports opaque bytes (`Vec<u8>`), such as vendor-defined
-/// data, and little-endian 16-bit code units (`Vec<u16>`), such as a USB WWID
-/// serial number. Semantic limits remain the responsibility of the containing node.
+/// data, little-endian 16-bit code units (`Vec<u16>`), such as a USB WWID
+/// serial number, and little-endian 32-bit values (`Vec<u32>`), such as ACPI
+/// `_ADR` values. Semantic limits remain the responsibility of the containing node.
 ///
 /// # Errors
 ///
-/// Reading `Vec<u16>` rejects an odd number of bytes. Writing rejects
-/// insufficient destination space.
+/// Reading rejects a byte count that is not a multiple of the element size.
+/// Writing rejects insufficient destination space.
 #[derive(Debug, Clone, Copy)]
-pub struct Remaining;
+pub struct Vector;
 
-impl<'a> TryFromCtx<'a, Remaining> for Vec<u8> {
+impl<'a> TryFromCtx<'a, Vector> for Vec<u8> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(src: &'a [u8], _: Remaining) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(src: &'a [u8], _: Vector) -> Result<(Self, usize), Self::Error> {
         Ok((src.to_vec(), src.len()))
     }
 }
 
-impl TryIntoCtx<Remaining> for &Vec<u8> {
+impl TryIntoCtx<Vector> for &Vec<u8> {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, dst: &mut [u8], _: Remaining) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, dst: &mut [u8], _: Vector) -> Result<usize, Self::Error> {
         dst.pwrite_with(self.as_slice(), 0, ())
     }
 }
 
-impl<'a> TryFromCtx<'a, Remaining> for Vec<u16> {
+impl<'a> TryFromCtx<'a, Vector> for Vec<u16> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(src: &'a [u8], _: Remaining) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(src: &'a [u8], _: Vector) -> Result<(Self, usize), Self::Error> {
         if !src.len().is_multiple_of(2) {
             return Err(invalid("trailing payload has an incomplete 16-bit code unit"));
         }
@@ -244,10 +245,10 @@ impl<'a> TryFromCtx<'a, Remaining> for Vec<u16> {
     }
 }
 
-impl TryIntoCtx<Remaining> for &Vec<u16> {
+impl TryIntoCtx<Vector> for &Vec<u16> {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, dst: &mut [u8], _: Remaining) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, dst: &mut [u8], _: Vector) -> Result<usize, Self::Error> {
         let required = self.len() * 2;
         if dst.len() < required {
             return Err(scroll::Error::TooBig { size: required, len: dst.len() });
@@ -255,6 +256,38 @@ impl TryIntoCtx<Remaining> for &Vec<u16> {
         let mut offset = 0;
         for unit in self {
             dst.gwrite_with(*unit, &mut offset, scroll::LE)?;
+        }
+        Ok(offset)
+    }
+}
+
+impl<'a> TryFromCtx<'a, Vector> for Vec<u32> {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], _: Vector) -> Result<(Self, usize), Self::Error> {
+        if !src.len().is_multiple_of(4) {
+            return Err(invalid("trailing payload has an incomplete 32-bit value"));
+        }
+        let mut offset = 0;
+        let mut values = Vec::with_capacity(src.len() / 4);
+        while offset < src.len() {
+            values.push(src.gread_with::<u32>(&mut offset, scroll::LE)?);
+        }
+        Ok((values, offset))
+    }
+}
+
+impl TryIntoCtx<Vector> for &Vec<u32> {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], _: Vector) -> Result<usize, Self::Error> {
+        let required = size_of_val(self.as_slice());
+        if dst.len() < required {
+            return Err(scroll::Error::TooBig { size: required, len: dst.len() });
+        }
+        let mut offset = 0;
+        for value in self {
+            dst.gwrite_with(*value, &mut offset, scroll::LE)?;
         }
         Ok(offset)
     }
@@ -473,30 +506,44 @@ mod tests {
     #[test]
     fn test_device_path_encoding_remaining_bytes() {
         for payload in [vec![], vec![1, 2, 3]] {
-            let (parsed, consumed) = read::<Vec<u8>, _>(&payload, Remaining).unwrap();
+            let (parsed, consumed) = read::<Vec<u8>, _>(&payload, Vector).unwrap();
             assert_eq!(parsed, payload);
             assert_eq!(consumed, payload.len());
             let mut bytes = vec![0xa5; payload.len() + 1];
-            assert_eq!(bytes.pwrite_with(&payload, 0, Remaining).unwrap(), payload.len());
+            assert_eq!(bytes.pwrite_with(&payload, 0, Vector).unwrap(), payload.len());
             assert_eq!(&bytes[..payload.len()], payload.as_slice());
         }
         let mut short = [0xa5; 2];
-        assert!(write(&vec![1u8, 2, 3], &mut short, Remaining).is_err());
+        assert!(write(&vec![1u8, 2, 3], &mut short, Vector).is_err());
         assert_eq!(short, [0xa5; 2]);
     }
 
     #[test]
     fn test_device_path_encoding_remaining_code_units() {
-        let (units, consumed) = read::<Vec<u16>, _>(&[0x41, 0, 0x34, 0x12], Remaining).unwrap();
+        let (units, consumed) = read::<Vec<u16>, _>(&[0x41, 0, 0x34, 0x12], Vector).unwrap();
         assert_eq!(units, [0x41, 0x1234]);
         assert_eq!(consumed, 4);
         let mut bytes = [0xa5; 5];
-        assert_eq!(bytes.pwrite_with(&units, 0, Remaining).unwrap(), 4);
+        assert_eq!(bytes.pwrite_with(&units, 0, Vector).unwrap(), 4);
         assert_eq!(bytes, [0x41, 0, 0x34, 0x12, 0xa5]);
-        assert!(read::<Vec<u16>, _>(&[1, 2, 3], Remaining).is_err());
+        assert!(read::<Vec<u16>, _>(&[1, 2, 3], Vector).is_err());
         let mut short = [0xa5; 3];
-        assert!(write(&units, &mut short, Remaining).is_err());
+        assert!(write(&units, &mut short, Vector).is_err());
         assert_eq!(short, [0xa5; 3]);
+    }
+
+    #[test]
+    fn test_device_path_encoding_vector_u32() {
+        let (values, consumed) = read::<Vec<u32>, _>(&[1, 0, 0, 0, 0x78, 0x56, 0x34, 0x12], Vector).unwrap();
+        assert_eq!(values, [1, 0x1234_5678]);
+        assert_eq!(consumed, 8);
+        let mut bytes = [0xa5; 9];
+        assert_eq!(bytes.pwrite_with(&values, 0, Vector).unwrap(), 8);
+        assert_eq!(bytes, [1, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 0xa5]);
+        assert!(read::<Vec<u32>, _>(&[1, 2, 3], Vector).is_err());
+        let mut short = [0xa5; 7];
+        assert!(write(&values, &mut short, Vector).is_err());
+        assert_eq!(short, [0xa5; 7]);
     }
 
     #[derive(Debug, Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -506,7 +553,7 @@ mod tests {
         guid: efi::Guid,
         #[scroll(ctx = Char16Nul)]
         path: String,
-        #[scroll(ctx = Remaining)]
+        #[scroll(ctx = Vector)]
         data: Vec<u8>,
     }
 

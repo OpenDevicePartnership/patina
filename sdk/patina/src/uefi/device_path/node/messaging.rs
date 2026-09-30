@@ -6,16 +6,15 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, MessagingSubType, ascii, check_length, invalid, read_ascii};
+use super::{DevicePathType, MessagingSubType, invalid};
 use crate::{
     device_path_node,
     uefi::device_path::{
-        encoding::Remaining,
-        parse_node::{DevicePathNode, MeasureSize},
+        encoding::{AsciiNul, Utf8Nul, Vector},
+        parse_node::{MeasureSize, Validate},
     },
 };
 use alloc::{string::String, vec::Vec};
-use core::fmt::Display;
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -25,7 +24,7 @@ device_path_node! {
     /// An ATAPI device and its logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
         pub primary_secondary: u8,
@@ -36,42 +35,19 @@ device_path_node! {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for Atapi {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let node = Self {
-            primary_secondary: data.gread_with::<u8>(&mut offset, endian)?,
-            slave_master: data.gread_with::<u8>(&mut offset, endian)?,
-            lun: data.gread_with::<u16>(&mut offset, endian)?,
-        };
-        if node.primary_secondary > 1 || node.slave_master > 1 {
-            return Err(invalid("invalid ATAPI channel or master/slave selector"));
-        }
-        Ok((node, offset))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Atapi {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for Atapi {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.primary_secondary > 1 || self.slave_master > 1 {
-            return Err(invalid("invalid ATAPI channel or master/slave selector"));
+            return Err("invalid ATAPI channel or master/slave selector");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.primary_secondary, &mut offset, endian)?;
-        data.gwrite_with(self.slave_master, &mut offset, endian)?;
-        data.gwrite_with(self.lun, &mut offset, endian)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
 device_path_node! {
     /// A target and logical unit on a SCSI bus.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
@@ -84,7 +60,7 @@ device_path_node! {
 device_path_node! {
     /// A Fibre Channel device using numeric WWN and LUN fields.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -102,7 +78,7 @@ device_path_node! {
     /// The 24-byte layout includes the reserved field, as specified in UEFI 2.11
     /// Table 10.16 and EDK II, rather than the inconsistent 20-byte example.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -117,7 +93,7 @@ device_path_node! {
 device_path_node! {
     /// An IEEE 1394 device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -130,7 +106,7 @@ device_path_node! {
 device_path_node! {
     /// A USB port and interface.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
@@ -143,7 +119,7 @@ device_path_node! {
 device_path_node! {
     /// An I2O random block storage target.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
@@ -154,7 +130,7 @@ device_path_node! {
 device_path_node! {
     /// A network interface's MAC address.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MacAddress {
         /// Address bytes in wire order; producers pad unused bytes with zero.
@@ -168,7 +144,7 @@ device_path_node! {
     /// An IPv6 network connection.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
         /// Local IPv6 address octets in network order.
         pub local_ip_address: [u8; 16],
@@ -189,45 +165,12 @@ device_path_node! {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for IpV6 {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let node = Self {
-            local_ip_address: data.gread_with::<[u8; 16]>(&mut offset, scroll::LE)?,
-            remote_ip_address: data.gread_with::<[u8; 16]>(&mut offset, scroll::LE)?,
-            local_port: data.gread_with::<u16>(&mut offset, endian)?,
-            remote_port: data.gread_with::<u16>(&mut offset, endian)?,
-            protocol: data.gread_with::<u16>(&mut offset, endian)?,
-            ip_address_origin: data.gread_with::<u8>(&mut offset, endian)?,
-            prefix_length: data.gread_with::<u8>(&mut offset, endian)?,
-            gateway_ip_address: data.gread_with::<[u8; 16]>(&mut offset, scroll::LE)?,
-        };
-        if node.ip_address_origin > 2 || node.prefix_length > 128 {
-            return Err(invalid("invalid IPv6 address origin or prefix length"));
-        }
-        Ok((node, offset))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for IpV6 {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for IpV6 {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.ip_address_origin > 2 || self.prefix_length > 128 {
-            return Err(invalid("invalid IPv6 address origin or prefix length"));
+            return Err("invalid IPv6 address origin or prefix length");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.local_ip_address.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.remote_ip_address.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.local_port, &mut offset, endian)?;
-        data.gwrite_with(self.remote_port, &mut offset, endian)?;
-        data.gwrite_with(self.protocol, &mut offset, endian)?;
-        data.gwrite_with(self.ip_address_origin, &mut offset, endian)?;
-        data.gwrite_with(self.prefix_length, &mut offset, endian)?;
-        data.gwrite_with(self.gateway_ip_address.as_slice(), &mut offset, ())?;
-        Ok(offset)
+        Ok(())
     }
 }
 
@@ -235,43 +178,26 @@ device_path_node! {
     /// An IEEE 802.1Q virtual LAN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
         pub vlan_id: u16,
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for Vlan {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let node = Self { vlan_id: data.gread_with::<u16>(&mut offset, endian)? };
-        if node.vlan_id > 4094 {
-            return Err(invalid("invalid VLAN identifier"));
-        }
-        Ok((node, offset))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Vlan {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for Vlan {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.vlan_id > 4094 {
-            return Err(invalid("invalid VLAN identifier"));
+            return Err("invalid VLAN identifier");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.vlan_id, &mut offset, endian)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
 device_path_node! {
     /// An InfiniBand fabric endpoint.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
         /// Resource flags; producers clear reserved bits above bit 4.
@@ -291,7 +217,7 @@ device_path_node! {
     /// A UART connection and its serial configuration.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uart {
         /// Reserved; producers should use zero, while decoding preserves the value.
         pub reserved: u32,
@@ -306,39 +232,12 @@ device_path_node! {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for Uart {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let node = Self {
-            reserved: data.gread_with::<u32>(&mut offset, endian)?,
-            baud_rate: data.gread_with::<u64>(&mut offset, endian)?,
-            data_bits: data.gread_with::<u8>(&mut offset, endian)?,
-            parity: data.gread_with::<u8>(&mut offset, endian)?,
-            stop_bits: data.gread_with::<u8>(&mut offset, endian)?,
-        };
-        if node.parity > 5 || node.stop_bits > 3 {
-            return Err(invalid("invalid UART parity or stop bits"));
-        }
-        Ok((node, offset))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Uart {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for Uart {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.parity > 5 || self.stop_bits > 3 {
-            return Err(invalid("invalid UART parity or stop bits"));
+            return Err("invalid UART parity or stop bits");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.reserved, &mut offset, endian)?;
-        data.gwrite_with(self.baud_rate, &mut offset, endian)?;
-        data.gwrite_with(self.data_bits, &mut offset, endian)?;
-        data.gwrite_with(self.parity, &mut offset, endian)?;
-        data.gwrite_with(self.stop_bits, &mut offset, endian)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
@@ -349,7 +248,7 @@ device_path_node! {
     /// port follow the header without gaps. UEFI 2.11 Table 10.36 inconsistently
     /// gives a 32-byte length and leaves an eight-byte hole before the LUN.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
@@ -366,7 +265,7 @@ device_path_node! {
 device_path_node! {
     /// A Universal Flash Storage target and logical unit.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
@@ -379,7 +278,7 @@ device_path_node! {
 device_path_node! {
     /// A Secure Digital card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
@@ -390,7 +289,7 @@ device_path_node! {
 device_path_node! {
     /// A Bluetooth device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
@@ -401,7 +300,7 @@ device_path_node! {
 device_path_node! {
     /// A wireless network identified by its SSID.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
@@ -412,7 +311,7 @@ device_path_node! {
 device_path_node! {
     /// An embedded Multi-Media Card slot.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
@@ -424,7 +323,7 @@ device_path_node! {
     /// A Bluetooth Low Energy device.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::BluetoothLE)]
     @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
@@ -433,40 +332,19 @@ device_path_node! {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for BluetoothLE {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(data: &[u8], endian: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let node = Self {
-            address: data.gread_with::<[u8; 6]>(&mut offset, scroll::LE)?,
-            address_type: data.gread_with::<u8>(&mut offset, endian)?,
-        };
-        if node.address_type > 1 {
-            return Err(invalid("invalid Bluetooth LE address type"));
-        }
-        Ok((node, offset))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for BluetoothLE {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, data: &mut [u8], endian: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for BluetoothLE {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.address_type > 1 {
-            return Err(invalid("invalid Bluetooth LE address type"));
+            return Err("invalid Bluetooth LE address type");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.address.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.address_type, &mut offset, endian)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
 device_path_node! {
     /// A persistent memory namespace (messaging node, not the ACPI physical device).
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
         /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
@@ -477,7 +355,7 @@ device_path_node! {
 device_path_node! {
     /// A logical unit appended to an interface's device path.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
@@ -488,7 +366,7 @@ device_path_node! {
 device_path_node! {
     /// A USB class matching pattern.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
@@ -507,13 +385,13 @@ device_path_node! {
 device_path_node! {
     /// Vendor-defined messaging node.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vendor)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MessagingVendor {
         /// Vendor GUID in EFI wire byte order.
         pub guid: [u8; 16],
         /// Opaque vendor-defined bytes following the GUID.
-        #[scroll(ctx = Remaining)]
+        #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
     }
 }
@@ -528,7 +406,7 @@ device_path_node! {
     /// USB identity node using a serial-number suffix.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbWwid)]
     @[DevicePathNodeDerive(Debug, Display)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbWwid {
         /// USB interface number.
         pub interface: u16,
@@ -539,6 +417,7 @@ device_path_node! {
         /// Serial suffix as at most 64 UTF-16 code units, preserved verbatim.
         ///
         /// The wire length, rather than a required NUL, bounds this field.
+        #[scroll(ctx = Vector)]
         pub serial_number: Vec<u16>,
     }
 }
@@ -552,48 +431,14 @@ impl MeasureSize for UsbWwid {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for UsbWwid {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
-        if !data.len().is_multiple_of(2) {
-            return Err(invalid("USB WWID has an incomplete code unit"));
-        }
-        let mut offset = 0;
-        let interface = data.gread_with(&mut offset, endian)?;
-        let vendor_id = data.gread_with(&mut offset, endian)?;
-        let product_id = data.gread_with(&mut offset, endian)?;
-        let mut serial_number = Vec::new();
-        while offset < data.len() {
-            serial_number.push(data.gread_with(&mut offset, endian)?);
-        }
-        let (node, consumed) = (Self { interface, vendor_id, product_id, serial_number }, offset);
-        check_length(node.header().length - 4)?;
-        if node.serial_number.len() > 64
-            || core::char::decode_utf16(node.serial_number.iter().copied()).any(|c| c.is_err())
-        {
-            return Err(invalid("USB WWID requires at most 64 valid UTF-16 code units"));
-        }
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for UsbWwid {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
+impl Validate for UsbWwid {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.serial_number.len() > 64
             || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
         {
-            return Err(invalid("USB WWID requires at most 64 valid UTF-16 code units"));
+            return Err("USB WWID requires at most 64 valid UTF-16 code units");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.interface, &mut offset, endian)?;
-        data.gwrite_with(self.vendor_id, &mut offset, endian)?;
-        data.gwrite_with(self.product_id, &mut offset, endian)?;
-        for unit in &self.serial_number {
-            data.gwrite_with(*unit, &mut offset, endian)?;
-        }
-        Ok(offset)
+        Ok(())
     }
 }
 
@@ -644,6 +489,15 @@ impl MeasureSize for IpV4 {
     }
 }
 
+impl Validate for IpV4 {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.static_ip > 1 {
+            return Err("invalid IPv4 address origin");
+        }
+        Ok(())
+    }
+}
+
 impl TryFromCtx<'_, scroll::Endian> for IpV4 {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
@@ -662,23 +516,13 @@ impl TryFromCtx<'_, scroll::Endian> for IpV4 {
                 subnet_mask: data.gread_with(&mut offset, scroll::LE)?,
             })
         };
-        let (node, consumed) =
-            (Self { local_ip, remote_ip, local_port, remote_port, protocol, static_ip, network }, offset);
-        check_length(node.header().length - 4)?;
-        if node.static_ip > 1 {
-            return Err(invalid("invalid IPv4 address origin"));
-        }
-        Ok((node, consumed))
+        Ok((Self { local_ip, remote_ip, local_port, remote_port, protocol, static_ip, network }, offset))
     }
 }
 
 impl TryIntoCtx<scroll::Endian> for IpV4 {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.static_ip > 1 {
-            return Err(invalid("invalid IPv4 address origin"));
-        }
         let mut offset = 0;
         data.gwrite_with(self.local_ip.as_slice(), &mut offset, ())?;
         data.gwrite_with(self.remote_ip.as_slice(), &mut offset, ())?;
@@ -698,7 +542,7 @@ device_path_node! {
     /// iSCSI target and login parameters.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Iscsi)]
     @[DevicePathNodeDerive(Debug, Display)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Iscsi {
         /// Network protocol; zero identifies TCP.
         pub protocol: u16,
@@ -709,6 +553,7 @@ device_path_node! {
         /// Target portal group tag.
         pub portal_group: u16,
         /// ASCII target name without its NUL terminator, at most 223 bytes.
+        #[scroll(ctx = AsciiNul)]
         pub target_name: String,
     }
 }
@@ -724,41 +569,12 @@ impl MeasureSize for Iscsi {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for Iscsi {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let protocol = data.gread_with(&mut offset, endian)?;
-        let options = data.gread_with(&mut offset, endian)?;
-        let lun = data.gread_with(&mut offset, scroll::LE)?;
-        let portal_group = data.gread_with(&mut offset, endian)?;
-        let target_name = read_ascii(data, &mut offset)?;
-        let (node, consumed) = (Self { protocol, options, lun, portal_group, target_name }, offset);
-        check_length(node.header().length - 4)?;
-        ascii(&node.target_name)?;
-        if node.target_name.is_empty() || node.target_name.len() > 223 || node.protocol != 0 {
-            return Err(invalid("invalid iSCSI target name or network protocol"));
-        }
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Iscsi {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.target_name)?;
+impl Validate for Iscsi {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.target_name.is_empty() || self.target_name.len() > 223 || self.protocol != 0 {
-            return Err(invalid("invalid iSCSI target name or network protocol"));
+            return Err("invalid iSCSI target name or network protocol");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.protocol, &mut offset, endian)?;
-        data.gwrite_with(self.options, &mut offset, endian)?;
-        data.gwrite_with(self.lun.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.portal_group, &mut offset, endian)?;
-        data.gwrite_with(self.target_name.as_bytes(), &mut offset, ())?;
-        data.gwrite_with(0u8, &mut offset, endian)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
@@ -779,22 +595,26 @@ impl MeasureSize for Uri {
     }
 }
 
+impl Validate for Uri {
+    fn validate(&self) -> Result<(), &'static str> {
+        if !self.uri.is_ascii() || self.uri.contains('\0') {
+            return Err("URI must be ASCII without embedded NUL");
+        }
+        Ok(())
+    }
+}
+
 impl TryFromCtx<'_, scroll::Endian> for Uri {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
         let uri = core::str::from_utf8(data).map_err(|_| invalid("URI must be ASCII"))?;
-        let (node, consumed) = (Self { uri: String::from(uri) }, data.len());
-        check_length(node.header().length - 4)?;
-        ascii(&node.uri)?;
-        Ok((node, consumed))
+        Ok((Self { uri: String::from(uri) }, data.len()))
     }
 }
 
 impl TryIntoCtx<scroll::Endian> for Uri {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        ascii(&self.uri)?;
         data.pwrite_with(self.uri.as_bytes(), 0, ())
     }
 }
@@ -818,6 +638,15 @@ impl MeasureSize for Dns {
     }
 }
 
+impl Validate for Dns {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.addresses.is_empty() {
+            return Err("DNS node requires at least one address");
+        }
+        Ok(())
+    }
+}
+
 impl TryFromCtx<'_, scroll::Endian> for Dns {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
@@ -830,22 +659,13 @@ impl TryFromCtx<'_, scroll::Endian> for Dns {
         while offset < data.len() {
             addresses.push(data.gread_with(&mut offset, scroll::LE)?);
         }
-        let (node, consumed) = (Self { is_ipv6: family == 1, addresses }, offset);
-        check_length(node.header().length - 4)?;
-        if node.addresses.is_empty() {
-            return Err(invalid("DNS node requires at least one address"));
-        }
-        Ok((node, consumed))
+        Ok((Self { is_ipv6: family == 1, addresses }, offset))
     }
 }
 
 impl TryIntoCtx<scroll::Endian> for Dns {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.addresses.is_empty() {
-            return Err(invalid("DNS node requires at least one address"));
-        }
         let mut offset = 0;
         data.gwrite_with(u8::from(self.is_ipv6), &mut offset, scroll::LE)?;
         for address in &self.addresses {
@@ -896,6 +716,15 @@ impl MeasureSize for RestService {
     }
 }
 
+impl Validate for RestService {
+    fn validate(&self) -> Result<(), &'static str> {
+        if !matches!(self.access_mode, 1 | 2) {
+            return Err("invalid REST access mode");
+        }
+        Ok(())
+    }
+}
+
 impl TryFromCtx<'_, scroll::Endian> for RestService {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
@@ -913,22 +742,13 @@ impl TryFromCtx<'_, scroll::Endian> for RestService {
             }
             _ => return Err(invalid("unknown REST service type")),
         };
-        let (node, consumed) = (Self { service, access_mode }, offset);
-        check_length(node.header().length - 4)?;
-        if !matches!(node.access_mode, 1 | 2) {
-            return Err(invalid("invalid REST access mode"));
-        }
-        Ok((node, consumed))
+        Ok((Self { service, access_mode }, offset))
     }
 }
 
 impl TryIntoCtx<scroll::Endian> for RestService {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if !matches!(self.access_mode, 1 | 2) {
-            return Err(invalid("invalid REST access mode"));
-        }
         let mut offset = 0;
         let kind: u8 = match self.service {
             RestServiceType::Redfish => 1,
@@ -949,13 +769,14 @@ device_path_node! {
     /// `NVMe` over Fabrics namespace identity.
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmeOf)]
     @[DevicePathNodeDerive(Debug, Display)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmeOf {
         /// Namespace identifier type: 1 for EUI-64, 2 for NGUID, 3 for UUID.
         pub identifier_type: u8,
         /// Identifier bytes; EUI-64 uses the first eight bytes, UUID uses RFC byte order.
         pub identifier: [u8; 16],
         /// UTF-8 subsystem NQN without its wire NUL terminator, at most 223 bytes.
+        #[scroll(ctx = Utf8Nul)]
         pub subsystem_nqn: String,
     }
 }
@@ -966,50 +787,16 @@ impl MeasureSize for NvmeOf {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for NvmeOf {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
-        let mut offset = 0;
-        let identifier_type = data.gread_with(&mut offset, scroll::LE)?;
-        let identifier = data.gread_with(&mut offset, scroll::LE)?;
-        let remaining = data.get(offset..).ok_or_else(|| invalid("missing subsystem NQN"))?;
-        let length = remaining.iter().position(|byte| *byte == 0).ok_or_else(|| invalid("missing NQN terminator"))?;
-        let bytes = remaining.get(..length).ok_or_else(|| invalid("invalid NQN length"))?;
-        let subsystem_nqn = core::str::from_utf8(bytes).map_err(|_| invalid("invalid UTF-8 NQN"))?;
-        offset += length + 1;
-        let (node, consumed) =
-            (Self { identifier_type, identifier, subsystem_nqn: String::from(subsystem_nqn) }, offset);
-        check_length(node.header().length - 4)?;
-        if !matches!(node.identifier_type, 1..=3)
-            || node.subsystem_nqn.is_empty()
-            || node.subsystem_nqn.len() > 223
-            || node.subsystem_nqn.as_bytes().contains(&0)
-            || (node.identifier_type == 1 && node.identifier[8..].iter().any(|byte| *byte != 0))
-        {
-            return Err(invalid("invalid NVMe over Fabrics namespace identity"));
-        }
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for NvmeOf {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
+impl Validate for NvmeOf {
+    fn validate(&self) -> Result<(), &'static str> {
         if !matches!(self.identifier_type, 1..=3)
             || self.subsystem_nqn.is_empty()
             || self.subsystem_nqn.len() > 223
-            || self.subsystem_nqn.as_bytes().contains(&0)
             || (self.identifier_type == 1 && self.identifier[8..].iter().any(|byte| *byte != 0))
         {
-            return Err(invalid("invalid NVMe over Fabrics namespace identity"));
+            return Err("invalid NVMe over Fabrics namespace identity");
         }
-        let mut offset = 0;
-        data.gwrite_with(self.identifier_type, &mut offset, scroll::LE)?;
-        data.gwrite_with(self.identifier.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.subsystem_nqn.as_bytes(), &mut offset, ())?;
-        data.gwrite_with(0u8, &mut offset, scroll::LE)?;
-        Ok(offset)
+        Ok(())
     }
 }
 
@@ -1018,8 +805,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata)]
-    @[DevicePathNodeDerive(MeasureSize)]
-    #[derive(Clone)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    #[derive(Pread, Pwrite, Clone)]
     pub struct Sata {
         /// HBA Port Number.
         pub hba_port: u16,
@@ -1042,50 +829,12 @@ impl Sata {
     }
 }
 
-impl core::fmt::Debug for Sata {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Sata")
-            .field("hba_port", &self.hba_port)
-            .field("port_multiplier_port", &self.port_multiplier_port)
-            .field("lun", &self.lun)
-            .finish()
-    }
-}
-
-impl Display for Sata {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("Sata").field(&self.hba_port).field(&self.port_multiplier_port).field(&self.lun).finish()
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Sata {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for Sata {
+    fn validate(&self) -> Result<(), &'static str> {
         if self.hba_port == u16::MAX {
-            return Err(invalid("SATA HBA port 0xffff is reserved"));
+            return Err("SATA HBA port 0xffff is reserved");
         }
-        let mut offset = 0;
-        dest.gwrite_with(self.hba_port, &mut offset, ctx)?;
-        dest.gwrite_with(self.port_multiplier_port, &mut offset, ctx)?;
-        dest.gwrite_with(self.lun, &mut offset, ctx)?;
-        Ok(offset)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for Sata {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(buffer: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let hba_port = buffer.gread_with(&mut offset, ctx)?;
-        let port_multiplier_port = buffer.gread_with(&mut offset, ctx)?;
-        let lun = buffer.gread_with(&mut offset, ctx)?;
-        let node = Self { hba_port, port_multiplier_port, lun };
-        if node.hba_port == u16::MAX {
-            return Err(invalid("SATA HBA port 0xffff is reserved"));
-        }
-        Ok((node, offset))
+        Ok(())
     }
 }
 
@@ -1094,8 +843,8 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-namespace-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::NvmExpress)]
-    @[DevicePathNodeDerive(MeasureSize)]
-    #[derive(Clone)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    #[derive(Pread, Pwrite, Clone)]
     pub struct NvmExpress {
         /// Namespace Identifier (NSID).
         pub namespace_id: u32,
@@ -1115,43 +864,11 @@ impl NvmExpress {
     }
 }
 
-impl core::fmt::Debug for NvmExpress {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("NvmExpress").field("namespace_id", &self.namespace_id).field("eui64", &self.eui64).finish()
-    }
-}
-
-impl Display for NvmExpress {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("NvmExpress").field(&self.namespace_id).field(&self.eui64).finish()
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for NvmExpress {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+impl Validate for NvmExpress {
+    fn validate(&self) -> Result<(), &'static str> {
         if matches!(self.namespace_id, 0 | u32::MAX) {
-            return Err(invalid("NVMe namespace ID is reserved"));
+            return Err("NVMe namespace ID is reserved");
         }
-        let mut offset = 0;
-        dest.gwrite_with(self.namespace_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.eui64, &mut offset, ctx)?;
-        Ok(offset)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for NvmExpress {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(buffer: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let namespace_id = buffer.gread_with(&mut offset, ctx)?;
-        let eui64 = buffer.gread_with(&mut offset, ctx)?;
-        let node = Self { namespace_id, eui64 };
-        if matches!(node.namespace_id, 0 | u32::MAX) {
-            return Err(invalid("NVMe namespace ID is reserved"));
-        }
-        Ok((node, offset))
+        Ok(())
     }
 }

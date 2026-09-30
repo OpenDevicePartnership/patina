@@ -32,7 +32,7 @@ pub use media::*;
 pub use messaging::*;
 pub use node_types::*;
 
-use super::encoding::{ascii, invalid, read_ascii};
+use super::encoding::invalid;
 use crate::uefi::device_path::parse_node::{DevicePathNode, UnknownDevicePathNode};
 use alloc::boxed::Box;
 use scroll::ctx::TryFromCtx;
@@ -80,6 +80,7 @@ pub fn try_cast_to_dyn_device_path_node(
         if consumed != data.len() {
             return Err(invalid("unexpected trailing device path payload"));
         }
+        node.validate().map_err(invalid)?;
         Ok(Box::new(node))
     }
 
@@ -170,7 +171,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::uefi::device_path::parse_node;
+    use crate::uefi::device_path::parse_node::{self, Validate};
     use scroll::{Pread, Pwrite};
 
     #[test]
@@ -302,6 +303,38 @@ mod tests {
     }
 
     #[test]
+    fn test_hard_drive_validate() {
+        let mbr = |partition_number, signature: [u8; 16]| HardDrive {
+            partition_number,
+            partition_start: 0,
+            partition_size: 0,
+            partition_signature: signature,
+            partition_format: HardDrive::FORMAT_MBR,
+            signature_type: HardDrive::SIGNATURE_TYPE_MBR,
+        };
+        let mut signature = [0; 16];
+        signature[..4].copy_from_slice(&[1, 2, 3, 4]);
+        for partition_number in 0..=4 {
+            assert!(mbr(partition_number, signature).validate().is_ok());
+        }
+        assert!(mbr(5, signature).validate().is_err());
+        assert!(mbr(1, [1; 16]).validate().is_err());
+        assert!(HardDrive { partition_format: 3, ..mbr(1, signature) }.validate().is_err());
+        assert!(HardDrive { signature_type: 3, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
+        assert!(HardDrive { signature_type: 0, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
+        assert!(HardDrive::new_gpt(128, 0, 0, [1; 16]).validate().is_ok());
+
+        let mut data = [0u8; 38];
+        data.pwrite_with(mbr(5, signature), 0, scroll::LE).unwrap();
+        let node = parse_node::UnknownDevicePathNode {
+            header: parse_node::Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42),
+            data: &data,
+        };
+        assert!(HardDrive::try_from_node(&node).is_none());
+        assert!(try_cast_to_dyn_device_path_node(node).is_err());
+    }
+
+    #[test]
     fn test_hard_drive_try_from_node_short_data() {
         let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
         let node = parse_node::UnknownDevicePathNode {
@@ -430,21 +463,16 @@ mod fixed_tests {
         assert_eq!(big_endian.pread_with::<T>(0, scroll::BE).unwrap(), node);
     }
 
-    fn check_invalid<T>(node: T, payload: &[u8])
-    where
-        T: DevicePathNode + Clone,
-        T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
-        T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
-    {
+    fn check_invalid<T: DevicePathNode + Clone>(node: T, payload: &[u8]) {
+        assert!(node.validate().is_err());
         assert!(encode_node(node.clone()).is_err());
         let mut output = vec![0xa5; node.header().length];
         assert!(node.clone().write_into(&mut output).is_err());
         assert!(output.iter().all(|byte| *byte == 0xa5));
-        assert!(output.pwrite_with(node.clone(), 0, scroll::LE).is_err());
-        assert!(output.iter().all(|byte| *byte == 0xa5));
 
         assert_eq!(payload.len() + 4, node.header().length);
-        assert!(payload.pread_with::<T>(0, scroll::LE).is_err());
+        let unknown = UnknownDevicePathNode { header: node.header(), data: payload };
+        assert!(try_cast_to_dyn_device_path_node(unknown).is_err());
     }
 
     macro_rules! fixture {

@@ -6,25 +6,22 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{AcpiSubType, DevicePathType, check_length, invalid};
+use super::{AcpiSubType, DevicePathType};
 use crate::{
     device_path_node,
     uefi::device_path::{
-        encoding::AsciiNul,
-        parse_node::{DevicePathNode, MeasureSize},
+        encoding::{AsciiNul, Vector},
+        parse_node::{MeasureSize, Validate},
     },
 };
 use alloc::{string::String, vec::Vec};
 use core::fmt::Display;
-use scroll::{
-    Endian, Pread, Pwrite,
-    ctx::{TryFromCtx, TryIntoCtx},
-};
+use scroll::{Pread, Pwrite};
 
 device_path_node! {
     /// An ACPI physical NVDIMM device, distinct from a messaging namespace node.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, Display, MeasureSize, Validate)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
@@ -38,7 +35,7 @@ device_path_node! {
     /// A nonempty string supersedes its corresponding numeric identifier. Each string
     /// is stored as NUL-terminated ASCII, as specified by UEFI 2.11 Table 10.10.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::ExtendedAcpi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct ExtendedAcpi {
         /// Numeric hardware identifier.
@@ -75,10 +72,20 @@ device_path_node! {
     /// ACPI address node containing one or more display device addresses.
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Adr)]
     @[DevicePathNodeDerive(Debug, Display)]
-    #[derive(Clone, Eq, PartialEq)]
+    #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct AcpiAdr {
-        /// ACPI `_ADR` values, in their original order.
+        /// ACPI `_ADR` values, in their original order. At least one is required.
+        #[scroll(ctx = Vector)]
         pub addresses: Vec<u32>,
+    }
+}
+
+impl Validate for AcpiAdr {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.addresses.is_empty() {
+            return Err("ACPI address node requires at least one address");
+        }
+        Ok(())
     }
 }
 
@@ -88,44 +95,9 @@ impl MeasureSize for AcpiAdr {
     }
 }
 
-impl TryFromCtx<'_, scroll::Endian> for AcpiAdr {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
-        if !data.len().is_multiple_of(4) {
-            return Err(invalid("ACPI address payload is not a sequence of u32 values"));
-        }
-        let mut addresses = Vec::new();
-        let mut offset = 0;
-        while offset < data.len() {
-            addresses.push(data.gread_with(&mut offset, endian)?);
-        }
-        let (node, consumed) = (Self { addresses }, offset);
-        check_length(node.header().length - 4)?;
-        if node.addresses.is_empty() {
-            return Err(invalid("ACPI address node requires at least one address"));
-        }
-        Ok((node, consumed))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for AcpiAdr {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
-        check_length(self.header().length - 4)?;
-        if self.addresses.is_empty() {
-            return Err(invalid("ACPI address node requires at least one address"));
-        }
-        let mut offset = 0;
-        for address in &self.addresses {
-            data.gwrite_with(*address, &mut offset, endian)?;
-        }
-        Ok(offset)
-    }
-}
-
 device_path_node! {
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
-    @[DevicePathNodeDerive(Debug, MeasureSize)]
+    @[DevicePathNodeDerive(Debug, MeasureSize, Validate)]
     #[derive(Pwrite, Pread, Clone)]
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     pub struct Acpi {

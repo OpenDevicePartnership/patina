@@ -93,6 +93,23 @@ pub trait MeasureSize {
     fn measure_size(&self) -> usize;
 }
 
+/// Checks the UEFI specification rules on a device path node's field values.
+///
+/// Scroll conversions only encode and decode bytes. Device path read and write
+/// entry points call `validate` so that nodes breaking a specification rule, such
+/// as a reserved value, are rejected.
+///
+/// Nodes whose fields have no specification rules derive it with
+/// `@[DevicePathNodeDerive(Validate)]`, which always succeeds.
+pub trait Validate {
+    /// Check the node's field values against the UEFI specification.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description of the first rule the node breaks.
+    fn validate(&self) -> Result<(), &'static str>;
+}
+
 /// Instance access to a node's type and sub-type.
 ///
 /// This is implemented automatically for every sized [`DevicePathNode`] from its
@@ -117,7 +134,7 @@ impl<T: DevicePathNode> DevicePathNodeKind for T {
 }
 
 /// Trait that every device path node must implement.
-pub trait DevicePathNode: Debug + Display + MeasureSize + DevicePathNodeKind {
+pub trait DevicePathNode: Debug + Display + MeasureSize + Validate + DevicePathNodeKind {
     /// Return the device path type identifying this node kind.
     fn r#type() -> u8
     where
@@ -146,8 +163,8 @@ pub trait DevicePathNode: Debug + Display + MeasureSize + DevicePathNodeKind {
 
     /// Write the device path node into the buffer and return the number of bytes written.
     ///
-    /// Implementations check wire lengths and applicable field constraints while
-    /// encoding, returning an error when the node cannot be serialized.
+    /// Implementations validate the node with [`Validate::validate`] and check wire
+    /// lengths, returning an error when the node cannot be serialized.
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
 }
 
@@ -171,6 +188,13 @@ impl<'a> UnknownDevicePathNode<'a> {
 impl MeasureSize for UnknownDevicePathNode<'_> {
     fn measure_size(&self) -> usize {
         self.data.len()
+    }
+}
+
+impl Validate for UnknownDevicePathNode<'_> {
+    /// Unknown payloads are not interpreted, so there are no field rules to check.
+    fn validate(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 }
 
@@ -265,7 +289,7 @@ impl Display for UnknownDevicePathNode<'_> {
 /// where the Type and subtype are enum paths where the value can be expressed as u8.a
 ///
 /// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
-/// Currently supported traits are: Debug, Display, and [`MeasureSize`].
+/// Currently supported traits are: Debug, Display, [`MeasureSize`], and [`Validate`].
 ///
 /// The header length is computed from the node's [`MeasureSize`] implementation.
 /// Derive it for nodes containing only fixed-width integer and byte-array fields;
@@ -327,6 +351,8 @@ macro_rules! device_path_node {
             fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
                 use scroll::Pwrite as _;
 
+                $crate::uefi::device_path::parse_node::Validate::validate(&self)
+                    .map_err(|msg| scroll::Error::BadInput { size: 0, msg })?;
                 let header = $crate::uefi::device_path::parse_node::DevicePathNode::header(&self);
                 let mut header_bytes = [0u8; 4];
                 header_bytes.pwrite_with(header, 0, scroll::LE)?;
@@ -380,6 +406,14 @@ macro_rules! device_path_node {
         impl $crate::uefi::device_path::parse_node::MeasureSize for $struct_name {
             fn measure_size(&self) -> usize {
                 0 $(+ core::mem::size_of::<$field_type>())*
+            }
+        }
+    };
+    // Internal Matching to implement the validate trait for nodes without field rules.
+    (@Derive; $struct_name:ident, $($field_name:ident: $field_type:ty),*; Validate) => {
+        impl $crate::uefi::device_path::parse_node::Validate for $struct_name {
+            fn validate(&self) -> Result<(), &'static str> {
+                Ok(())
             }
         }
     };

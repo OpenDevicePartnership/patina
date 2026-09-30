@@ -17,7 +17,7 @@ use scroll::{Pread, Pwrite};
 device_path_node! {
     /// BIOS Boot Specification device path with a NUL-terminated ASCII description.
     @[DevicePathNode(DevicePathType::Bios, BiosSubType::BiosBootSpecification)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug, Display, Validate)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct Bios {
         /// BIOS device type.
