@@ -2677,6 +2677,250 @@ mod tests {
         unsafe { supervisor.free_init_module(core::ptr::null(), &state) };
     }
 
+    struct InitModuleFixture {
+        supervisor: MmSupervisorCore<TestPlatform, 4>,
+        state: InitState,
+        init_module: MemoryAllocationModule,
+        core_module: MemoryAllocationModule,
+    }
+
+    impl InitModuleFixture {
+        fn new() -> Self {
+            // These allocations back global state for the lifetime of this nextest process.
+            let memory = Box::leak(Box::new(PageAlignedMemory::new(16)));
+            let paging_memory = Box::leak(Box::new(PageAlignedMemory::new(16)));
+            let smram_hobs = smram_hob_list(memory);
+            let allocator = security_state().page_allocator();
+            let paging_allocator = security_state().paging_allocator();
+            // SAFETY: both pools are distinct, page-aligned, writable and remain live.
+            unsafe {
+                allocator.init_from_hob_list(smram_hobs.as_ptr()).unwrap();
+                paging_allocator.init(paging_memory.base(), 16).unwrap();
+            }
+            let core_base = allocator.allocate_pages(1).unwrap();
+            let init_base = allocator.allocate_pages(3).unwrap();
+            let mut page_table =
+                X64PageTable::new(SharedPagingAllocator::new(paging_allocator), PagingType::Paging4Level).unwrap();
+            let code = MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly;
+            page_table.map_memory_region(core_base, UEFI_PAGE_SIZE as u64, code).unwrap();
+            page_table.map_memory_region(init_base, 3 * UEFI_PAGE_SIZE as u64, code).unwrap();
+            page_table
+                .map_memory_region(
+                    init_base + UEFI_PAGE_SIZE as u64,
+                    UEFI_PAGE_SIZE as u64,
+                    MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect,
+                )
+                .unwrap();
+            *security_state().lock_page_table() = Some(page_table);
+
+            let mut init_module = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, init_base);
+            init_module.alloc_descriptor.memory_base_address = init_base;
+            init_module.alloc_descriptor.memory_length = 3 * UEFI_PAGE_SIZE as u64;
+            let mut core_module =
+                allocation_module(MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_CORE_GUID, core_base);
+            core_module.alloc_descriptor.memory_base_address = core_base;
+            core_module.alloc_descriptor.memory_length = UEFI_PAGE_SIZE as u64;
+
+            Self { supervisor: MmSupervisorCore::new(), state: InitState::new(), init_module, core_module }
+        }
+
+        fn hob_list(&self) -> RawHobList {
+            let mut hobs = RawHobList::new();
+            hobs.push_struct(self.core_module);
+            hobs.push_struct(self.init_module);
+            hobs.finish()
+        }
+
+        fn free(&self) {
+            let hobs = self.hob_list();
+            // SAFETY: the HOB list is readable host memory and no processor executes the synthetic image.
+            unsafe { self.supervisor.free_init_module(hobs.as_ptr(), &self.state) };
+        }
+
+        fn assert_rejected(&self, expected: &str) {
+            let allocator = security_state().page_allocator();
+            let free_pages = allocator.free_page_count();
+            let supervisor_pages = allocator.allocated_page_count(AllocationType::Supervisor);
+            let user_pages = allocator.allocated_page_count(AllocationType::User);
+            let panic = catch_unwind(AssertUnwindSafe(|| self.free())).expect_err("invalid image must be rejected");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("panic must report the validation failure");
+            assert!(message.contains(expected), "expected {expected:?}, got {message:?}");
+            assert!(!self.state.is_init_module_freed());
+            assert_eq!(allocator.free_page_count(), free_pages);
+            assert_eq!(allocator.allocated_page_count(AllocationType::Supervisor), supervisor_pages);
+            assert_eq!(allocator.allocated_page_count(AllocationType::User), user_pages);
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_releases_mixed_code_and_data_exactly_once() {
+        let fixture = InitModuleFixture::new();
+        let base = fixture.init_module.alloc_descriptor.memory_base_address;
+        let size = fixture.init_module.alloc_descriptor.memory_length as usize;
+        let allocator = security_state().page_allocator();
+        let free_pages = allocator.free_page_count();
+        // SAFETY: the inactive test page table does not change the host allocation's writable mapping.
+        let bytes = unsafe { core::slice::from_raw_parts_mut(base as *mut u8, size) };
+        bytes.fill(0xA5);
+
+        fixture.free();
+
+        assert!(fixture.state.is_init_module_freed());
+        assert_eq!(allocator.free_page_count(), free_pages + 3);
+        assert!(bytes.iter().all(|&byte| byte == 0xA5), "freeing must not zero the image");
+        {
+            let page_table = security_state().lock_page_table();
+            let page_table = page_table.as_ref().unwrap();
+            for address in (base..base + size as u64).step_by(UEFI_PAGE_SIZE) {
+                assert_eq!(allocator.get_allocation_type(address), None);
+                assert_eq!(
+                    page_table.query_memory_region(address, UEFI_PAGE_SIZE as u64),
+                    Err(patina_paging::PtError::NoMapping)
+                );
+            }
+            let core_base = fixture.core_module.alloc_descriptor.memory_base_address;
+            assert_eq!(allocator.get_allocation_type(core_base), Some(AllocationType::Supervisor));
+            assert_eq!(
+                page_table.query_memory_region(core_base, UEFI_PAGE_SIZE as u64).unwrap(),
+                MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly
+            );
+        }
+
+        assert_eq!(allocator.allocate_pages(3).unwrap(), base);
+        // SAFETY: completed cleanup must not touch the old HOB list or free the reused pages.
+        unsafe { fixture.supervisor.free_init_module(core::ptr::null(), &fixture.state) };
+        assert_eq!(allocator.free_page_count(), free_pages);
+        assert_eq!(allocator.get_allocation_type(base), Some(AllocationType::Supervisor));
+    }
+
+    #[test]
+    fn test_free_init_module_accepts_an_entirely_non_executable_image() {
+        let fixture = InitModuleFixture::new();
+        let base = fixture.init_module.alloc_descriptor.memory_base_address;
+        let size = fixture.init_module.alloc_descriptor.memory_length;
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .map_memory_region(base, size, MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect)
+            .unwrap();
+
+        fixture.free();
+
+        assert!(fixture.state.is_init_module_freed());
+        assert_eq!(security_state().page_allocator().get_allocation_type(base), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "MM Init cleanup requires a non-null HOB list")]
+    fn test_free_init_module_rejects_null_hobs_before_freeing() {
+        let supervisor = MmSupervisorCore::<TestPlatform, 4>::new();
+        // SAFETY: a null pointer is checked before any HOB access.
+        unsafe { supervisor.free_init_module(core::ptr::null(), &InitState::new()) };
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_invalid_allocation_ranges() {
+        let mut fixture = InitModuleFixture::new();
+        let base = fixture.init_module.alloc_descriptor.memory_base_address;
+        let size = fixture.init_module.alloc_descriptor.memory_length;
+        for (address, length, expected) in [
+            (base, 0, "non-empty, page-aligned allocation"),
+            (base + 1, size, "non-empty, page-aligned allocation"),
+            (base, size - 1, "non-empty, page-aligned allocation"),
+            (0, size, "outside MMRAM"),
+            (u64::MAX - UEFI_PAGE_SIZE as u64 + 1, UEFI_PAGE_SIZE as u64, "outside MMRAM"),
+        ] {
+            fixture.init_module.alloc_descriptor.memory_base_address = address;
+            fixture.init_module.alloc_descriptor.memory_length = length;
+            fixture.assert_rejected(expected);
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_invalid_core_ranges() {
+        let mut fixture = InitModuleFixture::new();
+        let base = fixture.init_module.alloc_descriptor.memory_base_address;
+        let size = fixture.init_module.alloc_descriptor.memory_length;
+        let core = fixture.core_module;
+        fixture.core_module.module_name = MM_SUPERVISOR_USER_GUID;
+        fixture.assert_rejected("MM Supervisor Core module not found");
+        fixture.core_module = core;
+        fixture.core_module.alloc_descriptor.memory_length = 0;
+        fixture.assert_rejected("MM Supervisor Core module has an empty allocation");
+
+        for (address, length) in [
+            (base, size),
+            (base - UEFI_PAGE_SIZE as u64, 2 * UEFI_PAGE_SIZE as u64),
+            (base + size - UEFI_PAGE_SIZE as u64, 2 * UEFI_PAGE_SIZE as u64),
+            (base + UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64),
+            (u64::MAX - UEFI_PAGE_SIZE as u64 + 1, UEFI_PAGE_SIZE as u64),
+        ] {
+            fixture.core_module.alloc_descriptor.memory_base_address = address;
+            fixture.core_module.alloc_descriptor.memory_length = length;
+            fixture.assert_rejected("MM Init module overlaps the MM Supervisor Core");
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_missing_page_table() {
+        let fixture = InitModuleFixture::new();
+        *security_state().lock_page_table() = None;
+
+        fixture.assert_rejected("Page table required to validate MM Init module");
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_an_unmapped_later_page() {
+        let fixture = InitModuleFixture::new();
+        let last_page = fixture.init_module.alloc_descriptor.memory_base_address + 2 * UEFI_PAGE_SIZE as u64;
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .unmap_memory_region(last_page, UEFI_PAGE_SIZE as u64)
+            .unwrap();
+
+        fixture.assert_rejected("Failed to query MM Init module page");
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_unprotected_later_code_pages() {
+        let fixture = InitModuleFixture::new();
+        let last_page = fixture.init_module.alloc_descriptor.memory_base_address + 2 * UEFI_PAGE_SIZE as u64;
+        for attributes in [MemoryAttributes::Supervisor, MemoryAttributes::ReadOnly] {
+            security_state()
+                .lock_page_table()
+                .as_mut()
+                .unwrap()
+                .map_memory_region(last_page, UEFI_PAGE_SIZE as u64, attributes)
+                .unwrap();
+            fixture.assert_rejected("must be supervisor-only, read-only and executable");
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_does_not_mark_failed_free_as_complete() {
+        let fixture = InitModuleFixture::new();
+        let base = fixture.init_module.alloc_descriptor.memory_base_address;
+        let size = fixture.init_module.alloc_descriptor.memory_length;
+        let allocator = security_state().page_allocator();
+        allocator.free_pages(base, 3).unwrap();
+        assert_eq!(allocator.allocate_pages_with_type(3, AllocationType::User).unwrap(), base);
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .map_memory_region(base, size, MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly)
+            .unwrap();
+
+        fixture.assert_rejected("Failed to free MM Init module");
+    }
+
     #[test]
     fn test_find_module_region_copies_matching_allocation() {
         let init = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x10_1234);
