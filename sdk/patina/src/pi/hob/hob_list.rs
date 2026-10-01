@@ -523,12 +523,7 @@ mod tests {
         },
     };
 
-    use core::{
-        ffi::c_void,
-        mem::{drop, forget, size_of},
-        ptr,
-        slice::from_raw_parts,
-    };
+    use core::{ffi::c_void, mem::size_of, ptr, slice::from_raw_parts};
 
     use std::vec::Vec;
 
@@ -537,8 +532,9 @@ mod tests {
     // * `hob_list` - A reference to the HobList.
     //
     // # Returns
-    // A tuple containing a pointer to the C array and the length of the C array.
-    pub fn to_c_array(hob_list: &HobList) -> (*const c_void, usize) {
+    // An owned byte vector containing the serialized HOB list. The caller retains ownership
+    // and must keep the vector alive and unmodified while any pointer derived from it is in use.
+    pub fn to_c_array(hob_list: &HobList) -> Vec<u8> {
         let size = hob_list.size();
         let mut c_array: Vec<u8> = Vec::with_capacity(size);
 
@@ -550,31 +546,7 @@ mod tests {
             c_array.extend_from_slice(slice);
         }
 
-        let void_ptr = c_array.as_ptr().cast::<c_void>();
-
-        // in order to not call the destructor on the Vec at the end of this function, we need to forget it
-        forget(c_array);
-
-        (void_ptr, size)
-    }
-
-    // Implements a function to manually free a C array.
-    //
-    // # Arguments
-    // * `c_array_ptr` - A pointer to the C array.
-    // * `len` - The length of the C array.
-    //
-    // # Safety
-    //
-    // The caller must ensure that the pointer and length match a Vec originally created by to_c_array.
-    pub fn manually_free_c_array(c_array_ptr: *const c_void, len: usize) {
-        let ptr = c_array_ptr as *mut u8;
-        // SAFETY: Caller is responsible for ensuring the pointer and length are valid per the function contract.
-        unsafe {
-            #[allow(clippy::same_length_and_capacity)]
-            // TODO: Remove this once the clippy lint is fixed in the future.
-            drop(Vec::from_raw_parts(ptr, len, len));
-        }
+        c_array
     }
 
     #[test]
@@ -795,18 +767,18 @@ mod tests {
 
         assert_eq!(count, 12);
 
-        // c_hoblist is a pointer to the hoblist - we need to manually free it later
-        let (c_array_hoblist, length) = to_c_array(&hoblist);
+        // Own the serialized bytes for the rest of this test. Derived HOB references
+        // alias this buffer, so it stays unmodified until those references are dropped.
+        let c_array = to_c_array(&hoblist);
+        let c_array_hoblist = c_array.as_ptr().cast::<c_void>();
 
         // create a new hoblist
         let mut cloned_hoblist = HobList::new();
         cloned_hoblist.discover_hobs(c_array_hoblist);
 
-        // assert that the hoblist has 2 hobs and they are of the correct type
-        // we don't need to check the end of hoblist hob as it will not be 'discovered'
-        // by the discover_hobs function and simply end the iteration
+        // The end-of-list HOB terminates discovery and is not part of the parsed list.
         count = 0;
-        hoblist.into_iter().for_each(|hob| {
+        cloned_hoblist.iter().for_each(|hob| {
             match hob {
                 Hob::ResourceDescriptor(resource) => {
                     assert_eq!(resource.resource_type, hob::EFI_RESOURCE_SYSTEM_MEMORY);
@@ -853,10 +825,7 @@ mod tests {
             count += 1;
         });
 
-        assert_eq!(count, 12);
-
-        // free the c array
-        manually_free_c_array(c_array_hoblist, length);
+        assert_eq!(count, 11);
     }
 
     #[test]
@@ -891,17 +860,17 @@ mod tests {
         hoblist.push(Hob::Cpu(&cpu));
         hoblist.push(Hob::Handoff(&end_of_hob_list));
 
-        let (c_array_hoblist, length) = to_c_array(&hoblist);
+        // Own the serialized bytes for the rest of this test. `hob` aliases this buffer.
+        let c_array = to_c_array(&hoblist);
+        let c_array_hoblist = c_array.as_ptr().cast::<c_void>();
 
-        // SAFETY: Test code - creating a reference from C array pointer for HOB testing.
-        let hob = Hob::ResourceDescriptor(unsafe {
-            c_array_hoblist.cast::<hob::ResourceDescriptor>().as_ref::<'static>().unwrap()
-        });
+        // SAFETY: Test code - the pointer refers to the owned `c_array`, which is not mutated
+        // and remains in scope until `hob` is no longer used.
+        let hob =
+            Hob::ResourceDescriptor(unsafe { c_array_hoblist.cast::<hob::ResourceDescriptor>().as_ref().unwrap() });
         for h in &hob {
             println!("{:?}", h.header());
         }
-
-        manually_free_c_array(c_array_hoblist, length);
     }
 
     #[test]
