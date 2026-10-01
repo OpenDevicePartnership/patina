@@ -9,7 +9,7 @@ use gdbstub::{
     target::ext::breakpoints::WatchKind,
 };
 use patina_internal_cpu::{interrupts::ExceptionContext, paging::PatinaPageTable};
-use patina_mtrr::Mtrr;
+use patina_mtrr::{Mtrr, error::MtrrError};
 
 use super::{DebuggerArch, UefiArchRegs};
 use crate::{ExceptionInfo, ExceptionType};
@@ -184,8 +184,17 @@ impl DebuggerArch for X64Arch {
                         return;
                     };
 
-                    let attr = mtrr.get_memory_attribute(addr);
-                    let _ = write!(out, "{attr}");
+                    match mtrr.get_memory_attribute(addr) {
+                        Ok(attr) => {
+                            let _ = write!(out, "{attr}");
+                        }
+                        Err(MtrrError::MtrrNotSupported) => {
+                            let _ = out.write_str("MTRRs Unsupported");
+                        }
+                        Err(_) => {
+                            let _ = out.write_str("MTRR query failed");
+                        }
+                    }
                 } else {
                     let _ = out.write_str("Usage: mtrr <base_address>");
                 }

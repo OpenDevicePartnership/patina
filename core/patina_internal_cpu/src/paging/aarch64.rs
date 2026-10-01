@@ -10,7 +10,7 @@
 //!
 use patina_paging::{MemoryAttributes, PageTable, PagingType, aarch64::AArch64PageTable};
 
-use crate::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
+use crate::paging::{CacheAttributeSource, PagingError, PatinaPageTable};
 use patina::pi::protocol::cpu_arch::CpuFlushType;
 use patina::standard::efi;
 use patina_paging::page_allocator::PageAllocator;
@@ -62,12 +62,14 @@ where
         &self,
         address: u64,
         size: u64,
-    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
+    ) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)> {
         // in AARCH64, the caching attributes are managed in the page table and so we will never return just caching
         // attributes
-        self.paging
-            .query_memory_region(address, size)
-            .map_err(|error| (error.into(), CacheAttributeValue::NotSupported))
+        self.paging.query_memory_region(address, size).map_err(|error| (error.into(), None))
+    }
+
+    fn cache_attribute_source(&self) -> CacheAttributeSource {
+        CacheAttributeSource::PageTable
     }
 
     fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError> {

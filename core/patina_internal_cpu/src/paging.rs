@@ -30,18 +30,17 @@ cfg_if::cfg_if! {
     }
 }
 
-/// Enum representing the cache attribute value of a memory region if it is not maintained
-/// by the page table. On x64 platforms, this allows for unmapped pages to still reflect
-/// the cache attributes as managed by MTRRs. On ARM64 this will always be `NotSupported` as
-/// cache attributes are always managed by the page table.
+/// Describes where the cache attributes of a memory region are maintained on this platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheAttributeValue {
-    /// Valid cache attributes for the memory region
-    Valid(MemoryAttributes),
-    /// The memory region is unmapped
-    Unmapped,
-    /// Cache attributes are only supported via the page table for this architecture
-    NotSupported,
+pub enum CacheAttributeSource {
+    /// Cache attributes are maintained in the page table alongside the access attributes.
+    PageTable,
+    /// Cache attributes are maintained in processor state outside of the page table (x64 MTRRs).
+    /// Changes must be replicated to the application processors.
+    Processor,
+    /// Cache attributes cannot be applied and are not reported by queries. This may be the case for confidential
+    /// compute platforms where caching is managed by the HW/VMM.
+    Unsupported,
 }
 
 /// Errors returned by Patina paging operations.
@@ -200,16 +199,21 @@ pub trait PatinaPageTable {
     /// * `size` - The memory size to query.
     ///
     /// ## Returns
-    /// Returns memory attributes
+    ///   `Ok(MemoryAttributes)` - the attributes from the page table, combined with any cache
+    ///   attributes that are maintained outside of it (see
+    ///   [`PatinaPageTable::cache_attribute_source`]).
     ///
-    ///   `Ok(MemoryAttributes)` if the page range is mapped else
-    ///   `Err(PagingError, None)` if the page is unmapped and the cache attributes are not available
-    ///   `Err(PagingError, CacheAttributeValue)` if the page is unmapped but caching attributes are available
+    ///   `Err(PagingError, Option<MemoryAttributes>)` - the page table query failed. The
+    ///   `MemoryAttributes` are the cache attributes in effect for the region, if they are
+    ///   maintained independently of the page table, otherwise `None`.
     fn query_memory_region(
         &self,
         address: u64,
         size: u64,
-    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)>;
+    ) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)>;
+
+    /// Returns where the cache attributes of a memory region are maintained on this platform.
+    fn cache_attribute_source(&self) -> CacheAttributeSource;
 
     /// Function to dump memory ranges with their attributes. It uses current
     /// cr3 as the base. This function can be used from

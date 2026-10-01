@@ -11,7 +11,7 @@
 use alloc::boxed::Box;
 use patina_paging::MemoryAttributes;
 
-use crate::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
+use crate::paging::{CacheAttributeSource, PagingError, PatinaPageTable};
 use patina_paging::page_allocator::PageAllocator;
 
 #[derive(Default)]
@@ -58,8 +58,12 @@ where
         &self,
         _address: u64,
         _size: u64,
-    ) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
+    ) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)> {
         Ok(MemoryAttributes::empty())
+    }
+
+    fn cache_attribute_source(&self) -> CacheAttributeSource {
+        CacheAttributeSource::PageTable
     }
 
     fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PagingError> {

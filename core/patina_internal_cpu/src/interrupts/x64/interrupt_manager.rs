@@ -14,7 +14,7 @@ use patina::{
     {UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
 };
 #[cfg(target_arch = "x86_64")]
-use patina_mtrr::Mtrr;
+use patina_mtrr::{Mtrr, error::MtrrError};
 use patina_paging::PageTable;
 use patina_stacktrace::{StackFrame, StackTrace};
 
@@ -232,8 +232,19 @@ fn dump_pte(cr2: u64) {
     #[cfg(target_arch = "x86_64")]
     {
         let mtrr = patina_mtrr::create_mtrr_lib(0);
+
         log::error!("");
-        log::error!("MTRR Cache Attribute: {}", mtrr.get_memory_attribute(cr2));
+        match mtrr.get_memory_attribute(cr2) {
+            Ok(cache_attribute) => {
+                log::error!("MTRR Cache Attribute: {cache_attribute}");
+            }
+            Err(MtrrError::MtrrNotSupported) => {
+                log::error!("MTRRs Unsupported");
+            }
+            Err(_) => {
+                log::error!("MTRR query failed");
+            }
+        }
         log::error!("");
     }
 }
