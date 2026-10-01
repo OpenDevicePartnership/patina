@@ -112,7 +112,7 @@ impl EfiMmCommunicateHeader {
     /// A slice of bytes representing the header.
     pub fn as_bytes(&self) -> &[u8] {
         // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
-        unsafe { core::slice::from_raw_parts(core::ptr::from_ref(self) as *const u8, Self::size()) }
+        unsafe { core::slice::from_raw_parts(core::ptr::from_ref(self).cast::<u8>(), Self::size()) }
     }
 
     /// Function to get the size of the header in bytes.

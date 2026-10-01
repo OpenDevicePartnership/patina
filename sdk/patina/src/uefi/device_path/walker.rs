@@ -117,7 +117,7 @@ pub fn device_path_as_slice(
     let (_, byte_count) = device_path_node_count(device_path)?;
     // SAFETY: Caller must ensure that device_path is valid, that device_path
     // will remain valid for lifetime of slice and that byte_count is valid
-    unsafe { Ok(from_raw_parts(device_path as *const u8, byte_count)) }
+    unsafe { Ok(from_raw_parts(device_path.cast::<u8>(), byte_count)) }
 }
 
 /// Computes the remaining device path and the number of nodes in common for two device paths.
@@ -263,11 +263,11 @@ pub unsafe fn remaining_device_path(a: NonNull<Protocol>, b: NonNull<Protocol>) 
             return None;
         }
         // SAFETY: caller must assure that device path is valid
-        let a_slice = unsafe { slice_from_raw_parts(a_ptr as *const u8, a_length).as_ref() };
+        let a_slice = unsafe { slice_from_raw_parts(a_ptr.cast::<u8>(), a_length).as_ref() };
 
         // SAFETY: caller must assure that device path is valid and that memory will remain
         // available for the lifetime of the slice
-        let b_slice = unsafe { slice_from_raw_parts(b_ptr as *const u8, b_length).as_ref() };
+        let b_slice = unsafe { slice_from_raw_parts(b_ptr.cast::<u8>(), b_length).as_ref() };
 
         if a_slice != b_slice {
             return None;
@@ -339,7 +339,7 @@ impl GenericDevicePathNode {
         let node_len = u16::from_le_bytes(header.length);
         let data_len = node_len.checked_sub(size_of_val(&header).try_into().ok()?)?;
         // SAFETY: Caller must ensure node is a valid and well formatted device path
-        let data_ptr = unsafe { node.byte_offset(size_of_val(&header).try_into().ok()?) } as *const u8;
+        let data_ptr = unsafe { node.byte_offset(size_of_val(&header).try_into().ok()?) }.cast::<u8>();
         // SAFETY: Caller must ensure node is a valid and well formatted device path
         let data = unsafe { from_raw_parts(data_ptr, data_len.into()).to_vec() };
         Some(Self { header, data })
@@ -499,7 +499,7 @@ mod tests {
             0x4,  //length[0]
             0x00, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         let (nodes, length) = device_path_node_count(device_path_ptr).unwrap();
         assert_eq!(nodes, 4);
         assert_eq!(length, device_path_bytes.len());
@@ -514,7 +514,7 @@ mod tests {
             0x2, //length[0] invalid: smaller than the node header
             0x0, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         assert_eq!(device_path_node_count(device_path_ptr), Err(efi::Status::INVALID_PARAMETER));
     }
 
@@ -558,7 +558,7 @@ mod tests {
             0x0, //length[0] invalid zero length
             0x0, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         // SAFETY: device_path_ptr is a valid pointer to a test byte array.
         let mut device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
         assert_eq!(device_path_walker.next(), None);
@@ -698,7 +698,7 @@ mod tests {
             0x4,  //length[0]
             0x00, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
 
         // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let mut device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
@@ -753,7 +753,7 @@ mod tests {
             0x4,  //length[0]
             0x00, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
 
@@ -795,7 +795,7 @@ mod tests {
             0x4,  //length[0]
             0x00, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         let boxed_device_path = copy_device_path_to_boxed_slice(device_path_ptr);
 
         assert_eq!(boxed_device_path.unwrap().to_vec(), device_path_bytes.to_vec());
@@ -827,7 +827,7 @@ mod tests {
             0x4,  //length[0]
             0x00, //length[1]
         ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_ptr = device_path_bytes.as_ptr().cast::<efi::protocols::device_path::Protocol>();
         // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
         let string: String = device_path_walker.into();

@@ -255,7 +255,7 @@ pub(crate) fn install_memory_attributes_protocol() {
 
     // Convert the protocol to a raw pointer and store it in to protocol DB
     let interface = Box::into_raw(Box::new(protocol));
-    let interface = interface as *mut c_void;
+    let interface = interface.cast::<c_void>();
     MEMORY_ATTRIBUTES_PROTOCOL_INTERFACE.store(interface, Ordering::SeqCst);
 
     match PROTOCOL_DB.install_protocol_interface(None, efi::protocols::memory_attribute::PROTOCOL_GUID, interface) {

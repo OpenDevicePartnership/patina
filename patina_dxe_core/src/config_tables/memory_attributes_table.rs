@@ -115,7 +115,7 @@ pub fn core_install_memory_attributes_table() {
             match core_allocate_pool(efi::BOOT_SERVICES_DATA, size_of::<efi::MemoryAttributesTable>()) {
                 Ok(empty_ptr) => {
                     // SAFETY: empty_ptr is a valid allocation for MemoryAttributesTable.
-                    if let Some(empty_mat) = unsafe { (empty_ptr as *mut efi::MemoryAttributesTable).as_mut() } {
+                    if let Some(empty_mat) = unsafe { empty_ptr.cast::<efi::MemoryAttributesTable>().as_mut() } {
                         *empty_mat = efi::MemoryAttributesTable {
                             version: 0,
                             number_of_entries: 0,
@@ -197,7 +197,7 @@ pub fn core_install_memory_attributes_table() {
         }
         Ok(void_ptr) => {
             let mat_descriptors_ptr = mat_desc_list.as_ptr() as *mut u8;
-            let mat_ptr = void_ptr as *mut efi::MemoryAttributesTable;
+            let mat_ptr = void_ptr.cast::<efi::MemoryAttributesTable>();
             if mat_ptr.is_null() {
                 log::error!("Got a null ptr in successful return from allocate_pool. Failed to create MAT.");
                 return;

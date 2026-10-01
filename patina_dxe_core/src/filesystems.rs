@@ -47,7 +47,8 @@ impl SimpleFile<'_> {
         let sfs = unsafe {
             let sfs_protocol_ptr =
                 PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID)?;
-            (sfs_protocol_ptr as *mut efi::protocols::simple_file_system::Protocol)
+            sfs_protocol_ptr
+                .cast::<efi::protocols::simple_file_system::Protocol>()
                 .as_mut()
                 .ok_or(EfiError::NotFound)?
         };
@@ -93,7 +94,7 @@ impl SimpleFile<'_> {
                 self.file,
                 core::ptr::from_ref::<efi::Guid>(&efi::protocols::file::INFO_ID).cast_mut(),
                 core::ptr::addr_of_mut!(info_size),
-                file_info_buffer.as_mut_ptr() as *mut c_void,
+                file_info_buffer.as_mut_ptr().cast::<c_void>(),
             )
         };
 
@@ -143,7 +144,7 @@ impl SimpleFile<'_> {
         // obtained from the protocol database during the construction of this
         // SimpleFile instance.
         let status = unsafe {
-            (self.file.read)(self.file, core::ptr::addr_of_mut!(file_size), file_buffer.as_mut_ptr() as *mut c_void)
+            (self.file.read)(self.file, core::ptr::addr_of_mut!(file_size), file_buffer.as_mut_ptr().cast::<c_void>())
         };
 
         EfiError::status_to_result(status)?;

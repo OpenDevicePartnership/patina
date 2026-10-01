@@ -267,7 +267,7 @@ impl DebugImageInfoData {
         }
 
         self.capacity = new_capacity;
-        self.header.debug_image_info_table = data as *mut efi::DebugImageInfo;
+        self.header.debug_image_info_table = data.cast::<efi::DebugImageInfo>();
         Ok(())
     }
 }

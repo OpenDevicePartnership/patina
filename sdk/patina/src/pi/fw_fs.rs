@@ -188,7 +188,7 @@ impl<'a> FirmwareVolume<'a> {
         }
 
         // SAFETY: Buffer size was validated to contain the full Header.
-        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const fv::Header) };
+        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<fv::Header>()) };
 
         // signature: must be ASCII '_FVH'
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
@@ -250,7 +250,7 @@ impl<'a> FirmwareVolume<'a> {
                     .ok_or(efi::Status::VOLUME_CORRUPTED)?;
 
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
-                let ext_header = unsafe { &*(ext_header_slice.as_ptr() as *const fv::ExtHeader) };
+                let ext_header = unsafe { &*ext_header_slice.as_ptr().cast::<fv::ExtHeader>() };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 let ext_header_data =
                     buffer.get(ext_header_offset..ext_header_end).ok_or(efi::Status::VOLUME_CORRUPTED)?;
@@ -445,7 +445,7 @@ impl<'a> File<'a> {
         }
 
         // SAFETY: Buffer size was validated to at least contain a full file::Header
-        let file_header = unsafe { &*(buffer.as_ptr() as *const file::Header) };
+        let file_header = unsafe { &*buffer.as_ptr().cast::<file::Header>() };
 
         // determine size and data offset
         let (header_size, size) = {
@@ -760,7 +760,7 @@ impl Section {
                 // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let guid_defined_header = unsafe {
-                    core::ptr::read_unaligned(guid_defined_header.as_ptr() as *const section::header::GuidDefined)
+                    core::ptr::read_unaligned(guid_defined_header.as_ptr().cast::<section::header::GuidDefined>())
                 };
 
                 let data_offset = guid_defined_header.data_offset as usize;
@@ -795,7 +795,7 @@ impl Section {
                 // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
                 // Zerocopy cannot be used because r-efi Guid does not implement zerocopy traits.
                 let freeform_header = unsafe {
-                    core::ptr::read_unaligned(freeform_header.as_ptr() as *const section::header::FreeformSubtypeGuid)
+                    core::ptr::read_unaligned(freeform_header.as_ptr().cast::<section::header::FreeformSubtypeGuid>())
                 };
 
                 let data = buffer
@@ -1180,7 +1180,7 @@ mod unit_tests {
 
         // bogus signature.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).signature ^= 0xdeadbeef;
@@ -1189,7 +1189,7 @@ mod unit_tests {
 
         // bogus header_length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).header_length = 0;
@@ -1198,7 +1198,7 @@ mod unit_tests {
 
         // bogus checksum.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).checksum ^= 0xbeef;
@@ -1207,7 +1207,7 @@ mod unit_tests {
 
         // bogus revision.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).revision = 1;
@@ -1216,7 +1216,7 @@ mod unit_tests {
 
         // bogus filesystem guid.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).file_system_guid = crate::BinaryGuid::from(efi::Guid::from_bytes(&[0xa5; 16]));
@@ -1225,7 +1225,7 @@ mod unit_tests {
 
         // bogus fv length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).fv_length = 0;
@@ -1234,7 +1234,7 @@ mod unit_tests {
 
         // bogus ext header offset.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        let fv_header = fv_bytes.as_mut_ptr().cast::<fv::Header>();
         // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).fv_length = u64::from((*fv_header).ext_header_offset - 1);
@@ -1270,7 +1270,7 @@ mod unit_tests {
 
         // SAFETY: Test validates pointer offset calculation for zero-size array
         unsafe {
-            assert_eq!((*a_ptr).block_map.as_ptr(), a_ptr.add(1) as *const fv::BlockMapEntry);
+            assert_eq!((*a_ptr).block_map.as_ptr(), a_ptr.add(1).cast::<fv::BlockMapEntry>());
         }
     }
 

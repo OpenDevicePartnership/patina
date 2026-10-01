@@ -357,7 +357,7 @@ extern "efiapi" fn timer_tick(time: u64) {
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID.into_inner()) {
         Ok(timer_arch_ptr) => {
-            let timer_arch_ptr = timer_arch_ptr as *mut timer::TimerProtocol;
+            let timer_arch_ptr = timer_arch_ptr.cast::<timer::TimerProtocol>();
             // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
@@ -459,7 +459,7 @@ mod tests {
     fn test_create_event_with_notify_context() {
         with_locked_state(|| {
             let mut event: efi::Event = ptr::null_mut();
-            let context = Box::into_raw(Box::new(42)) as *mut c_void;
+            let context = Box::into_raw(Box::new(42)).cast::<c_void>();
             // SAFETY: Test code - all pointers are test-controlled and valid for the duration of the call.
             let result = unsafe { create_event(0, efi::TPL_APPLICATION, None, context, &raw mut event) };
 

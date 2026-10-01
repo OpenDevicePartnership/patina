@@ -39,7 +39,7 @@ impl<T: BootServices> BootServicesGlobalAllocator<T> {
             // SAFETY: Calculating aligned pointer offset within the allocated pool.
             let ptr = unsafe { original_ptr.add(original_ptr.align_offset(extended_layout.align())) };
             // SAFETY: Computing tracker pointer location within the allocated region.
-            let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
+            let tracker_ptr = unsafe { ptr.add(tracker_offset).cast::<*mut u8>() };
             // SAFETY: Writing original_ptr to tracker location for later deallocation.
             unsafe { ptr::write(tracker_ptr, original_ptr) };
             ptr
@@ -56,7 +56,7 @@ impl<T: BootServices> BootServicesGlobalAllocator<T> {
                 return;
             };
             // SAFETY: Reading tracker pointer from the allocated region.
-            let tracker_ptr = unsafe { ptr.add(tracker_offset) as *mut *mut u8 };
+            let tracker_ptr = unsafe { ptr.add(tracker_offset).cast::<*mut u8>() };
             // SAFETY: Reading original allocation pointer from tracker location.
             let original_ptr = unsafe { ptr::read(tracker_ptr) };
             // SAFETY: Verifying alignment matches what we calculated during allocation.

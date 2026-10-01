@@ -570,14 +570,14 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
         0x1010 => {
             if data.len() >= core::mem::size_of::<GuidEventRecordData>() {
                 // SAFETY: We've verified the data is large enough and the struct is packed
-                let record = unsafe { &*(data.as_ptr() as *const GuidEventRecordData) };
+                let record = unsafe { &*data.as_ptr().cast::<GuidEventRecordData>() };
                 record.print_details(record_number);
             }
         }
         0x1011 => {
             if data.len() >= core::mem::size_of::<DynamicStringEventRecordData>() {
                 // SAFETY: We've verified the data is large enough and the struct is packed
-                let record = unsafe { &*(data.as_ptr() as *const DynamicStringEventRecordData) };
+                let record = unsafe { &*data.as_ptr().cast::<DynamicStringEventRecordData>() };
                 record.print_details(record_number);
                 let string_data = DynamicStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {
@@ -588,7 +588,7 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
         0x1012 => {
             if data.len() >= core::mem::size_of::<DualGuidStringEventRecordData>() {
                 // SAFETY: We've verified the data is large enough and the struct is packed
-                let record = unsafe { &*(data.as_ptr() as *const DualGuidStringEventRecordData) };
+                let record = unsafe { &*data.as_ptr().cast::<DualGuidStringEventRecordData>() };
                 record.print_details(record_number);
                 let string_data = DualGuidStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {
@@ -599,14 +599,14 @@ pub fn print_record_details(record_type: u16, record_number: usize, data: &[u8])
         0x1013 => {
             if data.len() >= core::mem::size_of::<GuidQwordEventRecordData>() {
                 // SAFETY: We've verified the data is large enough and the struct is packed
-                let record = unsafe { &*(data.as_ptr() as *const GuidQwordEventRecordData) };
+                let record = unsafe { &*data.as_ptr().cast::<GuidQwordEventRecordData>() };
                 record.print_details(record_number);
             }
         }
         0x1014 => {
             if data.len() >= core::mem::size_of::<GuidQwordStringEventRecordData>() {
                 // SAFETY: We've verified the data is large enough and the struct is packed
-                let record = unsafe { &*(data.as_ptr() as *const GuidQwordStringEventRecordData) };
+                let record = unsafe { &*data.as_ptr().cast::<GuidQwordStringEventRecordData>() };
                 record.print_details(record_number);
                 let string_data = GuidQwordStringEventRecordData::extract_string(data);
                 if !string_data.is_empty() {

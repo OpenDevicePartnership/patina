@@ -89,7 +89,7 @@ impl<'a> HobList<'a> {
     /// }
     /// ```
     pub fn as_mut_ptr<T>(&mut self) -> *mut T {
-        self.0.as_mut_ptr() as *mut T
+        self.0.as_mut_ptr().cast::<T>()
     }
 
     /// Returns the size of the Hoblist in bytes.
@@ -229,7 +229,7 @@ impl<'a> HobList<'a> {
             true
         }
 
-        let mut hob_header: *const HobHeader = hob_list as *const HobHeader;
+        let mut hob_header: *const HobHeader = hob_list.cast::<HobHeader>();
 
         loop {
             // SAFETY: hob_header points to valid HOB data provided by firmware. Each HOB has a valid header.
@@ -550,7 +550,7 @@ mod tests {
             c_array.extend_from_slice(slice);
         }
 
-        let void_ptr = c_array.as_ptr() as *const c_void;
+        let void_ptr = c_array.as_ptr().cast::<c_void>();
 
         // in order to not call the destructor on the Vec at the end of this function, we need to forget it
         forget(c_array);
@@ -684,7 +684,7 @@ mod tests {
         let write_header = |buf: &mut [u8], offset: usize, r#type: u16, length: u16| {
             let header = hob::HobHeader { r#type, length, reserved: 0 };
             // SAFETY: Test code - `HobHeader` is `repr(C)` plain data serialized into the test-allocated buffer.
-            let bytes = unsafe { from_raw_parts(&raw const header as *const u8, size_of::<hob::HobHeader>()) };
+            let bytes = unsafe { from_raw_parts((&raw const header).cast::<u8>(), size_of::<hob::HobHeader>()) };
             buf[offset..offset + bytes.len()].copy_from_slice(bytes);
         };
 
@@ -693,7 +693,7 @@ mod tests {
         write_header(&mut buf, malformed_len as usize, hob::END_OF_HOB_LIST, header_size as u16);
 
         let mut hoblist = HobList::new();
-        hoblist.discover_hobs(buf.as_ptr() as *const c_void);
+        hoblist.discover_hobs(buf.as_ptr().cast::<c_void>());
         assert_eq!(hoblist.len(), 1);
         match hoblist.iter().next().unwrap() {
             Hob::GuidHob(_, data) => assert!(data.is_empty(), "an undersized GUID HOB must give empty data"),
@@ -701,7 +701,7 @@ mod tests {
         }
 
         // SAFETY: Test code. The buffer begins with a valid GUID_EXTENSION HOB header constructed in the test.
-        let first = Hob::GuidHob(unsafe { (buf.as_ptr() as *const hob::GuidHob).as_ref().unwrap() }, &[]);
+        let first = Hob::GuidHob(unsafe { buf.as_ptr().cast::<hob::GuidHob>().as_ref().unwrap() }, &[]);
         for hob in &first {
             if let Hob::GuidHob(_, data) = hob {
                 assert!(data.is_empty(), "HobIter should give empty data for an undersized GUID HOB");
@@ -895,7 +895,7 @@ mod tests {
 
         // SAFETY: Test code - creating a reference from C array pointer for HOB testing.
         let hob = Hob::ResourceDescriptor(unsafe {
-            (c_array_hoblist as *const hob::ResourceDescriptor).as_ref::<'static>().unwrap()
+            c_array_hoblist.cast::<hob::ResourceDescriptor>().as_ref::<'static>().unwrap()
         });
         for h in &hob {
             println!("{:?}", h.header());
@@ -1083,7 +1083,7 @@ mod tests {
         let end_of_list = gen_end_of_hoblist();
 
         // SAFETY: The list is created in this test with a valid end-of-list marker
-        let size = unsafe { get_pi_hob_list_size(&raw const end_of_list as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size((&raw const end_of_list).cast::<c_void>()) };
 
         assert_eq!(size, size_of::<PhaseHandoffInformationTable>());
     }
@@ -1106,25 +1106,28 @@ mod tests {
         // Add a capsule HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let capsule_bytes =
-            unsafe { core::slice::from_raw_parts(&raw const capsule as *const u8, size_of::<Capsule>()) };
+            unsafe { core::slice::from_raw_parts((&raw const capsule).cast::<u8>(), size_of::<Capsule>()) };
         buffer.extend_from_slice(capsule_bytes);
 
         // Add a firmware volume HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let fv_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const firmware_volume as *const u8, size_of::<FirmwareVolume>())
+            core::slice::from_raw_parts((&raw const firmware_volume).cast::<u8>(), size_of::<FirmwareVolume>())
         };
         buffer.extend_from_slice(fv_bytes);
 
         // Add an end-of-list HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let end_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(
+                (&raw const end_of_list).cast::<u8>(),
+                size_of::<PhaseHandoffInformationTable>(),
+            )
         };
         buffer.extend_from_slice(end_bytes);
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr().cast::<c_void>()) };
 
         assert_eq!(size, expected_size);
     }
@@ -1148,25 +1151,29 @@ mod tests {
         let mut buffer = Vec::new();
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
-        buffer.extend_from_slice(unsafe { core::slice::from_raw_parts(&raw const cpu as *const u8, size_of::<Cpu>()) });
+        buffer
+            .extend_from_slice(unsafe { core::slice::from_raw_parts((&raw const cpu).cast::<u8>(), size_of::<Cpu>()) });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const resource as *const u8, size_of::<ResourceDescriptor>())
+            core::slice::from_raw_parts((&raw const resource).cast::<u8>(), size_of::<ResourceDescriptor>())
         });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const memory_alloc as *const u8, size_of::<MemoryAllocation>())
+            core::slice::from_raw_parts((&raw const memory_alloc).cast::<u8>(), size_of::<MemoryAllocation>())
         });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(
+                (&raw const end_of_list).cast::<u8>(),
+                size_of::<PhaseHandoffInformationTable>(),
+            )
         });
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr().cast::<c_void>()) };
 
         assert_eq!(size, expected_size);
     }

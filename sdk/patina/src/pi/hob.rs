@@ -827,18 +827,18 @@ impl HobTrait for Hob<'_> {
     /// Returns a pointer to the HOB.
     fn as_ptr<T>(&self) -> *const T {
         match self {
-            Hob::Handoff(hob) => core::ptr::from_ref::<PhaseHandoffInformationTable>(*hob) as *const _,
-            Hob::MemoryAllocation(hob) => core::ptr::from_ref::<MemoryAllocation>(*hob) as *const _,
-            Hob::MemoryAllocationModule(hob) => core::ptr::from_ref::<MemoryAllocationModule>(*hob) as *const _,
-            Hob::Capsule(hob) => core::ptr::from_ref::<Capsule>(*hob) as *const _,
-            Hob::ResourceDescriptor(hob) => core::ptr::from_ref::<ResourceDescriptor>(*hob) as *const _,
-            Hob::GuidHob(hob, _) => core::ptr::from_ref::<GuidHob>(*hob) as *const _,
-            Hob::FirmwareVolume(hob) => core::ptr::from_ref::<FirmwareVolume>(*hob) as *const _,
-            Hob::FirmwareVolume2(hob) => core::ptr::from_ref::<FirmwareVolume2>(*hob) as *const _,
-            Hob::FirmwareVolume3(hob) => core::ptr::from_ref::<FirmwareVolume3>(*hob) as *const _,
-            Hob::Cpu(hob) => core::ptr::from_ref::<Cpu>(*hob) as *const _,
-            Hob::ResourceDescriptorV2(hob) => core::ptr::from_ref::<ResourceDescriptorV2>(*hob) as *const _,
-            Hob::Misc(hob) => *hob as *const u16 as *const _,
+            Hob::Handoff(hob) => core::ptr::from_ref::<PhaseHandoffInformationTable>(*hob).cast(),
+            Hob::MemoryAllocation(hob) => core::ptr::from_ref::<MemoryAllocation>(*hob).cast(),
+            Hob::MemoryAllocationModule(hob) => core::ptr::from_ref::<MemoryAllocationModule>(*hob).cast(),
+            Hob::Capsule(hob) => core::ptr::from_ref::<Capsule>(*hob).cast(),
+            Hob::ResourceDescriptor(hob) => core::ptr::from_ref::<ResourceDescriptor>(*hob).cast(),
+            Hob::GuidHob(hob, _) => core::ptr::from_ref::<GuidHob>(*hob).cast(),
+            Hob::FirmwareVolume(hob) => core::ptr::from_ref::<FirmwareVolume>(*hob).cast(),
+            Hob::FirmwareVolume2(hob) => core::ptr::from_ref::<FirmwareVolume2>(*hob).cast(),
+            Hob::FirmwareVolume3(hob) => core::ptr::from_ref::<FirmwareVolume3>(*hob).cast(),
+            Hob::Cpu(hob) => core::ptr::from_ref::<Cpu>(*hob).cast(),
+            Hob::ResourceDescriptorV2(hob) => core::ptr::from_ref::<ResourceDescriptorV2>(*hob).cast(),
+            Hob::Misc(hob) => (*hob as *const u16).cast(),
         }
     }
 }
@@ -875,7 +875,7 @@ impl HobTrait for Hob<'_> {
 /// println!("HOB list size: {}", size);
 /// ```
 pub unsafe fn get_pi_hob_list_size(hob_list: *const c_void) -> usize {
-    let mut hob_header: *const HobHeader = hob_list as *const HobHeader;
+    let mut hob_header: *const HobHeader = hob_list.cast::<HobHeader>();
     let mut hob_list_len = 0;
 
     loop {
@@ -949,23 +949,19 @@ impl<'a> Iterator for HobIter<'a> {
         // on the HOB header type field. as_ref() converts to a reference with the iterator's lifetime.
         let hob = unsafe {
             match hob_header.r#type {
-                HANDOFF => {
-                    Hob::Handoff((self.hob_ptr as *const PhaseHandoffInformationTable).as_ref().expect(NOT_NULL))
-                }
+                HANDOFF => Hob::Handoff(self.hob_ptr.cast::<PhaseHandoffInformationTable>().as_ref().expect(NOT_NULL)),
                 MEMORY_ALLOCATION if hob_header.length as usize == mem::size_of::<MemoryAllocationModule>() => {
-                    Hob::MemoryAllocationModule(
-                        (self.hob_ptr as *const MemoryAllocationModule).as_ref().expect(NOT_NULL),
-                    )
+                    Hob::MemoryAllocationModule(self.hob_ptr.cast::<MemoryAllocationModule>().as_ref().expect(NOT_NULL))
                 }
                 MEMORY_ALLOCATION => {
-                    Hob::MemoryAllocation((self.hob_ptr as *const MemoryAllocation).as_ref().expect(NOT_NULL))
+                    Hob::MemoryAllocation(self.hob_ptr.cast::<MemoryAllocation>().as_ref().expect(NOT_NULL))
                 }
                 RESOURCE_DESCRIPTOR => {
-                    Hob::ResourceDescriptor((self.hob_ptr as *const ResourceDescriptor).as_ref().expect(NOT_NULL))
+                    Hob::ResourceDescriptor(self.hob_ptr.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL))
                 }
                 GUID_EXTENSION => {
-                    let hob = (self.hob_ptr as *const GuidHob).as_ref().expect(NOT_NULL);
-                    let data_ptr = self.hob_ptr.byte_add(mem::size_of::<GuidHob>()) as *const u8;
+                    let hob = self.hob_ptr.cast::<GuidHob>().as_ref().expect(NOT_NULL);
+                    let data_ptr = self.hob_ptr.byte_add(mem::size_of::<GuidHob>()).cast::<u8>();
                     // A well-formed GUID extension HOB length that covers at least `GuidHob` header.
                     debug_assert!(
                         hob.header.length as usize >= mem::size_of::<GuidHob>(),
@@ -976,13 +972,13 @@ impl<'a> Iterator for HobIter<'a> {
                     let data_len = (hob.header.length as usize).saturating_sub(mem::size_of::<GuidHob>());
                     Hob::GuidHob(hob, slice::from_raw_parts(data_ptr, data_len))
                 }
-                FV => Hob::FirmwareVolume((self.hob_ptr as *const FirmwareVolume).as_ref().expect(NOT_NULL)),
-                FV2 => Hob::FirmwareVolume2((self.hob_ptr as *const FirmwareVolume2).as_ref().expect(NOT_NULL)),
-                FV3 => Hob::FirmwareVolume3((self.hob_ptr as *const FirmwareVolume3).as_ref().expect(NOT_NULL)),
-                CPU => Hob::Cpu((self.hob_ptr as *const Cpu).as_ref().expect(NOT_NULL)),
-                UEFI_CAPSULE => Hob::Capsule((self.hob_ptr as *const Capsule).as_ref().expect(NOT_NULL)),
+                FV => Hob::FirmwareVolume(self.hob_ptr.cast::<FirmwareVolume>().as_ref().expect(NOT_NULL)),
+                FV2 => Hob::FirmwareVolume2(self.hob_ptr.cast::<FirmwareVolume2>().as_ref().expect(NOT_NULL)),
+                FV3 => Hob::FirmwareVolume3(self.hob_ptr.cast::<FirmwareVolume3>().as_ref().expect(NOT_NULL)),
+                CPU => Hob::Cpu(self.hob_ptr.cast::<Cpu>().as_ref().expect(NOT_NULL)),
+                UEFI_CAPSULE => Hob::Capsule(self.hob_ptr.cast::<Capsule>().as_ref().expect(NOT_NULL)),
                 RESOURCE_DESCRIPTOR2 => {
-                    Hob::ResourceDescriptorV2((self.hob_ptr as *const ResourceDescriptorV2).as_ref().expect(NOT_NULL))
+                    Hob::ResourceDescriptorV2(self.hob_ptr.cast::<ResourceDescriptorV2>().as_ref().expect(NOT_NULL))
                 }
                 END_OF_HOB_LIST => return None,
                 hob_type => Hob::Misc(hob_type),
@@ -1167,7 +1163,7 @@ pub(crate) mod tests {
         // Build a contiguous buffer: [GuidHob struct bytes | data bytes]
         let mut buf = Vec::with_capacity(size_of::<hob::GuidHob>() + data.len());
         // SAFETY: Test code - serializing the GuidHob struct into raw bytes for contiguous layout.
-        let hob_bytes = unsafe { from_raw_parts(&raw const hob as *const u8, size_of::<hob::GuidHob>()) };
+        let hob_bytes = unsafe { from_raw_parts((&raw const hob).cast::<u8>(), size_of::<hob::GuidHob>()) };
         buf.extend_from_slice(hob_bytes);
         buf.extend_from_slice(data);
         buf
@@ -1181,7 +1177,7 @@ pub(crate) mod tests {
     pub(crate) fn guid_hob_refs(buf: &[u8]) -> (&hob::GuidHob, &[u8]) {
         assert!(buf.len() >= size_of::<hob::GuidHob>(), "Buffer too small for GuidHob");
         // SAFETY: Test code - the buffer was constructed by gen_guid_hob(), so the buffer layout matches.
-        let guid_hob = unsafe { &*(buf.as_ptr() as *const hob::GuidHob) };
+        let guid_hob = unsafe { &*buf.as_ptr().cast::<hob::GuidHob>() };
         let data = &buf[size_of::<hob::GuidHob>()..];
         (guid_hob, data)
     }
@@ -1240,7 +1236,7 @@ pub(crate) mod tests {
         let end_of_list = gen_end_of_hoblist();
 
         // SAFETY: The list is created in this test with a valid end-of-list marker
-        let size = unsafe { get_pi_hob_list_size(&raw const end_of_list as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size((&raw const end_of_list).cast::<c_void>()) };
 
         assert_eq!(size, size_of::<PhaseHandoffInformationTable>());
     }
@@ -1263,25 +1259,28 @@ pub(crate) mod tests {
         // Add a capsule HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let capsule_bytes =
-            unsafe { core::slice::from_raw_parts(&raw const capsule as *const u8, size_of::<Capsule>()) };
+            unsafe { core::slice::from_raw_parts((&raw const capsule).cast::<u8>(), size_of::<Capsule>()) };
         buffer.extend_from_slice(capsule_bytes);
 
         // Add a firmware volume HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let fv_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const firmware_volume as *const u8, size_of::<FirmwareVolume>())
+            core::slice::from_raw_parts((&raw const firmware_volume).cast::<u8>(), size_of::<FirmwareVolume>())
         };
         buffer.extend_from_slice(fv_bytes);
 
         // Add an end-of-list HOB
         // SAFETY: Creating a byte slice from a struct for test purposes.
         let end_bytes = unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(
+                (&raw const end_of_list).cast::<u8>(),
+                size_of::<PhaseHandoffInformationTable>(),
+            )
         };
         buffer.extend_from_slice(end_bytes);
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr().cast::<c_void>()) };
 
         assert_eq!(size, expected_size);
     }
@@ -1305,25 +1304,29 @@ pub(crate) mod tests {
         let mut buffer = Vec::new();
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
-        buffer.extend_from_slice(unsafe { core::slice::from_raw_parts(&raw const cpu as *const u8, size_of::<Cpu>()) });
+        buffer
+            .extend_from_slice(unsafe { core::slice::from_raw_parts((&raw const cpu).cast::<u8>(), size_of::<Cpu>()) });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const resource as *const u8, size_of::<ResourceDescriptor>())
+            core::slice::from_raw_parts((&raw const resource).cast::<u8>(), size_of::<ResourceDescriptor>())
         });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const memory_alloc as *const u8, size_of::<MemoryAllocation>())
+            core::slice::from_raw_parts((&raw const memory_alloc).cast::<u8>(), size_of::<MemoryAllocation>())
         });
 
         // SAFETY: Creating a byte slice from a struct for test purposes.
         buffer.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const end_of_list as *const u8, size_of::<PhaseHandoffInformationTable>())
+            core::slice::from_raw_parts(
+                (&raw const end_of_list).cast::<u8>(),
+                size_of::<PhaseHandoffInformationTable>(),
+            )
         });
 
         // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
-        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr().cast::<c_void>()) };
 
         assert_eq!(size, expected_size);
     }

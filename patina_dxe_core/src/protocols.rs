@@ -378,8 +378,8 @@ unsafe extern "efiapi" fn locate_handle(
             // SAFETY: Caller must ensure that handle_buffer is valid for writes of list.len() handles. It is checked for null above.
             unsafe {
                 core::ptr::copy(
-                    list.as_ptr() as *const u8,
-                    handle_buffer as *mut u8,
+                    list.as_ptr().cast::<u8>(),
+                    handle_buffer.cast::<u8>(),
                     list.len() * core::mem::size_of::<efi::Handle>(),
                 );
             }
@@ -582,11 +582,11 @@ unsafe extern "efiapi" fn open_protocol_information(
         Ok(allocation) =>
         // SAFETY: Caller must ensure that entry_buffer and entry_count are valid pointers. They are null-checked above.
         unsafe {
-            entry_buffer.write_unaligned(allocation as *mut efi::OpenProtocolInformationEntry);
+            entry_buffer.write_unaligned(allocation.cast::<efi::OpenProtocolInformationEntry>());
             entry_count.write_unaligned(open_info.len());
             core::ptr::copy(
-                open_info.as_ptr() as *const u8,
-                allocation as *mut u8,
+                open_info.as_ptr().cast::<u8>(),
+                allocation.cast::<u8>(),
                 open_info.len() * size_of::<efi::OpenProtocolInformationEntry>(),
             );
             efi::Status::SUCCESS
@@ -629,7 +629,7 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
             // `interface` is the value for the device_path::PROTOCOL_GUID being installed.
             // The caller is responsible for ensuring that it points to a valid device path when
             // it is dereferenced; here we only need a non-null guard.
-            && let Some(device_path) = NonNull::new(interface as *mut _)
+            && let Some(device_path) = NonNull::new(interface.cast())
             && let Ok((remaining_path, handle)) =
                 core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path)
             && PROTOCOL_DB.validate_handle(handle).is_ok()
@@ -748,7 +748,7 @@ unsafe extern "efiapi" fn protocols_per_handle(
         Err(err) => err.into(),
         // SAFETY: Caller must ensure that protocol_buffer and protocol_buffer_count are valid pointers. They are null-checked above.
         Ok(allocation) => unsafe {
-            protocol_buffer.write_unaligned(allocation as *mut *mut efi::Guid);
+            protocol_buffer.write_unaligned(allocation.cast::<*mut efi::Guid>());
             protocol_buffer_count.write_unaligned(protocol_list.len());
 
             let guid_buffer = (allocation as usize + ptr_buffer_size) as *mut efi::Guid;
@@ -824,7 +824,7 @@ unsafe extern "efiapi" fn locate_handle_buffer(
             Err(err) => err.into(),
             // SAFETY: Caller must ensure that no_handles and buffer are valid pointers. They are null-checked above.
             Ok(allocation) => unsafe {
-                buffer.write_unaligned(allocation as *mut efi::Handle);
+                buffer.write_unaligned(allocation.cast::<efi::Handle>());
                 no_handles.write_unaligned(handles.len());
                 slice::from_raw_parts_mut(buffer.read_unaligned(), handles.len()).copy_from_slice(&handles);
                 efi::Status::SUCCESS
@@ -894,7 +894,7 @@ pub fn core_locate_device_path(
 
     for handle in handles {
         let mut temp_device_path: *mut efi::protocols::device_path::Protocol = core::ptr::null_mut();
-        let temp_device_path_ptr: *mut *mut c_void = &raw mut temp_device_path as *mut *mut c_void;
+        let temp_device_path_ptr: *mut *mut c_void = (&raw mut temp_device_path).cast::<*mut c_void>();
         // SAFETY: `handle` comes from `locate_handles` and is valid. `device_path_protocol_guid`
         // points to a valid static GUID. `temp_device_path_ptr` is derived from a local variable
         // and is valid for writes.

@@ -457,7 +457,8 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
 
     // SAFETY: physical_hob_list is provided by the platform and must point to a valid HOB list.
     let hob_list = Hob::Handoff(unsafe {
-        (physical_hob_list as *const PhaseHandoffInformationTable)
+        physical_hob_list
+            .cast::<PhaseHandoffInformationTable>()
             .as_ref::<'static>()
             .expect("Physical hob list pointer is null, but it must exist and be valid.")
     });
@@ -800,7 +801,8 @@ mod tests {
         // SAFETY: Test code - the physical_hob_list pointer is pointing to a HOBs list
         // constructed in test_full_gcd_init() and directly passed to this function.
         let handoff = unsafe {
-            (physical_hob_list as *const PhaseHandoffInformationTable)
+            physical_hob_list
+                .cast::<PhaseHandoffInformationTable>()
                 .as_ref::<'static>()
                 .expect("Physical hob list pointer is null, but it must exist and be valid.")
         };

@@ -855,7 +855,7 @@ pub(crate) fn extract_memory_type_info_from_hob(hob_list: &HobList) -> Option<Ve
                 data.len() / entry_size
             );
 
-            let ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
+            let ptr = data.as_ptr().cast::<EFiMemoryTypeInformation>();
             let len = data.len() / entry_size;
 
             // SAFETY: HOB data is 8-byte aligned per the PI spec.

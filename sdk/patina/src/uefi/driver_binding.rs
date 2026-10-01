@@ -153,7 +153,7 @@ where
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe {
-            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+            let Some(this) = this.cast::<_UefiDriverBinding<T, U>>().as_mut() else {
                 return efi::Status::INVALID_PARAMETER;
             };
             this
@@ -177,7 +177,7 @@ where
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe {
-            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+            let Some(this) = this.cast::<_UefiDriverBinding<T, U>>().as_mut() else {
                 return efi::Status::INVALID_PARAMETER;
             };
             this
@@ -200,7 +200,7 @@ where
     ) -> efi::Status {
         // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe {
-            let Some(this) = (this as *mut _UefiDriverBinding<T, U>).as_mut() else {
+            let Some(this) = this.cast::<_UefiDriverBinding<T, U>>().as_mut() else {
                 return efi::Status::INVALID_PARAMETER;
             };
             this

@@ -98,7 +98,7 @@ extern "efiapi" fn runtime_protocol_notify(_event: efi::Event, _context: *mut c_
     let ptr =
         PROTOCOL_DB.locate_protocol(runtime::PROTOCOL_GUID.into_inner()).expect("Failed to locate runtime protocol.");
     let mut data = RUNTIME_DATA.lock();
-    data.runtime_arch_ptr = ptr as *mut runtime::RuntimeProtocol;
+    data.runtime_arch_ptr = ptr.cast::<runtime::RuntimeProtocol>();
     data.update_protocol_lists();
 }
 
@@ -155,7 +155,7 @@ pub fn add_runtime_image(
     data.runtime_images.push_back(runtime::ImageEntry {
         image_base,
         image_size,
-        relocation_data: relocation_data.as_mut_ptr() as *mut _,
+        relocation_data: relocation_data.as_mut_ptr().cast(),
         handle,
         link: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
     });
@@ -271,7 +271,9 @@ mod tests {
                 let mut count = 0;
                 let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
                 while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
-                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
+                    let entry = (protocol_link as *const u8)
+                        .byte_sub(link_offset)
+                        .cast::<runtime::ImageEntry>()
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count);
@@ -298,7 +300,9 @@ mod tests {
                 let mut count = 0;
                 let mut prev = &raw const (*data.runtime_arch_ptr).image_head;
                 while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).image_head) {
-                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
+                    let entry = (protocol_link as *const u8)
+                        .byte_sub(link_offset)
+                        .cast::<runtime::ImageEntry>()
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.handle as usize, count * 2);
@@ -335,7 +339,9 @@ mod tests {
                 let mut count = 0;
                 let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
                 while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
-                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
+                    let entry = (protocol_link as *const u8)
+                        .byte_sub(link_offset)
+                        .cast::<runtime::EventEntry>()
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count);
@@ -362,7 +368,9 @@ mod tests {
                 let mut count = 0;
                 let mut prev = &raw const (*data.runtime_arch_ptr).event_head;
                 while !core::ptr::eq(protocol_link, &raw mut (*data.runtime_arch_ptr).event_head) {
-                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
+                    let entry = (protocol_link as *const u8)
+                        .byte_sub(link_offset)
+                        .cast::<runtime::EventEntry>()
                         .as_ref()
                         .unwrap();
                     assert_eq!(entry.event as usize, count * 2);

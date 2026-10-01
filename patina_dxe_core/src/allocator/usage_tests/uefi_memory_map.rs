@@ -498,7 +498,7 @@ mod tests {
                 );
             }
 
-            mem.as_ptr() as *const core::ffi::c_void
+            mem.as_ptr().cast::<core::ffi::c_void>()
         }
     }
 

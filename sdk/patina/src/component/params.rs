@@ -148,8 +148,7 @@ pub unsafe trait Param {
     /// from [Storage].
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool;
 
-    /// A wrapper around [validate](Param::validate) that maps the boolean to a Result<(), &'static str>. where the
-    /// &'static str is the name of the type that failed validation.
+    /// A wrapper around [validate](Param::validate) that reports the type that failed validation.
     fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), Cow<'static, str>> {
         if Self::validate(state, storage) {
             Ok(())
@@ -817,17 +816,13 @@ macro_rules! impl_component_param_tuple {
             fn try_validate(state: &Self::State, _storage: UnsafeStorageCell) -> Result<(), Cow<'static, str>> {
                 let ($($param,)*) = state;
                 $(
-                    if !$param::validate($param, _storage) {
-                        return Err(Cow::from(super::type_name::normalized::<$param>()));
-                    }
+                    $param::try_validate($param, _storage)?;
                 )*
                 Ok(())
             }
 
-            // This function is not used as we are overwriting the try_validate to call the individual param validate function
-            // instead of this one.
-            fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
-                true
+            fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
+                Self::try_validate(state, storage).is_ok()
             }
 
             fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
@@ -1117,11 +1112,9 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
         <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
-        // This will always return true, because this function is not used with tuples. The tuple implementations
-        // override the next level up, `try_validate`.
-        assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
+        assert!(!<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
-            Err(Cow::from("patina::uefi::boot_services::StandardBootServices")),
+            Err(Cow::from("patina::uefi::boot_services::StandardBootServices not available.")),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }
@@ -1345,5 +1338,79 @@ mod tests {
             <Commands as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
             "Commands conflicts with a previous Commands access."
         );
+    }
+
+    #[test]
+    fn test_nested_tuple_params() {
+        use crate::component::prelude::Service;
+
+        #[derive(IntoService)]
+        #[service(S1)]
+        struct S1;
+
+        #[derive(IntoService)]
+        #[service(S2)]
+        struct S2;
+
+        #[derive(IntoService)]
+        #[service(S3)]
+        struct S3;
+
+        #[derive(IntoService)]
+        #[service(S4)]
+        struct S4;
+
+        #[derive(IntoService)]
+        #[service(S5)]
+        struct S5;
+
+        #[derive(IntoService)]
+        #[service(S6)]
+        struct S6;
+
+        #[derive(IntoService)]
+        #[service(S7)]
+        struct S7;
+
+        type Arguments = (Service<S1>, Service<S2>, Service<S3>, Service<S4>, Service<S5>, Service<S6>);
+
+        struct Component;
+
+        static DID_RUN: AtomicBool = AtomicBool::new(false);
+        #[component]
+        impl Component {
+            fn entry_point(self, _args: Arguments, _other: Service<S7>) -> Result<()> {
+                DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        DID_RUN.store(false, core::sync::atomic::Ordering::SeqCst);
+        let mut storage = Storage::new();
+
+        storage.add_service(S1);
+        storage.add_service(S2);
+        storage.add_service(S3);
+        storage.add_service(S4);
+        storage.add_service(S5);
+        // S6 is intentionally unavailable.
+        storage.add_service(S7);
+
+        let mut component = Component.into_component();
+        assert!(component.initialize(&mut storage));
+
+        assert_eq!(component.run(&mut storage), Ok(false));
+        assert!(!DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            component.metadata().error_message(),
+            Some(Cow::from(alloc::format!(
+                "{} not available.",
+                crate::component::type_name::normalized::<Service<S6>>()
+            )))
+        );
+
+        storage.add_service(S6);
+        assert_eq!(component.run(&mut storage), Ok(true));
+        assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
     }
 }

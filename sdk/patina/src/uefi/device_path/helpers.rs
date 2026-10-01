@@ -85,7 +85,7 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
     // Use LocateDevicePath to find the handle with the best matching device path.
     // This is more efficient than enumerating all handles manually.
     let mut device_path_ptr =
-        core::ptr::from_mut::<DevicePath>(partial_path) as *mut u8 as *mut efi::protocols::device_path::Protocol;
+        core::ptr::from_mut::<DevicePath>(partial_path).cast::<u8>().cast::<efi::protocols::device_path::Protocol>();
     // SAFETY: device_path_ptr points to a valid device path from partial_path.
     let handle = unsafe {
         boot_services.locate_device_path(&efi::protocols::device_path::PROTOCOL_GUID, &raw mut device_path_ptr)
@@ -99,7 +99,7 @@ pub fn expand_device_path<B: BootServices>(boot_services: &B, partial_path: &mut
         .map_err(EfiError::from)?;
 
     // SAFETY: The device path pointer comes from a valid protocol interface.
-    let full_path = unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(full_dp_ptr) as *const u8) }
+    let full_path = unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(full_dp_ptr).cast::<u8>()) }
         .map_err(|_| EfiError::DeviceError)?;
 
     // Combine the full path prefix with the remaining partial path.
@@ -200,7 +200,7 @@ mod tests {
         // SAFETY: path_ref is a valid DevicePath reference and size() returns its exact byte length.
         let bytes: alloc::vec::Vec<u8> = unsafe {
             alloc::vec::Vec::from(core::slice::from_raw_parts(
-                std::ptr::from_ref(path_ref) as *const u8,
+                std::ptr::from_ref(path_ref).cast::<u8>(),
                 path_ref.size(),
             ))
         };
@@ -223,7 +223,7 @@ mod tests {
             unsafe {
                 // Read the current device path to find the HD node size
                 let current_ptr = *device_path_ptr as *const u8;
-                let header = current_ptr as *const efi::protocols::device_path::Protocol;
+                let header = current_ptr.cast::<efi::protocols::device_path::Protocol>();
                 let hd_node_size = u16::from_le_bytes([(*header).length[0], (*header).length[1]]) as usize;
 
                 // Advance past the HD node to point to FilePath

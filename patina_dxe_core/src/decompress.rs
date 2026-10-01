@@ -90,7 +90,7 @@ unsafe extern "efiapi" fn decompress(
     // Sizes are provided by caller and trusted to match the buffer allocations.
     let src = unsafe { core::slice::from_raw_parts(source_buffer as *const u8, source_size as usize) };
     // SAFETY: destination_buffer is validated as non-null and mutable access is exclusive.
-    let dst = unsafe { core::slice::from_raw_parts_mut(destination_buffer as *mut u8, destination_size as usize) };
+    let dst = unsafe { core::slice::from_raw_parts_mut(destination_buffer.cast::<u8>(), destination_size as usize) };
 
     match decompress_into_with_algo(src, dst, DecompressionAlgorithm::UefiDecompress) {
         Ok(()) => efi::Status::SUCCESS,
@@ -125,20 +125,20 @@ mod tests {
 
         // SAFETY: src is valid, dst_size is null under test, scratch_size is valid.
         let status = unsafe {
-            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, ptr::null_mut(), &raw mut scratch_size)
+            get_info(ptr::null_mut(), src.as_mut_ptr().cast::<c_void>(), 16, ptr::null_mut(), &raw mut scratch_size)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         // SAFETY: src and dst_size are valid, scratch_size is null under test.
         let status = unsafe {
-            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &raw mut dst_size, ptr::null_mut())
+            get_info(ptr::null_mut(), src.as_mut_ptr().cast::<c_void>(), 16, &raw mut dst_size, ptr::null_mut())
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         let mut small = [0u8; 4];
         // SAFETY: all pointers reference valid stack values.
         let status = unsafe {
-            get_info(ptr::null_mut(), small.as_mut_ptr() as *mut c_void, 4, &raw mut dst_size, &raw mut scratch_size)
+            get_info(ptr::null_mut(), small.as_mut_ptr().cast::<c_void>(), 4, &raw mut dst_size, &raw mut scratch_size)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
@@ -147,7 +147,7 @@ mod tests {
         let status = unsafe {
             get_info(
                 ptr::null_mut(),
-                undersized.as_mut_ptr() as *mut c_void,
+                undersized.as_mut_ptr().cast::<c_void>(),
                 16,
                 &raw mut dst_size,
                 &raw mut scratch_size,
@@ -164,7 +164,7 @@ mod tests {
 
         // SAFETY: all pointers reference valid stack values and src_size matches the buffer.
         let status = unsafe {
-            get_info(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, &raw mut dst_size, &raw mut scratch_size)
+            get_info(ptr::null_mut(), src.as_mut_ptr().cast::<c_void>(), 16, &raw mut dst_size, &raw mut scratch_size)
         };
         assert_eq!(status, efi::Status::SUCCESS);
         assert_eq!(dst_size, 100);
@@ -178,13 +178,13 @@ mod tests {
 
         // SAFETY: source_buffer is null under test.
         let status = unsafe {
-            decompress(ptr::null_mut(), ptr::null_mut(), 16, dst.as_mut_ptr() as *mut c_void, 8, ptr::null_mut(), 0)
+            decompress(ptr::null_mut(), ptr::null_mut(), 16, dst.as_mut_ptr().cast::<c_void>(), 8, ptr::null_mut(), 0)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
         // SAFETY: destination_buffer is null under test.
         let status = unsafe {
-            decompress(ptr::null_mut(), src.as_mut_ptr() as *mut c_void, 16, ptr::null_mut(), 8, ptr::null_mut(), 0)
+            decompress(ptr::null_mut(), src.as_mut_ptr().cast::<c_void>(), 16, ptr::null_mut(), 8, ptr::null_mut(), 0)
         };
         assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
@@ -193,9 +193,9 @@ mod tests {
         let status = unsafe {
             decompress(
                 ptr::null_mut(),
-                malformed.as_mut_ptr() as *mut c_void,
+                malformed.as_mut_ptr().cast::<c_void>(),
                 4,
-                dst.as_mut_ptr() as *mut c_void,
+                dst.as_mut_ptr().cast::<c_void>(),
                 8,
                 ptr::null_mut(),
                 0,
@@ -213,9 +213,9 @@ mod tests {
         let status = unsafe {
             decompress(
                 ptr::null_mut(),
-                src.as_mut_ptr() as *mut c_void,
+                src.as_mut_ptr().cast::<c_void>(),
                 16,
-                dst.as_mut_ptr() as *mut c_void,
+                dst.as_mut_ptr().cast::<c_void>(),
                 0,
                 ptr::null_mut(),
                 0,

@@ -165,7 +165,7 @@ impl FixedSizeBlockAllocator {
         }
 
         // Interpret the first part of the provided region as an AllocatorListNode
-        let alloc_node_ptr = new_region.as_ptr() as *mut AllocatorListNode;
+        let alloc_node_ptr = new_region.as_ptr().cast::<AllocatorListNode>();
 
         if !alloc_node_ptr.is_aligned() {
             debug_assert!(false, "FSB expanded with memory region unaligned to AllocatorListNode.");
@@ -293,7 +293,7 @@ impl FixedSizeBlockAllocator {
                     !(size_of::<BlockListNode>() > block_size || align_of::<BlockListNode>() > block_size),
                     "FSB deallocating block too small to store BlockListNode."
                 );
-                let new_node_ptr = ptr.as_ptr() as *mut BlockListNode;
+                let new_node_ptr = ptr.as_ptr().cast::<BlockListNode>();
                 // SAFETY: new_node_ptr points to memory returned by alloc for this layout.
                 unsafe {
                     new_node_ptr.write(new_node);
@@ -689,7 +689,7 @@ impl SpinLockedFixedSizeBlockAllocator {
 unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match self.allocate(layout) {
-            Ok(alloc) => alloc.as_ptr() as *mut u8,
+            Ok(alloc) => alloc.as_ptr().cast::<u8>(),
             Err(_) => core::ptr::null_mut(),
         }
     }
@@ -1220,7 +1220,7 @@ mod tests {
                 );
 
                 let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-                let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
+                let allocation = fsb.allocate(layout).unwrap().as_ptr().cast::<u8>();
                 assert!(fsb.lock().allocators.is_some());
                 assert!((allocation as u64) > base);
                 assert!((allocation as u64) < base + 0x400000);
@@ -1300,7 +1300,8 @@ mod tests {
                 unsafe { fsb.dealloc(allocation, layout) };
                 let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
                     fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
-                ) as *mut u8;
+                )
+                .cast::<u8>();
                 assert_eq!(free_block_ptr, allocation);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
@@ -1311,7 +1312,8 @@ mod tests {
                 unsafe { fsb.dealloc(allocation, layout) };
                 let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
                     fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
-                ) as *mut u8;
+                )
+                .cast::<u8>();
                 assert_eq!(free_block_ptr, allocation);
             });
         });
@@ -1343,7 +1345,8 @@ mod tests {
                 unsafe { fsb.deallocate(allocation, layout) };
                 let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
                     fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
-                ) as *mut u8;
+                )
+                .cast::<u8>();
                 assert_eq!(free_block_ptr, allocation_ptr);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
@@ -1354,7 +1357,8 @@ mod tests {
                 unsafe { fsb.deallocate(allocation, layout) };
                 let free_block_ptr = std::ptr::from_mut::<BlockListNode>(
                     fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap(),
-                ) as *mut u8;
+                )
+                .cast::<u8>();
                 assert_eq!(free_block_ptr, allocation_ptr);
             });
         });
@@ -1733,7 +1737,7 @@ mod tests {
 
             // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
-                fsb.free_pages(ptr as *mut u8 as usize, 0x4).unwrap();
+                fsb.free_pages(ptr.cast::<u8>() as usize, 0x4).unwrap();
             }
 
             //after this free, the basic memory map of the FSB should look like:
@@ -1792,11 +1796,11 @@ mod tests {
 
             // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
-                fsb.free_pages(ptr1 as *mut u8 as usize, 0x4).unwrap();
+                fsb.free_pages(ptr1.cast::<u8>() as usize, 0x4).unwrap();
             }
             // SAFETY: free_pages uses a valid test allocation pointer and page count.
             unsafe {
-                fsb.free_pages(ptr as *mut u8 as usize, 0x104).unwrap();
+                fsb.free_pages(ptr.cast::<u8>() as usize, 0x104).unwrap();
             }
 
             //after this free, the basic memory map of the FSB should look like:

@@ -583,7 +583,7 @@ fn get_module_guid_from_handle(handle: efi::Handle) -> Result<BinaryGuid, efi::S
             unsafe {
                 let guid_ptr = (loaded_image.file_path as *const u8)
                     .add(mem::size_of::<efi::protocols::device_path::Protocol>())
-                    as *const BinaryGuid;
+                    .cast::<BinaryGuid>();
                 guid = ptr::read_unaligned(guid_ptr);
             }
         }
@@ -910,7 +910,7 @@ mod tests {
             },
             guid: file_guid,
         });
-        let node_ptr = alloc::boxed::Box::into_raw(node) as *mut efi::protocols::device_path::Protocol;
+        let node_ptr = alloc::boxed::Box::into_raw(node).cast::<efi::protocols::device_path::Protocol>();
 
         let loaded_image = alloc::boxed::Box::new(efi::protocols::loaded_image::Protocol {
             revision: efi::protocols::loaded_image::REVISION,
@@ -927,7 +927,7 @@ mod tests {
             image_data_type: efi::BOOT_SERVICES_DATA,
             unload: None,
         });
-        let loaded_image_ptr = alloc::boxed::Box::into_raw(loaded_image) as *mut core::ffi::c_void;
+        let loaded_image_ptr = alloc::boxed::Box::into_raw(loaded_image).cast::<core::ffi::c_void>();
 
         let (handle, _) = PROTOCOL_DB
             .install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, loaded_image_ptr)
@@ -1167,7 +1167,7 @@ mod tests {
                 image_handle,
                 driver_binding_handle: ptr::null_mut(),
             });
-            let driver_binding_ptr = alloc::boxed::Box::into_raw(driver_binding) as *mut core::ffi::c_void;
+            let driver_binding_ptr = alloc::boxed::Box::into_raw(driver_binding).cast::<core::ffi::c_void>();
             let (db_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(None, efi::protocols::driver_binding::PROTOCOL_GUID, driver_binding_ptr)
                 .unwrap();

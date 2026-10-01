@@ -257,7 +257,7 @@ fn fixup_hob_list(
         // Look for the DXE core memory allocation hob and modify it.
         if hob_header.r#type == hob::MEMORY_ALLOCATION {
             // SAFETY: The hob type has been verified, switching to the actual type.
-            let alloc_hob = unsafe { (next_hob as *mut hob::MemoryAllocationModule).as_mut() }
+            let alloc_hob = unsafe { next_hob.cast::<hob::MemoryAllocationModule>().as_mut() }
                 .ok_or("Failed to read memory allocation HOB")?;
 
             if alloc_hob.module_name == base_guids::DXE_CORE_ID {

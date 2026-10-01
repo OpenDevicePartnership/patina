@@ -27,7 +27,7 @@ impl<'a, T, B: BootServices> BootServicesBox<'a, T, B> {
     /// Create a new `BootServicesBox` containing the provided value
     pub fn new(value: T, memory_type: EfiMemoryType, boot_services: &'a B) -> Self {
         let size = mem::size_of_val(&value);
-        let ptr = boot_services.allocate_pool(memory_type, size).unwrap() as *mut T;
+        let ptr = boot_services.allocate_pool(memory_type, size).unwrap().cast::<T>();
         // SAFETY: ptr was just allocated with the exact size needed for T.
         // The pointer is valid and uninitialized, making ptr::write safe.
         unsafe { ptr::write(ptr, value) };
@@ -79,7 +79,7 @@ impl<'a, T, B: BootServices> BootServicesBox<'a, [T], B> {
 impl<T: ?Sized, B: BootServices + ?Sized> Drop for BootServicesBox<'_, T, B> {
     fn drop(&mut self) {
         // SAFETY: The pointer was allocated by BootServicesBox and is valid.
-        let _ = unsafe { self.boot_services.free_pool(self.ptr as *mut u8) };
+        let _ = unsafe { self.boot_services.free_pool(self.ptr.cast::<u8>()) };
     }
 }
 

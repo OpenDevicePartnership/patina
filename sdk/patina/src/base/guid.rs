@@ -1088,13 +1088,13 @@ mod tests {
             Guid::Owned(_) => panic!("Expected Borrowed variant"),
         };
 
-        assert_eq!(r_efi_ptr as *const u8, patina_ptr as *const u8);
+        assert_eq!(r_efi_ptr.cast::<u8>(), patina_ptr.cast::<u8>());
 
         // SAFETY: Both pointers are valid GUID references with a known size of 16 bytes.
         // The memory representation is being read to verify binary compatibility.
         unsafe {
-            let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr as *const u8, 16);
-            let patina_slice = core::slice::from_raw_parts(patina_ptr as *const u8, 16);
+            let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr.cast::<u8>(), 16);
+            let patina_slice = core::slice::from_raw_parts(patina_ptr.cast::<u8>(), 16);
             assert_eq!(r_efi_slice, patina_slice);
         }
     }
@@ -1132,8 +1132,8 @@ mod tests {
         // SAFETY: Both pointers reference valid GUID structures of known size (16 bytes).
         // The memory representation is being read to verify binary compatibility.
         unsafe {
-            let patina_slice = core::slice::from_raw_parts(patina_ptr as *const u8, 16);
-            let r_efi_slice = core::slice::from_raw_parts(&raw const r_efi_guid as *const u8, 16);
+            let patina_slice = core::slice::from_raw_parts(patina_ptr.cast::<u8>(), 16);
+            let r_efi_slice = core::slice::from_raw_parts((&raw const r_efi_guid).cast::<u8>(), 16);
             assert_eq!(patina_slice, r_efi_slice);
         }
     }
@@ -1229,7 +1229,7 @@ mod tests {
         // The memory representation is being read to verify it matches the expected bytes.
         unsafe {
             let r_efi_ptr = &raw const r_efi_guid;
-            let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr as *const u8, 16);
+            let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr.cast::<u8>(), 16);
             assert_eq!(r_efi_slice, expected_bytes);
         }
     }
@@ -1281,8 +1281,8 @@ mod tests {
         let binary_guid = BinaryGuid(efi_guid);
 
         // Verify the memory layout is identical
-        let efi_ptr = &raw const efi_guid as *const u8;
-        let binary_ptr = &raw const binary_guid as *const u8;
+        let efi_ptr = (&raw const efi_guid).cast::<u8>();
+        let binary_ptr = (&raw const binary_guid).cast::<u8>();
 
         // SAFETY: Both pointers point to valid GUID structures with repr(transparent) layout.
         // 16 bytes is being read to verify binary compatibility.
@@ -1746,7 +1746,7 @@ mod tests {
         let efi_guid_ptr = &raw const binary_guid.0;
 
         // Pointers should be identical
-        assert_eq!(guid_ptr as *const u8, efi_guid_ptr as *const u8);
+        assert_eq!(guid_ptr.cast::<u8>(), efi_guid_ptr.cast::<u8>());
 
         // 6: Check transmutation is as expected
         //    This doesn't perform an actual transmute, but checks that the memory
@@ -1757,8 +1757,8 @@ mod tests {
         // SAFETY: Both pointers reference valid GUID structures. \16 bytes from each to verify that
         // BinaryGuid maintains binary compatibility with crate::standard::efi::Guid.
         unsafe {
-            let efi_bytes = core::slice::from_raw_parts(&raw const efi_guid as *const u8, 16);
-            let binary_bytes = core::slice::from_raw_parts(&raw const binary_guid_from_efi as *const u8, 16);
+            let efi_bytes = core::slice::from_raw_parts((&raw const efi_guid).cast::<u8>(), 16);
+            let binary_bytes = core::slice::from_raw_parts((&raw const binary_guid_from_efi).cast::<u8>(), 16);
             assert_eq!(efi_bytes, binary_bytes);
         }
 

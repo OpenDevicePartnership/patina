@@ -227,7 +227,7 @@ extern "efiapi" fn get_memory_space_map(
         // SAFETY: caller must ensure that number_of_descriptors and memory_space_map are valid pointers. They are
         // null-checked above.
         unsafe {
-            memory_space_map.write_unaligned(allocation as *mut dxe_services::MemorySpaceDescriptor);
+            memory_space_map.write_unaligned(allocation.cast::<dxe_services::MemorySpaceDescriptor>());
             number_of_descriptors.write_unaligned(descriptors.len());
             slice::from_raw_parts_mut(memory_space_map.read_unaligned(), descriptors.len())
                 .copy_from_slice(&descriptors);
@@ -374,7 +374,7 @@ extern "efiapi" fn get_io_space_map(
         Ok(allocation) =>
         // SAFETY: caller must ensure that number_of_descriptors and io_space_map are valid pointers. They are null-checked above.
         unsafe {
-            io_space_map.write_unaligned(allocation as *mut dxe_services::IoSpaceDescriptor);
+            io_space_map.write_unaligned(allocation.cast::<dxe_services::IoSpaceDescriptor>());
             number_of_descriptors.write_unaligned(descriptors.len());
             slice::from_raw_parts_mut(io_space_map.read_unaligned(), descriptors.len()).copy_from_slice(&descriptors);
             efi::Status::SUCCESS
@@ -416,7 +416,7 @@ impl<P: PlatformInfo> Core<P> {
         // SAFETY: dxe_services_system_table is a local value, its byte representation is valid for hashing.
         let crc32 = unsafe {
             crc32::calculate_crc32(from_raw_parts(
-                dxe_services_system_table_ptr as *const u8,
+                dxe_services_system_table_ptr.cast::<u8>(),
                 mem::size_of::<dxe_services::DxeServicesTable>(),
             ))
         };
@@ -426,7 +426,7 @@ impl<P: PlatformInfo> Core<P> {
 
         let _ = config_tables::core_install_configuration_table(
             dxe_services::DXE_SERVICES_TABLE_GUID.into_inner(),
-            Box::into_raw(dxe_services_system_table) as *mut c_void,
+            Box::into_raw(dxe_services_system_table).cast::<c_void>(),
             system_table,
         );
     }
@@ -442,7 +442,7 @@ impl<P: PlatformInfo> Core<P> {
 
         // construct a FirmwareVolume to verify sanity
         // SAFETY: caller must ensure that firmware_volume_header is a valid pointer. It is null-checked above.
-        let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
+        let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header.cast::<u8>(), size) };
         if let Err(err) = VolumeRef::new(fv_slice) {
             return err.into();
         }
@@ -1490,7 +1490,7 @@ mod tests {
             assert_eq!(out_slice, expected.as_slice());
 
             // SAFETY: `out_ptr` was allocated by `get_memory_space_map` and is valid pool memory.
-            assert!(unsafe { crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void) }.is_ok());
+            assert!(unsafe { crate::allocator::core_free_pool(out_ptr.cast::<core::ffi::c_void>()) }.is_ok());
         });
     }
 
@@ -1526,7 +1526,7 @@ mod tests {
             assert_eq!(out_slice, expected.as_slice());
 
             // SAFETY: `out_ptr` was allocated by `get_memory_space_map` and is valid pool memory.
-            assert!(unsafe { crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void) }.is_ok());
+            assert!(unsafe { crate::allocator::core_free_pool(out_ptr.cast::<core::ffi::c_void>()) }.is_ok());
         });
     }
 
@@ -1583,7 +1583,7 @@ mod tests {
             assert_eq!(out_slice, expected.as_slice());
 
             // SAFETY: `out_ptr` was allocated by `get_io_space_map` and is valid pool memory.
-            assert!(unsafe { crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void) }.is_ok());
+            assert!(unsafe { crate::allocator::core_free_pool(out_ptr.cast::<core::ffi::c_void>()) }.is_ok());
         });
     }
 
@@ -1615,7 +1615,7 @@ mod tests {
             assert_eq!(out_slice, expected.as_slice());
 
             // SAFETY: `out_ptr` was allocated by `get_io_space_map` and is valid pool memory.
-            assert!(unsafe { crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void) }.is_ok());
+            assert!(unsafe { crate::allocator::core_free_pool(out_ptr.cast::<core::ffi::c_void>()) }.is_ok());
         });
     }
 
@@ -2258,7 +2258,7 @@ mod tests {
             let bad_buf: [u8; 16] = [0u8; 16];
             let mut out_handle: efi::Handle = core::ptr::null_mut();
             let s = MockCore::process_firmware_volume_efiapi(
-                bad_buf.as_ptr() as *const core::ffi::c_void,
+                bad_buf.as_ptr().cast::<core::ffi::c_void>(),
                 bad_buf.len(),
                 &raw mut out_handle,
             );
@@ -2280,7 +2280,7 @@ mod tests {
             CORE.override_instance();
             let mut out_handle: efi::Handle = core::ptr::null_mut();
             let s = MockCore::process_firmware_volume_efiapi(
-                fv.as_ptr() as *const core::ffi::c_void,
+                fv.as_ptr().cast::<core::ffi::c_void>(),
                 fv.len(),
                 &raw mut out_handle,
             );
@@ -2338,7 +2338,7 @@ mod tests {
             // SAFETY: copy is a local value. Creating a slice from its pointer and size is valid.
             let crc = patina::crc32::calculate_crc32(unsafe {
                 core::slice::from_raw_parts(
-                    (&raw const copy) as *const u8,
+                    (&raw const copy).cast::<u8>(),
                     core::mem::size_of::<dxe_services::DxeServicesTable>(),
                 )
             });

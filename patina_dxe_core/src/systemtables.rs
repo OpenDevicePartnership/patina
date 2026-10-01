@@ -49,7 +49,7 @@ impl EfiRuntimeServicesTable {
 
         // SAFETY: table_copy is a valid, initialized RuntimeServices value on the stack.
         let tbl_slice =
-            unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::RuntimeServices>()) };
+            unsafe { from_raw_parts((&raw const table_copy).cast::<u8>(), size_of::<efi::RuntimeServices>()) };
         table_copy.hdr.crc32 = crc32::calculate_crc32(tbl_slice);
 
         // SAFETY: structure construction ensures pointer is valid.
@@ -249,7 +249,7 @@ impl EfiBootServicesTable {
         table_copy.hdr.crc32 = 0;
 
         // SAFETY: table_copy is a valid, initialized BootServices value on the stack.
-        let tbl_slice = unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::BootServices>()) };
+        let tbl_slice = unsafe { from_raw_parts((&raw const table_copy).cast::<u8>(), size_of::<efi::BootServices>()) };
         table_copy.hdr.crc32 = crc32::calculate_crc32(tbl_slice);
 
         // SAFETY: structure construction ensures pointer is valid.
@@ -739,7 +739,7 @@ impl EfiSystemTable {
         table_copy.hdr.crc32 = 0;
 
         // SAFETY: table_copy is a valid, initialized SystemTable value on the stack.
-        let st_slice = unsafe { from_raw_parts(&raw const table_copy as *const u8, size_of::<efi::SystemTable>()) };
+        let st_slice = unsafe { from_raw_parts((&raw const table_copy).cast::<u8>(), size_of::<efi::SystemTable>()) };
         table_copy.hdr.crc32 = crc32::calculate_crc32(st_slice);
 
         // SAFETY: structure construction ensures pointer is valid.

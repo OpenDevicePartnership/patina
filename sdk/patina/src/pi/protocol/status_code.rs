@@ -91,7 +91,7 @@ impl StatusCodeProtocol {
         };
 
         let mut data_buffer = [any_as_u8_slice(&header), any_as_u8_slice(&data)].concat();
-        let data_ptr: *mut EfiStatusCodeData = data_buffer.as_mut_ptr() as *mut EfiStatusCodeData;
+        let data_ptr: *mut EfiStatusCodeData = data_buffer.as_mut_ptr().cast::<EfiStatusCodeData>();
 
         let status = (self.report_status_code)(status_code_type, status_code_value, instance, caller_id, data_ptr);
 
@@ -115,5 +115,5 @@ impl StatusCodeProtocol {
 #[cfg(feature = "alloc")]
 fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     // SAFETY: P is a ref thus a valid pointer and since the type is sized, the memory boundary of this type is known.
-    unsafe { slice::from_raw_parts(core::ptr::from_ref::<T>(p) as *const u8, mem::size_of::<T>()) }
+    unsafe { slice::from_raw_parts(core::ptr::from_ref::<T>(p).cast::<u8>(), mem::size_of::<T>()) }
 }

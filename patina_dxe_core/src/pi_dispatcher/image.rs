@@ -325,7 +325,7 @@ impl PrivateImageData {
             .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
             let (_, device_path_size) =
-                device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
+                device_path_node_count(device_path.cast::<efi::protocols::device_path::Protocol>())?;
 
             // Adjust the split index to exclude the END node of the device path, so the true file path does not start with END.
             let split_idx =
@@ -341,7 +341,7 @@ impl PrivateImageData {
         // The `file_path` field in the loaded image protocol is really just the filename (more specifically the remaining portion
         // of the device path in relation to the parent's device path)
         self.image_info.file_path =
-            Box::into_raw(copy_device_path_to_boxed_slice(fp)?) as *mut efi::protocols::device_path::Protocol;
+            Box::into_raw(copy_device_path_to_boxed_slice(fp)?).cast::<efi::protocols::device_path::Protocol>();
 
         // The `image_device_path` field is the `loaded_image_device_path` protocol, which is the full device path.
         self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path.as_ptr())?);
@@ -492,7 +492,7 @@ impl ImageData {
             .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE_ID as FFS GUID.");
 
         let mut image_info = empty_image_info();
-        image_info.system_table = core::ptr::from_mut(system_table) as *mut efi::SystemTable;
+        image_info.system_table = core::ptr::from_mut(system_table).cast::<efi::SystemTable>();
         image_info.image_base = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
         image_info.image_size = dxe_core_hob.alloc_descriptor.memory_length;
 
@@ -1417,7 +1417,7 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
     // Get the firmware volume protocol
     let fv_ptr = PROTOCOL_DB
         .get_interface_for_handle(handle, pi::protocol::firmware_volume::PROTOCOL_GUID.into_inner())?
-        as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol;
+        .cast::<pi::protocol::firmware_volume::FirmwareVolumeProtocol>();
     if fv_ptr.is_null() {
         debug_assert!(!fv_ptr.is_null(), "ERROR: get_interface_for_handle returned NULL ptr for FirmwareVolume!");
         return Err(EfiError::InvalidParameter);
@@ -1427,7 +1427,7 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
 
     // Read image from the firmware file
     let mut buffer: *mut u8 = core::ptr::null_mut();
-    let buffer_ptr: *mut *mut c_void = &raw mut buffer as *mut *mut c_void;
+    let buffer_ptr: *mut *mut c_void = (&raw mut buffer).cast::<*mut c_void>();
     let mut buffer_size = 0;
     let mut authentication_status = 0;
     let authentication_status_ptr = &mut authentication_status;
@@ -1504,7 +1504,7 @@ fn get_file_buffer_from_load_protocol(
     let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
     // SAFETY: load_file is obtained from the protocol database and is a valid load_file protocol pointer.
     let load_file =
-        unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(EfiError::Unsupported)? };
+        unsafe { load_file.cast::<efi::protocols::load_file::Protocol>().as_mut().ok_or(EfiError::Unsupported)? };
 
     //determine buffer size.
     let mut buffer_size = 0;
@@ -1533,7 +1533,7 @@ fn get_file_buffer_from_load_protocol(
             remaining_file_path.as_ptr(),
             boot_policy.into(),
             core::ptr::addr_of_mut!(buffer_size),
-            file_buffer.as_mut_ptr() as *mut c_void,
+            file_buffer.as_mut_ptr().cast::<c_void>(),
         )
     };
 
@@ -1554,7 +1554,7 @@ fn authenticate_image(
     // which will also check if the pointer is null before allowing access.
     let security2_protocol = unsafe {
         match PROTOCOL_DB.locate_protocol(pi::protocol::security2::PROTOCOL_GUID.into_inner()) {
-            Ok(protocol) => (protocol as *mut pi::protocol::security2::Security2Protocol).as_ref(),
+            Ok(protocol) => protocol.cast::<pi::protocol::security2::Security2Protocol>().as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -1565,7 +1565,7 @@ fn authenticate_image(
     // which will also check if the pointer is null before allowing access.
     let security_protocol = unsafe {
         match PROTOCOL_DB.locate_protocol(pi::protocol::security::PROTOCOL_GUID.into_inner()) {
-            Ok(protocol) => (protocol as *mut pi::protocol::security::SecurityProtocol).as_ref(),
+            Ok(protocol) => protocol.cast::<pi::protocol::security::SecurityProtocol>().as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -1577,7 +1577,7 @@ fn authenticate_image(
         security_status = (security2.file_authentication)(
             core::ptr::from_ref(security2).cast_mut(),
             device_path_raw,
-            image.as_ptr() as *const _ as *mut c_void,
+            image.as_ptr().cast::<c_void>().cast_mut(),
             image.len(),
             boot_policy,
         );
@@ -2344,7 +2344,7 @@ mod tests {
                 0x4,  //length[0]
                 0x00, //length[1]
             ];
-            let device_path_ptr = device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
+            let device_path_ptr = device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
             // SAFETY: device_path_bytes is a non-null device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -2361,7 +2361,7 @@ mod tests {
         let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
         // SAFETY: Test mock - creating a mutable slice from the provided buffer pointer.
         unsafe {
-            let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
+            let slice = core::slice::from_raw_parts_mut(buffer.cast::<u8>(), *buffer_size);
             let read_bytes = test_file.read(slice).unwrap();
             buffer_size.write(read_bytes);
         }
@@ -2395,7 +2395,7 @@ mod tests {
         // SAFETY: Test mock - copying file info structure to caller's buffer if large enough.
         unsafe {
             if *size >= (*file_info_ptr).size.try_into().unwrap() {
-                core::ptr::copy(file_info_ptr, buffer as *mut efi::protocols::file::Info, 1);
+                core::ptr::copy(file_info_ptr, buffer.cast::<efi::protocols::file::Info>(), 1);
             } else {
                 status = efi::Status::BUFFER_TOO_SMALL;
             }
@@ -2529,24 +2529,24 @@ mod tests {
             let handle = core_install_protocol_interface(
                 None,
                 efi::protocols::simple_file_system::PROTOCOL_GUID,
-                protocol_ptr as *mut c_void,
+                protocol_ptr.cast::<c_void>(),
             )
             .unwrap();
 
             //deliberate leak
-            let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
-                as *mut efi::protocols::device_path::Protocol;
+            let root_device_path_ptr =
+                Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)).cast::<efi::protocols::device_path::Protocol>();
 
             core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
-                root_device_path_ptr as *mut c_void,
+                root_device_path_ptr.cast::<c_void>(),
             )
             .unwrap();
 
             let mut full_device_path_bytes = FULL_DEVICE_PATH_BYTES;
 
-            let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
+            let device_path_ptr = full_device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
             // SAFETY: full_device_path_bytes is a valid device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -2576,7 +2576,7 @@ mod tests {
                         buffer_size.write(test_file.metadata().unwrap().len() as usize);
                         status = efi::Status::BUFFER_TOO_SMALL;
                     } else {
-                        let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
+                        let slice = core::slice::from_raw_parts_mut(buffer.cast::<u8>(), *buffer_size);
                         let read_bytes = test_file.read(slice).unwrap();
                         buffer_size.write(read_bytes);
                         status = efi::Status::SUCCESS;
@@ -2591,24 +2591,24 @@ mod tests {
             let handle = core_install_protocol_interface(
                 None,
                 efi::protocols::load_file::PROTOCOL_GUID,
-                protocol_ptr as *mut c_void,
+                protocol_ptr.cast::<c_void>(),
             )
             .unwrap();
 
             //deliberate leak
-            let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
-                as *mut efi::protocols::device_path::Protocol;
+            let root_device_path_ptr =
+                Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)).cast::<efi::protocols::device_path::Protocol>();
 
             core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
-                root_device_path_ptr as *mut c_void,
+                root_device_path_ptr.cast::<c_void>(),
             )
             .unwrap();
 
             let mut full_device_path_bytes = FULL_DEVICE_PATH_BYTES;
 
-            let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
+            let device_path_ptr = full_device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
             // SAFETY: full_device_path_bytes is a valid device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -3308,7 +3308,7 @@ mod tests {
 
             // validate the entire device path is correct
             let (_, len) =
-                device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
+                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
                     .unwrap();
             // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
@@ -3375,7 +3375,7 @@ mod tests {
 
             // validate the entire device path is correct
             let (_, len) =
-                device_path_node_count(private_info.get_file_path() as *mut efi::protocols::device_path::Protocol)
+                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
                     .unwrap();
             // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
             let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
@@ -3428,12 +3428,15 @@ mod tests {
         let mut hobs = Vec::new();
         // SAFETY: Taking a byte view of a stack-allocated HOB struct for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(&raw const ma_hob as *const u8, core::mem::size_of::<MemoryAllocationModule>())
+            core::slice::from_raw_parts(
+                (&raw const ma_hob).cast::<u8>(),
+                core::mem::size_of::<MemoryAllocationModule>(),
+            )
         });
         // SAFETY: Taking a byte view of a stack-allocated HOB header for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
             core::slice::from_raw_parts(
-                &raw const end_hob as *const u8,
+                (&raw const end_hob).cast::<u8>(),
                 core::mem::size_of::<patina::pi::hob::HobHeader>(),
             )
         });

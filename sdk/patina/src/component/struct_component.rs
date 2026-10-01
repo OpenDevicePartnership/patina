@@ -203,7 +203,7 @@ mod tests {
         assert!(test_struct.run(&mut storage).is_ok_and(|res| !res));
         assert_eq!(
             test_struct.metadata().error_message(),
-            Some(Cow::from("patina::component::params::ConfigMut<u32>"))
+            Some(Cow::from("patina::component::params::ConfigMut<u32> not available."))
         );
 
         let mut test_struct = TestStructFail { x: 5 }.into_component();

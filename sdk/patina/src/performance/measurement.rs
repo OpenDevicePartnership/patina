@@ -50,7 +50,7 @@ impl CallerIdentifier {
             }
             // SAFETY: The safety contract of this function ensures that `ptr` is a valid pointer to a GUID.
             // `validate_guid` performs basic validations but cannot guarantee safety.
-            Some(CallerIdentifier::Guid(unsafe { *(ptr as *const efi::Guid) }))
+            Some(CallerIdentifier::Guid(unsafe { *ptr.cast::<efi::Guid>() }))
         } else {
             Some(CallerIdentifier::Handle(ptr.cast_mut()))
         }
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_validate_guid_caller_identifier() {
         let valid_guid = efi::Guid::from_bytes(&[1; 16]);
-        let valid_guid_ptr = &raw const valid_guid as *const c_void;
+        let valid_guid_ptr = (&raw const valid_guid).cast::<c_void>();
 
         #[allow(clippy::manual_dangling_ptr)]
         let invalid_guid_ptr = 0x1_usize as *const c_void; // Misaligned pointer.

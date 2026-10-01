@@ -41,7 +41,7 @@ impl<T> ArchProtocolPtr<T> {
             log_debug_assert!("Attempted to initialize ArchProtocolPtr more than once.");
             return;
         }
-        let _ = self.0.call_once(|| ptr as *mut T);
+        let _ = self.0.call_once(|| ptr.cast::<T>());
     }
 }
 
@@ -77,7 +77,7 @@ unsafe extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, c
     }
     // SAFETY: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
-        let buffer = from_raw_parts(data as *mut u8, data_size);
+        let buffer = from_raw_parts(data.cast::<u8>(), data_size);
         crc_32.write_unaligned(crc32::calculate_crc32(buffer));
     }
 
@@ -204,7 +204,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // Disable the timer
     match PROTOCOL_DB.locate_protocol(protocol::timer::PROTOCOL_GUID.into_inner()) {
         Ok(timer_arch_ptr) => {
-            let timer_arch_ptr = timer_arch_ptr as *mut protocol::timer::TimerProtocol;
+            let timer_arch_ptr = timer_arch_ptr.cast::<protocol::timer::TimerProtocol>();
             // SAFETY: timer_arch_ptr comes from locate_protocol and is considered valid based on the successful
             // return status from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
@@ -234,7 +234,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // Initialize StatusCode and send EFI_SW_BS_PC_EXIT_BOOT_SERVICES
     match PROTOCOL_DB.locate_protocol(protocol::status_code::PROTOCOL_GUID.into_inner()) {
         Ok(status_code_ptr) => {
-            let status_code_ptr = status_code_ptr as *mut protocol::status_code::StatusCodeProtocol;
+            let status_code_ptr = status_code_ptr.cast::<protocol::status_code::StatusCodeProtocol>();
             // SAFETY: status_code_ptr comes from locate_protocol and is considered valid based on the successful
             // return status from locate_protocol.
             let status_code_protocol = unsafe { &*(status_code_ptr) };
@@ -264,7 +264,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     }
     match PROTOCOL_DB.locate_protocol(protocol::runtime::PROTOCOL_GUID.into_inner()) {
         Ok(rt_arch_ptr) => {
-            let rt_arch_ptr = rt_arch_ptr as *mut protocol::runtime::RuntimeProtocol;
+            let rt_arch_ptr = rt_arch_ptr.cast::<protocol::runtime::RuntimeProtocol>();
             // SAFETY: rt_arch_ptr comes from locate_protocol and is considered valid based on the successful
             // return status from locate_protocol.
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };

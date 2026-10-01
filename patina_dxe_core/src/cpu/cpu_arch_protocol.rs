@@ -69,7 +69,7 @@ fn get_impl_ref<'a>(this: *const CpuArchProtocol) -> Option<&'a EfiCpuArchProtoc
     // SAFETY: `this` is non-null and points to an EfiCpuArchProtocolImpl instance installed by
     //         Patina via `Box::leak`, so it is properly aligned and valid for the protocol's
     //         lifetime.
-    Some(unsafe { &*(this as *const EfiCpuArchProtocolImpl) })
+    Some(unsafe { &*this.cast::<EfiCpuArchProtocolImpl>() })
 }
 
 fn get_impl_ref_mut<'a>(this: *mut CpuArchProtocol) -> Option<&'a mut EfiCpuArchProtocolImpl> {
@@ -80,7 +80,7 @@ fn get_impl_ref_mut<'a>(this: *mut CpuArchProtocol) -> Option<&'a mut EfiCpuArch
     // SAFETY: `this` is non-null and points to an EfiCpuArchProtocolImpl instance installed by
     //         Patina via `Box::leak`, so it is properly aligned and valid for the protocol's
     //         lifetime.
-    Some(unsafe { &mut *(this as *mut EfiCpuArchProtocolImpl) })
+    Some(unsafe { &mut *this.cast::<EfiCpuArchProtocolImpl>() })
 }
 
 // EfiCpuArchProtocolImpl function pointers implementations.

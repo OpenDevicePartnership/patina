@@ -114,7 +114,7 @@ where
                 // `allocate_pool` safety contract.
                 unsafe {
                     alloc_info_ptr.write(allocation_info);
-                    buffer.write((ptr.as_ptr() as *mut u8 as usize + offset) as *mut c_void);
+                    buffer.write((ptr.as_ptr().cast::<u8>() as usize + offset) as *mut c_void);
                 }
                 Ok(())
             }
@@ -498,7 +498,7 @@ mod tests {
                 let ua = UefiAllocator::new(fsb, efi::RUNTIME_SERVICES_DATA);
 
                 let buffer = ua.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
-                let buffer_address = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
+                let buffer_address = buffer.as_ptr().cast::<u8>() as efi::PhysicalAddress;
                 assert_eq!(buffer_address & 0xFFF, 0); // must be page aligned.
                 assert_eq!(buffer.len(), max(granularity, UEFI_PAGE_SIZE * 4)); //should be 4 pages or granularity pages in size.
                 assert!(buffer_address >= base);
@@ -511,7 +511,7 @@ mod tests {
 
                 let buffer =
                     ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4, UEFI_PAGE_SIZE).unwrap();
-                let buffer_address2 = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
+                let buffer_address2 = buffer.as_ptr().cast::<u8>() as efi::PhysicalAddress;
                 assert_eq!(buffer_address, buffer_address2);
                 assert_eq!(buffer.len(), max(granularity, UEFI_PAGE_SIZE * 4)); //should be 4 pages or granularity pages in size.
 
@@ -551,8 +551,8 @@ mod tests {
             let bs_buffer = bs_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
             let bc_buffer = bc_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
 
-            let bs_buffer_address = bs_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
-            let bc_buffer_address = bc_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
+            let bs_buffer_address = bs_buffer.as_ptr().cast::<u8>() as efi::PhysicalAddress;
+            let bc_buffer_address = bc_buffer.as_ptr().cast::<u8>() as efi::PhysicalAddress;
 
             // SAFETY: free_pages uses valid allocation pointers for each allocator.
             unsafe {
@@ -736,7 +736,7 @@ mod tests {
                     if granularity == SIZE_4KB || page % 16 == 0 {
                         let reserved_page =
                             reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
-                        reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
+                        reserved_page_addr = reserved_page.as_ptr().cast::<u8>() as u64;
                     } else {
                         reserved_page_addr += UEFI_PAGE_SIZE as u64;
                     }
@@ -745,7 +745,7 @@ mod tests {
 
                     let unreserved_page =
                         unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
-                    let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
+                    let unreserved_page_addr = unreserved_page.as_ptr().cast::<u8>() as u64;
                     assert!(!reserved_range.contains(&(unreserved_page_addr)));
                     assert!(!reserved_range.contains(&(unreserved_page_addr + 0xFFF)));
                 }
@@ -753,7 +753,7 @@ mod tests {
                 //verify that further page allocations from the reserved allocator are outside the reserved range but succeed.
                 let reserved_page =
                     reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
-                let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
+                let reserved_page_addr = reserved_page.as_ptr().cast::<u8>() as u64;
                 assert!(!reserved_range.contains(&(reserved_page_addr)));
                 assert!(!reserved_range.contains(&(reserved_page_addr + 0xFFF)));
 
@@ -766,7 +766,7 @@ mod tests {
                 let unreserved_page = unreserved_allocator
                     .allocate_pages(AllocationStrategy::Address(reserved_page_addr as usize), 1, UEFI_PAGE_SIZE)
                     .unwrap();
-                let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
+                let unreserved_page_addr = unreserved_page.as_ptr().cast::<u8>() as u64;
                 assert_eq!(
                     reserved_page_addr, unreserved_page_addr,
                     "reserved_page_addr: {reserved_page_addr:#x?}, unreserved_page_addr: {unreserved_page_addr:#x?}",
@@ -779,7 +779,7 @@ mod tests {
                 }
                 let unreserved_page =
                     unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
-                let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
+                let unreserved_page_addr = unreserved_page.as_ptr().cast::<u8>() as u64;
                 assert!(!reserved_range.contains(&(unreserved_page_addr)));
                 assert!(!reserved_range.contains(&(unreserved_page_addr + 0xFFF)));
 
@@ -789,7 +789,7 @@ mod tests {
                     if granularity == SIZE_4KB || page == 0 {
                         let reserved_page =
                             reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
-                        reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
+                        reserved_page_addr = reserved_page.as_ptr().cast::<u8>() as u64;
                     } else {
                         reserved_page_addr += UEFI_PAGE_SIZE as u64;
                     }
@@ -824,7 +824,7 @@ mod tests {
                 let page = reserved_allocator
                     .allocate_pages(AllocationStrategy::TopDown(Some(gcd_end as usize)), 1, UEFI_PAGE_SIZE)
                     .unwrap();
-                let page_addr = page.as_ptr() as *mut u8 as u64;
+                let page_addr = page.as_ptr().cast::<u8>() as u64;
                 assert!(
                     reserved_range.contains(&page_addr),
                     "TopDown(Some(gcd_end)) should land in the bin: addr={page_addr:#x}, range={reserved_range:#x?}",
@@ -834,7 +834,7 @@ mod tests {
                 let page_below = reserved_allocator
                     .allocate_pages(AllocationStrategy::TopDown(Some(reserved_range.start as usize)), 1, UEFI_PAGE_SIZE)
                     .unwrap();
-                let page_below_addr = page_below.as_ptr() as *mut u8 as u64;
+                let page_below_addr = page_below.as_ptr().cast::<u8>() as u64;
                 assert!(
                     !reserved_range.contains(&page_below_addr),
                     "TopDown(Some(below_bin)) should not land in the bin: addr={page_below_addr:#x}, range={reserved_range:#x?}",

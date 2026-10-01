@@ -124,7 +124,7 @@ pub fn core_install_configuration_table(
         system_table.number_of_table_entries = updated_table.len();
         let updated_table = updated_table.to_vec_in(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR).into_boxed_slice();
         system_table.configuration_table =
-            Box::into_raw_with_allocator(updated_table).0 as *mut efi::ConfigurationTable;
+            Box::into_raw_with_allocator(updated_table).0.cast::<efi::ConfigurationTable>();
     }
 
     efi_system_table.set(system_table);

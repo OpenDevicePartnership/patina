@@ -610,7 +610,7 @@ pub(crate) mod test {
             }
 
             *data_size = DUMMY_DATA_REPR_SIZE;
-            *(data as *mut u32) = DUMMY_DATA;
+            *data.cast::<u32>() = DUMMY_DATA;
         }
 
         efi::Status::SUCCESS
@@ -650,7 +650,7 @@ pub(crate) mod test {
             assert_eq!(*namespace, DUMMY_FIRST_NAMESPACE);
             assert_eq!(attributes, DUMMY_ATTRIBUTES);
             assert_eq!(data_size, DUMMY_DATA_REPR_SIZE);
-            assert_eq!(*(data as *mut u32), DUMMY_DATA);
+            assert_eq!(*data.cast::<u32>(), DUMMY_DATA);
         }
 
         efi::Status::SUCCESS

@@ -445,6 +445,42 @@ pub(crate) unsafe fn init_test_protocol_db() {
     PROTOCOL_DB.init_protocol_db();
 }
 
+/// Size in bytes of one resource descriptor HOB as written by [`write_resource_descriptor_hob`].
+/// This matches the format `gcd::parse_resource_descriptor_hob` accepts for this build which is
+/// determine by whether the `v1_resource_descriptor_support` feature is enabled.
+#[cfg(feature = "v1_resource_descriptor_support")]
+const RESOURCE_DESCRIPTOR_HOB_SIZE: usize = core::mem::size_of::<hob::ResourceDescriptor>();
+#[cfg(not(feature = "v1_resource_descriptor_support"))]
+const RESOURCE_DESCRIPTOR_HOB_SIZE: usize = core::mem::size_of::<ResourceDescriptorV2>();
+
+/// Writes one resource descriptor HOB at `cursor`.
+///
+/// `desc` contains a V1 resource descriptor, so that is simply used if the `v1_resource_descriptor_support`
+/// feature is active.
+///
+/// Returns `cursor` advanced past the written HOB.
+///
+/// ## Safety
+/// `cursor` must be valid for a write of `RESOURCE_DESCRIPTOR_HOB_SIZE` bytes.
+unsafe fn write_resource_descriptor_hob(cursor: *mut u8, desc: ResourceDescriptorV2) -> *mut u8 {
+    #[cfg(feature = "v1_resource_descriptor_support")]
+    {
+        let mut v1 = desc.v1;
+        v1.header.r#type = hob::RESOURCE_DESCRIPTOR;
+        v1.header.length = RESOURCE_DESCRIPTOR_HOB_SIZE as u16;
+        // SAFETY: caller guarantees `cursor` is valid for a write of `RESOURCE_DESCRIPTOR_HOB_SIZE` bytes.
+        unsafe { core::ptr::copy(&raw const v1, cursor.cast::<hob::ResourceDescriptor>(), 1) };
+    }
+    #[cfg(not(feature = "v1_resource_descriptor_support"))]
+    {
+        // SAFETY: caller guarantees `cursor` is valid for a write of `RESOURCE_DESCRIPTOR_HOB_SIZE` bytes.
+        unsafe { core::ptr::copy(&raw const desc, cursor.cast::<ResourceDescriptorV2>(), 1) };
+    }
+
+    // SAFETY: advances within the same allocation the caller already guaranteed is large enough.
+    unsafe { cursor.add(RESOURCE_DESCRIPTOR_HOB_SIZE) }
+}
+
 pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     // SAFETY: Test code - allocates memory for the test HOB list.
     let mem = unsafe { get_memory(mem_size as usize) };
@@ -494,7 +530,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         end_of_hob_list: mem_base
             + core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u64
             + core::mem::size_of::<hob::Cpu>() as u64
-            + (core::mem::size_of::<ResourceDescriptorV2>() as u64) * 7
+            + (RESOURCE_DESCRIPTOR_HOB_SIZE as u64) * 7
             + (core::mem::size_of::<hob::MemoryAllocation>() as u64) * 11  // 10 memory type allocations + 1 MMIO
             + core::mem::size_of::<hob::FirmwareVolume>() as u64
             + core::mem::size_of::<HobHeader>() as u64,
@@ -658,34 +694,22 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         let mut cursor = mem.as_mut_ptr();
 
         //PHIT HOB
-        core::ptr::copy(&raw const phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
+        core::ptr::copy(&raw const phit, cursor.cast::<hob::PhaseHandoffInformationTable>(), 1);
         cursor = cursor.add(usize::from(phit.header.length));
 
         //CPU HOB
-        core::ptr::copy(&raw const cpu, cursor as *mut hob::Cpu, 1);
+        core::ptr::copy(&raw const cpu, cursor.cast::<hob::Cpu>(), 1);
         cursor = cursor.add(usize::from(cpu.header.length));
 
-        //resource descriptor HOBs - all V2 to enable proper migration
-        core::ptr::copy(&raw const resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor1.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor2, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor2.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor3, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor3.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor4, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor4.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor5, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor5.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor6, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor6.v1.header.length));
-
-        core::ptr::copy(&raw const resource_descriptor7, cursor as *mut ResourceDescriptorV2, 1);
-        cursor = cursor.add(usize::from(resource_descriptor7.v1.header.length));
+        // resource descriptor HOBs - created as V1 or V2 depending on whether
+        // the `v1_resource_descriptor_support` feature is active.
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor1);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor2);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor3);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor4);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor5);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor6);
+        cursor = write_resource_descriptor_hob(cursor, resource_descriptor7);
 
         //memory allocation HOBs.
         let mut address: u64 = resource_descriptor1.v1.physical_start;
@@ -715,7 +739,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
             allocation_hob_template.alloc_descriptor.memory_length = granularity;
 
-            core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+            core::ptr::copy(&raw const allocation_hob_template, cursor.cast::<hob::MemoryAllocation>(), 1);
             cursor = cursor.add(usize::from(allocation_hob_template.header.length));
             address += granularity;
         }
@@ -727,16 +751,16 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.v1.physical_start;
         allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
         allocation_hob_template.alloc_descriptor.memory_type = efi::MEMORY_MAPPED_IO;
-        core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+        core::ptr::copy(&raw const allocation_hob_template, cursor.cast::<hob::MemoryAllocation>(), 1);
         cursor = cursor.add(usize::from(allocation_hob_template.header.length));
 
         //FV HOB.
-        core::ptr::copy(&raw const firmware_volume_hob, cursor as *mut hob::FirmwareVolume, 1);
+        core::ptr::copy(&raw const firmware_volume_hob, cursor.cast::<hob::FirmwareVolume>(), 1);
         cursor = cursor.add(usize::from(firmware_volume_hob.header.length));
 
-        core::ptr::copy(&raw const end, cursor as *mut HobHeader, 1);
+        core::ptr::copy(&raw const end, cursor.cast::<HobHeader>(), 1);
     }
-    mem.as_ptr() as *const c_void
+    mem.as_ptr().cast::<c_void>()
 }
 
 /// To enable logging, set the `RUST_LOG` environment variable to the desired
@@ -824,7 +848,7 @@ mod tests {
             end_of_hob_list: mem_base
                 + core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u64
                 + core::mem::size_of::<hob::Cpu>() as u64
-                + core::mem::size_of::<ResourceDescriptorV2>() as u64  // Only 1 V2 system memory HOB
+                + RESOURCE_DESCRIPTOR_HOB_SIZE as u64 // Only 1 system memory HOB
                 + core::mem::size_of::<HobHeader>() as u64,
         };
 
@@ -878,16 +902,15 @@ mod tests {
             let mut cursor = mem.as_mut_ptr();
 
             // PHIT HOB
-            core::ptr::copy(&raw const phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
+            core::ptr::copy(&raw const phit, cursor.cast::<hob::PhaseHandoffInformationTable>(), 1);
             cursor = cursor.add(usize::from(phit.header.length));
 
             // CPU HOB
-            core::ptr::copy(&raw const cpu, cursor as *mut hob::Cpu, 1);
+            core::ptr::copy(&raw const cpu, cursor.cast::<hob::Cpu>(), 1);
             cursor = cursor.add(usize::from(cpu.header.length));
 
             // Resource descriptor HOB
-            core::ptr::copy(&raw const resource_descriptor1, cursor as *mut ResourceDescriptorV2, 1);
-            cursor = cursor.add(usize::from(resource_descriptor1.v1.header.length));
+            cursor = write_resource_descriptor_hob(cursor, resource_descriptor1);
 
             // Memory allocation HOBs.
             for (idx, memory_type) in [
@@ -910,13 +933,13 @@ mod tests {
                 allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
                 allocation_hob_template.module_name = base_guids::DXE_CORE_ID;
 
-                core::ptr::copy(&raw const allocation_hob_template, cursor as *mut hob::MemoryAllocationModule, 1);
+                core::ptr::copy(&raw const allocation_hob_template, cursor.cast::<hob::MemoryAllocationModule>(), 1);
                 cursor = cursor.add(usize::from(allocation_hob_template.header.length));
             }
 
-            core::ptr::copy(&raw const end, cursor as *mut HobHeader, 1);
+            core::ptr::copy(&raw const end, cursor.cast::<HobHeader>(), 1);
         }
-        mem.as_ptr() as *const c_void
+        mem.as_ptr().cast::<c_void>()
     }
 
     //

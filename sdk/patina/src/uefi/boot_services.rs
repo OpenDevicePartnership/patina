@@ -327,7 +327,7 @@ pub trait BootServices {
     /// Allocates pool memory casted as given type.
     fn allocate_pool_for_type<T: 'static + Sized>(&self, pool_type: EfiMemoryType) -> Result<*mut T, efi::Status> {
         let ptr = self.allocate_pool(pool_type, mem::size_of::<T>())?;
-        Ok(ptr as *mut T)
+        Ok(ptr.cast::<T>())
     }
 
     /// Returns pool memory to the system.
@@ -372,7 +372,7 @@ pub trait BootServices {
 
         let protocol_interface_ptr = match mem::size_of::<T>() {
             0 => ptr::null_mut(),
-            _ => protocol_interface.into_mut_ptr() as *mut c_void,
+            _ => protocol_interface.into_mut_ptr().cast::<c_void>(),
         };
 
         // SAFETY: This is safe because ProtocolInterface provide the right guid for the interface.
@@ -456,7 +456,7 @@ pub trait BootServices {
         let new_key = new_protocol_interface.metadata();
 
         let mut old_protocol_interface_ptr = old_protocol_interface_key.ptr_value as *mut c_void;
-        let mut new_protocol_interface_ptr = new_protocol_interface.into_mut_ptr() as *mut c_void;
+        let mut new_protocol_interface_ptr = new_protocol_interface.into_mut_ptr().cast::<c_void>();
 
         if mem::size_of::<T>() == 0 {
             old_protocol_interface_ptr = ptr::null_mut();
@@ -556,7 +556,7 @@ pub trait BootServices {
         // SAFETY: handle_protocol_unchecked returns a raw pointer. Converting to *mut T is considered
         // safe based on T::PROTOCOL_GUID ensuring type correctness. as_mut() may return None if the
         // firmware returns null for zero-sized protocols.
-        Ok(unsafe { (self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)? as *mut T).as_mut() })
+        Ok(unsafe { self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)?.cast::<T>().as_mut() })
     }
 
     /// Use [`BootServices::handle_protocol`] when possible.
@@ -649,8 +649,8 @@ pub trait BootServices {
         // safe based on T::PROTOCOL_GUID ensuring type correctness. as_mut() may return None if the
         // firmware returns null for zero-sized protocols.
         Ok(unsafe {
-            (self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
-                as *mut T)
+            self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
+                .cast::<T>()
                 .as_mut()
         })
     }
@@ -788,8 +788,8 @@ pub trait BootServices {
     {
         //SAFETY: The generic ProtocolInterface ensure that the interfaces is the right type for the specified protocol.
         Ok(unsafe {
-            (self.locate_protocol_unchecked(&T::PROTOCOL_GUID, registration.map_or(ptr::null_mut(), NonNull::as_ptr))?
-                as *mut T)
+            self.locate_protocol_unchecked(&T::PROTOCOL_GUID, registration.map_or(ptr::null_mut(), NonNull::as_ptr))?
+                .cast::<T>()
                 .as_mut()
         })
     }
@@ -937,8 +937,8 @@ pub trait BootServices {
         // SAFETY: This is safe because refs are valid pointers and the size is trusted from mem size of.
         unsafe {
             self.copy_mem_unchecked(
-                core::ptr::from_mut::<T>(dest) as _,
-                core::ptr::from_ref::<T>(src) as _,
+                core::ptr::from_mut::<T>(dest).cast(),
+                core::ptr::from_ref::<T>(src).cast(),
                 mem::size_of::<T>(),
             );
         }
@@ -975,7 +975,7 @@ pub trait BootServices {
     ) -> Result<(), efi::Status> {
         // SAFETY: Caller guarantees table type matches guid. into_mut_ptr() provides a valid pointer
         // that remains valid for the lifetime of boot services as constrained by the trait bound.
-        unsafe { self.install_configuration_table_unchecked(guid, table.into_mut_ptr() as *mut c_void) }
+        unsafe { self.install_configuration_table_unchecked(guid, table.into_mut_ptr().cast::<c_void>()) }
     }
 
     /// Use [`BootServices::install_configuration_table`] when possible.
@@ -995,7 +995,7 @@ pub trait BootServices {
     fn calculate_crc_32<T: 'static>(&self, data: &T) -> Result<u32, efi::Status> {
         // SAFETY: The reference guarantees that the pointer is valid and properly aligned.
         // size_of::<T>() provides the exact size of the data being pointed to.
-        unsafe { self.calculate_crc_32_unchecked(core::ptr::from_ref::<T>(data) as _, mem::size_of::<T>()) }
+        unsafe { self.calculate_crc_32_unchecked(core::ptr::from_ref::<T>(data).cast(), mem::size_of::<T>()) }
     }
 
     /// Use [`BootServices::calculate_crc_32`] when possible.
@@ -1069,7 +1069,7 @@ impl BootServices for StandardBootServices {
                     Option<unsafe extern "efiapi" fn(*mut c_void, *mut T)>,
                     Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>,
                 >(notify_function),
-                notify_context as *mut c_void,
+                notify_context.cast::<c_void>(),
                 event.as_mut_ptr(),
             )
         };
@@ -1107,7 +1107,7 @@ impl BootServices for StandardBootServices {
                     Option<unsafe extern "efiapi" fn(*mut c_void, *mut T)>,
                     Option<unsafe extern "efiapi" fn(*mut c_void, *mut c_void)>,
                 >(notify_function),
-                notify_context as *mut c_void,
+                notify_context.cast::<c_void>(),
                 core::ptr::from_ref(event_group),
                 event.as_mut_ptr(),
             )
@@ -1239,7 +1239,7 @@ impl BootServices for StandardBootServices {
                 alloc_type.into(),
                 memory_type.into(),
                 nb_pages,
-                ptr::addr_of_mut!(memory_address) as *mut u64,
+                ptr::addr_of_mut!(memory_address).cast::<u64>(),
             )
         };
         match status {
@@ -1301,7 +1301,7 @@ impl BootServices for StandardBootServices {
         match unsafe {
             get_memory_map(
                 ptr::addr_of_mut!(memory_map_size),
-                buffer as *mut _,
+                buffer.cast(),
                 ptr::addr_of_mut!(map_key),
                 ptr::addr_of_mut!(descriptor_size),
                 ptr::addr_of_mut!(descriptor_version),
@@ -1314,7 +1314,7 @@ impl BootServices for StandardBootServices {
         Ok(MemoryMap {
             // SAFETY: buffer was allocated with allocate_pool and size is descriptor_size.
             // The buffer is properly sized and aligned for the memory map descriptors.
-            descriptors: unsafe { BootServicesBox::from_raw_parts_mut(buffer as *mut _, descriptor_size, self) },
+            descriptors: unsafe { BootServicesBox::from_raw_parts_mut(buffer.cast(), descriptor_size, self) },
             map_key,
             descriptor_version,
         })
@@ -1329,7 +1329,7 @@ impl BootServices for StandardBootServices {
         let status = unsafe { allocate_pool(memory_type.into(), size, ptr::addr_of_mut!(buffer)) };
         match status {
             status if status.is_error() => Err(status),
-            _ => Ok(buffer as *mut u8),
+            _ => Ok(buffer.cast::<u8>()),
         }
     }
 
@@ -1342,7 +1342,7 @@ impl BootServices for StandardBootServices {
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let free_pool = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), free_pool) };
         // SAFETY: The caller is responsible for ensuring `buffer` points to a valid allocation.
-        match unsafe { free_pool(buffer as *mut c_void) } {
+        match unsafe { free_pool(buffer.cast::<c_void>()) } {
             status if status.is_error() => Err(status),
             _ => Ok(()),
         }
@@ -1440,18 +1440,14 @@ impl BootServices for StandardBootServices {
     // it is an opaque handle used as a database key.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn register_protocol_notify(&self, protocol: &efi::Guid, event: efi::Event) -> Result<Registration, efi::Status> {
-        let mut registration = MaybeUninit::uninit();
+        let mut registration: MaybeUninit<Registration> = MaybeUninit::uninit();
         // SAFETY: See safety comment in create_event_unchecked for details on corner cases around external modifications.
         let register_protocol_notify = unsafe { efi_boot_services_fn!(*self.as_mut_ptr(), register_protocol_notify) };
 
         // SAFETY: `protocol` is a valid reference cast to a pointer. `event` is validated by the
         // implementation. `registration` is a local `MaybeUninit` whose address is valid for writes.
         let status = unsafe {
-            register_protocol_notify(
-                core::ptr::from_ref(protocol).cast_mut(),
-                event,
-                registration.as_mut_ptr() as *mut _,
-            )
+            register_protocol_notify(core::ptr::from_ref(protocol).cast_mut(), event, registration.as_mut_ptr().cast())
         };
         match status {
             status if status.is_error() => Err(status),
@@ -1501,7 +1497,7 @@ impl BootServices for StandardBootServices {
                 protocol,
                 search_key,
                 ptr::addr_of_mut!(buffer_size),
-                buffer as *mut efi::Handle,
+                buffer.cast::<efi::Handle>(),
             )
         };
         match status {
@@ -1509,7 +1505,7 @@ impl BootServices for StandardBootServices {
             // SAFETY: buffer was allocated with allocate_pool to hold buffer_size bytes.
             // The number of handles is buffer_size divided by the size of each handle.
             _ => Ok(unsafe {
-                BootServicesBox::from_raw_parts_mut(buffer as *mut _, buffer_size / mem::size_of::<efi::Handle>(), self)
+                BootServicesBox::from_raw_parts_mut(buffer.cast(), buffer_size / mem::size_of::<efi::Handle>(), self)
             }),
         }
     }
@@ -1760,7 +1756,7 @@ impl BootServices for StandardBootServices {
             // SAFETY: The firmware allocates protocol_buffer and sets protocol_buffer_count.
             // from_raw_parts_mut creates a slice with the proper length as specified.
             _ => Ok(unsafe {
-                BootServicesBox::<[_], _>::from_raw_parts_mut(protocol_buffer as *mut _, protocol_buffer_count, self)
+                BootServicesBox::<[_], _>::from_raw_parts_mut(protocol_buffer.cast(), protocol_buffer_count, self)
             }),
         }
     }
@@ -1804,7 +1800,7 @@ impl BootServices for StandardBootServices {
             // SAFETY: The firmware allocates buffer and sets buffer_count.
             // from_raw_parts_mut creates a slice with the proper length as specified.
             _ => Ok(unsafe {
-                BootServicesBox::<[_], _>::from_raw_parts_mut(buffer as *mut efi::Handle, buffer_count, self)
+                BootServicesBox::<[_], _>::from_raw_parts_mut(buffer.cast::<efi::Handle>(), buffer_count, self)
             }),
         }
     }
@@ -1845,7 +1841,7 @@ impl BootServices for StandardBootServices {
         source_buffer: Option<&[u8]>,
     ) -> Result<efi::Handle, efi::Status> {
         let source_buffer_ptr =
-            source_buffer.map_or(ptr::null_mut(), |buffer| buffer.as_ptr() as *const _ as *mut c_void);
+            source_buffer.map_or(ptr::null_mut(), |buffer| buffer.as_ptr().cast::<c_void>().cast_mut());
         let source_buffer_size = source_buffer.map_or(0, <[u8]>::len);
         let device_path = device_path.map_or(ptr::null_mut(), core::ptr::NonNull::as_ptr);
         let mut image_handle = MaybeUninit::uninit();
@@ -1898,7 +1894,7 @@ impl BootServices for StandardBootServices {
                     // SAFETY: The firmware allocated `exit_data_ptr` as a pool buffer of
                     // `exit_data_len` bytes. `BootServicesBox` takes ownership and will free it via
                     // `free_pool` on drop.
-                    unsafe { BootServicesBox::from_raw_parts_mut(exit_data_ptr as *mut u8, exit_data_len, self) }
+                    unsafe { BootServicesBox::from_raw_parts_mut(exit_data_ptr.cast::<u8>(), exit_data_len, self) }
                 });
                 Err((status, data))
             }
@@ -2028,7 +2024,7 @@ impl BootServices for StandardBootServices {
         // SAFETY: The parameters are safe because `buffer` is a mutable slice
         // with an associated length, so the pointer and size are guaranteed
         // valid and cannot cause undefined behavior.
-        unsafe { set_mem(buffer.as_mut_ptr() as *mut c_void, buffer.len(), value) };
+        unsafe { set_mem(buffer.as_mut_ptr().cast::<c_void>(), buffer.len(), value) };
     }
 
     fn get_next_monotonic_count(&self) -> Result<u64, efi::Status> {
@@ -2138,7 +2134,7 @@ mod tests {
         let allocation = vec![0_u64; size.div_ceil(mem::size_of::<u64>())].into_boxed_slice();
         // Safety: Test code - buffer pointer is valid for write, allocation is properly aligned.
         unsafe {
-            *buffer = Box::into_raw(allocation) as *mut c_void;
+            *buffer = Box::into_raw(allocation).cast::<c_void>();
         }
         efi::Status::SUCCESS
     }
@@ -2150,7 +2146,7 @@ mod tests {
 
         // Safety: Test code - buffer was allocated by efi_allocate_pool_use_box as a Box<[u64]>.
         unsafe {
-            let _ = Box::from_raw(buffer as *mut u8);
+            let _ = Box::from_raw(buffer.cast::<u8>());
         }
 
         efi::Status::SUCCESS
@@ -2652,7 +2648,7 @@ mod tests {
             if buffer.is_null() {
                 efi::Status::INVALID_PARAMETER
             } else {
-                assert_eq!(buffer, 0xffff0000 as *mut u8 as *mut c_void);
+                assert_eq!(buffer, (0xffff0000 as *mut u8).cast::<c_void>());
                 efi::Status::SUCCESS
             }
         }
@@ -2692,7 +2688,7 @@ mod tests {
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(guid) });
             assert_eq!(efi::NATIVE_INTERFACE, interface_type);
             // SAFETY: Test mock - reading test protocol value.
-            assert_eq!(42, unsafe { ptr::read(interface as *mut u32) });
+            assert_eq!(42, unsafe { ptr::read(interface.cast::<u32>()) });
 
             // SAFETY: Test mock - writing output parameter.
             unsafe {
@@ -2724,7 +2720,7 @@ mod tests {
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(guid) });
             assert_eq!(efi::NATIVE_INTERFACE, interface_type);
             // SAFETY: Test mock - reading test protocol value.
-            assert_eq!(42, unsafe { ptr::read(interface as *mut u32) });
+            assert_eq!(42, unsafe { ptr::read(interface.cast::<u32>()) });
 
             // SAFETY: Test mock - writing output parameter.
             unsafe {
@@ -3050,7 +3046,7 @@ mod tests {
             assert_ne!(ptr::null_mut(), interface);
             let b = Box::new(12);
             // SAFETY: Test mock - writing test protocol interface pointer to output parameter.
-            unsafe { ptr::write(interface, b.into_mut_ptr() as *mut _) };
+            unsafe { ptr::write(interface, b.into_mut_ptr().cast()) };
             efi::Status::SUCCESS
         }
 
@@ -3142,7 +3138,7 @@ mod tests {
 
             let b = Box::new(12);
             // SAFETY: Test mock - writing protocol interface pointer to output parameter.
-            unsafe { ptr::write(interface, b.into_mut_ptr() as _) };
+            unsafe { ptr::write(interface, b.into_mut_ptr().cast()) };
 
             efi::Status::SUCCESS
         }
@@ -3248,7 +3244,8 @@ mod tests {
                 attributes: 10,
                 open_count: 0,
             }])
-            .into_mut_ptr() as *mut OpenProtocolInformationEntry;
+            .into_mut_ptr()
+            .cast::<OpenProtocolInformationEntry>();
 
             // SAFETY: Test mock - writing entry buffer pointer and count to output parameters.
             unsafe {
@@ -3436,7 +3433,7 @@ mod tests {
             // SAFETY: Test mock - reading protocol GUID to verify locate_protocol request for TestProtocol.
             assert_eq!(unsafe { ptr::read(protocol_guid) }, TestProtocol::PROTOCOL_GUID);
             // SAFETY: Test mock - writing protocol interface pointer to output parameter.
-            unsafe { ptr::write(interface, (&raw const PROTOCOL_INTERFACE).cast_mut() as *mut c_void) };
+            unsafe { ptr::write(interface, (&raw const PROTOCOL_INTERFACE).cast_mut().cast::<c_void>()) };
             efi::Status::SUCCESS
         }
 
@@ -3491,7 +3488,7 @@ mod tests {
             assert_eq!(2, device_path as usize);
             assert_eq!(5, source_size);
             // SAFETY: Test mock - reading source buffer to verify image data provided to load_image.
-            let source = unsafe { slice::from_raw_parts(source_buffer as *mut u8, source_size) };
+            let source = unsafe { slice::from_raw_parts(source_buffer.cast::<u8>(), source_size) };
             assert_eq!(&[1_u8, 2, 3, 4, 5], source);
             // SAFETY: Test mock - writing image handle to output parameter.
             unsafe {
@@ -3527,7 +3524,7 @@ mod tests {
             assert_eq!(2, device_path as usize);
             assert_eq!(5, source_size);
             // SAFETY: Test mock - reading source buffer to verify image data for load_image_from_source.
-            let source = unsafe { slice::from_raw_parts(source_buffer as *mut u8, source_size) };
+            let source = unsafe { slice::from_raw_parts(source_buffer.cast::<u8>(), source_size) };
             assert_eq!(&[1_u8, 2, 3, 4, 5], source);
             efi::Status::SUCCESS
         }
@@ -3839,7 +3836,7 @@ mod tests {
             // SAFETY: Test code - reading static data for assertion verification.
             assert_eq!(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], unsafe { ptr::read(guid) }.as_bytes());
             // SAFETY: Test code - reading static data for assertion verification.
-            assert_eq!(10, unsafe { ptr::read(table as *mut i32) });
+            assert_eq!(10, unsafe { ptr::read(table.cast::<i32>()) });
             efi::Status::SUCCESS
         }
 

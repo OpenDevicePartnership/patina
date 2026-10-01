@@ -863,7 +863,7 @@ unsafe extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void
     }
     // SAFETY: caller must ensure that the source and destination are valid for length bytes.
     //         destination and source have been null-checked above.
-    unsafe { core::ptr::copy(source as *mut u8, destination as *mut u8, length) }
+    unsafe { core::ptr::copy(source.cast::<u8>(), destination.cast::<u8>(), length) }
 }
 
 /// # Safety
@@ -881,7 +881,7 @@ unsafe extern "efiapi" fn set_mem(buffer: *mut c_void, size: usize, value: u8) {
     // SAFETY: caller must ensure that the buffer is valid for size bytes.
     //         buffer has been null-checked above.
     unsafe {
-        let dst_buffer = from_raw_parts_mut(buffer as *mut u8, size);
+        let dst_buffer = from_raw_parts_mut(buffer.cast::<u8>(), size);
         dst_buffer.fill(value);
     }
 }
@@ -960,7 +960,7 @@ unsafe extern "efiapi" fn get_memory_map(
     // SAFETY: caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
         if !map_key.is_null() {
-            let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, actual_map_size);
+            let memory_map_as_bytes = slice::from_raw_parts(memory_map.cast::<u8>(), actual_map_size);
             GCD.set_last_efi_memory_map_key(memory_map_as_bytes);
             if let Some(key) = GCD.get_last_efi_memory_map_key() {
                 log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {key:#X}");
@@ -1080,6 +1080,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     log::warn!(
                         "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{hob:#x?}"
                     );
+                    debug_assert!(desc.memory_base_address != 0, "Memory Allocation HOB has a 0 base address.");
                     continue;
                 }
 
@@ -1091,6 +1092,11 @@ fn process_hob_allocations(hob_list: &HobList) {
                     || (desc.memory_length & UEFI_PAGE_MASK as u64) != 0
                 {
                     log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{hob:#x?}");
+                    debug_assert!(
+                        (desc.memory_base_address & UEFI_PAGE_MASK as u64) == 0
+                            && (desc.memory_length & UEFI_PAGE_MASK as u64) == 0,
+                        "Memory Allocation HOB has invalid address or length granularity."
+                    );
                     continue;
                 }
 
@@ -2379,7 +2385,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::BOOT_SERVICES_DATA,
                         0x4,
-                        core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                        core::ptr::null_mut::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2393,7 +2399,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::CONVENTIONAL_MEMORY,
                         0x4,
-                        core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                        core::ptr::null_mut::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2406,7 +2412,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::PERSISTENT_MEMORY,
                         0x4,
-                        core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                        core::ptr::null_mut::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2419,7 +2425,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::UNUSABLE_MEMORY,
                         0x4,
-                        core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                        core::ptr::null_mut::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2432,7 +2438,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::UNACCEPTED_MEMORY_TYPE,
                         0x4,
-                        core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                        core::ptr::null_mut::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2447,7 +2453,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::BOOT_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2463,7 +2469,7 @@ mod tests {
                         efi::ALLOCATE_ADDRESS,
                         efi::BOOT_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2480,7 +2486,7 @@ mod tests {
                         efi::ALLOCATE_MAX_ADDRESS,
                         efi::BOOT_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2496,7 +2502,7 @@ mod tests {
                         0x12345,
                         efi::BOOT_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2510,7 +2516,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         0x71234567,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2532,7 +2538,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::PERSISTENT_MEMORY,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::INVALID_PARAMETER
@@ -2545,7 +2551,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::UNUSABLE_MEMORY,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2572,7 +2578,7 @@ mod tests {
         let mut dest = vec![0xa5u8; 0x10];
         let mut src = vec![0x5au8; 0x10];
         // SAFETY: The passed in values are safe because they are constructed in this test case.
-        unsafe { copy_mem(dest.as_mut_ptr() as *mut c_void, src.as_mut_ptr() as *mut c_void, 0x10) };
+        unsafe { copy_mem(dest.as_mut_ptr().cast::<c_void>(), src.as_mut_ptr().cast::<c_void>(), 0x10) };
         assert_eq!(dest, src);
     }
 
@@ -2586,7 +2592,7 @@ mod tests {
     fn set_mem_should_set_mem() {
         let mut dest = vec![0xa5u8; 0x10];
         // SAFETY: The passed in values are safe because they are constructed in this test case.
-        unsafe { set_mem(dest.as_mut_ptr() as *mut c_void, 0x10, 0x00) };
+        unsafe { set_mem(dest.as_mut_ptr().cast::<c_void>(), 0x10, 0x00) };
         assert_eq!(dest, vec![0x00u8; 0x10]);
     }
 
@@ -2594,7 +2600,7 @@ mod tests {
     fn set_mem_fills_bytes() {
         let mut buf: [u8; 8] = [0; 8];
         // SAFETY: The buffer is valid for writes of its length.
-        unsafe { set_mem(buf.as_mut_ptr() as *mut c_void, buf.len(), 0xAB) };
+        unsafe { set_mem(buf.as_mut_ptr().cast::<c_void>(), buf.len(), 0xAB) };
         assert_eq!(buf, [0xAB; 8]);
     }
 
@@ -2645,7 +2651,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         0x71234567,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2660,7 +2666,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::RUNTIME_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(runtime_buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(runtime_buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2773,7 +2779,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         0x71234567,
                         0x10,
-                        core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
@@ -2788,7 +2794,7 @@ mod tests {
                         efi::ALLOCATE_ANY_PAGES,
                         efi::RUNTIME_SERVICES_DATA,
                         0x10,
-                        core::ptr::addr_of_mut!(runtime_buffer_ptr) as *mut efi::PhysicalAddress,
+                        core::ptr::addr_of_mut!(runtime_buffer_ptr).cast::<efi::PhysicalAddress>(),
                     )
                 },
                 efi::Status::SUCCESS
