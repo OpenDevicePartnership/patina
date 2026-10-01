@@ -47,7 +47,7 @@ use crate::{
     protocol_db::INVALID_HANDLE,
     tpl_mutex,
 };
-use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
+use patina_internal_cpu::paging::{CacheAttributeSource, PatinaPageTable};
 use patina_paging::{MemoryAttributes, PtError, page_allocator::PageAllocator};
 
 use patina::pi::hob::{Hob, HobList};

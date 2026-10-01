@@ -19,7 +19,7 @@ use patina::{
         hob::{self, HobHeader, HobList, MemoryAllocationHeader, ResourceDescriptorV2},
     },
 };
-use patina_internal_cpu::paging::{CacheAttributeValue, PagingError, PatinaPageTable};
+use patina_internal_cpu::paging::{CacheAttributeSource, PagingError, PatinaPageTable};
 use patina_paging::MemoryAttributes;
 use spin::{Once, RwLock};
 use std::{any::Any, cell::RefCell, fs::File, io::Read, slice};
@@ -117,16 +117,27 @@ pub struct MockPageTable {
     mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
     aliased_mapped: RefCell<Vec<(u64, u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
+    map_error: Option<PagingError>,
     map_aliased_error: Option<PagingError>,
     unmap_error: Option<PagingError>,
     installed: RefCell<bool>,
+    cache_attribute_source: CacheAttributeSource,
     // Track current mappings to provide realistic query behavior
     current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
 }
 
 impl PatinaPageTable for MockPageTable {
     fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PagingError> {
+        if let Some(error) = self.map_error.take() {
+            return Err(error);
+        }
         self.mapped.borrow_mut().push((base, len, attrs));
+
+        // Mirror the real page tables, which cannot record cache attributes the platform cannot apply.
+        let attrs = match self.cache_attribute_source {
+            CacheAttributeSource::Unsupported => attrs & MemoryAttributes::AccessAttributesMask,
+            _ => attrs,
+        };
 
         // Update current mappings - remove any overlapping regions first
         let mut current = self.current_mappings.borrow_mut();
@@ -173,7 +184,11 @@ impl PatinaPageTable for MockPageTable {
         Ok(())
     }
 
-    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
+    fn query_memory_region(
+        &self,
+        base: u64,
+        len: u64,
+    ) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)> {
         let current = self.current_mappings.borrow();
         let end = base + len;
 
@@ -185,9 +200,14 @@ impl PatinaPageTable for MockPageTable {
             }
         }
 
-        // No mapping found - return NoMapping error with empty cache attributes
-        Err((PagingError::NoMapping, CacheAttributeValue::Unmapped))
+        // No mapping found - return NoMapping error with no cache attributes
+        Err((PagingError::NoMapping, None))
     }
+
+    fn cache_attribute_source(&self) -> CacheAttributeSource {
+        self.cache_attribute_source
+    }
+
     fn install_page_table(&mut self) -> Result<(), PagingError> {
         *self.installed.borrow_mut() = true;
         Ok(())
@@ -219,12 +239,20 @@ impl Default for MockPageTable {
 }
 
 impl MockPageTable {
+    pub fn fail_next_map_memory_region(&mut self, error: PagingError) {
+        self.map_error = Some(error);
+    }
+
     pub fn fail_next_map_aliased_memory_region(&mut self, error: PagingError) {
         self.map_aliased_error = Some(error);
     }
 
     pub fn fail_next_unmap_memory_region(&mut self, error: PagingError) {
         self.unmap_error = Some(error);
+    }
+
+    pub fn set_cache_attribute_source(&mut self, source: CacheAttributeSource) {
+        self.cache_attribute_source = source;
     }
 
     pub fn get_mapped_regions(&self) -> Vec<(u64, u64, MemoryAttributes)> {
@@ -248,9 +276,11 @@ impl MockPageTable {
             mapped: RefCell::new(Vec::new()),
             aliased_mapped: RefCell::new(Vec::new()),
             unmapped: RefCell::new(Vec::new()),
+            map_error: None,
             map_aliased_error: None,
             unmap_error: None,
             installed: RefCell::new(false),
+            cache_attribute_source: CacheAttributeSource::Processor,
             current_mappings: RefCell::new(Vec::new()),
         }
     }
@@ -285,8 +315,16 @@ impl PatinaPageTable for MockPageTableWrapper {
         self.inner.borrow_mut().unmap_memory_region(base, len)
     }
 
-    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)> {
+    fn query_memory_region(
+        &self,
+        base: u64,
+        len: u64,
+    ) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)> {
         self.inner.borrow().query_memory_region(base, len)
+    }
+
+    fn cache_attribute_source(&self) -> CacheAttributeSource {
+        self.inner.borrow().cache_attribute_source()
     }
 
     fn install_page_table(&mut self) -> Result<(), PagingError> {

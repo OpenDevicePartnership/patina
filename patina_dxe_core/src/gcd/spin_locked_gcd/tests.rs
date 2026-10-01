@@ -34,7 +34,7 @@ use super::*;
 use alloc::vec::Vec;
 use patina::pi::dxe_services::GcdMemoryType;
 use patina::standard::efi;
-use patina_internal_cpu::paging::PagingError;
+use patina_internal_cpu::paging::{CacheAttributeSource, PagingError};
 use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
 const DXE_CORE_PE_HEADER_DATA: [u8; 1057] = [
@@ -2618,6 +2618,19 @@ fn test_map_aliased_memory_region() {
         );
         assert!(GCD.get_aliased_mappings().is_empty());
 
+        mock_table.borrow_mut().fail_next_map_aliased_memory_region(PagingError::NoMapping);
+        assert_eq!(
+            GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes),
+            Err(EfiError::NoMapping)
+        );
+
+        mock_table.borrow_mut().fail_next_map_aliased_memory_region(PagingError::InternalError);
+        assert_eq!(
+            GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes),
+            Err(EfiError::InvalidParameter)
+        );
+        assert!(GCD.get_aliased_mappings().is_empty());
+
         assert_eq!(GCD.map_aliased_memory_region(virtual_address, physical_address, length, attributes), Ok(()));
         assert_eq!(
             GCD.get_aliased_mappings(),
@@ -2655,6 +2668,12 @@ fn test_unmap_aliased_memory_region() {
             GCD.get_aliased_mappings(),
             vec![AliasedMapping { virtual_address, physical_address, length, attributes: efi::MEMORY_WB }]
         );
+
+        mock_table.borrow_mut().fail_next_unmap_memory_region(PagingError::NoMapping);
+        assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Err(EfiError::NoMapping));
+
+        mock_table.borrow_mut().fail_next_unmap_memory_region(PagingError::InternalError);
+        assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Err(EfiError::InvalidParameter));
 
         assert_eq!(GCD.unmap_aliased_memory_region(virtual_address, length), Ok(()));
         assert!(GCD.get_aliased_mappings().is_empty());
@@ -2739,6 +2758,89 @@ fn test_set_paging_attributes_no_page_table() {
 
         let result = GCD.set_paging_attributes(base_address, length, attributes);
         assert_eq!(result.unwrap_err(), EfiError::NotReady);
+    });
+}
+
+#[test]
+fn test_set_memory_space_attributes_preserves_requested_cache_attributes() {
+    with_locked_state(|| {
+        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        GCD.init(48, 16);
+
+        // SAFETY: The buffer range is owned by this test and can be registered as system memory.
+        let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
+        let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+        // SAFETY: The buffer range is owned by this test and can be registered as system memory.
+        unsafe {
+            GCD.init_memory_blocks(
+                GcdMemoryType::SystemMemory,
+                address,
+                MEMORY_BLOCK_SLICE_SIZE,
+                efi::MEMORY_WB,
+                efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+            )
+            .unwrap();
+        }
+
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+        *GCD.page_table.lock() = Some(mock_page_table);
+
+        for source in [CacheAttributeSource::Processor, CacheAttributeSource::PageTable] {
+            mock_table.borrow_mut().set_cache_attribute_source(source);
+            GCD.set_memory_space_attributes(address, 0x1000, efi::MEMORY_WB).unwrap();
+
+            let desc = GCD.get_memory_descriptor_for_address(address as u64, |_, _| true).unwrap();
+            assert_eq!(desc.attributes & efi::CACHE_ATTRIBUTE_MASK, efi::MEMORY_WB);
+        }
+
+        *GCD.page_table.lock() = None;
+    });
+}
+
+#[test]
+fn test_set_paging_attributes_skips_remap_when_cache_attributes_unsupported() {
+    with_locked_state(|| {
+        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        GCD.init(48, 16);
+
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        mock_table.borrow_mut().set_cache_attribute_source(CacheAttributeSource::Unsupported);
+        let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+        *GCD.page_table.lock() = Some(mock_page_table);
+
+        // The requested cache attributes cannot be applied, so they must not be compared against the page table.
+        let attributes = (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits();
+        GCD.set_paging_attributes(0x1000, 0x1000, attributes).unwrap();
+        GCD.set_paging_attributes(0x1000, 0x1000, attributes).unwrap();
+
+        *GCD.page_table.lock() = None;
+
+        assert_eq!(mock_table.borrow().get_mapped_regions().len(), 1);
+    });
+}
+
+#[test]
+fn test_set_paging_attributes_map_failure() {
+    with_locked_state(|| {
+        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        GCD.init(48, 16);
+
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+        *GCD.page_table.lock() = Some(mock_page_table);
+
+        let attributes = MemoryAttributes::Writeback.bits();
+        for (error, expected) in [
+            (PagingError::OutOfResources, EfiError::OutOfResources),
+            (PagingError::NoMapping, EfiError::NotFound),
+            (PagingError::InternalError, EfiError::InvalidParameter),
+        ] {
+            mock_table.borrow_mut().fail_next_map_memory_region(error);
+            assert_eq!(GCD.set_paging_attributes(0x1000, 0x1000, attributes), Err(expected));
+        }
+
+        *GCD.page_table.lock() = None;
     });
 }
 

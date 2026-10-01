@@ -181,7 +181,7 @@ mod tests {
     use crate::*;
     use gdbstub::target::ext::breakpoints;
     use mockall::{predicate::*, *};
-    use patina_internal_cpu::paging::{CacheAttributeValue, PagingError};
+    use patina_internal_cpu::paging::{CacheAttributeSource, PagingError};
     use patina_paging::MemoryAttributes;
 
     mock! {
@@ -198,7 +198,8 @@ mod tests {
             ) -> Result<(), PagingError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PagingError>;
             fn install_page_table(&mut self) -> Result<(), PagingError>;
-            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PagingError, CacheAttributeValue)>;
+            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PagingError, Option<MemoryAttributes>)>;
+            fn cache_attribute_source(&self) -> CacheAttributeSource;
             fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PagingError>;
             fn handle_cacheability_change(
                 &self,
@@ -247,9 +248,10 @@ mod tests {
     #[test]
     fn test_access_check_invalid_page() {
         let mut mock_page_table = MockMemPageTable::new();
-        mock_page_table.expect_query_memory_region().times(2).returning(|_, _| {
-            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported(MemoryAttributes::empty())))
-        });
+        mock_page_table
+            .expect_query_memory_region()
+            .times(2)
+            .returning(|_, _| Err((PagingError::InvalidMemoryRange, None)));
 
         let result = check_paging_range(&mock_page_table, 0, 0x1000);
         result.expect_err("Should have return a failure.");
@@ -270,9 +272,10 @@ mod tests {
     fn test_access_check_partially_valid_range() {
         let mut mock_page_table = MockMemPageTable::new();
         mock_page_table.expect_query_memory_region().times(2).returning(|_, _| Ok(MemoryAttributes::empty()));
-        mock_page_table.expect_query_memory_region().times(1).returning(|_, _| {
-            Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported)
-        });
+        mock_page_table
+            .expect_query_memory_region()
+            .times(1)
+            .returning(|_, _| Err((PagingError::InvalidMemoryRange, None)));
 
         let result = check_paging_range(&mock_page_table, 0x800, 0x3000);
         assert!(result.expect("Failed to check range access.") == 0x1800);
@@ -311,9 +314,7 @@ mod tests {
         let ctx = MockMemDebuggerArch::get_page_table_context();
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
-            mock_page_table.expect_query_memory_region().returning(|_, _| {
-                Err((PagingError::InvalidMemoryRange, CacheAttributeValue::NotSupported))
-            });
+            mock_page_table.expect_query_memory_region().returning(|_, _| Err((PagingError::InvalidMemoryRange, None)));
             Ok(mock_page_table)
         });
 
