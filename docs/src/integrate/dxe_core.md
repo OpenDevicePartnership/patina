@@ -646,27 +646,35 @@ For detailed memory allocation behavior, see [DXE Core Memory Management](../dxe
 ### 9.3 Resource Descriptor HOB Version Support
 
 Patina DXE Core supports two mutually exclusive formats for Resource Descriptor HOBs: v1 (what EDK II uses) and v2
-(v1 + cache attribute information). The version supported is selected at compile time using a Cargo feature flag:
+(v1 + cache attribute information). Platforms select the version through their [`MemoryInfo`] implementation:
 
-- **Default (v2)**: Only v2 Resource Descriptor HOBs are processed. This is the default in Patina and is required for
-  ARM64 platforms.
-- **Compat (v1)**: If the `v1_resource_descriptor_support` feature is enabled, only V1 Resource Descriptor HOBs are
-  processed in order to support an easy transition from EDK II. v2 HOBs are ignored in this mode.
+- **Default (v2)**: [`ResourceDescriptorHobPolicy::V2`] processes only v2 Resource Descriptor HOBs. This is the default
+  in Patina and is required for ARM64 platforms.
+- **Compat (v1)**: [`ResourceDescriptorHobPolicy::V1`] processes only v1 Resource Descriptor HOBs to support an easy
+  transition from EDK II. v2 HOBs are ignored in this mode.
 
 Platforms are required to move to Resource Descriptor HOB v2s to accurately describe their system memory with caching
 information.
 
-In order to support easier adoption of Patina, a feature flag is provided to only process Resource Descriptor v1 HOBs.
-This is simply added for bring up purposes and is not intended to be a production feature. Resource Descriptor HOB v1
-support is enabled by setting the feature in the platform binary crate's `Cargo.toml`:
+Resource Descriptor HOB v1 support is intended only for bring-up and is not a production configuration. A platform can
+select it by overriding the policy constant:
 
-```toml
-[dependencies]
-patina = {version = "x", features = ["v1_resource_descriptor_support"]}
+```rust
+use patina_dxe_core::{MemoryInfo, ResourceDescriptorHobPolicy};
+
+struct Platform;
+
+impl MemoryInfo for Platform {
+    const RESOURCE_DESCRIPTOR_HOB_POLICY: ResourceDescriptorHobPolicy =
+        ResourceDescriptorHobPolicy::V1;
+}
 ```
 
-This will build and test the V1 code path by default, without needing to specify the feature flag on the command line.
-For production, remove it from the default list to restore V2 as the default.
+Omitting `RESOURCE_DESCRIPTOR_HOB_POLICY` from the implementation uses the v2 policy by default.
+
+[`MemoryInfo`]: https://docs.rs/patina_dxe_core/latest/patina_dxe_core/trait.MemoryInfo.html
+[`ResourceDescriptorHobPolicy::V1`]: https://docs.rs/patina_dxe_core/latest/patina_dxe_core/enum.ResourceDescriptorHobPolicy.html#variant.V1
+[`ResourceDescriptorHobPolicy::V2`]: https://docs.rs/patina_dxe_core/latest/patina_dxe_core/enum.ResourceDescriptorHobPolicy.html#variant.V2
 
 ## 10. Build Process and Validation
 

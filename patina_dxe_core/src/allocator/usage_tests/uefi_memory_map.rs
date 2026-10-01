@@ -323,13 +323,13 @@ mod tests {
                 unsafe {
                     test_support::init_test_protocol_db();
                     crate::GCD.reset();
-                    crate::gcd::init_gcd(hob_list_ptr);
+                    crate::gcd::init_gcd(hob_list_ptr, crate::gcd::ResourceDescriptorHobPolicy::V2);
                     reset_allocators();
                 }
 
                 let mut hob_list = HobList::default();
                 hob_list.discover_hobs(hob_list_ptr);
-                init_memory_support(&hob_list);
+                init_memory_support(&hob_list, crate::gcd::ResourceDescriptorHobPolicy::V2);
 
                 let descriptors = self.call_get_memory_map().expect("Failed to get the UEFI memory map");
 

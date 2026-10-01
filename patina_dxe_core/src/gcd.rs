@@ -32,6 +32,42 @@ use crate::{GCD, gcd::spin_locked_gcd::PagingAllocator, pecoff};
 
 pub use spin_locked_gcd::{AllocateType, MapChangeType, SpinLockedGcd};
 
+/// Selects the Resource Descriptor HOB version consumed by the DXE Core.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceDescriptorHobPolicy {
+    /// Consume Resource Descriptor HOB v1 entries.
+    V1,
+    /// Consume Resource Descriptor HOB v2 entries.
+    V2,
+}
+
+impl ResourceDescriptorHobPolicy {
+    const fn resource_descriptor(self, hob: &Hob<'_>) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
+        match self {
+            Self::V1 => v1_policy(hob),
+            Self::V2 => v2_policy(hob),
+        }
+    }
+}
+
+const fn v1_policy(hob: &Hob<'_>) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
+    match hob {
+        Hob::ResourceDescriptor(resource_descriptor) => Some((**resource_descriptor, None)),
+        _ => None,
+    }
+}
+
+const fn v2_policy(hob: &Hob<'_>) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
+    match hob {
+        Hob::ResourceDescriptorV2(resource_descriptor) => {
+            let attributes =
+                if resource_descriptor.attributes == 0 { None } else { Some(resource_descriptor.attributes) };
+            Some((resource_descriptor.v1, attributes))
+        }
+        _ => None,
+    }
+}
+
 /// The `MemoryProtectionPolicy` struct is the source of truth for Patina's memory protection rules.
 /// All memory protection decisions in Patina are driven by functions in this struct to have one
 /// easily auditable location.
@@ -447,7 +483,7 @@ impl MemoryProtectionPolicy {
     }
 }
 
-pub fn init_gcd(physical_hob_list: *const c_void) {
+pub fn init_gcd(physical_hob_list: *const c_void, resource_descriptor_hob_policy: ResourceDescriptorHobPolicy) {
     let mut free_memory_start: u64 = 0;
     let mut free_memory_size: u64 = 0;
     let mut memory_start: u64 = 0;
@@ -484,7 +520,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
                 // resource descriptor HOB.
                 if free_memory_start != 0
                     && free_memory_attributes == 0
-                    && let Some((res_desc, cache_attributes)) = parse_resource_descriptor_hob(&hob)
+                    && let Some((res_desc, cache_attributes)) = resource_descriptor_hob_policy.resource_descriptor(&hob)
                     && res_desc.resource_type == hob::EFI_RESOURCE_SYSTEM_MEMORY
                     && res_desc.physical_start <= free_memory_start
                     && res_desc.physical_start.saturating_add(res_desc.resource_length)
@@ -551,17 +587,10 @@ pub fn init_paging(hob_list: &HobList) {
     GCD.init_paging_with(hob_list, page_table);
 }
 
-pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
-    #[cfg(feature = "v1_resource_descriptor_support")]
-    {
-        log::debug!("v1_resource_descriptor_support feature is active (V1 ResourceDescriptor HOBs only)");
-    }
-
-    #[cfg(not(feature = "v1_resource_descriptor_support"))]
-    {
-        log::debug!("v1_resource_descriptor_support feature is NOT active (V2 ResourceDescriptor HOBs only)");
-    }
-
+pub fn add_hob_resource_descriptors_to_gcd(
+    hob_list: &HobList,
+    resource_descriptor_hob_policy: ResourceDescriptorHobPolicy,
+) {
     let phit = hob_list
         .iter()
         .find_map(|x| match x {
@@ -582,11 +611,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         // Only process Resource Descriptor HOBs according to the selected version
         // If we have resc desc HOB v2s, we will take the cache attributes from there. If we don't,
         // we will default to EFI_MEMORY_WB for system memory and 0 for all other types.
-        let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
+        let (res_desc, cache_attributes) = match resource_descriptor_hob_policy.resource_descriptor(hob) {
             Some((desc, Some(attrs))) => (desc, attrs),
             Some((desc, None)) if desc.resource_type == hob::EFI_RESOURCE_SYSTEM_MEMORY => (desc, DEFAULT_CACHE_ATTR),
             Some((desc, None)) => (desc, 0u64),
-            None => continue, // Not a resource descriptor HOB or unsupported version for this build
+            None => continue, // Not a resource descriptor HOB or unsupported by the selected policy
         };
 
         // Skip the PEI memory bin region to avoid a conflict. It will overlap the system
@@ -730,39 +759,6 @@ fn remove_range_overlap<T: PartialOrd + Copy>(a: &Range<T>, b: &Range<T>) -> [Op
     }
 }
 
-/// Parse Resource Descriptor HOB v2
-///
-/// This function takes in a HOB and returns:
-/// - Some((Resource Descriptor, `Some(cache_attributes)`)) if cache attributes are present
-/// - Some((Resource Descriptor, None)) if no cache attributes are present
-/// - None if not a v2 resource descriptor HOB
-#[cfg(not(feature = "v1_resource_descriptor_support"))]
-fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
-    match hob {
-        Hob::ResourceDescriptorV2(v2_res_desc) => {
-            let attrs = if v2_res_desc.attributes != 0 { Some(v2_res_desc.attributes) } else { None };
-            Some((v2_res_desc.v1, attrs))
-        }
-        _ => None, // Not a resource descriptor HOB or a v1 HOB
-    }
-}
-
-/// Parse Resource Descriptor HOB v1
-///
-/// This function takes in a HOB and returns:
-/// - Some((Resource Descriptor, None))
-/// - None if not a v1 resource descriptor HOB
-#[cfg(feature = "v1_resource_descriptor_support")]
-fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
-    match hob {
-        Hob::ResourceDescriptor(v1_res_desc) => {
-            // Legacy platforms: Process v1 HOBs normally
-            Some((**v1_res_desc, None)) // v1 HOBs have no cache attributes
-        }
-        _ => None, // Not a resource descriptor HOB or a v2 HOB
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
@@ -808,7 +804,7 @@ mod tests {
         let free_memory_start = handoff.free_memory_bottom;
         let free_memory_size = handoff.free_memory_top - handoff.free_memory_bottom;
 
-        init_gcd(physical_hob_list);
+        init_gcd(physical_hob_list, ResourceDescriptorHobPolicy::V2);
         assert!(free_memory_start >= mem_base && free_memory_start < mem_base + MEM_SIZE);
         assert!(free_memory_size <= 0x100000);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
@@ -821,7 +817,7 @@ mod tests {
     }
 
     fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {
-        add_hob_resource_descriptors_to_gcd(hob_list);
+        add_hob_resource_descriptors_to_gcd(hob_list, ResourceDescriptorHobPolicy::V2);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
         GCD.get_memory_descriptors(&mut descriptors, |_, _| true).expect("get_memory_descriptors failed.");
         descriptors
@@ -858,6 +854,58 @@ mod tests {
 
             add_resource_descriptors_should_add_resource_descriptors(&hob_list, physical_hob_list as u64);
         });
+    }
+
+    fn test_resource_descriptor() -> hob::ResourceDescriptor {
+        hob::ResourceDescriptor {
+            header: hob::HobHeader {
+                r#type: hob::RESOURCE_DESCRIPTOR,
+                length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
+                reserved: 0,
+            },
+            owner: patina::BinaryGuid::ZERO,
+            resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
+            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
+            physical_start: 0x1000,
+            resource_length: 0x1000,
+        }
+    }
+
+    #[test]
+    fn test_resource_descriptor_hob_policy_v1() {
+        let resource_descriptor = test_resource_descriptor();
+        let resource_descriptor_v2 = hob::ResourceDescriptorV2 { v1: resource_descriptor, attributes: efi::MEMORY_WB };
+
+        assert_eq!(
+            ResourceDescriptorHobPolicy::V1.resource_descriptor(&Hob::ResourceDescriptor(&resource_descriptor)),
+            Some((resource_descriptor, None))
+        );
+        assert_eq!(
+            ResourceDescriptorHobPolicy::V1.resource_descriptor(&Hob::ResourceDescriptorV2(&resource_descriptor_v2)),
+            None
+        );
+    }
+
+    #[test]
+    fn test_resource_descriptor_hob_policy_v2() {
+        let resource_descriptor = test_resource_descriptor();
+        let resource_descriptor_v2 = hob::ResourceDescriptorV2 { v1: resource_descriptor, attributes: efi::MEMORY_WB };
+        let resource_descriptor_v2_without_attributes =
+            hob::ResourceDescriptorV2 { v1: resource_descriptor, attributes: 0 };
+
+        assert_eq!(
+            ResourceDescriptorHobPolicy::V2.resource_descriptor(&Hob::ResourceDescriptorV2(&resource_descriptor_v2)),
+            Some((resource_descriptor, Some(efi::MEMORY_WB)))
+        );
+        assert_eq!(
+            ResourceDescriptorHobPolicy::V2
+                .resource_descriptor(&Hob::ResourceDescriptorV2(&resource_descriptor_v2_without_attributes)),
+            Some((resource_descriptor, None))
+        );
+        assert_eq!(
+            ResourceDescriptorHobPolicy::V2.resource_descriptor(&Hob::ResourceDescriptor(&resource_descriptor)),
+            None
+        );
     }
 
     #[test]

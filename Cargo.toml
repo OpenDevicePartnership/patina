@@ -86,10 +86,6 @@ suspicious = { level = "warn", priority = -1 }
 ###########################
 # Individual Lint Overrides
 ###########################
-# cargo::redundant_feature_names violation - Fixes:
-#     `the "_support" suffix in the feature name "v1_resource_descriptor_support" is redundant`
-#   This is allowed until the v1_resource_descriptor_support feature is dropped.
-redundant_feature_names = "allow"
 # pedantic::cast_possible_truncation - Temporarily allowed until all cases are updated (each fix needs a lot of
 #                                      attention) to determine if the truncation is intentional and safe or not.
 cast_possible_truncation = "allow"

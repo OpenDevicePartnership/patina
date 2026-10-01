@@ -101,6 +101,7 @@ pub use {component_dispatcher::MockComponentInfo, cpu::MockCpuInfo};
 
 pub use component_dispatcher::{Add, Component, ComponentInfo, Config, Service};
 pub use cpu::{CpuInfo, ExceptionContext, ExceptionContextX64, ExceptionType, GicBases, InterruptHandler};
+pub use gcd::ResourceDescriptorHobPolicy;
 
 use spin::Once;
 
@@ -183,6 +184,12 @@ static DXE_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// }
 #[cfg_attr(test, mockall::automock)]
 pub trait MemoryInfo {
+    /// Selects the Resource Descriptor HOB version consumed by the core.
+    ///
+    /// Resource Descriptor HOB v2 is selected by default. Platforms that require temporary v1 compatibility can
+    /// override this constant with [`ResourceDescriptorHobPolicy::V1`].
+    const RESOURCE_DESCRIPTOR_HOB_POLICY: ResourceDescriptorHobPolicy = ResourceDescriptorHobPolicy::V2;
+
     /// Informs the core that it should prioritize allocating 32-bit memory when not otherwise specified.
     ///
     /// This should only be used as a workaround in environments where address width bugs exist in uncontrollable
@@ -420,7 +427,7 @@ impl<P: PlatformInfo> Core<P> {
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
         // patina_debugger::initialize(&mut interrupt_manager);
 
-        gcd::init_gcd(physical_hob_list);
+        gcd::init_gcd(physical_hob_list, P::MemoryInfo::RESOURCE_DESCRIPTOR_HOB_POLICY);
 
         log::trace!("Initial GCD:\n{GCD}");
 
@@ -436,7 +443,7 @@ impl<P: PlatformInfo> Core<P> {
         PROTOCOL_DB.init_protocol_db();
 
         // Initialize full allocation support.
-        allocator::init_memory_support(&hob_list);
+        allocator::init_memory_support(&hob_list, P::MemoryInfo::RESOURCE_DESCRIPTOR_HOB_POLICY);
 
         // Relocate the PI Spec HOB list
         //
@@ -790,6 +797,7 @@ mod tests {
         impl MemoryInfo for TestPlatform {}
 
         assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
+        assert_eq!(<TestPlatform as MemoryInfo>::RESOURCE_DESCRIPTOR_HOB_POLICY, ResourceDescriptorHobPolicy::V2);
     }
 
     fn with_reset_global_state<F>(f: F) -> core::result::Result<(), Box<dyn Any + Send>>

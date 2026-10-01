@@ -1218,12 +1218,12 @@ fn process_hob_allocations(hob_list: &HobList) {
 /// memory map reported to the OS can be stable even in the face of small variations in memory from boot-to-boot, which
 /// helps to avoid S4 failure due to memory map change.
 ///
-pub fn init_memory_support(hob_list: &HobList) {
+pub fn init_memory_support(hob_list: &HobList, resource_descriptor_hob_policy: gcd::ResourceDescriptorHobPolicy) {
     // Add the rest of the system resources to the GCD.
     // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
     // processed - otherwise they could occupy space corresponding to a pre-DXE memory allocation that has not yet been
     // reserved.
-    gcd::add_hob_resource_descriptors_to_gcd(hob_list);
+    gcd::add_hob_resource_descriptors_to_gcd(hob_list, resource_descriptor_hob_policy);
 
     // Process pre-DXE allocations from the Hob list
     process_hob_allocations(hob_list);
@@ -1624,7 +1624,7 @@ mod tests {
                     // initialization.
                     unsafe {
                         test_support::init_test_logger();
-                        gcd::init_gcd(physical_hob_list);
+                        gcd::init_gcd(physical_hob_list, gcd::ResourceDescriptorHobPolicy::V2);
                         test_support::init_test_protocol_db();
                         test_support::reset_allocators();
                     }
@@ -1706,7 +1706,7 @@ mod tests {
             });
             hob_list.push(stack_hob);
 
-            init_memory_support(&hob_list);
+            init_memory_support(&hob_list, gcd::ResourceDescriptorHobPolicy::V2);
 
             let bin_manager = MEMORY_BIN_MANAGER.lock();
             assert!(bin_manager.is_initialized(), "Bin manager should be initialized");
@@ -1768,7 +1768,7 @@ mod tests {
             });
             hob_list.push(stack_hob);
 
-            init_memory_support(&hob_list);
+            init_memory_support(&hob_list, gcd::ResourceDescriptorHobPolicy::V2);
             assert!(MEMORY_BIN_MANAGER.lock().is_initialized(), "bin manager must be initialized");
 
             // Build an isolated HOB list to pass to seed_bin_statistics_from_hobs().
@@ -2084,7 +2084,7 @@ mod tests {
             });
             hob_list.push(stack_hob);
 
-            init_memory_support(&hob_list);
+            init_memory_support(&hob_list, gcd::ResourceDescriptorHobPolicy::V2);
 
             let allocators = ALLOCATORS.lock();
 
