@@ -12,19 +12,15 @@
 //!
 
 /// String encoding contexts for device path fields.
-#[cfg(feature = "unstable-device-path")]
 pub mod encoding;
 /// Module for FV-related Device Path struct implementations.
 pub mod fv_types;
 /// Device path node definitions.
-#[cfg(feature = "unstable-device-path")]
 pub mod node;
 /// Module for walking UEFI device paths, providing utilities for traversing and analyzing device path structures.
 pub mod walker;
 
-#[cfg(feature = "unstable-device-path")]
 use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
-#[cfg(feature = "unstable-device-path")]
 use core::{
     borrow::Borrow,
     clone::Clone,
@@ -37,10 +33,8 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-#[cfg(feature = "unstable-device-path")]
 use scroll::{Pread, ctx::TryIntoCtx};
 
-#[cfg(feature = "unstable-device-path")]
 use crate::{
     base::error::EfiError,
     standard::efi,
@@ -53,14 +47,12 @@ use crate::{
     },
 };
 
-#[cfg(feature = "unstable-device-path")]
 /// `DevicePathBuf` is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
 #[derive(Debug, Clone)]
 pub struct DevicePathBuf {
     buffer: Vec<u8>,
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl DevicePathBuf {
     /// Create a `DevicePathBuf` with an empty buffer.
     fn new_empty() -> Self {
@@ -200,7 +192,6 @@ impl DevicePathBuf {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Deref for DevicePathBuf {
     type Target = DevicePath;
 
@@ -209,7 +200,6 @@ impl Deref for DevicePathBuf {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl DerefMut for DevicePathBuf {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: DevicePath has the same memory layout as `[u8]`.
@@ -217,45 +207,38 @@ impl DerefMut for DevicePathBuf {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl AsRef<DevicePath> for DevicePathBuf {
     fn as_ref(&self) -> &DevicePath {
         self
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl AsMut<DevicePath> for DevicePathBuf {
     fn as_mut(&mut self) -> &mut DevicePath {
         self
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl From<&DevicePath> for DevicePathBuf {
     fn from(value: &DevicePath) -> Self {
         DevicePathBuf { buffer: Vec::from(&value.buffer) }
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Display for DevicePathBuf {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!("{}", self.as_ref()))
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl PartialEq for DevicePathBuf {
     fn eq(&self, other: &DevicePathBuf) -> bool {
         DevicePath::from(self) == DevicePath::from(other)
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Eq for DevicePathBuf {}
 
-#[cfg(feature = "unstable-device-path")]
 /// `DevicePath` is the borrowed version of a [`DevicePathBuf`].
 /// Only immutable operations are possible on this type.
 #[derive(Debug)]
@@ -264,7 +247,6 @@ pub struct DevicePath {
     buffer: [u8],
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl DevicePath {
     /// Create a &`DevicePath` for a `DevicePathBuf`.
     pub fn from(device_path_buff: &DevicePathBuf) -> &Self {
@@ -499,17 +481,14 @@ impl DevicePath {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl PartialEq for &DevicePath {
     fn eq(&self, other: &&DevicePath) -> bool {
         self.buffer == other.buffer
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Eq for &DevicePath {}
 
-#[cfg(feature = "unstable-device-path")]
 impl ToOwned for DevicePath {
     type Owned = DevicePathBuf;
 
@@ -518,27 +497,23 @@ impl ToOwned for DevicePath {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Borrow<DevicePath> for DevicePathBuf {
     fn borrow(&self) -> &DevicePath {
         self.as_ref()
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Clone for Box<DevicePath> {
     fn clone(&self) -> Self {
         DevicePathBuf::from(self.as_ref()).into_box_device_path()
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 /// Device path instance iterator.
 pub struct IterInstance<'a> {
     node_iterator: Iter<'a>,
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Iterator for IterInstance<'_> {
     type Item = Result<DevicePathBuf, scroll::Error>;
 
@@ -559,7 +534,6 @@ impl Iterator for IterInstance<'_> {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 impl Display for DevicePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut nodes = self.iter().peekable();
@@ -580,7 +554,6 @@ impl Display for DevicePath {
     }
 }
 
-#[cfg(feature = "unstable-device-path")]
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {

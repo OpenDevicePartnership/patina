@@ -77,7 +77,6 @@ fn test_devpath_public_macro_encodes_vendor_media_schema() {
     assert_eq!(CUSTOM_VENDOR_MEDIA_PATH, devpath!("VenMedia(00112233-4455-6677-8899-aabbccddeeff,033412)"));
 }
 
-#[cfg(feature = "unstable-device-path")]
 mod runtime_cross_checks {
     use patina::{
         devpath,
