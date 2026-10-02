@@ -11,6 +11,8 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
+#[cfg(feature = "unstable-device-path")]
+use core::ptr::NonNull;
 
 use patina::BinaryGuid;
 use patina::component::service::{
@@ -21,8 +23,12 @@ use patina::component::service::{
 };
 use patina::error::EfiError;
 use patina::standard::efi;
+#[cfg(feature = "unstable-device-path")]
+use patina::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
 use crate::events::EVENT_DB;
+#[cfg(feature = "unstable-device-path")]
+use crate::protocols::core_locate_device_path;
 use crate::protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface};
 
 use super::event::tpl_to_efi;
@@ -103,6 +109,23 @@ impl ProtocolServices for CoreProtocolServices {
             Err(EfiError::NotFound) => Ok(Vec::new()),
             Err(err) => Err(ProtocolError::from(err)),
         }
+    }
+
+    #[cfg(feature = "unstable-device-path")]
+    fn locate_device_path(
+        &self,
+        protocol: BinaryGuid,
+        path: &DevicePath,
+    ) -> Result<(Handle, DevicePathBuf), ProtocolError> {
+        let ptr = NonNull::new(path.as_bytes().as_ptr() as *mut efi::protocols::device_path::Protocol)
+            .ok_or(ProtocolError::InvalidParameter)?;
+        let (remaining, handle) = core_locate_device_path(protocol.into_inner(), ptr).map_err(ProtocolError::from)?;
+        let handle = Handle::from_raw(handle).ok_or(ProtocolError::Internal)?;
+        // SAFETY: `remaining` is returned by `core_locate_device_path` and points within `path`'s
+        // buffer, which is valid for the duration of this call.
+        let remaining = unsafe { DevicePath::try_from_ptr(remaining.as_ptr() as *const u8) }
+            .map_err(|_| ProtocolError::Internal)?;
+        Ok((handle, DevicePathBuf::from(remaining)))
     }
 
     fn interface_on_handle(&self, handle: Handle, protocol: BinaryGuid) -> Result<ProtocolPtr, ProtocolError> {
@@ -332,6 +355,53 @@ mod tests {
             assert_eq!(handles.len(), 2);
             assert!(handles.contains(&handle_a));
             assert!(handles.contains(&handle_b));
+        });
+    }
+
+    #[cfg(feature = "unstable-device-path")]
+    #[test]
+    fn test_protocol_services_locate_device_path_returns_handle_and_remaining_path() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("dddddddd-dddd-dddd-dddd-dddddddddddd");
+
+            // Install `guid` and a device path protocol (the handle's "root" path) on the same handle.
+            let handle = service.install_interface(None, guid, fake_interface(0x6000)).unwrap();
+            let root_bytes = patina::devpath!("PciRoot(0)");
+            let root_device_path_ptr =
+                Box::into_raw(Box::new(root_bytes)).cast::<efi::protocols::device_path::Protocol>();
+            core_install_protocol_interface(
+                Some(handle.as_raw()),
+                efi::protocols::device_path::PROTOCOL_GUID,
+                root_device_path_ptr.cast::<c_void>(),
+            )
+            .unwrap();
+
+            // Query with the root path plus an extra Pci(0x11,0) node.
+            let query_bytes = patina::devpath!("PciRoot(0)/Pci(0x11,0)");
+            // SAFETY: `query_bytes` is a valid, well-formed device path byte buffer.
+            let query_path = unsafe { DevicePath::try_from_ptr(query_bytes.as_ptr()) }.unwrap();
+
+            let (located, remaining) = service.locate_device_path(guid, query_path).unwrap();
+
+            assert_eq!(located, handle);
+            // Only the Pci(0x11,0) node (plus the end node) should remain.
+            assert_eq!(remaining.node_count(), 2);
+        });
+    }
+
+    #[cfg(feature = "unstable-device-path")]
+    #[test]
+    fn test_protocol_services_locate_device_path_not_found() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+
+            let query_bytes = patina::devpath!("PciRoot(0)/Pci(0x11,0)");
+            // SAFETY: `query_bytes` is a valid, well-formed device path byte buffer.
+            let query_path = unsafe { DevicePath::try_from_ptr(query_bytes.as_ptr()) }.unwrap();
+
+            assert_eq!(service.locate_device_path(guid, query_path), Err(ProtocolError::NotFound));
         });
     }
 
