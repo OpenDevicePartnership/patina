@@ -150,6 +150,63 @@ pub const SIZE_256TB: usize = 0x1000000000000;
 /// Patina uses write back as the default cache attribute for memory allocations.
 pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
+/// A UEFI specification revision encoded for use in standard UEFI table headers.
+///
+/// The upper 16 bits contain the major revision and the lower 16 bits contain the encoded minor revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct UefiSpecVersion(u32);
+
+impl UefiSpecVersion {
+    /// Creates a custom UEFI specification version from the given major and minor version numbers.
+    pub const fn from_parts(major: u32, minor: u32) -> Self {
+        debug_assert!(major > 2 || (major == 2 && minor >= 11));
+        Self((major << 16) | minor)
+    }
+
+    /// UEFI Specification Version 2.00
+    pub const V2_00: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_00);
+
+    /// UEFI Specification Version 2.10
+    pub const V2_10: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_10);
+
+    /// UEFI Specification Version 2.20
+    pub const V2_20: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_20);
+
+    /// UEFI Specification Version 2.30
+    pub const V2_30: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_30);
+
+    /// UEFI Specification Version 2.40
+    pub const V2_40: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_40);
+
+    /// UEFI Specification Version 2.50
+    pub const V2_50: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_50);
+
+    /// UEFI Specification Version 2.60
+    pub const V2_60: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_60);
+
+    /// UEFI Specification Version 2.70
+    pub const V2_70: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_70);
+
+    /// UEFI Specification Version 2.80
+    pub const V2_80: Self = Self::from_parts(2, 80);
+
+    /// UEFI Specification Version 2.90
+    pub const V2_90: Self = Self::from_parts(2, 90);
+
+    /// UEFI Specification Version 2.10
+    pub const V2_100: Self = Self::from_parts(2, 100);
+
+    /// UEFI Specification Version 2.11
+    pub const V2_110: Self = Self::from_parts(2, 110);
+}
+
+impl From<UefiSpecVersion> for u32 {
+    fn from(version: UefiSpecVersion) -> Self {
+        version.0
+    }
+}
+
 /// Converts a size in bytes to the number of UEFI pages required.
 ///
 /// Takes a size in bytes and calculates the number of UEFI pages needed to accommodate that size.
@@ -494,6 +551,33 @@ macro_rules! writelncrlf {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_uefi_spec_version_encodings() {
+        let versions = [
+            (UefiSpecVersion::V2_00, 0x0002_0000),
+            (UefiSpecVersion::V2_10, 0x0002_000A),
+            (UefiSpecVersion::V2_20, 0x0002_0014),
+            (UefiSpecVersion::V2_30, 0x0002_001E),
+            (UefiSpecVersion::V2_40, 0x0002_0028),
+            (UefiSpecVersion::V2_50, 0x0002_0032),
+            (UefiSpecVersion::V2_60, 0x0002_003C),
+            (UefiSpecVersion::V2_70, 0x0002_0046),
+            (UefiSpecVersion::V2_80, 0x0002_0050),
+            (UefiSpecVersion::V2_90, 0x0002_005A),
+            (UefiSpecVersion::V2_100, 0x0002_0064),
+            (UefiSpecVersion::V2_110, 0x0002_006E),
+        ];
+
+        for (version, expected) in versions {
+            assert_eq!(u32::from(version), expected);
+        }
+    }
+
+    #[test]
+    fn test_custom_uefi_spec_version_encoding() {
+        assert_eq!(u32::from(UefiSpecVersion::from_parts(3, 20)), 0x0003_0014);
+    }
 
     #[test]
     fn test_is_power_of_two() {

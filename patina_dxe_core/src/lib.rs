@@ -120,7 +120,7 @@ use core::{
 use cpu::DxeInterruptManager;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
-use patina::standard::efi;
+use patina::{UefiSpecVersion, standard::efi};
 use patina::{
     component::{IntoComponent, service::performance::PerformanceManager},
     error::{self, Result},
@@ -239,6 +239,9 @@ pub trait PlatformInfo: 'static {
 
     /// The platform's section extractor type, used when extracting sections from firmware volumes.
     type Extractor: SectionExtractor;
+
+    /// The UEFI specification revision advertised by the System.
+    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_70;
 
     /// The performance measurement configuration used when no performance configuration HOB is present.
     ///
@@ -541,7 +544,7 @@ impl<P: PlatformInfo> Core<P> {
 
     fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
-        systemtables::init_system_table();
+        systemtables::init_system_table(P::UEFI_SPEC_VERSION);
 
         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
         let st = st_guard.as_mut().expect("System Table not initialized!");
