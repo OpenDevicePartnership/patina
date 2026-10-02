@@ -142,7 +142,10 @@ pub trait EventServices {
 
     /// Checks whether an event is in the signaled state, clearing it if so.
     ///
-    /// Returns `true` if the event was signaled. The event must not be a notify-signal event.
+    /// Returns `true` if the event was signaled. The event must not be a notify-signal event. For
+    /// example, a timer event to be polled here must be created with
+    /// [`TimerEventServices::create_timer_event_no_notify`](super::timer_event::TimerEventServices::create_timer_event_no_notify),
+    /// not [`TimerEventServices::create_timer_event`](super::timer_event::TimerEventServices::create_timer_event).
     ///
     /// # Errors
     ///

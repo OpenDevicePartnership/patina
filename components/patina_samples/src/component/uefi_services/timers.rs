@@ -10,6 +10,10 @@
 //! Because a timer closure runs asynchronously at a raised task priority level, it communicates
 //! with the rest of the component through `'static` atomics rather than captured borrows.
 //!
+//! It also shows a **polling** timer, created with [`TimerEventServices::create_timer_event_no_notify`]
+//! instead of a closure, and checked with [`EventServices::check_event`]. This avoids the cost of a
+//! notification callback for a component that is already polling in a loop.
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -84,6 +88,16 @@ impl TimerSample {
         // periodic timer is left running to demonstrate a long-lived event.
         timer_events.set_timer(one_shot, TimerType::Cancel)?;
         events.close_event(one_shot)?;
+
+        // A polling timer can be setup without a notification callback, the caller checks it using
+        // `EventServices::check_event` instead of a closure running asynchronously.
+        let poll_timer = timer_events.create_timer_event_no_notify()?;
+        timer_events.set_timer(poll_timer, TimerType::Relative(Duration::from_millis(5)))?;
+        while !events.check_event(poll_timer)? {
+            timing.stall(Duration::from_millis(1))?;
+        }
+        log::info!("Polling timer fired");
+        events.close_event(poll_timer)?;
 
         Ok(())
     }

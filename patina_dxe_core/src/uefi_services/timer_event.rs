@@ -17,7 +17,7 @@ use patina::component::service::{
 use patina::error::EfiError;
 use patina::standard::efi;
 
-use crate::events::set_timer as core_set_timer;
+use crate::events::{EVENT_DB, set_timer as core_set_timer};
 
 use super::event::create_event_internal;
 
@@ -33,6 +33,15 @@ pub(crate) struct CoreTimerEventServices;
 impl TimerEventServices for CoreTimerEventServices {
     fn create_timer_event(&self, notify_tpl: Tpl, callback: EventNotifyCallback) -> Result<Event, EventError> {
         create_event_internal(efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL, notify_tpl, callback, None)
+    }
+
+    fn create_timer_event_no_notify(&self) -> Result<Event, EventError> {
+        // Note: The TPL is a placeholder for EventDb::create_event, and is not used here since
+        // EVT_NOTIFY_SIGNAL and EVT_NOTIFY_WAIT are not used.
+        match EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_APPLICATION, None, None, None) {
+            Ok(efi_event) => Event::from_raw(efi_event).ok_or(EventError::Internal),
+            Err(err) => Err(EventError::from(err)),
+        }
     }
 
     fn set_timer(&self, event: Event, timer_type: TimerType) -> Result<(), EventError> {
@@ -70,6 +79,43 @@ mod tests {
     fn test_timer_event_services_create_timer_event_smoke() {
         with_locked_state(|| {
             let event = create_timer_event();
+
+            assert!(EVENT_DB.close_event(event.as_raw()).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_timer_event_services_create_timer_event_no_notify() {
+        with_locked_state(|| {
+            let event = CoreTimerEventServices.create_timer_event_no_notify().unwrap();
+
+            assert!(EVENT_DB.close_event(event.as_raw()).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_timer_event_services_create_timer_event_no_notify_is_pollable_with_check_event() {
+        use crate::uefi_services::CoreEventServices;
+        use patina::component::service::uefi_services::event::EventServices;
+
+        with_locked_state(|| {
+            let event = CoreTimerEventServices.create_timer_event_no_notify().unwrap();
+
+            // This is not an EVT_NOTIFY_SIGNAL type, so `check_event` accepts it.
+            assert_eq!(CoreEventServices.check_event(event), Ok(false));
+            EVENT_DB.signal_event(event.as_raw()).unwrap();
+            assert_eq!(CoreEventServices.check_event(event), Ok(true));
+            assert!(EVENT_DB.close_event(event.as_raw()).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_timer_event_services_create_timer_event_no_notify_can_be_armed() {
+        with_locked_state(|| {
+            let event = CoreTimerEventServices.create_timer_event_no_notify().unwrap();
+
+            let result = CoreTimerEventServices.set_timer(event, TimerType::Relative(Duration::from_millis(10)));
+            assert_eq!(result, Ok(()));
 
             assert!(EVENT_DB.close_event(event.as_raw()).is_ok());
         });
