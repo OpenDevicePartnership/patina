@@ -10,5 +10,6 @@
 //!
 
 mod audit_tests;
+mod mp_services_tests;
 mod stability_tests;
 mod test_support;

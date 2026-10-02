@@ -21,6 +21,7 @@
 
 /// Trait that provides architecture-specific timer functionality.
 /// Components that need timing functionality can request this service.
+#[cfg_attr(any(test, feature = "mockall"), mockall::automock)]
 pub trait ArchTimerFunctionality: Send + Sync {
     /// Value of the counter (ticks).
     fn cpu_count(&self) -> u64;

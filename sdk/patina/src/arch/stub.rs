@@ -114,4 +114,20 @@ pub mod x64 {
     ///
     /// Always safe; this stub performs no I/O.
     pub unsafe fn io_out8(_port: u16, _value: u8) {}
+
+    /// Stub of the real `x64` `read_msr`. Returns 0 on host builds.
+    ///
+    /// # Safety
+    ///
+    /// Always safe; this stub reads no register.
+    pub unsafe fn read_msr(_msr: u32) -> u64 {
+        0
+    }
+
+    /// Stub of the real `x64` `write_msr`. No-op on host builds.
+    ///
+    /// # Safety
+    ///
+    /// Always safe; this stub writes no register.
+    pub unsafe fn write_msr(_msr: u32, _value: u64) {}
 }

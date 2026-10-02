@@ -77,7 +77,7 @@ where
         hardware_port: S,
     ) -> Self {
         Self {
-            hardware_port: SharedSerial::new(hardware_port),
+            hardware_port: SharedSerial::new(hardware_port).with_blocking(),
             target_filters,
             max_level,
             hw_print_level_override_callback: None,

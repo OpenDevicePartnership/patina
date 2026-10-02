@@ -45,6 +45,49 @@ pub fn rdtsc() -> u64 {
     (u64::from(hi) << 32) | u64::from(lo)
 }
 
+/// Reads a 64-bit Model-Specific Register (MSR).
+///
+/// # Safety
+///
+/// The caller must ensure `msr` is a valid, readable MSR on this processor and
+/// in this execution context. Reading some MSRs has side effects.
+pub unsafe fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    // SAFETY: Guaranteed by caller; `rdmsr` reads the MSR in ECX into EDX:EAX.
+    unsafe {
+        asm!(
+            "rdmsr",
+            in("ecx") msr,
+            out("eax") low,
+            out("edx") high,
+            options(nostack, nomem, preserves_flags),
+        );
+    }
+    (u64::from(high) << 32) | u64::from(low)
+}
+
+/// Writes a 64-bit Model-Specific Register (MSR).
+///
+/// # Safety
+///
+/// The caller must ensure `msr` and `value` are valid for this processor and
+/// in this execution context. Writing MSRs can have wide-ranging side effects.
+pub unsafe fn write_msr(msr: u32, value: u64) {
+    let low = value as u32;
+    let high = (value >> 32) as u32;
+    // SAFETY: Guaranteed by caller; `wrmsr` writes EDX:EAX to the MSR in ECX.
+    unsafe {
+        asm!(
+            "wrmsr",
+            in("ecx") msr,
+            in("eax") low,
+            in("edx") high,
+            options(nostack, nomem, preserves_flags),
+        );
+    }
+}
+
 /// Returns the Current Privilege Level (CPL) from the CS selector.
 fn current_privilege_level() -> u16 {
     let cs: u16;
