@@ -44,6 +44,8 @@ use core::ptr::NonNull;
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
 use crate::base::protocol::ProtocolInterface;
+#[cfg(feature = "unstable-device-path")]
+use crate::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
 pub use super::handle::Handle;
 pub use super::tpl::Tpl;
@@ -274,6 +276,27 @@ pub trait ProtocolServices {
     /// Returns an empty list if no handle has the protocol installed.
     fn locate_handles(&self, protocol: BinaryGuid) -> Result<Vec<Handle>, ProtocolError>;
 
+    /// Locates the handle of the device on `path` that supports `protocol`, plus the unmatched
+    /// remainder of `path` beyond that device.
+    ///
+    /// This is the typed counterpart to the UEFI `LocateDevicePath()` boot service. It is commonly
+    /// used to find the device (for example, a Simple File System or Firmware Volume) that owns a
+    /// file identified by a full device path, leaving the device-relative suffix (a `FilePath` or
+    /// PIWG Firmware File node) in the returned remainder.
+    ///
+    /// This method is available only when the `unstable-device-path` feature is enabled, as it
+    /// depends on the SDK's unstable device path API.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if no handle supporting `protocol` is a prefix of `path`.
+    #[cfg(feature = "unstable-device-path")]
+    fn locate_device_path(
+        &self,
+        protocol: BinaryGuid,
+        path: &DevicePath,
+    ) -> Result<(Handle, DevicePathBuf), ProtocolError>;
+
     /// Returns the interface for `protocol` installed on a specific `handle`.
     ///
     /// # Errors
@@ -423,6 +446,22 @@ pub trait ProtocolServicesExt: ProtocolServices {
     /// Returns [`ProtocolError::NotFound`] if no handle has protocol `P` installed.
     fn locate_handles_for<P: ProtocolInterface>(&self) -> Result<Vec<Handle>, ProtocolError> {
         self.locate_handles(P::PROTOCOL_GUID)
+    }
+
+    /// Locates the handle of the device on `path` that supports protocol `P`, plus the unmatched
+    /// remainder of `path` beyond that device.
+    ///
+    /// This method is available only when the `unstable-device-path` feature is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if no handle supporting `P` is a prefix of `path`.
+    #[cfg(feature = "unstable-device-path")]
+    fn locate_device_path_for<P: ProtocolInterface>(
+        &self,
+        path: &DevicePath,
+    ) -> Result<(Handle, DevicePathBuf), ProtocolError> {
+        self.locate_device_path(P::PROTOCOL_GUID, path)
     }
 
     /// Runs `f` with the first installed interface for protocol `P`.
@@ -585,6 +624,24 @@ mod tests {
         });
 
         assert!(mock.locate_handles_for::<FakeProtocol>().unwrap().is_empty());
+    }
+
+    #[cfg(feature = "unstable-device-path")]
+    #[test]
+    fn test_protocol_services_ext_locate_device_path_for() {
+        let bytes = crate::devpath!("PciRoot(0)");
+        // SAFETY: `bytes` is a valid, well-formed device path that outlives the returned reference.
+        let path = unsafe { DevicePath::try_from_ptr(bytes.as_ptr()) }.unwrap();
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_locate_device_path().times(1).returning(|guid, path| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            Ok((fake_handle(), DevicePathBuf::from(path)))
+        });
+
+        let (handle, remaining) = mock.locate_device_path_for::<FakeProtocol>(path).unwrap();
+        assert_eq!(handle, fake_handle());
+        assert_eq!(remaining, DevicePathBuf::from(path));
     }
 
     fn fake_handle() -> Handle {
