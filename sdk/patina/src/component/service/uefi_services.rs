@@ -29,7 +29,7 @@
 //! - [`image::ImageServices`] - Loading, starting, and unloading UEFI images.
 //! - [`protocol::ProtocolServices`] - Typed protocol installation and discovery.
 //! - [`timer_event::TimerEventServices`] - Timer events, available once the Timer Architectural
-//!   Protocol is installed.
+//!   Protocol is installed. Supports closure notifications and no-callback polling.
 //! - [`timing::TimingServices`] - Delays and the Watchdog timer.
 //! - [`tpl::TplServices`] - Raising and restoring the Task Priority Level (TPL).
 //!

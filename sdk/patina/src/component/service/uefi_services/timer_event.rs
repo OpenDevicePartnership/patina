@@ -5,6 +5,10 @@
 //! because arming a timer depends on the Timer Architectural Protocol, so a component depending on
 //! this service is not dispatched until the protocol is available and timers can actually fire.
 //!
+//! A timer event either runs a closure via [`TimerEventServices::create_timer_event`], or is polled
+//! with [`EventServices::check_event`](super::event::EventServices::check_event) after being created
+//! with [`TimerEventServices::create_timer_event_no_notify`], which has no notification callback.
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -74,9 +78,22 @@ pub trait TimerEventServices {
     /// Returns [`EventError::InvalidParameter`] if the event could not be created.
     fn create_timer_event(&self, notify_tpl: Tpl, callback: EventNotifyCallback) -> Result<Event, EventError>;
 
+    /// Creates a timer event with no notification callback.
+    ///
+    /// The returned event can be armed with [`Self::set_timer`].
+    ///
+    /// While [`Self::create_timer_event`] requires a notification callback, this does not and it
+    /// can be polled with [`EventServices::check_event`](super::event::EventServices::check_event) instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EventError::InvalidParameter`] if the event could not be created.
+    fn create_timer_event_no_notify(&self) -> Result<Event, EventError>;
+
     /// Arms, re-arms, or cancels the timer on a timer event.
     ///
-    /// The event must have been created with [`Self::create_timer_event`].
+    /// The event must have been created with [`Self::create_timer_event`] or
+    /// [`Self::create_timer_event_no_notify`].
     ///
     /// # Errors
     ///
@@ -126,6 +143,16 @@ mod tests {
 
         let event = mock.create_timer_event(Tpl::Callback, Box::new(|| {})).unwrap();
         assert!(mock.set_timer(event, TimerType::Periodic(Duration::from_millis(10))).is_ok());
+    }
+
+    #[test]
+    fn test_timer_event_services_mock_create_timer_event_no_notify() {
+        let mut mock = MockTimerEventServices::new();
+        mock.expect_create_timer_event_no_notify()
+            .times(1)
+            .returning(|| Ok(Event::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()));
+
+        assert!(mock.create_timer_event_no_notify().is_ok());
     }
 
     #[test]
