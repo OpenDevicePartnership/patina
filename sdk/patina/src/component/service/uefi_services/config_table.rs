@@ -12,8 +12,14 @@
 //! Implement [`ConfigTable`] to bind a GUID to a concrete Rust type, then use
 //! [`ConfigurationTableServicesExt::install`] (or [`ConfigurationTableServicesExt::install_or_replace`]
 //! for a table that is republished, such as after each record added to it) and [`ConfigurationTableServicesExt::get`].
-//! These methods never expose a raw pointer to the caller, and verify (at runtime) that a lookup's
-//! requested type matches the type it was installed with, so [`ConfigurationTableServicesExt::get`] is not `unsafe`.
+//!
+//! Once installed, a table's address is accessible by any other code with access to the UEFI system table,
+//! including other components, `extern "efiapi"` callers, and later boot phases, so [`ConfigurationTableServicesExt::get`]
+//! and [`ConfigurationTableServicesExt::get_bytes`] copy the table's current contents out rather than returning a
+//! reference into it. This is to avoid creating a `&'static` reference, which would assert that nothing mutates
+//! the table for as long as the reference might still be used, which cannot be upheld by this code. Neither method
+//! exposes a raw pointer to the caller, and both verify (at runtime) that a lookup's requested type matches the
+//! type the table was installed with, so [`ConfigurationTableServicesExt::get`] is not `unsafe`.
 //!
 //! [`ConfigTable`] still requires a fixed-size Rust type, but that type may be a self-describing
 //! header for a table with trailing variable-length data. Override [`ConfigTable::table_len`] to report
@@ -23,6 +29,10 @@
 //! can fall back to using the `unsafe` [`ConfigurationTableServices::install_table`] with a raw
 //! [`ConfigTablePtr`].
 //!
+//! Callers that need zero-copy access to the active table, and are willing to take on the resulting aliasing
+//! requirements themselves, can use [`ConfigurationTableServicesExt::get_ptr`] instead. It returns a
+//! type-verified, non-owning [`NonNull`] rather than a reference, so no aliasing assertions are made.
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -30,9 +40,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use alloc::vec::Vec;
 use core::any::TypeId;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
@@ -155,9 +167,12 @@ pub trait ConfigurationTableServices {
     /// # Safety
     ///
     /// `table` must point to valid, initialized memory of the type expected by consumers of `guid`, and
-    /// that memory must remain valid for as long as the table stays installed. Since a configuration
-    /// table may be looked up at any later point, including by other components or by the OS after
-    /// `ExitBootServices`, this is effectively a `'static` requirement.
+    /// that memory must remain valid, and continue to hold a valid/initialized instance of that type,
+    /// for as long as the table stays installed. Since a configuration table may be looked up (and its
+    /// contents copied out, see [`ConfigurationTableServicesExt::get`]) at any later point, including by
+    /// other components or by the OS after `ExitBootServices`, this is effectively a `'static` requirement.
+    /// The caller may update the table's contents in place (for example, to republish it after adding a
+    /// record), but must not deallocate or repurpose the memory while the table remains installed.
     unsafe fn install_table(&self, guid: BinaryGuid, table: ConfigTablePtr) -> Result<(), ConfigTableError>;
 
     /// Removes the configuration table associated with `guid`.
@@ -182,8 +197,12 @@ pub trait ConfigurationTableServices {
     /// # Safety
     ///
     /// `table` must point to valid, initialized memory of the type identified by `type_id`, and that
-    /// memory must remain valid for as long as the table stays installed (effectively `'static`), since
-    /// [`ConfigurationTableServicesExt::get`] later trusts `type_id` alone before casting the pointer.
+    /// memory must remain valid, and continue to hold a valid/initialized instance of that type, for
+    /// as long as the table stays installed (effectively `'static`), since
+    /// [`ConfigurationTableServicesExt::get`] later trusts `type_id` alone before copying its contents
+    /// out. The caller may update the table's contents in place (for example, to republish it after
+    /// adding a record), but must not deallocate or repurpose the memory while the table remains
+    /// installed.
     unsafe fn install_typed_table(
         &self,
         guid: BinaryGuid,
@@ -197,6 +216,41 @@ pub trait ConfigurationTableServices {
     /// This is the primitive backing [`ConfigurationTableServicesExt::get`]. Component authors
     /// should generally use that method instead.
     fn get_typed_table(&self, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr>;
+
+    /// Copies `buf.len()` bytes, starting at the table's address, from the table associated
+    /// with `guid` into `buf`, if it is present and if it was installed with `type_id`. Returns
+    /// whether a matching table was found (and `buf` was filled).
+    ///
+    /// This is the primitive backing [`ConfigurationTableServicesExt::get`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `buf.len()` bytes are valid to read starting at the installed
+    /// table's address.
+    unsafe fn read_typed_table_bytes(&self, guid: BinaryGuid, type_id: TypeId, buf: &mut [u8]) -> bool;
+
+    /// Returns the whole table associated with `guid`, if present, and if it was installed with `type_id`.
+    ///
+    /// `header_len` is the fixed size of the type's header. `table_len` is called with that
+    /// many header bytes (read first) and must return the table's real total length.
+    ///
+    /// A lock must be held across both the header read and `table_len`'s call, not just each
+    /// read individually.
+    ///
+    /// This is the primitive backing [`ConfigurationTableServicesExt::get_bytes`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `header_len` bytes are valid to read starting at the installed
+    /// table's address, and that `table_len`'s return value for those header bytes never exceeds
+    /// the number of bytes actually allocated there.
+    unsafe fn read_typed_table_bytes_sized(
+        &self,
+        guid: BinaryGuid,
+        type_id: TypeId,
+        header_len: usize,
+        table_len: fn(&[u8]) -> usize,
+    ) -> Option<Vec<u8>>;
 
     /// Removes the configuration table associated with `guid`, along with its recorded type.
     ///
@@ -222,8 +276,12 @@ pub trait ConfigurationTableServices {
     /// # Safety
     ///
     /// `table` must point to valid, initialized memory of the type identified by `type_id`, and that
-    /// memory must remain valid for as long as the table stays installed (effectively `'static`), since
-    /// [`ConfigurationTableServicesExt::get`] later trusts `type_id` alone before casting the pointer.
+    /// memory must remain valid, and continue to hold a valid/initialized instance of that type, for
+    /// as long as the table stays installed (effectively `'static`), since
+    /// [`ConfigurationTableServicesExt::get`] later trusts `type_id` alone before copying its contents
+    /// out. The caller may update the table's contents in place (for example, to republish it after
+    /// adding a record), but must not deallocate or repurpose the memory while the table remains
+    /// installed.
     unsafe fn replace_typed_table(
         &self,
         guid: BinaryGuid,
@@ -250,8 +308,10 @@ pub trait ConfigurationTableServices {
 ///     uefi_services::config_table::{ConfigTable, ConfigurationTableServices, ConfigurationTableServicesExt},
 /// };
 /// use patina::error::Result;
+/// use zerocopy::{FromBytes, IntoBytes};
 ///
 /// #[repr(C)]
+/// #[derive(Clone, Copy, FromBytes, IntoBytes)]
 /// struct VendorTable {
 ///     version: u32,
 /// }
@@ -264,7 +324,7 @@ pub trait ConfigurationTableServices {
 ///
 /// fn entry_point(config: Service<dyn ConfigurationTableServices>) -> Result<()> {
 ///     config.install(&TABLE)?;
-///     let installed: Option<&VendorTable> = config.get::<VendorTable>();
+///     let installed: Option<VendorTable> = config.get::<VendorTable>();
 ///     Ok(())
 /// }
 /// ```
@@ -289,8 +349,12 @@ pub trait ConfigTable: Sized + 'static {
 ///
 /// [`Self::install`], [`Self::install_or_replace`], [`Self::get`], [`Self::get_bytes`], and
 /// [`Self::remove`] work with any `T: `[`ConfigTable`]. The GUID is always `T::TABLE_GUID`, and the
-/// underlying service verifies the installed type before a lookup casts the pointer, so
-/// [`Self::get`] is not `unsafe`.
+/// underlying service verifies the installed type before a lookup copies out of the pointer, so
+/// [`Self::get`] is not `unsafe`. [`Self::get`] and [`Self::get_bytes`] copy the table's current
+/// contents rather than returning a reference into it, since the installed memory can be mutated or
+/// republished for as long as the table stays installed. [`Self::get_ptr`] is available for callers
+/// that need zero-copy access and are willing to take on the resulting aliasing requirements
+/// themselves.
 pub trait ConfigurationTableServicesExt: ConfigurationTableServices {
     /// Installs `table` as a [`ConfigTable`].
     ///
@@ -328,35 +392,73 @@ pub trait ConfigurationTableServicesExt: ConfigurationTableServices {
         unsafe { self.replace_typed_table(T::TABLE_GUID, TypeId::of::<T>(), ptr) }
     }
 
-    /// Returns the table installed under `T::TABLE_GUID`, if present.
+    /// Returns a copy of the table installed under `T::TABLE_GUID`, if present.
     ///
     /// Returns `None` if no table is installed under `T::TABLE_GUID`, or if the installed table was
     /// not installed as `T` (for example, using [`ConfigurationTableServices::install_table`] with a
     /// mismatched type).
-    fn get<T: ConfigTable>(&self) -> Option<&'static T> {
-        let ptr = self.get_typed_table(T::TABLE_GUID, TypeId::of::<T>())?;
-        // SAFETY: `get_typed_table` only returns `Some` when the table under `T::TABLE_GUID` was
-        // recorded with `TypeId::of::<T>()`, which only happens in `install`, so the pointer was
-        // installed from a `&'static T` and is valid, aligned, and lives for a `'static` lifetime.
-        Some(unsafe { &*(ptr.as_raw() as *const T) })
+    ///
+    /// This returns an owned `T` rather than a reference, since the installed memory may be mutated or
+    /// replaced (for example, republished after a record is added) for as long as the table stays
+    /// installed, and nothing would stop that from happening while a `&'static T` returned here was
+    /// still being used. Use [`Self::get_ptr`] instead if zero-copy access is required.
+    fn get<T: ConfigTable + FromBytes + IntoBytes>(&self) -> Option<T> {
+        let mut table = T::new_zeroed();
+        // SAFETY: `table.as_mut_bytes()` is `size_of::<T>()` bytes, which is always valid to read
+        // starting at the installed table's address once `read_typed_table_bytes` confirms the table
+        // under `T::TABLE_GUID` was recorded with `TypeId::of::<T>()`, which only happens in
+        // `install`/`install_or_replace`.
+        if !unsafe { self.read_typed_table_bytes(T::TABLE_GUID, TypeId::of::<T>(), table.as_mut_bytes()) } {
+            return None;
+        }
+        Some(table)
     }
 
-    /// Returns the whole table installed under `T::TABLE_GUID` as bytes, including any
+    /// Returns a copy of the whole table installed under `T::TABLE_GUID` as bytes, including any
     /// trailing variable-length data, if present.
     ///
     /// Returns `None` if no table is installed under `T::TABLE_GUID`, or if the installed table was
     /// not installed as `T`.
     ///
+    /// This returns owned bytes rather than a reference, since the installed memory may be mutated or
+    /// replaced for as long as the table stays installed. Use [`Self::get_ptr`] instead if zero-copy
+    /// access is required.
+    ///
     /// # Safety
     ///
     /// The caller must ensure `T::table_len` accurately reports the number of bytes allocated
     /// starting at the installed table's address.
-    unsafe fn get_bytes<T: ConfigTable>(&self) -> Option<&'static [u8]> {
+    unsafe fn get_bytes<T: ConfigTable + Copy>(&self) -> Option<Vec<u8>> {
+        fn table_len_of<T: ConfigTable + Copy>(header: &[u8]) -> usize {
+            // SAFETY: `header` is `size_of::<T>()` bytes, read from a table verified as `T`.
+            let table = unsafe { core::ptr::read_unaligned(header.as_ptr().cast::<T>()) };
+            table.table_len()
+        }
+
+        // SAFETY: `size_of::<T>()` header bytes are always valid to read once the table under
+        // `T::TABLE_GUID` is verified as `T`. `table_len_of::<T>` reports the total length from
+        // those already-verified header bytes.
+        unsafe {
+            self.read_typed_table_bytes_sized(T::TABLE_GUID, TypeId::of::<T>(), size_of::<T>(), table_len_of::<T>)
+        }
+    }
+
+    /// Returns a type-verified, non-owning pointer to the table installed under `T::TABLE_GUID`, if
+    /// present.
+    ///
+    /// Returns `None` if no table is installed under `T::TABLE_GUID`, or if the installed table was
+    /// not installed as `T`.
+    ///
+    /// This does not copy the table, so it is suitable for large tables or cases when the table may
+    /// need to be accessed frequently. It returns a pointer rather than a reference since
+    /// forming a reference from it (for example, `unsafe { ptr.as_ref() }`) carries the usual
+    /// requirement that the pointee not be mutated for as long as that reference is used, which this
+    /// crate cannot guarantee on the installer's behalf since the table may be mutated or republished
+    /// for as long as it stays installed. Keep any reference derived from this pointer as short-lived
+    /// as possible.
+    fn get_ptr<T: ConfigTable>(&self) -> Option<NonNull<T>> {
         let ptr = self.get_typed_table(T::TABLE_GUID, TypeId::of::<T>())?;
-        // SAFETY: see `Self::get` for why `ptr` is a valid, aligned, `'static` `T`.
-        let table = unsafe { &*(ptr.as_raw() as *const T) };
-        // SAFETY: the caller guarantees `table.table_len()` bytes are valid to read starting here.
-        Some(unsafe { core::slice::from_raw_parts(ptr.as_raw() as *const u8, table.table_len()) })
+        NonNull::new(ptr.as_raw().cast::<T>())
     }
 
     /// Removes the table installed under `T::TABLE_GUID`.
@@ -393,6 +495,7 @@ mod tests {
     }
 
     #[repr(C)]
+    #[derive(Clone, Copy, FromBytes, IntoBytes)]
     struct FakeConfigTable {
         value: u32,
     }
@@ -412,10 +515,14 @@ mod tests {
             assert_eq!(type_id, TypeId::of::<FakeConfigTable>());
             Ok(())
         });
-        mock.expect_get_typed_table().times(1).returning(|guid, type_id| {
+        mock.expect_read_typed_table_bytes().times(1).returning(|guid, type_id, buf| {
             assert_eq!(guid, FakeConfigTable::TABLE_GUID);
             assert_eq!(type_id, TypeId::of::<FakeConfigTable>());
-            ConfigTablePtr::from_raw(&raw const FAKE_CONFIG_TABLE as *mut c_void)
+            // SAFETY: `FAKE_CONFIG_TABLE` is a valid `'static` value, and `buf` is exactly
+            // `size_of::<FakeConfigTable>()` bytes, matching what `get` requests.
+            let src = unsafe { core::slice::from_raw_parts((&raw const FAKE_CONFIG_TABLE).cast::<u8>(), buf.len()) };
+            buf.copy_from_slice(src);
+            true
         });
 
         mock.install(&FAKE_CONFIG_TABLE).unwrap();
@@ -434,7 +541,7 @@ mod tests {
     #[test]
     fn test_config_table_ext_get_returns_none_on_type_mismatch() {
         let mut mock = MockConfigurationTableServices::new();
-        mock.expect_get_typed_table().times(1).returning(|_, _| None);
+        mock.expect_read_typed_table_bytes().times(1).returning(|_, _, _| false);
 
         assert!(mock.get::<FakeConfigTable>().is_none());
     }
@@ -470,6 +577,7 @@ mod tests {
     /// A self-describing header whose total size is reported by `table_len` and covers trailing
     /// data past the header itself.
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct HeaderWithTrailingData {
         total_len: u32,
     }
@@ -497,10 +605,21 @@ mod tests {
     #[test]
     fn test_config_table_ext_get_bytes_returns_whole_table() {
         let mut mock = MockConfigurationTableServices::new();
-        mock.expect_get_typed_table().times(1).returning(|guid, type_id| {
+        mock.expect_read_typed_table_bytes_sized().times(1).returning(|guid, type_id, header_len, table_len| {
             assert_eq!(guid, HeaderWithTrailingData::TABLE_GUID);
             assert_eq!(type_id, TypeId::of::<HeaderWithTrailingData>());
-            ConfigTablePtr::from_raw(&raw const HEADER_WITH_TRAILING_DATA_BUFFER as *mut c_void)
+            assert_eq!(header_len, size_of::<HeaderWithTrailingData>());
+            // SAFETY: `HEADER_WITH_TRAILING_DATA_BUFFER` is a valid `'static` value, large enough
+            // for `header_len` bytes and for whatever length `table_len` reports from them.
+            let header = unsafe {
+                core::slice::from_raw_parts((&raw const HEADER_WITH_TRAILING_DATA_BUFFER).cast::<u8>(), header_len)
+            };
+            let len = table_len(header);
+            // SAFETY: see the comment above. This is the same buffer, now read for `len` bytes instead
+            // of just `header_len`.
+            let src =
+                unsafe { core::slice::from_raw_parts((&raw const HEADER_WITH_TRAILING_DATA_BUFFER).cast::<u8>(), len) };
+            Some(src.to_vec())
         });
 
         // SAFETY: `HEADER_WITH_TRAILING_DATA_BUFFER.header.total_len` (8) matches the number of
@@ -513,9 +632,32 @@ mod tests {
     #[test]
     fn test_config_table_ext_get_bytes_returns_none_on_type_mismatch() {
         let mut mock = MockConfigurationTableServices::new();
-        mock.expect_get_typed_table().times(1).returning(|_, _| None);
+        mock.expect_read_typed_table_bytes_sized().times(1).returning(|_, _, _, _| None);
 
         // SAFETY: no table is returned, so no memory is read.
         assert!(unsafe { mock.get_bytes::<HeaderWithTrailingData>() }.is_none());
+    }
+
+    #[test]
+    fn test_config_table_ext_get_ptr_returns_typed_pointer() {
+        let mut mock = MockConfigurationTableServices::new();
+        mock.expect_get_typed_table().times(1).returning(|guid, type_id| {
+            assert_eq!(guid, FakeConfigTable::TABLE_GUID);
+            assert_eq!(type_id, TypeId::of::<FakeConfigTable>());
+            ConfigTablePtr::from_raw(&raw const FAKE_CONFIG_TABLE as *mut c_void)
+        });
+
+        let ptr = mock.get_ptr::<FakeConfigTable>().unwrap();
+        // SAFETY: `ptr` was just verified above to have been looked up as `FakeConfigTable`, and
+        // `FAKE_CONFIG_TABLE` is a `'static` value that nothing in this test mutates.
+        assert_eq!(unsafe { ptr.as_ref() }.value, 42);
+    }
+
+    #[test]
+    fn test_config_table_ext_get_ptr_returns_none_on_type_mismatch() {
+        let mut mock = MockConfigurationTableServices::new();
+        mock.expect_get_typed_table().times(1).returning(|_, _| None);
+
+        assert!(mock.get_ptr::<FakeConfigTable>().is_none());
     }
 }

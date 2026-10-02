@@ -9,7 +9,7 @@
 //! lets the component install and retrieve it through [`ConfigurationTableServicesExt::install`] and
 //! [`ConfigurationTableServicesExt::get`]. Neither method takes a raw pointer or directly requires the
 //! GUID, so they're relatively straightforward and simple to use. `get` is not `unsafe`, because the
-//! service verifies the installed type before casting the pointer.
+//! service verifies the installed type before copying the table's contents out.
 //!
 //! [`ConfigTable`] only supports tables whose size is known at compile time, but that type can be a
 //! self-describing header whose own field covers trailing data laid out after it in the same allocation.
@@ -35,10 +35,12 @@ use patina::{
     },
     error::Result,
 };
+use zerocopy::{FromBytes, IntoBytes};
 
 /// A sample vendor table laid out the way a typical firmware table would be as `#[repr(C)]`, with a
 /// signature and version so consumers can validate it.
 #[repr(C)]
+#[derive(Clone, Copy, FromBytes, IntoBytes)]
 pub struct SampleVendorTable {
     /// Four-character signature identifying the table (`b"PTNA"`).
     pub signature: [u8; 4],
@@ -79,8 +81,8 @@ impl ConfigurationTableSample {
         config.install(&VENDOR_TABLE)?;
         log::info!("Installed SampleVendorTable v{}", VENDOR_TABLE.version);
 
-        // Read it back. Note that `unsafe` is not needed as the service only returns a table here if it was
-        // installed as `SampleVendorTable`, which is what `install` did above.
+        // Read it back as an owned copy. Note that `unsafe` is not needed as the service only returns a
+        // table here if it was installed as `SampleVendorTable`, which is what `install` did above.
         if let Some(table) = config.get::<SampleVendorTable>() {
             log::info!(
                 "Read back signature {:?}, {} entries",
@@ -98,6 +100,7 @@ const ENTRY_COUNT: u32 = 3;
 /// A sample vendor table with a self-describing header where `total_len` covers this header plus the
 /// `entries` that follow it in memory.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct SampleDynamicHeader {
     /// Four-character signature identifying the table (`b"PTNB"`).
     pub signature: [u8; 4],

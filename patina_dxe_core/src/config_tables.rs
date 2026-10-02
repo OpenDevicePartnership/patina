@@ -200,25 +200,23 @@ pub(crate) fn core_install_typed_configuration_table(
     Ok(old_vendor_table_ptr)
 }
 
-/// Returns the pointer to a configuration table for the specified guid, if it exists.
-pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>> {
-    let st_guard = SYSTEM_TABLE.lock();
-    let st = st_guard.as_ref()?;
-
+/// Returns the vendor table pointer for `vendor_guid` from a system table reference. This allows
+/// reuse of a [`SYSTEM_TABLE`] lock already acquired by the caller.
+pub(crate) fn configuration_table_entry_ptr(st: &EfiSystemTable, vendor_guid: &efi::Guid) -> Option<NonNull<c_void>> {
     let system_table = st.get();
     if system_table.configuration_table.is_null() || system_table.number_of_table_entries == 0 {
         return None;
     }
-
-    // SAFETY: system table exists, and configuration is non-null, and number_of_table_entries is non-zero.
+    // SAFETY: configuration_table is non-null, and number_of_table_entries describes its length.
     let ct_slice = unsafe { from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
+    ct_slice.iter().find(|entry| entry.vendor_guid == *vendor_guid).and_then(|entry| NonNull::new(entry.vendor_table))
+}
 
-    for entry in ct_slice {
-        if entry.vendor_guid == *table_guid {
-            return NonNull::new(entry.vendor_table);
-        }
-    }
-    None
+/// Returns the pointer to a configuration table for the specified guid, if it exists.
+pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>> {
+    let st_guard = SYSTEM_TABLE.lock();
+    let st = st_guard.as_ref()?;
+    configuration_table_entry_ptr(st, table_guid)
 }
 
 pub fn init_config_tables_support(st: &mut EfiSystemTable) {

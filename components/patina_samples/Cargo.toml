@@ -17,6 +17,7 @@ log = { workspace = true }
 patina = { workspace = true, features = ["alloc"] }
 patina_macro = { workspace = true }
 patina_smbios = { workspace = true }
+zerocopy = { workspace = true }
 
 [features]
 std = []
