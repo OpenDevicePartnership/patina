@@ -194,23 +194,6 @@ impl HardDrive {
     /// Signature type: MBR 32-bit signature
     pub const SIGNATURE_TYPE_MBR: u8 = 0x01;
 
-    /// Try to parse a `HardDrive` from a raw device path node.
-    ///
-    /// Returns `None` if the node's type/subtype does not identify a
-    /// `HardDrive` node, if the node data is not exactly one `HardDrive`
-    /// payload, or if the node fails [`validate`](super::DevicePathNode::validate).
-    ///
-    /// Useful when walking a device path with
-    /// [`crate::uefi::device_path::DevicePath`] to recover the typed
-    /// `HardDrive` payload from each node without doing the
-    /// type/subtype check at the call site.
-    pub fn try_from_node(node: &super::GenericDevicePathNode) -> Option<Self> {
-        if !<Self as super::DevicePathNode>::is_type(node.header.r#type, node.header.sub_type) {
-            return None;
-        }
-        super::decode_payload(&node.data).ok()
-    }
-
     /// Create a new `HardDrive` device path node for a GPT partition.
     ///
     /// # Arguments

@@ -33,7 +33,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use scroll::{Pread, ctx::TryIntoCtx};
+use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
 
 use crate::{
     base::error::EfiError,
@@ -62,47 +62,52 @@ impl DevicePathBuf {
     /// Append a node to the device path.
     /// This function does not ensure that the device path is valid, the `EndEntire` node must be manually added to the device path.
     ///
+    /// The node is checked with [`validate`](DevicePathNode::validate), then its header and
+    /// payload are encoded directly into the device path buffer.
+    ///
     /// # Errors
     ///
-    /// Returns an error for invalid nodes, allocation failure, or serialization
-    /// failure. The existing bytes remain unchanged on failure.
+    /// Returns an error if the node fails validation, the node is too large for a 16-bit
+    /// length, the header length differs from [`measure_size`](DevicePathNode::measure_size),
+    /// allocation fails, or the payload cannot be encoded. The existing bytes remain
+    /// unchanged on failure.
     pub fn append<T>(&mut self, node: T) -> Result<(), scroll::Error>
     where
         T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
-        let writing_start_offset = self.buffer.len();
-        let expected_length = Header::size_of_header()
-            .checked_add(node.measure_size())
-            .ok_or(scroll::Error::BadInput { size: usize::MAX, msg: "device path node length overflow" })?;
-        if expected_length > usize::from(u16::MAX) {
-            return Err(scroll::Error::BadInput { size: expected_length, msg: "device path node is too large" });
-        }
+        node.validate().map_err(|msg| scroll::Error::BadInput { size: 0, msg })?;
+        let payload_length = node.measure_size();
+        let node_length = Header::size_of_header()
+            .checked_add(payload_length)
+            .filter(|length| u16::try_from(*length).is_ok())
+            .ok_or(scroll::Error::BadInput { size: payload_length, msg: "device path node is too large" })?;
         let header = node.header();
-        let header_length = usize::from(header.length);
-        if header_length != expected_length || header_length < Header::size_of_header() {
-            return Err(scroll::Error::BadInput { size: header_length, msg: "invalid device path node length" });
+        if usize::from(header.length) != node_length {
+            return Err(scroll::Error::BadInput {
+                size: usize::from(header.length),
+                msg: "device path node header length differs from its size",
+            });
         }
-        let new_length = writing_start_offset
-            .checked_add(header_length)
-            .ok_or(scroll::Error::BadInput { size: header_length, msg: "device path length overflow" })?;
+
+        let start = self.buffer.len();
         self.buffer
-            .try_reserve_exact(header_length)
-            .map_err(|_| scroll::Error::BadInput { size: header_length, msg: "cannot allocate device path node" })?;
-
+            .try_reserve_exact(node_length)
+            .map_err(|_| scroll::Error::BadInput { size: node_length, msg: "cannot allocate device path node" })?;
         // No allocation will be done here, handled by the `try_reserve`.
-        self.buffer.resize(new_length, 0);
+        self.buffer.resize(start + node_length, 0);
 
-        let writing_buffer =
-            self.buffer.as_mut_slice().get_mut(writing_start_offset..).expect("buffer was just resized to fit");
-        let result = match node.write_into(writing_buffer) {
-            Ok(written) if written == header_length => Ok(()),
-            Ok(written) => {
-                Err(scroll::Error::BadInput { size: written, msg: "encoded node length differs from header" })
+        let node_bytes = self.buffer.get_mut(start..).expect("buffer was just resized to fit");
+        let result = node_bytes.pwrite_with(header, 0, scroll::LE).and_then(|_| {
+            match node_bytes.pwrite_with(node, Header::size_of_header(), scroll::LE)? {
+                written if written == payload_length => Ok(()),
+                written => Err(scroll::Error::BadInput {
+                    size: written,
+                    msg: "encoded payload size differs from measure_size",
+                }),
             }
-            Err(error) => Err(error),
-        };
+        });
         if result.is_err() {
-            self.buffer.truncate(writing_start_offset);
+            self.buffer.truncate(start);
         }
         result
     }
@@ -417,7 +422,7 @@ impl DevicePath {
         }
 
         let mut shorthand_nodes = self.iter().filter(|node| node.header.r#type != DevicePathType::End as u8);
-        let Some(target) = shorthand_nodes.by_ref().find_map(HardDrive::try_from_node) else {
+        let Some(target) = shorthand_nodes.by_ref().find_map(|node| HardDrive::try_from(node).ok()) else {
             log::error!("Shorthand device path has no hard drive node to expand");
             return Err(EfiError::InvalidParameter);
         };
@@ -448,7 +453,7 @@ impl DevicePath {
             let mut found = false;
             for node in handle_path.iter().take_while(|node| node.header.r#type != DevicePathType::End as u8) {
                 prefix_nodes.push(node);
-                if HardDrive::try_from_node(node).is_some_and(|hard_drive| {
+                if HardDrive::try_from(node).is_ok_and(|hard_drive| {
                     hard_drive.partition_number == target.partition_number
                         && hard_drive.partition_format == target.partition_format
                         && hard_drive.signature_type == target.signature_type
@@ -540,7 +545,12 @@ impl Display for DevicePath {
 
         while let Some(node) = nodes.next() {
             let is_end = node.header.r#type == DevicePathType::End as u8;
-            f.write_fmt(format_args!("{}", node::cast_to_dyn_device_path_node(node)))?;
+            // Print the decoded node; a malformed node is logged and printed as a generic node.
+            let decoded = <Box<dyn DevicePathNode>>::try_from(node).unwrap_or_else(|error| {
+                log::warn!("Invalid device path node {}/{}: {error}", node.header.r#type, node.header.sub_type);
+                Box::new(node)
+            });
+            f.write_fmt(format_args!("{decoded}"))?;
 
             if let Some(next) = nodes.peek()
                 && !is_end
