@@ -25,6 +25,13 @@
 //! non-group self-managed function, since if the caller receives nothing in return and the callback
 //! doesn't signal itself, nothing could signal it.
 //!
+//! ### Wait Events
+//!
+//! For [`EventServicesExt::on_wait_event`], the caller and the callback need the event. A wait
+//! callback runs because something else checked or waited on the event while it was not yet signaled,
+//! and it is the callback's job to decide whether to call [`EventServices::signal_event`] on its
+//! event. The caller still owns the event, to publish it and to close it once it is no longer needed.
+//!
 //! It is safe for an event to be closed from within its own callback (or an ancestor's, if closed from a nested
 //! notification).
 //!
@@ -158,6 +165,18 @@ pub trait EventServices {
         callback: EventNotifyCallback,
     ) -> Result<Event, EventError>;
 
+    /// Creates a wait-type event with a notification callback that decides whether to signal it.
+    ///
+    /// The callback runs because something else called [`Self::check_event`] on it while it was not
+    /// yet signaled. The callback often checks some external condition(s) and calls [`Self::signal_event`]
+    /// on the event it is given if that condition is now met. The producer remains responsible for
+    /// closing the event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EventError::InvalidParameter`] if the event could not be created.
+    fn create_wait_event(&self, notify_tpl: Tpl, callback: EventNotifyCallback) -> Result<Event, EventError>;
+
     /// Signals an event, queuing its notification callback for dispatch.
     ///
     /// # Errors
@@ -287,6 +306,20 @@ pub trait EventServicesExt: EventServices {
     ) -> Result<(), EventError> {
         self.create_event_for_group(group, notify_tpl, Box::new(callback)).map(|_event| ())
     }
+
+    /// Creates a wait-type event with a notification callback that decides whether to signal it.
+    ///
+    /// Equivalent to [`EventServices::create_wait_event`], but takes a closure instead of a
+    /// pre-boxed [`EventNotifyCallback`]. The callback receives the event so it can signal it when
+    /// its condition is met. The caller also receives the event, to publish it (for example as a
+    /// protocol field) and to close it once it is no longer needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EventError::InvalidParameter`] if the event could not be created.
+    fn on_wait_event(&self, notify_tpl: Tpl, callback: impl FnMut(Event) + 'static) -> Result<Event, EventError> {
+        self.create_wait_event(notify_tpl, Box::new(callback))
+    }
 }
 
 impl<T: EventServices + ?Sized> EventServicesExt for T {}
@@ -329,6 +362,18 @@ mod tests {
         mock.expect_close_event().times(1).returning(|_| Ok(()));
 
         let event = mock.create_event_for_group(BinaryGuid::ZERO, Tpl::Callback, Box::new(|_event| {})).unwrap();
+        assert!(mock.close_event(event).is_ok());
+    }
+
+    #[test]
+    fn test_event_services_mock_wait_event_flow() {
+        let mut mock = MockEventServices::new();
+        mock.expect_create_wait_event()
+            .times(1)
+            .returning(|_, _| Ok(Event::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()));
+        mock.expect_close_event().times(1).returning(|_| Ok(()));
+
+        let event = mock.create_wait_event(Tpl::Notify, Box::new(|_event| {})).unwrap();
         assert!(mock.close_event(event).is_ok());
     }
 
@@ -387,6 +432,25 @@ mod tests {
         });
 
         assert_eq!(result, Ok(()));
+        assert_eq!(received.get(), Some(dummy_event()));
+    }
+
+    #[test]
+    fn test_event_services_ext_on_wait_event_shares_the_event_with_both_sides() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let mut mock = MockEventServices::new();
+        mock.expect_create_wait_event().times(1).returning(|_, mut callback| {
+            callback(dummy_event());
+            Ok(dummy_event())
+        });
+
+        let received: Rc<Cell<Option<Event>>> = Rc::new(Cell::new(None));
+        let received_in_callback = received.clone();
+        let event = mock.on_wait_event(Tpl::Notify, move |event| received_in_callback.set(Some(event))).unwrap();
+
+        assert_eq!(event, dummy_event());
         assert_eq!(received.get(), Some(dummy_event()));
     }
 

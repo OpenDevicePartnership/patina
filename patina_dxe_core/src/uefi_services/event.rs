@@ -109,6 +109,10 @@ impl EventServices for CoreEventServices {
         create_event_internal(efi::EVT_NOTIFY_SIGNAL, notify_tpl, callback, Some(group.into_inner()))
     }
 
+    fn create_wait_event(&self, notify_tpl: Tpl, callback: EventNotifyCallback) -> Result<Event, EventError> {
+        create_event_internal(efi::EVT_NOTIFY_WAIT, notify_tpl, callback, None)
+    }
+
     fn signal_event(&self, event: Event) -> Result<(), EventError> {
         EVENT_DB.signal_event(event.as_raw()).map_err(EventError::from)
     }
@@ -160,7 +164,7 @@ mod tests {
     use super::*;
     use std::sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     use std::{cell::Cell, rc::Rc};
 
@@ -257,8 +261,9 @@ mod tests {
         crate::test_support::with_global_lock(|| {
             let service = CoreEventServices;
 
-            // The service can only create NOTIFY_SIGNAL events, so create a NOTIFY_WAIT event
-            // directly through the event database to exercise check_event's other branches.
+            // Created directly through the event database (rather than create_wait_event) so this
+            // test stays focused on check_event's signaled/clear logic, independent of the
+            // notify-dispatch operations create_wait_event exercises in the test below.
             let raw_event = EVENT_DB
                 .create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(noop_wait_notify), None, None)
                 .unwrap();
@@ -268,6 +273,33 @@ mod tests {
 
             service.signal_event(event).unwrap();
 
+            assert_eq!(service.check_event(event), Ok(true));
+
+            service.close_event(event).unwrap();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_core_event_services_create_wait_event_signals_when_condition_is_met() {
+        crate::test_support::with_global_lock(|| {
+            let service = CoreEventServices;
+            let ready = Arc::new(AtomicBool::new(false));
+            let notify_ready = ready.clone();
+            let callback: EventNotifyCallback = Box::new(move |event| {
+                if notify_ready.load(Ordering::SeqCst) {
+                    EVENT_DB.signal_event(event.as_raw()).unwrap();
+                }
+            });
+
+            let event = service.create_wait_event(Tpl::Notify, callback).unwrap();
+
+            // check_event queues and runs the callback, which does not signal yet.
+            assert_eq!(service.check_event(event), Ok(false));
+
+            ready.store(true, Ordering::SeqCst);
+
+            // The callback signals the event this time.
             assert_eq!(service.check_event(event), Ok(true));
 
             service.close_event(event).unwrap();
