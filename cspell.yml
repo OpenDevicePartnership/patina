@@ -173,6 +173,7 @@ words:
   - pdata
   - pdbaltpath
   - pdbhelper
+  - pointee
   - powerfmt
   - pread
   - psapi

@@ -7,6 +7,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use alloc::vec;
+use alloc::vec::Vec;
 use core::any::TypeId;
 
 use patina::BinaryGuid;
@@ -16,10 +18,21 @@ use patina::component::service::{
 };
 
 use crate::config_tables::{
-    CONFIG_TABLE_TYPES, core_install_configuration_table, core_install_typed_configuration_table,
-    get_configuration_table,
+    CONFIG_TABLE_TYPES, configuration_table_entry_ptr, core_install_configuration_table,
+    core_install_typed_configuration_table, get_configuration_table,
 };
-use crate::systemtables::SYSTEM_TABLE;
+use crate::systemtables::{EfiSystemTable, SYSTEM_TABLE};
+
+/// Looks up the pointer for `guid`'s table given an already-locked system table reference,
+/// and verifies it was recorded with `type_id` in [`CONFIG_TABLE_TYPES`]. Returns `None` if either
+/// check fails.
+fn typed_table_ptr(st: &EfiSystemTable, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
+    if CONFIG_TABLE_TYPES.lock().get(&guid) != Some(&type_id) {
+        return None;
+    }
+    let ptr = configuration_table_entry_ptr(st, &guid.into_inner())?;
+    ConfigTablePtr::from_raw(ptr.as_ptr())
+}
 
 /// Core implementation of [`ConfigurationTableServices`], operating on the global system table via
 /// the core's internal Rust APIs.
@@ -64,10 +77,53 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     }
 
     fn get_typed_table(&self, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
-        if CONFIG_TABLE_TYPES.lock().get(&guid) != Some(&type_id) {
-            return None;
+        let st_guard = SYSTEM_TABLE.lock();
+        let st = st_guard.as_ref()?;
+        typed_table_ptr(st, guid, type_id)
+    }
+
+    unsafe fn read_typed_table_bytes(&self, guid: BinaryGuid, type_id: TypeId, buf: &mut [u8]) -> bool {
+        // Note: The `SYSTEM_TABLE` lock is held across the type check, lookup, and copy to keep all three
+        // synchronized against a concurrent install, replace, or remove of the same entry.
+        let st_guard = SYSTEM_TABLE.lock();
+        let Some(st) = st_guard.as_ref() else { return false };
+        let Some(ptr) = typed_table_ptr(st, guid, type_id) else { return false };
+        let base = ptr.as_raw() as *const u8;
+        for (index, byte) in buf.iter_mut().enumerate() {
+            // SAFETY: the caller guarantees `buf.len()` bytes are valid to read starting at `base`.
+            *byte = unsafe { core::ptr::read(base.add(index)) };
         }
-        self.get_table(guid)
+        true
+    }
+
+    unsafe fn read_typed_table_bytes_sized(
+        &self,
+        guid: BinaryGuid,
+        type_id: TypeId,
+        header_len: usize,
+        table_len: fn(&[u8]) -> usize,
+    ) -> Option<Vec<u8>> {
+        // Holding `SYSTEM_TABLE`'s lock across check and read operations is done to keep all of them
+        // synchronized against a concurrent operations against the same entry.
+        let st_guard = SYSTEM_TABLE.lock();
+        let st = st_guard.as_ref()?;
+        let ptr = typed_table_ptr(st, guid, type_id)?;
+        let base = ptr.as_raw() as *const u8;
+
+        let mut header = vec![0u8; header_len];
+        for (index, byte) in header.iter_mut().enumerate() {
+            // SAFETY: the caller guarantees `header_len` bytes are valid to read starting at `base`.
+            *byte = unsafe { core::ptr::read(base.add(index)) };
+        }
+
+        let mut bytes = vec![0u8; table_len(&header)];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            // SAFETY: the caller guarantees `table_len`'s result is valid to read starting at
+            // `base`, and the table has stayed synchronized since the header read above because
+            // `SYSTEM_TABLE`'s lock has been held continuously.
+            *byte = unsafe { core::ptr::read(base.add(index)) };
+        }
+        Some(bytes)
     }
 
     fn remove_typed_table(&self, guid: BinaryGuid) -> Result<(), ConfigTableError> {
@@ -337,6 +393,103 @@ mod tests {
             // The stale type record must not vouch for the replacement pointer.
             assert_eq!(svc.get_typed_table(guid, type_id), None);
             assert_eq!(svc.get_table(guid).unwrap().as_raw(), replacement);
+        });
+    }
+
+    #[test]
+    fn read_typed_table_bytes_copies_installed_table() {
+        with_locked_state(|| {
+            static VALUE: u32 = 0x1234_5678;
+
+            let svc = CoreConfigurationTableServices;
+            let guid: BinaryGuid = BinaryGuid::from_string("4a5b6c7d-8e9f-4a0b-9c1d-2e3f4a5b6c7d");
+            let type_id = TypeId::of::<u32>();
+            let table = ConfigTablePtr::from_raw(&raw const VALUE as *mut c_void).unwrap();
+
+            // SAFETY: `table` points to `VALUE`, a `'static u32` (outlives this test).
+            unsafe { svc.install_typed_table(guid, type_id, table) }.unwrap();
+
+            let mut buf = [0u8; size_of::<u32>()];
+            // SAFETY: `buf` is exactly `size_of::<u32>()` bytes, matching the installed `VALUE`.
+            let found = unsafe { svc.read_typed_table_bytes(guid, type_id, &mut buf) };
+
+            assert!(found);
+            assert_eq!(u32::from_ne_bytes(buf), VALUE);
+        });
+    }
+
+    #[test]
+    fn read_typed_table_bytes_returns_false_on_type_mismatch() {
+        with_locked_state(|| {
+            let svc = CoreConfigurationTableServices;
+            let guid: BinaryGuid = BinaryGuid::from_string("5b6c7d8e-9f0a-4b1c-9d2e-3f4a5b6c7d8e");
+            let table = ConfigTablePtr::from_raw(0xc100usize as *mut c_void).unwrap();
+
+            // SAFETY: `table` is a dummy address. It is never dereferenced because the type
+            // mismatch below makes `read_typed_table_bytes` return before reading it.
+            unsafe { svc.install_typed_table(guid, TypeId::of::<u32>(), table) }.unwrap();
+
+            let mut buf = [0u8; 8];
+            // SAFETY: `read_typed_table_bytes` reports a type mismatch without reading `table`'s
+            // memory, so `buf` is never actually filled from the dummy address.
+            let found = unsafe { svc.read_typed_table_bytes(guid, TypeId::of::<u64>(), &mut buf) };
+
+            assert!(!found);
+        });
+    }
+
+    #[test]
+    fn read_typed_table_bytes_sized_reads_header_then_full_length() {
+        with_locked_state(|| {
+            #[repr(C)]
+            struct HeaderWithTrailingData {
+                total_len: u32,
+                trailing: [u8; 4],
+            }
+
+            static TABLE: HeaderWithTrailingData =
+                HeaderWithTrailingData { total_len: 8, trailing: [0xaa, 0xbb, 0xcc, 0xdd] };
+
+            fn table_len(header: &[u8]) -> usize {
+                u32::from_ne_bytes(header.try_into().unwrap()) as usize
+            }
+
+            let svc = CoreConfigurationTableServices;
+            let guid: BinaryGuid = BinaryGuid::from_string("6c7d8e9f-0a1b-4c2d-9e3f-4a5b6c7d8e9f");
+            let type_id = TypeId::of::<u32>();
+            let table = ConfigTablePtr::from_raw(&raw const TABLE as *mut c_void).unwrap();
+
+            // SAFETY: `table` points to `TABLE`, a `'static` value (outlives this test).
+            unsafe { svc.install_typed_table(guid, type_id, table) }.unwrap();
+
+            // SAFETY: 4 header bytes and `table_len`'s result (8) are both valid to read starting
+            // at `TABLE`'s address.
+            let bytes = unsafe { svc.read_typed_table_bytes_sized(guid, type_id, 4, table_len) }.unwrap();
+
+            assert_eq!(bytes.len(), 8);
+            assert_eq!(&bytes[4..], &[0xaa, 0xbb, 0xcc, 0xdd]);
+        });
+    }
+
+    #[test]
+    fn read_typed_table_bytes_sized_returns_none_on_type_mismatch() {
+        with_locked_state(|| {
+            fn table_len(_header: &[u8]) -> usize {
+                8
+            }
+
+            let svc = CoreConfigurationTableServices;
+            let guid: BinaryGuid = BinaryGuid::from_string("7d8e9f0a-1b2c-4d3e-8f4a-5b6c7d8e9f0a");
+            let table = ConfigTablePtr::from_raw(0xd100usize as *mut c_void).unwrap();
+
+            // SAFETY: `table` is a dummy address. It is not dereferenced because the type
+            // mismatch below makes `read_typed_table_bytes_sized` return before reading it.
+            unsafe { svc.install_typed_table(guid, TypeId::of::<u32>(), table) }.unwrap();
+
+            // SAFETY: `read_typed_table_bytes_sized` reports a type mismatch without reading `table`'s memory.
+            let result = unsafe { svc.read_typed_table_bytes_sized(guid, TypeId::of::<u64>(), 4, table_len) };
+
+            assert!(result.is_none());
         });
     }
 }
