@@ -351,13 +351,14 @@ mod tests {
     fn mock_events_registering_once(fires: u32) -> MockEventServices {
         let mut events = MockEventServices::new();
         events.expect_create_event_for_group().once().returning(move |_, _, mut callback| {
-            for _ in 0..fires {
-                callback();
-            }
-            Ok(patina::component::service::uefi_services::event::Event::from_raw(
+            let event = patina::component::service::uefi_services::event::Event::from_raw(
                 core::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr(),
             )
-            .unwrap())
+            .unwrap();
+            for _ in 0..fires {
+                callback(event);
+            }
+            Ok(event)
         });
         events
     }
