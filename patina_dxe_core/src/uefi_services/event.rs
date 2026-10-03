@@ -107,6 +107,11 @@ impl EventServices for CoreEventServices {
         EVENT_DB.signal_event(event.as_raw()).map_err(EventError::from)
     }
 
+    fn signal_group(&self, group: BinaryGuid) -> Result<(), EventError> {
+        EVENT_DB.signal_group(group.into_inner());
+        Ok(())
+    }
+
     fn check_event(&self, event: Event) -> Result<bool, EventError> {
         match core_check_event(event.as_raw()) {
             efi::Status::SUCCESS => Ok(true),
@@ -223,6 +228,26 @@ mod tests {
 
             let event = service.create_event_for_group(BinaryGuid::ZERO, Tpl::Callback, callback).unwrap();
             EVENT_DB.signal_group(BinaryGuid::ZERO.into_inner());
+
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+            service.close_event(event).unwrap();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_core_event_services_signal_group_dispatches_through_service() {
+        crate::test_support::with_global_lock(|| {
+            let service = CoreEventServices;
+            let counter = Arc::new(AtomicUsize::new(0));
+            let callback_counter = counter.clone();
+            let callback: EventNotifyCallback = Box::new(move || {
+                callback_counter.fetch_add(1, Ordering::SeqCst);
+            });
+
+            let event = service.create_event_for_group(BinaryGuid::ZERO, Tpl::Callback, callback).unwrap();
+            assert!(service.signal_group(BinaryGuid::ZERO).is_ok());
 
             assert_eq!(counter.load(Ordering::SeqCst), 1);
 
