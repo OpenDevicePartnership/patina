@@ -241,7 +241,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::reset_allocators();
-                init_system_table();
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
             f();
         })

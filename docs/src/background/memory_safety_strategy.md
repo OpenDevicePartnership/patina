@@ -203,6 +203,7 @@ impl PlatformInfo for ExamplePlatform {
   type CpuInfo = Self;
   type ComponentInfo = Self;
   type Extractor = LzmaSectionExtractor;
+  const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 }
 
 static CORE: Core<ExamplePlatform> = Core::new(LzmaSectionExtractor::new());

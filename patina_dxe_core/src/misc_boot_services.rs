@@ -355,7 +355,7 @@ mod tests {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::init_test_protocol_db();
             }
-            crate::systemtables::init_system_table();
+            crate::systemtables::init_system_table(patina::UefiSpecVersion::V2_11);
 
             let mut st_guard = systemtables::SYSTEM_TABLE.lock();
             let st = st_guard.as_mut().expect("System Table not initialized!");

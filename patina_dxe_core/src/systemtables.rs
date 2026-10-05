@@ -11,6 +11,7 @@
 use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::boxed::Box;
+use patina::UefiSpecVersion;
 use patina::standard::efi;
 use patina::{component::component, crc32, pi::error_codes::EFI_NOT_AVAILABLE_YET, uefi::boot_services::BootServices};
 
@@ -24,7 +25,8 @@ pub struct EfiRuntimeServicesTable {
 }
 
 impl EfiRuntimeServicesTable {
-    /// Allocates a new Runtime Services table initialized to default stub functions in the Runtime Services Data allocator.
+    /// Allocates a new Runtime Services table initialized to default stub functions in the Runtime Services Data
+    /// allocator.
     pub fn allocate_new_table() -> Self {
         let rt = Self::default_runtime_services_table();
         let (runtime_services, _alloc) =
@@ -868,8 +870,23 @@ impl EfiSystemTable {
     }
 }
 
-pub fn init_system_table() {
-    *SYSTEM_TABLE.lock() = Some(EfiSystemTable::allocate_new_table());
+pub fn init_system_table(uefi_spec_version: UefiSpecVersion) {
+    let revision = u32::from(uefi_spec_version);
+    let mut table = EfiSystemTable::allocate_new_table();
+
+    let mut runtime_services = table.runtime_services().get();
+    runtime_services.hdr.revision = revision;
+    table.runtime_services().set(runtime_services);
+
+    let mut boot_services = table.boot_services().get();
+    boot_services.hdr.revision = revision;
+    table.boot_services().set(boot_services);
+
+    let mut system_table = table.get();
+    system_table.hdr.revision = revision;
+    table.set(system_table);
+
+    *SYSTEM_TABLE.lock() = Some(table);
 }
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
@@ -987,6 +1004,21 @@ mod tests {
                 table.clear_boot_time_services();
                 assert_eq!((*table.system_table).boot_services, core::ptr::null_mut());
             };
+        });
+    }
+
+    #[test]
+    fn test_standard_table_revisions_match_selected_uefi_spec_version() {
+        with_locked_state(|| {
+            let expected_revision = u32::from(UefiSpecVersion::V2_11);
+            init_system_table(UefiSpecVersion::V2_11);
+
+            let table_guard = SYSTEM_TABLE.lock();
+            let table = table_guard.as_ref().expect("System Table should be initialized");
+
+            assert_eq!(table.get().hdr.revision, expected_revision);
+            assert_eq!(table.boot_services().get().hdr.revision, expected_revision);
+            assert_eq!(table.runtime_services().get().hdr.revision, expected_revision);
         });
     }
 }

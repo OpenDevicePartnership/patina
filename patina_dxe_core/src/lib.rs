@@ -48,6 +48,7 @@
 //!   type CpuInfo = Self;
 //!   type ComponentInfo = Self;
 //!   type Extractor = NullSectionExtractor;
+//!   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 //! }
 //!
 //! static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
@@ -121,7 +122,7 @@ use core::{
 use cpu::DxeInterruptManager;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
-use patina::standard::efi;
+use patina::{UefiSpecVersion, standard::efi};
 use patina::{
     component::{IntoComponent, service::performance::PerformanceManager},
     error::{self, Result},
@@ -204,12 +205,13 @@ pub trait MemoryInfo {
 ///
 /// struct ExamplePlatform;
 ///
-/// // An example of using all default implementations.
+/// // An example of using the default subsystem implementations.
 /// impl PlatformInfo for ExamplePlatform {
 ///   type MemoryInfo = Self;
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = patina_ffs_extractors::NullSectionExtractor;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 /// }
 ///
 /// impl ComponentInfo for ExamplePlatform {}
@@ -222,12 +224,6 @@ pub trait MemoryInfo {
 ///   }
 /// }
 /// ```
-#[cfg_attr(test, mockall::automock(
-    type Extractor = patina_ffs_extractors::NullSectionExtractor;
-    type ComponentInfo = MockComponentInfo;
-    type MemoryInfo = MockMemoryInfo;
-    type CpuInfo = MockCpuInfo;
-))]
 pub trait PlatformInfo: 'static {
     /// The platform's memory information and configuration.
     type MemoryInfo: MemoryInfo;
@@ -241,11 +237,27 @@ pub trait PlatformInfo: 'static {
     /// The platform's section extractor type, used when extracting sections from firmware volumes.
     type Extractor: SectionExtractor;
 
+    /// The UEFI specification revision advertised by the System.
+    const UEFI_SPEC_VERSION: UefiSpecVersion;
+
     /// The performance measurement configuration used when no performance configuration HOB is present.
     ///
     /// Defaults to disabled. Platforms may override this option to control the default behavior of the performance
     /// measurement service when no configuration HOB is present.
     const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new();
+}
+
+#[cfg(test)]
+struct MockPlatformInfo;
+
+#[cfg(test)]
+impl PlatformInfo for MockPlatformInfo {
+    type MemoryInfo = MockMemoryInfo;
+    type CpuInfo = MockCpuInfo;
+    type ComponentInfo = MockComponentInfo;
+    type Extractor = patina_ffs_extractors::NullSectionExtractor;
+
+    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_11;
 }
 
 /// Static reference to the DXE Core instance in the compiled binary.
@@ -311,6 +323,7 @@ type MockCore = Core<MockPlatformInfo>;
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = NullSectionExtractor;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 /// }
 ///
 /// static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
@@ -572,7 +585,7 @@ impl<P: PlatformInfo> Core<P> {
 
     fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
-        systemtables::init_system_table();
+        systemtables::init_system_table(P::UEFI_SPEC_VERSION);
 
         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
         let st = st_guard.as_mut().expect("System Table not initialized!");
