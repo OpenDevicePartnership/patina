@@ -162,7 +162,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::reset_allocators();
-                init_system_table();
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
             f();
         })
@@ -225,7 +225,7 @@ mod tests {
             // Simulate an uninitialized system table. Restore it afterward (even on panic) so
             // later tests relying on `with_locked_state`'s invariant are unaffected.
             *SYSTEM_TABLE.lock() = None;
-            let _guard = test_support::StateGuard::new(init_system_table);
+            let _guard = test_support::StateGuard::new(|| init_system_table(patina::UefiSpecVersion::V2_11));
 
             let svc = CoreConfigurationTableServices;
             let guid: BinaryGuid = BinaryGuid::from_string("5e6f7a8b-9c0d-4e5f-9a6b-7c8d9e0f1a2b");

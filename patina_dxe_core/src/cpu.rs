@@ -58,6 +58,7 @@ use patina_internal_cpu::interrupts::{HandlerType, InterruptManager, Interrupts}
 /// #   type Extractor = patina_ffs_extractors::NullSectionExtractor;
 /// #   type ComponentInfo = Self;
 /// #   type CpuInfo = Self;
+/// #   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 /// # }
 /// ```
 #[derive(Debug, PartialEq)]

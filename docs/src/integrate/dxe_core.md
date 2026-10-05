@@ -237,6 +237,7 @@ impl PlatformInfo for ExamplePlatform {
     type CpuInfo = Self;
     type ComponentInfo = Self;
     type Extractor = BrotliSectionExtractor;
+    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 }
 
 static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
@@ -348,6 +349,7 @@ impl PlatformInfo for ExamplePlatform {
     type ComponentInfo = Self;
     type CpuInfo = Self;
     type Extractor = BrotliSectionExtractor;
+    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 }
 
 static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
@@ -453,6 +455,8 @@ use patina_dxe_core::*;
 struct ExamplePlatform;
 
 impl PlatformInfo for ExamplePlatform {
+    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
+
     // Optional override if the platform does not publish the performance configuration HOB.
     const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new()
         .with_measurement(patina::performance::Measurement::DriverBindingStart) // Adds driver binding start measurements.
@@ -570,6 +574,7 @@ impl PlatformInfo for ExamplePlatform {
     type CpuInfo = Self;
     type ComponentInfo = Self;
     type Extractor = BrotliSectionExtractor;
+    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 }
 
 static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
@@ -614,6 +619,7 @@ For platforms requiring compatibility with legacy software that improperly handl
 memory preference using the `prioritize_32_bit_memory()` configuration:
 
 ```rust,no_run
+# extern crate patina;
 # extern crate patina_dxe_core;
 # extern crate patina_ffs_extractors;
 # use patina_ffs_extractors::BrotliSectionExtractor;
@@ -631,6 +637,7 @@ impl PlatformInfo for ExamplePlatform {
     # type Extractor = BrotliSectionExtractor;
     # type ComponentInfo = Self;
     # type CpuInfo = Self;
+    # const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 }
 
 static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());

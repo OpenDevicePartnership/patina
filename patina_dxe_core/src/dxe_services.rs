@@ -2296,7 +2296,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
             // Initialize a fresh System Table (requires GCD already initialized by with_locked_state)
-            crate::systemtables::init_system_table();
+            crate::systemtables::init_system_table(patina::UefiSpecVersion::V2_11);
 
             // Get a mutable reference to the system table
             let mut st_guard = crate::systemtables::SYSTEM_TABLE.lock();

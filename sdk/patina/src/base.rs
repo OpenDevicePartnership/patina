@@ -150,6 +150,69 @@ pub const SIZE_256TB: usize = 0x1000000000000;
 /// Patina uses write back as the default cache attribute for memory allocations.
 pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
+/// A UEFI specification revision encoded for use in standard UEFI table headers.
+///
+/// The upper 16 bits contain the major revision and the lower 16 bits contain the minor revision multiplied by 10.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct UefiSpecVersion(u32);
+
+impl UefiSpecVersion {
+    /// Creates a custom UEFI specification version from the given major and minor version numbers.
+    ///
+    /// For example, `from_parts(2, 10)` encodes UEFI 2.10 as `(2 << 16) | 100`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the encoded minor revision does not fit in the lower 16 bits.
+    pub const fn from_parts(major: u16, minor: u16) -> Self {
+        assert!(minor <= u16::MAX / 10, "UEFI specification minor revision does not fit in its 16-bit encoding");
+        Self(((major as u32) << 16) | ((minor as u32) * 10))
+    }
+
+    /// UEFI Specification Version 2.0
+    pub const V2_0: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_00);
+
+    /// UEFI Specification Version 2.1
+    pub const V2_1: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_10);
+
+    /// UEFI Specification Version 2.2
+    pub const V2_2: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_20);
+
+    /// UEFI Specification Version 2.3
+    pub const V2_3: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_30);
+
+    /// UEFI Specification Version 2.4
+    pub const V2_4: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_40);
+
+    /// UEFI Specification Version 2.5
+    pub const V2_5: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_50);
+
+    /// UEFI Specification Version 2.6
+    pub const V2_6: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_60);
+
+    /// UEFI Specification Version 2.7
+    pub const V2_7: Self = Self(crate::standard::efi::SYSTEM_TABLE_REVISION_2_70);
+
+    /// UEFI Specification Version 2.8
+    pub const V2_8: Self = Self::from_parts(2, 8);
+
+    /// UEFI Specification Version 2.9
+    pub const V2_9: Self = Self::from_parts(2, 9);
+
+    /// UEFI Specification Version 2.10
+    pub const V2_10: Self = Self::from_parts(2, 10);
+
+    /// UEFI Specification Version 2.11
+    pub const V2_11: Self = Self::from_parts(2, 11);
+}
+
+impl From<UefiSpecVersion> for u32 {
+    fn from(version: UefiSpecVersion) -> Self {
+        version.0
+    }
+}
+
 /// Converts a size in bytes to the number of UEFI pages required.
 ///
 /// Takes a size in bytes and calculates the number of UEFI pages needed to accommodate that size.
@@ -494,6 +557,39 @@ macro_rules! writelncrlf {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_uefi_spec_version_encodings() {
+        let versions = [
+            (UefiSpecVersion::V2_0, 0x0002_0000),
+            (UefiSpecVersion::V2_1, 0x0002_000A),
+            (UefiSpecVersion::V2_2, 0x0002_0014),
+            (UefiSpecVersion::V2_3, 0x0002_001E),
+            (UefiSpecVersion::V2_4, 0x0002_0028),
+            (UefiSpecVersion::V2_5, 0x0002_0032),
+            (UefiSpecVersion::V2_6, 0x0002_003C),
+            (UefiSpecVersion::V2_7, 0x0002_0046),
+            (UefiSpecVersion::V2_8, 0x0002_0050),
+            (UefiSpecVersion::V2_9, 0x0002_005A),
+            (UefiSpecVersion::V2_10, 0x0002_0064),
+            (UefiSpecVersion::V2_11, 0x0002_006E),
+        ];
+
+        for (version, expected) in versions {
+            assert_eq!(u32::from(version), expected);
+        }
+    }
+
+    #[test]
+    fn test_custom_uefi_spec_version_encoding() {
+        assert_eq!(u32::from(UefiSpecVersion::from_parts(3, 20)), 0x0003_00C8);
+    }
+
+    #[test]
+    #[should_panic(expected = "UEFI specification minor revision does not fit in its 16-bit encoding")]
+    fn test_custom_uefi_spec_version_rejects_minor_that_does_not_fit() {
+        UefiSpecVersion::from_parts(3, 6_554);
+    }
 
     #[test]
     fn test_is_power_of_two() {
