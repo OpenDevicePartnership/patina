@@ -48,7 +48,7 @@
 //!   type CpuInfo = Self;
 //!   type ComponentInfo = Self;
 //!   type Extractor = NullSectionExtractor;
-//!   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
+//!   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 //! }
 //!
 //! static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
@@ -211,7 +211,7 @@ pub trait MemoryInfo {
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = patina_ffs_extractors::NullSectionExtractor;
-///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 /// }
 ///
 /// impl ComponentInfo for ExamplePlatform {}
@@ -257,7 +257,7 @@ impl PlatformInfo for MockPlatformInfo {
     type ComponentInfo = MockComponentInfo;
     type Extractor = patina_ffs_extractors::NullSectionExtractor;
 
-    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_7;
+    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_11;
 }
 
 /// Static reference to the DXE Core instance in the compiled binary.
@@ -323,7 +323,7 @@ type MockCore = Core<MockPlatformInfo>;
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = NullSectionExtractor;
-///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 /// }
 ///
 /// static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);

@@ -1766,7 +1766,7 @@ mod tests {
         test_support::with_clean_global_lock(|| unsafe {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
-            init_system_table(patina::UefiSpecVersion::V2_7);
+            init_system_table(patina::UefiSpecVersion::V2_11);
 
             f();
         })
@@ -2858,7 +2858,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             // Load a valid test image as a template
@@ -2923,7 +2923,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             // Load a valid test image as a template
@@ -2969,7 +2969,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             const STACK_SIZE: usize = 0x10000;
@@ -2999,7 +2999,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3039,7 +3039,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3075,7 +3075,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3108,7 +3108,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3137,7 +3137,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3173,7 +3173,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3212,7 +3212,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3335,7 +3335,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             // Load the valid image.
@@ -3391,7 +3391,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             // Register the parent device path to a new handle
@@ -3513,7 +3513,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_7);
+                init_system_table(patina::UefiSpecVersion::V2_11);
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");

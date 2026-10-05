@@ -30,7 +30,7 @@ use patina_dxe_core::*;
 struct ExamplePlatform;
 
 impl PlatformInfo for ExamplePlatform {
-    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
+    const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
 
     // Optional override if the platform does not publish the performance configuration HOB.
     const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new()

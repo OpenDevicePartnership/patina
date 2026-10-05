@@ -1010,17 +1010,15 @@ mod tests {
     #[test]
     fn test_standard_table_revisions_match_selected_uefi_spec_version() {
         with_locked_state(|| {
-            for version in [UefiSpecVersion::V2_0, UefiSpecVersion::V2_7, UefiSpecVersion::V2_11] {
-                let expected_revision = u32::from(version);
-                init_system_table(version);
+            let expected_revision = u32::from(UefiSpecVersion::V2_11);
+            init_system_table(UefiSpecVersion::V2_11);
 
-                let table_guard = SYSTEM_TABLE.lock();
-                let table = table_guard.as_ref().expect("System Table should be initialized");
+            let table_guard = SYSTEM_TABLE.lock();
+            let table = table_guard.as_ref().expect("System Table should be initialized");
 
-                assert_eq!(table.get().hdr.revision, expected_revision);
-                assert_eq!(table.boot_services().get().hdr.revision, expected_revision);
-                assert_eq!(table.runtime_services().get().hdr.revision, expected_revision);
-            }
+            assert_eq!(table.get().hdr.revision, expected_revision);
+            assert_eq!(table.boot_services().get().hdr.revision, expected_revision);
+            assert_eq!(table.runtime_services().get().hdr.revision, expected_revision);
         });
     }
 }

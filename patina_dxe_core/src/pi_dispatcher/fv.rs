@@ -948,7 +948,7 @@ mod tests {
         type ComponentInfo = MockComponentInfo;
         type Extractor = CompositeSectionExtractor;
 
-        const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
+        const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
     }
     type MockCore = Core<MockPlatformInfo>;
     type MockProtocolData = FvProtocolData<MockPlatformInfo>;
