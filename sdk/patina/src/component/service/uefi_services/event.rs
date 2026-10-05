@@ -184,6 +184,14 @@ pub trait EventServices {
     /// Returns [`EventError::InvalidParameter`] if `event` is not a valid event.
     fn signal_event(&self, event: Event) -> Result<(), EventError>;
 
+    /// Signals every event that is a member of `group`, including events this component created
+    /// with [`Self::create_event_for_group`].
+    ///
+    /// # Errors
+    ///
+    /// This cannot currently fail. It returns `Result` for consistency with the rest of this trait.
+    fn signal_group(&self, group: BinaryGuid) -> Result<(), EventError>;
+
     /// Checks whether an event is in the signaled state, clearing it if so.
     ///
     /// Returns `true` if the event was signaled. The event must not be a notify-signal event. For
