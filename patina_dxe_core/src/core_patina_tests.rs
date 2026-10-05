@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+mod allocator_tests;
 mod audit_tests;
 mod mp_services_tests;
 mod stability_tests;

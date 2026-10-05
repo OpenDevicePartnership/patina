@@ -379,7 +379,7 @@ impl SpinLockedGcd {
                     // we've already handled MMIO and reserved memory, so skip these
                     return false;
                 }
-                allocated && d.attributes & efi::MEMORY_RP != efi::MEMORY_RP
+                allocated && d.attributes & efi::MEMORY_RP == 0
             })
             .expect("Failed to get allocated memory descriptors!");
 
