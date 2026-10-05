@@ -11,8 +11,9 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use crate::{Char16Str, Char16String, standard::efi};
+use crate::{BinaryGuid, Char16Str, Char16String, standard::efi};
 use alloc::{string::String, vec::Vec};
+use core::net::{Ipv4Addr, Ipv6Addr};
 use scroll::{
     Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -174,27 +175,171 @@ impl TryIntoCtx<Utf8Nul> for &String {
     }
 }
 
-/// A scroll context for an `EFI_GUID` stored in its 16-byte UEFI wire layout.
+/// A scroll context for an ASCII string that fills the rest of the node payload.
 ///
-/// `Data1`, `Data2`, and `Data3` are little-endian; `Data4` is a byte array. The
-/// scroll endianness of the containing structure does not affect this layout.
+/// The wire format has no terminator; the node length bounds the string, which may be
+/// empty. Reading consumes every remaining byte in the source, so the field must be last
+/// in its structure.
+///
+/// # Errors
+///
+/// Reading and writing reject non-ASCII text or NULs. Writing also rejects
+/// insufficient destination space.
+///
+/// # Examples
+///
+/// ```rust
+/// # extern crate alloc;
+/// use alloc::string::String;
+/// use patina::uefi::device_path::encoding::Ascii;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Record {
+///     id: u16,
+///     #[scroll(ctx = Ascii)]
+///     text: String,
+/// }
+///
+/// let record: Record = b"\x01\x00ABC".pread_with(0, scroll::LE)?;
+/// assert_eq!(record.id, 1);
+/// assert_eq!(record.text, "ABC");
+/// # Ok::<(), scroll::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
-pub struct EfiGuid;
+pub struct Ascii;
 
-impl<'a> TryFromCtx<'a, EfiGuid> for efi::Guid {
+impl<'a> TryFromCtx<'a, Ascii> for String {
     type Error = scroll::Error;
 
-    fn try_from_ctx(src: &'a [u8], _: EfiGuid) -> Result<(Self, usize), Self::Error> {
-        let bytes: [u8; 16] = src.pread_with(0, scroll::LE)?;
-        Ok((efi::Guid::from_bytes(&bytes), bytes.len()))
+    fn try_from_ctx(src: &'a [u8], _: Ascii) -> Result<(Self, usize), Self::Error> {
+        let value = core::str::from_utf8(src).map_err(|_| invalid("string must be ASCII"))?;
+        ascii(value)?;
+        Ok((String::from(value), src.len()))
     }
 }
 
-impl TryIntoCtx<EfiGuid> for &efi::Guid {
+impl TryIntoCtx<Ascii> for &String {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, dst: &mut [u8], _: EfiGuid) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, dst: &mut [u8], _: Ascii) -> Result<usize, Self::Error> {
+        ascii(self)?;
+        dst.pwrite_with(self.as_bytes(), 0, ())
+    }
+}
+
+// Scroll encoding of `BinaryGuid` fields: 16 bytes in the UEFI wire layout, where `Data1`,
+// `Data2`, and `Data3` are little-endian and `Data4` is a byte array. The scroll endianness
+// of the containing structure does not affect this layout, so derived node encoders can
+// use `BinaryGuid` fields without a context attribute.
+impl<'a> TryFromCtx<'a, scroll::Endian> for BinaryGuid {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], _: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let bytes: [u8; 16] = src.pread_with(0, scroll::LE)?;
+        Ok((BinaryGuid::from_bytes(&bytes), bytes.len()))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for &BinaryGuid {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], _: scroll::Endian) -> Result<usize, Self::Error> {
         dst.pwrite_with(self.as_bytes().as_slice(), 0, ())
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for BinaryGuid {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        (&self).try_into_ctx(dst, ctx)
+    }
+}
+
+/// A scroll context for an IP address stored as its octets in network byte order.
+///
+/// Used for `EFI_IPv4_ADDRESS` (4 bytes) and `EFI_IPv6_ADDRESS` (16 bytes) fields, read
+/// into [`Ipv4Addr`] and [`Ipv6Addr`]. The scroll endianness of the containing structure
+/// does not affect this layout.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::Ipv6Addr;
+/// use patina::uefi::device_path::encoding::IpAddress;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Endpoint {
+///     #[scroll(ctx = IpAddress)]
+///     address: Ipv6Addr,
+/// }
+///
+/// let bytes = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+/// let endpoint: Endpoint = bytes.pread_with(0, scroll::LE).unwrap();
+/// assert_eq!(endpoint.address, "2001:db8::1".parse::<Ipv6Addr>().unwrap());
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct IpAddress;
+
+impl<'a> TryFromCtx<'a, IpAddress> for Ipv4Addr {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], _: IpAddress) -> Result<(Self, usize), Self::Error> {
+        let octets: [u8; 4] = src.pread_with(0, scroll::LE)?;
+        Ok((Ipv4Addr::from(octets), octets.len()))
+    }
+}
+
+impl TryIntoCtx<IpAddress> for &Ipv4Addr {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], _: IpAddress) -> Result<usize, Self::Error> {
+        dst.pwrite_with(self.octets().as_slice(), 0, ())
+    }
+}
+
+impl<'a> TryFromCtx<'a, IpAddress> for Ipv6Addr {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], _: IpAddress) -> Result<(Self, usize), Self::Error> {
+        let octets: [u8; 16] = src.pread_with(0, scroll::LE)?;
+        Ok((Ipv6Addr::from(octets), octets.len()))
+    }
+}
+
+impl TryIntoCtx<IpAddress> for &Ipv6Addr {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], _: IpAddress) -> Result<usize, Self::Error> {
+        dst.pwrite_with(self.octets().as_slice(), 0, ())
+    }
+}
+
+/// A scroll context for an `EFI_MAC_ADDRESS`, read into [`efi::MacAddress`].
+///
+/// The address is always 32 bytes in wire order. The interface type of the containing
+/// node defines how many bytes are significant, such as 6 for Ethernet; producers pad the
+/// rest with zeros. The scroll endianness of the containing structure does not affect
+/// this layout.
+#[derive(Debug, Clone, Copy)]
+pub struct EfiMacAddress;
+
+impl<'a> TryFromCtx<'a, EfiMacAddress> for efi::MacAddress {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], _: EfiMacAddress) -> Result<(Self, usize), Self::Error> {
+        let addr: [u8; 32] = src.pread_with(0, scroll::LE)?;
+        Ok((efi::MacAddress { addr }, addr.len()))
+    }
+}
+
+impl TryIntoCtx<EfiMacAddress> for &efi::MacAddress {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], _: EfiMacAddress) -> Result<usize, Self::Error> {
+        dst.pwrite_with(self.addr.as_slice(), 0, ())
     }
 }
 
@@ -486,21 +631,82 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_encoding_efi_guid_layout() {
+    fn test_device_path_encoding_guid_layout() {
         let guid =
-            efi::Guid::from_fields(0x0011_2233, 0x4455, 0x6677, 0x88, 0x99, &[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+            BinaryGuid::from_fields(0x0011_2233, 0x4455, 0x6677, 0x88, 0x99, &[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
         let wire = [0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
-        let (parsed, consumed) = read::<efi::Guid, _>(&wire, EfiGuid).unwrap();
-        assert_eq!(parsed, guid);
-        assert_eq!(consumed, 16);
-        let mut bytes = [0xa5; 17];
-        assert_eq!(bytes.pwrite_with(&guid, 0, EfiGuid).unwrap(), 16);
-        assert_eq!(&bytes[..16], &wire);
-        assert_eq!(bytes[16], 0xa5);
-        assert!(read::<efi::Guid, _>(&wire[..15], EfiGuid).is_err());
+        for ctx in [scroll::LE, scroll::BE] {
+            let (parsed, consumed) = read::<BinaryGuid, _>(&wire, ctx).unwrap();
+            assert_eq!(parsed, guid);
+            assert_eq!(consumed, 16);
+            let mut bytes = [0xa5; 17];
+            assert_eq!(bytes.pwrite_with(&guid, 0, ctx).unwrap(), 16);
+            assert_eq!(&bytes[..16], &wire);
+            assert_eq!(bytes[16], 0xa5);
+        }
+        assert!(read::<BinaryGuid, _>(&wire[..15], scroll::LE).is_err());
         let mut short = [0xa5; 15];
-        assert!(write(&guid, &mut short, EfiGuid).is_err());
+        assert!(write(guid, &mut short, scroll::LE).is_err());
         assert_eq!(short, [0xa5; 15]);
+    }
+
+    #[test]
+    fn test_device_path_encoding_ip_address_layout() {
+        let v4 = Ipv4Addr::new(192, 168, 1, 2);
+        let v6: Ipv6Addr = "2001:4898:a:1005:215:17ff:fe21:5593".parse().unwrap();
+        let v6_wire = [0x20, 0x01, 0x48, 0x98, 0x00, 0x0a, 0x10, 0x05, 0x02, 0x15, 0x17, 0xff, 0xfe, 0x21, 0x55, 0x93];
+        assert_eq!(read::<Ipv4Addr, _>(&[192, 168, 1, 2], IpAddress).unwrap(), (v4, 4));
+        assert_eq!(read::<Ipv6Addr, _>(&v6_wire, IpAddress).unwrap(), (v6, 16));
+        let mut bytes = [0xa5; 17];
+        assert_eq!(bytes.pwrite_with(&v6, 0, IpAddress).unwrap(), 16);
+        assert_eq!(&bytes[..16], &v6_wire);
+        assert_eq!(bytes[16], 0xa5);
+        assert_eq!(bytes.pwrite_with(&v4, 0, IpAddress).unwrap(), 4);
+        assert_eq!(&bytes[..4], &[192, 168, 1, 2]);
+        assert!(read::<Ipv4Addr, _>(&[1, 2, 3], IpAddress).is_err());
+        assert!(read::<Ipv6Addr, _>(&v6_wire[..15], IpAddress).is_err());
+        let mut short = [0xa5; 15];
+        assert!(write(&v6, &mut short, IpAddress).is_err());
+        assert_eq!(short, [0xa5; 15]);
+    }
+
+    #[test]
+    fn test_device_path_encoding_mac_address_layout() {
+        let mut wire = [0; 32];
+        wire[..6].copy_from_slice(&[0x00, 0x15, 0x5d, 0x01, 0x02, 0x03]);
+        let mac = efi::MacAddress { addr: wire };
+        assert_eq!(read::<efi::MacAddress, _>(&wire, EfiMacAddress).unwrap(), (mac, 32));
+        let mut bytes = [0xa5; 33];
+        assert_eq!(bytes.pwrite_with(&mac, 0, EfiMacAddress).unwrap(), 32);
+        assert_eq!(&bytes[..32], &wire);
+        assert_eq!(bytes[32], 0xa5);
+        assert!(read::<efi::MacAddress, _>(&wire[..31], EfiMacAddress).is_err());
+        let mut short = [0xa5; 31];
+        assert!(write(&mac, &mut short, EfiMacAddress).is_err());
+        assert_eq!(short, [0xa5; 31]);
+    }
+
+    #[test]
+    fn test_device_path_encoding_ascii_fills_payload() {
+        for text in ["", "https://a"] {
+            let (parsed, consumed) = read::<String, _>(text.as_bytes(), Ascii).unwrap();
+            assert_eq!(parsed, text);
+            assert_eq!(consumed, text.len());
+            let mut bytes = vec![0xa5; text.len() + 1];
+            assert_eq!(bytes.pwrite_with(&String::from(text), 0, Ascii).unwrap(), text.len());
+            assert_eq!(&bytes[..text.len()], text.as_bytes());
+        }
+        for input in [&b"a\0b"[..], "\u{e9}".as_bytes(), &[0xff]] {
+            assert!(read::<String, _>(input, Ascii).is_err());
+        }
+        for value in ["a\0b", "\u{e9}"] {
+            let mut bytes = [0xa5; 4];
+            assert!(write(&String::from(value), &mut bytes, Ascii).is_err());
+            assert_eq!(bytes, [0xa5; 4]);
+        }
+        let mut short = [0xa5; 2];
+        assert!(write(&String::from("abc"), &mut short, Ascii).is_err());
+        assert_eq!(short, [0xa5; 2]);
     }
 
     #[test]
@@ -549,8 +755,7 @@ mod tests {
     #[derive(Debug, Clone, Eq, PartialEq, Pread, Pwrite)]
     struct VendorRecord {
         kind: u16,
-        #[scroll(ctx = EfiGuid)]
-        guid: efi::Guid,
+        guid: BinaryGuid,
         #[scroll(ctx = Char16Nul)]
         path: String,
         #[scroll(ctx = Vector)]
@@ -561,7 +766,7 @@ mod tests {
     fn test_device_path_encoding_contexts_derive_together() {
         let record = VendorRecord {
             kind: 0x0102,
-            guid: efi::Guid::from_bytes(&[7; 16]),
+            guid: BinaryGuid::from_bytes(&[7; 16]),
             path: String::from("A"),
             data: vec![0xaa, 0xbb],
         };

@@ -21,6 +21,7 @@ pub mod event;
 pub mod memory;
 #[cfg(any(test, feature = "alloc"))]
 pub mod memory_map;
+pub mod protocols;
 #[cfg(any(test, feature = "alloc"))]
 pub mod runtime_services;
 #[cfg(any(test, feature = "alloc"))]

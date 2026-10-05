@@ -2482,6 +2482,7 @@ mod tests {
                 0x00, //'A' (as CHAR16)
                 0x00,
                 0x00, //NULL (as CHAR16)
+                efi::protocols::device_path::TYPE_MEDIA,
                 efi::protocols::device_path::Media::SUBTYPE_FILE_PATH,
                 0x8, //length[0]
                 0x0, //length[1]
@@ -2489,6 +2490,7 @@ mod tests {
                 0x00, //'B' (as CHAR16)
                 0x00,
                 0x00, //NULL (as CHAR16)
+                efi::protocols::device_path::TYPE_MEDIA,
                 efi::protocols::device_path::Media::SUBTYPE_FILE_PATH,
                 0x8, //length[0]
                 0x0, //length[1]

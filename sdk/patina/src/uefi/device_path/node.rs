@@ -25,6 +25,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+// cspell:ignore elems rsplit BCDEFGHIJ PNPZZZZ
 pub mod acpi;
 pub mod bios;
 pub mod end;
@@ -43,7 +44,7 @@ pub use node_types::*;
 
 use super::{DevicePath, encoding::invalid};
 use alloc::boxed::Box;
-use core::fmt::{Debug, Display, Write};
+use core::fmt::{Debug, Display};
 use scroll::{
     Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -548,11 +549,11 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for &'a GenericDevicePathNode {
 
 impl Display for GenericDevicePathNode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("Path({}, {},", &self.header.r#type, &self.header.sub_type))?;
-        for b in &self.data {
-            f.write_fmt(format_args!(" {b:02X}"))?;
-        }
-        f.write_char(')')
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            &self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }
 
@@ -628,6 +629,15 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
             h if Vlan::is_type(h.r#type, h.sub_type) => decode_node::<Vlan>(unknown),
             h if InfiniBand::is_type(h.r#type, h.sub_type) => decode_node::<InfiniBand>(unknown),
             h if Uart::is_type(h.r#type, h.sub_type) => decode_node::<Uart>(unknown),
+            // Vendor nodes whose GUID the specification defines decode as their own type.
+            h if UartFlowControl::is_type(h.r#type, h.sub_type)
+                && unknown.data.starts_with(UartFlowControl::GUID.as_bytes()) =>
+            {
+                decode_node::<UartFlowControl>(unknown)
+            }
+            h if Sas::is_type(h.r#type, h.sub_type) && unknown.data.starts_with(Sas::GUID.as_bytes()) => {
+                decode_node::<Sas>(unknown)
+            }
             h if MessagingVendor::is_type(h.r#type, h.sub_type) => decode_node::<MessagingVendor>(unknown),
             h if SasEx::is_type(h.r#type, h.sub_type) => decode_node::<SasEx>(unknown),
             h if Iscsi::is_type(h.r#type, h.sub_type) => decode_node::<Iscsi>(unknown),
@@ -666,9 +676,9 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
 fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
     node: T,
 ) -> Result<Vec<u8>, scroll::Error> {
-    let mut path = crate::uefi::device_path::DevicePathBuf::new_empty();
-    path.append(node)?;
-    Ok(path.buffer)
+    let mut bytes = Vec::new();
+    crate::uefi::device_path::DevicePathBuf::encode_node(&mut bytes, node)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -778,7 +788,7 @@ mod tests {
     fn test_nvme_display() {
         let nvme = NvmExpress::new(1, 0);
         let display = std::format!("{nvme}");
-        assert!(display.contains("NvmExpress"));
+        assert_eq!(display, "NVMe(0x1,00-00-00-00-00-00-00-00)");
     }
 
     #[test]
@@ -970,7 +980,7 @@ mod fixed_tests {
         let debug = format!("{dynamic:?}");
         assert!(debug.starts_with(&format!("{type_name} {{")), "unexpected decoded type: {debug}");
         assert_eq!(debug, format!("{node:?}"));
-        assert!(format!("{node}").starts_with(&format!("{type_name}(")));
+        assert!(!format!("{node}").is_empty());
         let decoded: T = wire.pread_with(4, scroll::LE).unwrap();
         assert_eq!(decoded, node);
         let mut offset = 0;
@@ -1003,7 +1013,7 @@ mod fixed_tests {
         assert_eq!(big_endian.pread_with::<T>(0, scroll::BE).unwrap(), node);
     }
 
-    fn check_invalid<T>(node: T, payload: &[u8])
+    pub(super) fn check_invalid<T>(node: T, payload: &[u8])
     where
         T: DevicePathNode + Clone,
         T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
@@ -1042,24 +1052,20 @@ mod fixed_tests {
 
     fixture!(
         test_device_path_fiber_channel,
-        FiberChannel { reserved: 0x04030201, wwn: 0x0c0b0a0908070605, lun: 0x14131211100f0e0d },
-        [3, 3, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        FiberChannel { reserved: 0, wwn: 0x0c0b0a0908070605, lun: 0x14131211100f0e0d },
+        [3, 3, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     );
 
     fixture!(
         test_device_path_fiber_channel_ex,
-        FiberChannelEx {
-            reserved: 0x04030201,
-            wwn: [5, 6, 7, 8, 9, 10, 11, 12],
-            lun: [13, 14, 15, 16, 17, 18, 19, 20]
-        },
-        [3, 21, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        FiberChannelEx { reserved: 0, wwn: [5, 6, 7, 8, 9, 10, 11, 12], lun: [13, 14, 15, 16, 17, 18, 19, 20] },
+        [3, 21, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     );
 
     fixture!(
         test_device_path_ieee1394,
-        Ieee1394 { reserved: 0x04030201, guid: 0x0c0b0a0908070605 },
-        [3, 4, 16, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        Ieee1394 { reserved: 0, guid: 0x0c0b0a0908070605 },
+        [3, 4, 16, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12]
     );
 
     fixture!(test_device_path_usb, Usb { parent_port_number: 1, interface_number: 2 }, [3, 5, 6, 0, 1, 2]);
@@ -1069,10 +1075,12 @@ mod fixed_tests {
     fixture!(
         test_device_path_mac_address,
         MacAddress {
-            mac_address: [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-                29, 30, 31, 32,
-            ],
+            mac_address: crate::standard::efi::MacAddress {
+                addr: [
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+                    28, 29, 30, 31, 32,
+                ],
+            },
             if_type: 33,
         },
         [
@@ -1084,14 +1092,18 @@ mod fixed_tests {
     fixture!(
         test_device_path_ipv6,
         IpV6 {
-            local_ip_address: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            remote_ip_address: [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+            local_ip_address: core::net::Ipv6Addr::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            remote_ip_address: core::net::Ipv6Addr::from([
+                17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            ]),
             local_port: 0x2221,
             remote_port: 0x2423,
             protocol: 0x2625,
             ip_address_origin: 2,
             prefix_length: 128,
-            gateway_ip_address: [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56],
+            gateway_ip_address: core::net::Ipv6Addr::from([
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56
+            ]),
         },
         [
             3, 13, 60, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -1105,22 +1117,22 @@ mod fixed_tests {
     fixture!(
         test_device_path_infiniband,
         InfiniBand {
-            resource_flags: 0x04030201,
+            resource_flags: 0x1f,
             port_gid: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
             service_id: 0x1c1b1a1918171615,
             target_port_id: 0x24232221201f1e1d,
             device_id: 0x2c2b2a2928272625,
         },
         [
-            3, 9, 48, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            3, 9, 48, 0, 0x1f, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         ]
     );
 
     fixture!(
         test_device_path_uart,
-        Uart { reserved: 0x04030201, baud_rate: 0x0c0b0a0908070605, data_bits: 8, parity: 5, stop_bits: 3 },
-        [3, 14, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 8, 5, 3]
+        Uart { reserved: 0, baud_rate: 0x0c0b0a0908070605, data_bits: 8, parity: 5, stop_bits: 3 },
+        [3, 14, 19, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 8, 5, 3]
     );
 
     fixture!(
@@ -1164,7 +1176,7 @@ mod fixed_tests {
 
     fixture!(
         test_device_path_nvdimm,
-        Nvdimm { uuid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] },
+        Nvdimm { uuid: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) },
         [3, 32, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
@@ -1186,19 +1198,25 @@ mod fixed_tests {
 
     fixture!(
         test_device_path_media_protocol,
-        MediaProtocol { protocol: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] },
+        MediaProtocol {
+            protocol: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
         [4, 5, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
     fixture!(
         test_device_path_piwg_firmware_file,
-        PiwgFirmwareFile { fv_file_name: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] },
+        PiwgFirmwareFile {
+            fv_file_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
         [4, 6, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
     fixture!(
         test_device_path_piwg_firmware_volume,
-        PiwgFirmwareVolume { fv_name: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] },
+        PiwgFirmwareVolume {
+            fv_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
         [4, 7, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
@@ -1217,7 +1235,7 @@ mod fixed_tests {
         RamDisk {
             starting_address: 0x0807060504030201,
             ending_address: 0x100f0e0d0c0b0a09,
-            type_guid: [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+            type_guid: crate::BinaryGuid::from_bytes(&[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]),
             instance: 0x2221,
         },
         [
@@ -1229,7 +1247,7 @@ mod fixed_tests {
     #[test]
     fn test_device_path_derived_nvdimm_formatting() {
         let node = NvdimmAcpi { nfit_device_handle: 42 };
-        assert_eq!(format!("{node}"), "NvdimmAcpi(42)");
+        assert_eq!(format!("{node}"), "NvdimmAcpiAdr(0x2a)");
         assert_eq!(format!("{node:?}"), "NvdimmAcpi { type: 2, sub_type: 4, length: 8, nfit_device_handle: 42 }",);
     }
 
@@ -1257,14 +1275,14 @@ mod fixed_tests {
     #[test]
     fn test_device_path_ipv6_ranges() {
         let node = IpV6 {
-            local_ip_address: [0; 16],
-            remote_ip_address: [0; 16],
+            local_ip_address: core::net::Ipv6Addr::from([0; 16]),
+            remote_ip_address: core::net::Ipv6Addr::from([0; 16]),
             local_port: 0,
             remote_port: 0,
             protocol: 0,
             ip_address_origin: 0,
             prefix_length: 0,
-            gateway_ip_address: [0; 16],
+            gateway_ip_address: core::net::Ipv6Addr::from([0; 16]),
         };
         for ip_address_origin in 0..=2 {
             for prefix_length in [0, 64, 128] {
@@ -1276,11 +1294,8 @@ mod fixed_tests {
             payload[38] = ip_address_origin;
             check_invalid(IpV6 { ip_address_origin, ..node.clone() }, &payload);
         }
-        for prefix_length in [129, u8::MAX] {
-            let mut payload = [0; 56];
-            payload[39] = prefix_length;
-            check_invalid(IpV6 { prefix_length, ..node.clone() }, &payload);
-        }
+        // The specification does not bound the prefix length.
+        encode_node(IpV6 { prefix_length: u8::MAX, ..node.clone() }).unwrap();
     }
 
     #[test]
@@ -1340,7 +1355,7 @@ mod fixed_tests {
 
         let guid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         let mut output = [0; 16];
-        output.pwrite_with(MediaProtocol { protocol: guid }, 0, scroll::BE).unwrap();
+        output.pwrite_with(MediaProtocol { protocol: crate::BinaryGuid::from_bytes(&guid) }, 0, scroll::BE).unwrap();
         assert_eq!(output, guid);
     }
 }
@@ -1437,13 +1452,85 @@ mod binary_tests {
         let mut expected = vec![1, 4, 22, 0];
         expected.extend_from_slice(&[0x11; 16]);
         expected.extend_from_slice(&[0xaa, 0xbb]);
-        check_node(HardwareVendor { guid: [0x11; 16], data: vec![0xaa, 0xbb] }, &expected);
+        check_node(
+            HardwareVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
+            &expected,
+        );
         expected[0] = 3;
         expected[1] = 10;
-        check_node(MessagingVendor { guid: [0x11; 16], data: vec![0xaa, 0xbb] }, &expected);
+        check_node(
+            MessagingVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
+            &expected,
+        );
         expected[0] = 4;
         expected[1] = 3;
-        check_node(MediaVendor { guid: [0x11; 16], data: vec![0xaa, 0xbb] }, &expected);
+        check_node(MediaVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] }, &expected);
+    }
+
+    #[test]
+    fn test_device_path_spec_vendor_messaging_nodes() {
+        use super::fixed_tests::check_invalid;
+
+        let mut expected = vec![3, 10, 24, 0];
+        expected.extend_from_slice(UartFlowControl::GUID.as_bytes());
+        expected.extend_from_slice(&[3, 0, 0, 0]);
+        check_node(
+            UartFlowControl { flow_control_map: UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF },
+            &expected,
+        );
+        check_invalid(
+            UartFlowControl { flow_control_map: 4 },
+            &[&UartFlowControl::GUID.as_bytes()[..], &[4, 0, 0, 0]].concat(),
+        );
+
+        let mut expected = vec![3, 10, 44, 0];
+        expected.extend_from_slice(Sas::GUID.as_bytes());
+        expected.extend_from_slice(&[
+            0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0x11, 0x12, 0x13, 0x14,
+        ]);
+        let sas = Sas {
+            reserved: 0,
+            sas_address: 0x0807060504030201,
+            lun: 0x100f0e0d0c0b0a09,
+            device_topology: 0x1211,
+            relative_target_port: 0x1413,
+        };
+        check_node(sas.clone(), &expected);
+        let mut payload = expected[4..].to_vec();
+        payload[16] = 1;
+        check_invalid(Sas { reserved: 1, ..sas }, &payload);
+
+        // A vendor node with another GUID stays a generic vendor node, and the specific
+        // nodes reject it.
+        let mut other = vec![3, 10, 24, 0];
+        other.extend_from_slice(&[0x11; 16]);
+        other.extend_from_slice(&[0; 4]);
+        let raw = GenericDevicePathNode::from_bytes(&other).unwrap().0;
+        assert!(format!("{:?}", <Box<dyn DevicePathNode>>::try_from(raw).unwrap()).starts_with("MessagingVendor"));
+        assert!(UartFlowControl::try_from(raw).is_err());
+        assert!(Sas::try_from(raw).is_err());
+    }
+
+    #[test]
+    fn test_device_path_reserved_values_are_rejected() {
+        use super::fixed_tests::check_invalid;
+
+        let mut payload = vec![1, 0, 0, 0];
+        payload.extend_from_slice(&[0; 16]);
+        check_invalid(FiberChannel { reserved: 1, wwn: 0, lun: 0 }, &payload);
+        check_invalid(FiberChannelEx { reserved: 1, wwn: [0; 8], lun: [0; 8] }, &payload);
+        check_invalid(Ieee1394 { reserved: 1, guid: 0 }, &payload[..12]);
+        check_invalid(Uart { reserved: 1, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 }, &payload[..15]);
+        let mut payload = vec![0x20, 0, 0, 0];
+        payload.extend_from_slice(&[0; 40]);
+        check_invalid(
+            InfiniBand { resource_flags: 0x20, port_gid: [0; 16], service_id: 0, target_port_id: 0, device_id: 0 },
+            &payload,
+        );
+        for interface_type in 0..=3 {
+            encode_node(Bmc { interface_type, base_address: 0 }).unwrap();
+        }
+        check_invalid(Bmc { interface_type: 4, base_address: 0 }, &[4, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -1503,23 +1590,29 @@ mod binary_tests {
     #[test]
     fn test_device_path_ipv4_legacy_and_current() {
         let mut node = IpV4 {
-            local_ip: [1, 2, 3, 4],
-            remote_ip: [5, 6, 7, 8],
+            local_ip: core::net::Ipv4Addr::from([1, 2, 3, 4]),
+            remote_ip: core::net::Ipv4Addr::from([5, 6, 7, 8]),
             local_port: 0x1234,
             remote_port: 0x5678,
             protocol: 6,
-            static_ip: 1,
+            static_ip: true,
             network: None,
         };
         let mut expected = vec![3, 12, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, 0x78, 0x56, 6, 0, 1];
         check_node(node.clone(), &expected);
-        node.network = Some(IpV4Network { gateway: [9, 10, 11, 12], subnet_mask: [255, 255, 255, 0] });
+        node.network = Some(IpV4Network {
+            gateway: core::net::Ipv4Addr::from([9, 10, 11, 12]),
+            subnet_mask: core::net::Ipv4Addr::from([255, 255, 255, 0]),
+        });
         expected[2] = 27;
         expected.extend_from_slice(&[9, 10, 11, 12, 255, 255, 255, 0]);
         check_node(node, &expected);
         for len in 16..23 {
             assert!(IpV4::try_from_ctx(&expected[4..4 + len], scroll::LE).is_err());
         }
+        let mut invalid_origin = expected[4..].to_vec();
+        invalid_origin[14] = 2;
+        assert!(IpV4::try_from_ctx(&invalid_origin, scroll::LE).is_err());
     }
 
     #[test]
@@ -1543,11 +1636,35 @@ mod binary_tests {
 
     #[test]
     fn test_device_path_dns() {
+        use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
         let mut expected = vec![3, 31, 21, 0, 1];
         expected.extend_from_slice(&[0x12; 16]);
-        check_node(Dns { is_ipv6: true, addresses: vec![[0x12; 16]] }, &expected);
-        expected[4] = 0;
-        check_node(Dns { is_ipv6: false, addresses: vec![[0x12; 16]] }, &expected);
+        let node = Dns { addresses: vec![IpAddr::V6(Ipv6Addr::from([0x12; 16]))] };
+        assert!(node.is_ipv6());
+        check_node(node, &expected);
+
+        let mut expected = vec![3, 31, 37, 0, 0, 10, 0, 0, 1];
+        expected.extend_from_slice(&[0; 12]);
+        expected.extend_from_slice(&[10, 0, 0, 2]);
+        expected.extend_from_slice(&[0; 12]);
+        let node = Dns { addresses: vec![Ipv4Addr::new(10, 0, 0, 1).into(), Ipv4Addr::new(10, 0, 0, 2).into()] };
+        assert!(!node.is_ipv6());
+        check_node(node, &expected);
+
+        // IPv4 padding is ignored when read.
+        let mut padded = [0x12; 16];
+        padded[..4].copy_from_slice(&[10, 0, 0, 1]);
+        let mut payload = vec![0];
+        payload.extend_from_slice(&padded);
+        let (node, _) = Dns::try_from_ctx(&payload, scroll::LE).unwrap();
+        assert_eq!(node.addresses, [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))]);
+
+        payload[0] = 2;
+        assert!(Dns::try_from_ctx(&payload, scroll::LE).is_err());
+        let mixed = Dns { addresses: vec![Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()] };
+        assert!(mixed.validate().is_err());
+        assert!(encode_node(mixed).is_err());
     }
 
     #[test]
@@ -1559,7 +1676,10 @@ mod binary_tests {
         expected.extend_from_slice(&[0x44, 0x55]);
         check_node(
             RestService {
-                service: RestServiceType::Vendor { guid: [0x33; 16], data: vec![0x44, 0x55] },
+                service: RestServiceType::Vendor {
+                    guid: crate::BinaryGuid::from_bytes(&[0x33; 16]),
+                    data: vec![0x44, 0x55],
+                },
                 access_mode: 1,
             },
             &expected,
@@ -1654,7 +1774,7 @@ mod binary_tests {
     #[test]
     fn test_device_path_invalid_variable_payloads() {
         assert!(encode_node(AcpiAdr { addresses: vec![] }).is_err());
-        assert!(encode_node(Dns { is_ipv6: false, addresses: vec![] }).is_err());
+        assert!(encode_node(Dns { addresses: vec![] }).is_err());
         assert!(
             encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0; 65] }).is_err()
         );
@@ -1682,7 +1802,11 @@ mod binary_tests {
                 .is_err()
         );
         assert!(encode_node(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }).is_err());
-        assert!(encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).is_err());
+        // The specification does not require the unused EUI-64 bytes to be zero.
+        encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).unwrap();
+        // An empty iSCSI target name fits the variable-length field.
+        encode_node(Iscsi { protocol: 0, options: 0, lun: [0; 8], portal_group: 0, target_name: String::new() })
+            .unwrap();
         assert!(FilePath::try_from_ctx(&[b'A', 0], scroll::LE).is_err());
         assert!(FilePath::try_from_ctx(&[b'A'], scroll::LE).is_err());
         assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());

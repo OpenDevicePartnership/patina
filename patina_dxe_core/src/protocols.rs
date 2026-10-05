@@ -13,7 +13,7 @@ use patina::standard::efi::{self, protocols::device_path::Protocol};
 use patina::{
     OwnedGuid,
     error::EfiError,
-    uefi::device_path::walker::{is_device_path_end, remaining_device_path},
+    uefi::device_path::{DevicePath, walker::is_device_path_end},
 };
 use tpl_mutex::TplMutex;
 
@@ -897,8 +897,12 @@ pub fn core_locate_device_path(
 ) -> Result<(NonNull<Protocol>, efi::Handle), EfiError> {
     let device_path_protocol_guid = core::ptr::from_ref(&efi::protocols::device_path::PROTOCOL_GUID).cast_mut();
 
+    // SAFETY: The caller guarantees that `device_path` points to a valid device path.
+    let search_path = unsafe { DevicePath::try_from_ptr(device_path.as_ptr().cast::<u8>()) }
+        .map_err(|_| EfiError::InvalidParameter)?;
+
     let mut best_device: efi::Handle = core::ptr::null_mut();
-    let mut best_match: isize = -1;
+    let mut best_match: Option<usize> = None;
     let mut best_remaining_path: Option<NonNull<Protocol>> = None;
 
     let handles = PROTOCOL_DB.locate_handles(Some(protocol))?;
@@ -922,19 +926,20 @@ pub fn core_locate_device_path(
             None => continue,
         };
 
-        let (remaining_path, matching_nodes) = match
-            // SAFETY: temp_device_path and device_path are valid device path pointers per the
-            // non-null guarantee and the caller's contract on `device_path`.
-            unsafe { remaining_device_path(temp_device_path, device_path) }
-        {
-            Some((remaining_path, matching_nodes)) => (remaining_path, matching_nodes.cast_signed()),
-            None => continue,
+        // SAFETY: The device path protocol installed on the handle points to a valid device path.
+        let Ok(handle_path) = (unsafe { DevicePath::try_from_ptr(temp_device_path.as_ptr().cast::<u8>()) }) else {
+            continue;
         };
+        let Some(remaining_path) = search_path.strip_prefix(handle_path) else {
+            continue;
+        };
+        // The nodes of the handle path, without its end node, all matched.
+        let matching_nodes = handle_path.node_count() - 1;
 
-        if matching_nodes > best_match {
-            best_match = matching_nodes;
+        if best_match.is_none_or(|best_match| matching_nodes > best_match) {
+            best_match = Some(matching_nodes);
             best_device = handle;
-            best_remaining_path = Some(remaining_path);
+            best_remaining_path = NonNull::new(remaining_path.as_bytes().as_ptr().cast::<Protocol>().cast_mut());
         }
     }
 

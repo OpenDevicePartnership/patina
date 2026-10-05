@@ -16,6 +16,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{DevicePathType, MediaSubType};
+use crate::BinaryGuid;
 use crate::{
     device_path_node,
     uefi::device_path::encoding::{Char16Nul, Vector},
@@ -31,7 +32,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#cd-rom-media-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct CdRom {
         /// Boot catalog entry number; zero denotes the initial/default entry.
@@ -50,11 +51,11 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#media-protocol-device-path>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MediaProtocol {
-        /// Protocol identifier as 16 EFI GUID wire bytes, without additional byte swapping.
-        pub protocol: [u8; 16],
+        /// Protocol GUID.
+        pub protocol: BinaryGuid,
     }
 }
 
@@ -65,11 +66,11 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-file>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareFile {
-        /// File name as 16 EFI GUID wire bytes, without additional byte swapping.
-        pub fv_file_name: [u8; 16],
+        /// Firmware file name GUID.
+        pub fv_file_name: BinaryGuid,
     }
 }
 
@@ -80,11 +81,11 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-volume>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct PiwgFirmwareVolume {
-        /// Volume name as 16 EFI GUID wire bytes, without additional byte swapping.
-        pub fv_name: [u8; 16],
+        /// Firmware volume name GUID.
+        pub fv_name: BinaryGuid,
     }
 }
 
@@ -96,7 +97,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#relative-offset-range>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RelativeOffsetRange {
         /// Reserved; producers should use zero, while decoding preserves the value.
@@ -115,15 +116,15 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk>
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct RamDisk {
         /// Starting physical memory address.
         pub starting_address: u64,
         /// Ending physical memory address.
         pub ending_address: u64,
-        /// Disk type as 16 EFI GUID wire bytes, without additional byte swapping.
-        pub type_guid: [u8; 16],
+        /// Disk type GUID.
+        pub type_guid: BinaryGuid,
         /// Disk instance number, or zero if unsupported.
         pub instance: u16,
     }
@@ -139,11 +140,11 @@ device_path_node! {
         DevicePathType::Media, MediaSubType::Vendor,
         measure_size = media_vendor_measure_size,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MediaVendor {
-        /// Vendor GUID in EFI wire byte order.
-        pub guid: [u8; 16],
+        /// Vendor GUID.
+        pub guid: BinaryGuid,
         /// Opaque vendor-defined bytes following the GUID.
         #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
@@ -215,7 +216,11 @@ impl HardDrive {
 
 impl Display for HardDrive {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "HD({}, GPT, ...)", self.partition_number)
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }
 
@@ -274,6 +279,10 @@ fn file_path_measure_size(node: &FilePath) -> usize {
 
 impl Display for FilePath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.path)
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }

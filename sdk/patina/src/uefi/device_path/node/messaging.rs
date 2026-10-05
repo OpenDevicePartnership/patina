@@ -16,12 +16,16 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+// cspell:ignore NGUID
 use super::{DevicePathType, MessagingSubType, invalid};
+use crate::BinaryGuid;
 use crate::{
     device_path_node,
-    uefi::device_path::encoding::{AsciiNul, Utf8Nul, Vector},
+    standard::efi,
+    uefi::device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
 };
 use alloc::{string::String, vec::Vec};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -35,7 +39,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = atapi_validate)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
         /// Zero for the primary channel, one for the secondary channel.
@@ -61,7 +65,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#scsi-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Scsi {
         /// Target ID (physical unit number) on the SCSI bus.
@@ -77,17 +81,21 @@ device_path_node! {
     /// The Fibre Channel World Wide Name and logical unit number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = fiber_channel_validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
-        /// Reserved; producers should use zero, while decoding preserves the value.
+        /// Reserved; must be zero.
         pub reserved: u32,
         /// Fibre Channel world wide name.
         pub wwn: u64,
         /// Fibre Channel logical unit number.
         pub lun: u64,
     }
+}
+
+fn fiber_channel_validate(node: &FiberChannel) -> Result<(), &'static str> {
+    reserved_zero(node.reserved)
 }
 
 device_path_node! {
@@ -100,11 +108,11 @@ device_path_node! {
     /// EDK II, rather than the inconsistent 20-byte example in Table 10.17.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = fiber_channel_ex_validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
-        /// Reserved; producers should use zero, while decoding preserves the value.
+        /// Reserved; must be zero.
         pub reserved: u32,
         /// Eight port-name bytes in wire order, without integer byte swapping.
         pub wwn: [u8; 8],
@@ -113,21 +121,29 @@ device_path_node! {
     }
 }
 
+fn fiber_channel_ex_validate(node: &FiberChannelEx) -> Result<(), &'static str> {
+    reserved_zero(node.reserved)
+}
+
 device_path_node! {
     /// 1394 device path node (UEFI 2.10 Table 10.18).
     ///
     /// The 64-bit IEEE 1394 global unique ID, which is not an EFI GUID.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394, validate = ieee1394_validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
-        /// Reserved; producers should use zero, while decoding preserves the value.
+        /// Reserved; must be zero.
         pub reserved: u32,
         /// The 64-bit IEEE 1394 identifier, not an EFI GUID.
         pub guid: u64,
     }
+}
+
+fn ieee1394_validate(node: &Ieee1394) -> Result<(), &'static str> {
+    reserved_zero(node.reserved)
 }
 
 device_path_node! {
@@ -137,7 +153,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Usb {
         /// USB parent port number.
@@ -154,7 +170,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#i-2-o-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
@@ -170,11 +186,13 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#mac-address-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct MacAddress {
-        /// Address bytes in wire order; producers pad unused bytes with zero.
-        pub mac_address: [u8; 32],
+        /// Interface address; [`if_type`](Self::if_type) defines how many bytes are
+        /// significant, and producers pad the rest with zeros.
+        #[scroll(ctx = EfiMacAddress)]
+        pub mac_address: efi::MacAddress,
         /// Network interface type, as assigned by IANA.
         pub if_type: u8,
     }
@@ -188,13 +206,15 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
-        /// Local IPv6 address octets in network order.
-        pub local_ip_address: [u8; 16],
-        /// Remote IPv6 address octets in network order.
-        pub remote_ip_address: [u8; 16],
+        /// Local IPv6 address.
+        #[scroll(ctx = IpAddress)]
+        pub local_ip_address: Ipv6Addr,
+        /// Remote IPv6 address.
+        #[scroll(ctx = IpAddress)]
+        pub remote_ip_address: Ipv6Addr,
         /// Local port number, encoded as a UEFI integer.
         pub local_port: u16,
         /// Remote port number, encoded as a UEFI integer.
@@ -203,16 +223,17 @@ device_path_node! {
         pub protocol: u16,
         /// Address origin: 0 is manual, 1 is stateless, and 2 is stateful configuration.
         pub ip_address_origin: u8,
-        /// Number of prefix bits, from 0 through 128.
+        /// Number of prefix bits.
         pub prefix_length: u8,
-        /// Gateway IPv6 address octets in network order.
-        pub gateway_ip_address: [u8; 16],
+        /// Gateway IPv6 address.
+        #[scroll(ctx = IpAddress)]
+        pub gateway_ip_address: Ipv6Addr,
     }
 }
 
 fn ip_v6_validate(node: &IpV6) -> Result<(), &'static str> {
-    if node.ip_address_origin > 2 || node.prefix_length > 128 {
-        return Err("invalid IPv6 address origin or prefix length");
+    if node.ip_address_origin > 2 {
+        return Err("invalid IPv6 address origin");
     }
     Ok(())
 }
@@ -224,7 +245,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vlan-device-path-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = vlan_validate)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
@@ -246,11 +267,11 @@ device_path_node! {
     /// connection.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#infiniband-device-path>
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand, validate = infiniband_validate)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
-        /// Resource flags; producers clear reserved bits above bit 4.
+        /// Resource flags; bits 5 through 31 are reserved and must be zero.
         pub resource_flags: u32,
         /// Remote port global identifier bytes, not an EFI GUID.
         pub port_gid: [u8; 16],
@@ -263,6 +284,18 @@ device_path_node! {
     }
 }
 
+fn infiniband_validate(node: &InfiniBand) -> Result<(), &'static str> {
+    if node.resource_flags & !InfiniBand::RESOURCE_FLAGS_MASK != 0 {
+        return Err("InfiniBand resource flags bits 5 through 31 are reserved");
+    }
+    Ok(())
+}
+
+impl InfiniBand {
+    /// Defined resource flag bits 0 through 4; the other bits are reserved and must be zero.
+    pub const RESOURCE_FLAGS_MASK: u32 = 0x1f;
+}
+
 device_path_node! {
     /// UART device path node (UEFI 2.10 Table 10.32).
     ///
@@ -271,10 +304,10 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = uart_validate)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uart {
-        /// Reserved; producers should use zero, while decoding preserves the value.
+        /// Reserved; must be zero.
         pub reserved: u32,
         /// Baud rate, or zero to use the device default.
         pub baud_rate: u64,
@@ -288,6 +321,7 @@ device_path_node! {
 }
 
 fn uart_validate(node: &Uart) -> Result<(), &'static str> {
+    reserved_zero(node.reserved)?;
     if node.parity > 5 || node.stop_bits > 3 {
         return Err("invalid UART parity or stop bits");
     }
@@ -306,7 +340,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-extended-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct SasEx {
         /// Eight SAS target-port address bytes in wire order.
@@ -327,7 +361,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ufs-universal-flash-storage-device-messaging-devicepath-node>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ufs {
         /// Target ID; UFS 2.0 producers use zero.
@@ -344,7 +378,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sd-secure-digital-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sd {
         /// Slot number.
@@ -359,7 +393,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetooth-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
@@ -374,7 +408,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#wireless-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
@@ -389,7 +423,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#emmc-embedded-multi-media-card-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Emmc {
         /// Slot number.
@@ -407,7 +441,7 @@ device_path_node! {
         DevicePathType::Messaging, MessagingSubType::BluetoothLE,
         validate = bluetooth_le_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
@@ -432,11 +466,11 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-namespace-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Nvdimm {
-        /// Namespace label UUID as 16 EFI GUID wire bytes, without additional byte swapping.
-        pub uuid: [u8; 16],
+        /// Namespace label UUID.
+        pub uuid: BinaryGuid,
     }
 }
 
@@ -448,7 +482,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
@@ -464,7 +498,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbClass {
         /// USB vendor ID; `0xffff` matches any vendor.
@@ -490,11 +524,11 @@ device_path_node! {
         DevicePathType::Messaging, MessagingSubType::Vendor,
         measure_size = messaging_vendor_measure_size,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct MessagingVendor {
-        /// Vendor GUID in EFI wire byte order.
-        pub guid: [u8; 16],
+        /// Vendor GUID.
+        pub guid: BinaryGuid,
         /// Opaque vendor-defined bytes following the GUID.
         #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
@@ -503,6 +537,160 @@ device_path_node! {
 
 fn messaging_vendor_measure_size(node: &MessagingVendor) -> usize {
     size_of_val(&node.guid) + size_of_val(node.data.as_slice())
+}
+
+/// Check that a reserved field is zero, as the specification requires.
+fn reserved_zero(reserved: u32) -> Result<(), &'static str> {
+    if reserved != 0 {
+        return Err("reserved field must be zero");
+    }
+    Ok(())
+}
+
+/// Read the vendor GUID at the start of a vendor messaging payload and check it is `expected`.
+fn read_vendor_guid(data: &[u8], offset: &mut usize, expected: BinaryGuid) -> Result<(), scroll::Error> {
+    let guid: BinaryGuid = data.gread_with(offset, scroll::LE)?;
+    if guid != expected {
+        return Err(invalid("vendor GUID does not match the node"));
+    }
+    Ok(())
+}
+
+device_path_node! {
+    /// UART flow control messaging device path node (UEFI 2.10 Table 10.34).
+    ///
+    /// A vendor-defined messaging node, identified by [`UartFlowControl::GUID`], that
+    /// declares the flow control of the UART node it follows.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-flow-control-messaging-path>
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Vendor,
+        measure_size = uart_flow_control_measure_size,
+        validate = uart_flow_control_validate,
+    )]
+    @[DevicePathNodeDerive(Debug)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct UartFlowControl {
+        /// Flow control bitmap: bit 0 is hardware (RTS/CTS) flow control, bit 1 is
+        /// XON/XOFF flow control, and the other bits are reserved and must be zero.
+        pub flow_control_map: u32,
+    }
+}
+
+impl UartFlowControl {
+    /// Vendor GUID `DEVICE_PATH_MESSAGING_UART_FLOW_CONTROL` that identifies this node.
+    pub const GUID: BinaryGuid = BinaryGuid::from_string("37499A9D-542F-4C89-A026-35DA142094E4");
+    /// Hardware (RTS/CTS) flow control bit.
+    pub const HARDWARE: u32 = 1 << 0;
+    /// XON/XOFF flow control bit.
+    pub const XON_XOFF: u32 = 1 << 1;
+}
+
+fn uart_flow_control_measure_size(node: &UartFlowControl) -> usize {
+    size_of::<BinaryGuid>() + size_of_val(&node.flow_control_map)
+}
+
+fn uart_flow_control_validate(node: &UartFlowControl) -> Result<(), &'static str> {
+    if node.flow_control_map & !(UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF) != 0 {
+        return Err("UART flow control map bits 2 through 31 are reserved");
+    }
+    Ok(())
+}
+
+impl TryFromCtx<'_, scroll::Endian> for UartFlowControl {
+    type Error = scroll::Error;
+    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
+        let mut offset = 0;
+        read_vendor_guid(data, &mut offset, Self::GUID)?;
+        let flow_control_map = data.gread_with(&mut offset, endian)?;
+        Ok((Self { flow_control_map }, offset))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for UartFlowControl {
+    type Error = scroll::Error;
+    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
+        let mut offset = 0;
+        data.gwrite_with(Self::GUID, &mut offset, scroll::LE)?;
+        data.gwrite_with(self.flow_control_map, &mut offset, endian)?;
+        Ok(offset)
+    }
+}
+
+device_path_node! {
+    /// Serial Attached SCSI (SAS) messaging device path node (UEFI 2.10 Table 10.35).
+    ///
+    /// A vendor-defined messaging node, identified by [`Sas::GUID`], with the SAS
+    /// address, logical unit number, device topology, and relative target port.
+    ///
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-device-path>
+    @[DevicePathNode(
+        DevicePathType::Messaging, MessagingSubType::Vendor,
+        measure_size = sas_measure_size,
+        validate = sas_validate,
+    )]
+    @[DevicePathNodeDerive(Debug)]
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Sas {
+        /// Reserved; must be zero.
+        pub reserved: u32,
+        /// SAS address.
+        pub sas_address: u64,
+        /// SAS logical unit number.
+        pub lun: u64,
+        /// SAS/SATA device and topology information.
+        pub device_topology: u16,
+        /// Relative target port.
+        pub relative_target_port: u16,
+    }
+}
+
+impl Sas {
+    /// Vendor GUID `DEVICE_PATH_MESSAGING_SAS` that identifies this node.
+    pub const GUID: BinaryGuid = BinaryGuid::from_string("D487DDB4-008B-11D9-AFDC-001083FFCA4D");
+}
+
+fn sas_measure_size(node: &Sas) -> usize {
+    size_of::<BinaryGuid>()
+        + size_of_val(&node.reserved)
+        + size_of_val(&node.sas_address)
+        + size_of_val(&node.lun)
+        + size_of_val(&node.device_topology)
+        + size_of_val(&node.relative_target_port)
+}
+
+fn sas_validate(node: &Sas) -> Result<(), &'static str> {
+    reserved_zero(node.reserved)
+}
+
+impl TryFromCtx<'_, scroll::Endian> for Sas {
+    type Error = scroll::Error;
+    fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
+        let mut offset = 0;
+        read_vendor_guid(data, &mut offset, Self::GUID)?;
+        let node = Self {
+            reserved: data.gread_with(&mut offset, endian)?,
+            sas_address: data.gread_with(&mut offset, endian)?,
+            lun: data.gread_with(&mut offset, endian)?,
+            device_topology: data.gread_with(&mut offset, endian)?,
+            relative_target_port: data.gread_with(&mut offset, endian)?,
+        };
+        Ok((node, offset))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for Sas {
+    type Error = scroll::Error;
+    fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
+        let mut offset = 0;
+        data.gwrite_with(Self::GUID, &mut offset, scroll::LE)?;
+        data.gwrite_with(self.reserved, &mut offset, endian)?;
+        data.gwrite_with(self.sas_address, &mut offset, endian)?;
+        data.gwrite_with(self.lun, &mut offset, endian)?;
+        data.gwrite_with(self.device_topology, &mut offset, endian)?;
+        data.gwrite_with(self.relative_target_port, &mut offset, endian)?;
+        Ok(offset)
+    }
 }
 
 device_path_node! {
@@ -517,7 +705,7 @@ device_path_node! {
         measure_size = usb_wwid_measure_size,
         validate = usb_wwid_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct UsbWwid {
         /// USB interface number.
@@ -552,10 +740,10 @@ fn usb_wwid_validate(node: &UsbWwid) -> Result<(), &'static str> {
 /// Gateway and subnet fields added to the original IPv4 node.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct IpV4Network {
-    /// Gateway address in network byte order.
-    pub gateway: [u8; 4],
-    /// Subnet mask in network byte order.
-    pub subnet_mask: [u8; 4],
+    /// Gateway address.
+    pub gateway: Ipv4Addr,
+    /// Subnet mask.
+    pub subnet_mask: Ipv4Addr,
 }
 
 device_path_node! {
@@ -569,23 +757,22 @@ device_path_node! {
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::IpV4,
         measure_size = ip_v4_measure_size,
-        validate = ip_v4_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct IpV4 {
-        /// Local address in network byte order.
-        pub local_ip: [u8; 4],
-        /// Remote address in network byte order.
-        pub remote_ip: [u8; 4],
+        /// Local address.
+        pub local_ip: Ipv4Addr,
+        /// Remote address.
+        pub remote_ip: Ipv4Addr,
         /// Local port, encoded as a UEFI little-endian integer.
         pub local_port: u16,
         /// Remote port, encoded as a UEFI little-endian integer.
         pub remote_port: u16,
         /// IP protocol number.
         pub protocol: u16,
-        /// Zero for DHCP, one for a static address.
-        pub static_ip: u8,
+        /// True for a static address, false for an address assigned through DHCP.
+        pub static_ip: bool,
         /// Absent only for the original 19-byte node.
         pub network: Option<IpV4Network>,
     }
@@ -601,29 +788,26 @@ fn ip_v4_measure_size(node: &IpV4) -> usize {
         + node.network.as_ref().map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
 }
 
-fn ip_v4_validate(node: &IpV4) -> Result<(), &'static str> {
-    if node.static_ip > 1 {
-        return Err("invalid IPv4 address origin");
-    }
-    Ok(())
-}
-
 impl TryFromCtx<'_, scroll::Endian> for IpV4 {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
         let mut offset = 0;
-        let local_ip = data.gread_with(&mut offset, scroll::LE)?;
-        let remote_ip = data.gread_with(&mut offset, scroll::LE)?;
+        let local_ip = data.gread_with(&mut offset, IpAddress)?;
+        let remote_ip = data.gread_with(&mut offset, IpAddress)?;
         let local_port = data.gread_with(&mut offset, endian)?;
         let remote_port = data.gread_with(&mut offset, endian)?;
         let protocol = data.gread_with(&mut offset, endian)?;
-        let static_ip = data.gread_with(&mut offset, endian)?;
+        let static_ip = match data.gread_with::<u8>(&mut offset, endian)? {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid("invalid IPv4 address origin")),
+        };
         let network = if data.len() == offset {
             None
         } else {
             Some(IpV4Network {
-                gateway: data.gread_with(&mut offset, scroll::LE)?,
-                subnet_mask: data.gread_with(&mut offset, scroll::LE)?,
+                gateway: data.gread_with(&mut offset, IpAddress)?,
+                subnet_mask: data.gread_with(&mut offset, IpAddress)?,
             })
         };
         Ok((Self { local_ip, remote_ip, local_port, remote_port, protocol, static_ip, network }, offset))
@@ -634,15 +818,15 @@ impl TryIntoCtx<scroll::Endian> for IpV4 {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], endian: Endian) -> Result<usize, scroll::Error> {
         let mut offset = 0;
-        data.gwrite_with(self.local_ip.as_slice(), &mut offset, ())?;
-        data.gwrite_with(self.remote_ip.as_slice(), &mut offset, ())?;
+        data.gwrite_with(&self.local_ip, &mut offset, IpAddress)?;
+        data.gwrite_with(&self.remote_ip, &mut offset, IpAddress)?;
         data.gwrite_with(self.local_port, &mut offset, endian)?;
         data.gwrite_with(self.remote_port, &mut offset, endian)?;
         data.gwrite_with(self.protocol, &mut offset, endian)?;
-        data.gwrite_with(self.static_ip, &mut offset, endian)?;
+        data.gwrite_with(u8::from(self.static_ip), &mut offset, endian)?;
         if let Some(network) = &self.network {
-            data.gwrite_with(network.gateway.as_slice(), &mut offset, ())?;
-            data.gwrite_with(network.subnet_mask.as_slice(), &mut offset, ())?;
+            data.gwrite_with(&network.gateway, &mut offset, IpAddress)?;
+            data.gwrite_with(&network.subnet_mask, &mut offset, IpAddress)?;
         }
         Ok(offset)
     }
@@ -660,7 +844,7 @@ device_path_node! {
         measure_size = iscsi_measure_size,
         validate = iscsi_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Iscsi {
         /// Network protocol; zero identifies TCP.
@@ -687,7 +871,7 @@ fn iscsi_measure_size(node: &Iscsi) -> usize {
 }
 
 fn iscsi_validate(node: &Iscsi) -> Result<(), &'static str> {
-    if node.target_name.is_empty() || node.target_name.len() > 223 || node.protocol != 0 {
+    if node.target_name.len() > 223 || node.protocol != 0 {
         return Err("invalid iSCSI target name or network protocol");
     }
     Ok(())
@@ -705,10 +889,11 @@ device_path_node! {
         measure_size = uri_measure_size,
         validate = uri_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
-    #[derive(Clone, Eq, PartialEq)]
+    @[DevicePathNodeDerive(Debug)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uri {
         /// URI text, including an empty URI when appropriate.
+        #[scroll(ctx = Ascii)]
         pub uri: String,
     }
 }
@@ -724,26 +909,12 @@ fn uri_validate(node: &Uri) -> Result<(), &'static str> {
     Ok(())
 }
 
-impl TryFromCtx<'_, scroll::Endian> for Uri {
-    type Error = scroll::Error;
-    fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
-        let uri = core::str::from_utf8(data).map_err(|_| invalid("URI must be ASCII"))?;
-        Ok((Self { uri: String::from(uri) }, data.len()))
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Uri {
-    type Error = scroll::Error;
-    fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
-        data.pwrite_with(self.uri.as_bytes(), 0, ())
-    }
-}
-
 device_path_node! {
     /// DNS device path node (UEFI 2.10 Table 10.48).
     ///
     /// One or more DNS server addresses, all IPv4 or all IPv6, each stored as a 16-byte
-    /// `EFI_IP_ADDRESS`.
+    /// `EFI_IP_ADDRESS`. An IPv4 address uses the first four bytes; the others are zero
+    /// when written and ignored when read.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#dns-device-path>
     @[DevicePathNode(
@@ -751,23 +922,34 @@ device_path_node! {
         measure_size = dns_measure_size,
         validate = dns_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct Dns {
-        /// True for IPv6 addresses; false for IPv4 addresses in the first four bytes.
-        pub is_ipv6: bool,
-        /// One or more 16-byte addresses, with unused IPv4 bytes preserved.
-        pub addresses: Vec<[u8; 16]>,
+        /// One or more addresses of the same family.
+        pub addresses: Vec<IpAddr>,
+    }
+}
+
+impl Dns {
+    /// Size of each `EFI_IP_ADDRESS` entry on the wire.
+    const ADDRESS_SIZE: usize = 16;
+
+    /// Return true if the addresses are IPv6, which is the node's `IsIPv6` field.
+    pub fn is_ipv6(&self) -> bool {
+        self.addresses.first().is_some_and(IpAddr::is_ipv6)
     }
 }
 
 fn dns_measure_size(node: &Dns) -> usize {
-    size_of_val(&node.is_ipv6) + size_of_val(node.addresses.as_slice())
+    1 + node.addresses.len() * Dns::ADDRESS_SIZE
 }
 
 fn dns_validate(node: &Dns) -> Result<(), &'static str> {
     if node.addresses.is_empty() {
         return Err("DNS node requires at least one address");
+    }
+    if node.addresses.iter().any(|address| address.is_ipv6() != node.is_ipv6()) {
+        return Err("DNS node addresses must all be IPv4 or all be IPv6");
     }
     Ok(())
 }
@@ -776,15 +958,26 @@ impl TryFromCtx<'_, scroll::Endian> for Dns {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], _: Endian) -> Result<(Self, usize), scroll::Error> {
         let mut offset = 0;
-        let family: u8 = data.gread_with(&mut offset, scroll::LE)?;
-        if family > 1 || !(data.len() - offset).is_multiple_of(16) {
-            return Err(invalid("invalid DNS family or address length"));
+        let is_ipv6 = match data.gread_with::<u8>(&mut offset, scroll::LE)? {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid("invalid DNS address family")),
+        };
+        if !(data.len() - offset).is_multiple_of(Dns::ADDRESS_SIZE) {
+            return Err(invalid("invalid DNS address length"));
         }
         let mut addresses = Vec::new();
         while offset < data.len() {
-            addresses.push(data.gread_with(&mut offset, scroll::LE)?);
+            let address: Ipv6Addr = data.pread_with(offset, IpAddress)?;
+            addresses.push(if is_ipv6 {
+                IpAddr::V6(address)
+            } else {
+                let octets = address.octets();
+                IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+            });
+            offset += Dns::ADDRESS_SIZE;
         }
-        Ok((Self { is_ipv6: family == 1, addresses }, offset))
+        Ok((Self { addresses }, offset))
     }
 }
 
@@ -792,9 +985,14 @@ impl TryIntoCtx<scroll::Endian> for Dns {
     type Error = scroll::Error;
     fn try_into_ctx(self, data: &mut [u8], _: Endian) -> Result<usize, scroll::Error> {
         let mut offset = 0;
-        data.gwrite_with(u8::from(self.is_ipv6), &mut offset, scroll::LE)?;
+        data.gwrite_with(u8::from(self.is_ipv6()), &mut offset, scroll::LE)?;
         for address in &self.addresses {
-            data.gwrite_with(address.as_slice(), &mut offset, ())?;
+            let mut entry = [0u8; Dns::ADDRESS_SIZE];
+            match address {
+                IpAddr::V4(address) => entry[..4].copy_from_slice(&address.octets()),
+                IpAddr::V6(address) => entry = address.octets(),
+            }
+            data.gwrite_with(entry.as_slice(), &mut offset, ())?;
         }
         Ok(offset)
     }
@@ -809,8 +1007,8 @@ pub enum RestServiceType {
     OData,
     /// Vendor-specific REST service.
     Vendor {
-        /// Vendor GUID in EFI wire byte order.
-        guid: [u8; 16],
+        /// Vendor GUID.
+        guid: BinaryGuid,
         /// Opaque vendor-defined bytes.
         data: Vec<u8>,
     },
@@ -828,7 +1026,7 @@ device_path_node! {
         measure_size = rest_service_measure_size,
         validate = rest_service_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct RestService {
         /// Standard service or vendor payload.
@@ -888,7 +1086,7 @@ impl TryIntoCtx<scroll::Endian> for RestService {
         data.gwrite_with(kind, &mut offset, scroll::LE)?;
         data.gwrite_with(self.access_mode, &mut offset, scroll::LE)?;
         if let RestServiceType::Vendor { guid, data: payload } = &self.service {
-            data.gwrite_with(guid.as_slice(), &mut offset, ())?;
+            data.gwrite_with(guid.as_bytes().as_slice(), &mut offset, ())?;
             data.gwrite_with(payload.as_slice(), &mut offset, ())?;
         }
         Ok(offset)
@@ -907,7 +1105,7 @@ device_path_node! {
         measure_size = nvme_of_measure_size,
         validate = nvme_of_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmeOf {
         /// Namespace identifier type: 1 for EUI-64, 2 for NGUID, 3 for UUID.
@@ -925,11 +1123,7 @@ fn nvme_of_measure_size(node: &NvmeOf) -> usize {
 }
 
 fn nvme_of_validate(node: &NvmeOf) -> Result<(), &'static str> {
-    if !matches!(node.identifier_type, 1..=3)
-        || node.subsystem_nqn.is_empty()
-        || node.subsystem_nqn.len() > 223
-        || (node.identifier_type == 1 && node.identifier[8..].iter().any(|byte| *byte != 0))
-    {
+    if !matches!(node.identifier_type, 1..=3) || node.subsystem_nqn.is_empty() || node.subsystem_nqn.len() > 223 {
         return Err("invalid NVMe over Fabrics namespace identity");
     }
     Ok(())
@@ -942,7 +1136,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct Sata {
         /// HBA Port Number.
@@ -984,7 +1178,7 @@ device_path_node! {
         DevicePathType::Messaging, MessagingSubType::NvmExpress,
         validate = nvm_express_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone)]
     pub struct NvmExpress {
         /// Namespace Identifier (NSID).

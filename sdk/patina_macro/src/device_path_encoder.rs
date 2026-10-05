@@ -171,6 +171,8 @@ pub(crate) fn parse_fixed_hex<const N: usize>(
     offset: usize,
     field: &str,
 ) -> Result<[u8; N], DevicePathError> {
+    // The array is written byte 0 first, with an optional `0x` prefix as EDK II writes it.
+    let value = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
     let bytes = parse_hex_bytes(value, offset, field)?;
     bytes.try_into().map_err(|bytes: Vec<u8>| {
         DevicePathError::new(offset, format!("{field} must be exactly {N} bytes, not {}", bytes.len()))

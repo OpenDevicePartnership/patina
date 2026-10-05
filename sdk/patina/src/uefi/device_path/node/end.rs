@@ -17,7 +17,7 @@
 
 use super::{DevicePathType, EndSubType};
 use crate::device_path_node;
-use core::fmt::{Display, Write};
+use core::fmt::Display;
 use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
 device_path_node! {
@@ -34,7 +34,11 @@ device_path_node! {
 
 impl Display for EndEntire {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_char('.')
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }
 
@@ -69,7 +73,11 @@ device_path_node! {
 
 impl Display for EndInstance {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_char(';')
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }
 

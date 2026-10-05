@@ -32,7 +32,7 @@ device_path_node! {
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
         measure_size = bios_measure_size,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct Bios {
         /// BIOS device type.

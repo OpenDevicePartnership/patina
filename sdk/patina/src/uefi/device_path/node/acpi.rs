@@ -35,7 +35,7 @@ device_path_node! {
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-device-path>
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
@@ -54,7 +54,7 @@ device_path_node! {
         DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
         measure_size = extended_acpi_measure_size,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct ExtendedAcpi {
         /// Numeric hardware identifier.
@@ -97,7 +97,7 @@ device_path_node! {
         measure_size = acpi_adr_measure_size,
         validate = acpi_adr_validate,
     )]
-    @[DevicePathNodeDerive(Debug, Display)]
+    @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct AcpiAdr {
         /// ACPI `_ADR` values, in their original order. At least one is required.
@@ -193,9 +193,10 @@ impl Acpi {
 
 impl Display for Acpi {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.hid {
-            Acpi::PCI_ROOT_HID => f.debug_tuple("PciRoot").field(&self.uid).finish(),
-            _ => f.debug_tuple("Acpi").field(&self.hid).field(&self.uid).finish(),
-        }
+        crate::uefi::device_path::text::DevicePathText::fmt_text(
+            self,
+            f,
+            crate::uefi::device_path::text::TextOptions::default(),
+        )
     }
 }
