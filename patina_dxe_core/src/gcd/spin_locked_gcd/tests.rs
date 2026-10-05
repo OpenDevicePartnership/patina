@@ -2085,6 +2085,8 @@ fn paging_allocator_new_and_basic_alloc() {
             .allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, true)
             .expect("Should allocate a page");
         assert!(page >= base && page < (base + GCD_SIZE as u64), "Allocated page should be within GCD memory range");
+        let descriptor = GCD.get_memory_descriptor_for_address(page, |_, _| true).unwrap();
+        assert_eq!(descriptor.attributes & efi::MEMORY_RP, 0, "Root page table page must be identity mapped");
 
         // allocate another page
         let page2 = allocator

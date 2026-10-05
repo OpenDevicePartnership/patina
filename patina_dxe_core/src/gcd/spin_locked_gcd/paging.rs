@@ -28,6 +28,22 @@ impl<'a> PagingAllocator<'a> {
     pub(crate) fn new(gcd: &'a SpinLockedGcd) -> Self {
         Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY), gcd }
     }
+
+    fn allocate_root_page(&self, allocate_type: AllocateType) -> Result<u64, EfiError> {
+        let attributes =
+            self.gcd.memory_protection_policy.apply_allocated_memory_protection_policy(0, GcdMemoryType::SystemMemory);
+        let mut gcd = self.gcd.memory.lock();
+        let root_page = gcd.allocate_memory_space(
+            allocate_type,
+            GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            UEFI_PAGE_SIZE,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+            None,
+        )?;
+        gcd.set_memory_space_attributes(root_page, UEFI_PAGE_SIZE, attributes)?;
+        Ok(root_page as u64)
+    }
 }
 
 impl PageAllocator for PagingAllocator<'_> {
@@ -38,8 +54,6 @@ impl PageAllocator for PagingAllocator<'_> {
         }
 
         if is_root {
-            // allocate 1 page
-            let len = 1;
             // allocate under 4GB to support x86 MPServices
             let addr: u64 = (SIZE_4GB - 1) as u64;
 
@@ -50,31 +64,16 @@ impl PageAllocator for PagingAllocator<'_> {
             // an issue to allocate. However, some architectures may not have memory under 4GB, so if we fail here,
             // simply retry with the normal allocation
 
-            let res = self.gcd.memory.lock().allocate_memory_space(
-                AllocateType::BottomUp(Some(addr as usize)),
-                GcdMemoryType::SystemMemory,
-                UEFI_PAGE_SHIFT,
-                uefi_pages_to_size!(len),
-                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                None,
-            );
-            if let Ok(root_page) = res {
-                Ok(root_page as u64)
+            if let Ok(root_page) = self.allocate_root_page(AllocateType::BottomUp(Some(addr as usize))) {
+                Ok(root_page)
             } else {
                 // if we failed, try again with normal allocation
                 log::error!(
                     "Failed to allocate root page for the page table page pool, retrying with normal allocation"
                 );
 
-                match self.gcd.memory.lock().allocate_memory_space(
-                    DEFAULT_ALLOCATION_STRATEGY,
-                    GcdMemoryType::SystemMemory,
-                    UEFI_PAGE_SHIFT,
-                    uefi_pages_to_size!(len),
-                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                    None,
-                ) {
-                    Ok(root_page) => Ok(root_page as u64),
+                match self.allocate_root_page(DEFAULT_ALLOCATION_STRATEGY) {
+                    Ok(root_page) => Ok(root_page),
                     Err(e) => {
                         // okay we are good and dead now
                         panic!("Failed to allocate root page for the page table page pool: {e}");
