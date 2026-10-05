@@ -478,6 +478,17 @@ impl TryFromCtx<'_, scroll::Endian> for Header {
 /// A node whose payload is kept as raw bytes: the specific device path data that its
 /// type and sub-type define. It represents any node, including nodes that are not
 /// decoded into a specific type or whose type is not defined by the specification.
+///
+/// # Examples
+///
+/// ```
+/// use patina::uefi::device_path::node::GenericDevicePathNode;
+///
+/// let bytes = [9, 2, 6, 0, 0xaa, 0xbb];
+/// let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes).unwrap();
+/// assert!(remaining.is_empty());
+/// assert_eq!(node.to_string(), "Path(9,2,aabb)");
+/// ```
 #[repr(C)]
 #[derive(Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 pub struct GenericDevicePathNode {

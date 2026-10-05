@@ -28,6 +28,18 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::HardwareVendor};
+    ///
+    /// let node = HardwareVendor {
+    ///     guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
+    ///     data: vec![0x01, 0x02],
+    /// };
+    /// assert_eq!(node.to_string(), "VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Hardware, HardwareSubType::Vendor,
         measure_size = hardware_vendor_measure_size,
@@ -54,6 +66,15 @@ device_path_node! {
     /// ACPI node that identifies the PCI root bus.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Pci;
+    ///
+    /// let node = Pci { function: 0, device: 0x1f };
+    /// assert_eq!(node.to_string(), "Pci(0x1f,0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
@@ -71,6 +92,15 @@ device_path_node! {
     /// The PC Card function number, where zero is the first function.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pccard-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::PcCard;
+    ///
+    /// let node = PcCard { function_number: 1 };
+    /// assert_eq!(node.to_string(), "PcCard(0x1)");
+    /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
@@ -86,6 +116,15 @@ device_path_node! {
     /// A memory range of an `EFI_MEMORY_TYPE`, from a starting to an ending address.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#memory-mapped-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::MemoryMapped;
+    ///
+    /// let node = MemoryMapped { memory_type: 0x0b, start_address: 0x1000, end_address: 0x1fff };
+    /// assert_eq!(node.to_string(), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
@@ -105,6 +144,15 @@ device_path_node! {
     /// A controller number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Controller;
+    ///
+    /// let node = Controller { number: 3 };
+    /// assert_eq!(node.to_string(), "Ctrl(0x3)");
+    /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
@@ -121,6 +169,15 @@ device_path_node! {
     /// memory-mapped or I/O base address.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bmc-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Bmc;
+    ///
+    /// let node = Bmc { interface_type: 1, base_address: 0x1000 };
+    /// assert_eq!(node.to_string(), "BMC(0x1,0x1000)");
+    /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = bmc_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]

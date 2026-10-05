@@ -28,6 +28,15 @@ device_path_node! {
     /// NUL-terminated ASCII description.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Bios;
+    ///
+    /// let node = Bios { device_type: 2, status_flag: 0, description_str: "boot".into() };
+    /// assert_eq!(node.to_string(), "BBS(HD,boot,0x0)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
         measure_size = bios_measure_size,

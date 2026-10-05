@@ -31,6 +31,15 @@ device_path_node! {
     /// A system partition on an El Torito CD-ROM, identified by its boot catalog entry.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#cd-rom-media-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::CdRom;
+    ///
+    /// let node = CdRom { boot_entry: 1, partition_start: 0x10, partition_size: 0x20 };
+    /// assert_eq!(node.to_string(), "CDROM(0x1,0x10,0x20)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -50,6 +59,15 @@ device_path_node! {
     /// The GUID of the protocol used at this location in the device path.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#media-protocol-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::MediaProtocol};
+    ///
+    /// let node = MediaProtocol { protocol: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
+    /// assert_eq!(node.to_string(), "Media(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -65,6 +83,15 @@ device_path_node! {
     /// A firmware file, whose contents are defined by the UEFI PI Specification.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-file>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::PiwgFirmwareFile};
+    ///
+    /// let node = PiwgFirmwareFile { fv_file_name: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
+    /// assert_eq!(node.to_string(), "FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -80,6 +107,15 @@ device_path_node! {
     /// A firmware volume, whose contents are defined by the UEFI PI Specification.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#piwg-firmware-volume>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::PiwgFirmwareVolume};
+    ///
+    /// let node = PiwgFirmwareVolume { fv_name: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
+    /// assert_eq!(node.to_string(), "Fv(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -96,6 +132,15 @@ device_path_node! {
     /// the last byte of the range.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#relative-offset-range>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::RelativeOffsetRange;
+    ///
+    /// let node = RelativeOffsetRange { reserved: 0, starting_offset: 0x10, ending_offset: 0x20 };
+    /// assert_eq!(node.to_string(), "Offset(0x10,0x20)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -115,6 +160,20 @@ device_path_node! {
     /// The memory range, disk type GUID, and instance number of a RAM disk.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::RamDisk};
+    ///
+    /// let node = RamDisk {
+    ///     starting_address: 0x1000,
+    ///     ending_address: 0x1fff,
+    ///     type_guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
+    ///     instance: 0,
+    /// };
+    /// assert_eq!(node.to_string(), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -136,6 +195,18 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-media-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::MediaVendor};
+    ///
+    /// let node = MediaVendor {
+    ///     guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
+    ///     data: vec![0x01],
+    /// };
+    /// assert_eq!(node.to_string(), "VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::Vendor,
         measure_size = media_vendor_measure_size,
@@ -162,6 +233,16 @@ device_path_node! {
     /// Partition number zero represents the entire device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::HardDrive};
+    ///
+    /// let partition_guid = *BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF").as_bytes();
+    /// let node = HardDrive::new_gpt(1, 0x800, 0x1000, partition_guid);
+    /// assert_eq!(node.to_string(), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::HardDrive,
         validate = hard_drive_validate,
@@ -247,6 +328,15 @@ device_path_node! {
     /// which are concatenated to form the complete path.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#file-path-media-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::FilePath;
+    ///
+    /// let node = FilePath::new(r"\EFI\BOOT\boot.efi");
+    /// assert_eq!(node.to_string(), r"\EFI\BOOT\boot.efi");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::FilePath,
         measure_size = file_path_measure_size,

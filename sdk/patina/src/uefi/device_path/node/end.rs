@@ -26,6 +26,15 @@ device_path_node! {
     /// Terminates an entire device path. Every device path ends with this node.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::EndEntire;
+    ///
+    /// let node = EndEntire;
+    /// assert_eq!(node.to_string(), "");
+    /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]
@@ -65,6 +74,15 @@ device_path_node! {
     /// describes several devices.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::EndInstance;
+    ///
+    /// let node = EndInstance;
+    /// assert_eq!(node.to_string(), ",");
+    /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]

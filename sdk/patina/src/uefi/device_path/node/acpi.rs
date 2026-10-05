@@ -36,6 +36,15 @@ device_path_node! {
     /// the messaging [`Nvdimm`](super::Nvdimm) namespace node.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::NvdimmAcpi;
+    ///
+    /// let node = NvdimmAcpi { nfit_device_handle: 0x2a };
+    /// assert_eq!(node.to_string(), "NvdimmAcpiAdr(0x2a)");
+    /// ```
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -52,6 +61,22 @@ device_path_node! {
     /// forms. A nonempty string supersedes its corresponding numeric identifier.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::{Acpi, ExtendedAcpi};
+    ///
+    /// let node = ExtendedAcpi {
+    ///     hid: Acpi::PCI_ROOT_HID,
+    ///     uid: 0,
+    ///     cid: 0,
+    ///     hid_string: String::new(),
+    ///     uid_string: String::new(),
+    ///     cid_string: String::new(),
+    /// };
+    /// assert_eq!(node.to_string(), "AcpiEx(PNP0A03,0,0x0,,,)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
         measure_size = extended_acpi_measure_size,
@@ -94,6 +119,15 @@ device_path_node! {
     /// Output Protocol. At least one `_ADR` value is required.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-adr-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::AcpiAdr;
+    ///
+    /// let node = AcpiAdr { addresses: vec![0x80010100, 0x80010200] };
+    /// assert_eq!(node.to_string(), "AcpiAdr(0x80010100,0x80010200)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::Adr,
         measure_size = acpi_adr_measure_size,
@@ -126,6 +160,15 @@ device_path_node! {
     /// node is smaller than [`ExtendedAcpi`] and should be used when possible.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Acpi;
+    ///
+    /// let node = Acpi::new_pci_root(0);
+    /// assert_eq!(node.to_string(), "PciRoot(0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]

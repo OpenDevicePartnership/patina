@@ -38,6 +38,15 @@ device_path_node! {
     /// of an ATAPI device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Atapi;
+    ///
+    /// let node = Atapi { primary_secondary: 0, slave_master: 0, lun: 0 };
+    /// assert_eq!(node.to_string(), "Ata(Primary,Master,0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = atapi_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -64,6 +73,15 @@ device_path_node! {
     /// The target ID (PUN) and logical unit number on a SCSI bus.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#scsi-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Scsi;
+    ///
+    /// let node = Scsi { pun: 1, lun: 2 };
+    /// assert_eq!(node.to_string(), "Scsi(0x1,0x2)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -81,6 +99,15 @@ device_path_node! {
     /// The Fibre Channel World Wide Name and logical unit number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::FiberChannel;
+    ///
+    /// let node = FiberChannel { reserved: 0, wwn: 0x1122334455667788, lun: 0x10 };
+    /// assert_eq!(node.to_string(), "Fibre(0x1122334455667788,0x10)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = fiber_channel_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -108,6 +135,19 @@ device_path_node! {
     /// EDK II, rather than the inconsistent 20-byte example in Table 10.17.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#fibre-channel-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::FiberChannelEx;
+    ///
+    /// let node = FiberChannelEx {
+    ///     reserved: 0,
+    ///     wwn: [1, 2, 3, 4, 5, 6, 7, 8],
+    ///     lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
+    /// };
+    /// assert_eq!(node.to_string(), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = fiber_channel_ex_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -131,6 +171,15 @@ device_path_node! {
     /// The 64-bit IEEE 1394 global unique ID, which is not an EFI GUID.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Ieee1394;
+    ///
+    /// let node = Ieee1394 { reserved: 0, guid: 0x0123456789abcdef };
+    /// assert_eq!(node.to_string(), "I1394(0x0123456789abcdef)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394, validate = ieee1394_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -152,6 +201,15 @@ device_path_node! {
     /// The USB parent port number and interface number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Usb;
+    ///
+    /// let node = Usb { parent_port_number: 1, interface_number: 0 };
+    /// assert_eq!(node.to_string(), "USB(0x1,0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -169,6 +227,15 @@ device_path_node! {
     /// The target ID (TID) of an I2O random block storage device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#i-2-o-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::I2oRandomBlockStorageClass;
+    ///
+    /// let node = I2oRandomBlockStorageClass { tid: 5 };
+    /// assert_eq!(node.to_string(), "I2O(0x5)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -185,6 +252,17 @@ device_path_node! {
     /// type.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#mac-address-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{standard::efi::MacAddress as EfiMacAddress, uefi::device_path::node::MacAddress};
+    ///
+    /// let mut addr = [0; 32];
+    /// addr[..6].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    /// let node = MacAddress { mac_address: EfiMacAddress { addr }, if_type: 1 };
+    /// assert_eq!(node.to_string(), "MAC(001122334455,0x1)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -205,6 +283,28 @@ device_path_node! {
     /// length, and gateway address.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::net::Ipv6Addr;
+    /// use patina::uefi::device_path::node::IpV6;
+    ///
+    /// let node = IpV6 {
+    ///     local_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2),
+    ///     remote_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+    ///     local_port: 8443,
+    ///     remote_port: 443,
+    ///     protocol: 6,
+    ///     ip_address_origin: 2,
+    ///     prefix_length: 64,
+    ///     gateway_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0xffff),
+    /// };
+    /// assert_eq!(
+    ///     node.to_string(),
+    ///     "IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+    /// );
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -244,6 +344,15 @@ device_path_node! {
     /// An IEEE 802.1Q VLAN identifier.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vlan-device-path-node>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Vlan;
+    ///
+    /// let node = Vlan { vlan_id: 100 };
+    /// assert_eq!(node.to_string(), "Vlan(100)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = vlan_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -267,6 +376,21 @@ device_path_node! {
     /// connection.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#infiniband-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::InfiniBand};
+    ///
+    /// let node = InfiniBand {
+    ///     resource_flags: 1,
+    ///     port_gid: *BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF").as_bytes(),
+    ///     service_id: 1,
+    ///     target_port_id: 2,
+    ///     device_id: 3,
+    /// };
+    /// assert_eq!(node.to_string(), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand, validate = infiniband_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -303,6 +427,15 @@ device_path_node! {
     /// selects the device default.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Uart;
+    ///
+    /// let node = Uart { reserved: 0, baud_rate: 115200, data_bits: 8, parity: 1, stop_bits: 1 };
+    /// assert_eq!(node.to_string(), "Uart(115200,8,N,1)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = uart_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -339,6 +472,20 @@ device_path_node! {
     /// and leaves an eight-byte hole before the LUN.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-extended-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::SasEx;
+    ///
+    /// let node = SasEx {
+    ///     sas_address: [1, 2, 3, 4, 5, 6, 7, 8],
+    ///     lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
+    ///     device_topology: 0x11,
+    ///     relative_target_port: 6,
+    /// };
+    /// assert_eq!(node.to_string(), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -360,6 +507,15 @@ device_path_node! {
     /// The target ID (PUN) and logical unit number of a Universal Flash Storage device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ufs-universal-flash-storage-device-messaging-devicepath-node>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Ufs;
+    ///
+    /// let node = Ufs { pun: 0, lun: 3 };
+    /// assert_eq!(node.to_string(), "UFS(0x0,0x3)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -377,6 +533,15 @@ device_path_node! {
     /// The slot number of a Secure Digital card.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sd-secure-digital-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Sd;
+    ///
+    /// let node = Sd { slot_number: 1 };
+    /// assert_eq!(node.to_string(), "SD(0x1)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -392,6 +557,15 @@ device_path_node! {
     /// The 48-bit address of a Bluetooth device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetooth-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Bluetooth;
+    ///
+    /// let node = Bluetooth { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55] };
+    /// assert_eq!(node.to_string(), "Bluetooth(001122334455)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -407,6 +581,17 @@ device_path_node! {
     /// The SSID of a wireless network as a 32-byte octet string.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#wireless-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::WiFi;
+    ///
+    /// let mut ssid = [0; 32];
+    /// ssid[..4].copy_from_slice(b"ssid");
+    /// let node = WiFi { ssid };
+    /// assert_eq!(node.to_string(), "Wi-Fi(ssid)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -422,6 +607,15 @@ device_path_node! {
     /// The slot number of an embedded Multi-Media Card.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#emmc-embedded-multi-media-card-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Emmc;
+    ///
+    /// let node = Emmc { slot_number: 0 };
+    /// assert_eq!(node.to_string(), "eMMC(0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -437,6 +631,15 @@ device_path_node! {
     /// The 48-bit address of a Bluetooth Low Energy device and its address type.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::BluetoothLE;
+    ///
+    /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: 1 };
+    /// assert_eq!(node.to_string(), "BluetoothLE(001122334455,0x01)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::BluetoothLE,
         validate = bluetooth_le_validate,
@@ -465,6 +668,15 @@ device_path_node! {
     /// the ACPI [`NvdimmAcpi`](super::NvdimmAcpi) device node.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvdimm-namespace-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::Nvdimm};
+    ///
+    /// let node = Nvdimm { uuid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
+    /// assert_eq!(node.to_string(), "NVDIMM(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -481,6 +693,15 @@ device_path_node! {
     /// logical units, such as a USB mass storage device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::DeviceLogicalUnit;
+    ///
+    /// let node = DeviceLogicalUnit { lun: 1 };
+    /// assert_eq!(node.to_string(), "Unit(0x1)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -497,6 +718,21 @@ device_path_node! {
     /// value of `0xFFFF` or `0xFF` matches any value.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::UsbClass;
+    ///
+    /// let node = UsbClass {
+    ///     vendor_id: 0x1234,
+    ///     product_id: 0x5678,
+    ///     device_class: 0xff,
+    ///     device_subclass: 0xff,
+    ///     device_protocol: 0xff,
+    /// };
+    /// assert_eq!(node.to_string(), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -520,6 +756,18 @@ device_path_node! {
     /// A vendor-assigned GUID defines the contents of the vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::{BinaryGuid, uefi::device_path::node::MessagingVendor};
+    ///
+    /// let node = MessagingVendor {
+    ///     guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
+    ///     data: vec![0x01, 0x02],
+    /// };
+    /// assert_eq!(node.to_string(), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
         measure_size = messaging_vendor_measure_size,
@@ -563,6 +811,15 @@ device_path_node! {
     /// declares the flow control of the UART node it follows.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-flow-control-messaging-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::UartFlowControl;
+    ///
+    /// let node = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
+    /// assert_eq!(node.to_string(), "UartFlowCtrl(Hardware)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
         measure_size = uart_flow_control_measure_size,
@@ -624,6 +881,21 @@ device_path_node! {
     /// address, logical unit number, device topology, and relative target port.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#serial-attached-scsi-sas-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Sas;
+    ///
+    /// let node = Sas {
+    ///     reserved: 0,
+    ///     sas_address: 0x1234,
+    ///     lun: 0,
+    ///     device_topology: 0,
+    ///     relative_target_port: 0x100,
+    /// };
+    /// assert_eq!(node.to_string(), "SAS(0x1234,0x0,0x100,NoTopology)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
         measure_size = sas_measure_size,
@@ -700,6 +972,20 @@ device_path_node! {
     /// last 64 or fewer UTF-16 characters of its serial number.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-device-paths-wwid>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::UsbWwid;
+    ///
+    /// let node = UsbWwid {
+    ///     interface: 0,
+    ///     vendor_id: 0x1234,
+    ///     product_id: 0x5678,
+    ///     serial_number: vec![0x0053, 0x004e, 0x0031, 0x0032, 0x0033],
+    /// };
+    /// assert_eq!(node.to_string(), r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#);
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::UsbWwid,
         measure_size = usb_wwid_measure_size,
@@ -754,6 +1040,30 @@ device_path_node! {
     /// without the gateway and subnet mask; both forms are supported.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv4-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::net::Ipv4Addr;
+    /// use patina::uefi::device_path::node::{IpV4, IpV4Network};
+    ///
+    /// let node = IpV4 {
+    ///     local_ip: Ipv4Addr::new(192, 168, 0, 2),
+    ///     remote_ip: Ipv4Addr::new(192, 168, 0, 1),
+    ///     local_port: 8080,
+    ///     remote_port: 80,
+    ///     protocol: 6,
+    ///     static_ip: true,
+    ///     network: Some(IpV4Network {
+    ///         gateway: Ipv4Addr::new(192, 168, 0, 254),
+    ///         subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
+    ///     }),
+    /// };
+    /// assert_eq!(
+    ///     node.to_string(),
+    ///     "IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,192.168.0.254,255.255.255.0)",
+    /// );
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::IpV4,
         measure_size = ip_v4_measure_size,
@@ -839,6 +1149,24 @@ device_path_node! {
     /// tag, and target name of an iSCSI target.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#iscsi-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Iscsi;
+    ///
+    /// let node = Iscsi {
+    ///     protocol: 0,
+    ///     options: 1 << 11,
+    ///     lun: [0, 1, 2, 3, 4, 5, 6, 7],
+    ///     portal_group: 1,
+    ///     target_name: "iqn.2026-10.com.example:disk".into(),
+    /// };
+    /// assert_eq!(
+    ///     node.to_string(),
+    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    /// );
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Iscsi,
         measure_size = iscsi_measure_size,
@@ -884,6 +1212,15 @@ device_path_node! {
     /// terminator, and an empty URI is allowed.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uniform-resource-identifiers-uri-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Uri;
+    ///
+    /// let node = Uri { uri: "https://example.com/boot".into() };
+    /// assert_eq!(node.to_string(), "Uri(https://example.com/boot)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Uri,
         measure_size = uri_measure_size,
@@ -917,6 +1254,16 @@ device_path_node! {
     /// when written and ignored when read.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#dns-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::net::{IpAddr, Ipv4Addr};
+    /// use patina::uefi::device_path::node::Dns;
+    ///
+    /// let node = Dns { addresses: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))] };
+    /// assert_eq!(node.to_string(), "Dns(192.168.0.1)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Dns,
         measure_size = dns_measure_size,
@@ -1021,6 +1368,15 @@ device_path_node! {
     /// access mode. The vendor-specific form adds a GUID and vendor-defined data.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#rest-service-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::{RestService, RestServiceType};
+    ///
+    /// let node = RestService { service: RestServiceType::Redfish, access_mode: 1 };
+    /// assert_eq!(node.to_string(), "RestService(0x1,0x1)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::RestService,
         measure_size = rest_service_measure_size,
@@ -1100,6 +1456,25 @@ device_path_node! {
     /// value and the NVM subsystem NQN.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-over-fabric-nvme-of-namespace-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::NvmeOf;
+    ///
+    /// let node = NvmeOf {
+    ///     identifier_type: 3,
+    ///     identifier: [
+    ///         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    ///         0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ///     ],
+    ///     subsystem_nqn: "nqn.2026-10.com.example:disk".into(),
+    /// };
+    /// assert_eq!(
+    ///     node.to_string(),
+    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    /// );
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmeOf,
         measure_size = nvme_of_measure_size,
@@ -1135,6 +1510,15 @@ device_path_node! {
     /// The HBA port, port multiplier port, and logical unit number of a SATA device.
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#sata-device-path>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::Sata;
+    ///
+    /// let node = Sata::new(0, 0xffff, 0);
+    /// assert_eq!(node.to_string(), "Sata(0x0,0xffff,0x0)");
+    /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone)]
@@ -1174,6 +1558,15 @@ device_path_node! {
     /// (EUI-64).
     ///
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvm-express-namespace-messaging-device-path-node>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::NvmExpress;
+    ///
+    /// let node = NvmExpress::new(1, 0x0011223344556677);
+    /// assert_eq!(node.to_string(), "NVMe(0x1,00-11-22-33-44-55-66-77)");
+    /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmExpress,
         validate = nvm_express_validate,
