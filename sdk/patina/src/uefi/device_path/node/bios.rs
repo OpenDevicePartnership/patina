@@ -48,3 +48,24 @@ device_path_node! {
 fn bios_measure_size(node: &Bios) -> usize {
     size_of_val(&node.device_type) + size_of_val(&node.status_flag) + node.description_str.len() + size_of::<u8>() // NUL terminator
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::test_support::{check_node, encode_node};
+    use scroll::ctx::TryFromCtx;
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_bios() {
+        check_node(
+            Bios { device_type: 2, status_flag: 1, description_str: "foo".into() },
+            &[5, 1, 12, 0, 2, 0, 1, 0, b'f', b'o', b'o', 0],
+        );
+    }
+
+    #[test]
+    fn test_device_path_invalid_variable_payloads_bios() {
+        assert!(encode_node(Bios { device_type: 0, status_flag: 0, description_str: "a\0b".into() }).is_err());
+        assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());
+    }
+}

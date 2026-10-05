@@ -286,3 +286,249 @@ impl Display for FilePath {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::{
+        DevicePathNode, DevicePathType, GenericDevicePathNode, Header, MediaSubType,
+        test_support::{check_node, encode_node, fixture, generic_node_bytes},
+    };
+    use alloc::{format, vec};
+    use scroll::{Pread, Pwrite, ctx::TryFromCtx};
+
+    #[test]
+    fn test_hard_drive_new_gpt() {
+        let guid = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10];
+        let hd = HardDrive::new_gpt(1, 2048, 1000000, guid);
+        assert_eq!(hd.partition_number, 1);
+        assert_eq!(hd.partition_start, 2048);
+        assert_eq!(hd.partition_size, 1000000);
+        assert_eq!(hd.partition_signature, guid);
+        assert_eq!(hd.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(hd.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_serialization_roundtrip() {
+        let guid = [0xAA; 16];
+        let hd = HardDrive::new_gpt(2, 4096, 500000, guid);
+        // Payload is 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx).
+        let mut buf = [0u8; 38];
+        let written = buf.pwrite_with(hd.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 38);
+
+        let parsed: HardDrive = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.partition_number, 2);
+        assert_eq!(parsed.partition_start, 4096);
+        assert_eq!(parsed.partition_size, 500000);
+        assert_eq!(parsed.partition_signature, guid);
+        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_display() {
+        let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
+        let display = format!("{hd}");
+        assert!(display.contains("HD"));
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_success() {
+        let guid = [0x11u8; 16];
+        let hd = HardDrive::new_gpt(3, 0x1000, 0x4000, guid);
+        let mut data = [0u8; 38];
+        data.pwrite_with(hd, 0, scroll::LE).unwrap();
+        let bytes =
+            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42), &data);
+        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
+        let parsed = HardDrive::try_from(node).expect("valid HD node should parse");
+        assert_eq!(parsed.partition_number, 3);
+        assert_eq!(parsed.partition_start, 0x1000);
+        assert_eq!(parsed.partition_size, 0x4000);
+        assert_eq!(parsed.partition_signature, guid);
+        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
+        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_wrong_type() {
+        let data = [0u8; 38];
+        let bytes =
+            generic_node_bytes(Header::new(DevicePathType::Messaging as u8, MediaSubType::HardDrive as u8, 42), &data);
+        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
+        assert!(HardDrive::try_from(node).is_err());
+    }
+
+    #[test]
+    fn test_hard_drive_validate() {
+        let mbr = |partition_number, signature: [u8; 16]| HardDrive {
+            partition_number,
+            partition_start: 0,
+            partition_size: 0,
+            partition_signature: signature,
+            partition_format: HardDrive::FORMAT_MBR,
+            signature_type: HardDrive::SIGNATURE_TYPE_MBR,
+        };
+        let mut signature = [0; 16];
+        signature[..4].copy_from_slice(&[1, 2, 3, 4]);
+        for partition_number in 0..=4 {
+            assert!(mbr(partition_number, signature).validate().is_ok());
+        }
+        assert!(mbr(5, signature).validate().is_err());
+        assert!(mbr(1, [1; 16]).validate().is_err());
+        assert!(HardDrive { partition_format: 3, ..mbr(1, signature) }.validate().is_err());
+        assert!(HardDrive { signature_type: 3, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
+        assert!(HardDrive { signature_type: 0, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
+        assert!(HardDrive::new_gpt(128, 0, 0, [1; 16]).validate().is_ok());
+
+        let mut data = [0u8; 38];
+        data.pwrite_with(mbr(5, signature), 0, scroll::LE).unwrap();
+        let bytes =
+            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42), &data);
+        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
+        assert!(HardDrive::try_from(node).is_err());
+        assert!(<Box<dyn DevicePathNode>>::try_from(node).is_err());
+    }
+
+    #[test]
+    fn test_hard_drive_try_from_short_data() {
+        let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
+        let bytes =
+            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 20), &data);
+        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
+        assert!(HardDrive::try_from(node).is_err());
+    }
+
+    #[test]
+    fn test_file_path_new() {
+        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
+        assert_eq!(fp.path, "\\EFI\\BOOT\\BOOTX64.EFI");
+    }
+
+    #[test]
+    fn test_file_path_serialization_roundtrip() {
+        let fp = FilePath::new("\\test.efi");
+        // UTF-16: 9 chars (\test.efi) + null = 10 * 2 = 20 bytes
+        let mut buf = [0u8; 20];
+        let written = buf.pwrite_with(fp.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 20);
+
+        let parsed: FilePath = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.path, "\\test.efi");
+    }
+
+    #[test]
+    fn test_file_path_display() {
+        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
+        let display = format!("{fp}");
+        assert_eq!(display, "\\EFI\\BOOT\\BOOTX64.EFI");
+    }
+
+    #[test]
+    fn test_file_path_utf16_encoding() {
+        let fp = FilePath::new("A");
+        // 'A' (0x0041) + null (0x0000) = 4 bytes
+        let mut buf = [0u8; 4];
+        let written = buf.pwrite_with(fp, 0, scroll::LE).unwrap();
+        assert_eq!(written, 4);
+        // UTF-16LE: 'A' = 0x41, 0x00
+        assert_eq!(buf[0], 0x41);
+        assert_eq!(buf[1], 0x00);
+        // Null terminator
+        assert_eq!(buf[2], 0x00);
+        assert_eq!(buf[3], 0x00);
+    }
+
+    fixture!(
+        test_device_path_cdrom,
+        CdRom { boot_entry: 0x04030201, partition_start: 0x0c0b0a0908070605, partition_size: 0x14131211100f0e0d },
+        [4, 2, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    );
+
+    fixture!(
+        test_device_path_media_protocol,
+        MediaProtocol {
+            protocol: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
+        [4, 5, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+
+    fixture!(
+        test_device_path_piwg_firmware_file,
+        PiwgFirmwareFile {
+            fv_file_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
+        [4, 6, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+
+    fixture!(
+        test_device_path_piwg_firmware_volume,
+        PiwgFirmwareVolume {
+            fv_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        },
+        [4, 7, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+
+    fixture!(
+        test_device_path_relative_offset_range,
+        RelativeOffsetRange {
+            reserved: 0x04030201,
+            starting_offset: 0x0c0b0a0908070605,
+            ending_offset: 0x14131211100f0e0d
+        },
+        [4, 8, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    );
+
+    fixture!(
+        test_device_path_ram_disk,
+        RamDisk {
+            starting_address: 0x0807060504030201,
+            ending_address: 0x100f0e0d0c0b0a09,
+            type_guid: crate::BinaryGuid::from_bytes(&[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]),
+            instance: 0x2221,
+        },
+        [
+            4, 9, 38, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+            27, 28, 29, 30, 31, 32, 33, 34,
+        ]
+    );
+
+    #[test]
+    fn test_device_path_media_vendor() {
+        let mut expected = vec![4, 3, 22, 0];
+        expected.extend_from_slice(&[0x11; 16]);
+        expected.extend_from_slice(&[0xaa, 0xbb]);
+        check_node(MediaVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] }, &expected);
+    }
+
+    #[test]
+    fn test_device_path_opaque_arrays_ignore_endian_context_media() {
+        let guid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let mut output = [0; 16];
+        output.pwrite_with(MediaProtocol { protocol: crate::BinaryGuid::from_bytes(&guid) }, 0, scroll::BE).unwrap();
+        assert_eq!(output, guid);
+    }
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_media() {
+        check_node(FilePath::new("A"), &[4, 4, 8, 0, b'A', 0, 0, 0]);
+        let mut expected = vec![4, 1, 42, 0, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0];
+        expected.extend_from_slice(&[0x11; 16]);
+        expected.extend_from_slice(&[2, 2]);
+        check_node(HardDrive::new_gpt(1, 2048, 4096, [0x11; 16]), &expected);
+    }
+
+    #[test]
+    fn test_device_path_invalid_variable_payloads_media() {
+        assert!(FilePath::try_from_ctx(&[b'A', 0], scroll::LE).is_err());
+        assert!(FilePath::try_from_ctx(b"A", scroll::LE).is_err());
+    }
+
+    #[test]
+    fn test_device_path_existing_validation_media() {
+        assert!(encode_node(FilePath::new("a\0b")).is_err());
+        assert!(encode_node(FilePath::new("\u{1f600}")).is_err());
+    }
+}

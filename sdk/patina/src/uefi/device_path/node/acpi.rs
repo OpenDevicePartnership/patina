@@ -18,6 +18,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+// cspell:ignore BCDEFGHIJ PNPZZZZ
+
 use super::{AcpiSubType, DevicePathType};
 use crate::{
     device_path_node,
@@ -198,5 +200,72 @@ impl Display for Acpi {
             f,
             crate::uefi::device_path::text::TextOptions::default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::test_support::{check_node, encode_node, fixture};
+    use alloc::{format, string::String, vec};
+    use scroll::ctx::TryFromCtx;
+
+    fixture!(test_device_path_nvdimm_acpi, NvdimmAcpi { nfit_device_handle: 0x04030201 }, [2, 4, 8, 0, 1, 2, 3, 4]);
+
+    #[test]
+    fn test_device_path_derived_nvdimm_formatting() {
+        let node = NvdimmAcpi { nfit_device_handle: 42 };
+        assert_eq!(format!("{node}"), "NvdimmAcpiAdr(0x2a)");
+        assert_eq!(format!("{node:?}"), "NvdimmAcpi { type: 2, sub_type: 4, length: 8, nfit_device_handle: 42 }");
+    }
+
+    #[test]
+    fn test_device_path_extended_acpi() {
+        check_node(
+            ExtendedAcpi {
+                hid: 1,
+                uid: 2,
+                cid: 3,
+                hid_string: "A".into(),
+                uid_string: "B".into(),
+                cid_string: "C".into(),
+            },
+            &[2, 2, 22, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, b'A', 0, b'B', 0, b'C', 0],
+        );
+        check_node(AcpiAdr { addresses: vec![0x12345678, 9] }, &[2, 3, 12, 0, 0x78, 0x56, 0x34, 0x12, 9, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_acpi() {
+        check_node(Acpi::new_pci_root(0), &[2, 1, 12, 0, 0xd0, 0x41, 3, 0x0a, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_device_path_invalid_variable_payloads_acpi() {
+        assert!(encode_node(AcpiAdr { addresses: vec![] }).is_err());
+        assert!(
+            encode_node(ExtendedAcpi {
+                hid: 0,
+                uid: 0,
+                cid: 0,
+                hid_string: "\u{e9}".into(),
+                uid_string: String::new(),
+                cid_string: String::new(),
+            })
+            .is_err()
+        );
+        assert!(ExtendedAcpi::try_from_ctx(&[0; 14], scroll::LE).is_err());
+        let mut non_ascii = [0u8; 15];
+        non_ascii[12] = 0xe9;
+        assert!(ExtendedAcpi::try_from_ctx(&non_ascii, scroll::LE).is_err());
+    }
+
+    #[test]
+    fn test_device_path_existing_validation_acpi() {
+        for hid in ["", "PNP", "1NP0A03", "PNPZZZZ", "\u{e9}NP0A03"] {
+            assert!(Acpi::try_eisa_id(hid).is_err());
+        }
+        assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
+        assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
     }
 }

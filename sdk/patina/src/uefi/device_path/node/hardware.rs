@@ -138,3 +138,41 @@ fn bmc_validate(node: &Bmc) -> Result<(), &'static str> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::test_support::{check_invalid, check_node, encode_node};
+    use alloc::vec;
+
+    #[test]
+    fn test_device_path_hardware_vendor() {
+        let mut expected = vec![1, 4, 22, 0];
+        expected.extend_from_slice(&[0x11; 16]);
+        expected.extend_from_slice(&[0xaa, 0xbb]);
+        check_node(
+            HardwareVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
+            &expected,
+        );
+    }
+
+    #[test]
+    fn test_device_path_reserved_values_are_rejected_hardware() {
+        for interface_type in 0..=3 {
+            encode_node(Bmc { interface_type, base_address: 0 }).unwrap();
+        }
+        check_invalid(Bmc { interface_type: 4, base_address: 0 }, &[4, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_hardware() {
+        check_node(Pci { function: 1, device: 2 }, &[1, 1, 6, 0, 1, 2]);
+        check_node(PcCard { function_number: 3 }, &[1, 2, 5, 0, 3]);
+        check_node(Controller { number: 0x12345678 }, &[1, 5, 8, 0, 0x78, 0x56, 0x34, 0x12]);
+        check_node(
+            MemoryMapped { memory_type: 3, start_address: 0x1234, end_address: 0x5678 },
+            &[1, 3, 24, 0, 3, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0x78, 0x56, 0, 0, 0, 0, 0, 0],
+        );
+        check_node(Bmc { interface_type: 1, base_address: 0x1234 }, &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+    }
+}

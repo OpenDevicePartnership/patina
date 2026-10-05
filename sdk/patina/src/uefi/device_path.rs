@@ -27,11 +27,9 @@ use core::{
     borrow::Borrow,
     clone::Clone,
     convert::{AsRef, From},
-    debug_assert,
     fmt::{Debug, Display},
     format_args,
     iter::Iterator,
-    mem,
     ops::{Deref, DerefMut},
 };
 
@@ -77,6 +75,8 @@ impl DevicePathBuf {
     /// Append a node to the device path, before its [`EndEntire`] node, like the
     /// `AppendDeviceNode` function of the device path utilities protocol (UEFI 2.10
     /// Section 10.5.1).
+    ///
+    /// [UEFI Spec Documentation: 10.5.5. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.AppendDeviceNode()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-appenddevicenode)
     ///
     /// Append an [`EndInstance`] node to start a new instance. [`EndEntire`] cannot be
     /// appended: the device path already ends with it.
@@ -153,6 +153,8 @@ impl DevicePathBuf {
 
     /// Append a device path to this device path, the `EndEntire` node of self will be removed when appending the other path.
     ///
+    /// [UEFI Spec Documentation: 10.5.4. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.AppendDevicePath()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-appenddevicepath)
+    ///
     /// # Errors
     ///
     /// Returns an error if allocation fails.
@@ -162,10 +164,12 @@ impl DevicePathBuf {
 
     /// Append a device path to this device path, the `EndEntire` node of self will be replaced with an end instance.
     ///
+    /// [UEFI Spec Documentation: 10.5.6. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.AppendDevicePathInstance()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-appenddevicepathinstance)
+    ///
     /// # Errors
     ///
     /// Returns an error if allocation fails.
-    pub fn append_device_path_instances(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
+    pub fn append_device_path_instance(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
         self.append_path(device_path, true)
     }
 
@@ -186,6 +190,8 @@ impl DevicePathBuf {
     }
 
     /// Create a device path from an iterator of device path nodes.
+    ///
+    /// [UEFI Spec Documentation: 10.5.5. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.AppendDeviceNode()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-appenddevicenode)
     ///
     /// The [`EndEntire`] node is added after the nodes. The iterator may also yield it as
     /// its last node, as iterating a [`DevicePath`] does.
@@ -215,19 +221,22 @@ impl DevicePathBuf {
         Ok(device_path)
     }
 
-    /// Create a device path from the bytes of whole nodes, followed by `path`.
-    fn concat(nodes: &[u8], path: &DevicePath) -> Result<DevicePathBuf, EfiError> {
+    /// Create a device path from the bytes of whole nodes, followed by the bytes of a terminated device path.
+    fn concat(nodes: &[u8], path: &[u8]) -> Result<DevicePathBuf, EfiError> {
         let mut buffer = Vec::new();
-        buffer.try_reserve_exact(nodes.len() + path.size()).map_err(|_| EfiError::OutOfResources)?;
+        buffer.try_reserve_exact(nodes.len() + path.len()).map_err(|_| EfiError::OutOfResources)?;
         buffer.extend_from_slice(nodes);
-        buffer.extend_from_slice(path.as_bytes());
+        buffer.extend_from_slice(path);
         Ok(DevicePathBuf { buffer })
     }
+}
 
-    /// Convert the device path to a boxed [`DevicePath`].
-    pub fn into_box_device_path(self) -> Box<DevicePath> {
-        // SAFETY: DevicePath has the same memory layout as [u8].
-        unsafe { mem::transmute(self.buffer.into_boxed_slice()) }
+impl From<DevicePathBuf> for Box<DevicePath> {
+    fn from(value: DevicePathBuf) -> Self {
+        let bytes = Box::into_raw(value.buffer.into_boxed_slice());
+        // SAFETY: `bytes` comes from `Box::into_raw` of a `Box<[u8]>`, and `DevicePath` is
+        // repr(transparent) over `[u8]`, so the pointer and its allocation are valid for it.
+        unsafe { Box::from_raw(bytes as *mut DevicePath) }
     }
 }
 
@@ -258,6 +267,9 @@ impl AsMut<DevicePath> for DevicePathBuf {
     }
 }
 
+/// Copy a device path.
+///
+/// [UEFI Spec Documentation: 10.5.3. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.DuplicateDevicePath()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-duplicatedevicepath)
 impl From<&DevicePath> for DevicePathBuf {
     fn from(value: &DevicePath) -> Self {
         DevicePathBuf { buffer: Vec::from(&value.buffer) }
@@ -296,13 +308,15 @@ impl DevicePath {
     /// Create a &`DevicePath` from a pointer to a byte buffer.
     /// This is used to interface with device paths from C code.
     ///
-    /// The nodes are walked up to the [`EndEntire`] node, and each one is checked: its
-    /// length must cover at least its header, and end nodes must follow the specification.
+    /// [UEFI Spec Documentation: 10.3.1. Generic Device Path Structures](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)
+    ///
+    /// The nodes are walked up to the [`EndEntire`] node, then the device path is checked like
+    /// [`try_from_bytes`](Self::try_from_bytes) does, including each node's payload.
     ///
     /// # Errors
     ///
-    /// Returns an error if the pointer is null, a node is shorter than its header, an end
-    /// node is malformed, or the device path is too large to address.
+    /// Returns an error if the pointer is null, a node is shorter than its header or
+    /// malformed, or the device path is too large to address.
     ///
     /// # Safety
     ///
@@ -343,17 +357,24 @@ impl DevicePath {
 
     /// Borrow a complete device path from `bytes`.
     ///
+    /// [UEFI Spec Documentation: 10.3.1. Generic Device Path Structures](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)
+    ///
     /// Every node must have a length of at least its header, end nodes must follow the
-    /// specification, and the last node, and only the last node, must be [`EndEntire`].
-    /// Node payloads are not decoded.
+    /// specification, and the last node, and only the last node, must be [`EndEntire`]. Each
+    /// node of a known type is decoded, and must have a well-formed payload that passes
+    /// [`validate`](DevicePathNode::validate); nodes of an unknown type are accepted, since
+    /// the specification lets them be skipped.
     ///
     /// # Errors
     ///
-    /// Returns an error if `bytes` is not a complete, well-formed device path.
+    /// Returns an error if `bytes` is not a complete device path, or a node is malformed.
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&DevicePath, scroll::Error> {
         let mut rest = bytes;
         loop {
             let (node, next) = GenericDevicePathNode::from_bytes(rest)?;
+            // Decode the node as the type its header identifies, which checks its payload and the
+            // specification rules. Node types that are not known are accepted as they are.
+            <Box<dyn DevicePathNode>>::try_from(node)?;
             if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
                 if !next.is_empty() {
                     return Err(scroll::Error::BadInput { size: next.len(), msg: "data follows EndEntire" });
@@ -368,6 +389,8 @@ impl DevicePath {
     }
 
     /// Return the size in bytes of the device path.
+    ///
+    /// [UEFI Spec Documentation: 10.5.2. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.GetDevicePathSize()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-getdevicepathsize)
     pub fn size(&self) -> usize {
         self.buffer.len()
     }
@@ -383,29 +406,10 @@ impl DevicePath {
     }
 
     /// Return true if the device path contains more than one instance, otherwise false.
+    ///
+    /// [UEFI Spec Documentation: 10.5.9. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.IsDevicePathMultiInstance()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-isdevicepathmultiinstance)
     pub fn is_multi_instance(&self) -> bool {
         self.iter().any(|n| EndInstance::is_type(n.header.r#type, n.header.sub_type))
-    }
-
-    /// Return a &`DevicePath` for the n last nodes of the device path.
-    /// This operation does not copy memory since the trailing end of a device path is a valid device path.
-    pub fn slice_end(&self, n: usize) -> &DevicePath {
-        let count = self.node_count();
-
-        debug_assert!(n >= 1, "Device path needs to have at least the end node.");
-        debug_assert!(n <= count, "Cannot return a device path bigger than self.");
-
-        let nb_skip = count - n;
-        let mut idx = 0;
-        for _ in 0..nb_skip {
-            let header = self.buffer.pread_with::<crate::uefi::device_path::node::Header>(idx, scroll::LE).unwrap();
-            idx += usize::from(header.length);
-        }
-        let end_buffer = self.buffer.get(idx..).expect("idx is within device path bounds");
-        // SAFETY: The slice `end_buffer` is a valid trailing portion of the device path that contains
-        // the last n nodes including the end node. DevicePath is repr(transparent) over [u8], so this cast is
-        // considered valid.
-        unsafe { &*(core::ptr::from_ref::<[u8]>(end_buffer) as *const DevicePath) }
     }
 
     /// Return true if the device path starts with the other device path.
@@ -423,7 +427,7 @@ impl DevicePath {
         false
     }
 
-    /// Return the rest of this device path after `prefix`, like `Path::strip_prefix`.
+    /// Return the rest of this device path after `prefix`.
     ///
     /// Every node of `prefix` before its end node must be equal, byte for byte, to the node at
     /// the same position in this device path. The result borrows this device path, starts at
@@ -457,12 +461,16 @@ impl DevicePath {
     }
 
     /// Iterate through every instance of a device path.
+    ///
+    /// [UEFI Spec Documentation: 10.5.7. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.GetNextDevicePathInstance()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-getnextdevicepathinstance)
     pub fn iter_instances(&self) -> IterInstance<'_> {
         IterInstance { node_iterator: self.iter() }
     }
 
     /// Return true if this is a shorthand device path, which the specification calls a
-    /// short-form device path (UEFI 2.10 Section 3.1.2).
+    /// short-form device path.
+    ///
+    /// [UEFI Spec Documentation: 3.1.2. Load Option Processing](https://uefi.org/specs/UEFI/2.10/03_Boot_Manager.html#load-option-processing)
     ///
     /// A short-form device path starts with a [`HardDrive`], [`FilePath`], [`Uri`],
     /// [`UsbWwid`], or [`UsbClass`] node instead of the system root, and must be expanded with
@@ -480,7 +488,9 @@ impl DevicePath {
     }
 
     /// Expand a shorthand device path into the full device paths it can refer to, in the
-    /// order a boot manager tries them (UEFI 2.10 Section 3.1.2).
+    /// order a boot manager tries them.
+    ///
+    /// [UEFI Spec Documentation: 3.1.2. Load Option Processing](https://uefi.org/specs/UEFI/2.10/03_Boot_Manager.html#load-option-processing)
     ///
     /// A device path that is not shorthand is returned unchanged, as the only candidate. For a
     /// shorthand device path, the first node selects how the devices are searched:
@@ -515,7 +525,7 @@ impl DevicePath {
         if !self.is_shorthand_notation() {
             return Ok(Vec::from([self.into()]));
         }
-        let rest = self.slice_end(self.node_count() - 1);
+        let rest = self.buffer.get(first_node.as_bytes().len()..).unwrap_or_default();
 
         let mut candidates = Vec::new();
         if let Ok(target) = HardDrive::try_from(first_node) {
@@ -564,12 +574,12 @@ impl DevicePath {
                 }
             }
             for handle_path in removable.into_iter().chain(fixed).chain(without_block_io) {
-                candidates.push(DevicePathBuf::concat(handle_path.nodes(), self)?);
+                candidates.push(DevicePathBuf::concat(handle_path.nodes(), self.as_bytes())?);
             }
         } else if Uri::try_from(first_node).is_ok() {
             for handle in shorthand::handles(boot_services, &efi::protocols::load_file::PROTOCOL_GUID)? {
                 if let Some(handle_path) = shorthand::device_path(boot_services, handle) {
-                    candidates.push(DevicePathBuf::concat(handle_path.nodes(), self)?);
+                    candidates.push(DevicePathBuf::concat(handle_path.nodes(), self.as_bytes())?);
                 }
             }
         } else {
@@ -614,7 +624,7 @@ impl Borrow<DevicePath> for DevicePathBuf {
 
 impl Clone for Box<DevicePath> {
     fn clone(&self) -> Self {
-        DevicePathBuf::from(self.as_ref()).into_box_device_path()
+        DevicePathBuf::from(self.as_ref()).into()
     }
 }
 
@@ -799,6 +809,8 @@ impl Iterator for IterInstance<'_> {
 impl Display for DevicePath {
     /// Write the UEFI text representation of the device path, with the default
     /// [`TextOptions`](text::TextOptions).
+    ///
+    /// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         text::fmt_device_path(self, f, text::TextOptions::default())
     }
@@ -852,6 +864,12 @@ mod tests {
         for bytes in invalid {
             assert!(DevicePath::try_from_bytes(bytes).is_err(), "accepted {bytes:?}");
         }
+
+        // A PCI node with a payload one byte too short, and a SATA node with the reserved HBA port.
+        assert!(DevicePath::try_from_bytes(&[1, 1, 5, 0, 0, 0x7f, 0xff, 4, 0]).is_err());
+        assert!(DevicePath::try_from_bytes(&[3, 18, 10, 0, 0xff, 0xff, 0, 0, 0, 0, 0x7f, 0xff, 4, 0]).is_err());
+        // A node of a reserved type is not decoded.
+        assert!(DevicePath::try_from_bytes(&[9, 2, 6, 0, 0xaa, 0xbb, 0x7f, 0xff, 4, 0]).is_ok());
     }
 
     #[test]
@@ -952,7 +970,7 @@ mod tests {
         expected_device_path.append(EndInstance).unwrap();
         expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
 
-        device_path.append_device_path_instances(&device_path_to_add).unwrap();
+        device_path.append_device_path_instance(&device_path_to_add).unwrap();
 
         assert_eq!(expected_device_path, device_path);
     }
@@ -974,7 +992,7 @@ mod tests {
         device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
         device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
 
-        let device_path = DevicePathBuf::clone(&device_path_buf).into_box_device_path();
+        let device_path = Box::<DevicePath>::from(DevicePathBuf::clone(&device_path_buf));
 
         assert_eq!(device_path_buf.as_ref(), device_path.as_ref());
     }
@@ -1024,21 +1042,9 @@ mod tests {
 
         assert!(!device_path_buf.is_multi_instance());
 
-        device_path_buf.append_device_path_instances(&device_path_buf_2).unwrap();
+        device_path_buf.append_device_path_instance(&device_path_buf_2).unwrap();
 
         assert!(device_path_buf.is_multi_instance());
-    }
-
-    #[test]
-    fn test_device_path_slice_end() {
-        let mut device_path_buf = DevicePathBuf::new();
-        device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
-        device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
-
-        let mut expected_device_path = DevicePathBuf::new();
-        expected_device_path.append(Pci { function: 1, device: 2 }).unwrap();
-
-        assert_eq!(expected_device_path.as_ref(), device_path_buf.slice_end(2));
     }
 
     #[test]

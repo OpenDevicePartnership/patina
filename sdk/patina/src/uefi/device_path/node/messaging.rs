@@ -1205,3 +1205,543 @@ fn nvm_express_validate(node: &NvmExpress) -> Result<(), &'static str> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::{
+        DevicePathNode, GenericDevicePathNode,
+        test_support::{check_fixture, check_invalid, check_node, encode_node, fixture},
+    };
+    use alloc::{format, string::String, vec};
+    use scroll::{Pread, Pwrite, ctx::TryFromCtx};
+
+    #[test]
+    fn test_sata_new() {
+        let sata = Sata::new(1, 0xFFFF, 0);
+        assert_eq!(sata.hba_port, 1);
+        assert_eq!(sata.port_multiplier_port, 0xFFFF);
+        assert_eq!(sata.lun, 0);
+    }
+
+    #[test]
+    fn test_sata_serialization_roundtrip() {
+        let sata = Sata::new(2, 0, 1);
+        let mut buf = [0u8; 6];
+        let written = buf.pwrite_with(sata.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 6);
+
+        let parsed: Sata = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.hba_port, 2);
+        assert_eq!(parsed.port_multiplier_port, 0);
+        assert_eq!(parsed.lun, 1);
+    }
+
+    #[test]
+    fn test_sata_display() {
+        let sata = Sata::new(1, 0xFFFF, 0);
+        let display = format!("{sata}");
+        assert!(display.contains("Sata"));
+    }
+
+    #[test]
+    fn test_nvme_new() {
+        let nvme = NvmExpress::new(1, 0x123456789ABCDEF0);
+        assert_eq!(nvme.namespace_id, 1);
+        assert_eq!(nvme.eui64, 0x123456789ABCDEF0);
+    }
+
+    #[test]
+    fn test_nvme_serialization_roundtrip() {
+        let nvme = NvmExpress::new(1, 0xDEADBEEF12345678);
+        let mut buf = [0u8; 12];
+        let written = buf.pwrite_with(nvme.clone(), 0, scroll::LE).unwrap();
+        assert_eq!(written, 12);
+
+        let parsed: NvmExpress = buf.pread_with(0, scroll::LE).unwrap();
+        assert_eq!(parsed.namespace_id, 1);
+        assert_eq!(parsed.eui64, 0xDEADBEEF12345678);
+    }
+
+    #[test]
+    fn test_nvme_display() {
+        let nvme = NvmExpress::new(1, 0);
+        let display = format!("{nvme}");
+        assert_eq!(display, "NVMe(0x1,00-00-00-00-00-00-00-00)");
+    }
+
+    fixture!(
+        test_device_path_atapi,
+        Atapi { primary_secondary: 1, slave_master: 0, lun: 0x0403 },
+        [3, 1, 8, 0, 1, 0, 3, 4]
+    );
+
+    fixture!(test_device_path_scsi, Scsi { pun: 0x0201, lun: 0x0403 }, [3, 2, 8, 0, 1, 2, 3, 4]);
+
+    fixture!(
+        test_device_path_fiber_channel,
+        FiberChannel { reserved: 0, wwn: 0x0c0b0a0908070605, lun: 0x14131211100f0e0d },
+        [3, 3, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    );
+
+    fixture!(
+        test_device_path_fiber_channel_ex,
+        FiberChannelEx { reserved: 0, wwn: [5, 6, 7, 8, 9, 10, 11, 12], lun: [13, 14, 15, 16, 17, 18, 19, 20] },
+        [3, 21, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    );
+
+    fixture!(
+        test_device_path_ieee1394,
+        Ieee1394 { reserved: 0, guid: 0x0c0b0a0908070605 },
+        [3, 4, 16, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12]
+    );
+
+    fixture!(test_device_path_usb, Usb { parent_port_number: 1, interface_number: 2 }, [3, 5, 6, 0, 1, 2]);
+
+    fixture!(test_device_path_i2o, I2oRandomBlockStorageClass { tid: 0x04030201 }, [3, 6, 8, 0, 1, 2, 3, 4]);
+
+    fixture!(
+        test_device_path_mac_address,
+        MacAddress {
+            mac_address: crate::standard::efi::MacAddress {
+                addr: [
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+                    28, 29, 30, 31, 32,
+                ],
+            },
+            if_type: 33,
+        },
+        [
+            3, 11, 37, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            26, 27, 28, 29, 30, 31, 32, 33,
+        ]
+    );
+
+    fixture!(
+        test_device_path_ipv6,
+        IpV6 {
+            local_ip_address: core::net::Ipv6Addr::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            remote_ip_address: core::net::Ipv6Addr::from([
+                17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            ]),
+            local_port: 0x2221,
+            remote_port: 0x2423,
+            protocol: 0x2625,
+            ip_address_origin: 2,
+            prefix_length: 128,
+            gateway_ip_address: core::net::Ipv6Addr::from([
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56
+            ]),
+        },
+        [
+            3, 13, 60, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 2, 128, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+            53, 54, 55, 56,
+        ]
+    );
+
+    fixture!(test_device_path_vlan, Vlan { vlan_id: 4094 }, [3, 20, 6, 0, 0xfe, 0x0f]);
+
+    fixture!(
+        test_device_path_infiniband,
+        InfiniBand {
+            resource_flags: 0x1f,
+            port_gid: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            service_id: 0x1c1b1a1918171615,
+            target_port_id: 0x24232221201f1e1d,
+            device_id: 0x2c2b2a2928272625,
+        },
+        [
+            3, 9, 48, 0, 0x1f, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+        ]
+    );
+
+    fixture!(
+        test_device_path_uart,
+        Uart { reserved: 0, baud_rate: 0x0c0b0a0908070605, data_bits: 8, parity: 5, stop_bits: 3 },
+        [3, 14, 19, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 8, 5, 3]
+    );
+
+    fixture!(
+        test_device_path_sas_ex,
+        SasEx {
+            sas_address: [1, 2, 3, 4, 5, 6, 7, 8],
+            lun: [9, 10, 11, 12, 13, 14, 15, 16],
+            device_topology: 0x1211,
+            relative_target_port: 0x1413,
+        },
+        [3, 22, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    );
+
+    fixture!(test_device_path_ufs, Ufs { pun: 1, lun: 0x81 }, [3, 25, 6, 0, 1, 0x81]);
+
+    fixture!(test_device_path_sd, Sd { slot_number: 7 }, [3, 26, 5, 0, 7]);
+
+    fixture!(test_device_path_bluetooth, Bluetooth { address: [1, 2, 3, 4, 5, 6] }, [3, 27, 10, 0, 1, 2, 3, 4, 5, 6]);
+
+    fixture!(
+        test_device_path_wifi,
+        WiFi {
+            ssid: [
+                1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+                29, 30, 31, 255,
+            ],
+        },
+        [
+            3, 28, 36, 0, 1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+            26, 27, 28, 29, 30, 31, 255,
+        ]
+    );
+
+    fixture!(test_device_path_emmc, Emmc { slot_number: 8 }, [3, 29, 5, 0, 8]);
+
+    fixture!(
+        test_device_path_bluetooth_le,
+        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: 1 },
+        [3, 30, 11, 0, 1, 2, 3, 4, 5, 6, 1]
+    );
+
+    fixture!(
+        test_device_path_nvdimm,
+        Nvdimm { uuid: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) },
+        [3, 32, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    );
+
+    fixture!(test_device_path_device_logical_unit, DeviceLogicalUnit { lun: 7 }, [3, 17, 5, 0, 7]);
+
+    fixture!(
+        test_device_path_usb_class,
+        UsbClass { vendor_id: 0x0201, product_id: 0x0403, device_class: 5, device_subclass: 6, device_protocol: 7 },
+        [3, 15, 11, 0, 1, 2, 3, 4, 5, 6, 7]
+    );
+
+    #[test]
+    fn test_device_path_atapi_selectors() {
+        for primary_secondary in 0..=1 {
+            for slave_master in 0..=1 {
+                encode_node(Atapi { primary_secondary, slave_master, lun: u16::MAX }).unwrap();
+            }
+        }
+        for invalid in [2, u8::MAX] {
+            check_invalid(Atapi { primary_secondary: invalid, slave_master: 0, lun: 0 }, &[invalid, 0, 0, 0]);
+            check_invalid(Atapi { primary_secondary: 0, slave_master: invalid, lun: 0 }, &[0, invalid, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn test_device_path_vlan_range() {
+        encode_node(Vlan { vlan_id: 0 }).unwrap();
+        encode_node(Vlan { vlan_id: 4094 }).unwrap();
+        check_invalid(Vlan { vlan_id: 4095 }, &[0xff, 0x0f]);
+        check_invalid(Vlan { vlan_id: u16::MAX }, &[0xff, 0xff]);
+    }
+
+    #[test]
+    fn test_device_path_ipv6_ranges() {
+        let node = IpV6 {
+            local_ip_address: core::net::Ipv6Addr::from([0; 16]),
+            remote_ip_address: core::net::Ipv6Addr::from([0; 16]),
+            local_port: 0,
+            remote_port: 0,
+            protocol: 0,
+            ip_address_origin: 0,
+            prefix_length: 0,
+            gateway_ip_address: core::net::Ipv6Addr::from([0; 16]),
+        };
+        for ip_address_origin in 0..=2 {
+            for prefix_length in [0, 64, 128] {
+                encode_node(IpV6 { ip_address_origin, prefix_length, ..node.clone() }).unwrap();
+            }
+        }
+        for ip_address_origin in [3, u8::MAX] {
+            let mut payload = [0; 56];
+            payload[38] = ip_address_origin;
+            check_invalid(IpV6 { ip_address_origin, ..node.clone() }, &payload);
+        }
+        // The specification does not bound the prefix length.
+        encode_node(IpV6 { prefix_length: u8::MAX, ..node.clone() }).unwrap();
+    }
+
+    #[test]
+    fn test_device_path_uart_ranges() {
+        let node = Uart { reserved: 0, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 };
+        for parity in 0..=5 {
+            for stop_bits in 0..=3 {
+                encode_node(Uart { parity, stop_bits, ..node.clone() }).unwrap();
+            }
+        }
+        for parity in [6, u8::MAX] {
+            let mut payload = [0; 15];
+            payload[13] = parity;
+            check_invalid(Uart { parity, ..node.clone() }, &payload);
+        }
+        for stop_bits in [4, u8::MAX] {
+            let mut payload = [0; 15];
+            payload[14] = stop_bits;
+            check_invalid(Uart { stop_bits, ..node.clone() }, &payload);
+        }
+    }
+
+    #[test]
+    fn test_device_path_bluetooth_le_address_type() {
+        for address_type in 0..=1 {
+            encode_node(BluetoothLE { address: [0; 6], address_type }).unwrap();
+        }
+        for address_type in [2, u8::MAX] {
+            check_invalid(BluetoothLE { address: [0; 6], address_type }, &[0, 0, 0, 0, 0, 0, address_type]);
+        }
+    }
+
+    #[test]
+    fn test_device_path_usb_class_wildcards() {
+        check_fixture(
+            UsbClass {
+                vendor_id: u16::MAX,
+                product_id: u16::MAX,
+                device_class: u8::MAX,
+                device_subclass: u8::MAX,
+                device_protocol: u8::MAX,
+            },
+            &[3, 15, 11, 0, 255, 255, 255, 255, 255, 255, 255],
+        );
+    }
+
+    #[test]
+    fn test_device_path_opaque_arrays_ignore_endian_context_messaging() {
+        let node = FiberChannelEx {
+            reserved: 0x04030201,
+            wwn: [5, 6, 7, 8, 9, 10, 11, 12],
+            lun: [13, 14, 15, 16, 17, 18, 19, 20],
+        };
+        let mut output = [0; 20];
+        output.pwrite_with(node, 0, scroll::BE).unwrap();
+        assert_eq!(output, [4, 3, 2, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    }
+
+    #[test]
+    fn test_device_path_messaging_vendor() {
+        let mut expected = vec![3, 10, 22, 0];
+        expected.extend_from_slice(&[0x11; 16]);
+        expected.extend_from_slice(&[0xaa, 0xbb]);
+        check_node(
+            MessagingVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
+            &expected,
+        );
+    }
+
+    #[test]
+    fn test_device_path_spec_vendor_messaging_nodes() {
+        let mut expected = vec![3, 10, 24, 0];
+        expected.extend_from_slice(UartFlowControl::GUID.as_bytes());
+        expected.extend_from_slice(&[3, 0, 0, 0]);
+        check_node(
+            UartFlowControl { flow_control_map: UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF },
+            &expected,
+        );
+        check_invalid(
+            UartFlowControl { flow_control_map: 4 },
+            &[&UartFlowControl::GUID.as_bytes()[..], &[4, 0, 0, 0]].concat(),
+        );
+
+        let mut expected = vec![3, 10, 44, 0];
+        expected.extend_from_slice(Sas::GUID.as_bytes());
+        expected.extend_from_slice(&[
+            0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0x11, 0x12, 0x13, 0x14,
+        ]);
+        let sas = Sas {
+            reserved: 0,
+            sas_address: 0x0807060504030201,
+            lun: 0x100f0e0d0c0b0a09,
+            device_topology: 0x1211,
+            relative_target_port: 0x1413,
+        };
+        check_node(sas.clone(), &expected);
+        let mut payload = expected[4..].to_vec();
+        payload[16] = 1;
+        check_invalid(Sas { reserved: 1, ..sas }, &payload);
+
+        // A vendor node with another GUID stays a generic vendor node, and the specific
+        // nodes reject it.
+        let mut other = vec![3, 10, 24, 0];
+        other.extend_from_slice(&[0x11; 16]);
+        other.extend_from_slice(&[0; 4]);
+        let raw = GenericDevicePathNode::from_bytes(&other).unwrap().0;
+        assert!(format!("{:?}", <Box<dyn DevicePathNode>>::try_from(raw).unwrap()).starts_with("MessagingVendor"));
+        assert!(UartFlowControl::try_from(raw).is_err());
+        assert!(Sas::try_from(raw).is_err());
+    }
+
+    #[test]
+    fn test_device_path_reserved_values_are_rejected_messaging() {
+        let mut payload = vec![1, 0, 0, 0];
+        payload.extend_from_slice(&[0; 16]);
+        check_invalid(FiberChannel { reserved: 1, wwn: 0, lun: 0 }, &payload);
+        check_invalid(FiberChannelEx { reserved: 1, wwn: [0; 8], lun: [0; 8] }, &payload);
+        check_invalid(Ieee1394 { reserved: 1, guid: 0 }, &payload[..12]);
+        check_invalid(Uart { reserved: 1, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 }, &payload[..15]);
+        let mut payload = vec![0x20, 0, 0, 0];
+        payload.extend_from_slice(&[0; 40]);
+        check_invalid(
+            InfiniBand { resource_flags: 0x20, port_gid: [0; 16], service_id: 0, target_port_id: 0, device_id: 0 },
+            &payload,
+        );
+    }
+
+    #[test]
+    fn test_device_path_usb_wwid() {
+        check_node(
+            UsbWwid { interface: 1, vendor_id: 0x1234, product_id: 0x5678, serial_number: vec![0x41, 0x42] },
+            &[3, 16, 14, 0, 1, 0, 0x34, 0x12, 0x78, 0x56, 0x41, 0, 0x42, 0],
+        );
+    }
+
+    #[test]
+    fn test_device_path_ipv4_legacy_and_current() {
+        let mut node = IpV4 {
+            local_ip: core::net::Ipv4Addr::from([1, 2, 3, 4]),
+            remote_ip: core::net::Ipv4Addr::from([5, 6, 7, 8]),
+            local_port: 0x1234,
+            remote_port: 0x5678,
+            protocol: 6,
+            static_ip: true,
+            network: None,
+        };
+        let mut expected = vec![3, 12, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, 0x78, 0x56, 6, 0, 1];
+        check_node(node.clone(), &expected);
+        node.network = Some(IpV4Network {
+            gateway: core::net::Ipv4Addr::from([9, 10, 11, 12]),
+            subnet_mask: core::net::Ipv4Addr::from([255, 255, 255, 0]),
+        });
+        expected[2] = 27;
+        expected.extend_from_slice(&[9, 10, 11, 12, 255, 255, 255, 0]);
+        check_node(node, &expected);
+        for len in 16..23 {
+            assert!(IpV4::try_from_ctx(&expected[4..4 + len], scroll::LE).is_err());
+        }
+        let mut invalid_origin = expected[4..].to_vec();
+        invalid_origin[14] = 2;
+        assert!(IpV4::try_from_ctx(&invalid_origin, scroll::LE).is_err());
+    }
+
+    #[test]
+    fn test_device_path_iscsi_and_uri() {
+        check_node(
+            Iscsi {
+                protocol: 0,
+                options: 0x0800,
+                lun: [1, 2, 3, 4, 5, 6, 7, 8],
+                portal_group: 0x1234,
+                target_name: "iqn".into(),
+            },
+            &[3, 19, 22, 0, 0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, b'i', b'q', b'n', 0],
+        );
+        check_node(
+            Uri { uri: "https://a".into() },
+            &[3, 24, 13, 0, b'h', b't', b't', b'p', b's', b':', b'/', b'/', b'a'],
+        );
+        check_node(Uri { uri: String::new() }, &[3, 24, 4, 0]);
+    }
+
+    #[test]
+    fn test_device_path_dns() {
+        use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        let mut expected = vec![3, 31, 21, 0, 1];
+        expected.extend_from_slice(&[0x12; 16]);
+        let node = Dns { addresses: vec![IpAddr::V6(Ipv6Addr::from([0x12; 16]))] };
+        assert!(node.is_ipv6());
+        check_node(node, &expected);
+
+        let mut expected = vec![3, 31, 37, 0, 0, 10, 0, 0, 1];
+        expected.extend_from_slice(&[0; 12]);
+        expected.extend_from_slice(&[10, 0, 0, 2]);
+        expected.extend_from_slice(&[0; 12]);
+        let node = Dns { addresses: vec![Ipv4Addr::new(10, 0, 0, 1).into(), Ipv4Addr::new(10, 0, 0, 2).into()] };
+        assert!(!node.is_ipv6());
+        check_node(node, &expected);
+
+        // IPv4 padding is ignored when read.
+        let mut padded = [0x12; 16];
+        padded[..4].copy_from_slice(&[10, 0, 0, 1]);
+        let mut payload = vec![0];
+        payload.extend_from_slice(&padded);
+        let (node, _) = Dns::try_from_ctx(&payload, scroll::LE).unwrap();
+        assert_eq!(node.addresses, [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))]);
+
+        payload[0] = 2;
+        assert!(Dns::try_from_ctx(&payload, scroll::LE).is_err());
+        let mixed = Dns { addresses: vec![Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()] };
+        assert!(mixed.validate().is_err());
+        assert!(encode_node(mixed).is_err());
+    }
+
+    #[test]
+    fn test_device_path_rest_variants() {
+        check_node(RestService { service: RestServiceType::Redfish, access_mode: 1 }, &[3, 33, 6, 0, 1, 1]);
+        check_node(RestService { service: RestServiceType::OData, access_mode: 2 }, &[3, 33, 6, 0, 2, 2]);
+        let mut expected = vec![3, 33, 24, 0, 255, 1];
+        expected.extend_from_slice(&[0x33; 16]);
+        expected.extend_from_slice(&[0x44, 0x55]);
+        check_node(
+            RestService {
+                service: RestServiceType::Vendor {
+                    guid: crate::BinaryGuid::from_bytes(&[0x33; 16]),
+                    data: vec![0x44, 0x55],
+                },
+                access_mode: 1,
+            },
+            &expected,
+        );
+    }
+
+    #[test]
+    fn test_device_path_nvme_of() {
+        let mut expected = vec![3, 34, 25, 0, 3];
+        expected.extend_from_slice(&[0x22; 16]);
+        expected.extend_from_slice(b"nqn\0");
+        check_node(NvmeOf { identifier_type: 3, identifier: [0x22; 16], subsystem_nqn: "nqn".into() }, &expected);
+    }
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_messaging() {
+        check_node(Sata::new(1, 0xffff, 2), &[3, 18, 10, 0, 1, 0, 255, 255, 2, 0]);
+        check_node(NvmExpress::new(1, 0x1234), &[3, 23, 16, 0, 1, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_device_path_invalid_variable_payloads_messaging() {
+        assert!(encode_node(Dns { addresses: vec![] }).is_err());
+        assert!(
+            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0; 65] }).is_err()
+        );
+        assert!(
+            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0xd800] }).is_err()
+        );
+        assert!(encode_node(RestService { service: RestServiceType::Redfish, access_mode: 3 }).is_err());
+        assert!(encode_node(Uri { uri: "a\0b".into() }).is_err());
+        assert!(encode_node(Uri { uri: "\u{e9}".into() }).is_err());
+        assert!(encode_node(Uri { uri: "a".repeat(65532) }).is_err());
+        assert!(
+            encode_node(Iscsi { protocol: 1, options: 0, lun: [0; 8], portal_group: 0, target_name: "iqn".into() })
+                .is_err()
+        );
+        assert!(encode_node(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }).is_err());
+        // The specification does not require the unused EUI-64 bytes to be zero.
+        encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).unwrap();
+        // An empty iSCSI target name fits the variable-length field.
+        encode_node(Iscsi { protocol: 0, options: 0, lun: [0; 8], portal_group: 0, target_name: String::new() })
+            .unwrap();
+        assert!(Dns::try_from_ctx(&[0; 16], scroll::LE).is_err());
+        assert!(RestService::try_from_ctx(&[0xff, 1], scroll::LE).is_err());
+        assert!(Uri::try_from_ctx(&[0xff], scroll::LE).is_err());
+    }
+
+    #[test]
+    fn test_device_path_existing_validation_messaging() {
+        assert!(encode_node(Sata::new(u16::MAX, 0, 0)).is_err());
+        for id in [0, u32::MAX] {
+            assert!(encode_node(NvmExpress::new(id, 0)).is_err());
+        }
+    }
+}

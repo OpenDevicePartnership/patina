@@ -96,3 +96,30 @@ impl TryFromCtx<'_, scroll::Endian> for EndInstance {
         Ok((Self, 0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::node::{
+        DevicePathNode, GenericDevicePathNode,
+        test_support::{check_node, encode_node, raw_generic_node},
+    };
+    use scroll::Pread;
+
+    #[test]
+    fn test_device_path_existing_wire_sizes_end() {
+        check_node(EndEntire, &[0x7f, 0xff, 4, 0]);
+        check_node(EndInstance, &[0x7f, 1, 4, 0]);
+    }
+
+    #[test]
+    fn test_device_path_invalid_end_nodes_are_rejected_at_io_boundaries() {
+        for (sub_type, length) in [(1, 5), (0xff, 5), (2, 4)] {
+            let wire = [0x7f, sub_type, length, 0, 0];
+            assert!(wire.pread_with::<&GenericDevicePathNode>(0, scroll::LE).is_err());
+            let node = raw_generic_node(&wire[..usize::from(length)]);
+            assert!(<Box<dyn DevicePathNode>>::try_from(node).is_err());
+            assert!(encode_node(node).is_err());
+        }
+    }
+}

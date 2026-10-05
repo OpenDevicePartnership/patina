@@ -2,8 +2,7 @@
 //!
 //! A device path is a series of variable-length nodes. Each node starts at the end
 //! of the previous one, so nodes are byte-packed and their fields are unaligned.
-//! Every node has a length field in a known place, which makes it possible to skip
-//! nodes of an unknown type. The six node types are hardware, ACPI, messaging,
+//! The six node types are hardware, ACPI, messaging,
 //! media, BIOS Boot Specification, and end of hardware device path.
 //!
 //! Every node starts with the same 4-byte [`Header`]: a type, a sub-type whose
@@ -16,8 +15,35 @@
 //!
 //! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-path-nodes>
 //!
-//! Binary conversions use `DevicePathNode` and the `scroll` conversion traits.
-//! Diagnostic display is not a complete canonical UEFI text conversion API.
+//! ## Defined and custom nodes
+//!
+//! The nodes of this module are the complete set the specification defines: every other
+//! type and sub-type value is reserved
+//! ([10.3.1. Generic Device Path Structures](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)).
+//! Do not create nodes with other type or sub-type values.
+//!
+//! A custom node is a vendor node with its own GUID: [`HardwareVendor`], [`MessagingVendor`],
+//! or [`MediaVendor`]. The GUID, allocated by the vendor, defines the data that follows it,
+//! and never conflicts with future versions of the specification
+//! ([10.3.2.4. Vendor Device Path](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-device-path),
+//! [10.4.6. Other Rules](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#other-rules)).
+//! [`UartFlowControl`] and [`Sas`] are vendor nodes that the specification itself defines.
+//!
+//! A device path read from firmware may still hold a node of a type that is not known,
+//! such as one added by a later version of the specification. It is kept as a
+//! [`GenericDevicePathNode`] and can be skipped using its length
+//! ([10.4.1. Housekeeping Rules](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#housekeeping-rules)).
+//!
+//! [`HardwareVendor`]: crate::uefi::device_path::node::HardwareVendor
+//! [`MessagingVendor`]: crate::uefi::device_path::node::MessagingVendor
+//! [`MediaVendor`]: crate::uefi::device_path::node::MediaVendor
+//! [`UartFlowControl`]: crate::uefi::device_path::node::UartFlowControl
+//! [`Sas`]: crate::uefi::device_path::node::Sas
+//!
+//! ## Conversions
+//!
+//! Binary conversions use `DevicePathNode` and the `scroll` conversion traits. Nodes
+//! display in the UEFI text representation; see [`text`](crate::uefi::device_path::text).
 //!
 //! ## License
 //!
@@ -25,7 +51,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-// cspell:ignore elems rsplit BCDEFGHIJ PNPZZZZ
+// cspell:ignore elems rsplit BCDEFGHIJ
 pub mod acpi;
 pub mod bios;
 pub mod end;
@@ -50,9 +76,6 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
 };
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
-
-#[cfg(test)]
-use alloc::{string::String, vec::Vec};
 
 /// Trait that every device path node must implement.
 ///
@@ -672,32 +695,6 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
     }
 }
 
-#[cfg(test)]
-fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
-    node: T,
-) -> Result<Vec<u8>, scroll::Error> {
-    let mut bytes = Vec::new();
-    crate::uefi::device_path::DevicePathBuf::encode_node(&mut bytes, node)?;
-    Ok(bytes)
-}
-
-#[cfg(test)]
-fn generic_node_bytes(header: Header, data: &[u8]) -> Vec<u8> {
-    let mut bytes = alloc::vec![header.r#type, header.sub_type];
-    bytes.extend_from_slice(&header.length.to_le_bytes());
-    bytes.extend_from_slice(data);
-    bytes
-}
-
-#[cfg(test)]
-fn raw_generic_node(bytes: &[u8]) -> &GenericDevicePathNode {
-    <GenericDevicePathNode as zerocopy::FromBytes>::ref_from_bytes_with_elems(
-        bytes,
-        bytes.len() - Header::size_of_header(),
-    )
-    .unwrap()
-}
-
 /// Device path node iterator.
 pub struct Iter<'a> {
     device_path: &'a DevicePath,
@@ -731,227 +728,43 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    extern crate std;
-
+pub(crate) mod test_support {
     use super::*;
-    use scroll::{Pread, Pwrite};
+    use alloc::{format, vec, vec::Vec};
+    use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
 
-    #[test]
-    fn test_sata_new() {
-        let sata = Sata::new(1, 0xFFFF, 0);
-        assert_eq!(sata.hba_port, 1);
-        assert_eq!(sata.port_multiplier_port, 0xFFFF);
-        assert_eq!(sata.lun, 0);
+    pub(crate) fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
+        node: T,
+    ) -> Result<Vec<u8>, scroll::Error> {
+        let mut bytes = Vec::new();
+        crate::uefi::device_path::DevicePathBuf::encode_node(&mut bytes, node)?;
+        Ok(bytes)
     }
 
-    #[test]
-    fn test_sata_serialization_roundtrip() {
-        let sata = Sata::new(2, 0, 1);
-        let mut buf = [0u8; 6];
-        let written = buf.pwrite_with(sata.clone(), 0, scroll::LE).unwrap();
-        assert_eq!(written, 6);
-
-        let parsed: Sata = buf.pread_with(0, scroll::LE).unwrap();
-        assert_eq!(parsed.hba_port, 2);
-        assert_eq!(parsed.port_multiplier_port, 0);
-        assert_eq!(parsed.lun, 1);
+    pub(crate) fn generic_node_bytes(header: Header, data: &[u8]) -> Vec<u8> {
+        let mut bytes = alloc::vec![header.r#type, header.sub_type];
+        bytes.extend_from_slice(&header.length.to_le_bytes());
+        bytes.extend_from_slice(data);
+        bytes
     }
 
-    #[test]
-    fn test_sata_display() {
-        let sata = Sata::new(1, 0xFFFF, 0);
-        let display = std::format!("{sata}");
-        assert!(display.contains("Sata"));
+    pub(crate) fn raw_generic_node(bytes: &[u8]) -> &GenericDevicePathNode {
+        <GenericDevicePathNode as zerocopy::FromBytes>::ref_from_bytes_with_elems(
+            bytes,
+            bytes.len() - Header::size_of_header(),
+        )
+        .unwrap()
     }
-
-    #[test]
-    fn test_nvme_new() {
-        let nvme = NvmExpress::new(1, 0x123456789ABCDEF0);
-        assert_eq!(nvme.namespace_id, 1);
-        assert_eq!(nvme.eui64, 0x123456789ABCDEF0);
-    }
-
-    #[test]
-    fn test_nvme_serialization_roundtrip() {
-        let nvme = NvmExpress::new(1, 0xDEADBEEF12345678);
-        let mut buf = [0u8; 12];
-        let written = buf.pwrite_with(nvme.clone(), 0, scroll::LE).unwrap();
-        assert_eq!(written, 12);
-
-        let parsed: NvmExpress = buf.pread_with(0, scroll::LE).unwrap();
-        assert_eq!(parsed.namespace_id, 1);
-        assert_eq!(parsed.eui64, 0xDEADBEEF12345678);
-    }
-
-    #[test]
-    fn test_nvme_display() {
-        let nvme = NvmExpress::new(1, 0);
-        let display = std::format!("{nvme}");
-        assert_eq!(display, "NVMe(0x1,00-00-00-00-00-00-00-00)");
-    }
-
-    #[test]
-    fn test_hard_drive_new_gpt() {
-        let guid = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10];
-        let hd = HardDrive::new_gpt(1, 2048, 1000000, guid);
-        assert_eq!(hd.partition_number, 1);
-        assert_eq!(hd.partition_start, 2048);
-        assert_eq!(hd.partition_size, 1000000);
-        assert_eq!(hd.partition_signature, guid);
-        assert_eq!(hd.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(hd.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
-    }
-
-    #[test]
-    fn test_hard_drive_serialization_roundtrip() {
-        let guid = [0xAA; 16];
-        let hd = HardDrive::new_gpt(2, 4096, 500000, guid);
-        // Payload is 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx).
-        let mut buf = [0u8; 38];
-        let written = buf.pwrite_with(hd.clone(), 0, scroll::LE).unwrap();
-        assert_eq!(written, 38);
-
-        let parsed: HardDrive = buf.pread_with(0, scroll::LE).unwrap();
-        assert_eq!(parsed.partition_number, 2);
-        assert_eq!(parsed.partition_start, 4096);
-        assert_eq!(parsed.partition_size, 500000);
-        assert_eq!(parsed.partition_signature, guid);
-        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
-    }
-
-    #[test]
-    fn test_hard_drive_display() {
-        let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
-        let display = std::format!("{hd}");
-        assert!(display.contains("HD"));
-    }
-
-    #[test]
-    fn test_hard_drive_try_from_success() {
-        let guid = [0x11u8; 16];
-        let hd = HardDrive::new_gpt(3, 0x1000, 0x4000, guid);
-        let mut data = [0u8; 38];
-        data.pwrite_with(hd, 0, scroll::LE).unwrap();
-        let bytes =
-            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42), &data);
-        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
-        let parsed = HardDrive::try_from(node).expect("valid HD node should parse");
-        assert_eq!(parsed.partition_number, 3);
-        assert_eq!(parsed.partition_start, 0x1000);
-        assert_eq!(parsed.partition_size, 0x4000);
-        assert_eq!(parsed.partition_signature, guid);
-        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
-    }
-
-    #[test]
-    fn test_hard_drive_try_from_wrong_type() {
-        let data = [0u8; 38];
-        let bytes =
-            generic_node_bytes(Header::new(DevicePathType::Messaging as u8, MediaSubType::HardDrive as u8, 42), &data);
-        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
-        assert!(HardDrive::try_from(node).is_err());
-    }
-
-    #[test]
-    fn test_hard_drive_validate() {
-        let mbr = |partition_number, signature: [u8; 16]| HardDrive {
-            partition_number,
-            partition_start: 0,
-            partition_size: 0,
-            partition_signature: signature,
-            partition_format: HardDrive::FORMAT_MBR,
-            signature_type: HardDrive::SIGNATURE_TYPE_MBR,
-        };
-        let mut signature = [0; 16];
-        signature[..4].copy_from_slice(&[1, 2, 3, 4]);
-        for partition_number in 0..=4 {
-            assert!(mbr(partition_number, signature).validate().is_ok());
-        }
-        assert!(mbr(5, signature).validate().is_err());
-        assert!(mbr(1, [1; 16]).validate().is_err());
-        assert!(HardDrive { partition_format: 3, ..mbr(1, signature) }.validate().is_err());
-        assert!(HardDrive { signature_type: 3, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
-        assert!(HardDrive { signature_type: 0, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
-        assert!(HardDrive::new_gpt(128, 0, 0, [1; 16]).validate().is_ok());
-
-        let mut data = [0u8; 38];
-        data.pwrite_with(mbr(5, signature), 0, scroll::LE).unwrap();
-        let bytes =
-            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 42), &data);
-        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
-        assert!(HardDrive::try_from(node).is_err());
-        assert!(<Box<dyn DevicePathNode>>::try_from(node).is_err());
-    }
-
-    #[test]
-    fn test_hard_drive_try_from_short_data() {
-        let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
-        let bytes =
-            generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 20), &data);
-        let node = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
-        assert!(HardDrive::try_from(node).is_err());
-    }
-
-    #[test]
-    fn test_file_path_new() {
-        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
-        assert_eq!(fp.path, "\\EFI\\BOOT\\BOOTX64.EFI");
-    }
-
-    #[test]
-    fn test_file_path_serialization_roundtrip() {
-        let fp = FilePath::new("\\test.efi");
-        // UTF-16: 9 chars (\test.efi) + null = 10 * 2 = 20 bytes
-        let mut buf = [0u8; 20];
-        let written = buf.pwrite_with(fp.clone(), 0, scroll::LE).unwrap();
-        assert_eq!(written, 20);
-
-        let parsed: FilePath = buf.pread_with(0, scroll::LE).unwrap();
-        assert_eq!(parsed.path, "\\test.efi");
-    }
-
-    #[test]
-    fn test_file_path_display() {
-        let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
-        let display = std::format!("{fp}");
-        assert_eq!(display, "\\EFI\\BOOT\\BOOTX64.EFI");
-    }
-
-    #[test]
-    fn test_file_path_utf16_encoding() {
-        let fp = FilePath::new("A");
-        // 'A' (0x0041) + null (0x0000) = 4 bytes
-        let mut buf = [0u8; 4];
-        let written = buf.pwrite_with(fp, 0, scroll::LE).unwrap();
-        assert_eq!(written, 4);
-        // UTF-16LE: 'A' = 0x41, 0x00
-        assert_eq!(buf[0], 0x41);
-        assert_eq!(buf[1], 0x00);
-        // Null terminator
-        assert_eq!(buf[2], 0x00);
-        assert_eq!(buf[3], 0x00);
-    }
-}
-
-#[cfg(test)]
-mod fixed_tests {
-    use super::*;
-    use crate::uefi::device_path::node::DevicePathNode;
-    use alloc::{format, vec};
-    use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
     /// Borrow the first node of `bytes` as a generic node, then decode it as `T`.
-    fn read<T>(bytes: &[u8]) -> Result<T, scroll::Error>
+    pub(crate) fn read<T>(bytes: &[u8]) -> Result<T, scroll::Error>
     where
         T: for<'a> TryFrom<&'a GenericDevicePathNode, Error = scroll::Error>,
     {
         T::try_from(GenericDevicePathNode::from_bytes(bytes)?.0)
     }
 
-    fn check_fixture<T>(node: T, wire: &[u8])
+    pub(crate) fn check_fixture<T>(node: T, wire: &[u8])
     where
         T: DevicePathNode + Clone + Eq,
         T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
@@ -1013,7 +826,7 @@ mod fixed_tests {
         assert_eq!(big_endian.pread_with::<T>(0, scroll::BE).unwrap(), node);
     }
 
-    pub(super) fn check_invalid<T>(node: T, payload: &[u8])
+    pub(crate) fn check_invalid<T>(node: T, payload: &[u8])
     where
         T: DevicePathNode + Clone,
         T: for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
@@ -1033,341 +846,7 @@ mod fixed_tests {
         assert!(<Box<dyn DevicePathNode>>::try_from(unknown).is_err());
     }
 
-    macro_rules! fixture {
-    ($test:ident, $node:expr, [$($wire:expr),* $(,)?]) => {
-        #[test]
-        fn $test() {
-            check_fixture($node, &[$($wire),*]);
-        }
-    };
-}
-
-    fixture!(
-        test_device_path_atapi,
-        Atapi { primary_secondary: 1, slave_master: 0, lun: 0x0403 },
-        [3, 1, 8, 0, 1, 0, 3, 4]
-    );
-
-    fixture!(test_device_path_scsi, Scsi { pun: 0x0201, lun: 0x0403 }, [3, 2, 8, 0, 1, 2, 3, 4]);
-
-    fixture!(
-        test_device_path_fiber_channel,
-        FiberChannel { reserved: 0, wwn: 0x0c0b0a0908070605, lun: 0x14131211100f0e0d },
-        [3, 3, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    );
-
-    fixture!(
-        test_device_path_fiber_channel_ex,
-        FiberChannelEx { reserved: 0, wwn: [5, 6, 7, 8, 9, 10, 11, 12], lun: [13, 14, 15, 16, 17, 18, 19, 20] },
-        [3, 21, 24, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    );
-
-    fixture!(
-        test_device_path_ieee1394,
-        Ieee1394 { reserved: 0, guid: 0x0c0b0a0908070605 },
-        [3, 4, 16, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12]
-    );
-
-    fixture!(test_device_path_usb, Usb { parent_port_number: 1, interface_number: 2 }, [3, 5, 6, 0, 1, 2]);
-
-    fixture!(test_device_path_i2o, I2oRandomBlockStorageClass { tid: 0x04030201 }, [3, 6, 8, 0, 1, 2, 3, 4]);
-
-    fixture!(
-        test_device_path_mac_address,
-        MacAddress {
-            mac_address: crate::standard::efi::MacAddress {
-                addr: [
-                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-                    28, 29, 30, 31, 32,
-                ],
-            },
-            if_type: 33,
-        },
-        [
-            3, 11, 37, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33,
-        ]
-    );
-
-    fixture!(
-        test_device_path_ipv6,
-        IpV6 {
-            local_ip_address: core::net::Ipv6Addr::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-            remote_ip_address: core::net::Ipv6Addr::from([
-                17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-            ]),
-            local_port: 0x2221,
-            remote_port: 0x2423,
-            protocol: 0x2625,
-            ip_address_origin: 2,
-            prefix_length: 128,
-            gateway_ip_address: core::net::Ipv6Addr::from([
-                41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56
-            ]),
-        },
-        [
-            3, 13, 60, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 2, 128, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-            53, 54, 55, 56,
-        ]
-    );
-
-    fixture!(test_device_path_vlan, Vlan { vlan_id: 4094 }, [3, 20, 6, 0, 0xfe, 0x0f]);
-
-    fixture!(
-        test_device_path_infiniband,
-        InfiniBand {
-            resource_flags: 0x1f,
-            port_gid: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-            service_id: 0x1c1b1a1918171615,
-            target_port_id: 0x24232221201f1e1d,
-            device_id: 0x2c2b2a2928272625,
-        },
-        [
-            3, 9, 48, 0, 0x1f, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-        ]
-    );
-
-    fixture!(
-        test_device_path_uart,
-        Uart { reserved: 0, baud_rate: 0x0c0b0a0908070605, data_bits: 8, parity: 5, stop_bits: 3 },
-        [3, 14, 19, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 8, 5, 3]
-    );
-
-    fixture!(
-        test_device_path_sas_ex,
-        SasEx {
-            sas_address: [1, 2, 3, 4, 5, 6, 7, 8],
-            lun: [9, 10, 11, 12, 13, 14, 15, 16],
-            device_topology: 0x1211,
-            relative_target_port: 0x1413,
-        },
-        [3, 22, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    );
-
-    fixture!(test_device_path_ufs, Ufs { pun: 1, lun: 0x81 }, [3, 25, 6, 0, 1, 0x81]);
-
-    fixture!(test_device_path_sd, Sd { slot_number: 7 }, [3, 26, 5, 0, 7]);
-
-    fixture!(test_device_path_bluetooth, Bluetooth { address: [1, 2, 3, 4, 5, 6] }, [3, 27, 10, 0, 1, 2, 3, 4, 5, 6]);
-
-    fixture!(
-        test_device_path_wifi,
-        WiFi {
-            ssid: [
-                1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-                29, 30, 31, 255,
-            ],
-        },
-        [
-            3, 28, 36, 0, 1, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 255,
-        ]
-    );
-
-    fixture!(test_device_path_emmc, Emmc { slot_number: 8 }, [3, 29, 5, 0, 8]);
-
-    fixture!(
-        test_device_path_bluetooth_le,
-        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: 1 },
-        [3, 30, 11, 0, 1, 2, 3, 4, 5, 6, 1]
-    );
-
-    fixture!(
-        test_device_path_nvdimm,
-        Nvdimm { uuid: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) },
-        [3, 32, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-    );
-
-    fixture!(test_device_path_nvdimm_acpi, NvdimmAcpi { nfit_device_handle: 0x04030201 }, [2, 4, 8, 0, 1, 2, 3, 4]);
-
-    fixture!(test_device_path_device_logical_unit, DeviceLogicalUnit { lun: 7 }, [3, 17, 5, 0, 7]);
-
-    fixture!(
-        test_device_path_usb_class,
-        UsbClass { vendor_id: 0x0201, product_id: 0x0403, device_class: 5, device_subclass: 6, device_protocol: 7 },
-        [3, 15, 11, 0, 1, 2, 3, 4, 5, 6, 7]
-    );
-
-    fixture!(
-        test_device_path_cdrom,
-        CdRom { boot_entry: 0x04030201, partition_start: 0x0c0b0a0908070605, partition_size: 0x14131211100f0e0d },
-        [4, 2, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    );
-
-    fixture!(
-        test_device_path_media_protocol,
-        MediaProtocol {
-            protocol: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-        },
-        [4, 5, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-    );
-
-    fixture!(
-        test_device_path_piwg_firmware_file,
-        PiwgFirmwareFile {
-            fv_file_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-        },
-        [4, 6, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-    );
-
-    fixture!(
-        test_device_path_piwg_firmware_volume,
-        PiwgFirmwareVolume {
-            fv_name: crate::BinaryGuid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-        },
-        [4, 7, 20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-    );
-
-    fixture!(
-        test_device_path_relative_offset_range,
-        RelativeOffsetRange {
-            reserved: 0x04030201,
-            starting_offset: 0x0c0b0a0908070605,
-            ending_offset: 0x14131211100f0e0d
-        },
-        [4, 8, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    );
-
-    fixture!(
-        test_device_path_ram_disk,
-        RamDisk {
-            starting_address: 0x0807060504030201,
-            ending_address: 0x100f0e0d0c0b0a09,
-            type_guid: crate::BinaryGuid::from_bytes(&[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]),
-            instance: 0x2221,
-        },
-        [
-            4, 9, 38, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34,
-        ]
-    );
-
-    #[test]
-    fn test_device_path_derived_nvdimm_formatting() {
-        let node = NvdimmAcpi { nfit_device_handle: 42 };
-        assert_eq!(format!("{node}"), "NvdimmAcpiAdr(0x2a)");
-        assert_eq!(format!("{node:?}"), "NvdimmAcpi { type: 2, sub_type: 4, length: 8, nfit_device_handle: 42 }",);
-    }
-
-    #[test]
-    fn test_device_path_atapi_selectors() {
-        for primary_secondary in 0..=1 {
-            for slave_master in 0..=1 {
-                encode_node(Atapi { primary_secondary, slave_master, lun: u16::MAX }).unwrap();
-            }
-        }
-        for invalid in [2, u8::MAX] {
-            check_invalid(Atapi { primary_secondary: invalid, slave_master: 0, lun: 0 }, &[invalid, 0, 0, 0]);
-            check_invalid(Atapi { primary_secondary: 0, slave_master: invalid, lun: 0 }, &[0, invalid, 0, 0]);
-        }
-    }
-
-    #[test]
-    fn test_device_path_vlan_range() {
-        encode_node(Vlan { vlan_id: 0 }).unwrap();
-        encode_node(Vlan { vlan_id: 4094 }).unwrap();
-        check_invalid(Vlan { vlan_id: 4095 }, &[0xff, 0x0f]);
-        check_invalid(Vlan { vlan_id: u16::MAX }, &[0xff, 0xff]);
-    }
-
-    #[test]
-    fn test_device_path_ipv6_ranges() {
-        let node = IpV6 {
-            local_ip_address: core::net::Ipv6Addr::from([0; 16]),
-            remote_ip_address: core::net::Ipv6Addr::from([0; 16]),
-            local_port: 0,
-            remote_port: 0,
-            protocol: 0,
-            ip_address_origin: 0,
-            prefix_length: 0,
-            gateway_ip_address: core::net::Ipv6Addr::from([0; 16]),
-        };
-        for ip_address_origin in 0..=2 {
-            for prefix_length in [0, 64, 128] {
-                encode_node(IpV6 { ip_address_origin, prefix_length, ..node.clone() }).unwrap();
-            }
-        }
-        for ip_address_origin in [3, u8::MAX] {
-            let mut payload = [0; 56];
-            payload[38] = ip_address_origin;
-            check_invalid(IpV6 { ip_address_origin, ..node.clone() }, &payload);
-        }
-        // The specification does not bound the prefix length.
-        encode_node(IpV6 { prefix_length: u8::MAX, ..node.clone() }).unwrap();
-    }
-
-    #[test]
-    fn test_device_path_uart_ranges() {
-        let node = Uart { reserved: 0, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 };
-        for parity in 0..=5 {
-            for stop_bits in 0..=3 {
-                encode_node(Uart { parity, stop_bits, ..node.clone() }).unwrap();
-            }
-        }
-        for parity in [6, u8::MAX] {
-            let mut payload = [0; 15];
-            payload[13] = parity;
-            check_invalid(Uart { parity, ..node.clone() }, &payload);
-        }
-        for stop_bits in [4, u8::MAX] {
-            let mut payload = [0; 15];
-            payload[14] = stop_bits;
-            check_invalid(Uart { stop_bits, ..node.clone() }, &payload);
-        }
-    }
-
-    #[test]
-    fn test_device_path_bluetooth_le_address_type() {
-        for address_type in 0..=1 {
-            encode_node(BluetoothLE { address: [0; 6], address_type }).unwrap();
-        }
-        for address_type in [2, u8::MAX] {
-            check_invalid(BluetoothLE { address: [0; 6], address_type }, &[0, 0, 0, 0, 0, 0, address_type]);
-        }
-    }
-
-    #[test]
-    fn test_device_path_usb_class_wildcards() {
-        check_fixture(
-            UsbClass {
-                vendor_id: u16::MAX,
-                product_id: u16::MAX,
-                device_class: u8::MAX,
-                device_subclass: u8::MAX,
-                device_protocol: u8::MAX,
-            },
-            &[3, 15, 11, 0, 255, 255, 255, 255, 255, 255, 255],
-        );
-    }
-
-    #[test]
-    fn test_device_path_opaque_arrays_ignore_endian_context() {
-        let node = FiberChannelEx {
-            reserved: 0x04030201,
-            wwn: [5, 6, 7, 8, 9, 10, 11, 12],
-            lun: [13, 14, 15, 16, 17, 18, 19, 20],
-        };
-        let mut output = [0; 20];
-        output.pwrite_with(node, 0, scroll::BE).unwrap();
-        assert_eq!(output, [4, 3, 2, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
-
-        let guid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        let mut output = [0; 16];
-        output.pwrite_with(MediaProtocol { protocol: crate::BinaryGuid::from_bytes(&guid) }, 0, scroll::BE).unwrap();
-        assert_eq!(output, guid);
-    }
-}
-
-#[cfg(test)]
-mod binary_tests {
-    use super::*;
-    use crate::uefi::device_path::DevicePathBuf;
-    use alloc::{format, vec};
-    use core::{fmt, mem};
-
-    fn check_node<T>(node: T, expected: &[u8])
+    pub(crate) fn check_node<T>(node: T, expected: &[u8])
     where
         T: DevicePathNode + Clone + for<'a> TryFromCtx<'a, scroll::Endian, Error = scroll::Error>,
         T: TryIntoCtx<scroll::Endian, Error = scroll::Error>,
@@ -1386,22 +865,27 @@ mod binary_tests {
         assert!(!format!("{decoded:?}").starts_with("GenericDevicePathNode"));
     }
 
-    #[test]
-    fn test_device_path_header_layout_is_c_packed() {
-        assert_eq!(mem::align_of::<Header>(), 1);
-        assert_eq!(mem::size_of::<Header>(), 4);
+    macro_rules! fixture {
+        ($test:ident, $node:expr, [$($wire:expr),* $(,)?]) => {
+            #[test]
+            fn $test() {
+                $crate::uefi::device_path::node::test_support::check_fixture($node, &[$($wire),*]);
+            }
+        };
     }
 
-    #[test]
-    fn test_device_path_generic_node_borrows_odd_offset_bytes() {
-        let bytes = [0xa5, 6, 1, 7, 0, 1, 2, 3, 0x5a];
-        let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes[1..]).unwrap();
+    pub(crate) use fixture;
+}
 
-        assert_eq!(usize::from(node.header.length), 7);
-        assert_eq!(mem::size_of_val(node), 7);
-        assert_eq!(node.as_bytes().as_ptr(), bytes[1..].as_ptr());
-        assert_eq!(remaining, &[0x5a]);
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uefi::device_path::DevicePathBuf;
+    use alloc::{format, vec};
+    use core::{fmt, mem};
+    use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
+
+    use super::test_support::{encode_node, generic_node_bytes, raw_generic_node};
 
     #[derive(Debug)]
     struct HugeNode;
@@ -1439,114 +923,29 @@ mod binary_tests {
     }
 
     #[test]
+    fn test_device_path_header_layout_is_c_packed() {
+        assert_eq!(mem::align_of::<Header>(), 1);
+        assert_eq!(mem::size_of::<Header>(), 4);
+    }
+
+    #[test]
+    fn test_device_path_generic_node_borrows_odd_offset_bytes() {
+        let bytes = [0xa5, 6, 1, 7, 0, 1, 2, 3, 0x5a];
+        let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes[1..]).unwrap();
+
+        assert_eq!(usize::from(node.header.length), 7);
+        assert_eq!(mem::size_of_val(node), 7);
+        assert_eq!(node.as_bytes().as_ptr(), bytes[1..].as_ptr());
+        assert_eq!(remaining, &[0x5a]);
+    }
+
+    #[test]
     fn test_device_path_oversized_default_header_saturates_and_append_fails() {
         let length = HugeNode.header().length;
         assert_eq!(length, u16::MAX);
         assert!(encode_node(HugeNode).is_err());
 
         assert!(DevicePathBuf::from_device_path_node_iter([HugeNode].into_iter()).is_err());
-    }
-
-    #[test]
-    fn test_device_path_vendor_nodes() {
-        let mut expected = vec![1, 4, 22, 0];
-        expected.extend_from_slice(&[0x11; 16]);
-        expected.extend_from_slice(&[0xaa, 0xbb]);
-        check_node(
-            HardwareVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
-            &expected,
-        );
-        expected[0] = 3;
-        expected[1] = 10;
-        check_node(
-            MessagingVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] },
-            &expected,
-        );
-        expected[0] = 4;
-        expected[1] = 3;
-        check_node(MediaVendor { guid: crate::BinaryGuid::from_bytes(&[0x11; 16]), data: vec![0xaa, 0xbb] }, &expected);
-    }
-
-    #[test]
-    fn test_device_path_spec_vendor_messaging_nodes() {
-        use super::fixed_tests::check_invalid;
-
-        let mut expected = vec![3, 10, 24, 0];
-        expected.extend_from_slice(UartFlowControl::GUID.as_bytes());
-        expected.extend_from_slice(&[3, 0, 0, 0]);
-        check_node(
-            UartFlowControl { flow_control_map: UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF },
-            &expected,
-        );
-        check_invalid(
-            UartFlowControl { flow_control_map: 4 },
-            &[&UartFlowControl::GUID.as_bytes()[..], &[4, 0, 0, 0]].concat(),
-        );
-
-        let mut expected = vec![3, 10, 44, 0];
-        expected.extend_from_slice(Sas::GUID.as_bytes());
-        expected.extend_from_slice(&[
-            0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0x11, 0x12, 0x13, 0x14,
-        ]);
-        let sas = Sas {
-            reserved: 0,
-            sas_address: 0x0807060504030201,
-            lun: 0x100f0e0d0c0b0a09,
-            device_topology: 0x1211,
-            relative_target_port: 0x1413,
-        };
-        check_node(sas.clone(), &expected);
-        let mut payload = expected[4..].to_vec();
-        payload[16] = 1;
-        check_invalid(Sas { reserved: 1, ..sas }, &payload);
-
-        // A vendor node with another GUID stays a generic vendor node, and the specific
-        // nodes reject it.
-        let mut other = vec![3, 10, 24, 0];
-        other.extend_from_slice(&[0x11; 16]);
-        other.extend_from_slice(&[0; 4]);
-        let raw = GenericDevicePathNode::from_bytes(&other).unwrap().0;
-        assert!(format!("{:?}", <Box<dyn DevicePathNode>>::try_from(raw).unwrap()).starts_with("MessagingVendor"));
-        assert!(UartFlowControl::try_from(raw).is_err());
-        assert!(Sas::try_from(raw).is_err());
-    }
-
-    #[test]
-    fn test_device_path_reserved_values_are_rejected() {
-        use super::fixed_tests::check_invalid;
-
-        let mut payload = vec![1, 0, 0, 0];
-        payload.extend_from_slice(&[0; 16]);
-        check_invalid(FiberChannel { reserved: 1, wwn: 0, lun: 0 }, &payload);
-        check_invalid(FiberChannelEx { reserved: 1, wwn: [0; 8], lun: [0; 8] }, &payload);
-        check_invalid(Ieee1394 { reserved: 1, guid: 0 }, &payload[..12]);
-        check_invalid(Uart { reserved: 1, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 }, &payload[..15]);
-        let mut payload = vec![0x20, 0, 0, 0];
-        payload.extend_from_slice(&[0; 40]);
-        check_invalid(
-            InfiniBand { resource_flags: 0x20, port_gid: [0; 16], service_id: 0, target_port_id: 0, device_id: 0 },
-            &payload,
-        );
-        for interface_type in 0..=3 {
-            encode_node(Bmc { interface_type, base_address: 0 }).unwrap();
-        }
-        check_invalid(Bmc { interface_type: 4, base_address: 0 }, &[4, 0, 0, 0, 0, 0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn test_device_path_extended_acpi() {
-        check_node(
-            ExtendedAcpi {
-                hid: 1,
-                uid: 2,
-                cid: 3,
-                hid_string: "A".into(),
-                uid_string: "B".into(),
-                cid_string: "C".into(),
-            },
-            &[2, 2, 22, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, b'A', 0, b'B', 0, b'C', 0],
-        );
-        check_node(AcpiAdr { addresses: vec![0x12345678, 9] }, &[2, 3, 12, 0, 0x78, 0x56, 0x34, 0x12, 9, 0, 0, 0]);
     }
 
     #[test]
@@ -1577,147 +976,6 @@ mod binary_tests {
         let bytes = generic_node_bytes(Header::new(6, 1, 7), &[1, 2, 3]);
         let unknown = GenericDevicePathNode::from_bytes(&bytes).unwrap().0;
         assert_eq!(unknown.measure_size(), 3);
-    }
-
-    #[test]
-    fn test_device_path_usb_wwid() {
-        check_node(
-            UsbWwid { interface: 1, vendor_id: 0x1234, product_id: 0x5678, serial_number: vec![0x41, 0x42] },
-            &[3, 16, 14, 0, 1, 0, 0x34, 0x12, 0x78, 0x56, 0x41, 0, 0x42, 0],
-        );
-    }
-
-    #[test]
-    fn test_device_path_ipv4_legacy_and_current() {
-        let mut node = IpV4 {
-            local_ip: core::net::Ipv4Addr::from([1, 2, 3, 4]),
-            remote_ip: core::net::Ipv4Addr::from([5, 6, 7, 8]),
-            local_port: 0x1234,
-            remote_port: 0x5678,
-            protocol: 6,
-            static_ip: true,
-            network: None,
-        };
-        let mut expected = vec![3, 12, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, 0x78, 0x56, 6, 0, 1];
-        check_node(node.clone(), &expected);
-        node.network = Some(IpV4Network {
-            gateway: core::net::Ipv4Addr::from([9, 10, 11, 12]),
-            subnet_mask: core::net::Ipv4Addr::from([255, 255, 255, 0]),
-        });
-        expected[2] = 27;
-        expected.extend_from_slice(&[9, 10, 11, 12, 255, 255, 255, 0]);
-        check_node(node, &expected);
-        for len in 16..23 {
-            assert!(IpV4::try_from_ctx(&expected[4..4 + len], scroll::LE).is_err());
-        }
-        let mut invalid_origin = expected[4..].to_vec();
-        invalid_origin[14] = 2;
-        assert!(IpV4::try_from_ctx(&invalid_origin, scroll::LE).is_err());
-    }
-
-    #[test]
-    fn test_device_path_iscsi_and_uri() {
-        check_node(
-            Iscsi {
-                protocol: 0,
-                options: 0x0800,
-                lun: [1, 2, 3, 4, 5, 6, 7, 8],
-                portal_group: 0x1234,
-                target_name: "iqn".into(),
-            },
-            &[3, 19, 22, 0, 0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, b'i', b'q', b'n', 0],
-        );
-        check_node(
-            Uri { uri: "https://a".into() },
-            &[3, 24, 13, 0, b'h', b't', b't', b'p', b's', b':', b'/', b'/', b'a'],
-        );
-        check_node(Uri { uri: String::new() }, &[3, 24, 4, 0]);
-    }
-
-    #[test]
-    fn test_device_path_dns() {
-        use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-        let mut expected = vec![3, 31, 21, 0, 1];
-        expected.extend_from_slice(&[0x12; 16]);
-        let node = Dns { addresses: vec![IpAddr::V6(Ipv6Addr::from([0x12; 16]))] };
-        assert!(node.is_ipv6());
-        check_node(node, &expected);
-
-        let mut expected = vec![3, 31, 37, 0, 0, 10, 0, 0, 1];
-        expected.extend_from_slice(&[0; 12]);
-        expected.extend_from_slice(&[10, 0, 0, 2]);
-        expected.extend_from_slice(&[0; 12]);
-        let node = Dns { addresses: vec![Ipv4Addr::new(10, 0, 0, 1).into(), Ipv4Addr::new(10, 0, 0, 2).into()] };
-        assert!(!node.is_ipv6());
-        check_node(node, &expected);
-
-        // IPv4 padding is ignored when read.
-        let mut padded = [0x12; 16];
-        padded[..4].copy_from_slice(&[10, 0, 0, 1]);
-        let mut payload = vec![0];
-        payload.extend_from_slice(&padded);
-        let (node, _) = Dns::try_from_ctx(&payload, scroll::LE).unwrap();
-        assert_eq!(node.addresses, [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))]);
-
-        payload[0] = 2;
-        assert!(Dns::try_from_ctx(&payload, scroll::LE).is_err());
-        let mixed = Dns { addresses: vec![Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()] };
-        assert!(mixed.validate().is_err());
-        assert!(encode_node(mixed).is_err());
-    }
-
-    #[test]
-    fn test_device_path_rest_variants() {
-        check_node(RestService { service: RestServiceType::Redfish, access_mode: 1 }, &[3, 33, 6, 0, 1, 1]);
-        check_node(RestService { service: RestServiceType::OData, access_mode: 2 }, &[3, 33, 6, 0, 2, 2]);
-        let mut expected = vec![3, 33, 24, 0, 255, 1];
-        expected.extend_from_slice(&[0x33; 16]);
-        expected.extend_from_slice(&[0x44, 0x55]);
-        check_node(
-            RestService {
-                service: RestServiceType::Vendor {
-                    guid: crate::BinaryGuid::from_bytes(&[0x33; 16]),
-                    data: vec![0x44, 0x55],
-                },
-                access_mode: 1,
-            },
-            &expected,
-        );
-    }
-
-    #[test]
-    fn test_device_path_nvme_of() {
-        let mut expected = vec![3, 34, 25, 0, 3];
-        expected.extend_from_slice(&[0x22; 16]);
-        expected.extend_from_slice(b"nqn\0");
-        check_node(NvmeOf { identifier_type: 3, identifier: [0x22; 16], subsystem_nqn: "nqn".into() }, &expected);
-    }
-
-    #[test]
-    fn test_device_path_existing_wire_sizes() {
-        check_node(Pci { function: 1, device: 2 }, &[1, 1, 6, 0, 1, 2]);
-        check_node(PcCard { function_number: 3 }, &[1, 2, 5, 0, 3]);
-        check_node(Controller { number: 0x12345678 }, &[1, 5, 8, 0, 0x78, 0x56, 0x34, 0x12]);
-        check_node(
-            MemoryMapped { memory_type: 3, start_address: 0x1234, end_address: 0x5678 },
-            &[1, 3, 24, 0, 3, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0x78, 0x56, 0, 0, 0, 0, 0, 0],
-        );
-        check_node(Bmc { interface_type: 1, base_address: 0x1234 }, &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
-        check_node(Acpi::new_pci_root(0), &[2, 1, 12, 0, 0xd0, 0x41, 3, 0x0a, 0, 0, 0, 0]);
-        check_node(
-            Bios { device_type: 2, status_flag: 1, description_str: "foo".into() },
-            &[5, 1, 12, 0, 2, 0, 1, 0, b'f', b'o', b'o', 0],
-        );
-        check_node(EndEntire, &[0x7f, 0xff, 4, 0]);
-        check_node(EndInstance, &[0x7f, 1, 4, 0]);
-        check_node(Sata::new(1, 0xffff, 2), &[3, 18, 10, 0, 1, 0, 255, 255, 2, 0]);
-        check_node(NvmExpress::new(1, 0x1234), &[3, 23, 16, 0, 1, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
-        check_node(FilePath::new("A"), &[4, 4, 8, 0, b'A', 0, 0, 0]);
-        let mut expected = vec![4, 1, 42, 0, 1, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0];
-        expected.extend_from_slice(&[0x11; 16]);
-        expected.extend_from_slice(&[2, 2]);
-        check_node(HardDrive::new_gpt(1, 2048, 4096, [0x11; 16]), &expected);
     }
 
     #[test]
@@ -1772,80 +1030,6 @@ mod binary_tests {
     }
 
     #[test]
-    fn test_device_path_invalid_variable_payloads() {
-        assert!(encode_node(AcpiAdr { addresses: vec![] }).is_err());
-        assert!(encode_node(Dns { addresses: vec![] }).is_err());
-        assert!(
-            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0; 65] }).is_err()
-        );
-        assert!(
-            encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0xd800] }).is_err()
-        );
-        assert!(encode_node(RestService { service: RestServiceType::Redfish, access_mode: 3 }).is_err());
-        assert!(encode_node(Uri { uri: "a\0b".into() }).is_err());
-        assert!(encode_node(Uri { uri: "\u{e9}".into() }).is_err());
-        assert!(encode_node(Uri { uri: "a".repeat(65532) }).is_err());
-        assert!(encode_node(Bios { device_type: 0, status_flag: 0, description_str: "a\0b".into() }).is_err());
-        assert!(
-            encode_node(ExtendedAcpi {
-                hid: 0,
-                uid: 0,
-                cid: 0,
-                hid_string: "\u{e9}".into(),
-                uid_string: "".into(),
-                cid_string: "".into()
-            })
-            .is_err()
-        );
-        assert!(
-            encode_node(Iscsi { protocol: 1, options: 0, lun: [0; 8], portal_group: 0, target_name: "iqn".into() })
-                .is_err()
-        );
-        assert!(encode_node(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }).is_err());
-        // The specification does not require the unused EUI-64 bytes to be zero.
-        encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).unwrap();
-        // An empty iSCSI target name fits the variable-length field.
-        encode_node(Iscsi { protocol: 0, options: 0, lun: [0; 8], portal_group: 0, target_name: String::new() })
-            .unwrap();
-        assert!(FilePath::try_from_ctx(&[b'A', 0], scroll::LE).is_err());
-        assert!(FilePath::try_from_ctx(&[b'A'], scroll::LE).is_err());
-        assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());
-        assert!(ExtendedAcpi::try_from_ctx(&[0; 14], scroll::LE).is_err());
-        let mut non_ascii = [0u8; 15];
-        non_ascii[12] = 0xe9;
-        assert!(ExtendedAcpi::try_from_ctx(&non_ascii, scroll::LE).is_err());
-        assert!(Dns::try_from_ctx(&[0; 16], scroll::LE).is_err());
-        assert!(RestService::try_from_ctx(&[0xff, 1], scroll::LE).is_err());
-        assert!(Uri::try_from_ctx(&[0xff], scroll::LE).is_err());
-    }
-
-    #[test]
-    fn test_device_path_existing_validation() {
-        assert!(encode_node(Sata::new(u16::MAX, 0, 0)).is_err());
-        for id in [0, u32::MAX] {
-            assert!(encode_node(NvmExpress::new(id, 0)).is_err());
-        }
-        assert!(encode_node(FilePath::new("a\0b")).is_err());
-        assert!(encode_node(FilePath::new("\u{1f600}")).is_err());
-        for hid in ["", "PNP", "1NP0A03", "PNPZZZZ", "\u{e9}NP0A03"] {
-            assert!(Acpi::try_eisa_id(hid).is_err());
-        }
-        assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
-        assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
-    }
-
-    #[test]
-    fn test_device_path_invalid_end_nodes_are_rejected_at_io_boundaries() {
-        for (sub_type, length) in [(1, 5), (0xff, 5), (2, 4)] {
-            let wire = [0x7f, sub_type, length, 0, 0];
-            assert!(wire.pread_with::<&GenericDevicePathNode>(0, scroll::LE).is_err());
-            let node = raw_generic_node(&wire[..usize::from(length)]);
-            assert!(<Box<dyn DevicePathNode>>::try_from(node).is_err());
-            assert!(encode_node(node).is_err());
-        }
-    }
-
-    #[test]
     fn test_device_path_builder_propagates_errors() {
         let mut path = DevicePathBuf::from_device_path_node_iter([EndEntire].into_iter()).unwrap();
         let expected = path.as_bytes().to_vec();
@@ -1860,7 +1044,7 @@ mod binary_tests {
 
 #[cfg(test)]
 mod device_path_node_tests {
-    use super::{DevicePathNode, DevicePathType, HardwareSubType, encode_node};
+    use super::{DevicePathNode, DevicePathType, HardwareSubType, test_support::encode_node};
     use scroll::{Pread, Pwrite};
 
     device_path_node! {

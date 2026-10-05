@@ -77,6 +77,8 @@ pub fn fmt_device_path(path: &DevicePath, f: &mut fmt::Formatter<'_>, options: T
 
 impl DevicePath {
     /// Convert this device path to UEFI text with the supplied options.
+    ///
+    /// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
     #[must_use]
     pub fn to_text(&self, options: TextOptions) -> String {
         struct TextDisplay<'a> {
@@ -89,6 +91,15 @@ impl DevicePath {
             }
         }
         TextDisplay { path: self, options }.to_string()
+    }
+}
+
+/// Convert a device path to UEFI text with the default [`TextOptions`].
+///
+/// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
+impl From<&DevicePath> for String {
+    fn from(path: &DevicePath) -> Self {
+        path.to_text(TextOptions::default())
     }
 }
 
@@ -431,7 +442,9 @@ fn fiber_channel_ex_text(node: &FiberChannelEx, f: &mut fmt::Formatter<'_>, _: T
 }
 impl_text!(FiberChannelEx, fiber_channel_ex_text);
 fn ieee1394_text(node: &Ieee1394, f: &mut fmt::Formatter<'_>, _: TextOptions) -> fmt::Result {
-    write!(f, "I1394({:016x})", node.guid)
+    // The 1394 GUID is an 8-byte integer (UEFI 2.10 Table 10.18), so it is written as a hexadecimal
+    // integer (Table 10.66) that parses back to the same value.
+    write!(f, "I1394(0x{:016x})", node.guid)
 }
 impl_text!(Ieee1394, ieee1394_text);
 fn usb_text(node: &Usb, f: &mut fmt::Formatter<'_>, _: TextOptions) -> fmt::Result {
@@ -1047,6 +1060,15 @@ mod tests {
     }
 
     #[test]
+    fn test_device_path_text_into_string() {
+        let bytes = devpath!("PciRoot(0)/Pci(0x1D,0)");
+        let path = DevicePath::try_from_bytes(&bytes).expect("macro output is a valid path");
+        assert_eq!(String::from(path), "PciRoot(0x0)/Pci(0x1d,0x0)");
+        let text: String = path.into();
+        assert_eq!(text, path.to_text(TextOptions::default()));
+    }
+
+    #[test]
     fn test_generic_device_path_text() {
         let bytes = [9u8, 2, 6, 0, 0xaa, 0xbb, 0x7f, 0xff, 4, 0];
         let path = DevicePath::try_from_bytes(&bytes).expect("generic path is valid");
@@ -1132,6 +1154,12 @@ mod tests {
             r"FibreEx(0x0102030405060708,0x1112131415161718)",
             r"FibreEx(0x0102030405060708,0x1112131415161718)",
             r"FibreEx(0x0102030405060708,0x1112131415161718)"
+        );
+        check!(
+            r"I1394(0x0123456789ABCDEF)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)"
         );
         check!(r"USB(1,0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)");
         check!(r"I2O(5)", r"I2O(0x5)", r"I2O(0x5)", r"I2O(0x5)");
