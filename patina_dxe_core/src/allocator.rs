@@ -127,6 +127,12 @@ pub struct AllocationStatistics {
 
     /// The number of pages claimed for use by this allocator.
     pub claimed_pages: usize,
+
+    /// The number of pool pages that have been fully freed and unmapped.
+    pub retired_pages: usize,
+
+    /// The number of retired pool pages that have been re-mapped and returned to service.
+    pub reclaimed_pages: usize,
 }
 
 impl AllocationStatistics {
@@ -139,6 +145,8 @@ impl AllocationStatistics {
             reserved_size: 0,
             reserved_used: 0,
             claimed_pages: 0,
+            retired_pages: 0,
+            reclaimed_pages: 0,
         }
     }
 }

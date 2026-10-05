@@ -655,7 +655,9 @@ mod tests {
                     "  page_free_calls: 0\r\n",
                     "  reserved_size: 0\r\n",
                     "  reserved_used: 0\r\n",
-                    "  claimed_pages: 0\r\n"
+                    "  claimed_pages: 0\r\n",
+                    "  retired_pages: 0\r\n",
+                    "  reclaimed_pages: 0\r\n"
                 )
             );
         });

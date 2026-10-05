@@ -1131,7 +1131,14 @@ impl GCD {
         active_attributes: bool,
     ) -> u64 {
         if active_attributes {
-            descriptor.attributes
+            // Allocators unmap pool pages that have been fully freed back to them. In the GCD, this will create
+            // separate descriptors. However, for the EFI_MEMORY_MAP, we want to coalesce these descriptors as they
+            // are one contiguous block of this type.
+            if memory_type_for_handle(descriptor.image_handle).is_some() {
+                descriptor.attributes & !efi::MEMORY_RP
+            } else {
+                descriptor.attributes
+            }
         } else {
             // when we are building the EFI memory map, follow edk2 conventions as OSes will expect that.
             // When using the capabilities, drop the runtime attribute and

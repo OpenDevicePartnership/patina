@@ -69,6 +69,13 @@ Freeing a block (except for very large blocks) is also constant-time, since the 
 1. Round up the freed allocation size to the next block size.
 2. Push the block on the front of the corresponding "free-list."
 
+When every pool segmented from a page has been returned to the free lists, the page is retired and unmapped. This
+catches as many use-after-free cases as we can in the pool allocator. Retired pages are re-mapped and returned to the
+backing allocator when the allocator would otherwise have to claim more memory from the GCD.
+
+Memory claimed from the GCD starts in the retired state, so an allocator never has memory mapped that it has not
+handed out.
+
 If the fixed-block size list corresponding to the requested block size is empty or if the requested size is larger than
 any fixed-block size, then the allocation falls back to a linked-list based allocator. This is also typically constant-
 time, since the first block in the linked-list backing allocator is larger than all the free-list block sizes (because
