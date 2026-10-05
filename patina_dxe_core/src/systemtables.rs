@@ -1010,7 +1010,7 @@ mod tests {
     #[test]
     fn test_standard_table_revisions_match_selected_uefi_spec_version() {
         with_locked_state(|| {
-            for version in [UefiSpecVersion::V2_00, UefiSpecVersion::V2_70, UefiSpecVersion::V2_110] {
+            for version in [UefiSpecVersion::V2_0, UefiSpecVersion::V2_7, UefiSpecVersion::V2_11] {
                 let expected_revision = u32::from(version);
                 init_system_table(version);
 

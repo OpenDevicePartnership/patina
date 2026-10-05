@@ -48,6 +48,7 @@
 //!   type CpuInfo = Self;
 //!   type ComponentInfo = Self;
 //!   type Extractor = NullSectionExtractor;
+//!   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
 //! }
 //!
 //! static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
@@ -204,12 +205,13 @@ pub trait MemoryInfo {
 ///
 /// struct ExamplePlatform;
 ///
-/// // An example of using all default implementations.
+/// // An example of using the default subsystem implementations.
 /// impl PlatformInfo for ExamplePlatform {
 ///   type MemoryInfo = Self;
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = patina_ffs_extractors::NullSectionExtractor;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
 /// }
 ///
 /// impl ComponentInfo for ExamplePlatform {}
@@ -222,12 +224,6 @@ pub trait MemoryInfo {
 ///   }
 /// }
 /// ```
-#[cfg_attr(test, mockall::automock(
-    type Extractor = patina_ffs_extractors::NullSectionExtractor;
-    type ComponentInfo = MockComponentInfo;
-    type MemoryInfo = MockMemoryInfo;
-    type CpuInfo = MockCpuInfo;
-))]
 pub trait PlatformInfo: 'static {
     /// The platform's memory information and configuration.
     type MemoryInfo: MemoryInfo;
@@ -242,13 +238,26 @@ pub trait PlatformInfo: 'static {
     type Extractor: SectionExtractor;
 
     /// The UEFI specification revision advertised by the System.
-    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_70;
+    const UEFI_SPEC_VERSION: UefiSpecVersion;
 
     /// The performance measurement configuration used when no performance configuration HOB is present.
     ///
     /// Defaults to disabled. Platforms may override this option to control the default behavior of the performance
     /// measurement service when no configuration HOB is present.
     const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new();
+}
+
+#[cfg(test)]
+struct MockPlatformInfo;
+
+#[cfg(test)]
+impl PlatformInfo for MockPlatformInfo {
+    type MemoryInfo = MockMemoryInfo;
+    type CpuInfo = MockCpuInfo;
+    type ComponentInfo = MockComponentInfo;
+    type Extractor = patina_ffs_extractors::NullSectionExtractor;
+
+    const UEFI_SPEC_VERSION: UefiSpecVersion = UefiSpecVersion::V2_7;
 }
 
 /// Static reference to the DXE Core instance in the compiled binary.
@@ -314,6 +323,7 @@ type MockCore = Core<MockPlatformInfo>;
 ///   type CpuInfo = Self;
 ///   type ComponentInfo = Self;
 ///   type Extractor = NullSectionExtractor;
+///   const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_7;
 /// }
 ///
 /// static CORE: Core<ExamplePlatform> = Core::new(NullSectionExtractor);
