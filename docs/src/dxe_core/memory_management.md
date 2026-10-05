@@ -67,7 +67,11 @@ normal case after the allocators have run for a while and have built up a set of
 Freeing a block (except for very large blocks) is also constant-time, since the procedure is the reverse of the above:
 
 1. Round up the freed allocation size to the next block size.
-2. Push the block on the front of the corresponding "free-list."
+2. Push the block to the tail of the corresponding "free-list."
+
+Freed blocks are appended to the back of the free list rather than the front so that a block is not immediately handed
+back out. Recycling blocks in first-in-first-out order maximizes the time between a block being freed and it being
+reused, which increases the chance that a use-after-free accesses memory that has not yet been handed to another owner.
 
 When every pool segmented from a page has been returned to the free lists, the page is retired and unmapped. This
 catches as many use-after-free cases as we can in the pool allocator. Retired pages are re-mapped and returned to the
