@@ -126,7 +126,8 @@ impl TestRecord {
                         recorder.with_mut(|records| records.get_mut(name).map(|record| record.run(storage)));
                     })?;
 
-                    timer.set_timer(timer_event, TimerType::Periodic(Duration::from_micros(*interval)))?;
+                    let interval = Duration::from_micros(*interval / 10) + Duration::from_nanos((*interval % 10) * 100);
+                    timer.set_timer(timer_event, TimerType::Periodic(interval))?;
 
                     events.on_event_group_self_managed(
                         patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
@@ -408,6 +409,78 @@ mod tests {
     }
 
     #[test]
+    fn test_timer_trigger_runs_test_and_ready_to_boot_cleans_up() {
+        use patina::component::service::uefi_services::{
+            event::{Event, EventNotifyCallback, MockEventServices},
+            timer_event::MockTimerEventServices,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        fn test_event(address: usize) -> Event {
+            Event::from_raw(address as *mut core::ffi::c_void).expect("a non-zero address should produce a test event")
+        }
+
+        let timer_event = test_event(1);
+        let ready_to_boot_event = test_event(2);
+
+        let timer_callback: Rc<RefCell<Option<EventNotifyCallback>>> = Rc::new(RefCell::new(None));
+        let timer_callback_for_mock = Rc::clone(&timer_callback);
+        let timer_settings: Rc<RefCell<Vec<(Event, TimerType)>>> = Rc::new(RefCell::new(Vec::new()));
+        let timer_settings_for_mock = Rc::clone(&timer_settings);
+        let mut timer = MockTimerEventServices::new();
+        timer.expect_create_timer_event().once().returning_st(move |tpl, callback| {
+            assert_eq!(tpl, Tpl::Callback);
+            timer_callback_for_mock.replace(Some(callback));
+            Ok(timer_event)
+        });
+        timer.expect_set_timer().times(2).returning_st(move |event, timer_type| {
+            timer_settings_for_mock.borrow_mut().push((event, timer_type));
+            Ok(())
+        });
+
+        let ready_to_boot_callback: Rc<RefCell<Option<EventNotifyCallback>>> = Rc::new(RefCell::new(None));
+        let ready_to_boot_callback_for_mock = Rc::clone(&ready_to_boot_callback);
+        let closed_events: Rc<RefCell<Vec<Event>>> = Rc::new(RefCell::new(Vec::new()));
+        let closed_events_for_mock = Rc::clone(&closed_events);
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().once().returning_st(move |group, tpl, callback| {
+            assert_eq!(group, patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID);
+            assert_eq!(tpl, Tpl::Callback);
+            ready_to_boot_callback_for_mock.replace(Some(callback));
+            Ok(ready_to_boot_event)
+        });
+        events.expect_close_event().once().returning_st(move |event| {
+            closed_events_for_mock.borrow_mut().push(event);
+            Ok(())
+        });
+
+        let mut storage = Storage::new();
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
+
+        record.schedule_run(events, timer, recorder, &mut storage).expect("timer test scheduling should succeed");
+        recorder.update_record(record);
+
+        let mut callback = timer_callback.borrow_mut().take().expect("timer callback should be registered");
+        callback(timer_event);
+
+        let output = format!("{recorder}");
+        assert!(output.contains("timer_triggered_test ... fail (1 fails, 0 passes): Intentional Failure"));
+
+        let mut callback =
+            ready_to_boot_callback.borrow_mut().take().expect("ready-to-boot callback should be registered");
+        callback(ready_to_boot_event);
+
+        assert_eq!(
+            timer_settings.borrow().as_slice(),
+            &[(timer_event, TimerType::Periodic(Duration::from_millis(100))), (timer_event, TimerType::Cancel),]
+        );
+        assert_eq!(closed_events.borrow().as_slice(), &[ready_to_boot_event]);
+    }
+
+    #[test]
     fn test_recorder_lifecycle_events_run_tests_and_close_events() {
         use patina::component::service::uefi_services::event::{Event, EventNotifyCallback, MockEventServices};
         use std::{cell::RefCell, rc::Rc};
@@ -470,6 +543,76 @@ mod tests {
 
         let output = format!("{recorder}");
         assert!(output.contains("test ... ok (1 passes)"));
+    }
+
+    #[test]
+    fn test_recorder_formats_failure_without_error_message() {
+        let recorder = Recorder::default();
+        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        record.fail = 1;
+        recorder.update_record(record);
+
+        let output = format!("{recorder}");
+        assert!(output.contains("test_that_fails ... fail (1 fails, 0 passes): <no error message>"));
+    }
+
+    #[test]
+    fn test_recorder_propagates_formatting_errors() {
+        struct RejectMissingErrorMessage;
+
+        impl core::fmt::Write for RejectMissingErrorMessage {
+            fn write_str(&mut self, value: &str) -> core::fmt::Result {
+                if value.contains("<no error message>") { Err(core::fmt::Error) } else { Ok(()) }
+            }
+        }
+
+        let recorder = Recorder::default();
+        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        record.fail = 1;
+        recorder.update_record(record);
+
+        assert!(core::fmt::write(&mut RejectMissingErrorMessage, format_args!("{recorder}")).is_err());
+    }
+
+    #[test]
+    fn test_recorder_reports_human_readable_and_json_results() {
+        struct TestLogger(std::sync::Mutex<Vec<String>>);
+
+        impl log::Log for TestLogger {
+            fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                metadata.level() <= log::Level::Info
+            }
+
+            fn log(&self, record: &log::Record<'_>) {
+                if self.enabled(record.metadata()) {
+                    self.0.lock().expect("test log should not be poisoned").push(format!("{}", record.args()));
+                }
+            }
+
+            fn flush(&self) {}
+        }
+
+        static LOGGER: TestLogger = TestLogger(std::sync::Mutex::new(Vec::new()));
+
+        log::set_logger(&LOGGER).expect("test logger should only be initialized once");
+        log::set_max_level(log::LevelFilter::Info);
+
+        let mut storage = Storage::new();
+        let recorder = Recorder::default();
+        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        record.fail = 1;
+        record.err_msg = Some("Failure");
+        recorder.update_record(record);
+
+        recorder.run_tests_and_report(&mut storage);
+
+        let messages = LOGGER.0.lock().expect("test log should not be poisoned");
+        assert!(messages.iter().any(|message| message.contains("test_that_fails ... fail")));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains(r#""patina_on_system_unit_test_results":[{"name":"test_that_fails""#))
+        );
     }
 
     #[test]
