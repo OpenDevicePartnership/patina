@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "UEFI specification minor revision does not fit in its 16-bit encoding")]
-    fn test_custom_uefi_spec_version_rejects_unencodable_minor() {
+    fn test_custom_uefi_spec_version_rejects_minor_that_does_not_fit() {
         UefiSpecVersion::from_parts(3, 6_554);
     }
 

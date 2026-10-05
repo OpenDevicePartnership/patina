@@ -619,6 +619,7 @@ For platforms requiring compatibility with legacy software that improperly handl
 memory preference using the `prioritize_32_bit_memory()` configuration:
 
 ```rust,no_run
+# extern crate patina;
 # extern crate patina_dxe_core;
 # extern crate patina_ffs_extractors;
 # use patina_ffs_extractors::BrotliSectionExtractor;
