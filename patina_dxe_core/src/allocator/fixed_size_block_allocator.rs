@@ -191,7 +191,8 @@ pub struct FixedSizeBlockAllocator {
     /// `BLOCK_SIZES`.
     list_heads: [Option<NonNull<BlockListNode>>; BLOCK_SIZES.len()],
 
-    /// The tails of the linked lists for each fixed-size block, maintained so page retirement can unlink blocks.
+    /// The tails of the linked lists for each fixed-size block. Freed blocks are appended here so that blocks are
+    /// recycled in FIFO order, which maximizes the time between a block being freed and it being handed out again.
     list_tails: [Option<NonNull<BlockListNode>>; BLOCK_SIZES.len()],
 
     /// The linked-list of allocators that this allocator uses to back allocations that are larger than the fixed-size
@@ -474,16 +475,20 @@ impl FixedSizeBlockAllocator {
             return None;
         }
 
-        let head = self.list_heads.get_mut(index).expect("list_index guarantees valid index");
         let new_node = ptr.cast::<BlockListNode>();
         // SAFETY: new_node points to memory returned by alloc for this layout, which is large enough and
         // aligned for a BlockListNode as asserted above.
-        unsafe { new_node.as_ptr().write(BlockListNode { next: *head }) };
+        unsafe { new_node.as_ptr().write(BlockListNode { next: None }) };
 
-        if head.is_none() {
-            let _ = self.list_tails.get_mut(index).expect("list_index guarantees valid index").replace(new_node);
+        // Append to the tail so that blocks are recycled in FIFO order.
+        match self.list_tails.get(index).copied().expect("list_index guarantees valid index") {
+            // SAFETY: tail is a node on this free list, so the page containing it is mapped.
+            Some(tail) => unsafe { (*tail.as_ptr()).next = Some(new_node) },
+            None => {
+                let _ = self.list_heads.get_mut(index).expect("list_index guarantees valid index").replace(new_node);
+            }
         }
-        *head = Some(new_node);
+        *self.list_tails.get_mut(index).expect("list_index guarantees valid index") = Some(new_node);
 
         self.track_block_freed(ptr.addr().get(), block_size)
     }
@@ -2537,6 +2542,32 @@ mod tests {
         })
         .unwrap()
         .attributes
+    }
+
+    #[test]
+    fn test_free_list_recycles_blocks_in_first_in_first_out_order() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            let fsb = fsb_with_gcd(&GCD);
+
+            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+            let first = fsb.allocate(layout).unwrap().cast::<u8>();
+            let second = fsb.allocate(layout).unwrap().cast::<u8>();
+            let third = fsb.allocate(layout).unwrap().cast::<u8>();
+
+            // SAFETY: each allocation was returned by fsb for this layout.
+            unsafe {
+                fsb.deallocate(first, layout);
+                fsb.deallocate(second, layout);
+                fsb.deallocate(third, layout);
+            }
+
+            // Blocks are handed back out in the order they were freed, so the most recently freed block is the last
+            // one to be reused.
+            assert_eq!(fsb.allocate(layout).unwrap().cast::<u8>(), first);
+            assert_eq!(fsb.allocate(layout).unwrap().cast::<u8>(), second);
+            assert_eq!(fsb.allocate(layout).unwrap().cast::<u8>(), third);
+        });
     }
 
     #[test]

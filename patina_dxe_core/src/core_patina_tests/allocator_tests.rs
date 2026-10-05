@@ -12,12 +12,13 @@
 use super::test_support::is_mapped;
 use crate::{
     GCD,
-    allocator::STATIC_ALLOCATORS,
+    allocator::{EFI_BOOT_SERVICES_DATA_ALLOCATOR, STATIC_ALLOCATORS},
     events::{raise_tpl, restore_tpl},
 };
 use alloc::vec::Vec;
 use core::{
     alloc::{Allocator, Layout},
+    ffi::c_void,
     ops::Range,
 };
 use patina::{UEFI_PAGE_SIZE, pi::dxe_services::GcdMemoryType};
@@ -34,6 +35,41 @@ fn page_attributes(address: usize) -> Result<u64, &'static str> {
     })
     .map(|descriptor| descriptor.attributes)
     .map_err(|_| "No GCD descriptor for pool memory")
+}
+
+/// Verifies that consecutive pool allocations return distinct addresses. The pool allocators are set up to
+/// always serve new allocations in FIFO order. Interrupts are disabled in this test just to protect against the
+/// rare case where event handling in the middle of the allocation could cause the free list to wrap around.
+#[patina_test]
+fn pool_allocations_with_interrupts_disabled_are_unique() -> patina_test::error::Result {
+    const ALLOCATION_SIZE: usize = 0x20;
+
+    let mut first: *mut c_void = core::ptr::null_mut();
+    let mut second: *mut c_void = core::ptr::null_mut();
+
+    let interrupts_enabled = patina::arch::interrupts_enabled();
+    patina::arch::disable_interrupts();
+    // SAFETY: Both out pointers refer to writable local variables.
+    let first_result =
+        unsafe { EFI_BOOT_SERVICES_DATA_ALLOCATOR.allocate_pool(ALLOCATION_SIZE, core::ptr::addr_of_mut!(first)) };
+    // SAFETY: The out pointer refers to a writable local variable.
+    let second_result =
+        unsafe { EFI_BOOT_SERVICES_DATA_ALLOCATOR.allocate_pool(ALLOCATION_SIZE, core::ptr::addr_of_mut!(second)) };
+    if interrupts_enabled {
+        patina::arch::enable_interrupts();
+    }
+
+    first_result.map_err(|_| "First pool allocation failed")?;
+    second_result.map_err(|_| "Second pool allocation failed")?;
+    u_assert!(first != second, "Consecutive pool allocations returned the same address");
+
+    // SAFETY: Both pointers were successfully allocated above by this allocator and have not yet been freed.
+    unsafe {
+        EFI_BOOT_SERVICES_DATA_ALLOCATOR.free_pool(first).map_err(|_| "Failed to free first pool allocation")?;
+        EFI_BOOT_SERVICES_DATA_ALLOCATOR.free_pool(second).map_err(|_| "Failed to free second pool allocation")?;
+    }
+
+    Ok(())
 }
 
 /// Verifies that a pool page is unmapped once every block in it has been freed.
