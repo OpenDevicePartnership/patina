@@ -350,10 +350,16 @@ impl SpinLockedGcd {
     pub(crate) fn init_paging_with(&self, hob_list: &HobList, page_table: Box<dyn PatinaPageTable>) {
         log::info!("Initializing paging for the GCD");
 
-        *self.page_table.lock() = Some(page_table);
-
+        // Do all memory allocation before we put the page table reference in the GCD. This ensures that when we
+        // grab the descriptors, any allocator expansion and setting unused pages as RP has already occurred. The
+        // GCD can change after this point, but not before we map the initial set of memory regions.
         let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> =
             Vec::with_capacity(self.memory_descriptor_count() + 10);
+        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
+            Vec::with_capacity(self.memory_descriptor_count() + 10);
+
+        *self.page_table.lock() = Some(page_table);
+
         self.memory
             .lock()
             .get_memory_descriptors(mmio_res_descs.as_mut(), |d, _| {
@@ -366,8 +372,6 @@ impl SpinLockedGcd {
         // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
         // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
         // descriptors
-        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-            Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
             .get_memory_descriptors(&mut descriptors, |d, allocated| {
@@ -375,7 +379,7 @@ impl SpinLockedGcd {
                     // we've already handled MMIO and reserved memory, so skip these
                     return false;
                 }
-                allocated
+                allocated && d.attributes & efi::MEMORY_RP != efi::MEMORY_RP
             })
             .expect("Failed to get allocated memory descriptors!");
 
