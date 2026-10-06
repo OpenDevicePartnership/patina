@@ -17,7 +17,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 // cspell:ignore NGUID nguid sassata iscsitarget iscsidisk nvmeoftarget nvmeofdisk NSUUID
-use super::{DevicePathType, MessagingSubType, invalid};
+use super::{DevicePathType, MessagingSubType};
 use super::{allow_shortcuts, display_only, write_hex_bytes, write_vendor};
 use crate::BinaryGuid;
 use crate::{
@@ -1228,7 +1228,7 @@ fn reserved_zero(reserved: u32) -> Result<(), &'static str> {
 fn read_vendor_guid(data: &[u8], offset: &mut usize, expected: BinaryGuid) -> Result<(), scroll::Error> {
     let guid: BinaryGuid = data.gread_with(offset, scroll::LE)?;
     if guid != expected {
-        return Err(invalid("vendor GUID does not match the node"));
+        return Err(scroll::Error::BadInput { size: 0, msg: "vendor GUID does not match the node" });
     }
     Ok(())
 }
@@ -1645,7 +1645,7 @@ impl TryFromCtx<'_, scroll::Endian> for IpV4 {
         let static_ip = match data.gread_with::<u8>(&mut offset, endian)? {
             0 => false,
             1 => true,
-            _ => return Err(invalid("invalid IPv4 address origin")),
+            _ => return Err(scroll::Error::BadInput { size: 0, msg: "invalid IPv4 address origin" }),
         };
         let network = if data.len() == offset {
             None
@@ -1903,10 +1903,10 @@ impl TryFromCtx<'_, scroll::Endian> for Dns {
         let is_ipv6 = match data.gread_with::<u8>(&mut offset, scroll::LE)? {
             0 => false,
             1 => true,
-            _ => return Err(invalid("invalid DNS address family")),
+            _ => return Err(scroll::Error::BadInput { size: 0, msg: "invalid DNS address family" }),
         };
         if !(data.len() - offset).is_multiple_of(Dns::ADDRESS_SIZE) {
-            return Err(invalid("invalid DNS address length"));
+            return Err(scroll::Error::BadInput { size: 0, msg: "invalid DNS address length" });
         }
         let mut addresses = Vec::new();
         while offset < data.len() {
@@ -2036,11 +2036,14 @@ impl TryFromCtx<'_, scroll::Endian> for RestService {
             2 => RestServiceType::OData,
             0xff => {
                 let guid = data.gread_with(&mut offset, scroll::LE)?;
-                let vendor_data = data.get(offset..).ok_or_else(|| invalid("missing REST vendor payload"))?.to_vec();
+                let vendor_data = data
+                    .get(offset..)
+                    .ok_or(scroll::Error::BadInput { size: 0, msg: "missing REST vendor payload" })?
+                    .to_vec();
                 offset = data.len();
                 RestServiceType::Vendor { guid, data: vendor_data }
             }
-            _ => return Err(invalid("unknown REST service type")),
+            _ => return Err(scroll::Error::BadInput { size: 0, msg: "unknown REST service type" }),
         };
         Ok((Self { service, access_mode }, offset))
     }

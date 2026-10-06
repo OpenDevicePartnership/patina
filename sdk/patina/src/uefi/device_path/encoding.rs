@@ -57,9 +57,13 @@ impl<'a> TryFromCtx<'a, AsciiNul> for String {
     type Error = scroll::Error;
 
     fn try_from_ctx(src: &'a [u8], _: AsciiNul) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        let value = read_ascii(src, &mut offset)?;
-        Ok((value, offset))
+        let len = src
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or(scroll::Error::BadInput { size: 0, msg: "missing ASCII terminator" })?;
+        let bytes = src.get(..len).ok_or(scroll::Error::BadInput { size: 0, msg: "invalid ASCII string bounds" })?;
+        let (value, _) = String::try_from_ctx(bytes, Ascii)?;
+        Ok((value, len + 1))
     }
 }
 
@@ -67,7 +71,7 @@ impl TryIntoCtx<AsciiNul> for &String {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dst: &mut [u8], _: AsciiNul) -> Result<usize, Self::Error> {
-        ascii(self)?;
+        Ascii::validate(self)?;
         let required = self.len() + 1;
         if dst.len() < required {
             return Err(scroll::Error::TooBig { size: required, len: dst.len() });
@@ -100,15 +104,16 @@ impl<'a> TryFromCtx<'a, Char16Nul> for String {
         let mut offset = 0;
         let mut units = Vec::new();
         loop {
-            let unit: u16 =
-                src.gread_with(&mut offset, scroll::LE).map_err(|_| invalid("missing CHAR16 terminator"))?;
+            let unit: u16 = src
+                .gread_with(&mut offset, scroll::LE)
+                .map_err(|_| scroll::Error::BadInput { size: 0, msg: "missing CHAR16 terminator" })?;
             units.push(unit);
             if unit == 0 {
                 break;
             }
         }
         let value = Char16Str::from_units_with_nul(&units)
-            .map_err(|_| invalid("CHAR16 string is not valid UCS-2"))?
+            .map_err(|_| scroll::Error::BadInput { size: 0, msg: "CHAR16 string is not valid UCS-2" })?
             .chars()
             .collect();
         Ok((value, offset))
@@ -119,7 +124,8 @@ impl TryIntoCtx<Char16Nul> for &String {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dst: &mut [u8], _: Char16Nul) -> Result<usize, Self::Error> {
-        let encoded = Char16String::try_from_str(self).map_err(|_| invalid("string is not valid CHAR16"))?;
+        let encoded = Char16String::try_from_str(self)
+            .map_err(|_| scroll::Error::BadInput { size: 0, msg: "string is not valid CHAR16" })?;
         let units = encoded.as_units_with_nul();
         let required = units.len() * 2;
         if dst.len() < required {
@@ -150,9 +156,13 @@ impl<'a> TryFromCtx<'a, Utf8Nul> for String {
     type Error = scroll::Error;
 
     fn try_from_ctx(src: &'a [u8], _: Utf8Nul) -> Result<(Self, usize), Self::Error> {
-        let len = src.iter().position(|byte| *byte == 0).ok_or_else(|| invalid("missing UTF-8 terminator"))?;
-        let bytes = src.get(..len).ok_or_else(|| invalid("invalid UTF-8 string bounds"))?;
-        let value = core::str::from_utf8(bytes).map_err(|_| invalid("invalid UTF-8 string"))?;
+        let len = src
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or(scroll::Error::BadInput { size: 0, msg: "missing UTF-8 terminator" })?;
+        let bytes = src.get(..len).ok_or(scroll::Error::BadInput { size: 0, msg: "invalid UTF-8 string bounds" })?;
+        let value = core::str::from_utf8(bytes)
+            .map_err(|_| scroll::Error::BadInput { size: 0, msg: "invalid UTF-8 string" })?;
         Ok((String::from(value), len + 1))
     }
 }
@@ -162,7 +172,7 @@ impl TryIntoCtx<Utf8Nul> for &String {
 
     fn try_into_ctx(self, dst: &mut [u8], _: Utf8Nul) -> Result<usize, Self::Error> {
         if self.as_bytes().contains(&0) {
-            return Err(invalid("UTF-8 string contains an embedded NUL"));
+            return Err(scroll::Error::BadInput { size: 0, msg: "UTF-8 string contains an embedded NUL" });
         }
         let required = self.len() + 1;
         if dst.len() < required {
@@ -209,12 +219,26 @@ impl TryIntoCtx<Utf8Nul> for &String {
 #[derive(Debug, Clone, Copy)]
 pub struct Ascii;
 
+impl Ascii {
+    /// Reject text that is not ASCII or that contains a NUL.
+    fn validate(value: &str) -> Result<(), scroll::Error> {
+        if !value.is_ascii() || value.as_bytes().contains(&0) {
+            return Err(scroll::Error::BadInput {
+                size: 0,
+                msg: "device path string must be ASCII without embedded NUL",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl<'a> TryFromCtx<'a, Ascii> for String {
     type Error = scroll::Error;
 
     fn try_from_ctx(src: &'a [u8], _: Ascii) -> Result<(Self, usize), Self::Error> {
-        let value = core::str::from_utf8(src).map_err(|_| invalid("string must be ASCII"))?;
-        ascii(value)?;
+        let value =
+            core::str::from_utf8(src).map_err(|_| scroll::Error::BadInput { size: 0, msg: "string must be ASCII" })?;
+        Ascii::validate(value)?;
         Ok((String::from(value), src.len()))
     }
 }
@@ -223,7 +247,7 @@ impl TryIntoCtx<Ascii> for &String {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dst: &mut [u8], _: Ascii) -> Result<usize, Self::Error> {
-        ascii(self)?;
+        Ascii::validate(self)?;
         dst.pwrite_with(self.as_bytes(), 0, ())
     }
 }
@@ -379,7 +403,10 @@ impl<'a> TryFromCtx<'a, Vector> for Vec<u16> {
 
     fn try_from_ctx(src: &'a [u8], _: Vector) -> Result<(Self, usize), Self::Error> {
         if !src.len().is_multiple_of(2) {
-            return Err(invalid("trailing payload has an incomplete 16-bit code unit"));
+            return Err(scroll::Error::BadInput {
+                size: 0,
+                msg: "trailing payload has an incomplete 16-bit code unit",
+            });
         }
         let mut offset = 0;
         let mut units = Vec::with_capacity(src.len() / 2);
@@ -411,7 +438,7 @@ impl<'a> TryFromCtx<'a, Vector> for Vec<u32> {
 
     fn try_from_ctx(src: &'a [u8], _: Vector) -> Result<(Self, usize), Self::Error> {
         if !src.len().is_multiple_of(4) {
-            return Err(invalid("trailing payload has an incomplete 32-bit value"));
+            return Err(scroll::Error::BadInput { size: 0, msg: "trailing payload has an incomplete 32-bit value" });
         }
         let mut offset = 0;
         let mut values = Vec::with_capacity(src.len() / 4);
@@ -436,27 +463,6 @@ impl TryIntoCtx<Vector> for &Vec<u32> {
         }
         Ok(offset)
     }
-}
-
-pub(super) fn invalid(msg: &'static str) -> scroll::Error {
-    scroll::Error::BadInput { size: 0, msg }
-}
-
-pub(super) fn ascii(value: &str) -> Result<(), scroll::Error> {
-    if !value.is_ascii() || value.as_bytes().contains(&0) {
-        return Err(invalid("device path string must be ASCII without embedded NUL"));
-    }
-    Ok(())
-}
-
-pub(super) fn read_ascii(data: &[u8], offset: &mut usize) -> Result<String, scroll::Error> {
-    let remaining = data.get(*offset..).ok_or_else(|| invalid("missing ASCII string"))?;
-    let len = remaining.iter().position(|byte| *byte == 0).ok_or_else(|| invalid("missing ASCII terminator"))?;
-    let bytes = remaining.get(..len).ok_or_else(|| invalid("invalid ASCII string bounds"))?;
-    let value = core::str::from_utf8(bytes).map_err(|_| invalid("invalid ASCII string"))?;
-    ascii(value)?;
-    *offset += len + 1;
-    Ok(String::from(value))
 }
 
 #[cfg(test)]

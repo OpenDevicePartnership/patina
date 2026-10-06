@@ -68,7 +68,7 @@ pub use media::*;
 pub use messaging::*;
 pub use node_types::*;
 
-use super::{DevicePath, encoding::invalid};
+use super::DevicePath;
 use crate::BinaryGuid;
 use alloc::boxed::Box;
 use core::fmt::{self, Debug, Display};
@@ -720,7 +720,7 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for &'a GenericDevicePathNode {
 
 fn check_length(size: usize) -> Result<(), scroll::Error> {
     if size > usize::from(u16::MAX) - 4 {
-        return Err(invalid("device path payload exceeds the 16-bit node length"));
+        return Err(scroll::Error::BadInput { size: 0, msg: "device path payload exceeds the 16-bit node length" });
     }
     Ok(())
 }
@@ -746,14 +746,14 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
         }
 
         if usize::from(unknown.header.length) != Header::size_of_header() + unknown.data.len() {
-            return Err(invalid("device path header and payload lengths differ"));
+            return Err(scroll::Error::BadInput { size: 0, msg: "device path header and payload lengths differ" });
         }
         check_length(unknown.data.len())?;
         if unknown.header.r#type == 0x7f
             && (usize::from(unknown.header.length) != Header::size_of_header()
                 || !matches!(unknown.header.sub_type, 1 | 0xff))
         {
-            return Err(invalid("invalid end device path node"));
+            return Err(scroll::Error::BadInput { size: 0, msg: "invalid end device path node" });
         }
 
         match unknown.header {
