@@ -11,7 +11,7 @@
 //! ```rust
 //! use patina::{
 //!    error::Result,
-//!    component::hob::{Hob, FromHob},
+//!    component::hob::{Hob, FromHob, HobParseError},
 //!    BinaryGuid
 //! };
 //!
@@ -36,8 +36,8 @@
 //! impl FromHob for MyComplexHobStruct {
 //!     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 //!
-//!    fn parse(bytes: &[u8]) -> Self {
-//!        Self::default() // Simple for example
+//!    fn parse(bytes: &[u8]) -> core::result::Result<Self, HobParseError> {
+//!        Ok(Self::default()) // Simple for example
 //!    }
 //! }
 //!
@@ -60,7 +60,7 @@
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use crate::BinaryGuid;
-use core::{any::Any, ops::Deref};
+use core::{any::Any, fmt, ops::Deref};
 
 use super::{
     metadata::MetaData,
@@ -68,18 +68,48 @@ use super::{
     storage::{Storage, UnsafeStorageCell},
 };
 
+/// An error produced when a guided HOB payload cannot be parsed into its target type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HobParseError {
+    /// The payload is smaller than the target type requires.
+    BufferTooSmall {
+        /// The minimum number of bytes required.
+        expected: usize,
+        /// The number of bytes provided.
+        actual: usize,
+    },
+    /// The payload contents are not valid for the target type.
+    Invalid(&'static str),
+}
+
+impl fmt::Display for HobParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferTooSmall { expected, actual } => {
+                write!(f, "Buffer too small: expected at least {expected} bytes, got {actual}")
+            }
+            Self::Invalid(reason) => write!(f, "Invalid HOB data: {reason}"),
+        }
+    }
+}
+
+impl core::error::Error for HobParseError {}
+
 /// A trait for automatically parsing guided HOBs to dependency injectable types.
 ///
 /// The actual parsing of the byte array is done by the implementor via the `parse` method. The implementor has
 /// the freedom to parse the byte array in anyway they see fit. It could be as simple as casting the byte array to a
 /// struct or a more complex parsing process.
 ///
+/// If `parse` fails, the HOB is logged and not registered, so components depending on it as `Hob<T>` are not
+/// dispatched.
+///
 /// This trait is used to parse guided HOBs as specified in the PI specification.
 ///
 /// ## Example
 ///
 /// ```rust
-/// use patina::component::hob::FromHob;
+/// use patina::component::hob::{FromHob, HobParseError};
 /// use patina::BinaryGuid;
 ///
 /// #[derive(Default, Clone, Copy)]
@@ -92,9 +122,12 @@ use super::{
 /// impl FromHob for MyConfig {
 ///     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 ///
-///     fn parse(bytes: &[u8]) -> Self {
-///         // SAFETY: Specification defined requirement that the byte array is this underlying C type.
-///         unsafe { *(bytes.as_ptr() as *const Self) }
+///     fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+///         if bytes.len() < size_of::<Self>() {
+///             return Err(HobParseError::BufferTooSmall { expected: size_of::<Self>(), actual: bytes.len() });
+///         }
+///         // SAFETY: Length was checked above. Unaligned reads are valid for this buffer.
+///         Ok(unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Self) })
 ///     }
 /// }
 ///
@@ -111,12 +144,21 @@ pub trait FromHob: Sized + 'static {
     const HOB_GUID: BinaryGuid;
 
     /// Registers the parsed hob with the provided [Storage] instance.
+    ///
+    /// A HOB that fails to parse is logged and not registered.
     fn register(bytes: &[u8], storage: &mut Storage) {
-        storage.add_hob(Self::parse(bytes));
+        match Self::parse(bytes) {
+            Ok(hob) => storage.add_hob(hob),
+            Err(e) => log::error!(
+                "Guided HOB [{:#?}] failed to parse as {}: {e}",
+                Self::HOB_GUID,
+                core::any::type_name::<Self>()
+            ),
+        }
     }
 
     /// Parses the byte array into the type implementing this trait.
-    fn parse(bytes: &[u8]) -> Self;
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError>;
 }
 
 pub use patina_macro::FromHob;
@@ -135,8 +177,8 @@ pub use patina_macro::FromHob;
 /// # struct MyStruct{ value: u32 };
 /// # impl FromHob for MyStruct {
 /// #     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::ZERO;
-/// #     fn parse(bytes: &[u8]) -> Self {
-/// #         MyStruct { value: 5 }
+/// #     fn parse(bytes: &[u8]) -> Result<Self, patina::component::hob::HobParseError> {
+/// #         Ok(MyStruct { value: 5 })
 /// #     }
 /// # }
 /// let hob = Hob::mock(vec![MyStruct{ value: 5 }, MyStruct{ value: 10 }]);
@@ -169,8 +211,8 @@ impl<'h, T: FromHob + 'static> Hob<'h, T> {
     /// impl FromHob for MyStruct {
     ///     const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
     ///
-    ///    fn parse(bytes: &[u8]) -> Self {
-    ///        MyStruct
+    ///    fn parse(bytes: &[u8]) -> Result<Self, patina::component::hob::HobParseError> {
+    ///        Ok(MyStruct)
     ///    }
     /// }
     ///
@@ -252,8 +294,8 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
 /// # struct MyStruct(u32);
 /// # impl FromHob for MyStruct {
 /// #     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::ZERO;
-/// #     fn parse(bytes: &[u8]) -> Self {
-/// #         MyStruct(5)
+/// #     fn parse(bytes: &[u8]) -> Result<Self, patina::component::hob::HobParseError> {
+/// #         Ok(MyStruct(5))
 /// #     }
 /// # }
 /// # let hob = Hob::mock(vec![MyStruct(5), MyStruct(10)]);
@@ -311,8 +353,8 @@ mod tests {
     impl FromHob for MyStruct {
         const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
 
-        fn parse(_bytes: &[u8]) -> Self {
-            MyStruct::default()
+        fn parse(_bytes: &[u8]) -> core::result::Result<Self, HobParseError> {
+            Ok(MyStruct::default())
         }
     }
 
@@ -396,5 +438,51 @@ mod tests {
             MyComponent::entry_point(MyComponent, Hob::mock(vec![MyStruct { unused: 10 }]))
                 .is_err_and(|e| e == EfiError::InvalidParameter)
         );
+    }
+
+    struct FailingHob;
+
+    impl FromHob for FailingHob {
+        const HOB_GUID: BinaryGuid = patina::BinaryGuid::ZERO;
+
+        fn parse(_bytes: &[u8]) -> core::result::Result<Self, HobParseError> {
+            Err(HobParseError::Invalid("always fails"))
+        }
+    }
+
+    #[test]
+    fn test_register_skips_hob_that_fails_to_parse() {
+        let mut storage = Storage::new();
+        storage.add_hob_parser::<FailingHob>();
+        let id = storage.register_hob::<FailingHob>();
+
+        for parser in storage.get_hob_parsers(&FailingHob::HOB_GUID) {
+            parser(&[0], &mut storage);
+        }
+
+        assert!(storage.get_raw_hob(id).is_empty());
+        assert!(!Hob::<FailingHob>::validate(&id, UnsafeStorageCell::from(&storage)));
+    }
+
+    #[derive(FromHob, zerocopy::FromBytes)]
+    #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
+    #[repr(C)]
+    struct DerivedHob {
+        value: u32,
+    }
+
+    #[test]
+    fn test_derived_parse_is_fallible_with_result_alias_in_scope() {
+        assert_eq!(DerivedHob::parse(&5_u32.to_le_bytes()).unwrap().value, 5);
+        assert_eq!(DerivedHob::parse(&[0, 0]).err(), Some(HobParseError::BufferTooSmall { expected: 4, actual: 2 }));
+    }
+
+    #[test]
+    fn test_hob_parse_error_display() {
+        assert_eq!(
+            HobParseError::BufferTooSmall { expected: 8, actual: 2 }.to_string(),
+            "Buffer too small: expected at least 8 bytes, got 2"
+        );
+        assert_eq!(HobParseError::Invalid("bad").to_string(), "Invalid HOB data: bad");
     }
 }
