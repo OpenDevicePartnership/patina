@@ -187,12 +187,6 @@ impl MmCommunicator {
     }
 
     /// Component entry point
-    ///
-    /// # Coverage
-    ///
-    /// This function is marked with `#[coverage(off)]` because it requires a
-    /// `Service<dyn ProtocolServices>` produced by the DXE Core. It is tested through integration tests.
-    #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
         mut self,
         storage: &mut Storage,
@@ -374,12 +368,15 @@ mod tests {
     use crate::{
         component::{
             communicator::{MmCommunicator, MockMmExecutor},
-            sw_mmi_manager::SwMmiManager,
+            sw_mmi_manager::{MockSwMmiTrigger, SwMmiManager},
         },
         config::{CommunicateBuffer, MmCommunicationConfiguration},
     };
     use patina::{
-        component::{IntoComponent, Storage},
+        component::{
+            IntoComponent, Storage,
+            service::uefi_services::protocol::{MockProtocolServices, NotifyRegistration, ProtocolError},
+        },
         management_mode::MmCommBufferStatus,
     };
 
@@ -467,6 +464,71 @@ mod tests {
         executor: E,
     ) -> MmCommunicator<E> {
         MmCommunicator { comm_buffers: RefCell::new(buffers), mm_executor: Some(executor), notify_context: None }
+    }
+
+    fn run_entry_point(
+        config: MmCommunicationConfiguration,
+        protocols: MockProtocolServices,
+    ) -> (Storage, patina::error::Result<()>) {
+        let mut storage = Storage::new();
+        storage.add_config(config);
+        let sw_mmi_trigger: Service<dyn SwMmiTrigger> = Service::mock(Box::new(MockSwMmiTrigger::new()));
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(protocols));
+        let result = MmCommunicator::new().entry_point(&mut storage, sw_mmi_trigger, protocols);
+        (storage, result)
+    }
+
+    fn fake_registration() -> NotifyRegistration {
+        NotifyRegistration::from_raw(core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut())
+    }
+
+    #[test]
+    fn test_entry_point_without_buffer_updates_registers_service() {
+        let (storage, result) = run_entry_point(MmCommunicationConfiguration::default(), MockProtocolServices::new());
+
+        assert!(result.is_ok());
+        assert!(storage.get_service::<dyn MmCommunication>().is_some());
+    }
+
+    #[test]
+    fn test_entry_point_buffer_updates_without_buffer_id_registers_service() {
+        let config = MmCommunicationConfiguration { enable_comm_buffer_updates: true, ..Default::default() };
+        let (storage, result) = run_entry_point(config, MockProtocolServices::new());
+
+        assert!(result.is_ok());
+        assert!(storage.get_service::<dyn MmCommunication>().is_some());
+    }
+
+    #[test]
+    fn test_entry_point_with_buffer_updates_registers_notification() {
+        let config = MmCommunicationConfiguration {
+            enable_comm_buffer_updates: true,
+            updatable_buffer_id: Some(2),
+            ..Default::default()
+        };
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_register_install_notify().once().returning(|_, _, _| Ok(fake_registration()));
+
+        let (storage, result) = run_entry_point(config, protocols);
+
+        assert!(result.is_ok());
+        assert!(storage.get_service::<dyn MmCommunication>().is_some());
+    }
+
+    #[test]
+    fn test_entry_point_fails_when_notification_registration_fails() {
+        let config = MmCommunicationConfiguration {
+            enable_comm_buffer_updates: true,
+            updatable_buffer_id: Some(2),
+            ..Default::default()
+        };
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_register_install_notify().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
+
+        let (storage, result) = run_entry_point(config, protocols);
+
+        assert!(result.is_err());
+        assert!(storage.get_service::<dyn MmCommunication>().is_none());
     }
 
     #[test]
