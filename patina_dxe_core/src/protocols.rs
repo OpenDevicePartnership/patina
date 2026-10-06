@@ -13,7 +13,10 @@ use patina::standard::efi::{self, protocols::device_path::Protocol};
 use patina::{
     OwnedGuid,
     error::EfiError,
-    uefi::device_path::{DevicePath, walker::is_device_path_end},
+    uefi::device_path::{
+        DevicePath,
+        node::{DevicePathNode, EndEntire},
+    },
 };
 use tpl_mutex::TplMutex;
 
@@ -645,8 +648,11 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
                 core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path)
             && PROTOCOL_DB.validate_handle(handle).is_ok()
             && {
-                // SAFETY: remaining_path is returned from core_locate_device_path and is a valid device path pointer.
-                unsafe { is_device_path_end(remaining_path.as_ptr()) }
+                // SAFETY: remaining_path is returned from core_locate_device_path and points into the
+                // device path being installed, which the caller guarantees is valid.
+                unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) }.is_ok_and(|remaining| {
+                    remaining.iter().next().is_some_and(|node| EndEntire::is_type(node.header.r#type, node.header.sub_type))
+                })
             }
         {
             return efi::Status::ALREADY_STARTED;

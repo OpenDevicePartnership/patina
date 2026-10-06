@@ -84,12 +84,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Pci;
     ///
-    /// let node = Pci { function: 0, device: 0x1f };
-    /// assert_eq!(node.to_string(), "Pci(0x1f,0x0)");
+    /// // The USB host controller of `PciRoot(0)/PCI(31,2)/USB(0,0)` (UEFI 2.10 Section 10.3.4.5.1).
+    /// let node = Pci { device: 31, function: 2 };
+    /// assert_eq!(node.to_string(), "Pci(0x1f,0x2)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "Pci(0x1f,0x0)");
-    /// assert_eq!(format!("{node:#}"), "Pci(0x1f,0x0)");
-    /// assert_eq!(format!("{node:-#}"), "Pci(0x1f,0x0)");
+    /// assert_eq!(format!("{node:-}"), "Pci(0x1f,0x2)");
+    /// assert_eq!(format!("{node:#}"), "Pci(0x1f,0x2)");
+    /// assert_eq!(format!("{node:-#}"), "Pci(0x1f,0x2)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
     @[DevicePathNodeDerive(Debug)]
@@ -154,12 +155,14 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::MemoryMapped;
     ///
-    /// let node = MemoryMapped { memory_type: 0x0b, start_address: 0x1000, end_address: 0x1fff };
-    /// assert_eq!(node.to_string(), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// // Flash memory at the top of the 4 GiB space, of type `EfiMemoryMappedIO` (11). The ending
+    /// // address is the last byte of the range.
+    /// let node = MemoryMapped { memory_type: 11, start_address: 0xff00_0000, end_address: 0xffff_ffff };
+    /// assert_eq!(node.to_string(), "MemoryMapped(0xb,0xff000000,0xffffffff)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "MemoryMapped(0xb,0x1000,0x1fff)");
-    /// assert_eq!(format!("{node:#}"), "MemoryMapped(0xb,0x1000,0x1fff)");
-    /// assert_eq!(format!("{node:-#}"), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// assert_eq!(format!("{node:-}"), "MemoryMapped(0xb,0xff000000,0xffffffff)");
+    /// assert_eq!(format!("{node:#}"), "MemoryMapped(0xb,0xff000000,0xffffffff)");
+    /// assert_eq!(format!("{node:-#}"), "MemoryMapped(0xb,0xff000000,0xffffffff)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
     @[DevicePathNodeDerive(Debug)]
@@ -227,12 +230,14 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Bmc;
     ///
-    /// let node = Bmc { interface_type: 1, base_address: 0x1000 };
-    /// assert_eq!(node.to_string(), "BMC(0x1,0x1000)");
+    /// // The BMC of `PciRoot(0x2)/Pci(0x2,0x0)/Pci(0x0,0x0)/BMC(0,0xf0000000)/RestService(...)`
+    /// // (UEFI 2.10 Section 10.3.4.31).
+    /// let node = Bmc { interface_type: 0, base_address: 0xf000_0000 };
+    /// assert_eq!(node.to_string(), "BMC(0x0,0xf0000000)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "BMC(0x1,0x1000)");
-    /// assert_eq!(format!("{node:#}"), "BMC(0x1,0x1000)");
-    /// assert_eq!(format!("{node:-#}"), "BMC(0x1,0x1000)");
+    /// assert_eq!(format!("{node:-}"), "BMC(0x0,0xf0000000)");
+    /// assert_eq!(format!("{node:#}"), "BMC(0x0,0xf0000000)");
+    /// assert_eq!(format!("{node:-#}"), "BMC(0x0,0xf0000000)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = bmc_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -293,5 +298,36 @@ mod tests {
             &[1, 3, 24, 0, 3, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0x78, 0x56, 0, 0, 0, 0, 0, 0],
         );
         check_node(Bmc { interface_type: 1, base_address: 0x1234 }, &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// Check the text of each hardware node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_hardware() {
+        use crate::uefi::device_path::node::test_support::check_text;
+        use alloc::format;
+
+        check_text!(r"Pci(0x1F,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)");
+        check_text!(r"PcCard(1)", r"PcCard(0x1)", r"PcCard(0x1)", r"PcCard(0x1)");
+        check_text!(
+            r"MemoryMapped(11,0x1000,0x1FFF)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)"
+        );
+        check_text!(
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)"
+        );
+        check_text!(r"Ctrl(3)", r"Ctrl(0x3)", r"Ctrl(0x3)", r"Ctrl(0x3)");
+        check_text!(r"BMC(1,0x1000)", r"BMC(0x1,0x1000)", r"BMC(0x1,0x1000)", r"BMC(0x1,0x1000)");
+
+        // The flags select the text form only; they do not change how field values are written.
+        let pci = Pci { function: 2, device: 0x1f };
+        for text in [format!("{pci}"), format!("{pci:-}"), format!("{pci:#}"), format!("{pci:+}")] {
+            assert_eq!(text, "Pci(0x1f,0x2)");
+        }
     }
 }

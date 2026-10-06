@@ -13,7 +13,7 @@ use alloc::{
 use core::ptr::NonNull;
 use patina::{
     error::EfiError,
-    uefi::device_path::walker::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice},
+    uefi::device_path::{DevicePath, DevicePathBuf},
 };
 
 use patina::standard::efi::{self, protocols::device_path::Protocol};
@@ -31,7 +31,7 @@ fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocol
         .iter()
         .filter_map(|x| {
             match PROTOCOL_DB.get_interface_for_handle(*x, efi::protocols::driver_binding::PROTOCOL_GUID) {
-                Ok(interface) => Some(interface.cast::<efi::protocols::driver_binding::Protocol>()),
+                Ok(interface) => Some(interface as *mut efi::protocols::driver_binding::Protocol),
                 Err(_) => None, //ignore handles without driver bindings
             }
         })
@@ -48,7 +48,7 @@ fn get_platform_driver_override_bindings(
         // SAFETY: Checks locate_protocol return value to determine if pointer is valid. as_mut() is used for mutable
         // access which will also check if the pointer is null before allowing access.
         Ok(protocol) => unsafe {
-            (protocol.cast::<efi::protocols::platform_driver_override::Protocol>()).as_mut().expect("bad protocol ptr")
+            (protocol as *mut efi::protocols::platform_driver_override::Protocol).as_mut().expect("bad protocol ptr")
         },
     };
 
@@ -87,8 +87,7 @@ fn get_family_override_bindings() -> Vec<*mut efi::protocols::driver_binding::Pr
             Ok(protocol) => {
                 // SAFETY: get_interface_for_handle guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
                 let driver_override_protocol = unsafe {
-                    protocol
-                        .cast::<efi::protocols::driver_family_override::Protocol>()
+                    (protocol as *mut efi::protocols::driver_family_override::Protocol)
                         .as_mut()
                         .expect("bad protocol ptr")
                 };
@@ -115,8 +114,7 @@ fn get_bus_specific_override_bindings(
         Err(_) => return Vec::new(),
         // SAFETY: get_interface_for_handle guarantees that if `Ok` is returned, a valid pointer is encapsulated in it.
         Ok(protocol) => unsafe {
-            protocol
-                .cast::<efi::protocols::bus_specific_driver_override::Protocol>()
+            (protocol as *mut efi::protocols::bus_specific_driver_override::Protocol)
                 .as_mut()
                 .expect("bad protocol ptr")
         },
@@ -157,6 +155,26 @@ fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protoco
     driver_bindings
 }
 
+// The device path to authenticate for a connect call: the controller device path, followed by the
+// remaining device path unless the connection is recursive.
+fn authentication_file_path(
+    device_path: *mut core::ffi::c_void,
+    remaining_device_path: Option<NonNull<Protocol>>,
+    recursive: bool,
+) -> Result<DevicePathBuf, EfiError> {
+    // SAFETY: The device path protocol installed on the controller handle points to a valid device path.
+    let device_path =
+        unsafe { DevicePath::try_from_ptr(device_path as *const u8) }.map_err(|_| EfiError::InvalidParameter)?;
+    let mut file_path = DevicePathBuf::from(device_path);
+    if !recursive && let Some(remaining_path) = remaining_device_path {
+        // SAFETY: The caller guarantees that remaining_device_path points to a valid device path.
+        let remaining_path = unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) }
+            .map_err(|_| EfiError::InvalidParameter)?;
+        file_path.append_device_path(remaining_path).map_err(|_| EfiError::OutOfResources)?;
+    }
+    Ok(file_path)
+}
+
 // authenticate a connect call through the security2 arch protocol
 fn authenticate_connect(
     controller_handle: efi::Handle,
@@ -165,39 +183,25 @@ fn authenticate_connect(
 ) -> Result<(), EfiError> {
     if let Ok(device_path) =
         PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
-    {
-        let device_path = device_path.cast::<efi::protocols::device_path::Protocol>();
-        if let Ok(security2_ptr) =
+        && let Ok(security2_ptr) =
             PROTOCOL_DB.locate_protocol(patina::pi::protocol::security2::PROTOCOL_GUID.into_inner())
-        {
-            let file_path = {
-                if recursive {
-                    copy_device_path_to_boxed_slice(device_path)
-                } else if let Some(remaining_path) = remaining_device_path {
-                    concat_device_path_to_boxed_slice(device_path, remaining_path.as_ptr())
-                } else {
-                    copy_device_path_to_boxed_slice(device_path)
-                }
-            };
-
-            if let Ok(mut file_path) = file_path {
-                // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
-                let security2 = unsafe {
-                    security2_ptr
-                        .cast::<patina::pi::protocol::security2::Security2Protocol>()
-                        .as_ref()
-                        .expect("security2 should not be null")
-                };
-                let security_status = (security2.file_authentication)(
-                    security2_ptr.cast(),
-                    file_path.as_mut_ptr().cast(),
-                    core::ptr::null_mut(),
-                    0,
-                    false,
-                );
-                EfiError::status_to_result(security_status)?;
-            }
-        }
+        && let Ok(file_path) = authentication_file_path(device_path, remaining_device_path, recursive)
+    {
+        // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
+        let security2 = unsafe {
+            (security2_ptr as *mut patina::pi::protocol::security2::Security2Protocol)
+                .as_ref()
+                .expect("security2 should not be null")
+        };
+        let security_status = (security2.file_authentication)(
+            security2_ptr as *mut _,
+            // FileAuthentication takes the device path as `CONST`, so it does not write through it.
+            file_path.as_bytes().as_ptr().cast_mut().cast(),
+            core::ptr::null_mut(),
+            0,
+            false,
+        );
+        EfiError::status_to_result(security_status)?;
     }
     //if there is no device path on the controller handle,
     //or if there is no security2 protocol instance,
@@ -531,7 +535,7 @@ pub unsafe fn core_disconnect_controller(
         let driver_binding_interface = PROTOCOL_DB
             .get_interface_for_handle(driver_handle, efi::protocols::driver_binding::PROTOCOL_GUID)
             .or(Err(EfiError::InvalidParameter))?;
-        let driver_binding_interface = driver_binding_interface.cast::<efi::protocols::driver_binding::Protocol>();
+        let driver_binding_interface = driver_binding_interface as *mut efi::protocols::driver_binding::Protocol;
         // SAFETY: driver_binding_interface is validated above, would have been caught with the .or and ? above with
         // the loop being terminated.
         let driver_binding = unsafe { &mut *(driver_binding_interface) };
@@ -841,7 +845,7 @@ mod tests {
             .install_protocol_interface(
                 Some(driver_handle),
                 efi::protocols::driver_binding::PROTOCOL_GUID,
-                Box::into_raw(binding).cast::<core::ffi::c_void>(),
+                Box::into_raw(binding) as *mut core::ffi::c_void,
             )
             .unwrap();
 
@@ -887,10 +891,10 @@ mod tests {
         with_locked_state(|| {
             // Create binding protocols
             let binding1 = create_default_driver_binding(10, 0x10 as efi::Handle);
-            let binding1_ptr = Box::into_raw(binding1).cast::<core::ffi::c_void>();
+            let binding1_ptr = Box::into_raw(binding1) as *mut core::ffi::c_void;
 
             let binding2 = create_default_driver_binding(20, 0x20 as efi::Handle);
-            let binding2_ptr = Box::into_raw(binding2).cast::<core::ffi::c_void>();
+            let binding2_ptr = Box::into_raw(binding2) as *mut core::ffi::c_void;
 
             // Create handles and install protocols
             PROTOCOL_DB
@@ -965,7 +969,7 @@ mod tests {
                     efi::Status::NOT_FOUND
                 },
             });
-            let platform_override_ptr = Box::into_raw(platform_override).cast::<core::ffi::c_void>();
+            let platform_override_ptr = Box::into_raw(platform_override) as *mut core::ffi::c_void;
 
             // Install the platform driver override protocol
             let (_, _) = PROTOCOL_DB
@@ -1049,7 +1053,7 @@ mod tests {
             }
 
             let security2 = Box::new(MockSecurity2Protocol { file_authentication: mock_file_authentication });
-            let security2_ptr = Box::into_raw(security2).cast::<core::ffi::c_void>();
+            let security2_ptr = Box::into_raw(security2) as *mut core::ffi::c_void;
 
             // Install the security2 protocol in the protocol database
             let (_, _) = PROTOCOL_DB
@@ -1066,7 +1070,7 @@ mod tests {
                 sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
                 length: [4, 0],
             });
-            let device_path_ptr = Box::into_raw(device_path).cast::<core::ffi::c_void>();
+            let device_path_ptr = Box::into_raw(device_path) as *mut core::ffi::c_void;
 
             let (controller_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
@@ -1090,13 +1094,13 @@ mod tests {
         with_locked_state(|| {
             // Create driver binding protocols
             let binding1 = create_default_driver_binding(10, 0x10 as efi::Handle);
-            let binding1_ptr = Box::into_raw(binding1).cast::<core::ffi::c_void>();
+            let binding1_ptr = Box::into_raw(binding1) as *mut core::ffi::c_void;
 
             let binding2 = create_default_driver_binding(20, 0x20 as efi::Handle);
-            let binding2_ptr = Box::into_raw(binding2).cast::<core::ffi::c_void>();
+            let binding2_ptr = Box::into_raw(binding2) as *mut core::ffi::c_void;
 
             let binding3 = create_default_driver_binding(30, 0x30 as efi::Handle);
-            let binding3_ptr = Box::into_raw(binding3).cast::<core::ffi::c_void>();
+            let binding3_ptr = Box::into_raw(binding3) as *mut core::ffi::c_void;
 
             // Create handle objects and install driver binding protocols
             let handle1 = 0x1 as efi::Handle;
@@ -1118,11 +1122,11 @@ mod tests {
             // Create family override protocols with different versions
             let family_override1 =
                 Box::new(efi::protocols::driver_family_override::Protocol { get_version: mock_get_version_100 });
-            let family_override1_ptr = Box::into_raw(family_override1).cast::<core::ffi::c_void>();
+            let family_override1_ptr = Box::into_raw(family_override1) as *mut core::ffi::c_void;
 
             let family_override2 =
                 Box::new(efi::protocols::driver_family_override::Protocol { get_version: mock_get_version_200 });
-            let family_override2_ptr = Box::into_raw(family_override2).cast::<core::ffi::c_void>();
+            let family_override2_ptr = Box::into_raw(family_override2) as *mut core::ffi::c_void;
 
             // Only install family override protocol on handles 1 and 2
             PROTOCOL_DB
@@ -1165,13 +1169,13 @@ mod tests {
         with_locked_state(|| {
             // Create driver binding protocols with different versions
             let binding1 = create_default_driver_binding(10, 0x10 as efi::Handle);
-            let binding1_ptr = Box::into_raw(binding1).cast::<core::ffi::c_void>();
+            let binding1_ptr = Box::into_raw(binding1) as *mut core::ffi::c_void;
 
             let binding2 = create_default_driver_binding(30, 0x20 as efi::Handle);
-            let binding2_ptr = Box::into_raw(binding2).cast::<core::ffi::c_void>();
+            let binding2_ptr = Box::into_raw(binding2) as *mut core::ffi::c_void;
 
             let binding3 = create_default_driver_binding(20, 0x30 as efi::Handle);
-            let binding3_ptr = Box::into_raw(binding3).cast::<core::ffi::c_void>();
+            let binding3_ptr = Box::into_raw(binding3) as *mut core::ffi::c_void;
 
             // Create handle objects
             let handle1 = 0x1 as efi::Handle;
@@ -1274,7 +1278,7 @@ mod tests {
                 mock_start_with_counter,
                 mock_stop_success,
             );
-            let binding1_ptr = Box::into_raw(binding1).cast::<core::ffi::c_void>();
+            let binding1_ptr = Box::into_raw(binding1) as *mut core::ffi::c_void;
 
             let binding2 = create_driver_binding(
                 20,
@@ -1283,7 +1287,7 @@ mod tests {
                 mock_start_success,
                 mock_stop_success,
             );
-            let binding2_ptr = Box::into_raw(binding2).cast::<core::ffi::c_void>();
+            let binding2_ptr = Box::into_raw(binding2) as *mut core::ffi::c_void;
 
             let binding3 = create_driver_binding(
                 30,
@@ -1292,7 +1296,7 @@ mod tests {
                 mock_start_failure, // This one will fail Start()
                 mock_stop_success,
             );
-            let binding3_ptr = Box::into_raw(binding3).cast::<core::ffi::c_void>();
+            let binding3_ptr = Box::into_raw(binding3) as *mut core::ffi::c_void;
 
             // Install driver binding protocols on their handles
             PROTOCOL_DB
@@ -1394,7 +1398,7 @@ mod tests {
                 mock_start_with_counter,
                 mock_stop_success,
             );
-            let binding_ptr = Box::into_raw(binding).cast::<core::ffi::c_void>();
+            let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
             PROTOCOL_DB
                 .install_protocol_interface(
@@ -1520,7 +1524,7 @@ mod tests {
                 mock_start_with_counter,
                 mock_stop_success,
             );
-            let binding_ptr = Box::into_raw(binding).cast::<core::ffi::c_void>();
+            let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
             PROTOCOL_DB
                 .install_protocol_interface(
@@ -1584,7 +1588,7 @@ mod tests {
             {
                 // Create controller handle with VendorDefined device path
                 let controller_device_path = Box::new(create_vendor_defined_device_path(0x1111));
-                let controller_device_path_ptr = Box::into_raw(controller_device_path).cast::<core::ffi::c_void>();
+                let controller_device_path_ptr = Box::into_raw(controller_device_path) as *mut core::ffi::c_void;
                 let (controller_handle, _) = PROTOCOL_DB
                     .install_protocol_interface(
                         None,
@@ -1595,7 +1599,7 @@ mod tests {
 
                 // Create driver handle with VendorDefined device path
                 let driver_device_path = Box::new(create_vendor_defined_device_path(0x2222));
-                let driver_device_path_ptr = Box::into_raw(driver_device_path).cast::<core::ffi::c_void>();
+                let driver_device_path_ptr = Box::into_raw(driver_device_path) as *mut core::ffi::c_void;
                 let (driver_handle, _) = PROTOCOL_DB
                     .install_protocol_interface(
                         None,
@@ -1612,7 +1616,7 @@ mod tests {
                     mock_start_success,
                     mock_stop_success,
                 );
-                let binding_ptr = Box::into_raw(binding).cast::<core::ffi::c_void>();
+                let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
                 PROTOCOL_DB
                     .install_protocol_interface(
@@ -1670,7 +1674,7 @@ mod tests {
 
             // Create controller handle with VendorDefined device path
             let controller_device_path = Box::new(create_vendor_defined_device_path(0x1111));
-            let controller_device_path_ptr = Box::into_raw(controller_device_path).cast::<core::ffi::c_void>();
+            let controller_device_path_ptr = Box::into_raw(controller_device_path) as *mut core::ffi::c_void;
             let (controller_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(
                     None,
@@ -1681,14 +1685,14 @@ mod tests {
 
             // Create driver handle with VendorDefined device path
             let driver_device_path = Box::new(create_vendor_defined_device_path(0x2222));
-            let driver_device_path_ptr = Box::into_raw(driver_device_path).cast::<core::ffi::c_void>();
+            let driver_device_path_ptr = Box::into_raw(driver_device_path) as *mut core::ffi::c_void;
             let (driver_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, driver_device_path_ptr)
                 .unwrap();
 
             // Create child handle with VendorDefined device path
             let child_device_path = Box::new(create_vendor_defined_device_path(0x3333));
-            let child_device_path_ptr = Box::into_raw(child_device_path).cast::<core::ffi::c_void>();
+            let child_device_path_ptr = Box::into_raw(child_device_path) as *mut core::ffi::c_void;
             let (child_handle, _) = PROTOCOL_DB
                 .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, child_device_path_ptr)
                 .unwrap();
@@ -1702,7 +1706,7 @@ mod tests {
                 driver_binding_handle: driver_handle,
                 image_handle: DXE_CORE_HANDLE,
             });
-            let binding_ptr = Box::into_raw(binding).cast::<core::ffi::c_void>();
+            let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
             // Install driver binding protocol
             PROTOCOL_DB
@@ -2119,8 +2123,8 @@ mod tests {
 
             let boot_services = st.boot_services().get();
 
-            assert_eq!(boot_services.connect_controller as usize, connect_controller as *const () as usize);
-            assert_eq!(boot_services.disconnect_controller as usize, disconnect_controller as *const () as usize);
+            assert!(boot_services.connect_controller as usize == connect_controller as *const () as usize);
+            assert!(boot_services.disconnect_controller as usize == disconnect_controller as *const () as usize);
         });
     }
 }

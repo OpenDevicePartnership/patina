@@ -39,12 +39,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Bios;
     ///
-    /// let node = Bios { device_type: 2, status_flag: 0, description_str: "boot".into() };
-    /// assert_eq!(node.to_string(), "BBS(HD,boot,0x0)");
+    /// // A legacy hard drive entry of the BIOS Boot Specification table.
+    /// let node = Bios { device_type: 2, status_flag: 0, description_str: "SATA HDD".into() };
+    /// assert_eq!(node.to_string(), "BBS(HD,SATA HDD,0x0)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "BBS(HD,boot)");
-    /// assert_eq!(format!("{node:#}"), "BBS(HD,boot,0x0)");
-    /// assert_eq!(format!("{node:-#}"), "BBS(HD,boot)");
+    /// assert_eq!(format!("{node:-}"), "BBS(HD,SATA HDD)");
+    /// assert_eq!(format!("{node:#}"), "BBS(HD,SATA HDD,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "BBS(HD,SATA HDD)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
@@ -104,5 +105,14 @@ mod tests {
     fn test_device_path_invalid_variable_payloads_bios() {
         assert!(encode_node(Bios { device_type: 0, status_flag: 0, description_str: "a\0b".into() }).is_err());
         assert!(Bios::try_from_ctx(&[0, 0, 0, 0, b'A'], scroll::LE).is_err());
+    }
+
+    /// Check the text of each bios node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_bios() {
+        use crate::uefi::device_path::node::test_support::check_text;
+
+        check_text!(r"BBS(HD,boot,0x0)", r"BBS(HD,boot,0x0)", r"BBS(HD,boot)", r"BBS(HD,boot,0x0)");
     }
 }

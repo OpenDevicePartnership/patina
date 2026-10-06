@@ -38,12 +38,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::CdRom;
     ///
-    /// let node = CdRom { boot_entry: 1, partition_start: 0x10, partition_size: 0x20 };
-    /// assert_eq!(node.to_string(), "CDROM(0x1,0x10,0x20)");
+    /// // The first El Torito boot entry, at sector 0x23 of the CD, for 0x2000 sectors.
+    /// let node = CdRom { boot_entry: 0, partition_start: 0x23, partition_size: 0x2000 };
+    /// assert_eq!(node.to_string(), "CDROM(0x0,0x23,0x2000)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "CDROM(0x1)");
-    /// assert_eq!(format!("{node:#}"), "CDROM(0x1,0x10,0x20)");
-    /// assert_eq!(format!("{node:-#}"), "CDROM(0x1)");
+    /// assert_eq!(format!("{node:-}"), "CDROM(0x0)");
+    /// assert_eq!(format!("{node:#}"), "CDROM(0x0,0x23,0x2000)");
+    /// assert_eq!(format!("{node:-#}"), "CDROM(0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
     @[DevicePathNodeDerive(Debug)]
@@ -183,12 +184,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::RelativeOffsetRange;
     ///
-    /// let node = RelativeOffsetRange { reserved: 0, starting_offset: 0x10, ending_offset: 0x20 };
-    /// assert_eq!(node.to_string(), "Offset(0x10,0x20)");
+    /// // The first 64 KiB of the device.
+    /// let node = RelativeOffsetRange { reserved: 0, starting_offset: 0, ending_offset: 0xffff };
+    /// assert_eq!(node.to_string(), "Offset(0x0,0xffff)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "Offset(0x10,0x20)");
-    /// assert_eq!(format!("{node:#}"), "Offset(0x10,0x20)");
-    /// assert_eq!(format!("{node:-#}"), "Offset(0x10,0x20)");
+    /// assert_eq!(format!("{node:-}"), "Offset(0x0,0xffff)");
+    /// assert_eq!(format!("{node:#}"), "Offset(0x0,0xffff)");
+    /// assert_eq!(format!("{node:-#}"), "Offset(0x0,0xffff)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
     @[DevicePathNodeDerive(Debug)]
@@ -221,17 +223,19 @@ device_path_node! {
     /// ```
     /// use patina::{BinaryGuid, uefi::device_path::node::RamDisk};
     ///
+    /// // A 64 MiB RAM disk of the virtual disk type `EFI_VIRTUAL_DISK_GUID` (UEFI 2.10 Section 10.3.5.9),
+    /// // which displays as `VirtualDisk`.
     /// let node = RamDisk {
-    ///     starting_address: 0x1000,
-    ///     ending_address: 0x1fff,
-    ///     type_guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
+    ///     starting_address: 0x7000_0000,
+    ///     ending_address: 0x73ff_ffff,
+    ///     type_guid: BinaryGuid::from_string("77AB535A-45FC-624B-5560-F7B281D1F96E"),
     ///     instance: 0,
     /// };
-    /// assert_eq!(node.to_string(), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(node.to_string(), "VirtualDisk(0x70000000,0x73ffffff,0)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
-    /// assert_eq!(format!("{node:#}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
-    /// assert_eq!(format!("{node:-#}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-}"), "VirtualDisk(0x70000000,0x73ffffff,0)");
+    /// assert_eq!(format!("{node:#}"), "RamDisk(0x70000000,0x73ffffff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)");
+    /// assert_eq!(format!("{node:-#}"), "RamDisk(0x70000000,0x73ffffff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
     @[DevicePathNodeDerive(Debug)]
@@ -341,13 +345,15 @@ device_path_node! {
     /// ```
     /// use patina::{BinaryGuid, uefi::device_path::node::HardDrive};
     ///
-    /// let partition_guid = *BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF").as_bytes();
-    /// let node = HardDrive::new_gpt(1, 0x800, 0x1000, partition_guid);
-    /// assert_eq!(node.to_string(), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)");
+    /// // The partition of the iSCSI example
+    /// // `HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)` (UEFI 2.10 Section 10.3.4.20.2).
+    /// let partition_guid = *BinaryGuid::from_string("15E39A00-1DD2-1000-8D7F-00A0C92408FC").as_bytes();
+    /// let node = HardDrive::new_gpt(1, 0x22, 0x2710000, partition_guid);
+    /// assert_eq!(node.to_string(), "HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)");
-    /// assert_eq!(format!("{node:#}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)");
-    /// assert_eq!(format!("{node:-#}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-}"), "HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC)");
+    /// assert_eq!(format!("{node:#}"), "HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)");
+    /// assert_eq!(format!("{node:-#}"), "HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::HardDrive,
@@ -452,12 +458,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::FilePath;
     ///
-    /// let node = FilePath::new(r"\EFI\BOOT\boot.efi");
-    /// assert_eq!(node.to_string(), r"\EFI\BOOT\boot.efi");
+    /// // The default boot file of removable media on x64 (UEFI 2.10 Section 3.5.1.1).
+    /// let node = FilePath::new(r"\EFI\BOOT\BOOTX64.EFI");
+    /// assert_eq!(node.to_string(), r#"\EFI\BOOT\BOOTX64.EFI"#);
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), r#"\EFI\BOOT\boot.efi"#);
-    /// assert_eq!(format!("{node:#}"), r#"\EFI\BOOT\boot.efi"#);
-    /// assert_eq!(format!("{node:-#}"), r#"\EFI\BOOT\boot.efi"#);
+    /// assert_eq!(format!("{node:-}"), r#"\EFI\BOOT\BOOTX64.EFI"#);
+    /// assert_eq!(format!("{node:#}"), r#"\EFI\BOOT\BOOTX64.EFI"#);
+    /// assert_eq!(format!("{node:-#}"), r#"\EFI\BOOT\BOOTX64.EFI"#);
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::FilePath,
@@ -738,5 +745,64 @@ mod tests {
     fn test_device_path_existing_validation_media() {
         assert!(encode_node(FilePath::new("a\0b")).is_err());
         assert!(encode_node(FilePath::new("\u{1f600}")).is_err());
+    }
+
+    /// Check the text of each media node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_media() {
+        use crate::uefi::device_path::node::test_support::check_text;
+
+        check_text!(
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)"
+        );
+        check_text!(
+            r"HD(2,MBR,0x12345678,0x800,0x1000)",
+            r"HD(2,MBR,0x12345678,0x800,0x1000)",
+            r"HD(2,MBR,0x12345678)",
+            r"HD(2,MBR,0x12345678,0x800,0x1000)"
+        );
+        check_text!(r"CDROM(1,0x10,0x20)", r"CDROM(0x1,0x10,0x20)", r"CDROM(0x1)", r"CDROM(0x1,0x10,0x20)");
+        check_text!(
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)"
+        );
+        check_text!(r"\file", r"\file", r"\file", r"\file");
+        check_text!(
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check_text!(
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check_text!(
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check_text!(r"Offset(0x10,0x20)", r"Offset(0x10,0x20)", r"Offset(0x10,0x20)", r"Offset(0x10,0x20)");
+        check_text!(
+            r"RamDisk(0x1000,0x1FFF,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check_text!(
+            r"VirtualDisk(0x1000,0x1FFF,0)",
+            r"VirtualDisk(0x1000,0x1fff,0)",
+            r"VirtualDisk(0x1000,0x1fff,0)",
+            r"RamDisk(0x1000,0x1fff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)"
+        );
     }
 }

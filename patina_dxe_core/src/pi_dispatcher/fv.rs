@@ -16,8 +16,8 @@ use patina::{
         hob,
     },
     uefi::device_path::{
-        fv_types::{FvMemMapDevicePath, FvPiWgDevicePath},
-        walker::concat_device_path_to_boxed_slice,
+        DevicePath, DevicePathBuf,
+        node::{MemoryMapped, PiwgFirmwareFile, PiwgFirmwareVolume},
     },
 };
 
@@ -424,17 +424,17 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must ensure that base_address is valid.
         let fv = unsafe { VolumeRef::new_from_address(base_address) }?;
 
-        let device_path_ptr = if let Some(fv_name) = fv.fv_name() {
-            // Construct FvPiWgDevicePath
-            let device_path = FvPiWgDevicePath::new_fv(fv_name.into_inner());
-            Box::into_raw(Box::new(device_path)).cast::<c_void>()
+        let mut device_path = DevicePathBuf::new();
+        let appended = if let Some(fv_name) = fv.fv_name() {
+            device_path.append(PiwgFirmwareVolume { fv_name })
         } else {
-            // Construct FvMemMapDevicePath
-            let device_path =
-                FvMemMapDevicePath::new(MEMORY_MAPPED_IO, base_address, base_address.saturating_add(fv.size()));
-
-            Box::into_raw(Box::new(device_path)).cast::<c_void>()
+            // The ending address is the last byte of the firmware volume.
+            let end_address = base_address.saturating_add(fv.size()).saturating_sub(1).max(base_address);
+            device_path.append(MemoryMapped { memory_type: MEMORY_MAPPED_IO, start_address: base_address, end_address })
         };
+        appended.map_err(|_| EfiError::OutOfResources)?;
+        // The device path protocol owns the device path for the lifetime of the handle.
+        let device_path_ptr = Box::into_raw(Box::<DevicePath>::from(device_path)) as *mut c_void;
 
         // install the protocol and return status
         core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
@@ -559,7 +559,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: buffer must be valid for writes of at least bytes_to_read length. It is null-checked above, and
         // the caller must ensure that the buffer is large enough to hold the data being read.
         unsafe {
-            let dest_buffer = slice::from_raw_parts_mut(buffer.cast::<u8>(), data.len());
+            let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, data.len());
             dest_buffer.copy_from_slice(data);
             num_bytes.write_unaligned(data.len());
         }
@@ -715,7 +715,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // convert pointer+size into a slice and copy the file data (truncated if necessary).
         // SAFETY: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
         // and is of sufficient size to contain the data.
-        let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr.cast::<u8>(), copy_size) };
+        let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
         out_buffer.copy_from_slice(file.content().get(..copy_size).expect("copy_size <= file.content().len()"));
 
         status
@@ -808,7 +808,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool and
         // is of sufficient size to contain the data. We copy the minimum of section_data.len() and local_buffer_size to ensure we do not
         // copy beyond the bounds of either buffer.
-        let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr.cast::<u8>(), copy_size) };
+        let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
         dest_buffer.copy_from_slice(
             section_data.get(..dest_buffer.len()).expect("copy_size = min(section_data.len(), local_buffer_size)"),
         );
@@ -846,7 +846,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         };
 
         // SAFETY: caller must provide valid pointers for key and file_type. They are null-checked above.
-        let local_key = unsafe { key.cast::<usize>().read_unaligned() };
+        let local_key = unsafe { (key as *mut usize).read_unaligned() };
         // SAFETY: caller must provide valid pointers for key and file_type. They are null-checked above.
         let local_file_type = unsafe { file_type.read_unaligned() };
 
@@ -862,7 +862,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         // SAFETY: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
         unsafe {
-            key.cast::<usize>().write_unaligned(local_key.saturating_add(1));
+            (key as *mut usize).write_unaligned(local_key.saturating_add(1));
             name_guid.write_unaligned(file_name);
             if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED
             {
@@ -898,13 +898,18 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 }
 
-pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<Box<[u8]>, efi::Status> {
+/// Return the device path of a file in a firmware volume: the device path of the firmware volume
+/// handle followed by a firmware file node.
+pub fn device_path_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<DevicePathBuf, efi::Status> {
     let fv_device_path = PROTOCOL_DB.get_interface_for_handle(fv_handle, efi::protocols::device_path::PROTOCOL_GUID)?;
-    let file_node = &FvPiWgDevicePath::new_file(file_name);
-    concat_device_path_to_boxed_slice(
-        fv_device_path.cast::<efi::protocols::device_path::Protocol>().cast_const(),
-        core::ptr::from_ref(file_node).cast::<efi::protocols::device_path::Protocol>(),
-    )
+    // SAFETY: The device path protocol installed on the firmware volume handle points to a valid device path.
+    let fv_device_path =
+        unsafe { DevicePath::try_from_ptr(fv_device_path as *const u8) }.map_err(|_| efi::Status::INVALID_PARAMETER)?;
+    let mut device_path = DevicePathBuf::from(fv_device_path);
+    device_path
+        .append(PiwgFirmwareFile { fv_file_name: file_name.into() })
+        .map_err(|_| efi::Status::OUT_OF_RESOURCES)?;
+    Ok(device_path)
 }
 
 #[cfg(test)]
@@ -947,8 +952,6 @@ mod tests {
         type CpuInfo = MockCpuInfo;
         type ComponentInfo = MockComponentInfo;
         type Extractor = CompositeSectionExtractor;
-
-        const UEFI_SPEC_VERSION: patina::UefiSpecVersion = patina::UefiSpecVersion::V2_11;
     }
     type MockCore = Core<MockPlatformInfo>;
     type MockProtocolData = FvProtocolData<MockPlatformInfo>;
@@ -1173,7 +1176,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
                     /* Handle various cases for different conditions to hit */
@@ -1210,7 +1213,7 @@ mod tests {
                     MockProtocolData::fvb_read_efiapi(fvb_intf_data_n_mut, LBA, 0, buffer_valid_size3, buffer_valid3);
 
                     /* Free Memory */
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 let fv_test_get_block_size = || {
@@ -1220,7 +1223,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
@@ -1267,7 +1270,7 @@ mod tests {
                         num_buffer_empty_ref,
                     );
                     /* Free Memory */
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 let fvb_test_erase_block = || {
@@ -1302,7 +1305,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
@@ -1323,7 +1326,7 @@ mod tests {
                     );
                     MockProtocolData::fvb_write_efiapi(fvb_intf_data_n_mut, LBA, 0, buffer_valid_size3, buffer_valid3);
                     /* Free Memory */
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 let fvb_test_get_attributes = || {
@@ -1343,7 +1346,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut file_type_read: fv::EfiFvFileType = 1;
                     let file_type_read_ref: *mut fv::EfiFvFileType = &raw mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
@@ -1412,7 +1415,7 @@ mod tests {
                         buffer_valid_size3,
                     );
                     // Deallocate the memory
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 let fvb_test_read_section = || {
@@ -1422,7 +1425,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     assert!(!buffer_valid3.is_null(), "Memory allocation failed!");
 
@@ -1500,7 +1503,7 @@ mod tests {
                         auth_valid_p,
                     );
                     /* Free Memory */
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 let fvb_test_read_file = || {
@@ -1510,7 +1513,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &raw mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3).cast::<c_void>();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut found_type: u8 = ffs::file::raw::r#type::DRIVER;
                     let found_type_ref: *mut fv::EfiFvFileType = &raw mut found_type;
 
@@ -1584,7 +1587,7 @@ mod tests {
                     );
                     assert_eq!(status, efi::Status::WARN_BUFFER_TOO_SMALL);
                     /* Free Memory */
-                    dealloc(buffer_valid3.cast::<u8>(), layout3);
+                    dealloc(buffer_valid3 as *mut u8, layout3);
                 };
 
                 fv_test_set_info();
@@ -1636,7 +1639,7 @@ mod tests {
             // functions it calls. It uses direct memory management to test fv FFI primitives.
             unsafe {
                 let layout = Layout::from_size_align(1000, 8).unwrap();
-                let mut buffer = alloc(layout).cast::<c_void>();
+                let mut buffer = alloc(layout) as *mut c_void;
 
                 assert!(!buffer.is_null(), "Memory allocation failed!");
 
@@ -1665,7 +1668,7 @@ mod tests {
                 );
 
                 // Deallocate the memory
-                dealloc(buffer.cast::<u8>(), layout);
+                dealloc(buffer as *mut u8, layout);
             }
         })
         .expect("Failed to read Firmware Volume Section");
@@ -1742,11 +1745,11 @@ mod tests {
                 // Test a truncated copy with a buffer that's smaller than the file
                 let truncated_size = actual_file_size / 2; // Use half the file size
                 let layout = Layout::from_size_align(truncated_size, 8).unwrap();
-                let mut buffer = alloc(layout).cast::<c_void>();
+                let mut buffer = alloc(layout) as *mut c_void;
                 assert!(!buffer.is_null(), "Memory allocation failed!");
 
                 // Fill the buffer with a pattern to check the truncated copy
-                let buffer_slice = slice::from_raw_parts_mut(buffer.cast::<u8>(), truncated_size);
+                let buffer_slice = slice::from_raw_parts_mut(buffer as *mut u8, truncated_size);
                 buffer_slice.fill(0xFE);
 
                 let mut buffer_size = truncated_size;
@@ -1778,12 +1781,12 @@ mod tests {
                 let all_ff = copied_data.iter().all(|&b| b == 0xFE);
                 assert!(!all_ff, "Data should have been copied to buffer (not all 0xFE)");
 
-                dealloc(buffer.cast::<u8>(), layout);
+                dealloc(buffer as *mut u8, layout);
 
                 // Additionally, verify a 0-byte buffer works as expected
                 let zero_size = 0;
                 let layout_zero = Layout::from_size_align(64, 8).unwrap();
-                let mut buffer_zero = alloc(layout_zero).cast::<c_void>();
+                let mut buffer_zero = alloc(layout_zero) as *mut c_void;
                 assert!(!buffer_zero.is_null(), "Memory allocation failed!");
 
                 let mut buffer_size_zero = zero_size;
@@ -1804,7 +1807,7 @@ mod tests {
                 );
                 assert_eq!(buffer_size_zero, 0, "buffer_size should remain 0 when input is 0");
 
-                dealloc(buffer_zero.cast::<u8>(), layout_zero);
+                dealloc(buffer_zero as *mut u8, layout_zero);
             }
         })
         .unwrap();
@@ -1871,11 +1874,11 @@ mod tests {
                 let larger_size = actual_section_size + 512; // 512 bytes larger than section
 
                 let layout = Layout::from_size_align(larger_size, 8).unwrap();
-                let mut buffer = alloc(layout).cast::<c_void>();
+                let mut buffer = alloc(layout) as *mut c_void;
                 assert!(!buffer.is_null(), "Memory allocation failed!");
 
                 // Fill the buffer with a pattern to check the copy
-                let buffer_slice = slice::from_raw_parts_mut(buffer.cast::<u8>(), larger_size);
+                let buffer_slice = slice::from_raw_parts_mut(buffer as *mut u8, larger_size);
                 buffer_slice.fill(0xFE);
 
                 let mut buffer_size = larger_size;
@@ -1915,26 +1918,24 @@ mod tests {
     fn test_fv_read_section_freeform_subtype_returns_guid_plus_payload() {
         fn enable_read_status(fv_bytes: &mut [u8]) {
             // SAFETY: The serialized FV buffer starts with a valid FV header.
-            let mut header = unsafe { ptr::read_unaligned(fv_bytes.as_ptr().cast::<patina::pi::fw_fs::fv::Header>()) };
+            let mut header = unsafe { ptr::read_unaligned(fv_bytes.as_ptr() as *const patina::pi::fw_fs::fv::Header) };
             header.attributes |= fvb::attributes::raw::fvb2::READ_STATUS;
             header.checksum = 0;
 
             // SAFETY: The serialized FV buffer is large enough to hold the header.
             unsafe {
-                ptr::write_unaligned(fv_bytes.as_mut_ptr().cast::<patina::pi::fw_fs::fv::Header>(), header);
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
             }
 
             let header_len = header.header_length as usize;
             let checksum = fv_bytes[..header_len]
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(*value)));
+                .chunks_exact(2)
+                .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
             header.checksum = 0u16.wrapping_sub(checksum);
 
             // SAFETY: The serialized FV buffer is large enough to hold the header.
             unsafe {
-                ptr::write_unaligned(fv_bytes.as_mut_ptr().cast::<patina::pi::fw_fs::fv::Header>(), header);
+                ptr::write_unaligned(fv_bytes.as_mut_ptr() as *mut patina::pi::fw_fs::fv::Header, header);
             }
         }
 
@@ -1993,7 +1994,7 @@ mod tests {
             let mut auth_status = 0u32;
             let expected_size = core::mem::size_of::<FreeformSubtypeGuid>() + payload.len();
             let mut returned = vec![0u8; expected_size + 8];
-            let mut returned_ptr = returned.as_mut_ptr().cast::<c_void>();
+            let mut returned_ptr = returned.as_mut_ptr() as *mut c_void;
             let mut returned_size = returned.len();
 
             let status = MockProtocolData::fv_read_section_efiapi(

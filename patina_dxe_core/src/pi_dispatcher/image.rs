@@ -8,7 +8,6 @@
 //!
 use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use core::{
-    convert::TryInto,
     ffi::c_void,
     mem::transmute,
     ptr::{NonNull, null_mut},
@@ -19,7 +18,6 @@ use patina::standard::efi::{self, protocols::device_path::Protocol};
 use patina::{
     Char16Str,
     component::service::memory::{AllocationOptions, MemoryManager, PageFree},
-    component::service::uefi_services::image::ImageError,
     error::EfiError,
     guid as base_guids, log_debug_assert,
     pi::{
@@ -27,7 +25,10 @@ use patina::{
         fw_fs::FfsSectionRawType::PE32,
         hob::{Hob, HobList},
     },
-    uefi::device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
+    uefi::device_path::{
+        DevicePath, DevicePathBuf,
+        node::{FilePath, PiwgFirmwareFile},
+    },
     uefi::memory::EfiMemoryType,
     uefi_size_to_pages, {DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
 };
@@ -81,7 +82,7 @@ struct PrivateImageData {
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<ExitData>,
-    image_device_path: Option<Box<[u8]>>,
+    image_device_path: Option<DevicePathBuf>,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
 }
@@ -234,15 +235,6 @@ impl PrivateImageData {
             core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(self.image_info.as_ref()) as *mut c_void,
         )?;
 
-        if let Err(error) = self.install_additional_interfaces(handle) {
-            let _ = self.uninstall(handle);
-            return Err(error);
-        }
-
-        Ok(handle)
-    }
-
-    fn install_additional_interfaces(&self, handle: efi::Handle) -> Result<(), EfiError> {
         core_install_protocol_interface(
             Some(handle),
             efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
@@ -266,7 +258,7 @@ impl PrivateImageData {
             )?;
         }
 
-        Ok(())
+        Ok(handle)
     }
 
     /// Uninstalls all protocols associated with this image from the specified handle.
@@ -328,40 +320,39 @@ impl PrivateImageData {
     ///
     /// The file path is the full device path for this image and is what is set for the `loaded_image_device_path` protocol.
     fn set_file_path(&mut self, file_path: NonNull<Protocol>) -> Result<(), EfiError> {
-        let mut fp = file_path.as_ptr();
+        // SAFETY: The caller guarantees that file_path points to a valid device path.
+        let full_path = unsafe { DevicePath::try_from_ptr(file_path.as_ptr().cast::<u8>()) }
+            .map_err(|_| EfiError::InvalidParameter)?;
 
-        // If the device handle is valid, and the handle has a device path protocol, we need to adjust our file path
+        // If the device handle has a device path protocol, the file path is the rest of the full path after it.
+        let mut relative_path = full_path;
         if let Ok(device_path) = PROTOCOL_DB
             .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
-            let (_, device_path_size) =
-                device_path_node_count(device_path.cast::<efi::protocols::device_path::Protocol>())?;
-
-            // Adjust the split index to exclude the END node of the device path, so the true file path does not start with END.
-            let split_idx =
-                device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
-
-            // SAFETY: `device_path_node_count` is always less than or equal to the size of the device path, so adding `split_idx` to
-            //  `file_path` will always produce a valid pointer within the bounds of the original device path.
-            fp = unsafe {
-                file_path.cast::<u8>().add(split_idx).cast::<efi::protocols::device_path::Protocol>().as_ptr()
-            };
+            // SAFETY: The device path protocol installed on the device handle points to a valid device path.
+            let device_path = unsafe { DevicePath::try_from_ptr(device_path as *const u8) }
+                .map_err(|_| EfiError::InvalidParameter)?;
+            if let Some(rest) = full_path.strip_prefix(device_path) {
+                relative_path = rest;
+            }
         }
 
         // The `file_path` field in the loaded image protocol is really just the filename (more specifically the remaining portion
         // of the device path in relation to the parent's device path)
-        self.image_info.file_path =
-            Box::into_raw(copy_device_path_to_boxed_slice(fp)?).cast::<efi::protocols::device_path::Protocol>();
+        self.image_info.file_path = Box::into_raw(Box::<DevicePath>::from(DevicePathBuf::from(relative_path)))
+            as *mut efi::protocols::device_path::Protocol;
 
         // The `image_device_path` field is the `loaded_image_device_path` protocol, which is the full device path.
-        self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path.as_ptr())?);
+        self.image_device_path = Some(DevicePathBuf::from(full_path));
 
         Ok(())
     }
 
     /// Returns the pointer to the full device path for this image, or null if none is set.
     fn get_file_path(&self) -> *mut c_void {
-        self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
+        self.image_device_path
+            .as_ref()
+            .map_or(core::ptr::null_mut(), |dp| dp.as_bytes().as_ptr().cast_mut().cast::<c_void>())
     }
 
     /// Attempts to activate compatability mode for this image, if allowed by the platform.
@@ -514,7 +505,7 @@ impl ImageData {
             .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE_ID as FFS GUID.");
 
         let mut image_info = empty_image_info();
-        image_info.system_table = core::ptr::from_mut(system_table).cast::<efi::SystemTable>();
+        image_info.system_table = core::ptr::from_mut(system_table) as *mut efi::SystemTable;
         image_info.image_base = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
         image_info.image_size = dxe_core_hob.alloc_descriptor.memory_length;
 
@@ -930,47 +921,6 @@ mod dispatch_stub {
 }
 
 impl<P: super::PlatformInfo> super::PiDispatcher<P> {
-    /// Loads an image from an in-memory buffer for the [`ImageServices`] component service.
-    ///
-    /// This resolves the platform-specific dispatcher instance and erases the platform generic
-    /// `P`, so it can be stored as a plain function pointer by `CoreImageServices`.
-    ///
-    /// This is a simplified version of loading an image, which does not require a device path and
-    /// always indicates that the image load is not originating from the boot manager. In order
-    /// to change the `boot_policy` or to provide a device path from which the image is loaded,
-    /// use [`service_load_image_from_device_path`] instead.
-    ///
-    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
-    pub(crate) fn service_load_image(parent: efi::Handle, source: &[u8]) -> Result<efi::Handle, ImageError> {
-        Self::instance().load_image(false, parent, None, Some(source)).map_err(image_status_to_error)
-    }
-
-    /// Starts a loaded image for the [`ImageServices`] component service.
-    ///
-    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
-    pub(crate) fn service_start_image(image: efi::Handle) -> Result<(), ImageError> {
-        Self::instance().start_image(image).map_err(efi_status_to_image_error)
-    }
-
-    /// Unloads a loaded image for the [`ImageServices`] component service.
-    ///
-    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
-    pub(crate) fn service_unload_image(image: efi::Handle) -> Result<(), ImageError> {
-        Self::instance().unload_image(image, false).map_err(efi_status_to_image_error)
-    }
-
-    /// Loads an image located by a device path for the [`ImageServices`] component service.
-    ///
-    /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
-    #[cfg(feature = "unstable-device-path")]
-    pub(crate) fn service_load_image_from_device_path(
-        parent: efi::Handle,
-        file_path: NonNull<Protocol>,
-        boot_policy: bool,
-    ) -> Result<efi::Handle, ImageError> {
-        Self::instance().load_image(boot_policy, parent, Some(file_path), None).map_err(image_status_to_error)
-    }
-
     /// Loads the image specified by the device path or slice.
     /// * `parent_image_handle` - the handle of the image that is loading this one.
     /// * `file_path` - optional device path describing where to load the image from.
@@ -1466,14 +1416,10 @@ fn core_load_pe_image(
 
 fn get_file_guid_from_device_path(path: *mut efi::protocols::device_path::Protocol) -> Result<Guid, EfiError> {
     // SAFETY: path is validated by the caller and must point to a valid device path structure.
-    let mut walker = unsafe { DevicePathWalker::new(path) };
-    let file_path_node = walker.next().ok_or(EfiError::InvalidParameter)?;
-    if file_path_node.header().r#type != efi::protocols::device_path::TYPE_MEDIA
-        || file_path_node.header().sub_type != efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
-    {
-        return Err(EfiError::InvalidParameter);
-    }
-    Ok(Guid::from_bytes(file_path_node.data().try_into().map_err(|_| EfiError::BadBufferSize)?))
+    let path = unsafe { DevicePath::try_from_ptr(path as *const u8) }.map_err(|_| EfiError::InvalidParameter)?;
+    let file_node = path.iter().next().ok_or(EfiError::InvalidParameter)?;
+    let file_node = PiwgFirmwareFile::try_from(file_node).map_err(|_| EfiError::InvalidParameter)?;
+    Ok(file_node.fv_file_name.into_inner())
 }
 
 fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi::Handle), EfiError> {
@@ -1487,7 +1433,7 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
     // Get the firmware volume protocol
     let fv_ptr = PROTOCOL_DB
         .get_interface_for_handle(handle, pi::protocol::firmware_volume::PROTOCOL_GUID.into_inner())?
-        .cast::<pi::protocol::firmware_volume::FirmwareVolumeProtocol>();
+        as *mut pi::protocol::firmware_volume::FirmwareVolumeProtocol;
     if fv_ptr.is_null() {
         debug_assert!(!fv_ptr.is_null(), "ERROR: get_interface_for_handle returned NULL ptr for FirmwareVolume!");
         return Err(EfiError::InvalidParameter);
@@ -1497,7 +1443,7 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
 
     // Read image from the firmware file
     let mut buffer: *mut u8 = core::ptr::null_mut();
-    let buffer_ptr: *mut *mut c_void = (&raw mut buffer).cast::<*mut c_void>();
+    let buffer_ptr: *mut *mut c_void = &raw mut buffer as *mut *mut c_void;
     let mut buffer_size = 0;
     let mut authentication_status = 0;
     let authentication_status_ptr = &mut authentication_status;
@@ -1525,16 +1471,15 @@ fn get_file_buffer_from_sfs(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, ef
     let mut file = SimpleFile::open_volume(handle)?;
 
     // SAFETY: remaining_file_path is returned by core_locate_device_path and is a valid device path.
-    for node in unsafe { DevicePathWalker::new(remaining_file_path.as_ptr()) } {
-        match node.header().r#type {
-            efi::protocols::device_path::TYPE_MEDIA
-                if node.header().sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
-            efi::protocols::device_path::TYPE_END => break,
-            _ => Err(EfiError::Unsupported)?,
+    let remaining_file_path = unsafe { DevicePath::try_from_ptr(remaining_file_path.as_ptr().cast::<u8>()) }
+        .map_err(|_| EfiError::InvalidParameter)?;
+    for node in remaining_file_path.iter() {
+        if node.header.r#type == efi::protocols::device_path::TYPE_END {
+            break;
         }
-        // For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to u16 code units for
-        // the call to open, since the raw device path bytes are not guaranteed to be aligned.
-        let filename: Vec<u16> = node.data().as_chunks::<2>().0.iter().map(|x| u16::from_le_bytes(*x)).collect();
+        // Every remaining node must be a file path node, which names a directory or the file to open.
+        let file_path_node = FilePath::try_from(node).map_err(|_| EfiError::Unsupported)?;
+        let filename: Vec<u16> = file_path_node.path.encode_utf16().chain(core::iter::once(0)).collect();
         let filename = Char16Str::from_units_until_nul(&filename)?;
 
         file = file.open(filename, efi::protocols::file::MODE_READ, 0)?;
@@ -1564,7 +1509,7 @@ fn get_file_buffer_from_load_protocol(
     let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
     // SAFETY: load_file is obtained from the protocol database and is a valid load_file protocol pointer.
     let load_file =
-        unsafe { load_file.cast::<efi::protocols::load_file::Protocol>().as_mut().ok_or(EfiError::Unsupported)? };
+        unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(EfiError::Unsupported)? };
 
     //determine buffer size.
     let mut buffer_size = 0;
@@ -1593,7 +1538,7 @@ fn get_file_buffer_from_load_protocol(
             remaining_file_path.as_ptr(),
             boot_policy.into(),
             core::ptr::addr_of_mut!(buffer_size),
-            file_buffer.as_mut_ptr().cast::<c_void>(),
+            file_buffer.as_mut_ptr() as *mut c_void,
         )
     };
 
@@ -1614,7 +1559,7 @@ fn authenticate_image(
     // which will also check if the pointer is null before allowing access.
     let security2_protocol = unsafe {
         match PROTOCOL_DB.locate_protocol(pi::protocol::security2::PROTOCOL_GUID.into_inner()) {
-            Ok(protocol) => protocol.cast::<pi::protocol::security2::Security2Protocol>().as_ref(),
+            Ok(protocol) => (protocol as *mut pi::protocol::security2::Security2Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -1625,7 +1570,7 @@ fn authenticate_image(
     // which will also check if the pointer is null before allowing access.
     let security_protocol = unsafe {
         match PROTOCOL_DB.locate_protocol(pi::protocol::security::PROTOCOL_GUID.into_inner()) {
-            Ok(protocol) => protocol.cast::<pi::protocol::security::SecurityProtocol>().as_ref(),
+            Ok(protocol) => (protocol as *mut pi::protocol::security::SecurityProtocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -1637,7 +1582,7 @@ fn authenticate_image(
         security_status = (security2.file_authentication)(
             core::ptr::from_ref(security2).cast_mut(),
             device_path_raw,
-            image.as_ptr().cast::<c_void>().cast_mut(),
+            image.as_ptr() as *const _ as *mut c_void,
             image.len(),
             boot_policy,
         );
@@ -1674,23 +1619,6 @@ pub enum ImageStatus {
 impl From<EfiError> for ImageStatus {
     fn from(err: EfiError) -> Self {
         ImageStatus::LoadError(err)
-    }
-}
-
-/// Maps a load-image [`ImageStatus`] to the component-facing [`ImageError`].
-fn image_status_to_error(status: ImageStatus) -> ImageError {
-    match status {
-        ImageStatus::LoadError(err) => ImageError::from(err),
-        ImageStatus::SecurityViolation(_) => ImageError::SecurityViolation,
-        ImageStatus::AccessDenied => ImageError::AccessDenied,
-    }
-}
-
-/// Maps a start/unload-image [`efi::Status`] to the component-facing [`ImageError`].
-fn efi_status_to_image_error(status: efi::Status) -> ImageError {
-    match EfiError::status_to_result(status) {
-        Ok(()) => ImageError::Internal,
-        Err(err) => ImageError::from(err),
     }
 }
 
@@ -1787,36 +1715,11 @@ mod tests {
         test_support::with_clean_global_lock(|| unsafe {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
-            init_system_table(patina::UefiSpecVersion::V2_11);
+            init_system_table();
 
             f();
         })
         .unwrap();
-    }
-
-    fn create_test_private_image_data() -> PrivateImageData {
-        let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to read test image");
-        let mut image = Vec::new();
-        test_file.read_to_end(&mut image).expect("failed to read test image");
-
-        let mut protocol = empty_image_info();
-        protocol.image_size = image.len() as u64;
-        protocol.image_code_type = efi::BOOT_SERVICES_CODE;
-        protocol.image_data_type = efi::BOOT_SERVICES_DATA;
-
-        let pe_info = UefiPeInfo::parse(&image).expect("test image should contain a valid PE image");
-        PrivateImageData::new(protocol, pe_info).expect("private image data should initialize")
-    }
-
-    fn install_test_loaded_image_protocol(image_data: &PrivateImageData) -> efi::Handle {
-        core_install_protocol_interface(
-            None,
-            efi::protocols::loaded_image::PROTOCOL_GUID,
-            core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(image_data.image_info.as_ref())
-                .cast_mut()
-                .cast::<c_void>(),
-        )
-        .expect("loaded image protocol should install")
     }
 
     #[test]
@@ -1959,58 +1862,6 @@ mod tests {
             PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
-        });
-    }
-
-    #[test]
-    fn load_image_should_fail_for_zero_section_alignment() {
-        with_locked_state(|| {
-            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
-            let mut image: Vec<u8> = Vec::new();
-            test_file.read_to_end(&mut image).expect("failed to read test file");
-
-            // SectionAlignment is at offset 32 of the optional header, which follows the 4 byte PE signature and the
-            // 20 byte COFF header.
-            let pe_header_offset = u32::from_le_bytes(image[0x3C..0x40].try_into().unwrap()) as usize;
-            let section_alignment_offset = pe_header_offset + 4 + 20 + 32;
-            image[section_alignment_offset..section_alignment_offset + 4].copy_from_slice(&0u32.to_le_bytes());
-
-            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
-                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
-            let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
-            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))), "{status:?}");
-        });
-    }
-
-    // TE images are not supported: they carry no section alignment, which must be a multiple of the page size to apply
-    // image memory protections. This runs the full LoadImage path on a TE image and checks that it is rejected when it
-    // is parsed, before any memory is allocated.
-    #[test]
-    fn load_image_should_fail_for_te_image() {
-        with_locked_state(|| {
-            let mut image: Vec<u8> = Vec::new();
-            File::open(test_collateral!("te/test_image.te"))
-                .expect("failed to open test file.")
-                .read_to_end(&mut image)
-                .expect("failed to read test file");
-
-            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
-                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
-
-            let handles_before =
-                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
-            let images_before = PI_DISPATCHER.image_data.lock().private_image_data.len();
-
-            let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
-            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::Unsupported))), "{status:?}");
-
-            // No image handle was installed and nothing was recorded for a later StartImage().
-            let handles_after =
-                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
-            assert_eq!(handles_before, handles_after);
-            assert_eq!(images_before, PI_DISPATCHER.image_data.lock().private_image_data.len());
         });
     }
 
@@ -2503,7 +2354,7 @@ mod tests {
                 0x4,  //length[0]
                 0x00, //length[1]
             ];
-            let device_path_ptr = device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
+            let device_path_ptr = device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
             // SAFETY: device_path_bytes is a non-null device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -2520,7 +2371,7 @@ mod tests {
         let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
         // SAFETY: Test mock - creating a mutable slice from the provided buffer pointer.
         unsafe {
-            let slice = core::slice::from_raw_parts_mut(buffer.cast::<u8>(), *buffer_size);
+            let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
             let read_bytes = test_file.read(slice).unwrap();
             buffer_size.write(read_bytes);
         }
@@ -2554,7 +2405,7 @@ mod tests {
         // SAFETY: Test mock - copying file info structure to caller's buffer if large enough.
         unsafe {
             if *size >= (*file_info_ptr).size.try_into().unwrap() {
-                core::ptr::copy(file_info_ptr, buffer.cast::<efi::protocols::file::Info>(), 1);
+                core::ptr::copy(file_info_ptr, buffer as *mut efi::protocols::file::Info, 1);
             } else {
                 status = efi::Status::BUFFER_TOO_SMALL;
             }
@@ -2688,24 +2539,24 @@ mod tests {
             let handle = core_install_protocol_interface(
                 None,
                 efi::protocols::simple_file_system::PROTOCOL_GUID,
-                protocol_ptr.cast::<c_void>(),
+                protocol_ptr as *mut c_void,
             )
             .unwrap();
 
             //deliberate leak
-            let root_device_path_ptr =
-                Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)).cast::<efi::protocols::device_path::Protocol>();
+            let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
+                as *mut efi::protocols::device_path::Protocol;
 
             core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
-                root_device_path_ptr.cast::<c_void>(),
+                root_device_path_ptr as *mut c_void,
             )
             .unwrap();
 
             let mut full_device_path_bytes = FULL_DEVICE_PATH_BYTES;
 
-            let device_path_ptr = full_device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
+            let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
             // SAFETY: full_device_path_bytes is a valid device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -2735,7 +2586,7 @@ mod tests {
                         buffer_size.write(test_file.metadata().unwrap().len() as usize);
                         status = efi::Status::BUFFER_TOO_SMALL;
                     } else {
-                        let slice = core::slice::from_raw_parts_mut(buffer.cast::<u8>(), *buffer_size);
+                        let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
                         let read_bytes = test_file.read(slice).unwrap();
                         buffer_size.write(read_bytes);
                         status = efi::Status::SUCCESS;
@@ -2750,24 +2601,24 @@ mod tests {
             let handle = core_install_protocol_interface(
                 None,
                 efi::protocols::load_file::PROTOCOL_GUID,
-                protocol_ptr.cast::<c_void>(),
+                protocol_ptr as *mut c_void,
             )
             .unwrap();
 
             //deliberate leak
-            let root_device_path_ptr =
-                Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)).cast::<efi::protocols::device_path::Protocol>();
+            let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
+                as *mut efi::protocols::device_path::Protocol;
 
             core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
-                root_device_path_ptr.cast::<c_void>(),
+                root_device_path_ptr as *mut c_void,
             )
             .unwrap();
 
             let mut full_device_path_bytes = FULL_DEVICE_PATH_BYTES;
 
-            let device_path_ptr = full_device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
+            let device_path_ptr = full_device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
             // SAFETY: full_device_path_bytes is a valid device path byte array for test code.
             let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
 
@@ -2958,7 +2809,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             // Load a valid test image as a template
@@ -3023,7 +2874,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             // Load a valid test image as a template
@@ -3166,7 +3017,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             const STACK_SIZE: usize = 0x10000;
@@ -3196,7 +3047,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3236,7 +3087,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3272,7 +3123,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3305,7 +3156,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3327,64 +3178,6 @@ mod tests {
     }
 
     #[test]
-    fn test_private_image_data_uninstall_removes_new_image_handle() {
-        with_locked_state(|| {
-            let image_data = create_test_private_image_data();
-            let handle = install_test_loaded_image_protocol(&image_data);
-
-            image_data.uninstall(handle).expect("partially installed image should uninstall");
-            assert_eq!(PROTOCOL_DB.validate_handle(handle), Err(EfiError::InvalidParameter));
-        });
-    }
-
-    #[test]
-    fn test_private_image_data_install_cleans_up_when_additional_interfaces_fail() {
-        with_locked_state(|| {
-            let mut image_data = create_test_private_image_data();
-            image_data.pe_info.image_type = EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER;
-            image_data.relocation_data.push(RelocationBlock {
-                block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
-                relocations: vec![crate::pecoff::relocation::Relocation { type_and_offset: 0x1 << 12, value: 0 }],
-            });
-
-            assert_eq!(image_data.install(), Err(EfiError::Unsupported));
-            assert_eq!(
-                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)),
-                Err(EfiError::NotFound)
-            );
-            assert_eq!(
-                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image_device_path::PROTOCOL_GUID)),
-                Err(EfiError::NotFound)
-            );
-        });
-    }
-
-    #[test]
-    fn test_private_image_data_uninstall_removes_partially_installed_protocols() {
-        with_locked_state(|| {
-            let image_data = create_test_private_image_data();
-            let handle = install_test_loaded_image_protocol(&image_data);
-            let file_path = image_data.get_file_path();
-
-            core_install_protocol_interface(
-                Some(handle),
-                efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-                file_path,
-            )
-            .expect("loaded image device path protocol should install");
-            assert!(PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::loaded_image::PROTOCOL_GUID).is_ok());
-            assert!(
-                PROTOCOL_DB
-                    .get_interface_for_handle(handle, efi::protocols::loaded_image_device_path::PROTOCOL_GUID)
-                    .is_ok()
-            );
-
-            image_data.uninstall(handle).expect("partially installed image should uninstall");
-            assert_eq!(PROTOCOL_DB.validate_handle(handle), Err(EfiError::InvalidParameter));
-        });
-    }
-
-    #[test]
     fn test_private_image_data_uninstall_succeeds_even_if_handle_is_stale() {
         test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
@@ -3392,7 +3185,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3428,7 +3221,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3467,7 +3260,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");
@@ -3525,19 +3318,18 @@ mod tests {
         image[machine_offset..machine_offset + 2].copy_from_slice(&machine.to_le_bytes());
     }
 
-    /// Converts a string file path into a FILEPATH device path node.
+    /// Converts a string file path into a FILEPATH device path node, whose path is a
+    /// null-terminated UCS-2 string.
     fn filepath_node_from_str(path: &str) -> Vec<u8> {
-        let path_bytes = path.as_bytes();
-        let path_len = path_bytes.len() + 2 + 4; // +2 for null terminator + 4 for header
+        let path_bytes: Vec<u8> = path.encode_utf16().chain(core::iter::once(0)).flat_map(u16::to_le_bytes).collect();
+        let path_len = path_bytes.len() + 4; // + 4 for header
         let mut node = vec![
             TYPE_MEDIA,
             Media::SUBTYPE_FILE_PATH,
             (path_len & 0xFF) as u8,        // length[0]
             ((path_len >> 8) & 0xFF) as u8, // length[1]
         ];
-        node.extend_from_slice(path_bytes);
-        node.push(0); // null terminator
-        node.push(0); // null terminator for unicode
+        node.extend_from_slice(&path_bytes);
         node
     }
 
@@ -3590,7 +3382,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             // Load the valid image.
@@ -3615,17 +3407,15 @@ mod tests {
             assert!(!private_info.image_info.file_path.is_null());
 
             // Validate the file path was set correctly
-            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
-            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+            // SAFETY: file_path was set by set_file_path to a valid device path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.image_info.file_path as *const u8) }.unwrap().as_bytes();
             assert_eq!(bytes, child_device_path.as_ref());
 
             // validate the entire device path is correct
-            let (_, len) =
-                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
-                    .unwrap();
-            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+            // SAFETY: get_file_path returns the full device path set by set_file_path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.get_file_path() as *const u8) }.unwrap().as_bytes();
             assert_eq!(bytes, child_device_path.as_ref());
         })
         .unwrap();
@@ -3646,7 +3436,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             // Register the parent device path to a new handle
@@ -3680,19 +3470,17 @@ mod tests {
             assert!(!private_info.image_info.file_path.is_null());
 
             // Validate the file path was set correctly
-            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
-            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+            // SAFETY: file_path was set by set_file_path to a valid device path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.image_info.file_path as *const u8) }.unwrap().as_bytes();
 
             // IMPORTANT: This is validating that we cut off the parent device path correctly.
             assert_eq!(bytes, child_filename.as_ref());
 
             // validate the entire device path is correct
-            let (_, len) =
-                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
-                    .unwrap();
-            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+            // SAFETY: get_file_path returns the full device path set by set_file_path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.get_file_path() as *const u8) }.unwrap().as_bytes();
 
             // IMPORTANT: This should always contain the full path.
             assert_eq!(bytes, child_device_path.as_ref());
@@ -3742,15 +3530,12 @@ mod tests {
         let mut hobs = Vec::new();
         // SAFETY: Taking a byte view of a stack-allocated HOB struct for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
-            core::slice::from_raw_parts(
-                (&raw const ma_hob).cast::<u8>(),
-                core::mem::size_of::<MemoryAllocationModule>(),
-            )
+            core::slice::from_raw_parts(&raw const ma_hob as *const u8, core::mem::size_of::<MemoryAllocationModule>())
         });
         // SAFETY: Taking a byte view of a stack-allocated HOB header for serialization into the test HOB list.
         hobs.extend_from_slice(unsafe {
             core::slice::from_raw_parts(
-                (&raw const end_hob).cast::<u8>(),
+                &raw const end_hob as *const u8,
                 core::mem::size_of::<patina::pi::hob::HobHeader>(),
             )
         });
@@ -3771,7 +3556,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(None);
                 test_support::init_test_protocol_db();
-                init_system_table(patina::UefiSpecVersion::V2_11);
+                init_system_table();
             }
 
             let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to open test file.");

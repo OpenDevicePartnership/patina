@@ -81,19 +81,21 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::{Acpi, ExtendedAcpi};
     ///
+    /// // `AcpiEx(HWP0002,PNP0A03,0)`: a device with the HID HWP0002 that is compatible with a PCI
+    /// // root bridge (UEFI 2.10 Section 10.6.1.5).
     /// let node = ExtendedAcpi {
-    ///     hid: Acpi::PCI_ROOT_HID,
+    ///     hid: Acpi::eisa_id("HWP0002"),
     ///     uid: 0,
-    ///     cid: 0,
+    ///     cid: Acpi::PCI_ROOT_HID,
     ///     hid_string: String::new(),
     ///     uid_string: String::new(),
     ///     cid_string: String::new(),
     /// };
-    /// assert_eq!(node.to_string(), "AcpiEx(PNP0A03,0,0x0,,,)");
+    /// assert_eq!(node.to_string(), "AcpiEx(HWP0002,PNP0A03,0x0,,,)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "PciRoot(0x0)");
-    /// assert_eq!(format!("{node:#}"), "AcpiEx(PNP0A03,0,0x0,,,)");
-    /// assert_eq!(format!("{node:-#}"), "AcpiEx(PNP0A03,0,0x0)");
+    /// assert_eq!(format!("{node:#}"), "AcpiEx(HWP0002,PNP0A03,0x0,,,)");
+    /// assert_eq!(format!("{node:-#}"), "AcpiEx(HWP0002,PNP0A03,0x0)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
@@ -447,5 +449,51 @@ mod tests {
         }
         assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
         assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
+    }
+
+    /// Check the text of each acpi node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_acpi() {
+        use crate::uefi::device_path::node::test_support::check_text;
+        use alloc::format;
+
+        check_text!(r"PciRoot(1)", r"PciRoot(0x1)", r"PciRoot(0x1)", r"Acpi(PNP0A03,0x1)");
+        check_text!(r"PcieRoot(2)", r"PcieRoot(0x2)", r"PcieRoot(0x2)", r"Acpi(PNP0A08,0x2)");
+        check_text!(r"Floppy(0)", r"Floppy(0x0)", r"Floppy(0x0)", r"Acpi(PNP0604,0x0)");
+        check_text!(r"Keyboard(0)", r"Keyboard(0x0)", r"Keyboard(0x0)", r"Acpi(PNP0301,0x0)");
+        check_text!(r"Serial(1)", r"Serial(0x1)", r"Serial(0x1)", r"Acpi(PNP0501,0x1)");
+        check_text!(r"ParallelPort(0)", r"ParallelPort(0x0)", r"ParallelPort(0x0)", r"Acpi(PNP0401,0x0)");
+        check_text!(r"Acpi(HWP0002,3)", r"Acpi(HWP0002,0x3)", r"Acpi(HWP0002,0x3)", r"Acpi(HWP0002,0x3)");
+        check_text!(
+            r"AcpiEx(HWP0002,PNP0A03,0)",
+            r"AcpiEx(HWP0002,PNP0A03,0x0,,,)",
+            r"PciRoot(0x0)",
+            r"AcpiEx(HWP0002,PNP0A03,0x0,,,)"
+        );
+        check_text!(
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)",
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)",
+            r"PciRoot(UniqueId)",
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)"
+        );
+        check_text!(
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)"
+        );
+
+        // A shortcut is not used without `AllowShortcuts`, even in the display-only form.
+        let acpi_ex = ExtendedAcpi {
+            hid: Acpi::PCI_ROOT_HID,
+            uid: 0,
+            cid: 0,
+            hid_string: String::new(),
+            uid_string: String::new(),
+            cid_string: String::new(),
+        };
+        assert_eq!(format!("{acpi_ex:-}"), "PciRoot(0x0)");
+        assert_eq!(format!("{acpi_ex:-#}"), "AcpiEx(PNP0A03,0,0x0)");
     }
 }

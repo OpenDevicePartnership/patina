@@ -16,7 +16,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-// cspell:ignore NGUID nguid sassata
+// cspell:ignore NGUID nguid sassata iscsitarget iscsidisk nvmeoftarget nvmeofdisk NSUUID
 use super::{DevicePathType, MessagingSubType, invalid};
 use super::{allow_shortcuts, display_only, write_hex_bytes, write_vendor};
 use crate::BinaryGuid;
@@ -158,12 +158,14 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::FiberChannel;
     ///
-    /// let node = FiberChannel { reserved: 0, wwn: 0x1122334455667788, lun: 0x10 };
-    /// assert_eq!(node.to_string(), "Fibre(0x1122334455667788,0x10)");
+    /// // The device of `FibreEx(0x0001020304050607,0x0001020304050607)` (UEFI 2.10 Section 10.3.4.3)
+    /// // in the original Fibre Channel node, where the name and LUN are integers.
+    /// let node = FiberChannel { reserved: 0, wwn: 0x0001_0203_0405_0607, lun: 0x0001_0203_0405_0607 };
+    /// assert_eq!(node.to_string(), "Fibre(0x1020304050607,0x1020304050607)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "Fibre(0x1122334455667788,0x10)");
-    /// assert_eq!(format!("{node:#}"), "Fibre(0x1122334455667788,0x10)");
-    /// assert_eq!(format!("{node:-#}"), "Fibre(0x1122334455667788,0x10)");
+    /// assert_eq!(format!("{node:-}"), "Fibre(0x1020304050607,0x1020304050607)");
+    /// assert_eq!(format!("{node:#}"), "Fibre(0x1020304050607,0x1020304050607)");
+    /// assert_eq!(format!("{node:-#}"), "Fibre(0x1020304050607,0x1020304050607)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = fiber_channel_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -204,16 +206,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::FiberChannelEx;
     ///
-    /// let node = FiberChannelEx {
-    ///     reserved: 0,
-    ///     wwn: [1, 2, 3, 4, 5, 6, 7, 8],
-    ///     lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
-    /// };
-    /// assert_eq!(node.to_string(), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// // `PciRoot(0)/PCI(31,0)/FibreEx(0x0001020304050607,0x0001020304050607)` (UEFI 2.10 Section 10.3.4.3).
+    /// let node = FiberChannelEx { reserved: 0, wwn: [0, 1, 2, 3, 4, 5, 6, 7], lun: [0, 1, 2, 3, 4, 5, 6, 7] };
+    /// assert_eq!(node.to_string(), "FibreEx(0x0001020304050607,0x0001020304050607)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
-    /// assert_eq!(format!("{node:#}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
-    /// assert_eq!(format!("{node:-#}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// assert_eq!(format!("{node:-}"), "FibreEx(0x0001020304050607,0x0001020304050607)");
+    /// assert_eq!(format!("{node:#}"), "FibreEx(0x0001020304050607,0x0001020304050607)");
+    /// assert_eq!(format!("{node:-#}"), "FibreEx(0x0001020304050607,0x0001020304050607)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = fiber_channel_ex_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -296,12 +295,14 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Usb;
     ///
-    /// let node = Usb { parent_port_number: 1, interface_number: 0 };
-    /// assert_eq!(node.to_string(), "USB(0x1,0x0)");
+    /// // The device on port 0 of the root hub, interface 0, of `PciRoot(0)/PCI(31,2)/USB(0,0)`
+    /// // (UEFI 2.10 Section 10.3.4.5.1).
+    /// let node = Usb { parent_port_number: 0, interface_number: 0 };
+    /// assert_eq!(node.to_string(), "USB(0x0,0x0)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "USB(0x1,0x0)");
-    /// assert_eq!(format!("{node:#}"), "USB(0x1,0x0)");
-    /// assert_eq!(format!("{node:-#}"), "USB(0x1,0x0)");
+    /// assert_eq!(format!("{node:-}"), "USB(0x0,0x0)");
+    /// assert_eq!(format!("{node:#}"), "USB(0x0,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "USB(0x0,0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
     @[DevicePathNodeDerive(Debug)]
@@ -367,14 +368,16 @@ device_path_node! {
     /// ```
     /// use patina::{standard::efi::MacAddress as EfiMacAddress, uefi::device_path::node::MacAddress};
     ///
+    /// // The network interface of the iSCSI example `PciRoot(0)/Pci(0x19,0x0)/Mac(001320F5FA77,0x01)/...`
+    /// // (UEFI 2.10 Section 10.3.4.20.2). The interface type 1 is Ethernet.
     /// let mut addr = [0; 32];
-    /// addr[..6].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    /// addr[..6].copy_from_slice(&[0x00, 0x13, 0x20, 0xf5, 0xfa, 0x77]);
     /// let node = MacAddress { mac_address: EfiMacAddress { addr }, if_type: 1 };
-    /// assert_eq!(node.to_string(), "MAC(001122334455,0x1)");
+    /// assert_eq!(node.to_string(), "MAC(001320f5fa77,0x1)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "MAC(001122334455,0x1)");
-    /// assert_eq!(format!("{node:#}"), "MAC(001122334455,0x1)");
-    /// assert_eq!(format!("{node:-#}"), "MAC(001122334455,0x1)");
+    /// assert_eq!(format!("{node:-}"), "MAC(001320f5fa77,0x1)");
+    /// assert_eq!(format!("{node:#}"), "MAC(001320f5fa77,0x1)");
+    /// assert_eq!(format!("{node:-#}"), "MAC(001320f5fa77,0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
     @[DevicePathNodeDerive(Debug)]
@@ -412,27 +415,30 @@ device_path_node! {
     /// use core::net::Ipv6Addr;
     /// use patina::uefi::device_path::node::IpV6;
     ///
+    /// // The IPv6 node of the iSCSI example (UEFI 2.10 Section 10.3.4.20.2): the target
+    /// // 2001:4898:a:1005:95a6:ee6c:bed3:4859 over TCP, with the local address 2001:4898:a:1005:215:17ff:fe21:5593
+    /// // assigned by DHCPv6 (stateful auto-configuration).
     /// let node = IpV6 {
-    ///     local_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2),
-    ///     remote_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
-    ///     local_port: 8443,
-    ///     remote_port: 443,
+    ///     local_ip_address: Ipv6Addr::new(0x2001, 0x4898, 0xa, 0x1005, 0x215, 0x17ff, 0xfe21, 0x5593),
+    ///     remote_ip_address: Ipv6Addr::new(0x2001, 0x4898, 0xa, 0x1005, 0x95a6, 0xee6c, 0xbed3, 0x4859),
+    ///     local_port: 0,
+    ///     remote_port: 0,
     ///     protocol: 6,
     ///     ip_address_origin: 2,
-    ///     prefix_length: 64,
-    ///     gateway_ip_address: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0xffff),
+    ///     prefix_length: 0,
+    ///     gateway_ip_address: Ipv6Addr::UNSPECIFIED,
     /// };
     /// assert_eq!(
     ///     node.to_string(),
-    ///     "IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+    ///     "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859,TCP,StatefulAutoConfigure,2001:4898:a:1005:215:17ff:fe21:5593,0x0,::)",
     /// );
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "IPv6([2001:db8::1]:443)");
+    /// assert_eq!(format!("{node:-}"), "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859)");
     /// assert_eq!(
     ///     format!("{node:#}"),
-    ///     "IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+    ///     "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859,TCP,StatefulAutoConfigure,2001:4898:a:1005:215:17ff:fe21:5593,0x0,::)",
     /// );
-    /// assert_eq!(format!("{node:-#}"), "IPv6([2001:db8::1]:443)");
+    /// assert_eq!(format!("{node:-#}"), "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -698,17 +704,19 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::SasEx;
     ///
+    /// // The device of `SAS(0x31000004CF13F6BD,0)` (UEFI 2.10 Section 10.3.4.18.4) in the extended node,
+    /// // where the address and LUN are byte arrays.
     /// let node = SasEx {
-    ///     sas_address: [1, 2, 3, 4, 5, 6, 7, 8],
-    ///     lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
-    ///     device_topology: 0x11,
-    ///     relative_target_port: 6,
+    ///     sas_address: [0x31, 0x00, 0x00, 0x04, 0xcf, 0x13, 0xf6, 0xbd],
+    ///     lun: [0; 8],
+    ///     device_topology: 0,
+    ///     relative_target_port: 0,
     /// };
-    /// assert_eq!(node.to_string(), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// assert_eq!(node.to_string(), "SasEx(0x31000004cf13f6bd,0x0000000000000000,0x0,NoTopology)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
-    /// assert_eq!(format!("{node:#}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
-    /// assert_eq!(format!("{node:-#}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// assert_eq!(format!("{node:-}"), "SasEx(0x31000004cf13f6bd,0x0000000000000000,0x0,NoTopology)");
+    /// assert_eq!(format!("{node:#}"), "SasEx(0x31000004cf13f6bd,0x0000000000000000,0x0,NoTopology)");
+    /// assert_eq!(format!("{node:-#}"), "SasEx(0x31000004cf13f6bd,0x0000000000000000,0x0,NoTopology)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
     @[DevicePathNodeDerive(Debug)]
@@ -1064,18 +1072,20 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::UsbClass;
     ///
+    /// // Any USB mass storage device using the SCSI command set over bulk-only transport (class 0x08,
+    /// // subclass 0x06, protocol 0x50). 0xFFFF matches any vendor and product.
     /// let node = UsbClass {
-    ///     vendor_id: 0x1234,
-    ///     product_id: 0x5678,
-    ///     device_class: 0xff,
-    ///     device_subclass: 0xff,
-    ///     device_protocol: 0xff,
+    ///     vendor_id: 0xffff,
+    ///     product_id: 0xffff,
+    ///     device_class: 0x08,
+    ///     device_subclass: 0x06,
+    ///     device_protocol: 0x50,
     /// };
-    /// assert_eq!(node.to_string(), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// assert_eq!(node.to_string(), "UsbMassStorage(0xffff,0xffff,0x6,0x50)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
-    /// assert_eq!(format!("{node:#}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
-    /// assert_eq!(format!("{node:-#}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// assert_eq!(format!("{node:-}"), "UsbMassStorage(0xffff,0xffff,0x6,0x50)");
+    /// assert_eq!(format!("{node:#}"), "UsbClass(0xffff,0xffff,0x8,0x6,0x50)");
+    /// assert_eq!(format!("{node:-#}"), "UsbClass(0xffff,0xffff,0x8,0x6,0x50)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
     @[DevicePathNodeDerive(Debug)]
@@ -1154,15 +1164,15 @@ device_path_node! {
     /// ```
     /// use patina::{BinaryGuid, uefi::device_path::node::MessagingVendor};
     ///
-    /// let node = MessagingVendor {
-    ///     guid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF"),
-    ///     data: vec![0x01, 0x02],
-    /// };
-    /// assert_eq!(node.to_string(), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// // The `DebugPort()` node of
+    /// // `PciRoot(0)/Pci(0x1f,0)/ACPI(PNP0501,0)/UART(115200,N,8,1)/UartFlowCtrl(2)/DebugPort()`
+    /// // (UEFI 2.10 Section 10.3.4.17): a vendor node with `EFI_DEBUGPORT_PROTOCOL_GUID` and no data.
+    /// let node = MessagingVendor { guid: BinaryGuid::from_string("EBA4E8D2-3858-41EC-A281-2647BA9660D0"), data: Vec::new() };
+    /// assert_eq!(node.to_string(), "DebugPort()");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
-    /// assert_eq!(format!("{node:#}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
-    /// assert_eq!(format!("{node:-#}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// assert_eq!(format!("{node:-}"), "DebugPort()");
+    /// assert_eq!(format!("{node:#}"), "VenMsg(EBA4E8D2-3858-41EC-A281-2647BA9660D0)");
+    /// assert_eq!(format!("{node:-#}"), "VenMsg(EBA4E8D2-3858-41EC-A281-2647BA9660D0)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
@@ -1236,12 +1246,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::UartFlowControl;
     ///
-    /// let node = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
-    /// assert_eq!(node.to_string(), "UartFlowCtrl(Hardware)");
+    /// // `UartFlowCtrl(2)`: Xon/Xoff flow control, from the debug port example (UEFI 2.10 Section 10.3.4.17).
+    /// let node = UartFlowControl { flow_control_map: UartFlowControl::XON_XOFF };
+    /// assert_eq!(node.to_string(), "UartFlowCtrl(XonXoff)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "UartFlowCtrl(Hardware)");
-    /// assert_eq!(format!("{node:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
-    /// assert_eq!(format!("{node:-#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
+    /// assert_eq!(format!("{node:-}"), "UartFlowCtrl(XonXoff)");
+    /// assert_eq!(format!("{node:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,02000000)");
+    /// assert_eq!(format!("{node:-#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,02000000)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
@@ -1351,23 +1362,19 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Sas;
     ///
-    /// let node = Sas {
-    ///     reserved: 0,
-    ///     sas_address: 0x1234,
-    ///     lun: 0,
-    ///     device_topology: 0,
-    ///     relative_target_port: 0x100,
-    /// };
-    /// assert_eq!(node.to_string(), "SAS(0x1234,0x0,0x100,NoTopology)");
+    /// // `SAS(0x31000004CF13F6BD,0)`: LUN 0 of a SAS device reached through SSP, without additional
+    /// // topology information (UEFI 2.10 Section 10.3.4.18.4).
+    /// let node = Sas { reserved: 0, sas_address: 0x3100_0004_cf13_f6bd, lun: 0, device_topology: 0, relative_target_port: 0 };
+    /// assert_eq!(node.to_string(), "SAS(0x31000004cf13f6bd,0x0,0x0,NoTopology)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "SAS(0x1234,0x0,0x100,NoTopology)");
+    /// assert_eq!(format!("{node:-}"), "SAS(0x31000004cf13f6bd,0x0,0x0,NoTopology)");
     /// assert_eq!(
     ///     format!("{node:#}"),
-    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000000000001)",
+    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,00000000bdf613cf04000031000000000000000000000000)",
     /// );
     /// assert_eq!(
     ///     format!("{node:-#}"),
-    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000000000001)",
+    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,00000000bdf613cf04000031000000000000000000000000)",
     /// );
     /// ```
     @[DevicePathNode(
@@ -1573,28 +1580,24 @@ device_path_node! {
     ///
     /// ```
     /// use core::net::Ipv4Addr;
-    /// use patina::uefi::device_path::node::{IpV4, IpV4Network};
+    /// use patina::uefi::device_path::node::IpV4;
     ///
+    /// // `IPv4(192.168.0.100,TCP,Static,192.168.0.1)` of the iSCSI example (UEFI 2.10 Section 10.3.4.20.2):
+    /// // the target is 192.168.0.100 and the static local address is 192.168.0.1.
     /// let node = IpV4 {
-    ///     local_ip: Ipv4Addr::new(192, 168, 0, 2),
-    ///     remote_ip: Ipv4Addr::new(192, 168, 0, 1),
-    ///     local_port: 8080,
-    ///     remote_port: 80,
+    ///     local_ip: Ipv4Addr::new(192, 168, 0, 1),
+    ///     remote_ip: Ipv4Addr::new(192, 168, 0, 100),
+    ///     local_port: 0,
+    ///     remote_port: 0,
     ///     protocol: 6,
     ///     static_ip: true,
-    ///     network: Some(IpV4Network {
-    ///         gateway: Ipv4Addr::new(192, 168, 0, 254),
-    ///         subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
-    ///     }),
+    ///     network: None,
     /// };
-    /// assert_eq!(
-    ///     node.to_string(),
-    ///     "IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,192.168.0.254,255.255.255.0)",
-    /// );
+    /// assert_eq!(node.to_string(), "IPv4(192.168.0.100,TCP,Static,192.168.0.1)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "IPv4(192.168.0.1:80)");
-    /// assert_eq!(format!("{node:#}"), "IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,192.168.0.254,255.255.255.0)");
-    /// assert_eq!(format!("{node:-#}"), "IPv4(192.168.0.1:80)");
+    /// assert_eq!(format!("{node:-}"), "IPv4(192.168.0.100)");
+    /// assert_eq!(format!("{node:#}"), "IPv4(192.168.0.100,TCP,Static,192.168.0.1)");
+    /// assert_eq!(format!("{node:-#}"), "IPv4(192.168.0.100)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::IpV4,
@@ -1687,29 +1690,31 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Iscsi;
     ///
+    /// // `iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0,None,None,None,TCP)`
+    /// // (UEFI 2.10 Section 10.3.4.20.2): portal group 1, LUN 0, no digests and no authentication.
     /// let node = Iscsi {
     ///     protocol: 0,
     ///     options: 1 << 11,
-    ///     lun: [0, 1, 2, 3, 4, 5, 6, 7],
+    ///     lun: [0; 8],
     ///     portal_group: 1,
-    ///     target_name: "iqn.2026-10.com.example:disk".into(),
+    ///     target_name: "iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target".into(),
     /// };
     /// assert_eq!(
     ///     node.to_string(),
-    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    ///     "iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)",
     /// );
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(
     ///     format!("{node:-}"),
-    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    ///     "iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)",
     /// );
     /// assert_eq!(
     ///     format!("{node:#}"),
-    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    ///     "iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)",
     /// );
     /// assert_eq!(
     ///     format!("{node:-#}"),
-    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    ///     "iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)",
     /// );
     /// ```
     @[DevicePathNode(
@@ -1780,12 +1785,13 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::Uri;
     ///
-    /// let node = Uri { uri: "https://example.com/boot".into() };
-    /// assert_eq!(node.to_string(), "Uri(https://example.com/boot)");
+    /// // The boot file of an HTTP boot server.
+    /// let node = Uri { uri: "http://192.168.0.1/boot/bootx64.efi".into() };
+    /// assert_eq!(node.to_string(), "Uri(http://192.168.0.1/boot/bootx64.efi)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "Uri(https://example.com/boot)");
-    /// assert_eq!(format!("{node:#}"), "Uri(https://example.com/boot)");
-    /// assert_eq!(format!("{node:-#}"), "Uri(https://example.com/boot)");
+    /// assert_eq!(format!("{node:-}"), "Uri(http://192.168.0.1/boot/bootx64.efi)");
+    /// assert_eq!(format!("{node:#}"), "Uri(http://192.168.0.1/boot/bootx64.efi)");
+    /// assert_eq!(format!("{node:-#}"), "Uri(http://192.168.0.1/boot/bootx64.efi)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Uri,
@@ -1963,12 +1969,15 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::{RestService, RestServiceType};
     ///
-    /// let node = RestService { service: RestServiceType::Redfish, access_mode: 1 };
-    /// assert_eq!(node.to_string(), "RestService(0x1,0x1)");
+    /// // `RestService(1,2)`: an out-of-band Redfish service, from
+    /// // `PciRoot(0x2)/Pci(0x2,0x0)/Pci(0x0,0x0)/MAC(FD19FA100672,0x0)/IPv4(...)/RestService(1,2)`
+    /// // (UEFI 2.10 Section 10.3.4.31).
+    /// let node = RestService { service: RestServiceType::Redfish, access_mode: 2 };
+    /// assert_eq!(node.to_string(), "RestService(0x1,0x2)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "RestService(0x1,0x1)");
-    /// assert_eq!(format!("{node:#}"), "RestService(0x1,0x1)");
-    /// assert_eq!(format!("{node:-#}"), "RestService(0x1,0x1)");
+    /// assert_eq!(format!("{node:-}"), "RestService(0x1,0x2)");
+    /// assert_eq!(format!("{node:#}"), "RestService(0x1,0x2)");
+    /// assert_eq!(format!("{node:-#}"), "RestService(0x1,0x2)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::RestService,
@@ -2069,30 +2078,31 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::NvmeOf;
     ///
+    /// // `NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)`
+    /// // (UEFI 2.10 Section 10.3.4.33): the namespace identifier is an NSUUID (type 3), in big-endian order.
     /// let node = NvmeOf {
     ///     identifier_type: 3,
     ///     identifier: [
-    ///         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-    ///         0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ///         0x4e, 0xff, 0x7f, 0x8e, 0xd3, 0x53, 0x4e, 0x9b, 0xa4, 0xec, 0xde, 0xea, 0x8e, 0xab, 0x84, 0xd7,
     ///     ],
-    ///     subsystem_nqn: "nqn.2026-10.com.example:disk".into(),
+    ///     subsystem_nqn: "nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target".into(),
     /// };
     /// assert_eq!(
     ///     node.to_string(),
-    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    ///     "NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)",
     /// );
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(
     ///     format!("{node:-}"),
-    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    ///     "NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)",
     /// );
     /// assert_eq!(
     ///     format!("{node:#}"),
-    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    ///     "NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)",
     /// );
     /// assert_eq!(
     ///     format!("{node:-#}"),
-    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    ///     "NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)",
     /// );
     /// ```
     @[DevicePathNode(
@@ -2809,5 +2819,198 @@ mod tests {
         for id in [0, u32::MAX] {
             assert!(encode_node(NvmExpress::new(id, 0)).is_err());
         }
+    }
+
+    /// Check the text of each messaging node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_messaging() {
+        use crate::uefi::device_path::node::test_support::check_text;
+        use alloc::format;
+
+        check_text!(r"Ata(Primary,Master,0)", r"Ata(Primary,Master,0x0)", r"Ata(0x0)", r"Ata(Primary,Master,0x0)");
+        check_text!(r"Scsi(1,2)", r"Scsi(0x1,0x2)", r"Scsi(0x1,0x2)", r"Scsi(0x1,0x2)");
+        check_text!(
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)"
+        );
+        check_text!(
+            r"FibreEx(0102030405060708,1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)"
+        );
+        check_text!(
+            r"I1394(0x0123456789ABCDEF)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)"
+        );
+        check_text!(r"USB(1,0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)");
+        check_text!(r"I2O(5)", r"I2O(0x5)", r"I2O(0x5)", r"I2O(0x5)");
+        check_text!(
+            r"Infiniband(1,00112233-4455-6677-8899-AABBCCDDEEFF,1,2,3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)"
+        );
+        check_text!(
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)"
+        );
+        check_text!(r"VenPcAnsi()", r"VenPcAnsi()", r"VenPcAnsi()", r"VenMsg(E0C14753-F9BE-11D2-9A0C-0090273FC14D)");
+        check_text!(r"VenVt100()", r"VenVt100()", r"VenVt100()", r"VenMsg(DFA66065-B419-11D3-9A2D-0090273FC14D)");
+        check_text!(
+            r"VenVt100Plus()",
+            r"VenVt100Plus()",
+            r"VenVt100Plus()",
+            r"VenMsg(7BAEC70B-57E0-4C76-8E87-2F9E28088343)"
+        );
+        check_text!(r"VenUtf8()", r"VenUtf8()", r"VenUtf8()", r"VenMsg(AD15A0D6-8BEC-4ACF-A073-D01DE77E2D88)");
+        check_text!(
+            r"UartFlowCtrl(XonXoff)",
+            r"UartFlowCtrl(XonXoff)",
+            r"UartFlowCtrl(XonXoff)",
+            r"VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,02000000)"
+        );
+        check_text!(
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,2)",
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,0x2)",
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,0x2)",
+            r"VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000050000000000000062010600)"
+        );
+        check_text!(r"DebugPort()", r"DebugPort()", r"DebugPort()", r"VenMsg(EBA4E8D2-3858-41EC-A281-2647BA9660D0)");
+        check_text!(
+            r"MAC(001122334455,0x1)",
+            r"MAC(001122334455,0x1)",
+            r"MAC(001122334455,0x1)",
+            r"MAC(001122334455,0x1)"
+        );
+        check_text!(
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,UDP,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)",
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,UDP,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)"
+        );
+        check_text!(
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)",
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)",
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)"
+        );
+        check_text!(
+            r"IPv6(2001:db8::1)",
+            r"IPv6(2001:db8::1,UDP,Static,::,0x0,::)",
+            r"IPv6(2001:db8::1)",
+            r"IPv6(2001:db8::1,UDP,Static,::,0x0,::)"
+        );
+        check_text!(
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080)",
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)",
+            r"IPv4(192.168.0.1:80)",
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)"
+        );
+        check_text!(
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,64,2001:db8::ffff)",
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+            r"IPv6([2001:db8::1]:443)",
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)"
+        );
+        check_text!(r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)");
+        check_text!(
+            r"UsbClass(0x1234,0x5678,0x8,0x6,0x50)",
+            r"UsbMassStorage(0x1234,0x5678,0x6,0x50)",
+            r"UsbMassStorage(0x1234,0x5678,0x6,0x50)",
+            r"UsbClass(0x1234,0x5678,0x8,0x6,0x50)"
+        );
+        check_text!(
+            r"UsbMassStorage(0xFFFF,0xFFFF,0x6,0x50)",
+            r"UsbMassStorage(0xffff,0xffff,0x6,0x50)",
+            r"UsbMassStorage(0xffff,0xffff,0x6,0x50)",
+            r"UsbClass(0xffff,0xffff,0x8,0x6,0x50)"
+        );
+        check_text!(
+            r#"UsbWwid(0x1234,0x5678,0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#
+        );
+        check_text!(r"Unit(1)", r"Unit(0x1)", r"Unit(0x1)", r"Unit(0x1)");
+        check_text!(r"Sata(0,0xFFFF,0)", r"Sata(0x0,0xffff,0x0)", r"Sata(0x0,0xffff,0x0)", r"Sata(0x0,0xffff,0x0)");
+        check_text!(
+            r"iSCSI(iqn.x,1,0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)"
+        );
+        check_text!(r"Vlan(100)", r"Vlan(100)", r"Vlan(100)", r"Vlan(100)");
+        check_text!(
+            r"SasEx(0102030405060708,1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)"
+        );
+        check_text!(
+            r"SasEx(0102030405060708,1112131415161718,0x6)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)"
+        );
+        check_text!(
+            r"SasEx(0102030405060708,1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)"
+        );
+        check_text!(
+            r"SAS(0x1234,0,0,SATA,Internal,Direct,256)",
+            r"SAS(0x1234,0x0,0x0,SATA,Internal,Direct,0x100)",
+            r"SAS(0x1234,0x0,0x0,SATA,Internal,Direct,0x100)",
+            r"VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000012ff0000)"
+        );
+        check_text!(
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)"
+        );
+        check_text!(r"Uri(http://a/b)", r"Uri(http://a/b)", r"Uri(http://a/b)", r"Uri(http://a/b)");
+        check_text!(r"UFS(0,0x3)", r"UFS(0x0,0x3)", r"UFS(0x0,0x3)", r"UFS(0x0,0x3)");
+        check_text!(r"SD(1)", r"SD(0x1)", r"SD(0x1)", r"SD(0x1)");
+        check_text!(
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)"
+        );
+        check_text!(r"Wi-Fi(ssid)", r"Wi-Fi(ssid)", r"Wi-Fi(ssid)", r"Wi-Fi(ssid)");
+        check_text!(r"eMMC(0)", r"eMMC(0x0)", r"eMMC(0x0)", r"eMMC(0x0)");
+        check_text!(
+            r"BluetoothLE(001122334455,0x1)",
+            r"BluetoothLE(001122334455,0x01)",
+            r"BluetoothLE(001122334455,0x01)",
+            r"BluetoothLE(001122334455,0x01)"
+        );
+        check_text!(
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)"
+        );
+        check_text!(r"RestService(1,1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)");
+        check_text!(
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)"
+        );
+
+        let uart = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
+        assert_eq!(format!("{uart}"), "UartFlowCtrl(Hardware)");
+        assert_eq!(format!("{uart:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
     }
 }

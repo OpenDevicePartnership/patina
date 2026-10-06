@@ -45,6 +45,11 @@ device_path_node! {
     pub struct EndEntire;
 }
 
+impl EndEntire {
+    /// The encoded node: its header, with a length of 4 bytes and no data.
+    pub const BYTES: [u8; 4] = [DevicePathType::End as u8, EndSubType::Entire as u8, 4, 0];
+}
+
 impl TryIntoCtx<scroll::Endian> for EndEntire {
     type Error = scroll::Error;
 

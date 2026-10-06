@@ -148,9 +148,9 @@ pub trait DevicePathNode: Debug + Display {
 /// #### Parameters
 ///
 /// - `<type>` (required): device path type, an enum value that converts to `u8`, from
-///   [`node_types`](crate::uefi::device_path::node::node_types).
+///   [`node_types`].
 /// - `<sub_type>` (required): device path sub-type, an enum value that converts to `u8`,
-///   from [`node_types`](crate::uefi::device_path::node::node_types).
+///   from [`node_types`].
 /// - `<function to override> = <function to use>` (optional): replaces the default
 ///   implementation of a [`DevicePathNode`] method with a function that takes the node
 ///   by reference. Can be repeated, in any order.
@@ -1013,6 +1013,27 @@ pub(crate) mod test_support {
     }
 
     pub(crate) use fixture;
+
+    /// Check a node's text in the default, display-only (`-`) and no-shortcut (`#`) forms,
+    /// and that the parseable forms parse back to the same bytes.
+    macro_rules! check_text {
+        ($input:literal, $text:literal, $display_only:literal, $no_shortcuts:literal) => {{
+            let bytes = $crate::devpath!($input);
+            let path = $crate::uefi::device_path::DevicePath::try_from_bytes(&bytes).expect($input);
+            assert_eq!(alloc::format!("{path}"), $text, "default text of {}", $input);
+            assert_eq!(alloc::format!("{path:-}"), $display_only, "display-only text of {}", $input);
+            assert_eq!(alloc::format!("{path:#}"), $no_shortcuts, "text without shortcuts of {}", $input);
+            assert_eq!($crate::devpath!($text), bytes, "default text of {} does not parse back", $input);
+            assert_eq!(
+                $crate::devpath!($no_shortcuts),
+                bytes,
+                "text without shortcuts of {} does not parse back",
+                $input
+            );
+        }};
+    }
+
+    pub(crate) use check_text;
 }
 
 #[cfg(test)]
@@ -1083,7 +1104,7 @@ mod tests {
         assert_eq!(length, u16::MAX);
         assert!(encode_node(HugeNode).is_err());
 
-        assert!(DevicePathBuf::from_device_path_node_iter([HugeNode].into_iter()).is_err());
+        assert!(DevicePathBuf::new().append(HugeNode).is_err());
     }
 
     #[test]
@@ -1169,22 +1190,13 @@ mod tests {
 
     #[test]
     fn test_device_path_builder_propagates_errors() {
-        let mut path = DevicePathBuf::from_device_path_node_iter([EndEntire].into_iter()).unwrap();
+        let mut path = DevicePathBuf::new();
         let expected = path.as_bytes().to_vec();
         assert!(path.append(Sata::new(u16::MAX, 0, 0)).is_err());
         assert_eq!(path.as_bytes(), expected);
         assert!(path.append(FilePath::new("bad\0path")).is_err());
         assert_eq!(path.as_bytes(), expected);
-        assert!(DevicePathBuf::from_device_path_node_iter([Sata::new(u16::MAX, 0, 0)].into_iter()).is_err());
-        assert!(DevicePathBuf::from_device_path_node_iter([EndEntire, EndEntire].into_iter()).is_err());
     }
-}
-
-#[cfg(test)]
-mod device_path_node_tests {
-    use super::{DevicePathNode, DevicePathType, HardwareSubType, test_support::encode_node};
-    use scroll::{Pread, Pwrite};
-
     device_path_node! {
         @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
         @[DevicePathNodeDerive(Debug, Display)]
@@ -1259,5 +1271,19 @@ mod device_path_node_tests {
         let node = Overridden { value: 1 };
         assert_eq!(node.measure_size(), 7);
         assert_eq!(node.validate(), Err("always rejected"));
+    }
+
+    /// Check the text of each generic node in the three text forms, and that the parseable forms
+    /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_generic() {
+        use crate::uefi::device_path::node::test_support::check_text;
+
+        check_text!(r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)");
+        check_text!(r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)");
+        check_text!(r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)");
+        check_text!(r"Msg(99,aabb)", r"Msg(99,aabb)", r"Msg(99,aabb)", r"Msg(99,aabb)");
+        check_text!(r"MediaPath(99,aabb)", r"MediaPath(99,aabb)", r"MediaPath(99,aabb)", r"MediaPath(99,aabb)");
+        check_text!(r"BbsPath(9,aabb)", r"BbsPath(9,aabb)", r"BbsPath(9,aabb)", r"BbsPath(9,aabb)");
     }
 }
