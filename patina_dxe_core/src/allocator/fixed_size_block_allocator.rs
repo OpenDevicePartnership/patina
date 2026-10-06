@@ -202,6 +202,10 @@ pub struct FixedSizeBlockAllocator {
     /// Most recently used allocator node for per-page accounting.
     page_accounting_node: Option<NonNull<AllocatorListNode>>,
 
+    /// Allocator node and page index where the next retired-page search begins. This is maintained to reclaim pages
+    /// in FIFO order, maximizing the time between a page being freed and it being reclaimed.
+    retired_page_cursor: Option<(NonNull<AllocatorListNode>, usize)>,
+
     /// The range of memory that is reserved for this allocator. This is used to stabilize the memory map during an
     /// S4 resume.
     pub(crate) reserved_range: Option<Range<efi::PhysicalAddress>>,
@@ -225,6 +229,7 @@ impl FixedSizeBlockAllocator {
             list_tails: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
             page_accounting_node: None,
+            retired_page_cursor: None,
             reserved_range: None,
             stats: AllocationStatistics::new(),
             page_allocation_granularity,
@@ -240,6 +245,7 @@ impl FixedSizeBlockAllocator {
         self.list_tails = [EMPTY; BLOCK_SIZES.len()];
         self.allocators = None;
         self.page_accounting_node = None;
+        self.retired_page_cursor = None;
         self.reserved_range = None;
         self.stats = AllocationStatistics::new();
     }
@@ -313,6 +319,9 @@ impl FixedSizeBlockAllocator {
 
         self.allocators = Some(alloc_node_ptr);
         self.page_accounting_node = NonNull::new(alloc_node_ptr);
+        if self.retired_page_cursor.is_none() {
+            self.retired_page_cursor = NonNull::new(alloc_node_ptr).map(|node| (node, 0));
+        }
 
         if self.in_reserved_range(alloc_node_ptr.addr() as efi::PhysicalAddress) {
             self.stats.reserved_used += new_region.len();
@@ -345,7 +354,7 @@ impl FixedSizeBlockAllocator {
 
         // SAFETY: node is valid and its heap covers all of the whole pages in the region.
         unsafe {
-            (*node).allocator.allocate_first_fit(layout).map_err(|_| FixedSizeBlockAllocatorError::InternalError)?;
+            (*node).allocator.allocate_first_fit(layout).map_err(|()| FixedSizeBlockAllocatorError::InternalError)?;
             for page_base in pages.clone().step_by(UEFI_PAGE_SIZE) {
                 if let Some((_, free_bytes)) = (*node).page_free_bytes_mut(page_base) {
                     *free_bytes = AllocatorListNode::RETIRING_PAGE;
@@ -603,24 +612,95 @@ impl FixedSizeBlockAllocator {
         }
     }
 
-    /// Returns the address range of up to `count` contiguous retired pages, if the allocator has any.
+    /// Returns the allocator node that contains up to `count` contiguous retired pages, if the allocator has any.
+    /// This function will return the nodes in FIFO order, starting from the given `current` node.
     ///
     /// The pages remain retired until they are handed to [`Self::restore_pages`].
-    fn find_retired_pages(&self, count: usize) -> Option<Range<usize>> {
-        AllocatorIterator::new(self.allocators).find_map(|node| {
-            // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
-            let node = unsafe { &*node };
-            let first =
-                node.page_free_bytes.iter().position(|free_bytes| *free_bytes == AllocatorListNode::RETIRED_PAGE)?;
-            let run = node
+    fn next_allocator_node(&self, current: NonNull<AllocatorListNode>) -> Option<NonNull<AllocatorListNode>> {
+        let head = NonNull::new(self.allocators?)?;
+        let mut node = head;
+        let tail = loop {
+            // SAFETY: node is from the allocator list and remains valid for the lifetime of the allocator.
+            let next = unsafe { node.as_ref().next }.and_then(NonNull::new);
+            if next == Some(current) {
+                return Some(node);
+            }
+            let Some(next) = next else { break node };
+            node = next;
+        };
+
+        (current == head).then_some(tail)
+    }
+
+    // Search through the allocator nodes for a contiguous run of exactly `count` retired pages. If there does not
+    // exist a suitable run, None is returned. This function uses the retired_page_cursor to maintain FIFO order of
+    // page reclamation.
+    fn find_retired_pages(&mut self, count: usize) -> Option<Range<usize>> {
+        if count == 0 {
+            return None;
+        }
+
+        let head = NonNull::new(self.allocators?)?;
+        let (start_node, start_index) = self.retired_page_cursor.unwrap_or((head, 0));
+        let mut node = Some(start_node);
+        let mut wrapped = false;
+
+        while let Some(current) = node {
+            // SAFETY: retired_page_cursor and allocators only contain nodes from the allocator list, which remain
+            // valid for the lifetime of the allocator.
+            let current_ref = unsafe { current.as_ref() };
+            let begin =
+                if !wrapped && current == start_node { start_index.min(current_ref.page_free_bytes.len()) } else { 0 };
+            let end = if wrapped && current == start_node {
+                start_index.min(current_ref.page_free_bytes.len())
+            } else {
+                current_ref.page_free_bytes.len()
+            };
+
+            let mut search_index = begin;
+            while let Some(relative_first) = current_ref
                 .page_free_bytes
-                .get(first..)?
+                .get(search_index..end)?
                 .iter()
-                .take(count)
-                .take_while(|free_bytes| **free_bytes == AllocatorListNode::RETIRED_PAGE)
-                .count();
-            Some(node.region_base() + uefi_pages_to_size!(first)..node.region_base() + uefi_pages_to_size!(first + run))
-        })
+                .position(|free_bytes| *free_bytes == AllocatorListNode::RETIRED_PAGE)
+            {
+                let first = search_index + relative_first;
+                let run = current_ref
+                    .page_free_bytes
+                    .get(first..end)?
+                    .iter()
+                    .take(count)
+                    .take_while(|free_bytes| **free_bytes == AllocatorListNode::RETIRED_PAGE)
+                    .count();
+                if run == count {
+                    let next_index = first + count;
+                    self.retired_page_cursor = if next_index < current_ref.page_free_bytes.len() {
+                        Some((current, next_index))
+                    } else {
+                        Some((self.next_allocator_node(current).unwrap_or(head), 0))
+                    };
+                    return Some(
+                        current_ref.region_base() + uefi_pages_to_size!(first)
+                            ..current_ref.region_base() + uefi_pages_to_size!(next_index),
+                    );
+                }
+
+                search_index = first + run;
+                if search_index < end {
+                    search_index += 1;
+                }
+            }
+
+            node = self.next_allocator_node(current);
+            if node == Some(start_node) {
+                wrapped = true;
+            }
+            if wrapped && current == start_node {
+                break;
+            }
+        }
+
+        None
     }
 
     /// Marks pages that have been unmapped as retired, making them available to be mapped back in and reused.
@@ -2819,12 +2899,57 @@ mod tests {
             assert_eq!(fsb.find_retired_pages(usize::MAX), None);
 
             fsb.mark_pages_retired(pages.clone());
-            assert_eq!(fsb.find_retired_pages(usize::MAX), Some(pages.clone()));
+            assert_eq!(fsb.find_retired_pages(uefi_size_to_pages!(pages.len())), Some(pages.clone()));
 
             // Restoring them puts them back into the backing allocator.
             fsb.restore_pages(pages);
             assert_eq!(fsb.find_retired_pages(usize::MAX), None);
             assert!(fsb.alloc(Layout::from_size_align(UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap()).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_retired_pages_are_found_in_fifo_order_across_regions() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            init_gcd(&GCD, 0x400000);
+
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
+            let region_size = UEFI_PAGE_SIZE * 4;
+            let mut retired_regions = Vec::new();
+
+            for _ in 0..3 {
+                let region = GCD
+                    .allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        region_size,
+                        DUMMY_HANDLE,
+                        None,
+                    )
+                    .unwrap();
+                let retired = fsb
+                    .expand(NonNull::slice_from_raw_parts(NonNull::new(region as *mut u8).unwrap(), region_size))
+                    .unwrap()
+                    .unwrap();
+                fsb.mark_pages_retired(retired.clone());
+                retired_regions.push(retired);
+            }
+
+            let first_region = retired_regions.first().unwrap();
+            for page_base in first_region.clone().step_by(UEFI_PAGE_SIZE) {
+                assert_eq!(fsb.find_retired_pages(1), Some(page_base..page_base + UEFI_PAGE_SIZE));
+            }
+
+            for region in retired_regions.iter().skip(1) {
+                for page_base in region.clone().step_by(UEFI_PAGE_SIZE) {
+                    assert_eq!(fsb.find_retired_pages(1), Some(page_base..page_base + UEFI_PAGE_SIZE));
+                }
+            }
+
+            // Since the pages remain retired, the cursor eventually wraps back to the first region.
+            assert_eq!(fsb.find_retired_pages(1), Some(first_region.start..first_region.start + UEFI_PAGE_SIZE));
         });
     }
 
