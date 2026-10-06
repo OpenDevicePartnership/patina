@@ -4,6 +4,32 @@
 //! Uses the UEFI specification as a reference for struct definitions and parsing logic:
 //! <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html>
 //!
+//! ## Text representation
+//!
+//! [`DevicePath`], [`DevicePathBuf`] and every node implement [`Display`]
+//! with the text representation of `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL` (UEFI 2.10 Section 10.6).
+//! Standalone end nodes display as their conventional separators (`EndInstance` as `,`,
+//! `EndEntire` as an empty string); in a path, they separate instances and end the path.
+//!
+//! ### Format flags
+//!
+//! The `DisplayOnly` and `AllowShortcuts` parameters of
+//! [`ConvertDevicePathToText()`](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
+//! are selected with format flags:
+//!
+//! | Format    | `DisplayOnly` | `AllowShortcuts` | Example                       |
+//! |-----------|---------------|------------------|-------------------------------|
+//! | `{}`      | `FALSE`       | `TRUE`           | `PciRoot(0x0)/HD(1,MBR,0x12345678,0x800,0x1000)` |
+//! | `{:-}`    | `TRUE`        | `TRUE`           | `PciRoot(0x0)/HD(1,MBR,0x12345678)` |
+//! | `{:#}`    | `FALSE`       | `FALSE`          | `Acpi(PNP0A03,0x0)/HD(1,MBR,0x12345678,0x800,0x1000)` |
+//! | `{:-#}`   | `TRUE`        | `FALSE`          | `Acpi(PNP0A03,0x0)/HD(1,MBR,0x12345678)` |
+//!
+//! The default form is lossless and parses back to the same device path. The display-only
+//! form (`-`) is shorter and may omit fields. A shortcut is a node name chosen from
+//! information other than the type and sub-type, such as `PciRoot` for an ACPI node with
+//! the PCI root bridge HID; `#` uses only the names of the type and sub-type
+//! (UEFI 2.10 Section 10.6.4 and Table 10.67).
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation.
@@ -17,18 +43,20 @@ pub mod encoding;
 pub mod fv_types;
 /// Device path node definitions.
 pub mod node;
-/// Conversion of device paths and nodes to the UEFI text representation.
-pub mod text;
 /// Module for walking UEFI device paths, providing utilities for traversing and analyzing device path structures.
 pub mod walker;
 
-use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{
     borrow::Borrow,
     clone::Clone,
     convert::{AsRef, From},
-    fmt::{Debug, Display},
-    format_args,
+    fmt::{self, Debug, Display},
     iter::Iterator,
     ops::{Deref, DerefMut},
 };
@@ -244,7 +272,7 @@ impl Deref for DevicePathBuf {
     type Target = DevicePath;
 
     fn deref(&self) -> &Self::Target {
-        DevicePath::from(self)
+        self.into()
     }
 }
 
@@ -276,15 +304,24 @@ impl From<&DevicePath> for DevicePathBuf {
     }
 }
 
+/// Borrow a device path buffer as a device path.
+impl<'a> From<&'a DevicePathBuf> for &'a DevicePath {
+    fn from(value: &'a DevicePathBuf) -> Self {
+        // SAFETY: DevicePath is repr(transparent) over `[u8]`, so it has the same memory layout.
+        unsafe { &*(core::ptr::from_ref::<[u8]>(value.buffer.as_slice()) as *const DevicePath) }
+    }
+}
+
 impl Display for DevicePathBuf {
+    /// Write the UEFI text representation of the device path; see [`DevicePath`].
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("{}", self.as_ref()))
+        Display::fmt(self.as_ref(), f)
     }
 }
 
 impl PartialEq for DevicePathBuf {
     fn eq(&self, other: &DevicePathBuf) -> bool {
-        DevicePath::from(self) == DevicePath::from(other)
+        self.buffer == other.buffer
     }
 }
 
@@ -299,12 +336,6 @@ pub struct DevicePath {
 }
 
 impl DevicePath {
-    /// Create a &`DevicePath` for a `DevicePathBuf`.
-    pub fn from(device_path_buff: &DevicePathBuf) -> &Self {
-        // SAFETY: This is safe because DevicePath have the same memory layout as `[u8]`.
-        unsafe { &*(core::ptr::from_ref::<[u8]>(device_path_buff.buffer.as_slice()) as *const Self) }
-    }
-
     /// Create a &`DevicePath` from a pointer to a byte buffer.
     /// This is used to interface with device paths from C code.
     ///
@@ -599,6 +630,43 @@ impl DevicePath {
         self.buffer.get(..self.buffer.len() - END_ENTIRE_BYTES.len()).unwrap_or_default()
     }
 }
+impl fmt::Display for DevicePath {
+    /// Write the UEFI text representation of the device path.
+    ///
+    /// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
+    ///
+    /// The format flags select the `DisplayOnly` and `AllowShortcuts` parameters: `{}` is the
+    /// default parseable form with shortcuts, `{:-}` the shorter display-only form, and `{:#}`
+    /// the form without shortcuts. See the [format flags](crate::uefi::device_path#format-flags).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut need_separator = false;
+        for generic in self.iter() {
+            if EndEntire::is_type(generic.header.r#type, generic.header.sub_type) {
+                break;
+            }
+            if EndInstance::is_type(generic.header.r#type, generic.header.sub_type) {
+                f.write_str(",")?;
+                need_separator = false;
+                continue;
+            }
+            if need_separator {
+                f.write_str("/")?;
+            }
+            node::fmt_generic_node(generic, f)?;
+            need_separator = true;
+        }
+        Ok(())
+    }
+}
+
+/// Convert a device path to UEFI text in the default form, like `path.to_string()`.
+///
+/// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
+impl From<&DevicePath> for String {
+    fn from(path: &DevicePath) -> Self {
+        path.to_string()
+    }
+}
 
 impl PartialEq for &DevicePath {
     fn eq(&self, other: &&DevicePath) -> bool {
@@ -803,16 +871,6 @@ impl Iterator for IterInstance<'_> {
             }
         }
         item.map(Ok)
-    }
-}
-
-impl Display for DevicePath {
-    /// Write the UEFI text representation of the device path, with the default
-    /// [`TextOptions`](text::TextOptions).
-    ///
-    /// [UEFI Spec Documentation: 10.6.4. EFI_DEVICE_PATH_TO_TEXT_PROTOCOL.ConvertDevicePathToText()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-to-text-protocol-convertdevicepathtotext)
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        text::fmt_device_path(self, f, text::TextOptions::default())
     }
 }
 
@@ -1540,5 +1598,381 @@ mod tests {
             ]));
             assert_eq!(uri.expand_shorthand(&mock).unwrap(), [join(&[&network, &uri])]);
         }
+    }
+}
+
+#[cfg(test)]
+mod text_tests {
+    use crate::{
+        devpath,
+        uefi::device_path::{DevicePath, node::*},
+    };
+    use alloc::format;
+
+    fn round_trip<const N: usize>(_text: &str, bytes: &[u8; N], expected: &str) {
+        let path = DevicePath::try_from_bytes(bytes).expect("macro output is a valid path");
+        assert_eq!(format!("{path}"), expected);
+    }
+
+    #[test]
+    fn test_device_path_text_common_nodes() {
+        round_trip("PciRoot(0)/Pci(0x11,0)", &devpath!("PciRoot(0)/Pci(0x11,0)"), "PciRoot(0x0)/Pci(0x11,0x0)");
+        round_trip(
+            "USB(2,1)/HD(1,GPT,00112233-4455-6677-8899-aabbccddeeff,0x800,0x1000)",
+            &devpath!("USB(2,1)/HD(1,GPT,00112233-4455-6677-8899-aabbccddeeff,0x800,0x1000)"),
+            "USB(0x2,0x1)/HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",
+        );
+        round_trip(r"\EFI\BOOT\BOOTX64.EFI", &devpath!(r"\EFI\BOOT\BOOTX64.EFI"), r"\EFI\BOOT\BOOTX64.EFI");
+    }
+
+    #[test]
+    fn test_device_path_text_instances_and_options() {
+        let bytes = devpath!("Pci(1,0),USB(2,1)");
+        let path = DevicePath::try_from_bytes(&bytes).expect("macro output is a valid path");
+        assert_eq!(format!("{path}"), "Pci(0x1,0x0),USB(0x2,0x1)");
+
+        let hd = DevicePath::try_from_bytes(&devpath!("HD(1,MBR,0x12345678,0x800,0x1000)")).expect("valid path");
+        assert_eq!(format!("{hd:-}"), "HD(1,MBR,0x12345678)");
+
+        let uart = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
+        assert_eq!(format!("{uart}"), "UartFlowCtrl(Hardware)");
+        assert_eq!(format!("{uart:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
+    }
+
+    #[test]
+    fn test_device_path_text_format_flags() {
+        let bytes = devpath!("PciRoot(0)/HD(1,MBR,0x12345678,0x800,0x1000)");
+        let path = DevicePath::try_from_bytes(&bytes).expect("macro output is a valid path");
+        assert_eq!(format!("{path}"), "PciRoot(0x0)/HD(1,MBR,0x12345678,0x800,0x1000)");
+        assert_eq!(format!("{path:-}"), "PciRoot(0x0)/HD(1,MBR,0x12345678)");
+        assert_eq!(format!("{path:#}"), "Acpi(PNP0A03,0x0)/HD(1,MBR,0x12345678,0x800,0x1000)");
+        assert_eq!(format!("{path:-#}"), "Acpi(PNP0A03,0x0)/HD(1,MBR,0x12345678)");
+        let buffer = crate::uefi::device_path::DevicePathBuf::from(path);
+        assert_eq!(format!("{buffer:-#}"), format!("{path:-#}"));
+
+        // A shortcut is not used without `AllowShortcuts`, even in the display-only form.
+        let acpi_ex = ExtendedAcpi {
+            hid: Acpi::PCI_ROOT_HID,
+            uid: 0,
+            cid: 0,
+            hid_string: String::new(),
+            uid_string: String::new(),
+            cid_string: String::new(),
+        };
+        assert_eq!(format!("{acpi_ex:-}"), "PciRoot(0x0)");
+        assert_eq!(format!("{acpi_ex:-#}"), "AcpiEx(PNP0A03,0,0x0)");
+
+        // The flags select the text form only; they do not change how field values are written.
+        let pci = Pci { function: 2, device: 0x1f };
+        for text in [format!("{pci}"), format!("{pci:-}"), format!("{pci:#}"), format!("{pci:+}")] {
+            assert_eq!(text, "Pci(0x1f,0x2)");
+        }
+    }
+
+    #[test]
+    fn test_device_path_text_into_string() {
+        let bytes = devpath!("PciRoot(0)/Pci(0x1D,0)");
+        let path = DevicePath::try_from_bytes(&bytes).expect("macro output is a valid path");
+        assert_eq!(String::from(path), "PciRoot(0x0)/Pci(0x1d,0x0)");
+        let text: String = path.into();
+        assert_eq!(text, path.to_string());
+    }
+
+    #[test]
+    fn test_generic_device_path_text() {
+        let bytes = [9u8, 2, 6, 0, 0xaa, 0xbb, 0x7f, 0xff, 4, 0];
+        let path = DevicePath::try_from_bytes(&bytes).expect("generic path is valid");
+        assert_eq!(format!("{path}"), "Path(9,2,aabb)");
+    }
+
+    /// Check the text of every kind of node in the three text forms, and that the parseable
+    /// forms parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
+    #[test]
+    fn test_device_path_text_round_trip() {
+        macro_rules! check {
+            ($input:literal, $text:literal, $display_only:literal, $no_shortcuts:literal) => {{
+                let bytes = devpath!($input);
+                let path = DevicePath::try_from_bytes(&bytes).expect($input);
+                assert_eq!(format!("{path}"), $text, "default text of {}", $input);
+                assert_eq!(format!("{path:-}"), $display_only, "display-only text of {}", $input);
+                assert_eq!(format!("{path:#}"), $no_shortcuts, "text without shortcuts of {}", $input);
+                assert_eq!(devpath!($text), bytes, "default text of {} does not parse back", $input);
+                assert_eq!(devpath!($no_shortcuts), bytes, "text without shortcuts of {} does not parse back", $input);
+            }};
+        }
+        check!(r"Pci(0x1F,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)");
+        check!(r"PcCard(1)", r"PcCard(0x1)", r"PcCard(0x1)", r"PcCard(0x1)");
+        check!(
+            r"MemoryMapped(11,0x1000,0x1FFF)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)",
+            r"MemoryMapped(0xb,0x1000,0x1fff)"
+        );
+        check!(
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)"
+        );
+        check!(r"Ctrl(3)", r"Ctrl(0x3)", r"Ctrl(0x3)", r"Ctrl(0x3)");
+        check!(r"BMC(1,0x1000)", r"BMC(0x1,0x1000)", r"BMC(0x1,0x1000)", r"BMC(0x1,0x1000)");
+        check!(r"PciRoot(1)", r"PciRoot(0x1)", r"PciRoot(0x1)", r"Acpi(PNP0A03,0x1)");
+        check!(r"PcieRoot(2)", r"PcieRoot(0x2)", r"PcieRoot(0x2)", r"Acpi(PNP0A08,0x2)");
+        check!(r"Floppy(0)", r"Floppy(0x0)", r"Floppy(0x0)", r"Acpi(PNP0604,0x0)");
+        check!(r"Keyboard(0)", r"Keyboard(0x0)", r"Keyboard(0x0)", r"Acpi(PNP0301,0x0)");
+        check!(r"Serial(1)", r"Serial(0x1)", r"Serial(0x1)", r"Acpi(PNP0501,0x1)");
+        check!(r"ParallelPort(0)", r"ParallelPort(0x0)", r"ParallelPort(0x0)", r"Acpi(PNP0401,0x0)");
+        check!(r"Acpi(HWP0002,3)", r"Acpi(HWP0002,0x3)", r"Acpi(HWP0002,0x3)", r"Acpi(HWP0002,0x3)");
+        check!(
+            r"AcpiEx(HWP0002,PNP0A03,0)",
+            r"AcpiEx(HWP0002,PNP0A03,0x0,,,)",
+            r"PciRoot(0x0)",
+            r"AcpiEx(HWP0002,PNP0A03,0x0,,,)"
+        );
+        check!(
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)",
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)",
+            r"PciRoot(UniqueId)",
+            r"AcpiExp(HWP0002,PNP0A03,UniqueId)"
+        );
+        check!(
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)",
+            r"AcpiAdr(0x80010100,0x80010200)"
+        );
+        check!(r"Ata(Primary,Master,0)", r"Ata(Primary,Master,0x0)", r"Ata(0x0)", r"Ata(Primary,Master,0x0)");
+        check!(r"Scsi(1,2)", r"Scsi(0x1,0x2)", r"Scsi(0x1,0x2)", r"Scsi(0x1,0x2)");
+        check!(
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)",
+            r"Fibre(0x1122334455667788,0x10)"
+        );
+        check!(
+            r"FibreEx(0102030405060708,1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)",
+            r"FibreEx(0x0102030405060708,0x1112131415161718)"
+        );
+        check!(
+            r"I1394(0x0123456789ABCDEF)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)",
+            r"I1394(0x0123456789abcdef)"
+        );
+        check!(r"USB(1,0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)", r"USB(0x1,0x0)");
+        check!(r"I2O(5)", r"I2O(0x5)", r"I2O(0x5)", r"I2O(0x5)");
+        check!(
+            r"Infiniband(1,00112233-4455-6677-8899-AABBCCDDEEFF,1,2,3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)",
+            r"Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)"
+        );
+        check!(
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)",
+            r"VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)"
+        );
+        check!(r"VenPcAnsi()", r"VenPcAnsi()", r"VenPcAnsi()", r"VenMsg(E0C14753-F9BE-11D2-9A0C-0090273FC14D)");
+        check!(r"VenVt100()", r"VenVt100()", r"VenVt100()", r"VenMsg(DFA66065-B419-11D3-9A2D-0090273FC14D)");
+        check!(
+            r"VenVt100Plus()",
+            r"VenVt100Plus()",
+            r"VenVt100Plus()",
+            r"VenMsg(7BAEC70B-57E0-4C76-8E87-2F9E28088343)"
+        );
+        check!(r"VenUtf8()", r"VenUtf8()", r"VenUtf8()", r"VenMsg(AD15A0D6-8BEC-4ACF-A073-D01DE77E2D88)");
+        check!(
+            r"UartFlowCtrl(XonXoff)",
+            r"UartFlowCtrl(XonXoff)",
+            r"UartFlowCtrl(XonXoff)",
+            r"VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,02000000)"
+        );
+        check!(
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,2)",
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,0x2)",
+            r"SAS(0x1234,0x5,0x6,SAS,External,Expanded,0x2)",
+            r"VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000050000000000000062010600)"
+        );
+        check!(r"DebugPort()", r"DebugPort()", r"DebugPort()", r"VenMsg(EBA4E8D2-3858-41EC-A281-2647BA9660D0)");
+        check!(r"MAC(001122334455,0x1)", r"MAC(001122334455,0x1)", r"MAC(001122334455,0x1)", r"MAC(001122334455,0x1)");
+        check!(
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,UDP,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)",
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,UDP,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)"
+        );
+        check!(
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)",
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)",
+            r"IPv4(192.168.0.1)",
+            r"IPv4(192.168.0.1,TCP,Static,192.168.0.2,192.168.0.254,255.255.255.0)"
+        );
+        check!(
+            r"IPv6(2001:db8::1)",
+            r"IPv6(2001:db8::1,UDP,Static,::,0x0,::)",
+            r"IPv6(2001:db8::1)",
+            r"IPv6(2001:db8::1,UDP,Static,::,0x0,::)"
+        );
+        check!(
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080)",
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)",
+            r"IPv4(192.168.0.1:80)",
+            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)"
+        );
+        check!(
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,64,2001:db8::ffff)",
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+            r"IPv6([2001:db8::1]:443)",
+            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)"
+        );
+        check!(r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)", r"Uart(115200,8,N,1)");
+        check!(
+            r"UsbClass(0x1234,0x5678,0x8,0x6,0x50)",
+            r"UsbMassStorage(0x1234,0x5678,0x6,0x50)",
+            r"UsbMassStorage(0x1234,0x5678,0x6,0x50)",
+            r"UsbClass(0x1234,0x5678,0x8,0x6,0x50)"
+        );
+        check!(
+            r"UsbMassStorage(0xFFFF,0xFFFF,0x6,0x50)",
+            r"UsbMassStorage(0xffff,0xffff,0x6,0x50)",
+            r"UsbMassStorage(0xffff,0xffff,0x6,0x50)",
+            r"UsbClass(0xffff,0xffff,0x8,0x6,0x50)"
+        );
+        check!(
+            r#"UsbWwid(0x1234,0x5678,0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#,
+            r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#
+        );
+        check!(r"Unit(1)", r"Unit(0x1)", r"Unit(0x1)", r"Unit(0x1)");
+        check!(r"Sata(0,0xFFFF,0)", r"Sata(0x0,0xffff,0x0)", r"Sata(0x0,0xffff,0x0)", r"Sata(0x0,0xffff,0x0)");
+        check!(
+            r"iSCSI(iqn.x,1,0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)"
+        );
+        check!(r"Vlan(100)", r"Vlan(100)", r"Vlan(100)", r"Vlan(100)");
+        check!(
+            r"SasEx(0102030405060708,1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)"
+        );
+        check!(
+            r"SasEx(0102030405060708,1112131415161718,0x6)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)"
+        );
+        check!(
+            r"SasEx(0102030405060708,1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)"
+        );
+        check!(
+            r"SAS(0x1234,0,0,SATA,Internal,Direct,256)",
+            r"SAS(0x1234,0x0,0x0,SATA,Internal,Direct,0x100)",
+            r"SAS(0x1234,0x0,0x0,SATA,Internal,Direct,0x100)",
+            r"VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000012ff0000)"
+        );
+        check!(
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)",
+            r"NVMe(0x1,00-11-22-33-44-55-66-77)"
+        );
+        check!(r"Uri(http://a/b)", r"Uri(http://a/b)", r"Uri(http://a/b)", r"Uri(http://a/b)");
+        check!(r"UFS(0,0x3)", r"UFS(0x0,0x3)", r"UFS(0x0,0x3)", r"UFS(0x0,0x3)");
+        check!(r"SD(1)", r"SD(0x1)", r"SD(0x1)", r"SD(0x1)");
+        check!(
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)",
+            r"Bluetooth(001122334455)"
+        );
+        check!(r"Wi-Fi(ssid)", r"Wi-Fi(ssid)", r"Wi-Fi(ssid)", r"Wi-Fi(ssid)");
+        check!(r"eMMC(0)", r"eMMC(0x0)", r"eMMC(0x0)", r"eMMC(0x0)");
+        check!(
+            r"BluetoothLE(001122334455,0x1)",
+            r"BluetoothLE(001122334455,0x01)",
+            r"BluetoothLE(001122334455,0x01)",
+            r"BluetoothLE(001122334455,0x01)"
+        );
+        check!(
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)",
+            r"Dns(192.168.0.1,192.168.0.2)"
+        );
+        check!(r"RestService(1,1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)");
+        check!(
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+            r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)"
+        );
+        check!(
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)"
+        );
+        check!(
+            r"HD(2,MBR,0x12345678,0x800,0x1000)",
+            r"HD(2,MBR,0x12345678,0x800,0x1000)",
+            r"HD(2,MBR,0x12345678)",
+            r"HD(2,MBR,0x12345678,0x800,0x1000)"
+        );
+        check!(r"CDROM(1,0x10,0x20)", r"CDROM(0x1,0x10,0x20)", r"CDROM(0x1)", r"CDROM(0x1,0x10,0x20)");
+        check!(
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)",
+            r"VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)"
+        );
+        check!(r"\file", r"\file", r"\file", r"\file");
+        check!(
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Media(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check!(
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"Fv(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check!(
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check!(r"Offset(0x10,0x20)", r"Offset(0x10,0x20)", r"Offset(0x10,0x20)", r"Offset(0x10,0x20)");
+        check!(
+            r"RamDisk(0x1000,0x1FFF,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)",
+            r"RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)"
+        );
+        check!(
+            r"VirtualDisk(0x1000,0x1FFF,0)",
+            r"VirtualDisk(0x1000,0x1fff,0)",
+            r"VirtualDisk(0x1000,0x1fff,0)",
+            r"RamDisk(0x1000,0x1fff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)"
+        );
+        check!(r"BBS(HD,boot,0x0)", r"BBS(HD,boot,0x0)", r"BBS(HD,boot)", r"BBS(HD,boot,0x0)");
+        check!(r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)");
+        check!(r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)");
+        check!(r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)");
+        check!(r"Msg(99,aabb)", r"Msg(99,aabb)", r"Msg(99,aabb)", r"Msg(99,aabb)");
+        check!(r"MediaPath(99,aabb)", r"MediaPath(99,aabb)", r"MediaPath(99,aabb)", r"MediaPath(99,aabb)");
+        check!(r"BbsPath(9,aabb)", r"BbsPath(9,aabb)", r"BbsPath(9,aabb)", r"BbsPath(9,aabb)");
     }
 }

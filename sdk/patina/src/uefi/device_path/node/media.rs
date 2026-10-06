@@ -16,13 +16,14 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{DevicePathType, MediaSubType};
+use super::{allow_shortcuts, display_only, write_guid, write_vendor};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
     uefi::device_path::encoding::{Char16Nul, Vector},
 };
 use alloc::{string::String, vec::Vec};
-use core::fmt::Display;
+use core::fmt;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
@@ -39,6 +40,10 @@ device_path_node! {
     ///
     /// let node = CdRom { boot_entry: 1, partition_start: 0x10, partition_size: 0x20 };
     /// assert_eq!(node.to_string(), "CDROM(0x1,0x10,0x20)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "CDROM(0x1)");
+    /// assert_eq!(format!("{node:#}"), "CDROM(0x1,0x10,0x20)");
+    /// assert_eq!(format!("{node:-#}"), "CDROM(0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::CdRom)]
     @[DevicePathNodeDerive(Debug)]
@@ -50,6 +55,16 @@ device_path_node! {
         pub partition_start: u64,
         /// Partition size in blocks.
         pub partition_size: u64,
+    }
+}
+impl fmt::Display for CdRom {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if display_only(f) {
+            write!(f, "CDROM(0x{:x})", node.boot_entry)
+        } else {
+            write!(f, "CDROM(0x{:x},0x{:x},0x{:x})", node.boot_entry, node.partition_start, node.partition_size)
+        }
     }
 }
 
@@ -67,6 +82,10 @@ device_path_node! {
     ///
     /// let node = MediaProtocol { protocol: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
     /// assert_eq!(node.to_string(), "Media(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Media(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "Media(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-#}"), "Media(00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::MediaProtocol)]
     @[DevicePathNodeDerive(Debug)]
@@ -74,6 +93,12 @@ device_path_node! {
     pub struct MediaProtocol {
         /// Protocol GUID.
         pub protocol: BinaryGuid,
+    }
+}
+impl fmt::Display for MediaProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Media({})", node.protocol)
     }
 }
 
@@ -91,6 +116,10 @@ device_path_node! {
     ///
     /// let node = PiwgFirmwareFile { fv_file_name: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
     /// assert_eq!(node.to_string(), "FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-#}"), "FvFile(00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareFile)]
     @[DevicePathNodeDerive(Debug)]
@@ -98,6 +127,12 @@ device_path_node! {
     pub struct PiwgFirmwareFile {
         /// Firmware file name GUID.
         pub fv_file_name: BinaryGuid,
+    }
+}
+impl fmt::Display for PiwgFirmwareFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "FvFile({})", node.fv_file_name)
     }
 }
 
@@ -115,6 +150,10 @@ device_path_node! {
     ///
     /// let node = PiwgFirmwareVolume { fv_name: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
     /// assert_eq!(node.to_string(), "Fv(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Fv(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "Fv(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-#}"), "Fv(00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::PiwgFirmwareVolume)]
     @[DevicePathNodeDerive(Debug)]
@@ -122,6 +161,12 @@ device_path_node! {
     pub struct PiwgFirmwareVolume {
         /// Firmware volume name GUID.
         pub fv_name: BinaryGuid,
+    }
+}
+impl fmt::Display for PiwgFirmwareVolume {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Fv({})", node.fv_name)
     }
 }
 
@@ -140,6 +185,10 @@ device_path_node! {
     ///
     /// let node = RelativeOffsetRange { reserved: 0, starting_offset: 0x10, ending_offset: 0x20 };
     /// assert_eq!(node.to_string(), "Offset(0x10,0x20)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Offset(0x10,0x20)");
+    /// assert_eq!(format!("{node:#}"), "Offset(0x10,0x20)");
+    /// assert_eq!(format!("{node:-#}"), "Offset(0x10,0x20)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RelativeOffsetRange)]
     @[DevicePathNodeDerive(Debug)]
@@ -151,6 +200,12 @@ device_path_node! {
         pub starting_offset: u64,
         /// Ending offset relative to the media device.
         pub ending_offset: u64,
+    }
+}
+impl fmt::Display for RelativeOffsetRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Offset(0x{:x},0x{:x})", node.starting_offset, node.ending_offset)
     }
 }
 
@@ -173,6 +228,10 @@ device_path_node! {
     ///     instance: 0,
     /// };
     /// assert_eq!(node.to_string(), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-#}"), "RamDisk(0x1000,0x1fff,0,00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(DevicePathType::Media, MediaSubType::RamDisk)]
     @[DevicePathNodeDerive(Debug)]
@@ -186,6 +245,39 @@ device_path_node! {
         pub type_guid: BinaryGuid,
         /// Disk instance number, or zero if unsupported.
         pub instance: u16,
+    }
+}
+const VIRTUAL_DISK_GUID: BinaryGuid = BinaryGuid::from_string("77AB535A-45FC-624B-5560-F7B281D1F96E");
+const VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("3D5ABD30-4175-87CE-6D64-D2ADE523C4BB");
+const PERSISTENT_VIRTUAL_DISK_GUID: BinaryGuid = BinaryGuid::from_string("5CEA02C9-4D07-69D3-269F-4496FBE096F9");
+const PERSISTENT_VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("08018188-42CD-BB48-100F-5387D53DED3D");
+impl fmt::Display for RamDisk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let name = if allow_shortcuts(f) {
+            if node.type_guid == VIRTUAL_DISK_GUID {
+                Some("VirtualDisk")
+            } else if node.type_guid == VIRTUAL_CD_GUID {
+                Some("VirtualCD")
+            } else if node.type_guid == PERSISTENT_VIRTUAL_DISK_GUID {
+                Some("PersistentVirtualDisk")
+            } else if node.type_guid == PERSISTENT_VIRTUAL_CD_GUID {
+                Some("PersistentVirtualCD")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(name) = name {
+            write!(f, "{name}(0x{:x},0x{:x},{})", node.starting_address, node.ending_address, node.instance)
+        } else {
+            write!(
+                f,
+                "RamDisk(0x{:x},0x{:x},{},{})",
+                node.starting_address, node.ending_address, node.instance, node.type_guid
+            )
+        }
     }
 }
 
@@ -206,6 +298,10 @@ device_path_node! {
     ///     data: vec![0x01],
     /// };
     /// assert_eq!(node.to_string(), "VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)");
+    /// assert_eq!(format!("{node:#}"), "VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)");
+    /// assert_eq!(format!("{node:-#}"), "VenMedia(00112233-4455-6677-8899-AABBCCDDEEFF,01)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::Vendor,
@@ -219,6 +315,12 @@ device_path_node! {
         /// Opaque vendor-defined bytes following the GUID.
         #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
+    }
+}
+impl fmt::Display for MediaVendor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write_vendor(f, "VenMedia", &node.guid, &node.data)
     }
 }
 
@@ -242,6 +344,10 @@ device_path_node! {
     /// let partition_guid = *BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF").as_bytes();
     /// let node = HardDrive::new_gpt(1, 0x800, 0x1000, partition_guid);
     /// assert_eq!(node.to_string(), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)");
+    /// assert_eq!(format!("{node:-#}"), "HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::HardDrive,
@@ -262,6 +368,28 @@ device_path_node! {
         pub partition_format: u8,
         /// Signature type: 0x00 = None, 0x01 = 32-bit MBR, 0x02 = GUID.
         pub signature_type: u8,
+    }
+}
+impl fmt::Display for HardDrive {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "HD({},", node.partition_number)?;
+        match node.signature_type {
+            HardDrive::SIGNATURE_TYPE_MBR => write!(
+                f,
+                "MBR,0x{:08x}",
+                u32::from_le_bytes(node.partition_signature[..4].try_into().map_err(|_| fmt::Error)?)
+            )?,
+            HardDrive::SIGNATURE_TYPE_GUID => {
+                f.write_str("GPT,")?;
+                write_guid(f, &BinaryGuid::from_bytes(&node.partition_signature))?;
+            }
+            other => write!(f, "{other},0")?,
+        }
+        if !display_only(f) {
+            write!(f, ",0x{:x},0x{:x}", node.partition_start, node.partition_size)?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -292,16 +420,6 @@ impl HardDrive {
             partition_format: Self::FORMAT_GPT,
             signature_type: Self::SIGNATURE_TYPE_GUID,
         }
-    }
-}
-
-impl Display for HardDrive {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
     }
 }
 
@@ -336,6 +454,10 @@ device_path_node! {
     ///
     /// let node = FilePath::new(r"\EFI\BOOT\boot.efi");
     /// assert_eq!(node.to_string(), r"\EFI\BOOT\boot.efi");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), r#"\EFI\BOOT\boot.efi"#);
+    /// assert_eq!(format!("{node:#}"), r#"\EFI\BOOT\boot.efi"#);
+    /// assert_eq!(format!("{node:-#}"), r#"\EFI\BOOT\boot.efi"#);
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::FilePath,
@@ -347,6 +469,12 @@ device_path_node! {
         /// The file path string (stored as UTF-8, serialized as UTF-16).
         #[scroll(ctx = Char16Nul)]
         pub path: String,
+    }
+}
+impl fmt::Display for FilePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str(&node.path)
     }
 }
 
@@ -365,16 +493,6 @@ impl FilePath {
 
 fn file_path_measure_size(node: &FilePath) -> usize {
     node.utf16_size()
-}
-
-impl Display for FilePath {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
-    }
 }
 
 #[cfg(test)]

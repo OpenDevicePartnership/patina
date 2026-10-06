@@ -43,7 +43,7 @@
 //! ## Conversions
 //!
 //! Binary conversions use `DevicePathNode` and the `scroll` conversion traits. Nodes
-//! display in the UEFI text representation; see [`text`](crate::uefi::device_path::text).
+//! display in the UEFI text representation; see [format flags](crate::uefi::device_path#format-flags).
 //!
 //! ## License
 //!
@@ -69,8 +69,9 @@ pub use messaging::*;
 pub use node_types::*;
 
 use super::{DevicePath, encoding::invalid};
+use crate::BinaryGuid;
 use alloc::boxed::Box;
-use core::fmt::{Debug, Display};
+use core::fmt::{self, Debug, Display};
 use scroll::{
     Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -488,6 +489,10 @@ impl TryFromCtx<'_, scroll::Endian> for Header {
 /// let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes).unwrap();
 /// assert!(remaining.is_empty());
 /// assert_eq!(node.to_string(), "Path(9,2,aabb)");
+/// // Display-only (`-`), without shortcuts (`#`), and both.
+/// assert_eq!(format!("{node:-}"), "Path(9,2,aabb)");
+/// assert_eq!(format!("{node:#}"), "Path(9,2,aabb)");
+/// assert_eq!(format!("{node:-#}"), "Path(9,2,aabb)");
 /// ```
 #[repr(C)]
 #[derive(Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
@@ -526,6 +531,138 @@ impl GenericDevicePathNode {
     pub fn as_bytes(&self) -> &[u8] {
         <Self as zerocopy::IntoBytes>::as_bytes(self)
     }
+}
+fn write_generic(f: &mut fmt::Formatter<'_>, node: &GenericDevicePathNode) -> fmt::Result {
+    let name = match node.header.r#type {
+        1 => "HardwarePath",
+        2 => "AcpiPath",
+        3 => "Msg",
+        4 => "MediaPath",
+        5 => "BbsPath",
+        _ => "Path",
+    };
+    if name == "Path" {
+        write!(f, "Path({},{},", node.header.r#type, node.header.sub_type)?;
+    } else {
+        write!(f, "{name}({},", node.header.sub_type)?;
+    }
+    write_hex_bytes(f, &node.data)?;
+    f.write_str(")")
+}
+
+impl fmt::Display for GenericDevicePathNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_generic(f, self)
+    }
+}
+
+/// Return true if the `-` flag selects the shorter display-only form, which may omit fields.
+fn display_only(f: &fmt::Formatter<'_>) -> bool {
+    f.sign_minus()
+}
+
+/// Return true unless the `#` flag disables the shortcut node names.
+fn allow_shortcuts(f: &fmt::Formatter<'_>) -> bool {
+    !f.alternate()
+}
+
+/// Write bytes as a contiguous lowercase hexadecimal string.
+fn write_hex_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    for byte in bytes {
+        write!(f, "{byte:02x}")?;
+    }
+    Ok(())
+}
+
+/// Write a GUID in UEFI device path text form.
+fn write_guid(f: &mut fmt::Formatter<'_>, guid: &BinaryGuid) -> fmt::Result {
+    write!(f, "{guid}")
+}
+
+/// Write a vendor node with its GUID and optional hexadecimal payload.
+fn write_vendor(f: &mut fmt::Formatter<'_>, name: &str, guid: &BinaryGuid, data: &[u8]) -> fmt::Result {
+    write!(f, "{name}(")?;
+    write_guid(f, guid)?;
+    if !data.is_empty() {
+        f.write_str(",")?;
+        write_hex_bytes(f, data)?;
+    }
+    f.write_str(")")
+}
+
+macro_rules! try_fmt_node {
+    ($generic:expr, $f:expr, $($ty:ty),+ $(,)?) => {
+        $(
+            if let Ok(node) = <$ty>::try_from($generic) {
+                return fmt::Display::fmt(&node, $f);
+            }
+        )+
+    };
+}
+
+/// Format a node with the `Display` of its decoded type, or in the generic form if it is unknown.
+pub(crate) fn fmt_generic_node(node: &GenericDevicePathNode, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    try_fmt_node!(
+        node,
+        f,
+        Pci,
+        PcCard,
+        MemoryMapped,
+        HardwareVendor,
+        Controller,
+        Bmc,
+        Acpi,
+        ExtendedAcpi,
+        AcpiAdr,
+        NvdimmAcpi,
+        Atapi,
+        Scsi,
+        FiberChannel,
+        FiberChannelEx,
+        Ieee1394,
+        Usb,
+        I2oRandomBlockStorageClass,
+        MacAddress,
+        IpV4,
+        IpV6,
+        Vlan,
+        InfiniBand,
+        Uart,
+        UartFlowControl,
+        Sas,
+        MessagingVendor,
+        UsbWwid,
+        UsbClass,
+        DeviceLogicalUnit,
+        Sata,
+        Iscsi,
+        SasEx,
+        NvmExpress,
+        Uri,
+        Ufs,
+        Sd,
+        Bluetooth,
+        WiFi,
+        Emmc,
+        BluetoothLE,
+        Dns,
+        Nvdimm,
+        RestService,
+        NvmeOf,
+        MediaVendor,
+        CdRom,
+        MediaProtocol,
+        PiwgFirmwareFile,
+        PiwgFirmwareVolume,
+        RelativeOffsetRange,
+        RamDisk,
+        HardDrive,
+        FilePath,
+        Bios,
+        EndInstance,
+        EndEntire,
+    );
+    fmt::Display::fmt(node, f)
 }
 
 impl DevicePathNode for &GenericDevicePathNode {
@@ -578,16 +715,6 @@ impl<'a> TryFromCtx<'a, scroll::Endian> for &'a GenericDevicePathNode {
     fn try_from_ctx(from: &'a [u8], _ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
         let (node, _) = GenericDevicePathNode::from_bytes(from)?;
         Ok((node, usize::from(node.header.length)))
-    }
-}
-
-impl Display for GenericDevicePathNode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            &self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
     }
 }
 

@@ -16,20 +16,43 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-// cspell:ignore NGUID
+// cspell:ignore NGUID nguid sassata
 use super::{DevicePathType, MessagingSubType, invalid};
+use super::{allow_shortcuts, display_only, write_hex_bytes, write_vendor};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
     standard::efi,
     uefi::device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::fmt;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
+
+fn write_dash_hex_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    for (index, byte) in bytes.iter().enumerate() {
+        if index != 0 {
+            f.write_str("-")?;
+        }
+        write!(f, "{byte:02x}")?;
+    }
+    Ok(())
+}
+
+fn write_hex_u8_data(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    for byte in bytes {
+        write!(f, ",0x{byte:x}")?;
+    }
+    Ok(())
+}
 
 device_path_node! {
     /// ATAPI device path node (UEFI 2.10 Table 10.13).
@@ -46,6 +69,10 @@ device_path_node! {
     ///
     /// let node = Atapi { primary_secondary: 0, slave_master: 0, lun: 0 };
     /// assert_eq!(node.to_string(), "Ata(Primary,Master,0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Ata(0x0)");
+    /// assert_eq!(format!("{node:#}"), "Ata(Primary,Master,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "Ata(0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = atapi_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -57,6 +84,22 @@ device_path_node! {
         pub slave_master: u8,
         /// Logical unit number.
         pub lun: u16,
+    }
+}
+impl fmt::Display for Atapi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if display_only(f) {
+            write!(f, "Ata(0x{:x})", node.lun)
+        } else {
+            write!(
+                f,
+                "Ata({},{},0x{:x})",
+                if node.primary_secondary == 1 { "Secondary" } else { "Primary" },
+                if node.slave_master == 1 { "Slave" } else { "Master" },
+                node.lun
+            )
+        }
     }
 }
 
@@ -81,6 +124,10 @@ device_path_node! {
     ///
     /// let node = Scsi { pun: 1, lun: 2 };
     /// assert_eq!(node.to_string(), "Scsi(0x1,0x2)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Scsi(0x1,0x2)");
+    /// assert_eq!(format!("{node:#}"), "Scsi(0x1,0x2)");
+    /// assert_eq!(format!("{node:-#}"), "Scsi(0x1,0x2)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Scsi)]
     @[DevicePathNodeDerive(Debug)]
@@ -90,6 +137,12 @@ device_path_node! {
         pub pun: u16,
         /// Logical unit number.
         pub lun: u16,
+    }
+}
+impl fmt::Display for Scsi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Scsi(0x{:x},0x{:x})", node.pun, node.lun)
     }
 }
 
@@ -107,6 +160,10 @@ device_path_node! {
     ///
     /// let node = FiberChannel { reserved: 0, wwn: 0x1122334455667788, lun: 0x10 };
     /// assert_eq!(node.to_string(), "Fibre(0x1122334455667788,0x10)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Fibre(0x1122334455667788,0x10)");
+    /// assert_eq!(format!("{node:#}"), "Fibre(0x1122334455667788,0x10)");
+    /// assert_eq!(format!("{node:-#}"), "Fibre(0x1122334455667788,0x10)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = fiber_channel_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -118,6 +175,12 @@ device_path_node! {
         pub wwn: u64,
         /// Fibre Channel logical unit number.
         pub lun: u64,
+    }
+}
+impl fmt::Display for FiberChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Fibre(0x{:x},0x{:x})", node.wwn, node.lun)
     }
 }
 
@@ -147,6 +210,10 @@ device_path_node! {
     ///     lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
     /// };
     /// assert_eq!(node.to_string(), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// assert_eq!(format!("{node:#}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
+    /// assert_eq!(format!("{node:-#}"), "FibreEx(0x0102030405060708,0x1112131415161718)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = fiber_channel_ex_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -158,6 +225,16 @@ device_path_node! {
         pub wwn: [u8; 8],
         /// Eight SCSI REPORT LUNS bytes in wire order.
         pub lun: [u8; 8],
+    }
+}
+impl fmt::Display for FiberChannelEx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("FibreEx(0x")?;
+        write_hex_bytes(f, &node.wwn)?;
+        f.write_str(",0x")?;
+        write_hex_bytes(f, &node.lun)?;
+        f.write_str(")")
     }
 }
 
@@ -179,6 +256,10 @@ device_path_node! {
     ///
     /// let node = Ieee1394 { reserved: 0, guid: 0x0123456789abcdef };
     /// assert_eq!(node.to_string(), "I1394(0x0123456789abcdef)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "I1394(0x0123456789abcdef)");
+    /// assert_eq!(format!("{node:#}"), "I1394(0x0123456789abcdef)");
+    /// assert_eq!(format!("{node:-#}"), "I1394(0x0123456789abcdef)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394, validate = ieee1394_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -188,6 +269,14 @@ device_path_node! {
         pub reserved: u32,
         /// The 64-bit IEEE 1394 identifier, not an EFI GUID.
         pub guid: u64,
+    }
+}
+impl fmt::Display for Ieee1394 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        // The 1394 GUID is an 8-byte integer (UEFI 2.10 Table 10.18), so it is written as a hexadecimal
+        // integer (Table 10.66) that parses back to the same value.
+        write!(f, "I1394(0x{:016x})", node.guid)
     }
 }
 
@@ -209,6 +298,10 @@ device_path_node! {
     ///
     /// let node = Usb { parent_port_number: 1, interface_number: 0 };
     /// assert_eq!(node.to_string(), "USB(0x1,0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "USB(0x1,0x0)");
+    /// assert_eq!(format!("{node:#}"), "USB(0x1,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "USB(0x1,0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Usb)]
     @[DevicePathNodeDerive(Debug)]
@@ -218,6 +311,12 @@ device_path_node! {
         pub parent_port_number: u8,
         /// USB interface number.
         pub interface_number: u8,
+    }
+}
+impl fmt::Display for Usb {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "USB(0x{:x},0x{:x})", node.parent_port_number, node.interface_number)
     }
 }
 
@@ -235,6 +334,10 @@ device_path_node! {
     ///
     /// let node = I2oRandomBlockStorageClass { tid: 5 };
     /// assert_eq!(node.to_string(), "I2O(0x5)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "I2O(0x5)");
+    /// assert_eq!(format!("{node:#}"), "I2O(0x5)");
+    /// assert_eq!(format!("{node:-#}"), "I2O(0x5)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::I2oRandomBlockStorageClass)]
     @[DevicePathNodeDerive(Debug)]
@@ -242,6 +345,12 @@ device_path_node! {
     pub struct I2oRandomBlockStorageClass {
         /// Target identifier.
         pub tid: u32,
+    }
+}
+impl fmt::Display for I2oRandomBlockStorageClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "I2O(0x{:x})", node.tid)
     }
 }
 
@@ -262,6 +371,10 @@ device_path_node! {
     /// addr[..6].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
     /// let node = MacAddress { mac_address: EfiMacAddress { addr }, if_type: 1 };
     /// assert_eq!(node.to_string(), "MAC(001122334455,0x1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "MAC(001122334455,0x1)");
+    /// assert_eq!(format!("{node:#}"), "MAC(001122334455,0x1)");
+    /// assert_eq!(format!("{node:-#}"), "MAC(001122334455,0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::MacAddress)]
     @[DevicePathNodeDerive(Debug)]
@@ -273,6 +386,15 @@ device_path_node! {
         pub mac_address: efi::MacAddress,
         /// Network interface type, as assigned by IANA.
         pub if_type: u8,
+    }
+}
+impl fmt::Display for MacAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let length = if matches!(node.if_type, 0 | 1) { 6 } else { node.mac_address.addr.len() };
+        f.write_str("MAC(")?;
+        write_hex_bytes(f, node.mac_address.addr.get(..length).ok_or(fmt::Error)?)?;
+        write!(f, ",0x{:x})", node.if_type)
     }
 }
 
@@ -304,6 +426,13 @@ device_path_node! {
     ///     node.to_string(),
     ///     "IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
     /// );
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "IPv6([2001:db8::1]:443)");
+    /// assert_eq!(
+    ///     format!("{node:#}"),
+    ///     "IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
+    /// );
+    /// assert_eq!(format!("{node:-#}"), "IPv6([2001:db8::1]:443)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -330,6 +459,41 @@ device_path_node! {
         pub gateway_ip_address: Ipv6Addr,
     }
 }
+struct Ipv6Endpoint(core::net::Ipv6Addr, u16);
+
+impl fmt::Display for Ipv6Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.1 {
+            0 => write!(f, "{}", self.0),
+            port => write!(f, "[{}]:{port}", self.0),
+        }
+    }
+}
+
+impl fmt::Display for IpV6 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "IPv6({}", Ipv6Endpoint(node.remote_ip_address, node.remote_port))?;
+        if display_only(f) {
+            return f.write_str(")");
+        }
+        let origin = match node.ip_address_origin {
+            0 => "Static",
+            1 => "StatelessAutoConfigure",
+            _ => "StatefulAutoConfigure",
+        };
+        write!(
+            f,
+            ",{},{},{},0x{:x},{}",
+            protocol_name(node.protocol),
+            origin,
+            Ipv6Endpoint(node.local_ip_address, node.local_port),
+            node.prefix_length,
+            node.gateway_ip_address
+        )?;
+        f.write_str(")")
+    }
+}
 
 fn ip_v6_validate(node: &IpV6) -> Result<(), &'static str> {
     if node.ip_address_origin > 2 {
@@ -352,6 +516,10 @@ device_path_node! {
     ///
     /// let node = Vlan { vlan_id: 100 };
     /// assert_eq!(node.to_string(), "Vlan(100)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Vlan(100)");
+    /// assert_eq!(format!("{node:#}"), "Vlan(100)");
+    /// assert_eq!(format!("{node:-#}"), "Vlan(100)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = vlan_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -359,6 +527,12 @@ device_path_node! {
     pub struct Vlan {
         /// VLAN identifier, from 0 through 4094.
         pub vlan_id: u16,
+    }
+}
+impl fmt::Display for Vlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Vlan({})", node.vlan_id)
     }
 }
 
@@ -390,6 +564,10 @@ device_path_node! {
     ///     device_id: 3,
     /// };
     /// assert_eq!(node.to_string(), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
+    /// assert_eq!(format!("{node:#}"), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
+    /// assert_eq!(format!("{node:-#}"), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand, validate = infiniband_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -405,6 +583,20 @@ device_path_node! {
         pub target_port_id: u64,
         /// Persistent identifier of the remote device.
         pub device_id: u64,
+    }
+}
+impl fmt::Display for InfiniBand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(
+            f,
+            "Infiniband(0x{:x},{},0x{:x},0x{:x},0x{:x})",
+            node.resource_flags,
+            BinaryGuid::from_bytes(&node.port_gid),
+            node.service_id,
+            node.target_port_id,
+            node.device_id
+        )
     }
 }
 
@@ -435,6 +627,10 @@ device_path_node! {
     ///
     /// let node = Uart { reserved: 0, baud_rate: 115200, data_bits: 8, parity: 1, stop_bits: 1 };
     /// assert_eq!(node.to_string(), "Uart(115200,8,N,1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Uart(115200,8,N,1)");
+    /// assert_eq!(format!("{node:#}"), "Uart(115200,8,N,1)");
+    /// assert_eq!(format!("{node:-#}"), "Uart(115200,8,N,1)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = uart_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -450,6 +646,30 @@ device_path_node! {
         pub parity: u8,
         /// Stop bits: 0 default, 1 one, 2 one-and-a-half, or 3 two.
         pub stop_bits: u8,
+    }
+}
+impl fmt::Display for Uart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let baud = if node.baud_rate == 0 { "DEFAULT".to_string() } else { node.baud_rate.to_string() };
+        let data = if node.data_bits == 0 { "DEFAULT".to_string() } else { node.data_bits.to_string() };
+        let parity = match node.parity {
+            0 => "D",
+            1 => "N",
+            2 => "E",
+            3 => "O",
+            4 => "M",
+            5 => "S",
+            _ => "x",
+        };
+        let stop = match node.stop_bits {
+            0 => "D",
+            1 => "1",
+            2 => "1.5",
+            3 => "2",
+            _ => "x",
+        };
+        write!(f, "Uart({baud},{data},{parity},{stop})")
     }
 }
 
@@ -485,6 +705,10 @@ device_path_node! {
     ///     relative_target_port: 6,
     /// };
     /// assert_eq!(node.to_string(), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// assert_eq!(format!("{node:#}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
+    /// assert_eq!(format!("{node:-#}"), "SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::SasEx)]
     @[DevicePathNodeDerive(Debug)]
@@ -498,6 +722,37 @@ device_path_node! {
         pub device_topology: u16,
         /// Relative target port.
         pub relative_target_port: u16,
+    }
+}
+impl fmt::Display for Sas {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if allow_shortcuts(f) {
+            write!(f, "SAS(0x{:x},0x{:x},0x{:x},", node.sas_address, node.lun, node.relative_target_port)?;
+            topology_text(f, node.device_topology, Some(node.reserved))?;
+            f.write_str(")")
+        } else {
+            write!(f, "VenMsg({},", Sas::GUID)?;
+            write_hex_bytes(f, &node.reserved.to_le_bytes())?;
+            write_hex_bytes(f, &node.sas_address.to_le_bytes())?;
+            write_hex_bytes(f, &node.lun.to_le_bytes())?;
+            write_hex_bytes(f, &node.device_topology.to_le_bytes())?;
+            write_hex_bytes(f, &node.relative_target_port.to_le_bytes())?;
+            f.write_str(")")
+        }
+    }
+}
+
+impl fmt::Display for SasEx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("SasEx(0x")?;
+        write_hex_bytes(f, &node.sas_address)?;
+        f.write_str(",0x")?;
+        write_hex_bytes(f, &node.lun)?;
+        write!(f, ",0x{:x},", node.relative_target_port)?;
+        topology_text(f, node.device_topology, None)?;
+        f.write_str(")")
     }
 }
 
@@ -515,6 +770,10 @@ device_path_node! {
     ///
     /// let node = Ufs { pun: 0, lun: 3 };
     /// assert_eq!(node.to_string(), "UFS(0x0,0x3)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "UFS(0x0,0x3)");
+    /// assert_eq!(format!("{node:#}"), "UFS(0x0,0x3)");
+    /// assert_eq!(format!("{node:-#}"), "UFS(0x0,0x3)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Ufs)]
     @[DevicePathNodeDerive(Debug)]
@@ -524,6 +783,12 @@ device_path_node! {
         pub pun: u8,
         /// Logical unit number, including well-known LUN encodings.
         pub lun: u8,
+    }
+}
+impl fmt::Display for Ufs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "UFS(0x{:x},0x{:x})", node.pun, node.lun)
     }
 }
 
@@ -541,6 +806,10 @@ device_path_node! {
     ///
     /// let node = Sd { slot_number: 1 };
     /// assert_eq!(node.to_string(), "SD(0x1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "SD(0x1)");
+    /// assert_eq!(format!("{node:#}"), "SD(0x1)");
+    /// assert_eq!(format!("{node:-#}"), "SD(0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sd)]
     @[DevicePathNodeDerive(Debug)]
@@ -548,6 +817,12 @@ device_path_node! {
     pub struct Sd {
         /// Slot number.
         pub slot_number: u8,
+    }
+}
+impl fmt::Display for Sd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "SD(0x{:x})", node.slot_number)
     }
 }
 
@@ -565,6 +840,10 @@ device_path_node! {
     ///
     /// let node = Bluetooth { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55] };
     /// assert_eq!(node.to_string(), "Bluetooth(001122334455)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Bluetooth(001122334455)");
+    /// assert_eq!(format!("{node:#}"), "Bluetooth(001122334455)");
+    /// assert_eq!(format!("{node:-#}"), "Bluetooth(001122334455)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Bluetooth)]
     @[DevicePathNodeDerive(Debug)]
@@ -572,6 +851,14 @@ device_path_node! {
     pub struct Bluetooth {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
+    }
+}
+impl fmt::Display for Bluetooth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("Bluetooth(")?;
+        write_hex_bytes(f, &node.address)?;
+        f.write_str(")")
     }
 }
 
@@ -591,6 +878,10 @@ device_path_node! {
     /// ssid[..4].copy_from_slice(b"ssid");
     /// let node = WiFi { ssid };
     /// assert_eq!(node.to_string(), "Wi-Fi(ssid)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Wi-Fi(ssid)");
+    /// assert_eq!(format!("{node:#}"), "Wi-Fi(ssid)");
+    /// assert_eq!(format!("{node:-#}"), "Wi-Fi(ssid)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::WiFi)]
     @[DevicePathNodeDerive(Debug)]
@@ -598,6 +889,13 @@ device_path_node! {
     pub struct WiFi {
         /// The 32 SSID octets; this field is not a NUL-terminated string.
         pub ssid: [u8; 32],
+    }
+}
+impl fmt::Display for WiFi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let len = node.ssid.iter().position(|b| *b == 0).unwrap_or(node.ssid.len());
+        write!(f, "Wi-Fi({})", String::from_utf8_lossy(node.ssid.get(..len).ok_or(fmt::Error)?))
     }
 }
 
@@ -615,6 +913,10 @@ device_path_node! {
     ///
     /// let node = Emmc { slot_number: 0 };
     /// assert_eq!(node.to_string(), "eMMC(0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "eMMC(0x0)");
+    /// assert_eq!(format!("{node:#}"), "eMMC(0x0)");
+    /// assert_eq!(format!("{node:-#}"), "eMMC(0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Emmc)]
     @[DevicePathNodeDerive(Debug)]
@@ -622,6 +924,12 @@ device_path_node! {
     pub struct Emmc {
         /// Slot number.
         pub slot_number: u8,
+    }
+}
+impl fmt::Display for Emmc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "eMMC(0x{:x})", node.slot_number)
     }
 }
 
@@ -639,6 +947,10 @@ device_path_node! {
     ///
     /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: 1 };
     /// assert_eq!(node.to_string(), "BluetoothLE(001122334455,0x01)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "BluetoothLE(001122334455,0x01)");
+    /// assert_eq!(format!("{node:#}"), "BluetoothLE(001122334455,0x01)");
+    /// assert_eq!(format!("{node:-#}"), "BluetoothLE(001122334455,0x01)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::BluetoothLE,
@@ -651,6 +963,14 @@ device_path_node! {
         pub address: [u8; 6],
         /// Address type: zero for public, one for random.
         pub address_type: u8,
+    }
+}
+impl fmt::Display for BluetoothLE {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("BluetoothLE(")?;
+        write_hex_bytes(f, &node.address)?;
+        write!(f, ",0x{:02x})", node.address_type)
     }
 }
 
@@ -676,6 +996,10 @@ device_path_node! {
     ///
     /// let node = Nvdimm { uuid: BinaryGuid::from_string("00112233-4455-6677-8899-AABBCCDDEEFF") };
     /// assert_eq!(node.to_string(), "NVDIMM(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "NVDIMM(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:#}"), "NVDIMM(00112233-4455-6677-8899-AABBCCDDEEFF)");
+    /// assert_eq!(format!("{node:-#}"), "NVDIMM(00112233-4455-6677-8899-AABBCCDDEEFF)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug)]
@@ -683,6 +1007,12 @@ device_path_node! {
     pub struct Nvdimm {
         /// Namespace label UUID.
         pub uuid: BinaryGuid,
+    }
+}
+impl fmt::Display for Nvdimm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "NVDIMM({})", node.uuid)
     }
 }
 
@@ -701,6 +1031,10 @@ device_path_node! {
     ///
     /// let node = DeviceLogicalUnit { lun: 1 };
     /// assert_eq!(node.to_string(), "Unit(0x1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Unit(0x1)");
+    /// assert_eq!(format!("{node:#}"), "Unit(0x1)");
+    /// assert_eq!(format!("{node:-#}"), "Unit(0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::DeviceLogicalUnit)]
     @[DevicePathNodeDerive(Debug)]
@@ -708,6 +1042,12 @@ device_path_node! {
     pub struct DeviceLogicalUnit {
         /// Logical unit number for the interface.
         pub lun: u8,
+    }
+}
+impl fmt::Display for DeviceLogicalUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Unit(0x{:x})", node.lun)
     }
 }
 
@@ -732,6 +1072,10 @@ device_path_node! {
     ///     device_protocol: 0xff,
     /// };
     /// assert_eq!(node.to_string(), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// assert_eq!(format!("{node:#}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
+    /// assert_eq!(format!("{node:-#}"), "UsbClass(0x1234,0x5678,0xff,0xff,0xff)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::UsbClass)]
     @[DevicePathNodeDerive(Debug)]
@@ -747,6 +1091,54 @@ device_path_node! {
         pub device_subclass: u8,
         /// USB protocol code; `0xff` matches any protocol.
         pub device_protocol: u8,
+    }
+}
+fn usb_class_shortcut(node: &UsbClass) -> Option<(&'static str, bool)> {
+    let name = match (node.device_class, node.device_subclass) {
+        (1, _) => ("UsbAudio", false),
+        (2, _) => ("UsbCDCControl", false),
+        (3, _) => ("UsbHID", false),
+        (6, _) => ("UsbImage", false),
+        (7, _) => ("UsbPrinter", false),
+        (8, _) => ("UsbMassStorage", false),
+        (9, _) => ("UsbHub", false),
+        (10, _) => ("UsbCDCData", false),
+        (11, _) => ("UsbSmartCard", false),
+        (14, _) => ("UsbVideo", false),
+        (220, _) => ("UsbDiagnostic", false),
+        (224, _) => ("UsbWireless", false),
+        (254, 1) => ("UsbDeviceFirmwareUpdate", true),
+        (254, 2) => ("UsbIrdaBridge", true),
+        (254, 3) => ("UsbTestAndMeasurement", true),
+        _ => return None,
+    };
+    Some(name)
+}
+
+impl fmt::Display for UsbClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if allow_shortcuts(f)
+            && let Some((name, fixed_subclass)) = usb_class_shortcut(node)
+        {
+            if fixed_subclass {
+                return write!(
+                    f,
+                    "{name}(0x{:x},0x{:x},0x{:x})",
+                    node.vendor_id, node.product_id, node.device_protocol
+                );
+            }
+            return write!(
+                f,
+                "{name}(0x{:x},0x{:x},0x{:x},0x{:x})",
+                node.vendor_id, node.product_id, node.device_subclass, node.device_protocol
+            );
+        }
+        write!(
+            f,
+            "UsbClass(0x{:x},0x{:x},0x{:x},0x{:x},0x{:x})",
+            node.vendor_id, node.product_id, node.device_class, node.device_subclass, node.device_protocol
+        )
     }
 }
 
@@ -767,6 +1159,10 @@ device_path_node! {
     ///     data: vec![0x01, 0x02],
     /// };
     /// assert_eq!(node.to_string(), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// assert_eq!(format!("{node:#}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// assert_eq!(format!("{node:-#}"), "VenMsg(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
@@ -780,6 +1176,29 @@ device_path_node! {
         /// Opaque vendor-defined bytes following the GUID.
         #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
+    }
+}
+impl fmt::Display for MessagingVendor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if allow_shortcuts(f) && node.data.is_empty() {
+            if node.guid == BinaryGuid::from_string("E0C14753-F9BE-11D2-9A0C-0090273FC14D") {
+                return f.write_str("VenPcAnsi()");
+            }
+            if node.guid == BinaryGuid::from_string("DFA66065-B419-11D3-9A2D-0090273FC14D") {
+                return f.write_str("VenVt100()");
+            }
+            if node.guid == BinaryGuid::from_string("7BAEC70B-57E0-4C76-8E87-2F9E28088343") {
+                return f.write_str("VenVt100Plus()");
+            }
+            if node.guid == BinaryGuid::from_string("AD15A0D6-8BEC-4ACF-A073-D01DE77E2D88") {
+                return f.write_str("VenUtf8()");
+            }
+            if node.guid == BinaryGuid::from_string("EBA4E8D2-3858-41EC-A281-2647BA9660D0") {
+                return f.write_str("DebugPort()");
+            }
+        }
+        write_vendor(f, "VenMsg", &node.guid, &node.data)
     }
 }
 
@@ -819,6 +1238,10 @@ device_path_node! {
     ///
     /// let node = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
     /// assert_eq!(node.to_string(), "UartFlowCtrl(Hardware)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "UartFlowCtrl(Hardware)");
+    /// assert_eq!(format!("{node:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
+    /// assert_eq!(format!("{node:-#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
@@ -831,6 +1254,47 @@ device_path_node! {
         /// Flow control bitmap: bit 0 is hardware (RTS/CTS) flow control, bit 1 is
         /// XON/XOFF flow control, and the other bits are reserved and must be zero.
         pub flow_control_map: u32,
+    }
+}
+fn topology_text(f: &mut fmt::Formatter<'_>, topology: u16, reserved: Option<u32>) -> fmt::Result {
+    let information = topology & 0x0f;
+    let keywords = topology & 0x80 == 0 && (information == 2 || (information == 1 && topology >> 8 == 0));
+    let mut arguments: [String; 5] = Default::default();
+    if topology == 0 {
+        arguments[0] = "NoTopology".to_string();
+    } else if keywords {
+        arguments[0] = (if topology & 0x10 != 0 { "SATA" } else { "SAS" }).to_string();
+        arguments[1] = (if topology & 0x20 != 0 { "External" } else { "Internal" }).to_string();
+        arguments[2] = (if topology & 0x40 != 0 { "Expanded" } else { "Direct" }).to_string();
+        if information == 2 {
+            arguments[3] = format!("0x{:x}", (topology >> 8) + 1);
+        }
+    } else {
+        arguments[0] = format!("0x{topology:x}");
+    }
+    if let Some(reserved) = reserved.filter(|reserved| *reserved != 0) {
+        arguments[4] = format!("0x{reserved:x}");
+    }
+    let count = arguments.iter().rposition(|argument| !argument.is_empty()).map_or(0, |last| last + 1);
+    f.write_str(&arguments.get(..count).unwrap_or_default().join(","))
+}
+
+impl fmt::Display for UartFlowControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if allow_shortcuts(f) {
+            let value = match node.flow_control_map {
+                0 => "None",
+                1 => "Hardware",
+                2 => "XonXoff",
+                other => return write!(f, "UartFlowCtrl(0x{other:x})"),
+            };
+            write!(f, "UartFlowCtrl({value})")
+        } else {
+            write!(f, "VenMsg({},", UartFlowControl::GUID)?;
+            write_hex_bytes(f, &node.flow_control_map.to_le_bytes())?;
+            f.write_str(")")
+        }
     }
 }
 
@@ -895,6 +1359,16 @@ device_path_node! {
     ///     relative_target_port: 0x100,
     /// };
     /// assert_eq!(node.to_string(), "SAS(0x1234,0x0,0x100,NoTopology)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "SAS(0x1234,0x0,0x100,NoTopology)");
+    /// assert_eq!(
+    ///     format!("{node:#}"),
+    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000000000001)",
+    /// );
+    /// assert_eq!(
+    ///     format!("{node:-#}"),
+    ///     "VenMsg(D487DDB4-008B-11D9-AFDC-001083FFCA4D,000000003412000000000000000000000000000000000001)",
+    /// );
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
@@ -985,6 +1459,10 @@ device_path_node! {
     ///     serial_number: vec![0x0053, 0x004e, 0x0031, 0x0032, 0x0033],
     /// };
     /// assert_eq!(node.to_string(), r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#);
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#);
+    /// assert_eq!(format!("{node:#}"), r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#);
+    /// assert_eq!(format!("{node:-#}"), r#"UsbWwid(0x1234,0x5678,0x0,"SN123")"#);
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::UsbWwid,
@@ -1005,6 +1483,56 @@ device_path_node! {
         /// The wire length, rather than a required NUL, bounds this field.
         #[scroll(ctx = Vector)]
         pub serial_number: Vec<u16>,
+    }
+}
+fn protocol_name(protocol: u16) -> ProtocolDisplay {
+    ProtocolDisplay(protocol)
+}
+
+struct ProtocolDisplay(u16);
+
+impl fmt::Display for ProtocolDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            6 => f.write_str("TCP"),
+            17 => f.write_str("UDP"),
+            value => write!(f, "0x{value:x}"),
+        }
+    }
+}
+
+struct Ipv4Endpoint(core::net::Ipv4Addr, u16);
+
+impl fmt::Display for Ipv4Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.1 {
+            0 => write!(f, "{}", self.0),
+            port => write!(f, "{}:{port}", self.0),
+        }
+    }
+}
+
+impl fmt::Display for IpV4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "IPv4({}", Ipv4Endpoint(node.remote_ip, node.remote_port))?;
+        if display_only(f) {
+            return f.write_str(")");
+        }
+        write!(f, ",{},{}", protocol_name(node.protocol), if node.static_ip { "Static" } else { "DHCP" })?;
+        write!(f, ",{}", Ipv4Endpoint(node.local_ip, node.local_port))?;
+        if let Some(network) = &node.network {
+            write!(f, ",{},{}", network.gateway, network.subnet_mask)?;
+        }
+        f.write_str(")")
+    }
+}
+
+impl fmt::Display for UsbWwid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let serial = String::from_utf16_lossy(&node.serial_number);
+        write!(f, "UsbWwid(0x{:x},0x{:x},0x{:x},\"{}\")", node.vendor_id, node.product_id, node.interface, serial)
     }
 }
 
@@ -1063,6 +1591,10 @@ device_path_node! {
     ///     node.to_string(),
     ///     "IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,192.168.0.254,255.255.255.0)",
     /// );
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "IPv4(192.168.0.1:80)");
+    /// assert_eq!(format!("{node:#}"), "IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,192.168.0.254,255.255.255.0)");
+    /// assert_eq!(format!("{node:-#}"), "IPv4(192.168.0.1:80)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::IpV4,
@@ -1166,6 +1698,19 @@ device_path_node! {
     ///     node.to_string(),
     ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
     /// );
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(
+    ///     format!("{node:-}"),
+    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    /// );
+    /// assert_eq!(
+    ///     format!("{node:#}"),
+    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    /// );
+    /// assert_eq!(
+    ///     format!("{node:-#}"),
+    ///     "iSCSI(iqn.2026-10.com.example:disk,0x1,0x0001020304050607,None,None,None,TCP)",
+    /// );
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Iscsi,
@@ -1186,6 +1731,23 @@ device_path_node! {
         /// ASCII target name without its NUL terminator, at most 223 bytes.
         #[scroll(ctx = AsciiNul)]
         pub target_name: String,
+    }
+}
+impl fmt::Display for Iscsi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let header = if node.options & (1 << 1) != 0 { "CRC32C" } else { "None" };
+        let data = if node.options & (1 << 3) != 0 { "CRC32C" } else { "None" };
+        let auth = if node.options & (1 << 11) != 0 {
+            "None"
+        } else if node.options & (1 << 12) != 0 {
+            "CHAP_UNI"
+        } else {
+            "CHAP_BI"
+        };
+        write!(f, "iSCSI({},0x{:x},0x", node.target_name, node.portal_group)?;
+        write_hex_bytes(f, &node.lun)?;
+        write!(f, ",{header},{data},{auth},TCP)")
     }
 }
 
@@ -1220,6 +1782,10 @@ device_path_node! {
     ///
     /// let node = Uri { uri: "https://example.com/boot".into() };
     /// assert_eq!(node.to_string(), "Uri(https://example.com/boot)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Uri(https://example.com/boot)");
+    /// assert_eq!(format!("{node:#}"), "Uri(https://example.com/boot)");
+    /// assert_eq!(format!("{node:-#}"), "Uri(https://example.com/boot)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Uri,
@@ -1232,6 +1798,12 @@ device_path_node! {
         /// URI text, including an empty URI when appropriate.
         #[scroll(ctx = Ascii)]
         pub uri: String,
+    }
+}
+impl fmt::Display for Uri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Uri({})", node.uri)
     }
 }
 
@@ -1263,6 +1835,10 @@ device_path_node! {
     ///
     /// let node = Dns { addresses: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))] };
     /// assert_eq!(node.to_string(), "Dns(192.168.0.1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Dns(192.168.0.1)");
+    /// assert_eq!(format!("{node:#}"), "Dns(192.168.0.1)");
+    /// assert_eq!(format!("{node:-#}"), "Dns(192.168.0.1)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Dns,
@@ -1274,6 +1850,19 @@ device_path_node! {
     pub struct Dns {
         /// One or more addresses of the same family.
         pub addresses: Vec<IpAddr>,
+    }
+}
+impl fmt::Display for Dns {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("Dns(")?;
+        for (index, addr) in node.addresses.iter().enumerate() {
+            if index != 0 {
+                f.write_str(",")?;
+            }
+            write!(f, "{addr}")?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -1376,6 +1965,10 @@ device_path_node! {
     ///
     /// let node = RestService { service: RestServiceType::Redfish, access_mode: 1 };
     /// assert_eq!(node.to_string(), "RestService(0x1,0x1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "RestService(0x1,0x1)");
+    /// assert_eq!(format!("{node:#}"), "RestService(0x1,0x1)");
+    /// assert_eq!(format!("{node:-#}"), "RestService(0x1,0x1)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::RestService,
@@ -1389,6 +1982,20 @@ device_path_node! {
         pub service: RestServiceType,
         /// One for in-band access, two for out-of-band access.
         pub access_mode: u8,
+    }
+}
+impl fmt::Display for RestService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        match &node.service {
+            RestServiceType::Redfish => write!(f, "RestService(0x1,0x{:x})", node.access_mode),
+            RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", node.access_mode),
+            RestServiceType::Vendor { guid, data } => {
+                write!(f, "RestService(0xff,0x{:x},{}", node.access_mode, guid)?;
+                write_hex_u8_data(f, data)?;
+                f.write_str(")")
+            }
+        }
     }
 }
 
@@ -1474,6 +2081,19 @@ device_path_node! {
     ///     node.to_string(),
     ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
     /// );
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(
+    ///     format!("{node:-}"),
+    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    /// );
+    /// assert_eq!(
+    ///     format!("{node:#}"),
+    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    /// );
+    /// assert_eq!(
+    ///     format!("{node:-#}"),
+    ///     "NVMEoF(nqn.2026-10.com.example:disk,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
+    /// );
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmeOf,
@@ -1490,6 +2110,37 @@ device_path_node! {
         /// UTF-8 subsystem NQN without its wire NUL terminator, at most 223 bytes.
         #[scroll(ctx = Utf8Nul)]
         pub subsystem_nqn: String,
+    }
+}
+fn write_uuid_bytes(f: &mut fmt::Formatter<'_>, b: &[u8; 16]) -> fmt::Result {
+    write!(
+        f,
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]
+    )?;
+    write_hex_bytes(f, &b[10..])
+}
+
+impl fmt::Display for NvmeOf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "NVMEoF({},", node.subsystem_nqn)?;
+        match node.identifier_type {
+            1 => {
+                f.write_str("eui.")?;
+                write_hex_bytes(f, &node.identifier[..8])?;
+            }
+            2 => {
+                f.write_str("nguid.")?;
+                write_hex_bytes(f, &node.identifier)?;
+            }
+            3 => {
+                f.write_str("urn:uuid:")?;
+                write_uuid_bytes(f, &node.identifier)?;
+            }
+            other => write!(f, "unknown{other}.")?,
+        }
+        f.write_str(")")
     }
 }
 
@@ -1518,6 +2169,10 @@ device_path_node! {
     ///
     /// let node = Sata::new(0, 0xffff, 0);
     /// assert_eq!(node.to_string(), "Sata(0x0,0xffff,0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Sata(0x0,0xffff,0x0)");
+    /// assert_eq!(format!("{node:#}"), "Sata(0x0,0xffff,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "Sata(0x0,0xffff,0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -1529,6 +2184,12 @@ device_path_node! {
         pub port_multiplier_port: u16,
         /// Logical Unit Number.
         pub lun: u16,
+    }
+}
+impl fmt::Display for Sata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Sata(0x{:x},0x{:x},0x{:x})", node.hba_port, node.port_multiplier_port, node.lun)
     }
 }
 
@@ -1566,6 +2227,10 @@ device_path_node! {
     ///
     /// let node = NvmExpress::new(1, 0x0011223344556677);
     /// assert_eq!(node.to_string(), "NVMe(0x1,00-11-22-33-44-55-66-77)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "NVMe(0x1,00-11-22-33-44-55-66-77)");
+    /// assert_eq!(format!("{node:#}"), "NVMe(0x1,00-11-22-33-44-55-66-77)");
+    /// assert_eq!(format!("{node:-#}"), "NVMe(0x1,00-11-22-33-44-55-66-77)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmExpress,
@@ -1578,6 +2243,14 @@ device_path_node! {
         pub namespace_id: u32,
         /// IEEE Extended Unique Identifier (EUI-64).
         pub eui64: u64,
+    }
+}
+impl fmt::Display for NvmExpress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "NVMe(0x{:x},", node.namespace_id)?;
+        write_dash_hex_bytes(f, &node.eui64.to_be_bytes())?;
+        f.write_str(")")
     }
 }
 

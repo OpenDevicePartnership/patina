@@ -16,9 +16,14 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+use super::display_only;
 use super::{BiosSubType, DevicePathType};
 use crate::{device_path_node, uefi::device_path::encoding::AsciiNul};
-use alloc::string::String;
+use alloc::{
+    format,
+    string::{String, ToString},
+};
+use core::fmt;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
@@ -36,6 +41,10 @@ device_path_node! {
     ///
     /// let node = Bios { device_type: 2, status_flag: 0, description_str: "boot".into() };
     /// assert_eq!(node.to_string(), "BBS(HD,boot,0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "BBS(HD,boot)");
+    /// assert_eq!(format!("{node:#}"), "BBS(HD,boot,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "BBS(HD,boot)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
@@ -56,6 +65,25 @@ device_path_node! {
 
 fn bios_measure_size(node: &Bios) -> usize {
     size_of_val(&node.device_type) + size_of_val(&node.status_flag) + node.description_str.len() + size_of::<u8>() // NUL terminator
+}
+impl fmt::Display for Bios {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        let ty = match node.device_type {
+            1 => "Floppy".to_string(),
+            2 => "HD".to_string(),
+            3 => "CDROM".to_string(),
+            4 => "PCMCIA".to_string(),
+            5 => "USB".to_string(),
+            6 => "Network".to_string(),
+            other => format!("0x{other:x}"),
+        };
+        write!(f, "BBS({ty},{}", node.description_str)?;
+        if !display_only(f) {
+            write!(f, ",0x{:x}", node.status_flag)?;
+        }
+        f.write_str(")")
+    }
 }
 
 #[cfg(test)]

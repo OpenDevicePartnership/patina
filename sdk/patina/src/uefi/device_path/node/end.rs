@@ -17,7 +17,7 @@
 
 use super::{DevicePathType, EndSubType};
 use crate::device_path_node;
-use core::fmt::Display;
+use core::fmt;
 use scroll::ctx::{TryFromCtx, TryIntoCtx};
 
 device_path_node! {
@@ -34,21 +34,15 @@ device_path_node! {
     ///
     /// let node = EndEntire;
     /// assert_eq!(node.to_string(), "");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "");
+    /// assert_eq!(format!("{node:#}"), "");
+    /// assert_eq!(format!("{node:-#}"), "");
     /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]
     pub struct EndEntire;
-}
-
-impl Display for EndEntire {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
-    }
 }
 
 impl TryIntoCtx<scroll::Endian> for EndEntire {
@@ -64,6 +58,11 @@ impl TryFromCtx<'_, scroll::Endian> for EndEntire {
 
     fn try_from_ctx(_: &[u8], _: scroll::Endian) -> Result<(Self, usize), Self::Error> {
         Ok((Self, 0))
+    }
+}
+impl fmt::Display for EndEntire {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
     }
 }
 
@@ -82,21 +81,15 @@ device_path_node! {
     ///
     /// let node = EndInstance;
     /// assert_eq!(node.to_string(), ",");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), ",");
+    /// assert_eq!(format!("{node:#}"), ",");
+    /// assert_eq!(format!("{node:-#}"), ",");
     /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Copy)]
     pub struct EndInstance;
-}
-
-impl Display for EndInstance {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
-    }
 }
 
 impl TryIntoCtx<scroll::Endian> for EndInstance {
@@ -112,6 +105,11 @@ impl TryFromCtx<'_, scroll::Endian> for EndInstance {
 
     fn try_from_ctx(_: &[u8], _: scroll::Endian) -> Result<(Self, usize), Self::Error> {
         Ok((Self, 0))
+    }
+}
+impl fmt::Display for EndInstance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(",")
     }
 }
 

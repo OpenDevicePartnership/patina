@@ -16,10 +16,12 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+use super::write_vendor;
 use super::{DevicePathType, HardwareSubType};
 use crate::{BinaryGuid, standard::efi};
 use crate::{device_path_node, uefi::device_path::encoding::Vector};
 use alloc::vec::Vec;
+use core::fmt;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
@@ -39,6 +41,10 @@ device_path_node! {
     ///     data: vec![0x01, 0x02],
     /// };
     /// assert_eq!(node.to_string(), "VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// assert_eq!(format!("{node:#}"), "VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
+    /// assert_eq!(format!("{node:-#}"), "VenHw(00112233-4455-6677-8899-AABBCCDDEEFF,0102)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Hardware, HardwareSubType::Vendor,
@@ -52,6 +58,12 @@ device_path_node! {
         /// Opaque vendor-defined bytes following the GUID.
         #[scroll(ctx = Vector)]
         pub data: Vec<u8>,
+    }
+}
+impl fmt::Display for HardwareVendor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write_vendor(f, "VenHw", &node.guid, &node.data)
     }
 }
 
@@ -74,6 +86,10 @@ device_path_node! {
     ///
     /// let node = Pci { function: 0, device: 0x1f };
     /// assert_eq!(node.to_string(), "Pci(0x1f,0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Pci(0x1f,0x0)");
+    /// assert_eq!(format!("{node:#}"), "Pci(0x1f,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "Pci(0x1f,0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
     @[DevicePathNodeDerive(Debug)]
@@ -83,6 +99,12 @@ device_path_node! {
         pub function: u8,
         /// PCI Device Number.
         pub device: u8,
+    }
+}
+impl fmt::Display for Pci {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Pci(0x{:x},0x{:x})", node.device, node.function)
     }
 }
 
@@ -100,6 +122,10 @@ device_path_node! {
     ///
     /// let node = PcCard { function_number: 1 };
     /// assert_eq!(node.to_string(), "PcCard(0x1)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "PcCard(0x1)");
+    /// assert_eq!(format!("{node:#}"), "PcCard(0x1)");
+    /// assert_eq!(format!("{node:-#}"), "PcCard(0x1)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
     @[DevicePathNodeDerive(Debug)]
@@ -107,6 +133,12 @@ device_path_node! {
     pub struct PcCard {
         /// Function Number, 0 is the first one.
         pub function_number: u8,
+    }
+}
+impl fmt::Display for PcCard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "PcCard(0x{:x})", node.function_number)
     }
 }
 
@@ -124,6 +156,10 @@ device_path_node! {
     ///
     /// let node = MemoryMapped { memory_type: 0x0b, start_address: 0x1000, end_address: 0x1fff };
     /// assert_eq!(node.to_string(), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// assert_eq!(format!("{node:#}"), "MemoryMapped(0xb,0x1000,0x1fff)");
+    /// assert_eq!(format!("{node:-#}"), "MemoryMapped(0xb,0x1000,0x1fff)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
     @[DevicePathNodeDerive(Debug)]
@@ -135,6 +171,12 @@ device_path_node! {
         pub start_address: u64,
         /// Ending Memory Address.
         pub end_address: u64,
+    }
+}
+impl fmt::Display for MemoryMapped {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "MemoryMapped(0x{:x},0x{:x},0x{:x})", node.memory_type, node.start_address, node.end_address)
     }
 }
 
@@ -152,6 +194,10 @@ device_path_node! {
     ///
     /// let node = Controller { number: 3 };
     /// assert_eq!(node.to_string(), "Ctrl(0x3)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "Ctrl(0x3)");
+    /// assert_eq!(format!("{node:#}"), "Ctrl(0x3)");
+    /// assert_eq!(format!("{node:-#}"), "Ctrl(0x3)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
     @[DevicePathNodeDerive(Debug)]
@@ -159,6 +205,12 @@ device_path_node! {
     pub struct Controller {
         /// Controller Number.
         pub number: u32,
+    }
+}
+impl fmt::Display for Controller {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "Ctrl(0x{:x})", node.number)
     }
 }
 
@@ -177,6 +229,10 @@ device_path_node! {
     ///
     /// let node = Bmc { interface_type: 1, base_address: 0x1000 };
     /// assert_eq!(node.to_string(), "BMC(0x1,0x1000)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "BMC(0x1,0x1000)");
+    /// assert_eq!(format!("{node:#}"), "BMC(0x1,0x1000)");
+    /// assert_eq!(format!("{node:-#}"), "BMC(0x1,0x1000)");
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = bmc_validate)]
     @[DevicePathNodeDerive(Debug)]
@@ -186,6 +242,12 @@ device_path_node! {
         pub interface_type: u8,
         /// BMC base address.
         pub base_address: u64,
+    }
+}
+impl fmt::Display for Bmc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "BMC(0x{:x},0x{:x})", node.interface_type, node.base_address)
     }
 }
 

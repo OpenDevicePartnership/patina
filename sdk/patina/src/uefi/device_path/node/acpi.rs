@@ -21,12 +21,16 @@
 // cspell:ignore BCDEFGHIJ PNPZZZZ
 
 use super::{AcpiSubType, DevicePathType};
+use super::{allow_shortcuts, display_only};
 use crate::{
     device_path_node,
     uefi::device_path::encoding::{AsciiNul, Vector},
 };
-use alloc::{string::String, vec::Vec};
-use core::fmt::Display;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::fmt;
 use scroll::{Pread, Pwrite};
 
 device_path_node! {
@@ -44,6 +48,10 @@ device_path_node! {
     ///
     /// let node = NvdimmAcpi { nfit_device_handle: 0x2a };
     /// assert_eq!(node.to_string(), "NvdimmAcpiAdr(0x2a)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "NvdimmAcpiAdr(0x2a)");
+    /// assert_eq!(format!("{node:#}"), "NvdimmAcpiAdr(0x2a)");
+    /// assert_eq!(format!("{node:-#}"), "NvdimmAcpiAdr(0x2a)");
     /// ```
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Nvdimm)]
     @[DevicePathNodeDerive(Debug)]
@@ -51,6 +59,12 @@ device_path_node! {
     pub struct NvdimmAcpi {
         /// NFIT device handle corresponding to the NVDIMM's ACPI `_ADR`.
         pub nfit_device_handle: u32,
+    }
+}
+impl fmt::Display for NvdimmAcpi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        write!(f, "NvdimmAcpiAdr(0x{:x})", node.nfit_device_handle)
     }
 }
 
@@ -76,6 +90,10 @@ device_path_node! {
     ///     cid_string: String::new(),
     /// };
     /// assert_eq!(node.to_string(), "AcpiEx(PNP0A03,0,0x0,,,)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "PciRoot(0x0)");
+    /// assert_eq!(format!("{node:#}"), "AcpiEx(PNP0A03,0,0x0,,,)");
+    /// assert_eq!(format!("{node:-#}"), "AcpiEx(PNP0A03,0,0x0)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
@@ -111,6 +129,63 @@ fn extended_acpi_measure_size(node: &ExtendedAcpi) -> usize {
             .map(|value| value.len() + size_of::<u8>()) // NUL terminator
             .sum::<usize>()
 }
+impl fmt::Display for ExtendedAcpi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        // `PciRoot` and `PcieRoot` are shortcuts, and only the shorter display-only form uses them
+        // for this node: their parseable form is the smaller `Acpi` node.
+        if display_only(f) && allow_shortcuts(f) {
+            if node.hid == Acpi::PCI_ROOT_HID || (node.cid == Acpi::PCI_ROOT_HID && node.hid != Acpi::PCIE_ROOT_HID) {
+                return write_root_shortcut(f, "PciRoot", node);
+            }
+            if node.hid == Acpi::PCIE_ROOT_HID || node.cid == Acpi::PCIE_ROOT_HID {
+                return write_root_shortcut(f, "PcieRoot", node);
+            }
+        }
+
+        let hid = eisa_string(node.hid);
+        let cid = eisa_string(node.cid);
+        if node.hid_string.is_empty() && node.cid_string.is_empty() && !node.uid_string.is_empty() {
+            if node.cid == 0 {
+                write!(f, "AcpiExp({hid},0,{})", node.uid_string)
+            } else {
+                write!(f, "AcpiExp({hid},{cid},{})", node.uid_string)
+            }
+        } else if display_only(f) {
+            write!(
+                f,
+                "AcpiEx({},{},{})",
+                if node.hid_string.is_empty() { hid.as_str() } else { &node.hid_string },
+                if node.cid_string.is_empty() { cid.as_str() } else { &node.cid_string },
+                if node.uid_string.is_empty() {
+                    return write!(
+                        f,
+                        "AcpiEx({},{},0x{:x})",
+                        if node.hid_string.is_empty() { hid.as_str() } else { &node.hid_string },
+                        if node.cid_string.is_empty() { cid.as_str() } else { &node.cid_string },
+                        node.uid
+                    );
+                } else {
+                    &node.uid_string
+                },
+            )
+        } else {
+            write!(
+                f,
+                "AcpiEx({hid},{cid},0x{:x},{},{},{})",
+                node.uid, node.hid_string, node.cid_string, node.uid_string
+            )
+        }
+    }
+}
+
+fn write_root_shortcut(f: &mut fmt::Formatter<'_>, name: &str, node: &ExtendedAcpi) -> fmt::Result {
+    if node.uid_string.is_empty() {
+        write!(f, "{name}(0x{:x})", node.uid)
+    } else {
+        write!(f, "{name}({})", node.uid_string)
+    }
+}
 
 device_path_node! {
     /// ACPI `_ADR` device path node (UEFI 2.10 Table 10.11).
@@ -127,6 +202,10 @@ device_path_node! {
     ///
     /// let node = AcpiAdr { addresses: vec![0x80010100, 0x80010200] };
     /// assert_eq!(node.to_string(), "AcpiAdr(0x80010100,0x80010200)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "AcpiAdr(0x80010100,0x80010200)");
+    /// assert_eq!(format!("{node:#}"), "AcpiAdr(0x80010100,0x80010200)");
+    /// assert_eq!(format!("{node:-#}"), "AcpiAdr(0x80010100,0x80010200)");
     /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::Adr,
@@ -152,6 +231,19 @@ fn acpi_adr_validate(node: &AcpiAdr) -> Result<(), &'static str> {
     }
     Ok(())
 }
+impl fmt::Display for AcpiAdr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        f.write_str("AcpiAdr(")?;
+        for (index, address) in node.addresses.iter().enumerate() {
+            if index != 0 {
+                f.write_str(",")?;
+            }
+            write!(f, "0x{address:x}")?;
+        }
+        f.write_str(")")
+    }
+}
 
 device_path_node! {
     /// ACPI device path node (UEFI 2.10 Table 10.9).
@@ -168,6 +260,10 @@ device_path_node! {
     ///
     /// let node = Acpi::new_pci_root(0);
     /// assert_eq!(node.to_string(), "PciRoot(0x0)");
+    /// // Display-only (`-`), without shortcuts (`#`), and both.
+    /// assert_eq!(format!("{node:-}"), "PciRoot(0x0)");
+    /// assert_eq!(format!("{node:#}"), "Acpi(PNP0A03,0x0)");
+    /// assert_eq!(format!("{node:-#}"), "Acpi(PNP0A03,0x0)");
     /// ```
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
     @[DevicePathNodeDerive(Debug)]
@@ -235,14 +331,55 @@ impl Acpi {
         Ok((product << 16) | vendor)
     }
 }
+fn write_eisa_id(f: &mut fmt::Formatter<'_>, value: u32) -> fmt::Result {
+    if value == 0 {
+        return f.write_str("0");
+    }
+    let vendor = value & 0x7fff;
+    let product = (value >> 16) & 0xffff;
+    let a = char::from_u32(((vendor >> 10) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+    let b = char::from_u32(((vendor >> 5) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+    let c = char::from_u32((vendor & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+    write!(f, "{a}{b}{c}{product:04X}")
+}
 
-impl Display for Acpi {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::uefi::device_path::text::DevicePathText::fmt_text(
-            self,
-            f,
-            crate::uefi::device_path::text::TextOptions::default(),
-        )
+fn eisa_string(value: u32) -> String {
+    struct Eisa(u32);
+    impl fmt::Display for Eisa {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write_eisa_id(f, self.0)
+        }
+    }
+    Eisa(value).to_string()
+}
+
+const PNP0604: u32 = Acpi::eisa_id("PNP0604");
+const PNP0301: u32 = Acpi::eisa_id("PNP0301");
+const PNP0501: u32 = Acpi::eisa_id("PNP0501");
+const PNP0401: u32 = Acpi::eisa_id("PNP0401");
+
+fn acpi_shortcut(hid: u32) -> Option<&'static str> {
+    match hid {
+        Acpi::PCI_ROOT_HID => Some("PciRoot"),
+        Acpi::PCIE_ROOT_HID => Some("PcieRoot"),
+        PNP0604 => Some("Floppy"),
+        PNP0301 => Some("Keyboard"),
+        PNP0501 => Some("Serial"),
+        PNP0401 => Some("ParallelPort"),
+        _ => None,
+    }
+}
+impl fmt::Display for Acpi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self;
+        if allow_shortcuts(f)
+            && let Some(name) = acpi_shortcut(node.hid)
+        {
+            return write!(f, "{name}(0x{:x})", node.uid);
+        }
+        write!(f, "Acpi(")?;
+        write_eisa_id(f, node.hid)?;
+        write!(f, ",0x{:x})", node.uid)
     }
 }
 
