@@ -287,7 +287,9 @@ pub(crate) fn read_performance_config(hob_list: &HobList) -> Option<PerformanceC
         if let PiHob::GuidHob(guid, data) = hob
             && guid.name == PerformanceConfig::HOB_GUID
         {
-            return Some(PerformanceConfig::parse(data));
+            return PerformanceConfig::parse(data)
+                .inspect_err(|e| log::error!("Performance: invalid PerformanceConfig HOB, ignoring: {e}"))
+                .ok();
         }
     }
     None
@@ -300,9 +302,9 @@ pub(crate) fn read_hob_performance_records(hob_list: &HobList) -> Option<(u32, P
     let perf_hobs: Vec<HobPerformanceData> = hob_list
         .iter()
         .filter_map(|hob| match hob {
-            PiHob::GuidHob(guid, data) if guid.name == HobPerformanceData::HOB_GUID => {
-                Some(HobPerformanceData::parse(data))
-            }
+            PiHob::GuidHob(guid, data) if guid.name == HobPerformanceData::HOB_GUID => HobPerformanceData::parse(data)
+                .inspect_err(|e| log::error!("Performance: skipping invalid performance record HOB: {e}"))
+                .ok(),
             _ => None,
         })
         .collect();

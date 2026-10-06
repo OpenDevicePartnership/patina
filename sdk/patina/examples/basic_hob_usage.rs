@@ -16,7 +16,7 @@
 //! initialization is to parse the HOB list and use any registered parsers to parse a `GUIDed` HOB.
 use patina::{
     BinaryGuid,
-    component::{IntoComponent, Storage, component, prelude::*},
+    component::{IntoComponent, Storage, component, hob::HobParseError, prelude::*},
 };
 use zerocopy_derive::FromBytes;
 
@@ -44,9 +44,10 @@ pub struct CustomHob2(String);
 impl FromHob for CustomHob2 {
     const HOB_GUID: BinaryGuid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000002");
 
-    fn parse(bytes: &[u8]) -> Self {
-        let out = String::from_utf8(bytes.to_vec()).expect("Failed to parse string from bytes");
-        CustomHob2(out)
+    fn parse(bytes: &[u8]) -> core::result::Result<Self, HobParseError> {
+        String::from_utf8(bytes.to_vec())
+            .map(CustomHob2)
+            .map_err(|_| HobParseError::Invalid("payload is not valid UTF-8"))
     }
 }
 

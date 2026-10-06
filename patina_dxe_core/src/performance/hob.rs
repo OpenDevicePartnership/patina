@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use core::iter::Iterator;
 
 use patina::{
-    component::hob::FromHob,
+    component::hob::{FromHob, HobParseError},
     performance::{
         error::Error,
         record::{Iter, PerformanceRecordBuffer},
@@ -32,22 +32,19 @@ pub(crate) struct HobPerformanceData {
 impl FromHob for HobPerformanceData {
     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("3B387BFD-7ABC-4CF2-A0CA-B6A16C1B1B25");
 
-    fn parse(bytes: &[u8]) -> HobPerformanceData {
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
         let mut offset = 0;
 
-        let Ok([size_of_all_entries, load_image_count, _hob_is_full]) = bytes.gread::<[u32; 3]>(&mut offset) else {
-            log::error!("Performance: error while parsing HobPerformanceRecordBuffer, return default value.");
-            return Self::default();
-        };
+        let [size_of_all_entries, load_image_count, _hob_is_full] = bytes
+            .gread::<[u32; 3]>(&mut offset)
+            .map_err(|_| HobParseError::BufferTooSmall { expected: size_of::<[u32; 3]>(), actual: bytes.len() })?;
         let records_data_buffer = bytes
-            .get(offset..offset + size_of_all_entries as usize)
-            .unwrap_or_else(|| {
-                debug_assert!(false, "Performance: records_data_buffer slice out of bounds");
-                &[]
-            })
+            .get(offset..)
+            .and_then(|rest| rest.get(..size_of_all_entries as usize))
+            .ok_or(HobParseError::Invalid("records_data_buffer slice out of bounds"))?
             .to_vec();
 
-        Self { load_image_count, records_data_buffer }
+        Ok(Self { load_image_count, records_data_buffer })
     }
 }
 
@@ -78,7 +75,10 @@ mod tests {
 
     use super::{HobPerformanceData, merge_hob_performance_buffer};
     use crate::performance::push_generic_record;
-    use patina::{component::hob::FromHob, performance::record::PerformanceRecordBuffer};
+    use patina::{
+        component::hob::{FromHob, HobParseError},
+        performance::record::PerformanceRecordBuffer,
+    };
 
     #[test]
     fn test_merge_hob_performance_buffer_with_none() {
@@ -112,7 +112,7 @@ mod tests {
         buffer.gwrite(hob_is_full, &mut offset).unwrap();
         buffer.gwrite(perf_record_buffer.buffer(), &mut offset).unwrap();
 
-        let hob_perf_record_buffer = HobPerformanceData::parse(&buffer);
+        let hob_perf_record_buffer = HobPerformanceData::parse(&buffer).expect("valid buffer");
 
         assert_eq!(load_image_count, hob_perf_record_buffer.load_image_count);
         assert_eq!(perf_record_buffer.buffer(), hob_perf_record_buffer.records_data_buffer.as_slice());
@@ -122,10 +122,18 @@ mod tests {
     fn test_hob_performance_record_buffer_parse_from_hob_invalid() {
         let buffer = [0_u8; 1];
 
-        let hob_perf_record_buffer = HobPerformanceData::parse(&buffer);
+        assert_eq!(
+            HobPerformanceData::parse(&buffer).unwrap_err(),
+            HobParseError::BufferTooSmall { expected: 12, actual: 1 }
+        );
+    }
 
-        assert_eq!(0, hob_perf_record_buffer.load_image_count);
-        assert!(hob_perf_record_buffer.records_data_buffer.is_empty());
+    #[test]
+    fn test_hob_performance_record_buffer_parse_from_hob_records_out_of_bounds() {
+        let mut buffer = [0_u8; 12];
+        buffer[..4].copy_from_slice(&100_u32.to_le_bytes());
+
+        assert!(matches!(HobPerformanceData::parse(&buffer), Err(HobParseError::Invalid(_))));
     }
 
     #[test]

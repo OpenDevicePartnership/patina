@@ -130,18 +130,13 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         impl #lhs patina::component::hob::FromHob for #name #rhs #where_clause {
             const HOB_GUID: patina::BinaryGuid = #hob_guid;
 
-            fn parse(bytes: &[u8]) -> Self {
-                let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
-                    Ok((hob, _)) => hob,
-                    Err(_) => {
-                        panic!(
-                            "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
-                            Self::HOB_GUID,
-                            core::any::type_name::<Self>()
-                        );
-                    }
-                };
-                hob
+            fn parse(bytes: &[u8]) -> core::result::Result<Self, patina::component::hob::HobParseError> {
+                <Self as zerocopy::FromBytes>::read_from_prefix(bytes)
+                    .map(|(hob, _)| hob)
+                    .map_err(|_| patina::component::hob::HobParseError::BufferTooSmall {
+                        expected: core::mem::size_of::<Self>(),
+                        actual: bytes.len(),
+                    })
             }
         }
     }
@@ -169,18 +164,13 @@ mod tests {
         let expected = quote! {
             impl patina::component::hob::FromHob for MyStruct {
                 const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
-                fn parse(bytes: &[u8]) -> Self {
-                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
-                        Ok((hob, _)) => hob,
-                        Err(_) => {
-                            panic!(
-                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
-                                Self::HOB_GUID,
-                                core::any::type_name::<Self>()
-                            );
-                        }
-                    };
-                    hob
+                fn parse(bytes: &[u8]) -> core::result::Result<Self, patina::component::hob::HobParseError> {
+                    <Self as zerocopy::FromBytes>::read_from_prefix(bytes)
+                        .map(|(hob, _)| hob)
+                        .map_err(|_| patina::component::hob::HobParseError::BufferTooSmall {
+                            expected: core::mem::size_of::<Self>(),
+                            actual: bytes.len(),
+                        })
                 }
             }
         };
@@ -208,18 +198,13 @@ mod tests {
             impl patina::component::hob::FromHob for MyStruct {
 
                 const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("EA296D92-0B69-423C-8C28-33B4E0A91268");
-                fn parse(bytes: &[u8]) -> Self {
-                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
-                        Ok((hob, _)) => hob,
-                        Err(_) => {
-                            panic!(
-                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
-                                Self::HOB_GUID,
-                                core::any::type_name::<Self>()
-                            );
-                        }
-                    };
-                    hob
+                fn parse(bytes: &[u8]) -> core::result::Result<Self, patina::component::hob::HobParseError> {
+                    <Self as zerocopy::FromBytes>::read_from_prefix(bytes)
+                        .map(|(hob, _)| hob)
+                        .map_err(|_| patina::component::hob::HobParseError::BufferTooSmall {
+                            expected: core::mem::size_of::<Self>(),
+                            actual: bytes.len(),
+                        })
                 }
             }
         };
@@ -245,18 +230,13 @@ mod tests {
         let expected = quote! {
             impl<T> patina::component::hob::FromHob for MyStruct<T> {
                 const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("8BE4DF61-93CA-11D2-AA0D-00E098032B8C");
-                fn parse(bytes: &[u8]) -> Self {
-                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
-                        Ok((hob, _)) => hob,
-                        Err(_) => {
-                            panic!(
-                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
-                                Self::HOB_GUID,
-                                core::any::type_name::<Self>()
-                            );
-                        }
-                    };
-                    hob
+                fn parse(bytes: &[u8]) -> core::result::Result<Self, patina::component::hob::HobParseError> {
+                    <Self as zerocopy::FromBytes>::read_from_prefix(bytes)
+                        .map(|(hob, _)| hob)
+                        .map_err(|_| patina::component::hob::HobParseError::BufferTooSmall {
+                            expected: core::mem::size_of::<Self>(),
+                            actual: bytes.len(),
+                        })
                 }
             }
         };

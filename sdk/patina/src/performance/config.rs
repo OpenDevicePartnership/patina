@@ -10,7 +10,11 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::{BinaryGuid, component::hob::FromHob, performance::Measurement};
+use crate::{
+    BinaryGuid,
+    component::hob::{FromHob, HobParseError},
+    performance::Measurement,
+};
 
 /// The configuration for performance measurement.
 #[derive(Debug, Clone, Copy, zerocopy_derive::FromBytes, zerocopy_derive::KnownLayout)]
@@ -53,15 +57,10 @@ impl Default for PerformanceConfig {
 impl FromHob for PerformanceConfig {
     const HOB_GUID: BinaryGuid = BinaryGuid::from_string("fd87f2d8-112d-4640-9c00-d37d2a1fb75d");
 
-    fn parse(bytes: &[u8]) -> Self {
-        match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
-            Ok((config, _)) => config,
-            Err(e) => panic!(
-                "Guided Hob [{:#?}] parse failed. Buffer too small for type {}: {e}",
-                Self::HOB_GUID,
-                core::any::type_name::<Self>()
-            ),
-        }
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+        <Self as zerocopy::FromBytes>::read_from_prefix(bytes)
+            .map(|(config, _)| config)
+            .map_err(|_| HobParseError::BufferTooSmall { expected: size_of::<Self>(), actual: bytes.len() })
     }
 }
 
@@ -96,7 +95,7 @@ mod tests {
     fn test_performance_config_parse_reads_packed_fields() {
         // Packed layout: enabled (u8) followed by enabled_measurements (u32, little-endian).
         let bytes: [u8; 5] = [PerformanceConfig::ENABLED, 0x0A, 0x00, 0x00, 0x00];
-        let config = PerformanceConfig::parse(&bytes);
+        let config = PerformanceConfig::parse(&bytes).expect("valid buffer");
         assert_eq!(config.enabled, PerformanceConfig::ENABLED);
         assert_eq!({ config.enabled_measurements }, 0x0A);
     }
@@ -104,15 +103,17 @@ mod tests {
     #[test]
     fn test_performance_config_parse_ignores_trailing_bytes() {
         let bytes: [u8; 8] = [PerformanceConfig::DISABLED, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF];
-        let config = PerformanceConfig::parse(&bytes);
+        let config = PerformanceConfig::parse(&bytes).expect("valid buffer");
         assert_eq!(config.enabled, PerformanceConfig::DISABLED);
         assert_eq!({ config.enabled_measurements }, 0x01);
     }
 
     #[test]
-    #[should_panic]
-    fn test_performance_config_parse_panics_on_short_buffer() {
+    fn test_performance_config_parse_errors_on_short_buffer() {
         let bytes: [u8; 2] = [PerformanceConfig::ENABLED, 0x00];
-        let _ = PerformanceConfig::parse(&bytes);
+        assert_eq!(
+            PerformanceConfig::parse(&bytes).unwrap_err(),
+            HobParseError::BufferTooSmall { expected: 5, actual: 2 }
+        );
     }
 }
