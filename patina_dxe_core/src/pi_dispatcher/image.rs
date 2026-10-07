@@ -3116,6 +3116,28 @@ mod tests {
     }
 
     #[test]
+    fn test_private_image_data_install_cleans_up_when_additional_interfaces_fail() {
+        with_locked_state(|| {
+            let mut image_data = create_test_private_image_data();
+            image_data.pe_info.image_type = EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER;
+            image_data.relocation_data.push(RelocationBlock {
+                block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
+                relocations: vec![crate::pecoff::relocation::Relocation { type_and_offset: 0x1 << 12, value: 0 }],
+            });
+
+            assert_eq!(image_data.install(), Err(EfiError::Unsupported));
+            assert_eq!(
+                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)),
+                Err(EfiError::NotFound)
+            );
+            assert_eq!(
+                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image_device_path::PROTOCOL_GUID)),
+                Err(EfiError::NotFound)
+            );
+        });
+    }
+
+    #[test]
     fn test_private_image_data_uninstall_removes_partially_installed_protocols() {
         with_locked_state(|| {
             let image_data = create_test_private_image_data();
