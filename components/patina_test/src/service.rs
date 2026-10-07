@@ -15,7 +15,7 @@
 //!
 use crate::{
     __private_api::{TestCase, TestTrigger},
-    alloc::{collections::BTreeMap, fmt::Display, string::String, vec::Vec},
+    alloc::{boxed::Box, collections::BTreeMap, fmt::Display, string::String, vec::Vec},
 };
 
 use core::{ptr::NonNull, time::Duration};
@@ -26,7 +26,7 @@ use patina::{
         service::{
             IntoService, Service,
             uefi_services::{
-                event::{EventServices, EventServicesExt, Tpl},
+                event::{EventError, EventServices, EventServicesExt, Tpl},
                 timer_event::{TimerEventServices, TimerEventServicesExt, TimerType},
             },
         },
@@ -107,18 +107,16 @@ impl TestRecord {
         let mut storage = NonNull::from_mut(storage);
 
         for trigger in self.test_case.triggers {
-            match trigger {
-                TestTrigger::Manual => {
-                    // Do nothing. Test must be manually triggered.
-                }
-                TestTrigger::Event(guid) => {
-                    events.on_event_group(*guid, Tpl::Callback, move || {
+            let result = match trigger {
+                TestTrigger::Manual => Ok(()),
+                TestTrigger::Event(guid) => events
+                    .on_event_group(*guid, Tpl::Callback, move || {
                         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
                         let mut storage = unsafe { storage.as_mut() };
                         recorder.with_mut(|records| records.get_mut(name).map(|record| record.run(storage)));
-                    });
-                }
-                TestTrigger::Timer(interval) => {
+                    })
+                    .map(|_| ()),
+                TestTrigger::Timer(interval) => (|| -> Result<(), EventError> {
                     // Create a timer event for the specified interval. Cancel the timer when the RTB event occurs.
                     let timer_event = timer.on_timer_event(Tpl::Callback, move || {
                         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
@@ -126,18 +124,42 @@ impl TestRecord {
                         recorder.with_mut(|records| records.get_mut(name).map(|record| record.run(storage)));
                     })?;
 
-                    let interval = Duration::from_micros(*interval / 10) + Duration::from_nanos((*interval % 10) * 100);
-                    timer.set_timer(timer_event, TimerType::Periodic(interval))?;
-
-                    events.on_event_group_self_managed(
+                    // Schedule the event to clean up the timer when the RTB event occurs.
+                    let cleanup_event = events.create_event_for_group(
                         patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
                         Tpl::Callback,
-                        move |rtb_event| {
-                            timer.set_timer(timer_event, TimerType::Cancel);
-                            events.close_event(rtb_event);
-                        },
+                        Box::new(move |rtb_event| {
+                            let cancel_result = timer.set_timer(timer_event, TimerType::Cancel);
+                            let timer_close_result = events.close_event(timer_event);
+                            let rtb_close_result = events.close_event(rtb_event);
+                            if let Err(error) = cancel_result.and(timer_close_result).and(rtb_close_result) {
+                                log::error!("Failed to clean up Timer trigger for patina_test {name}: {error:?}");
+                            }
+                        }),
                     );
-                }
+
+                    // Close the timer event if we failed to create the cleanup event.
+                    let cleanup_event = match cleanup_event {
+                        Ok(cleanup_event) => cleanup_event,
+                        Err(error) => {
+                            return events.close_event(timer_event).and(Err(error));
+                        }
+                    };
+
+                    // Close the timer event and the cleanup event if setting the periodic timer fails.
+                    let interval = Duration::from_nanos(interval.saturating_mul(100));
+                    if let Err(error) = timer.set_timer(timer_event, TimerType::Periodic(interval)) {
+                        let timer_close_result = events.close_event(timer_event);
+                        let cleanup_close_result = events.close_event(cleanup_event);
+                        return timer_close_result.and(cleanup_close_result).and(Err(error));
+                    }
+
+                    Ok(())
+                })(),
+            };
+
+            if let Err(error) = result {
+                log::error!("Failed to schedule {trigger:?} trigger for patina_test {name}: {error:?}");
             }
         }
 
@@ -191,7 +213,7 @@ impl Recorder {
 
         events.on_event_group_self_managed(
             patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
-            Tpl::Notify,
+            Tpl::Callback,
             run_tests_and_close,
         )?;
 
@@ -409,6 +431,117 @@ mod tests {
     }
 
     #[test]
+    fn test_timer_creation_failure_continues_to_next_trigger() {
+        use patina::BinaryGuid;
+        use patina::component::service::uefi_services::{
+            event::{Event, EventError, MockEventServices},
+            timer_event::MockTimerEventServices,
+        };
+
+        let triggers =
+            Box::leak(Box::new([TestTrigger::Timer(1_000_000), TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))]));
+        let test_case = Box::leak(Box::new(TestCase {
+            name: "timer_creation_failure",
+            triggers,
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: TEST_CASE4.func,
+        }));
+
+        let mut timer = MockTimerEventServices::new();
+        timer.expect_create_timer_event().once().returning(|_, _| Err(EventError::Internal));
+
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().once().returning(|group, tpl, _| {
+            assert_eq!(group, BinaryGuid::from_bytes(&[0; 16]));
+            assert_eq!(tpl, Tpl::Callback);
+            Event::from_raw(core::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr()).ok_or(EventError::Internal)
+        });
+
+        let mut storage = Storage::new();
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let record = TestRecord::new(false, test_case, None);
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
+
+        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+    }
+
+    #[test]
+    fn test_ready_to_boot_creation_failure_closes_timer_without_arming_it() {
+        use patina::component::service::uefi_services::{
+            event::{Event, EventError, MockEventServices},
+            timer_event::MockTimerEventServices,
+        };
+
+        let timer_event =
+            Event::from_raw(core::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr()).expect("non-null event");
+        let mut timer = MockTimerEventServices::new();
+        timer.expect_create_timer_event().once().returning_st(move |_, _| Ok(timer_event));
+
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().once().returning(|group, tpl, _| {
+            assert_eq!(group, patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID);
+            assert_eq!(tpl, Tpl::Callback);
+            Err(EventError::Internal)
+        });
+        events.expect_close_event().once().returning_st(move |event| {
+            assert_eq!(event, timer_event);
+            Ok(())
+        });
+
+        let mut storage = Storage::new();
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
+
+        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+    }
+
+    #[test]
+    fn test_timer_arm_failure_closes_timer_and_ready_to_boot_events() {
+        use patina::component::service::uefi_services::{
+            event::{Event, EventError, MockEventServices},
+            timer_event::MockTimerEventServices,
+        };
+        use std::{cell::RefCell, rc::Rc};
+
+        fn test_event(address: usize) -> Event {
+            Event::from_raw(address as *mut core::ffi::c_void).expect("a non-zero address should produce a test event")
+        }
+
+        let timer_event = test_event(1);
+        let ready_to_boot_event = test_event(2);
+        let mut timer = MockTimerEventServices::new();
+        timer.expect_create_timer_event().once().returning_st(move |_, _| Ok(timer_event));
+        timer.expect_set_timer().once().returning(|_, _| Err(EventError::Internal));
+
+        let closed_events: Rc<RefCell<Vec<Event>>> = Rc::new(RefCell::new(Vec::new()));
+        let closed_events_for_mock = Rc::clone(&closed_events);
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().once().returning_st(move |group, tpl, _| {
+            assert_eq!(group, patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID);
+            assert_eq!(tpl, Tpl::Callback);
+            Ok(ready_to_boot_event)
+        });
+        events.expect_close_event().times(2).returning_st(move |event| {
+            closed_events_for_mock.borrow_mut().push(event);
+            Ok(())
+        });
+
+        let mut storage = Storage::new();
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
+
+        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+        assert_eq!(closed_events.borrow().as_slice(), &[timer_event, ready_to_boot_event]);
+    }
+
+    #[test]
     fn test_timer_trigger_runs_test_and_ready_to_boot_cleans_up() {
         use patina::component::service::uefi_services::{
             event::{Event, EventNotifyCallback, MockEventServices},
@@ -449,7 +582,7 @@ mod tests {
             ready_to_boot_callback_for_mock.replace(Some(callback));
             Ok(ready_to_boot_event)
         });
-        events.expect_close_event().once().returning_st(move |event| {
+        events.expect_close_event().times(2).returning_st(move |event| {
             closed_events_for_mock.borrow_mut().push(event);
             Ok(())
         });
@@ -477,7 +610,7 @@ mod tests {
             timer_settings.borrow().as_slice(),
             &[(timer_event, TimerType::Periodic(Duration::from_millis(100))), (timer_event, TimerType::Cancel),]
         );
-        assert_eq!(closed_events.borrow().as_slice(), &[ready_to_boot_event]);
+        assert_eq!(closed_events.borrow().as_slice(), &[timer_event, ready_to_boot_event]);
     }
 
     #[test]
@@ -528,7 +661,7 @@ mod tests {
 
         let (ready_group, ready_tpl, ready_event, ready_callback) = &mut callbacks[0];
         assert_eq!(*ready_group, patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID);
-        assert_eq!(*ready_tpl, Tpl::Notify);
+        assert_eq!(*ready_tpl, Tpl::Callback);
         ready_callback(*ready_event);
 
         let (exit_group, exit_tpl, exit_event, exit_callback) = &mut callbacks[1];

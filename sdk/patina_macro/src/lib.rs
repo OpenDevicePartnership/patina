@@ -181,7 +181,7 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `#[should_fail = "message"]`: Indicates that the test is expected to fail with the given message. If the test
 ///   passes or fails with a different message, the test runner will log an error.
 /// - `#[skip]`: Indicates that the test should be skipped.
-/// - `#[on(timer = N)]`: Indicates that the test should be triggered by a timer after N microseconds.
+/// - `#[on(timer = N)]`: Indicates that the test should be triggered periodically every N units of 100 nanoseconds.
 /// - `#[on(event = GUID)]`: Indicates that the test should be triggered by the specified event.
 ///
 /// ## Example
@@ -222,7 +222,7 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// }
 ///
 /// #[patina_test]
-/// #[on(timer = 1000000)]
+/// #[on(timer = 1_000_000)] // Run every 100 ms.
 /// #[on(event = patina::pi::event::END_OF_DXE_EVENT_GROUP_GUID)]
 /// fn multi_triggered_test_case() -> Result {
 ///  todo!()
