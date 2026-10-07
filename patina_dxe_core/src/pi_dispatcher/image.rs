@@ -233,6 +233,15 @@ impl PrivateImageData {
             core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(self.image_info.as_ref()) as *mut c_void,
         )?;
 
+        if let Err(error) = self.install_additional_interfaces(handle) {
+            let _ = self.uninstall(handle);
+            return Err(error);
+        }
+
+        Ok(handle)
+    }
+
+    fn install_additional_interfaces(&self, handle: efi::Handle) -> Result<(), EfiError> {
         core_install_protocol_interface(
             Some(handle),
             efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
@@ -256,7 +265,7 @@ impl PrivateImageData {
             )?;
         }
 
-        Ok(handle)
+        Ok(())
     }
 
     /// Uninstalls all protocols associated with this image from the specified handle.
@@ -1714,6 +1723,31 @@ mod tests {
         .unwrap();
     }
 
+    fn create_test_private_image_data() -> PrivateImageData {
+        let mut test_file = File::open(test_paths::RUST_IMAGE).expect("failed to read test image");
+        let mut image = Vec::new();
+        test_file.read_to_end(&mut image).expect("failed to read test image");
+
+        let mut protocol = empty_image_info();
+        protocol.image_size = image.len() as u64;
+        protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+        protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+        let pe_info = UefiPeInfo::parse(&image).expect("test image should contain a valid PE image");
+        PrivateImageData::new(protocol, pe_info).expect("private image data should initialize")
+    }
+
+    fn install_test_loaded_image_protocol(image_data: &PrivateImageData) -> efi::Handle {
+        core_install_protocol_interface(
+            None,
+            efi::protocols::loaded_image::PROTOCOL_GUID,
+            core::ptr::from_ref::<efi::protocols::loaded_image::Protocol>(image_data.image_info.as_ref())
+                .cast_mut()
+                .cast::<c_void>(),
+        )
+        .expect("loaded image protocol should install")
+    }
+
     #[test]
     fn test_simple_init() {
         with_locked_state(|| {
@@ -3068,6 +3102,42 @@ mod tests {
             assert!(image_data.activate_compatibility_mode().is_err_and(|err| err == EfiError::LoadError));
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_private_image_data_uninstall_removes_new_image_handle() {
+        with_locked_state(|| {
+            let image_data = create_test_private_image_data();
+            let handle = install_test_loaded_image_protocol(&image_data);
+
+            image_data.uninstall(handle).expect("partially installed image should uninstall");
+            assert_eq!(PROTOCOL_DB.validate_handle(handle), Err(EfiError::InvalidParameter));
+        });
+    }
+
+    #[test]
+    fn test_private_image_data_uninstall_removes_partially_installed_protocols() {
+        with_locked_state(|| {
+            let image_data = create_test_private_image_data();
+            let handle = install_test_loaded_image_protocol(&image_data);
+            let file_path = image_data.get_file_path();
+
+            core_install_protocol_interface(
+                Some(handle),
+                efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
+                file_path,
+            )
+            .expect("loaded image device path protocol should install");
+            assert!(PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::loaded_image::PROTOCOL_GUID).is_ok());
+            assert!(
+                PROTOCOL_DB
+                    .get_interface_for_handle(handle, efi::protocols::loaded_image_device_path::PROTOCOL_GUID)
+                    .is_ok()
+            );
+
+            image_data.uninstall(handle).expect("partially installed image should uninstall");
+            assert_eq!(PROTOCOL_DB.validate_handle(handle), Err(EfiError::InvalidParameter));
+        });
     }
 
     #[test]
