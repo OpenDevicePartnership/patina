@@ -88,10 +88,6 @@ impl AcpiComponent {
     ) -> patina::error::Result<()> {
         let (protocols, tpl, config_table) = services;
 
-        // Produce the EDKII ACPI protocol interfaces.
-        protocols.install_protocol::<AcpiTableProtocol>(None, &ACPI_TABLE_PROTOCOL)?;
-        protocols.install_protocol::<AcpiGetProtocol>(None, &ACPI_GET_PROTOCOL)?;
-
         // Initialize the ACPI table info singleton (used for the protocol).
         STANDARD_ACPI_PROVIDER.initialize(tpl, config_table, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
@@ -198,6 +194,10 @@ impl AcpiComponent {
         // Register the ACPI table manager service.
         // Consumers of ACPI table management should use this service rather than the provider directly.
         storage.add_service(acpi_service);
+
+        // Produce the ACPI protocol interfaces last so C consumers do not see a partially initialized provider.
+        protocols.install_protocol::<AcpiTableProtocol>(None, &ACPI_TABLE_PROTOCOL)?;
+        protocols.install_protocol::<AcpiGetProtocol>(None, &ACPI_GET_PROTOCOL)?;
 
         log::trace!("ACPI Provider initialized.");
 
