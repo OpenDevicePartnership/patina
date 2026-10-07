@@ -907,6 +907,7 @@ pub(crate) struct SystemTableChecksumInstaller;
 
 #[component]
 impl SystemTableChecksumInstaller {
+    #[cfg_attr(coverage, coverage(off))]
     fn entry_point(self, protocols: Service<dyn ProtocolServices>) -> patina::error::Result<()> {
         const GUIDS: [BinaryGuid; 16] = [
             BinaryGuid::from_bytes(&uuid::uuid!("1DA97072-BDDC-4B30-99F1-72A0B56FFF2A").to_bytes_le()), // gEfiMonotonicCounterArchProtocolGuid

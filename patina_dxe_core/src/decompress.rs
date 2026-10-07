@@ -30,6 +30,7 @@ pub(crate) struct DecompressProtocolInstaller;
 
 #[component]
 impl DecompressProtocolInstaller {
+    #[cfg_attr(coverage, coverage(off))]
     fn entry_point(self, protocols: Service<dyn ProtocolServices>) -> patina::error::Result<()> {
         protocols.install_protocol(None, Box::new(decompress::Protocol { get_info, decompress }))?;
         Ok(())

@@ -253,6 +253,7 @@ pub(crate) struct CpuArchProtocolInstaller;
 
 #[component]
 impl CpuArchProtocolInstaller {
+    #[cfg_attr(coverage, coverage(off))]
     fn entry_point(
         self,
         interrupt_manager: Service<dyn InterruptManager>,
