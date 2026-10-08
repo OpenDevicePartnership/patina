@@ -19,6 +19,9 @@ patina = { workspace = true, features = ["alloc"] }
 patina_macro = { workspace = true }
 spin = { workspace = true }
 
+[dev-dependencies]
+patina = { path = "../../sdk/patina", features = ["mockall"] }
+
 [features]
 test-runner = ["patina_macro/enable_patina_tests"]
 # All non-std features to test in CI

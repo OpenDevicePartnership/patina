@@ -33,6 +33,12 @@ called for each `TestRunner` that discovers the test case. `debug_mode=true` tak
 that discovers a test case has `debug_mode=true`, then debug messages will be enabled for that test case regardless
 of the other `TestRunner`'s `debug_mode` configuration for that test case.
 
+> [!IMPORTANT]
+> `TestRunner` depends on `Service<dyn TimerEventServices>`. The DXE Core does not produce that service until the
+> `EFI_TIMER_ARCH_PROTOCOL` is available. As a result, `TestRunner` and all registered `patina_test` tests wait to run
+> until the platform installs the Timer Architectural Protocol. Tests will not run on a platform that never installs
+> it.
+
 ## Feature Flags
 
 - `test-runner`: Will make the `component` module public, providing access to the `TestRunner` component and actually
@@ -46,7 +52,10 @@ use patina_test::{
     error::Result,
 };
 
-use patina::uefi::boot_services::StandardBootServices;
+use patina::component::service::{
+    Service,
+    uefi_services::timing::TimingServices,
+};
 use patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 
 #[cfg_attr(target_arch = "aarch64", patina_test)]
@@ -83,8 +92,8 @@ fn skipped_test_case() -> Result {
 
 #[patina_test]
 #[cfg_attr(not(target_arch = "x86_64"), skip)]
-fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
-  todo!()
+fn x86_64_only_test_case(_timing: Service<dyn TimingServices>) -> Result {
+  Ok(())
 }
 
 #[patina_test]
