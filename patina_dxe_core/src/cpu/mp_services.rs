@@ -344,7 +344,7 @@ mod tests {
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
         }
-        <MpHandOff as FromHob>::parse(&bytes)
+        <MpHandOff as FromHob>::parse(&bytes).unwrap()
     }
 
     fn mp_handoff_with_health(processors: &[(u32, u32)]) -> MpHandOff {
@@ -357,7 +357,7 @@ mod tests {
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
         }
-        <MpHandOff as FromHob>::parse(&bytes)
+        <MpHandOff as FromHob>::parse(&bytes).unwrap()
     }
 
     #[test]

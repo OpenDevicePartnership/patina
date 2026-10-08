@@ -13,7 +13,7 @@
 
 use alloc::vec::Vec;
 
-use patina::component::hob::{FromHob, Hob};
+use patina::component::hob::{FromHob, Hob, HobParseError};
 use patina::standard::efi::protocols::mp_services;
 use patina_internal_cpu::mp::{MpHandOffInfo, ProcessorHandOff};
 use zerocopy::FromBytes;
@@ -88,10 +88,11 @@ impl MpInformation2 {
 impl FromHob for MpInformation2 {
     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("417A7F64-F4E9-4B32-846A-5CC4D8621879");
 
-    fn parse(bytes: &[u8]) -> Self {
-        let Ok((header, _)) = MpInfo2Header::read_from_prefix(bytes) else {
-            return Self { processor_index: 0, processors: Vec::new() };
-        };
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+        let (header, _) = MpInfo2Header::read_from_prefix(bytes).map_err(|_| HobParseError::BufferTooSmall {
+            expected: core::mem::size_of::<MpInfo2Header>(),
+            actual: bytes.len(),
+        })?;
         // `EntrySize` is the stride between entries; fall back to the size of
         // `RawProcessorInfo` if the firmware reports a smaller/zero value.
         let entry_size = (header.entry_size as usize).max(core::mem::size_of::<RawProcessorInfo>());
@@ -107,7 +108,7 @@ impl FromHob for MpInformation2 {
                 None => break,
             };
         }
-        Self { processor_index: header.processor_index as usize, processors }
+        Ok(Self { processor_index: header.processor_index as usize, processors })
     }
 }
 
@@ -151,10 +152,11 @@ impl MpHandOff {
 impl FromHob for MpHandOff {
     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("11E2BD88-ED38-4ABD-A399-21F25FD07A60");
 
-    fn parse(bytes: &[u8]) -> Self {
-        let Ok((header, _)) = MpHandOffHeader::read_from_prefix(bytes) else {
-            return Self { processor_index: 0, processors: Vec::new() };
-        };
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+        let (header, _) = MpHandOffHeader::read_from_prefix(bytes).map_err(|_| HobParseError::BufferTooSmall {
+            expected: core::mem::size_of::<MpHandOffHeader>(),
+            actual: bytes.len(),
+        })?;
 
         let mut processors = Vec::new();
         let mut off = core::mem::size_of::<MpHandOffHeader>();
@@ -172,7 +174,7 @@ impl FromHob for MpHandOff {
                 None => break,
             };
         }
-        Self { processor_index: header.processor_index as usize, processors }
+        Ok(Self { processor_index: header.processor_index as usize, processors })
     }
 }
 
@@ -189,9 +191,10 @@ pub(super) struct MpHandOffConfig {
 impl FromHob for MpHandOffConfig {
     const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("DABBD793-7B46-4144-8AD4-101C7C08EBFA");
 
-    fn parse(bytes: &[u8]) -> Self {
+    fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
         Self::read_from_prefix(bytes)
-            .map_or(Self { wait_loop_execution_mode: 0, startup_signal_value: 0 }, |(config, _)| config)
+            .map(|(config, _)| config)
+            .map_err(|_| HobParseError::BufferTooSmall { expected: core::mem::size_of::<Self>(), actual: bytes.len() })
     }
 }
 
@@ -324,7 +327,7 @@ mod tests {
             bytes.extend_from_slice(&0x2000u64.to_ne_bytes());
         }
 
-        let handoff = MpHandOff::parse(&bytes);
+        let handoff = MpHandOff::parse(&bytes).unwrap();
 
         assert!(handoff.processors[0].healthy);
         assert!(!handoff.processors[1].healthy);
@@ -342,7 +345,7 @@ mod tests {
         bytes.extend_from_slice(&entry);
         bytes.extend_from_slice(&[0xA5; 8]);
 
-        let info = MpInformation2::parse(&bytes);
+        let info = MpInformation2::parse(&bytes).unwrap();
         let processor = info.processors()[0];
 
         assert_eq!(info.processor_index(), 3);
@@ -363,10 +366,12 @@ mod tests {
 
     #[test]
     fn test_mp_information2_rejects_truncated_header() {
-        let info = MpInformation2::parse(&[0; core::mem::size_of::<MpInfo2Header>() - 1]);
+        let size = core::mem::size_of::<MpInfo2Header>();
 
-        assert_eq!(info.processor_index(), 0);
-        assert!(info.processors().is_empty());
+        assert_eq!(
+            MpInformation2::parse(&vec![0; size - 1]).err(),
+            Some(HobParseError::BufferTooSmall { expected: size, actual: size - 1 })
+        );
     }
 
     #[test]
@@ -380,7 +385,7 @@ mod tests {
         bytes.extend_from_slice(&0x2000u64.to_ne_bytes());
         bytes.extend_from_slice(&[0; core::mem::size_of::<RawProcessorHandOff>() - 1]);
 
-        let handoff = MpHandOff::parse(&bytes);
+        let handoff = MpHandOff::parse(&bytes).unwrap();
 
         assert_eq!(handoff.processor_index(), 4);
         assert_eq!(handoff.processors().len(), 1);
@@ -389,25 +394,28 @@ mod tests {
 
     #[test]
     fn test_mp_handoff_rejects_truncated_header() {
-        let handoff = MpHandOff::parse(&[0; core::mem::size_of::<MpHandOffHeader>() - 1]);
+        let size = core::mem::size_of::<MpHandOffHeader>();
 
-        assert_eq!(handoff.processor_index(), 0);
-        assert!(handoff.processors().is_empty());
+        assert_eq!(
+            MpHandOff::parse(&vec![0; size - 1]).err(),
+            Some(HobParseError::BufferTooSmall { expected: size, actual: size - 1 })
+        );
     }
 
     #[test]
-    fn test_mp_handoff_config_parses_and_defaults() {
+    fn test_mp_handoff_config_parses_and_rejects_truncated() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&8u32.to_ne_bytes());
         bytes.extend_from_slice(&0xA5A5u32.to_ne_bytes());
 
-        let config = MpHandOffConfig::parse(&bytes);
+        let config = MpHandOffConfig::parse(&bytes).unwrap();
         assert_eq!(config.wait_loop_execution_mode, 8);
         assert_eq!(config.startup_signal_value, 0xA5A5);
 
-        let default = MpHandOffConfig::parse(&bytes[..bytes.len() - 1]);
-        assert_eq!(default.wait_loop_execution_mode, 0);
-        assert_eq!(default.startup_signal_value, 0);
+        assert_eq!(
+            MpHandOffConfig::parse(&bytes[..bytes.len() - 1]).err(),
+            Some(HobParseError::BufferTooSmall { expected: 8, actual: 7 })
+        );
     }
 
     #[test]
