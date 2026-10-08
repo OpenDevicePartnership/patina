@@ -12,15 +12,16 @@ use core::ffi::c_void;
 
 use patina::{
     bit,
+    component::service::{
+        Service,
+        uefi_services::event::{Event, EventError, EventServices},
+    },
     protocol::ProtocolInterface,
     standard::efi::{self, protocols::mp_services},
-    uefi::{
-        boot_services::{BootServices, StandardBootServices},
-        memory::EfiMemoryType,
-    },
 };
 
 use super::services::{DispatchCompletion, MpError, MpServices};
+use crate::allocator::core_allocate_pool;
 use patina_internal_cpu::mp::{ApWorkItem, MpDispatcher, MpSupport};
 
 /// Bit set in the `ProcessorNumber` parameter of `GetProcessorInfo` to request extended topology information.
@@ -57,8 +58,8 @@ type RawStartupThisAp = unsafe extern "efiapi" fn(
 pub(super) struct MpProtocolWrapper<M: MpDispatcher + 'static = MpSupport> {
     protocol: mp_services::Protocol,
     service: &'static MpServices<M>,
-    /// Boot services used by the ABI layer to allocate the caller-freeable `FailedCpuList`.
-    boot_services: StandardBootServices,
+    /// Event services used by the ABI layer to signal the wait event of a non-blocking dispatch.
+    events: Service<dyn EventServices>,
 }
 
 // `protocol` must be at offset 0 for the `this`-pointer cast to be valid.
@@ -74,7 +75,7 @@ unsafe impl<M: MpDispatcher + 'static> ProtocolInterface for MpProtocolWrapper<M
 // Rust implementation of the protocol wrapper.
 impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
     /// Builds a wrapper around `services` populated with the protocol's function table.
-    pub(super) fn new(services: &'static MpServices<M>, boot_services: StandardBootServices) -> Self {
+    pub(super) fn new(services: &'static MpServices<M>, events: Service<dyn EventServices>) -> Self {
         // SAFETY: The raw shims have the firmware ABI and machine-level parameter
         // layout of the protocol callbacks.
         let startup_all_aps =
@@ -94,7 +95,7 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
                 who_am_i: Self::who_am_i,
             },
             service: services,
-            boot_services,
+            events,
         }
     }
 
@@ -121,7 +122,7 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
 
     /// Allocates and writes the `FailedCpuList`. See [`build_failed_cpu_list`] for details.
     fn build_failed_cpu_list(&self, failed: &[usize], out: *mut *mut usize) {
-        build_failed_cpu_list(&self.boot_services, failed, out);
+        build_failed_cpu_list(failed, out);
     }
 
     /// Builds the deferred reply for a non-blocking dispatch.
@@ -131,16 +132,19 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
         finished: *mut efi::Boolean,
         failed_cpu_list: *mut *mut usize,
     ) -> DispatchCompletion {
-        let boot_services = self.boot_services.clone();
+        let events = self.events;
         Box::new(move |failed: &[usize]| {
             if !finished.is_null() {
                 // SAFETY: the caller guaranteed a valid, writable `Finished` out-pointer.
                 unsafe { finished.write(efi::Boolean::from(failed.is_empty())) };
             }
             if !failed_cpu_list.is_null() && !failed.is_empty() {
-                build_failed_cpu_list(&boot_services, failed, failed_cpu_list);
+                build_failed_cpu_list(failed, failed_cpu_list);
             }
-            if let Err(e) = boot_services.signal_event(wait_event) {
+            if let Err(e) = Event::from_raw(wait_event)
+                .ok_or(EventError::InvalidParameter)
+                .and_then(|event| events.signal_event(event))
+            {
                 log::error!("Failed to signal MP wait event: {e:?}");
             }
         })
@@ -356,11 +360,11 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
 /// Allocates pool memory, writes the processor numbers in `failed` terminated by
 /// [`mp_services::END_OF_CPU_LIST`], and stores the buffer pointer in `out`. The
 /// buffer is caller-freeable pool memory.
-fn build_failed_cpu_list(bs: &StandardBootServices, failed: &[usize], out: *mut *mut usize) {
+fn build_failed_cpu_list(failed: &[usize], out: *mut *mut usize) {
     let mut list = failed.to_vec();
     list.push(mp_services::END_OF_CPU_LIST);
     let size = list.len() * core::mem::size_of::<usize>();
-    match bs.allocate_pool(EfiMemoryType::BootServicesData, size) {
+    match core_allocate_pool(efi::BOOT_SERVICES_DATA, size) {
         Ok(ptr) => {
             let dst = ptr.cast::<usize>();
             for (i, &v) in list.iter().enumerate() {
@@ -379,6 +383,7 @@ fn build_failed_cpu_list(bs: &StandardBootServices, failed: &[usize], out: *mut 
 mod tests {
     use super::*;
     use patina::component::service::perf_timer::ArchTimerFunctionality;
+    use patina::component::service::uefi_services::event::MockEventServices;
     use patina_internal_cpu::mp::MockMpDispatcher;
 
     type TestProtocolWrapper = MpProtocolWrapper<MockMpDispatcher>;
@@ -399,7 +404,7 @@ mod tests {
 
     fn test_wrapper(mp: MockMpDispatcher) -> TestProtocolWrapper {
         let service = Box::leak(Box::new(MpServices::new(mp, Vec::new(), &TIMER)));
-        TestProtocolWrapper::new(service, StandardBootServices::new_uninit())
+        TestProtocolWrapper::new(service, Service::mock(Box::new(MockEventServices::new())))
     }
 
     #[test]
