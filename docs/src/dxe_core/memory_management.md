@@ -67,7 +67,43 @@ normal case after the allocators have run for a while and have built up a set of
 Freeing a block (except for very large blocks) is also constant-time, since the procedure is the reverse of the above:
 
 1. Round up the freed allocation size to the next block size.
-2. Push the block on the front of the corresponding "free-list."
+2. Push the block to the tail of the corresponding "free-list."
+
+Freed blocks are appended to the back of the free list rather than the front so that a block is not immediately handed
+back out. Recycling blocks in FIFO order maximizes the time between a block being freed and it being
+reused, which increases the chance that a use-after-free accesses memory that has not yet been handed to another owner.
+
+When every pool segmented from a page has been returned to the free lists, the page is retired and unmapped. This
+catches as many use-after-free cases as we can in the pool allocator. Retired pages are re-mapped and returned to the
+backing allocator when the allocator would otherwise have to claim more memory from the GCD. Retired pages are also
+reclaimed in FIFO order to maximize the time between address reuse.
+
+Memory claimed from the GCD starts in the retired state, so an allocator never has memory mapped that it has not
+handed out.
+
+```mermaid
+stateDiagram-v2
+  direction TB
+
+  state "GCD-owned system memory" as GCD
+  state "Fallback allocator free memory<br/>(mapped)" as Fallback
+  state "Fixed-size blocks<br/>(mapped)" as FixedBlocks
+  state "FSB retired page<br/>(unmapped)" as Retired
+  state "Direct fallback allocation<br/>(mapped)" as DirectAllocation
+
+  GCD --> Fallback: FSB claims an expansion
+  Fallback --> FixedBlocks: Carve page into fixed-size blocks
+  FixedBlocks --> FixedBlocks: Allocate and free blocks
+  FixedBlocks --> Retired: Entire page becomes free and is retired
+  Retired --> Fallback: Reclaim and map page
+
+  Fallback --> DirectAllocation: Large allocation bypasses fixed-size blocks
+  DirectAllocation --> Fallback: Free allocation
+```
+
+The FSB retains ownership of retired pages even while they are unmapped. New expansion pages not needed immediately may
+enter the retired state directly. The metadata page remains mapped, and direct fallback allocations never enter the
+fixed-size block lifecycle.
 
 If the fixed-block size list corresponding to the requested block size is empty or if the requested size is larger than
 any fixed-block size, then the allocation falls back to a linked-list based allocator. This is also typically constant-

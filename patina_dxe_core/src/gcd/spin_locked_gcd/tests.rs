@@ -2085,6 +2085,8 @@ fn paging_allocator_new_and_basic_alloc() {
             .allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, true)
             .expect("Should allocate a page");
         assert!(page >= base && page < (base + GCD_SIZE as u64), "Allocated page should be within GCD memory range");
+        let descriptor = GCD.get_memory_descriptor_for_address(page, |_, _| true).unwrap();
+        assert_eq!(descriptor.attributes & efi::MEMORY_RP, 0, "Root page table page must be identity mapped");
 
         // allocate another page
         let page2 = allocator
@@ -2422,6 +2424,26 @@ fn test_init_paging_maps_allocated_and_mmio_regions() {
         let r = GCD.set_memory_space_attributes(0x1000, 0x1000, efi::MEMORY_UC);
         assert_eq!(r, Err(EfiError::NotReady));
 
+        let pool_region = address + MEMORY_BLOCK_SLICE_SIZE * 98 - UEFI_PAGE_SIZE * 3;
+        GCD.allocate_memory_space(
+            AllocateType::Address(pool_region),
+            GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            UEFI_PAGE_SIZE * 3,
+            1 as _,
+            None,
+        )
+        .unwrap();
+        let retired_pool_page = pool_region + UEFI_PAGE_SIZE;
+        assert_eq!(
+            GCD.set_memory_space_attributes(
+                retired_pool_page,
+                UEFI_PAGE_SIZE,
+                efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RP,
+            ),
+            Err(EfiError::NotReady)
+        );
+
         // Create a fake HobList with a MemoryAllocationModule for DXE Core
         let dxe_core_base = address + 0x1000;
         let dxe_core_len: u64 = 0x1000000;
@@ -2515,6 +2537,19 @@ fn test_init_paging_maps_allocated_and_mmio_regions() {
             current_mappings.iter().any(|(addr, len, _attr)| *addr <= 0x1000 && (*addr + len) >= 0x2000);
 
         assert!(has_mmio_mapping, "MMIO region should be mapped after init_paging");
+
+        let retired_pool_page = retired_pool_page as u64;
+        assert!(current_mappings.iter().any(|(addr, len, _)| {
+            *addr <= pool_region as u64 && pool_region as u64 + UEFI_PAGE_SIZE as u64 <= addr + len
+        }));
+        assert!(current_mappings.iter().any(|(addr, len, _)| {
+            *addr <= retired_pool_page + UEFI_PAGE_SIZE as u64
+                && retired_pool_page + (UEFI_PAGE_SIZE * 2) as u64 <= addr + len
+        }));
+        assert!(current_mappings.iter().all(|(addr, len, _)| {
+            let mapping_end = addr + len;
+            mapping_end <= retired_pool_page || *addr >= retired_pool_page + UEFI_PAGE_SIZE as u64
+        }));
 
         // Locate stack hob.
         let stack_hob = hob_list

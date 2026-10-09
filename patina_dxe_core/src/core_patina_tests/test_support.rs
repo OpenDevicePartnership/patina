@@ -255,10 +255,11 @@ pub(super) fn get_pte_state(pte: u64, level: PageTableLevel) -> PteInfo {
 }
 
 pub(super) fn is_mapped(addr: u64) -> bool {
-    let mut next_addr = addr;
     for &level in &[PageTableLevel::Level4, PageTableLevel::Level3, PageTableLevel::Level2, PageTableLevel::Level1] {
-        let pt = get_self_mapped_page_table(next_addr, level);
-        let idx = get_index(next_addr, level);
+        // The walk stays on `addr`: with a self mapped page table the table for the next level is addressed by the
+        // indexes of `addr`, and it is only guaranteed to be reachable once the entry above it is present.
+        let pt = get_self_mapped_page_table(addr, level);
+        let idx = get_index(addr, level);
         let entry = pt.get(idx as usize).expect("Index out of bounds");
         let pte_state = get_pte_state(*entry, level);
         if !pte_state.present {
@@ -269,8 +270,6 @@ pub(super) fn is_mapped(addr: u64) -> bool {
             // we are identity mapped
             return true;
         }
-        // continue down the page table levels
-        next_addr = pte_state.next_address;
     }
     unreachable!()
 }

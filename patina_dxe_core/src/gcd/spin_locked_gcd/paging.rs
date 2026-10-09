@@ -28,6 +28,22 @@ impl<'a> PagingAllocator<'a> {
     pub(crate) fn new(gcd: &'a SpinLockedGcd) -> Self {
         Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY), gcd }
     }
+
+    fn allocate_root_page(&self, allocate_type: AllocateType) -> Result<u64, EfiError> {
+        let attributes =
+            self.gcd.memory_protection_policy.apply_allocated_memory_protection_policy(0, GcdMemoryType::SystemMemory);
+        let mut gcd = self.gcd.memory.lock();
+        let root_page = gcd.allocate_memory_space(
+            allocate_type,
+            GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            UEFI_PAGE_SIZE,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+            None,
+        )?;
+        gcd.set_memory_space_attributes(root_page, UEFI_PAGE_SIZE, attributes)?;
+        Ok(root_page as u64)
+    }
 }
 
 impl PageAllocator for PagingAllocator<'_> {
@@ -38,8 +54,6 @@ impl PageAllocator for PagingAllocator<'_> {
         }
 
         if is_root {
-            // allocate 1 page
-            let len = 1;
             // allocate under 4GB to support x86 MPServices
             let addr: u64 = (SIZE_4GB - 1) as u64;
 
@@ -50,31 +64,16 @@ impl PageAllocator for PagingAllocator<'_> {
             // an issue to allocate. However, some architectures may not have memory under 4GB, so if we fail here,
             // simply retry with the normal allocation
 
-            let res = self.gcd.memory.lock().allocate_memory_space(
-                AllocateType::BottomUp(Some(addr as usize)),
-                GcdMemoryType::SystemMemory,
-                UEFI_PAGE_SHIFT,
-                uefi_pages_to_size!(len),
-                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                None,
-            );
-            if let Ok(root_page) = res {
-                Ok(root_page as u64)
+            if let Ok(root_page) = self.allocate_root_page(AllocateType::BottomUp(Some(addr as usize))) {
+                Ok(root_page)
             } else {
                 // if we failed, try again with normal allocation
                 log::error!(
                     "Failed to allocate root page for the page table page pool, retrying with normal allocation"
                 );
 
-                match self.gcd.memory.lock().allocate_memory_space(
-                    DEFAULT_ALLOCATION_STRATEGY,
-                    GcdMemoryType::SystemMemory,
-                    UEFI_PAGE_SHIFT,
-                    uefi_pages_to_size!(len),
-                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                    None,
-                ) {
-                    Ok(root_page) => Ok(root_page as u64),
+                match self.allocate_root_page(DEFAULT_ALLOCATION_STRATEGY) {
+                    Ok(root_page) => Ok(root_page),
                     Err(e) => {
                         // okay we are good and dead now
                         panic!("Failed to allocate root page for the page table page pool: {e}");
@@ -351,10 +350,16 @@ impl SpinLockedGcd {
     pub(crate) fn init_paging_with(&self, hob_list: &HobList, page_table: Box<dyn PatinaPageTable>) {
         log::info!("Initializing paging for the GCD");
 
-        *self.page_table.lock() = Some(page_table);
-
+        // Do all memory allocation before we put the page table reference in the GCD. This ensures that when we
+        // grab the descriptors, any allocator expansion and setting unused pages as RP has already occurred. The
+        // GCD can change after this point, but not before we map the initial set of memory regions.
         let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> =
             Vec::with_capacity(self.memory_descriptor_count() + 10);
+        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
+            Vec::with_capacity(self.memory_descriptor_count() + 10);
+
+        *self.page_table.lock() = Some(page_table);
+
         self.memory
             .lock()
             .get_memory_descriptors(mmio_res_descs.as_mut(), |d, _| {
@@ -367,8 +372,6 @@ impl SpinLockedGcd {
         // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
         // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
         // descriptors
-        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-            Vec::with_capacity(self.memory_descriptor_count() + 10);
         self.memory
             .lock()
             .get_memory_descriptors(&mut descriptors, |d, allocated| {
@@ -376,7 +379,7 @@ impl SpinLockedGcd {
                     // we've already handled MMIO and reserved memory, so skip these
                     return false;
                 }
-                allocated
+                allocated && d.attributes & efi::MEMORY_RP == 0
             })
             .expect("Failed to get allocated memory descriptors!");
 
