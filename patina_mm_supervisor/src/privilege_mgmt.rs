@@ -49,18 +49,23 @@
 
 use patina::standard::efi::Status;
 
-mod call_gate;
+pub(crate) mod call_gate;
 mod syscall_dispatcher;
 mod syscall_ops;
 pub(crate) mod syscall_setup;
 
-pub type SyscallResult = Result<u64, Status>; // Result of a syscall: Ok(value) or Err(EFI_STATUS)
+/// Result of a syscall: the value to hand back to Ring 3, or the status to report.
+pub type SyscallResult = Result<u64, Status>;
 
 // FFI binding to the assembly `invoke_demoted_routine` routine (`call_gate_transfer.asm`).
 // Only linked for the firmware (UEFI) target; host builds (unit tests, doctests, `check`)
 // exclude the entry/transition assembly and use the wrapper's host paths below.
 #[cfg(target_os = "uefi")]
 unsafe extern "efiapi" {
+    /// Performs the Ring 0 to Ring 3 transition and the return through the call gate.
+    ///
+    /// Declared here and defined in `call_gate_transfer.asm`. Callers go through
+    /// [`invoke_demoted_routine`], which is the only wrapper that upholds its contract.
     #[link_name = "invoke_demoted_routine"]
     fn invoke_demoted_routine_asm(cpu_index: usize, cpl3_routine: u64, cpl3_stack: u64, arg_count: usize, ...)
     -> usize;
@@ -118,6 +123,7 @@ pub(crate) unsafe fn invoke_demoted_routine(
 /// delegates here. Install a handler with [`set_handler`] to observe calls and control the
 /// return value; with no handler installed, calls return `0` (`EFI_SUCCESS`).
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 pub(crate) mod mock {
     use core::cell::RefCell;
 

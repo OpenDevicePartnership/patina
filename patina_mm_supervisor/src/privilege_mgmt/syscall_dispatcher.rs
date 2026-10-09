@@ -39,8 +39,8 @@ use patina::standard::efi::{ALLOCATE_ANY_PAGES, AllocateType, MemoryType, RUNTIM
 use patina::{UEFI_PAGE_SIZE, management_mode::supervisor::SyscallIndex};
 
 use crate::{
-    PageOwnership,
-    mm_policy::{AccessType, Instruction, IoWidth},
+    memory::page_ownership::PageOwnership,
+    policy::{AccessType, Instruction, IoWidth},
 };
 
 use super::{
@@ -425,10 +425,10 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
         // Verify the range was allocated as User type (Ring 3 code should only free its own memory)
         // This prevents user code from freeing supervisor-internal allocations.
         match self.ops.allocation_type(addr) {
-            Some(crate::mem::AllocationType::User) => {
+            Some(crate::memory::AllocationType::User) => {
                 // Good - this is user-owned memory
             }
-            Some(crate::mem::AllocationType::Supervisor) => {
+            Some(crate::memory::AllocationType::Supervisor) => {
                 log::error!("FREE_PAGE: Address 0x{addr:x} is a supervisor allocation - access denied");
                 return Err(Status::SECURITY_VIOLATION);
             }
@@ -602,8 +602,8 @@ impl<O: SyscallOps> SyscallDispatcher<O> {
             return Ok(0); // FALSE
         };
 
-        let buf_start = config.user_comm_buffer_internal;
-        let buf_end = buf_start.saturating_add(config.user_comm_buffer_size);
+        let buf_start = config.user.internal;
+        let buf_end = buf_start.saturating_add(config.user.size);
         let range_end = address.saturating_add(size);
 
         // Check that the range is non-empty and falls entirely within the user comm buffer.
@@ -639,9 +639,10 @@ pub extern "efiapi" fn syscall_dispatcher(
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use crate::CommBufferConfig;
-    use crate::mem::{AllocationType, page_allocator::PageAllocError};
-    use crate::mm_policy::PolicyError;
+    use crate::comm_buffer::{CommBufferConfig, CommChannel};
+    use crate::error::MmSupervisorResult;
+    use crate::memory::{AllocError, AllocationType};
+    use crate::policy::PolicyGateError;
     use core::cell::RefCell;
 
     /// An action a handler asked its [`SyscallOps`] implementation to perform.
@@ -674,8 +675,8 @@ mod tests {
         msr_value: u64,
         io_value: u64,
         is_bsp: bool,
-        allocate_result: Result<u64, PageAllocError>,
-        free_result: Result<(), PageAllocError>,
+        allocate_result: MmSupervisorResult<u64>,
+        free_result: MmSupervisorResult<()>,
         allocation_type: Option<AllocationType>,
         /// Mapped addresses and their ownership; any other address is treated as unmapped.
         mapped: Vec<(u64, PageOwnership)>,
@@ -762,12 +763,12 @@ mod tests {
             self.is_bsp
         }
 
-        fn allocate_user_pages(&self, page_count: usize) -> Result<u64, PageAllocError> {
+        fn allocate_user_pages(&self, page_count: usize) -> MmSupervisorResult<u64> {
             self.record(Effect::AllocateUserPages(page_count));
             self.allocate_result
         }
 
-        fn free_user_pages(&self, addr: u64, page_count: usize) -> Result<(), PageAllocError> {
+        fn free_user_pages(&self, addr: u64, page_count: usize) -> MmSupervisorResult<()> {
             self.record(Effect::FreeUserPages(addr, page_count));
             self.free_result
         }
@@ -856,7 +857,10 @@ mod tests {
     #[test]
     fn test_check_policy_maps_decisions_to_status() {
         assert_eq!(check_policy("TEST", PolicyDecision::Allowed), Ok(()));
-        assert_eq!(check_policy("TEST", PolicyDecision::Denied(PolicyError::AccessDenied)), Err(Status::ACCESS_DENIED));
+        assert_eq!(
+            check_policy("TEST", PolicyDecision::Denied(PolicyGateError::AccessDenied.into())),
+            Err(Status::ACCESS_DENIED)
+        );
         assert_eq!(check_policy("TEST", PolicyDecision::Unavailable), Err(Status::NOT_READY));
     }
 
@@ -889,8 +893,7 @@ mod tests {
         let any = u64::from(ALLOCATE_ANY_PAGES);
         let data = u64::from(RUNTIME_SERVICES_DATA);
         let comm_buffer = CommBufferConfig {
-            user_comm_buffer_internal: 0x1_0000,
-            user_comm_buffer_size: 0x1000,
+            user: CommChannel { internal: 0x1_0000, size: 0x1000, ..Default::default() },
             ..Default::default()
         };
 
@@ -1053,8 +1056,10 @@ mod tests {
 
     #[test]
     fn test_rdmsr_denied_by_policy() {
-        let d =
-            dispatcher(MockOps { msr_policy: PolicyDecision::Denied(PolicyError::AccessDenied), ..Default::default() });
+        let d = dispatcher(MockOps {
+            msr_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
 
         assert_eq!(d.handle_rdmsr(&ctx(0, 0x1B, 0, 0)), Err(Status::ACCESS_DENIED));
         // The MSR must not be read once the policy denies the request.
@@ -1082,8 +1087,10 @@ mod tests {
 
     #[test]
     fn test_wrmsr_denied_by_policy() {
-        let d =
-            dispatcher(MockOps { msr_policy: PolicyDecision::Denied(PolicyError::AccessDenied), ..Default::default() });
+        let d = dispatcher(MockOps {
+            msr_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
 
         assert_eq!(d.handle_wrmsr(&ctx(0, 0x1B, 0x5A, 0)), Err(Status::ACCESS_DENIED));
         assert_eq!(d.ops.effects(), vec![Effect::CheckMsr(0x1B, AccessType::Write)]);
@@ -1106,7 +1113,7 @@ mod tests {
     #[test]
     fn test_privileged_instructions_respect_policy_denial() {
         let denied = dispatcher(MockOps {
-            instruction_policy: PolicyDecision::Denied(PolicyError::AccessDenied),
+            instruction_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
             ..Default::default()
         });
         assert_eq!(denied.handle_instruction(Instruction::Cli), Err(Status::ACCESS_DENIED));
@@ -1145,8 +1152,10 @@ mod tests {
         assert!(d.ops.effects().is_empty());
 
         // Denied by policy.
-        let d =
-            dispatcher(MockOps { io_policy: PolicyDecision::Denied(PolicyError::AccessDenied), ..Default::default() });
+        let d = dispatcher(MockOps {
+            io_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
         assert_eq!(d.handle_io_read(&ctx(0, 0xCF8, MM_IO_UINT8, 0)), Err(Status::ACCESS_DENIED));
         assert_eq!(d.ops.effects(), vec![Effect::CheckIo(0xCF8, IoWidth::Byte, AccessType::Read)]);
     }
@@ -1242,7 +1251,7 @@ mod tests {
 
     #[test]
     fn test_alloc_page_reports_allocator_failure() {
-        let d = dispatcher(MockOps { allocate_result: Err(PageAllocError::OutOfMemory), ..Default::default() });
+        let d = dispatcher(MockOps { allocate_result: Err(AllocError::OutOfMemory.into()), ..Default::default() });
 
         assert_eq!(
             d.handle_alloc_page(&ctx(0, u64::from(ALLOCATE_ANY_PAGES), u64::from(RUNTIME_SERVICES_DATA), 4)),
@@ -1294,7 +1303,7 @@ mod tests {
     #[test]
     fn test_free_page_reports_allocator_failure() {
         // A page in the range belongs to someone else, so the checked free fails.
-        let d = dispatcher(MockOps { free_result: Err(PageAllocError::NotAllocated), ..Default::default() });
+        let d = dispatcher(MockOps { free_result: Err(AllocError::NotAllocated.into()), ..Default::default() });
 
         assert_eq!(d.handle_free_page(&ctx(0, 0x2000, 3, 0)), Err(Status::SECURITY_VIOLATION));
         assert_eq!(d.ops.effects(), vec![Effect::FreeUserPages(0x2000, 3)]);
@@ -1418,8 +1427,7 @@ mod tests {
     #[test]
     fn test_mm_is_comm_buffer_range_checks() {
         let config = CommBufferConfig {
-            user_comm_buffer_internal: 0x1_0000,
-            user_comm_buffer_size: 0x1000,
+            user: CommChannel { internal: 0x1_0000, size: 0x1000, ..Default::default() },
             ..Default::default()
         };
         let d = dispatcher(MockOps { comm_buffer: Some(config), ..Default::default() });
