@@ -13,11 +13,14 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use patina::component::params::Config;
 use patina::standard::efi;
 use patina::standard::efi::protocols::mp_services;
 use patina::uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 use patina::uefi::event::{EventTimerType, EventType};
 use patina_test::{patina_test, u_assert, u_assert_eq};
+
+use crate::cpu::MpServicesEnabled;
 
 // Procedure dispatched to APs: increments the shared counter pointed to by `arg`.
 extern "efiapi" fn increment_counter(arg: *mut c_void) {
@@ -58,7 +61,14 @@ extern "efiapi" fn call_bsp_only_queries(arg: *mut c_void) {
 // No-op notify for the waitable event used by the non-blocking dispatch test.
 unsafe extern "efiapi" fn noop_notify(_event: efi::Event, _context: *mut c_void) {}
 
-fn locate_protocol(bs: &StandardBootServices) -> Result<Option<&'static mut mp_services::Protocol>, &'static str> {
+fn locate_protocol(
+    bs: &StandardBootServices,
+    enabled: &Config<MpServicesEnabled>,
+) -> Result<Option<&'static mut mp_services::Protocol>, &'static str> {
+    if !enabled.0 {
+        return Ok(None);
+    }
+
     // SAFETY: A single reference to the protocol is taken and not aliased.
     match unsafe { bs.locate_protocol::<mp_services::Protocol>(None) } {
         Ok(protocol) => Ok(Some(protocol)),
@@ -70,8 +80,11 @@ fn locate_protocol(bs: &StandardBootServices) -> Result<Option<&'static mut mp_s
 // Verify that every logical processor reported by the MP Services Protocol has
 // started (enabled count equals the total processor count).
 #[patina_test]
-fn mp_services_all_cores_started(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_all_cores_started(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let mut total: usize = 0;
@@ -88,8 +101,11 @@ fn mp_services_all_cores_started(bs: StandardBootServices) -> patina_test::error
 
 // Verify that the test (running on the BSP) is reported as processor index 0.
 #[patina_test]
-fn mp_services_bsp_who_am_i(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_bsp_who_am_i(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let mut index: usize = usize::MAX;
@@ -102,8 +118,11 @@ fn mp_services_bsp_who_am_i(bs: StandardBootServices) -> patina_test::error::Res
 }
 
 #[patina_test]
-fn mp_services_bsp_only_queries_reject_ap_callers(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_bsp_only_queries_reject_ap_callers(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
     let probe = BspOnlyQueryProbe {
         protocol: protocol_ptr,
@@ -133,8 +152,11 @@ fn mp_services_bsp_only_queries_reject_ap_callers(bs: StandardBootServices) -> p
 
 // Verify startup_all_aps dispatches the procedure to every started AP exactly once.
 #[patina_test]
-fn mp_services_startup_all_aps_runs_on_every_ap(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_startup_all_aps_runs_on_every_ap(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let mut total: usize = 0;
@@ -166,8 +188,11 @@ fn mp_services_startup_all_aps_runs_on_every_ap(bs: StandardBootServices) -> pat
 
 // Verify startup_this_ap dispatches to a single AP and ignores Finished in blocking mode.
 #[patina_test]
-fn mp_services_startup_this_ap_runs_on_one_ap(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_startup_this_ap_runs_on_one_ap(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let counter = AtomicUsize::new(0);
@@ -194,8 +219,11 @@ fn mp_services_startup_this_ap_runs_on_one_ap(bs: StandardBootServices) -> patin
 // Verify that timing out an executing AP terminates the procedure through the
 // INIT-SIPI-SIPI recovery entry and leaves the same processor available for later work.
 #[patina_test]
-fn mp_services_timeout_recovers_ap(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_timeout_recovers_ap(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     // SAFETY: The protocol pointer and procedure are valid. The procedure is
@@ -244,8 +272,11 @@ fn mp_services_timeout_recovers_ap(bs: StandardBootServices) -> patina_test::err
 
 // Verify every AP can complete the PI disable/enable lifecycle and accept work afterward.
 #[patina_test]
-fn mp_services_enable_disable_all_aps(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_enable_disable_all_aps(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let mut total = 0usize;
@@ -305,8 +336,11 @@ fn mp_services_enable_disable_all_aps(bs: StandardBootServices) -> patina_test::
 // This exercises the dxe_core event-based notification path driven by the
 // component's periodic timer callback.
 #[patina_test]
-fn mp_services_startup_all_aps_nonblocking_signals_event(bs: StandardBootServices) -> patina_test::error::Result {
-    let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+fn mp_services_startup_all_aps_nonblocking_signals_event(
+    bs: StandardBootServices,
+    enabled: Config<MpServicesEnabled>,
+) -> patina_test::error::Result {
+    let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
     let protocol_ptr: *mut mp_services::Protocol = protocol;
 
     let mut total: usize = 0;
@@ -373,8 +407,8 @@ fn mp_services_startup_all_aps_nonblocking_signals_event(bs: StandardBootService
 #[cfg(target_arch = "x86_64")]
 mod x64 {
     use super::{
-        AtomicUsize, Ordering, StandardBootServices, c_void, efi, locate_protocol, mp_services, patina_test, u_assert,
-        u_assert_eq,
+        AtomicUsize, Config, MpServicesEnabled, Ordering, StandardBootServices, c_void, efi, locate_protocol,
+        mp_services, patina_test, u_assert, u_assert_eq,
     };
     // Snapshot of the architectural MTRR MSRs, read on any processor and compared
     // across processors to confirm they were synchronized from the BSP.
@@ -449,8 +483,11 @@ mod x64 {
     // attribute changes). Reads the MSRs directly, independent of the MTRR library
     // that performs the synchronization.
     #[patina_test]
-    fn mp_services_mtrrs_synchronized_with_bsp(bs: StandardBootServices) -> patina_test::error::Result {
-        let Some(protocol) = locate_protocol(&bs)? else { return Ok(()) };
+    fn mp_services_mtrrs_synchronized_with_bsp(
+        bs: StandardBootServices,
+        enabled: Config<MpServicesEnabled>,
+    ) -> patina_test::error::Result {
+        let Some(protocol) = locate_protocol(&bs, &enabled)? else { return Ok(()) };
         let protocol_ptr: *mut mp_services::Protocol = protocol;
 
         let mut total: usize = 0;
