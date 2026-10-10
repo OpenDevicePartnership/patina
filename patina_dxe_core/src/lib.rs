@@ -120,7 +120,7 @@ use core::{
 use cpu::DxeInterruptManager;
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
-use patina::standard::efi;
+use patina::{BinaryGuid, standard::efi};
 use patina::{
     component::{IntoComponent, service::performance::PerformanceManager},
     error::{self, Result},
@@ -245,6 +245,14 @@ pub trait PlatformInfo: 'static {
     /// Defaults to disabled. Platforms may override this option to control the default behavior of the performance
     /// measurement service when no configuration HOB is present.
     const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = PerformanceConfig::new();
+
+    /// List of file GUIDs to ignore during driver dispatch.
+    ///
+    /// Files discovered during dispatch that match any of these GUIDs will not
+    /// be loaded or launched. This can be used to prevent the launch of drivers
+    /// that have been replaced by Patina components without removing them from the
+    /// firmware volume.
+    const DISPATCH_IGNORE_FILES: &'static [BinaryGuid] = &[];
 }
 
 /// Static reference to the DXE Core instance in the compiled binary.

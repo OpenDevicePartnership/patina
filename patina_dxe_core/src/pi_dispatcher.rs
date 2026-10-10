@@ -104,7 +104,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     /// Creates a new `PiDispatcher` instance.
     pub const fn new(section_extractor: P::Extractor) -> Self {
         Self {
-            dispatcher_context: DispatcherContext::new_locked(),
+            dispatcher_context: DispatcherContext::new_locked(P::DISPATCH_IGNORE_FILES),
             image_data: image::ImageData::new_locked(),
             debug_image_data: debug_image_info_table::DebugImageInfoData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
@@ -635,10 +635,11 @@ struct DispatcherContext {
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
+    ignore_files: &'static [BinaryGuid],
 }
 
 impl DispatcherContext {
-    const fn new() -> Self {
+    const fn new(ignore_files: &'static [BinaryGuid]) -> Self {
         Self {
             executing: false,
             arch_protocols_available: false,
@@ -649,11 +650,12 @@ impl DispatcherContext {
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
+            ignore_files,
         }
     }
 
-    const fn new_locked() -> TplMutex<Self> {
-        TplMutex::new(efi::TPL_NOTIFY, Self::new(), "Dispatcher Context")
+    const fn new_locked(ignore_files: &'static [BinaryGuid]) -> TplMutex<Self> {
+        TplMutex::new(efi::TPL_NOTIFY, Self::new(ignore_files), "Dispatcher Context")
     }
 
     // Find all FV2 and extracted FV3 HOBs and cache them. These will be used to determine if a child FV needs to
@@ -810,6 +812,12 @@ impl DispatcherContext {
                             let full_device_path_for_file = full_path_bytes.map_or(fv_device_path, |full_path| {
                                 Box::into_raw(full_path).cast::<efi::protocols::device_path::Protocol>()
                             });
+
+                            let name_guid: BinaryGuid = file_name.into();
+                            if self.ignore_files.contains(&name_guid) {
+                                log::info!("Skipping dispatch of platform ignored file {name_guid}.");
+                                continue;
+                            }
 
                             self.pending_drivers.push(PendingDriver {
                                 file_name,
@@ -1052,6 +1060,45 @@ mod tests {
 
             const DRIVERS_IN_DXEFV: usize = 131;
             assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_ignored_driver() {
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv_raw = Box::into_raw(fv.into_boxed_slice());
+
+        with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw points to the valid FV buffer for the duration of the test.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .lock()
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            let dispatcher = CORE.pi_dispatcher.dispatcher_context.lock();
+            let queued_count = dispatcher.pending_drivers.len();
+            let ignored_file = dispatcher.pending_drivers[0].file_name;
+            drop(dispatcher);
+
+            let ignored_files = Box::leak(Box::new([ignored_file.into()]));
+            let mut dispatcher = DispatcherContext::new(ignored_files);
+            dispatcher.add_fv_handles(vec![handle], &NullSectionExtractor::new()).expect("Failed to add FV handle");
+
+            assert_eq!(dispatcher.pending_drivers.len(), queued_count - 1);
+            assert!(dispatcher.pending_drivers.iter().all(|driver| driver.file_name != ignored_file));
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
