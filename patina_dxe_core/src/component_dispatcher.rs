@@ -152,6 +152,12 @@ impl ComponentDispatcher {
         }
     }
 
+    /// Adds a configuration value to storage.
+    #[cfg_attr(coverage, coverage(off))]
+    pub(crate) fn add_config<C: Default + 'static>(&mut self, config: C) {
+        self.storage.add_config(config);
+    }
+
     /// Adds a service to storage.
     #[cfg_attr(coverage, coverage(off))]
     #[inline(always)]

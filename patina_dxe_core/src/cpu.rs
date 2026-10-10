@@ -23,6 +23,10 @@ pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
 pub(crate) use mp_services::MpServicesComponent;
 pub(crate) use perf_timer::PerfTimer;
 
+/// Set when the core installs Patina MP services, so on-system tests skip platform-provided MP services.
+#[derive(Default)]
+pub(crate) struct MpServicesEnabled(pub(crate) bool);
+
 use efi_cpu::EfiCpu;
 pub use patina_internal_cpu::interrupts::{ExceptionContext, ExceptionContextX64, ExceptionType, InterruptHandler};
 use patina_internal_cpu::interrupts::{HandlerType, InterruptManager, Interrupts};
