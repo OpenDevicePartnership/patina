@@ -7,7 +7,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    component::{metadata::MetaData, params::Param},
+    component::{
+        metadata::MetaData,
+        params::Param,
+        tables::{Fields, Tables},
+    },
     uefi::runtime_services::StandardRuntimeServices,
 };
 
@@ -26,6 +30,8 @@ use super::{
     hob::{FromHob, Hob},
     service::{IntoService, Service},
 };
+
+use super::tables::{Entity, EntityError};
 
 type HobParsers = BTreeMap<BinaryGuid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
 
@@ -166,6 +172,42 @@ impl Debug for Deferred {
     }
 }
 
+/// Immediate structural access to one [`Entity`].
+pub struct EntityMut<'storage> {
+    entity: Entity,
+    tables: &'storage mut Tables,
+}
+
+#[allow(private_bounds)]
+impl EntityMut<'_> {
+    /// Returns this entry's entity identity.
+    pub fn id(&self) -> Entity {
+        self.entity
+    }
+
+    /// Adds fields to this entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::FieldAlreadyExists`] if the entity already contains any field in `fields`.
+    pub fn add_fields<F: Fields>(&mut self, fields: F) -> Result<&mut Self, EntityError> {
+        self.tables.add_fields(self.entity, fields)?;
+        Ok(self)
+    }
+
+    /// Removes and returns one field from this entity.
+    ///
+    /// Returns `None` if the entity no longer exists or does not contain `T`.
+    pub fn take_field<T: 'static>(&mut self) -> Option<T> {
+        self.tables.take_field::<T>(self.entity)
+    }
+
+    /// Removes this entity and drops all of its fields.
+    pub fn remove(self) {
+        self.tables.remove(self.entity).expect("EntityMut must reference a live entity");
+    }
+}
+
 /// Storage container for all datums that can be consumed by a Component.
 ///
 /// The [Component](crate::component::Component) trait provides the interface that a component must implement to be
@@ -210,6 +252,8 @@ pub struct Storage {
     hobs: SparseVec<Vec<Box<dyn Any>>>,
     /// a map to convert from `TypeId` to a hob index.
     hob_indices: BTreeMap<TypeId, usize>,
+    /// Type-erased, column-oriented data used by component infrastructure.
+    tables: Tables,
     // Standard Runtime Services.
     runtime_services: StandardRuntimeServices,
     // Image handle for the DXE Core (used as parent for LoadImage calls).
@@ -222,6 +266,7 @@ impl Default for Storage {
     }
 }
 
+#[allow(private_bounds)]
 impl Storage {
     /// Creates a new [Storage] object with empty containers for all datums.
     pub const fn new() -> Self {
@@ -234,9 +279,31 @@ impl Storage {
             hob_parsers: BTreeMap::new(),
             hobs: SparseVec::new(),
             hob_indices: BTreeMap::new(),
+            tables: Tables::new(),
             runtime_services: StandardRuntimeServices::new_uninit(),
             image_handle: None,
         }
+    }
+
+    pub(crate) const fn get_tables_mut(&mut self) -> &mut Tables {
+        &mut self.tables
+    }
+
+    pub(crate) const fn get_tables(&self) -> &Tables {
+        &self.tables
+    }
+
+    /// Returns immediate structural access to `entity`.
+    ///
+    /// Returns `None` if the entity no longer exists.
+    pub fn entity_mut(&mut self, entity: Entity) -> Option<EntityMut<'_>> {
+        self.tables.contains(entity).then_some(EntityMut { entity, tables: &mut self.tables })
+    }
+
+    /// Creates an entity with no fields.
+    pub fn create_entity(&mut self) -> EntityMut<'_> {
+        let entity = self.tables.insert_new(());
+        EntityMut { entity, tables: &mut self.tables }
     }
 
     /// Applies all deferred actions to the storage. Used in a multi-threaded context
@@ -558,7 +625,6 @@ unsafe impl Param for &mut Storage {
         if meta.access().has_any_config_read() {
             return Err(Cow::from("&mut Storage conflicts with a previous Config<T> access."));
         }
-
         meta.access_mut().writes_all_configs();
         Ok(())
     }
@@ -596,7 +662,6 @@ unsafe impl Param for &Storage {
         if meta.access().has_any_config_write() {
             return Err(Cow::from("&Storage conflicts with a previous ConfigMut<T> access."));
         }
-
         meta.access_mut().reads_all_configs();
         Ok(())
     }
@@ -606,6 +671,44 @@ unsafe impl Param for &Storage {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::component::Query;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct QueryA(u32);
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct QueryB(u32);
+
+    #[test]
+    fn test_entity_adds_fields_before_querying() {
+        let mut storage = Storage::new();
+        let mut entity_mut = storage.create_entity();
+        let entity = entity_mut.id();
+        assert_eq!(entity_mut.id(), entity);
+        entity_mut.add_fields((QueryA(1), QueryB(2))).unwrap();
+
+        let rows =
+            Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).map(|(a, b)| (a.0, b.0)).collect::<Vec<_>>();
+        assert_eq!(rows, vec![(1, 2)]);
+    }
+
+    #[test]
+    fn test_entity_takes_and_restores_fields_one_at_a_time() {
+        let mut storage = Storage::new();
+        let entity = storage.create_entity().add_fields((QueryA(1), QueryB(2))).unwrap().id();
+
+        {
+            let mut entity_mut = storage.entity_mut(entity).unwrap();
+            assert_eq!(entity_mut.take_field::<QueryA>(), Some(QueryA(1)));
+            assert_eq!(entity_mut.take_field::<QueryB>(), Some(QueryB(2)));
+        }
+        assert!(Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).get(&entity).is_none());
+        storage.entity_mut(entity).unwrap().add_fields((QueryA(1), QueryB(3))).unwrap();
+        assert_eq!(
+            Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).get(&entity),
+            Some((&QueryA(1), &QueryB(3)))
+        );
+    }
 
     #[test]
     fn validate_iter_works() {

@@ -11,15 +11,90 @@
 extern crate alloc;
 
 use crate::tpl_mutex::TplMutex;
+use core::any::TypeId;
 use patina::standard::efi;
 use patina::{
-    component::{IntoComponent, Storage, service::IntoService},
+    component::{Entity, IntoComponent, Query, QueryIter, Storage, service::IntoService},
     log_debug_assert,
     pi::hob::HobList,
     uefi::runtime_services::StandardRuntimeServices,
 };
 
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum DispatchStatus {
+    /// Waiting for its dependencies before dispatch.
+    #[default]
+    Pending,
+    /// Completed successfully.
+    Succeeded,
+    /// Returned an error during dispatch.
+    Failed,
+    /// Failed parameter initialization and cannot be dispatched.
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DispatchInfo {
+    component_type_id: TypeId,
+    status: DispatchStatus,
+}
+
+impl DispatchInfo {
+    fn new(component_type_id: TypeId) -> Self {
+        Self { component_type_id, status: DispatchStatus::default() }
+    }
+
+    #[cfg(test)]
+    fn component_type_id(&self) -> TypeId {
+        self.component_type_id
+    }
+
+    fn is_pending(&self) -> bool {
+        self.status == DispatchStatus::Pending
+    }
+
+    #[cfg(test)]
+    fn is_succeeded(&self) -> bool {
+        self.status == DispatchStatus::Succeeded
+    }
+
+    #[cfg(test)]
+    fn is_failed(&self) -> bool {
+        self.status == DispatchStatus::Failed
+    }
+
+    fn is_rejected(&self) -> bool {
+        self.status == DispatchStatus::Rejected
+    }
+
+    fn set_succeeded(&mut self) {
+        self.status = DispatchStatus::Succeeded;
+    }
+
+    fn set_failed(&mut self) {
+        self.status = DispatchStatus::Failed;
+    }
+
+    fn set_rejected(&mut self) {
+        self.status = DispatchStatus::Rejected;
+    }
+}
+
+/// A private wrapper around a Patina component to prevent a non-patina_dxe_core consumer from
+/// access to the underlying component via Query parameters.
+pub(crate) struct StoredComponent(Option<Box<dyn patina::component::Component>>);
+
+impl StoredComponent {
+    fn component(&self) -> &dyn patina::component::Component {
+        self.0.as_deref().expect("stored component must be present outside its execution")
+    }
+}
+
+type ComponentQueryData = (Entity, &'static mut StoredComponent, &'static mut DispatchInfo);
+type ComponentQuery = Query<ComponentQueryData>;
+type ComponentQueryIter<'storage> = QueryIter<'storage, ComponentQueryData>;
 
 /// A trait to be implemented by the platform to register additional components, configurations, and services.
 ///
@@ -79,9 +154,11 @@ impl<L> Add<'_, L> {
 
 impl Add<'_, Component> {
     /// Adds a component to the core's component list.
-    pub fn component<I>(&mut self, component: impl IntoComponent<I>) {
-        let component = component.into_component();
-        self.dispatcher.insert_component(self.dispatcher.components.len(), component);
+    pub fn component<I, C>(&mut self, component: C)
+    where
+        C: IntoComponent<I> + 'static,
+    {
+        self.dispatcher.insert_component(component);
     }
 }
 
@@ -102,12 +179,10 @@ impl Add<'_, Service> {
 }
 
 pub(crate) struct ComponentDispatcher {
-    /// Components that successfully initialized and are ready for dispatch attempts.
-    components: Vec<Box<dyn patina::component::Component>>,
-    /// Components that failed to initialize and are not ready for dispatch attempts.
-    rejected: Vec<Box<dyn patina::component::Component>>,
     /// Storage for components to use during execution.
     storage: Storage,
+    /// Lazily validated query over registered component rows.
+    component_query: Option<ComponentQuery>,
 }
 
 impl Default for ComponentDispatcher {
@@ -132,7 +207,7 @@ impl ComponentDispatcher {
     /// Creates a new `ComponentDispatcher`.
     #[inline(always)]
     pub(crate) const fn new() -> Self {
-        Self { components: Vec::new(), rejected: Vec::new(), storage: Storage::new() }
+        Self { storage: Storage::new(), component_query: None }
     }
 
     /// Applies the component information provided by the given type implementing [`ComponentInfo`].
@@ -142,13 +217,26 @@ impl ComponentDispatcher {
         C::components(Add::new(self));
     }
 
-    /// Inserts a component at the given index.
-    pub(crate) fn insert_component(&mut self, idx: usize, mut component: Box<dyn patina::component::Component>) {
-        if component.initialize(&mut self.storage) {
-            self.components.insert(idx, component);
-        } else {
-            self.rejected.push(component);
+    /// Inserts a component.
+    pub(crate) fn insert_component<I, C>(&mut self, component: C)
+    where
+        C: IntoComponent<I> + 'static,
+    {
+        let mut component = component.into_component();
+        let mut dispatch_info = DispatchInfo::new(TypeId::of::<C>());
+        if !component.initialize(&mut self.storage) {
+            dispatch_info.set_rejected();
         }
+        self.storage
+            .create_entity()
+            .add_fields((dispatch_info, StoredComponent(Some(component))))
+            .expect("new component entity must accept its initial fields");
+    }
+
+    /// Returns all registered components and their dispatch state.
+    pub(crate) fn components(&mut self) -> ComponentQueryIter<'_> {
+        let Self { storage, component_query } = self;
+        component_query.get_or_insert_with(Query::new).query_mut(storage)
     }
 
     /// Adds a configuration value to storage.
@@ -222,51 +310,63 @@ impl ComponentDispatcher {
     ///
     /// Returns `true` if at least one component was successfully dispatched, `false` otherwise.
     pub(crate) fn dispatch(&mut self) -> bool {
-        let len = self.components.len();
-        self.components.retain_mut(|component| {
-            // Ok(true): Dispatchable and dispatched returning success
-            // Ok(false): Not dispatchable at this time.
-            // Err(e): Dispatchable and dispatched returning failure
+        let pending = self
+            .components()
+            .filter_map(|(entity, _, dispatch_info)| dispatch_info.is_pending().then_some(entity))
+            .collect::<Vec<_>>();
+
+        let mut dispatched = false;
+        for entity in pending {
+            let mut component = {
+                let (_, stored, _) = self.components().get(&entity).expect("pending entity must contain its component");
+                stored.0.take().expect("pending component must be present")
+            };
             let name = component.metadata().name();
             log::trace!("Dispatch Start: Id = [{name:?}]");
-            !match component.run(&mut self.storage) {
-                Ok(true) => true,
-                Ok(false) => false,
-                Err(err) => {
-                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err}]");
-                    true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
+            let result = component.run(&mut self.storage);
+
+            let (_, stored, dispatch_info) =
+                self.components().get(&entity).expect("dispatched entity must retain its component fields");
+            stored.0 = Some(component);
+            match result {
+                Ok(true) => {
+                    dispatch_info.set_succeeded();
+                    dispatched = true;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    dispatch_info.set_failed();
+                    log_debug_assert!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{error}]");
                 }
             }
-        });
-        len != self.components.len()
+        }
+        dispatched
     }
 
     /// Logs all components that were not dispatched, and the parameter that was not satisfied that prevented dispatch.
     #[cfg_attr(coverage, coverage(off))]
-    pub(crate) fn display_not_dispatched(&self) {
-        if !self.components.is_empty() || !self.rejected.is_empty() {
+    pub(crate) fn display_not_dispatched(&mut self) {
+        let not_dispatched = self
+            .components()
+            .filter(|(_, _, dispatch_info)| dispatch_info.is_pending() || dispatch_info.is_rejected())
+            .map(|(_, component, _)| {
+                let metadata = component.component().metadata();
+                (metadata.name(), metadata.error_message().unwrap_or(Cow::from("")))
+            })
+            .collect::<Vec<_>>();
+
+        if !not_dispatched.is_empty() {
             let name_len = "name".len();
             let param_len = "error message".len();
-
-            let not_dispatched = self.components.iter().chain(&self.rejected);
-            let max_name_len = not_dispatched.map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
-
-            let not_dispatched = self.components.iter().chain(&self.rejected);
-            let max_param_len =
-                not_dispatched.map(|c| c.metadata().error_message().map_or(0, |s| s.len())).max().unwrap_or(param_len);
+            let max_name_len = not_dispatched.iter().map(|(name, _)| name.len()).max().unwrap_or(name_len);
+            let max_param_len = not_dispatched.iter().map(|(_, error)| error.len()).max().unwrap_or(param_len);
 
             log::warn!("Components not dispatched:");
             log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
             log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "error message");
 
-            let not_dispatched = self.components.iter().chain(&self.rejected);
-            for component in not_dispatched {
-                let metadata = component.metadata();
-                log::warn!(
-                    "{:<max_name_len$} {:<max_param_len$}",
-                    metadata.name(),
-                    metadata.error_message().unwrap_or(Cow::from(""))
-                );
+            for (name, error) in not_dispatched {
+                log::warn!("{name:<max_name_len$} {error:<max_param_len$}");
             }
         }
     }
@@ -281,6 +381,12 @@ mod tests {
 
     use super::*;
 
+    fn dispatch_info_of<C: 'static>(dispatcher: &mut ComponentDispatcher) -> Option<DispatchInfo> {
+        dispatcher.components().find_map(|(_, _, dispatch_info)| {
+            (dispatch_info.component_type_id() == TypeId::of::<C>()).then_some(*dispatch_info)
+        })
+    }
+
     #[test]
     fn test_component_info_trait_is_implemented() {
         struct Test;
@@ -288,8 +394,11 @@ mod tests {
         impl ComponentInfo for Test {}
 
         let mut dispatcher = ComponentDispatcher::new();
+        assert!(dispatcher.component_query.is_none());
         dispatcher.apply_component_info::<Test>();
-        assert!(dispatcher.components.is_empty());
+        assert_eq!(dispatcher.components().count(), 0);
+        assert!(dispatcher.component_query.is_some());
+        assert_eq!(dispatcher.components().count(), 0);
     }
 
     #[test]
@@ -332,13 +441,50 @@ mod tests {
         let mut dispatcher = ComponentDispatcher::new();
         assert!(dispatcher.storage.get_config::<u32>().is_none());
         assert!(dispatcher.storage.get_service::<dyn TestService>().is_none());
-        assert!(dispatcher.components.is_empty());
+        assert_eq!(dispatcher.components().count(), 0);
 
         dispatcher.apply_component_info::<Test>();
 
         assert!(dispatcher.storage.get_config::<u32>().is_some());
         assert!(dispatcher.storage.get_service::<dyn TestService>().is_some());
-        assert_eq!(dispatcher.components.len(), 1);
+        assert_eq!(dispatcher.components().count(), 1);
+    }
+
+    #[test]
+    fn test_platform_components_append_after_core_components() {
+        struct CoreComponent;
+
+        #[component]
+        impl CoreComponent {
+            fn entry_point(self) -> patina::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct PlatformComponent;
+
+        #[component]
+        impl PlatformComponent {
+            fn entry_point(self) -> patina::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct Platform;
+
+        impl ComponentInfo for Platform {
+            fn components(mut add: Add<Component>) {
+                add.component(PlatformComponent);
+            }
+        }
+
+        let mut dispatcher = ComponentDispatcher::new();
+        dispatcher.insert_component(CoreComponent);
+        dispatcher.apply_component_info::<Platform>();
+
+        let component_types =
+            dispatcher.components().map(|(_, _, dispatch_info)| dispatch_info.component_type_id()).collect::<Vec<_>>();
+        assert_eq!(component_types, vec![TypeId::of::<CoreComponent>(), TypeId::of::<PlatformComponent>()]);
     }
 
     #[test]
@@ -371,16 +517,48 @@ mod tests {
         }
 
         let mut dispatcher = ComponentDispatcher::default();
-        dispatcher.insert_component(0, TestComponent.into_component());
+        dispatcher.insert_component(TestComponent);
+        assert!(dispatch_info_of::<TestComponent>(&mut dispatcher).unwrap().is_pending());
 
         // The service the component depends on hasn't been added yet, so the component must be deferred for
         // a later retry, not permanently failed.
         assert!(!dispatcher.dispatch());
+        assert!(dispatch_info_of::<TestComponent>(&mut dispatcher).unwrap().is_pending());
 
         dispatcher.add_service(TestServiceImpl);
 
         // Now that the service is present, the previously-deferred component should dispatch successfully.
         assert!(dispatcher.dispatch());
+        assert!(dispatch_info_of::<TestComponent>(&mut dispatcher).unwrap().is_succeeded());
+        assert_eq!(dispatcher.components().count(), 1, "completed component rows remain queryable");
+        assert!(!dispatcher.dispatch(), "completed components are not dispatched again");
+    }
+
+    #[test]
+    fn test_component_service_becomes_available_after_dispatch() {
+        trait TestService {}
+
+        #[derive(patina::component::service::IntoService)]
+        #[service(dyn TestService)]
+        struct TestServiceImpl;
+
+        impl TestService for TestServiceImpl {}
+
+        struct TestComponent;
+
+        #[component]
+        impl TestComponent {
+            fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
+                storage.add_service(TestServiceImpl);
+                Ok(())
+            }
+        }
+
+        let mut dispatcher = ComponentDispatcher::default();
+        dispatcher.insert_component(TestComponent);
+        assert!(dispatcher.storage.get_service::<dyn TestService>().is_none());
+        assert!(dispatcher.dispatch());
+        assert!(dispatcher.storage.get_service::<dyn TestService>().is_some());
     }
 
     #[test]
@@ -472,7 +650,7 @@ mod tests {
         }
 
         let mut dispatcher = ComponentDispatcher::default();
-        dispatcher.insert_component(0, TestComponent.into_component());
+        dispatcher.insert_component(TestComponent);
         dispatcher.insert_hobs(&hob_list);
 
         assert!(dispatcher.dispatch());
@@ -506,13 +684,13 @@ mod tests {
         }
 
         let mut dispatcher = ComponentDispatcher::default();
-        dispatcher.insert_component(0, TestComponent.into_component());
+        dispatcher.insert_component(TestComponent);
         assert!(!dispatcher.dispatch());
         dispatcher.display_not_dispatched();
     }
 
     #[test]
-    fn test_dispatch_still_succeeds_with_error_in_component() {
+    fn test_dispatch_records_failed_component_without_reporting_success() {
         struct TestComponent;
 
         #[component]
@@ -523,7 +701,9 @@ mod tests {
         }
 
         let mut dispatcher = ComponentDispatcher::default();
-        dispatcher.insert_component(0, TestComponent.into_component());
-        assert!(dispatcher.dispatch(), "Dispatch should succeed even if component fails");
+        dispatcher.insert_component(TestComponent);
+        assert!(!dispatcher.dispatch(), "A failed component is not a successful dispatch");
+        assert!(dispatch_info_of::<TestComponent>(&mut dispatcher).unwrap().is_failed());
+        assert!(!dispatcher.dispatch(), "failed components are not dispatched again");
     }
 }
