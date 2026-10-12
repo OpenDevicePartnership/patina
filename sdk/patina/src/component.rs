@@ -140,15 +140,21 @@ pub mod hob;
 mod metadata;
 pub mod params;
 pub mod protocol;
+mod query;
 pub mod service;
 mod storage;
 mod struct_component;
+mod tables;
 mod type_name;
 
 use crate::base::error::Result;
 
 pub use metadata::MetaData;
-pub use storage::{Storage, UnsafeStorageCell};
+pub use query::Query;
+#[doc(hidden)]
+pub use query::{QueryData, QueryIter, ReadOnly};
+pub use storage::{EntityMut, Storage, UnsafeStorageCell};
+pub use tables::{Entity, EntityError};
 
 /// A part of the private API that must be public for the component macro to work. Users should not use this directly
 /// and it is subject to change at any time.
@@ -204,7 +210,7 @@ pub mod prelude {
     pub use crate::{
         base::error::{EfiError, Result},
         component::{
-            IntoComponent,
+            Entity, IntoComponent, Query,
             hob::{FromHob, Hob},
             params::{Commands, Config, ConfigMut, Handle},
             protocol::Protocol,
