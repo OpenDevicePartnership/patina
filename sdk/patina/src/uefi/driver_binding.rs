@@ -219,7 +219,7 @@ where
 
 /// This struct is used to install and uninstall driver binding.
 /// If the `UefiDriverBinding` go out of scope and it wasn't install, the driver implementing [`DriverBinding`] will be drop.
-/// If installed, the memory will be leaked and the driver binding will live indefinitely.
+/// If installed, the box is converted to a raw pointer until the driver binding is uninstalled.
 pub enum UefiDriverBinding<T, U>
 where
     T: DriverBinding + 'static,
@@ -227,7 +227,7 @@ where
 {
     /// An owned, uninstalled driver binding.
     Uninstalled(Box<_UefiDriverBinding<T, U>>),
-    /// A leaked, global, installed driver binding.
+    /// A global, installed driver binding as a raw pointer.
     Installed(PtrMetadata<'static, Box<_UefiDriverBinding<T, U>>>),
 }
 
@@ -271,7 +271,7 @@ impl<T: DriverBinding + 'static, U: BootServices + 'static> UefiDriverBinding<T,
 
         let metadata = Box::metadata(uefi_driver_binding);
         match mem::replace(self, Self::Installed(metadata)) {
-            UefiDriverBinding::Uninstalled(uefi_driver_binding) => _ = Box::leak(uefi_driver_binding),
+            UefiDriverBinding::Uninstalled(uefi_driver_binding) => _ = Box::into_raw(uefi_driver_binding),
             UefiDriverBinding::Installed(_) => (),
         }
         Ok(())
@@ -284,7 +284,7 @@ impl<T: DriverBinding + 'static, U: BootServices + 'static> UefiDriverBinding<T,
             return Ok(());
         };
 
-        // SAFETY: This is safe because the pointer behind this metada has been leak in install an is still valid.
+        // SAFETY: The pointer behind this metadata was created by Box::into_raw in install and is still valid.
         let uefi_driver_binding = unsafe { PtrMetadata::clone(ptr_metadata).try_into_original_ptr() }
             .ok_or(efi::Status::INVALID_PARAMETER)
             .map(ManuallyDrop::new)?;
