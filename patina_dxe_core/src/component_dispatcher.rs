@@ -19,68 +19,9 @@ use patina::{
     pi::hob::HobList,
     uefi::runtime_services::StandardRuntimeServices,
 };
+use patina_test::__private_api::DispatchInfo;
 
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum DispatchStatus {
-    /// Waiting for its dependencies before dispatch.
-    #[default]
-    Pending,
-    /// Completed successfully.
-    Succeeded,
-    /// Returned an error during dispatch.
-    Failed,
-    /// Failed parameter initialization and cannot be dispatched.
-    Rejected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DispatchInfo {
-    component_type_id: TypeId,
-    status: DispatchStatus,
-}
-
-impl DispatchInfo {
-    fn new(component_type_id: TypeId) -> Self {
-        Self { component_type_id, status: DispatchStatus::default() }
-    }
-
-    #[cfg(test)]
-    fn component_type_id(&self) -> TypeId {
-        self.component_type_id
-    }
-
-    fn is_pending(&self) -> bool {
-        self.status == DispatchStatus::Pending
-    }
-
-    #[cfg(test)]
-    fn is_succeeded(&self) -> bool {
-        self.status == DispatchStatus::Succeeded
-    }
-
-    #[cfg(test)]
-    fn is_failed(&self) -> bool {
-        self.status == DispatchStatus::Failed
-    }
-
-    fn is_rejected(&self) -> bool {
-        self.status == DispatchStatus::Rejected
-    }
-
-    fn set_succeeded(&mut self) {
-        self.status = DispatchStatus::Succeeded;
-    }
-
-    fn set_failed(&mut self) {
-        self.status = DispatchStatus::Failed;
-    }
-
-    fn set_rejected(&mut self) {
-        self.status = DispatchStatus::Rejected;
-    }
-}
 
 /// A private wrapper around a Patina component to prevent a non-patina_dxe_core consumer from
 /// access to the underlying component via Query parameters.
