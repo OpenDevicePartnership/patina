@@ -23,11 +23,15 @@ protocol instances and processor ownership.
 
 ## DXE Core
 
-### Component
+### Components
 
-The component consumes the platform's processor handoff, allocates persistent AP
-contexts and guarded stacks, initializes architecture support, installs the MP
-Services Protocol, and manages notifications and protocol-level state. Architecture
+The MP services implementations are split between the following components.
+
+#### MpServicesComponent
+
+The primary implementation component which consumes the platform's processor handoff,
+allocates persistent AP contexts and guarded stacks, initializes architecture support,
+creates the MP service, and manages notifications and protocol-level state. Architecture
 initialization and AP setup are separate phases: `initialize` allocates resources
 that are private to the architecture, while `setup_aps` binds the caller-provided
 contexts to processors and starts the APs.
@@ -39,8 +43,15 @@ The component also registers lifecycle events:
   to complete or reach their original deadlines.
 - ExitBootServices parks all APs.
 
-If no usable handoff is available, the protocol is still installed and reports a
-uniprocessor system containing only the BSP.
+#### MpServicesProtocolInstaller
+
+A component that will take the `MpServices` as a dependency and will publish the
+`EFI_MP_SERVICES_PROTOCOL` as defined by the PI specification.
+
+#### MpBistReporter
+
+This component is responsible for reporting Built-In Self Test (BIST) failures
+recorded in `MP_HAND_OFF` to the EFI status code protocol.
 
 ### Service
 
