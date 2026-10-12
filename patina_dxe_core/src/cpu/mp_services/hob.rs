@@ -214,15 +214,7 @@ impl MpHobs {
         mp_handoff: Option<Hob<MpHandOff>>,
         mp_handoff_config: Option<Hob<MpHandOffConfig>>,
     ) -> Self {
-        let processor_handoffs: Vec<ProcessorHandOff> = mp_handoff
-            .as_ref()
-            .map(|hob| {
-                Self::flatten_indexed(
-                    hob.iter().map(|inst| (inst.processor_index(), inst.processors())).collect(),
-                    "MP_HAND_OFF",
-                )
-            })
-            .unwrap_or_default();
+        let processor_handoffs = Self::parse_mp_handoff(mp_handoff.as_ref());
 
         let processors: Vec<mp_services::ProcessorInformation> = mp_info
             .as_ref()
@@ -260,8 +252,19 @@ impl MpHobs {
             })
     }
 
-    pub fn bist_error_count(&self) -> usize {
-        self.processor_handoffs.iter().filter(|processor| !processor.healthy).count()
+    pub fn bist_error_count(mp_handoff: Option<&Hob<MpHandOff>>) -> usize {
+        Self::parse_mp_handoff(mp_handoff).iter().filter(|processor| !processor.healthy).count()
+    }
+
+    fn parse_mp_handoff(mp_handoff: Option<&Hob<MpHandOff>>) -> Vec<ProcessorHandOff> {
+        mp_handoff
+            .map(|hob| {
+                Self::flatten_indexed(
+                    hob.iter().map(|inst| (inst.processor_index(), inst.processors())).collect(),
+                    "MP_HAND_OFF",
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Flattens a set of HOB instances into a single vector of values, sorted by processor index.
@@ -331,6 +334,19 @@ mod tests {
 
         assert!(handoff.processors[0].healthy);
         assert!(!handoff.processors[1].healthy);
+    }
+
+    #[test]
+    fn test_mp_hobs_counts_bist_errors_from_handoff_only() {
+        let mut unhealthy = processor_handoff(1);
+        unhealthy.healthy = false;
+        let handoff = Hob::mock(vec![
+            MpHandOff { processor_index: 1, processors: vec![unhealthy] },
+            MpHandOff { processor_index: 0, processors: vec![processor_handoff(0)] },
+        ]);
+
+        assert_eq!(MpHobs::bist_error_count(Some(&handoff)), 1);
+        assert_eq!(MpHobs::bist_error_count(None), 0);
     }
 
     #[test]

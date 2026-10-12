@@ -645,6 +645,8 @@ impl<P: PlatformInfo> Core<P> {
         if P::CpuInfo::ENABLE_MP_SERVICES {
             dispatcher.add_config(cpu::MpServicesEnabled(true));
             dispatcher.insert_component(0, cpu::MpServicesComponent::default().into_component());
+            dispatcher.insert_component(0, cpu::MpServicesProtocolInstaller::default().into_component());
+            dispatcher.insert_component(0, cpu::MpBistReporter.into_component());
         }
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
         dispatcher

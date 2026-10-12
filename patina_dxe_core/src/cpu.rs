@@ -20,7 +20,7 @@ mod perf_timer;
 pub(crate) use cpu_arch_protocol::{CpuArchProtocolInstaller, DxeInterruptManager};
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
-pub(crate) use mp_services::MpServicesComponent;
+pub(crate) use mp_services::{MpBistReporter, MpServicesComponent, MpServicesProtocolInstaller};
 pub(crate) use perf_timer::PerfTimer;
 
 /// Set when the core installs Patina MP services, so on-system tests skip platform-provided MP services.

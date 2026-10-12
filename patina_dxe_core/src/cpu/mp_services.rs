@@ -16,7 +16,7 @@ use core::{num::NonZeroUsize, time::Duration};
 use patina::{
     BinaryGuid,
     component::{
-        component,
+        Storage, component,
         hob::Hob,
         service::{
             Service,
@@ -48,7 +48,7 @@ mod services;
 use hob::{MpHandOff, MpHandOffConfig, MpInformation2};
 use patina_internal_cpu::mp::{ApContext, MpDispatcher, MpSupport};
 use protocol::MpProtocolWrapper;
-use services::MpServices;
+use services::{MpServices, MpServicesInner};
 
 use crate::cpu::mp_services::hob::MpHobs;
 
@@ -58,9 +58,17 @@ const NOTIFICATION_POLL_PERIOD: Duration = Duration::from_micros(100);
 /// Event group signaled when cache (MTRR) attributes change, driving AP resync.
 const CACHE_ATTRIBUTE_CHANGE_GUID: BinaryGuid = CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 
-/// This component installs the MP Services Protocol.
+/// Initializes and publishes the MP Services implementation.
 #[derive(Default)]
 pub(crate) struct MpServicesComponent;
+
+/// Installs the UEFI MP Services Protocol.
+#[derive(Default)]
+pub(crate) struct MpServicesProtocolInstaller;
+
+/// Reports processor BIST failures from the MP handoff HOB.
+#[derive(Default)]
+pub(crate) struct MpBistReporter;
 
 /// Optional MP HOBs consumed by [`MpServicesComponent`].
 type MpHobParams<'h> = (Option<Hob<'h, MpInformation2>>, Option<Hob<'h, MpHandOff>>, Option<Hob<'h, MpHandOffConfig>>);
@@ -69,12 +77,13 @@ type MpHobParams<'h> = (Option<Hob<'h, MpInformation2>>, Option<Hob<'h, MpHandOf
 impl MpServicesComponent {
     fn entry_point(
         self,
-        services: (Service<dyn ProtocolServices>, Service<dyn EventServices>, Service<dyn TimerEventServices>),
+        events: Service<dyn EventServices>,
+        timer_events: Service<dyn TimerEventServices>,
         mm: Service<dyn MemoryManager>,
         timer: Service<dyn ArchTimerFunctionality>,
         hobs: MpHobParams<'_>,
+        storage: &mut Storage,
     ) -> Result<(), EfiError> {
-        let (protocols, events, timer_events) = services;
         let (mp_info, mp_handoff, mp_handoff_config) = hobs;
 
         // Collect context and config.
@@ -91,15 +100,10 @@ impl MpServicesComponent {
         mp.setup_aps(contexts, handoff)
             .inspect_err(|e| log::error!("Failed to set up application processors: {e:?}"))?;
 
-        self.report_or_defer_bist_errors(&protocols, parsed_hobs.bist_error_count());
-
         // Build the rust service.
         let services: &'static MpServices = Box::leak(Box::new(MpServices::new(mp, parsed_hobs.processors, *timer)));
-
         self.register_events(&events, &timer_events, services)?;
-        protocols
-            .install_protocol(None, Box::new(MpProtocolWrapper::new(services, events)))
-            .inspect_err(|_| log::error!("Failed to install MP_SERVICES_PROTOCOL"))?;
+        storage.add_service(services);
 
         Ok(())
     }
@@ -145,48 +149,11 @@ impl MpServicesComponent {
         Ok(contexts)
     }
 
-    fn report_or_defer_bist_errors(&self, protocols: &Service<dyn ProtocolServices>, bist_error_count: usize) {
-        if bist_error_count == 0 {
-            return;
-        }
-
-        if Self::report_bist_errors(protocols, bist_error_count) {
-            return;
-        }
-
-        let deferred_protocols = *protocols;
-        let mut reported = false;
-        if let Err(e) = protocols.on_protocol_installed::<StatusCodeProtocol>(Tpl::Callback, move |_handle| {
-            if !reported {
-                reported = Self::report_bist_errors(&deferred_protocols, bist_error_count);
-            }
-        }) {
-            log::error!("MP Services: Failed to register status code protocol notification: {e:?}");
-        }
-    }
-
-    fn report_bist_errors(protocols: &Service<dyn ProtocolServices>, bist_error_count: usize) -> bool {
-        protocols
-            .with_protocol::<StatusCodeProtocol, _>(|status_code| {
-                for _ in 0..bist_error_count {
-                    if let Err(status) = status_code.report_status_code(
-                        EFI_ERROR_CODE | EFI_ERROR_MAJOR,
-                        EFI_COMPUTING_UNIT_HOST_PROCESSOR | EFI_CU_HP_EC_SELF_TEST,
-                        0,
-                        patina::guid::DXE_CORE_ID.as_efi_guid(),
-                    ) {
-                        log::error!("MP Services: Failed to report BIST error status code: {status}");
-                    }
-                }
-            })
-            .is_ok()
-    }
-
     fn register_events<M: MpDispatcher>(
         &self,
         events: &Service<dyn EventServices>,
         timer_events: &Service<dyn TimerEventServices>,
-        services: &'static MpServices<M>,
+        services: &'static MpServicesInner<M>,
     ) -> Result<(), EfiError> {
         // Create park event for EBS so that APs are parked before the OS takes over.
         if let Err(e) =
@@ -223,6 +190,81 @@ impl MpServicesComponent {
         timer_events
             .set_timer(timer_event, TimerType::Periodic(NOTIFICATION_POLL_PERIOD))
             .inspect_err(|e| log::error!("Failed to arm MP notification timer: {e:?}"))?;
+
+        Ok(())
+    }
+}
+
+#[component]
+impl MpBistReporter {
+    fn entry_point(
+        self,
+        protocols: Service<dyn ProtocolServices>,
+        mp_handoff: Option<Hob<'_, MpHandOff>>,
+    ) -> Result<(), EfiError> {
+        self.report_or_defer_bist_errors(&protocols, MpHobs::bist_error_count(mp_handoff.as_ref()));
+        Ok(())
+    }
+
+    fn report_or_defer_bist_errors(&self, protocols: &Service<dyn ProtocolServices>, bist_error_count: usize) {
+        if bist_error_count == 0 {
+            return;
+        }
+
+        let deferred_protocols = *protocols;
+        let mut reported = false;
+        if let Err(e) = protocols.on_protocol_installed::<StatusCodeProtocol>(Tpl::Callback, move |handle| {
+            if reported {
+                return;
+            }
+            match deferred_protocols.open_protocol::<StatusCodeProtocol>(handle) {
+                Ok(status_code) => {
+                    Self::report_bist_errors(&status_code, bist_error_count);
+                    reported = true;
+                }
+                Err(e) => {
+                    log::error!("MP Services: Failed to open installed status code protocol: {e:?}");
+                }
+            }
+        }) {
+            log::error!("MP Services: Failed to register status code protocol notification: {e:?}");
+        }
+    }
+
+    fn report_bist_errors(status_code: &StatusCodeProtocol, bist_error_count: usize) {
+        for _ in 0..bist_error_count {
+            if let Err(status) = status_code.report_status_code(
+                EFI_ERROR_CODE | EFI_ERROR_MAJOR,
+                EFI_COMPUTING_UNIT_HOST_PROCESSOR | EFI_CU_HP_EC_SELF_TEST,
+                0,
+                patina::guid::DXE_CORE_ID.as_efi_guid(),
+            ) {
+                log::error!("MP Services: Failed to report BIST error status code: {status}");
+            }
+        }
+    }
+}
+
+#[component]
+impl MpServicesProtocolInstaller {
+    fn entry_point(
+        self,
+        services: Service<MpServices>,
+        protocols: Service<dyn ProtocolServices>,
+        events: Service<dyn EventServices>,
+    ) -> Result<(), EfiError> {
+        let services = *services;
+        Self::install_protocol(services, protocols, events)
+    }
+
+    fn install_protocol<M: MpDispatcher + 'static>(
+        services: &'static MpServicesInner<M>,
+        protocols: Service<dyn ProtocolServices>,
+        events: Service<dyn EventServices>,
+    ) -> Result<(), EfiError> {
+        protocols
+            .install_protocol(None, Box::new(MpProtocolWrapper::new(services, events)))
+            .inspect_err(|_| log::error!("Failed to install MP_SERVICES_PROTOCOL"))?;
 
         Ok(())
     }
@@ -282,22 +324,12 @@ mod tests {
         Service::mock(Box::new(memory))
     }
 
-    fn test_services(mp: MockMpDispatcher) -> &'static MpServices<MockMpDispatcher> {
-        Box::leak(Box::new(MpServices::new(mp, Vec::new(), &TIMER)))
+    fn test_services(mp: MockMpDispatcher) -> &'static MpServicesInner<MockMpDispatcher> {
+        Box::leak(Box::new(MpServicesInner::new(mp, Vec::new(), &TIMER)))
     }
 
     fn test_event() -> Event {
         Event::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null")
-    }
-
-    fn protocol_services_with_status_code(protocol: &'static StatusCodeProtocol) -> MockProtocolServices {
-        let address = core::ptr::from_ref(protocol) as usize;
-        let mut protocols = MockProtocolServices::new();
-        protocols.expect_locate_interface().returning(move |guid| {
-            assert_eq!(guid, StatusCodeProtocol::PROTOCOL_GUID);
-            Ok(ProtocolPtr::from_raw(address as *mut core::ffi::c_void).expect("address is non-null"))
-        });
-        protocols
     }
 
     fn mp_handoff(processor_ids: &[u32]) -> MpHandOff {
@@ -307,19 +339,6 @@ mod tests {
         for processor_id in processor_ids {
             bytes.extend_from_slice(&processor_id.to_ne_bytes());
             bytes.extend_from_slice(&0_u32.to_ne_bytes());
-            bytes.extend_from_slice(&0_u64.to_ne_bytes());
-            bytes.extend_from_slice(&0_u64.to_ne_bytes());
-        }
-        <MpHandOff as FromHob>::parse(&bytes).unwrap()
-    }
-
-    fn mp_handoff_with_health(processors: &[(u32, u32)]) -> MpHandOff {
-        let mut bytes = Vec::with_capacity(8 + processors.len() * 24);
-        bytes.extend_from_slice(&0_u32.to_ne_bytes());
-        bytes.extend_from_slice(&(processors.len() as u32).to_ne_bytes());
-        for (processor_id, health) in processors {
-            bytes.extend_from_slice(&processor_id.to_ne_bytes());
-            bytes.extend_from_slice(&health.to_ne_bytes());
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
             bytes.extend_from_slice(&0_u64.to_ne_bytes());
         }
@@ -356,12 +375,8 @@ mod tests {
         REPORT_COUNT.store(0, Ordering::Relaxed);
         REPORT_IS_VALID.store(true, Ordering::Relaxed);
         let protocol = Box::leak(Box::new(StatusCodeProtocol { report_status_code }));
-        let protocols: Service<dyn ProtocolServices> =
-            Service::mock(Box::new(protocol_services_with_status_code(protocol)));
-        let hobs =
-            MpHobs::parse_hobs(None, Some(Hob::mock(vec![mp_handoff_with_health(&[(0, 0), (1, 1), (2, 2)])])), None);
 
-        assert!(MpServicesComponent::report_bist_errors(&protocols, hobs.bist_error_count()));
+        MpBistReporter::report_bist_errors(protocol, 2);
 
         assert_eq!(REPORT_COUNT.load(Ordering::Relaxed), 2);
         assert!(REPORT_IS_VALID.load(Ordering::Relaxed));
@@ -384,14 +399,70 @@ mod tests {
             });
         let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(protocols));
 
-        MpServicesComponent.report_or_defer_bist_errors(&protocols, 1);
+        MpBistReporter.report_or_defer_bist_errors(&protocols, 1);
     }
 
     #[test]
     fn test_mp_services_component_skips_bist_reporting_without_errors() {
         let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(MockProtocolServices::new()));
 
-        MpServicesComponent.report_or_defer_bist_errors(&protocols, 0);
+        MpBistReporter.report_or_defer_bist_errors(&protocols, 0);
+    }
+
+    #[test]
+    fn test_mp_bist_reporter_entry_point_accepts_missing_handoff() {
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(MockProtocolServices::new()));
+
+        assert!(MpBistReporter.entry_point(protocols, None).is_ok());
+    }
+
+    #[test]
+    fn test_mp_bist_reporter_logs_notification_registration_failure() {
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_register_install_notify().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(protocols));
+
+        MpBistReporter.report_or_defer_bist_errors(&protocols, 1);
+    }
+
+    #[test]
+    fn test_mp_bist_reporter_handles_installed_protocol_open_failure() {
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_interface_on_handle().once().returning(|_, _| Err(ProtocolError::NotFound));
+        protocols.expect_register_install_notify().once().returning(|_, _, mut callback| {
+            callback(Handle::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null"));
+            Ok(NotifyRegistration::from_raw(
+                core::ptr::dangling_mut(),
+                core::ptr::dangling_mut(),
+                core::ptr::dangling_mut(),
+            ))
+        });
+        let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(protocols));
+
+        MpBistReporter.report_or_defer_bist_errors(&protocols, 1);
+    }
+
+    #[test]
+    fn test_mp_bist_reporter_handles_status_code_report_failure() {
+        static REPORT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        extern "efiapi" fn report_status_code(
+            _status_code_type: u32,
+            _status_code_value: u32,
+            _instance: u32,
+            _caller_id: *const efi::Guid,
+            _data: *const patina::pi::protocol::status_code::EfiStatusCodeData,
+        ) -> efi::Status {
+            REPORT_COUNT.fetch_add(1, Ordering::Relaxed);
+            efi::Status::DEVICE_ERROR
+        }
+
+        REPORT_COUNT.store(0, Ordering::Relaxed);
+        let protocol = StatusCodeProtocol { report_status_code };
+
+        MpBistReporter::report_bist_errors(&protocol, 1);
+
+        assert_eq!(REPORT_COUNT.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -414,7 +485,7 @@ mod tests {
         let address = core::ptr::from_ref(protocol) as usize;
         let mut protocols = MockProtocolServices::new();
         protocols.expect_locate_interface().once().returning(|_| Err(ProtocolError::NotFound));
-        protocols.expect_locate_interface().returning(move |_| {
+        protocols.expect_interface_on_handle().once().returning(move |_, _| {
             Ok(ProtocolPtr::from_raw(address as *mut core::ffi::c_void).expect("address is non-null"))
         });
         protocols.expect_register_install_notify().once().returning(|_, _, mut callback| {
@@ -430,17 +501,39 @@ mod tests {
         });
         let protocols: Service<dyn ProtocolServices> = Service::mock(Box::new(protocols));
 
-        MpServicesComponent.report_or_defer_bist_errors(&protocols, 2);
+        MpBistReporter.report_or_defer_bist_errors(&protocols, 2);
 
         assert_eq!(REPORT_COUNT.load(Ordering::Relaxed), 2);
     }
 
-    fn mock_services(
-        protocols: MockProtocolServices,
-        events: MockEventServices,
-        timer_events: MockTimerEventServices,
-    ) -> (Service<dyn ProtocolServices>, Service<dyn EventServices>, Service<dyn TimerEventServices>) {
-        (Service::mock(Box::new(protocols)), Service::mock(Box::new(events)), Service::mock(Box::new(timer_events)))
+    #[test]
+    fn test_mp_services_protocol_installer_installs_protocol() {
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_install_interface().once().returning(|_, _, _| {
+            Ok(Handle::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null"))
+        });
+
+        let result = MpServicesProtocolInstaller::install_protocol(
+            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(protocols)),
+            Service::mock(Box::new(MockEventServices::new())),
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mp_services_protocol_installer_propagates_install_failure() {
+        let mut protocols = MockProtocolServices::new();
+        protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
+
+        let result = MpServicesProtocolInstaller::install_protocol(
+            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(protocols)),
+            Service::mock(Box::new(MockEventServices::new())),
+        );
+
+        assert!(matches!(result, Err(EfiError::OutOfResources)));
     }
 
     #[test]
@@ -449,13 +542,16 @@ mod tests {
         memory.expect_allocate_pages().once().returning(|_, _| Err(MemoryError::NoAvailableMemory));
         let handoff = Hob::mock(vec![mp_handoff(&[0, 1])]);
         let config = Hob::mock(vec![MpHandOffConfig { wait_loop_execution_mode: 8, startup_signal_value: 1 }]);
+        let mut storage = Storage::new();
 
         assert!(matches!(
             MpServicesComponent.entry_point(
-                mock_services(MockProtocolServices::new(), MockEventServices::new(), MockTimerEventServices::new()),
+                Service::mock(Box::new(MockEventServices::new())),
+                Service::mock(Box::new(MockTimerEventServices::new())),
                 memory_service(memory),
                 Service::mock(Box::new(MockArchTimerFunctionality::new())),
                 (None, Some(handoff), Some(config)),
+                &mut storage,
             ),
             Err(EfiError::OutOfResources)
         ));
