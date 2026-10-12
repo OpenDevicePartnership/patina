@@ -256,12 +256,12 @@ impl BinaryGuid {
     }
 
     /// Get the GUID value as a 16-byte array.
-    pub fn as_bytes(&self) -> &[u8; 16] {
+    pub const fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_bytes()
     }
 
     /// Get the GUID fields as individual components.
-    pub fn as_fields(&self) -> (u32, u16, u16, u8, u8, &[u8; 6]) {
+    pub const fn as_fields(&self) -> (u32, u16, u16, u8, u8, &[u8; 6]) {
         self.0.as_fields()
     }
 
