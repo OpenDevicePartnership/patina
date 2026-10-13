@@ -86,6 +86,10 @@ multiple of 4KB as a page size in order to apply image memory protections. The E
 memory protections on images without this section alignment requirement, but it will dispatch them, depending on
 configuration.
 
+Terse Executable (TE) images are not supported. TEs do not record the section alignment of the original PE32+
+image and thus Patina cannot verify the section alignment requirements before loading or applying image memory
+protections. A TE image passed to `LoadImage()` is rejected with `EFI_UNSUPPORTED`.
+
 AArch64 DXE_RUNTIME_DRIVERs must have a multiple of 64 KB image section alignment per UEFI spec requirements.
 This is required to boot operating systems with 16 KB or 64 KB page sizes.
 

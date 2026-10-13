@@ -1951,6 +1951,58 @@ mod tests {
     }
 
     #[test]
+    fn load_image_should_fail_for_zero_section_alignment() {
+        with_locked_state(|| {
+            let mut test_file = File::open(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // SectionAlignment is at offset 32 of the optional header, which follows the 4 byte PE signature and the
+            // 20 byte COFF header.
+            let pe_header_offset = u32::from_le_bytes(image[0x3C..0x40].try_into().unwrap()) as usize;
+            let section_alignment_offset = pe_header_offset + 4 + 20 + 32;
+            image[section_alignment_offset..section_alignment_offset + 4].copy_from_slice(&0u32.to_le_bytes());
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))), "{status:?}");
+        });
+    }
+
+    // TE images are not supported: they carry no section alignment, which must be a multiple of the page size to apply
+    // image memory protections. This runs the full LoadImage path on a TE image and checks that it is rejected when it
+    // is parsed, before any memory is allocated.
+    #[test]
+    fn load_image_should_fail_for_te_image() {
+        with_locked_state(|| {
+            let mut image: Vec<u8> = Vec::new();
+            File::open(test_collateral!("te/test_image.te"))
+                .expect("failed to open test file.")
+                .read_to_end(&mut image)
+                .expect("failed to read test file");
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let handles_before =
+                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
+            let images_before = PI_DISPATCHER.image_data.lock().private_image_data.len();
+
+            let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
+            assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::Unsupported))), "{status:?}");
+
+            // No image handle was installed and nothing was recorded for a later StartImage().
+            let handles_after =
+                PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
+            assert_eq!(handles_before, handles_after);
+            assert_eq!(images_before, PI_DISPATCHER.image_data.lock().private_image_data.len());
+        });
+    }
+
+    #[test]
     fn load_image_should_fail_for_incorrect_size_of_image() {
         with_locked_state(|| {
             let mut test_file =

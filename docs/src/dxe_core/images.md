@@ -51,16 +51,18 @@ somewhere identified by the `device_path` parameter), it must be loaded into mem
 executed.
 
 The Patina DXE Core supports images in the [`PE32+`](https://uefi.org/specs/UEFI/2.10_A/02_Overview.html#uefi-images)
-format as required by the UEFI spec. In addition, the Patina DXE Core also supports the [`Terse Executable (TE)`](https://uefi.org/specs/PI/1.8A/V1_TE_Image.html)
-format as specified in the UEFI Platform Initialization Spec.
+format as required by the UEFI spec. The [`Terse Executable (TE)`](https://uefi.org/specs/PI/1.8A/V1_TE_Image.html)
+format specified in the UEFI Platform Initialization Spec is **not** supported: a TE image does not record its section
+alignment, so the Patina DXE Core cannot verify that it is a multiple of 4 KB, which is required to apply image memory
+protections (see [Driver Section Alignment Must Be a Multiple of 4 KB](../integrate/patina_dxe_core_requirements.md#13-driver-section-alignment-must-be-a-multiple-of-4-kb)).
+A TE image passed to `LoadImage()` fails to load with `EFI_UNSUPPORTED`.
 
-To parse these image formats, the Patina DXE Core uses the [goblin](https://docs.rs/goblin/latest/goblin/) crate which
-supports parsing both formats. Interactions with Goblin to support image parsing are implemented in the `patina_dxe_core`
-crate.
+To parse PE32+ images, the Patina DXE Core uses the [goblin](https://docs.rs/goblin/latest/goblin/) crate.
+Interactions with Goblin to support image parsing are implemented in the `patina_dxe_core` crate.
 
 To load an image, the Patina DXE Core does the following:
 
-1. Parse the PE32+ or TE header to extract information about the image.
+1. Parse the PE32+ header to extract information about the image.
 2. Allocate a destination buffer of the appropriate type to hold the loaded image.
 3. Load the image from the source image buffer into the destination buffer section by section.
 4. Apply relocation fixups to the image (see [PE Format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-reloc-section-image-only)

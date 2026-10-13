@@ -8,11 +8,7 @@
 //!
 extern crate alloc;
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{format, string::String, vec::Vec};
 use patina::log_debug_assert;
 use scroll::{LE, Pread, Pwrite};
 
@@ -26,16 +22,12 @@ pub use goblin::pe::section_table::IMAGE_SCN_CNT_CODE;
 use relocation::{RelocationBlock, parse_relocation_blocks};
 use resource_directory::{DataEntry, Directory, DirectoryEntry, DirectoryString};
 
-// Magic value for TE header.
-const TE_MAGIC: u16 = 0x5A56;
 // Magic value for PE32 header.
 const PE32_MAGIC: u16 = 0x5A4D;
 // The size of the PE32 signature.
 const SIZEOF_PE32_SIGNATURE: usize = 4;
 // The size of the COFF header.
 const SIZEOF_COFF_HEADER: usize = 20;
-// The offset from the start the TE header, that the image base is located at.
-const TE_IMAGE_BASE_HEADER_FIELD_OFFSET: usize = 16;
 // The size of the standard fields in the PE32Plus header.
 const SIZEOF_STANDARD_FIELDS_64: usize = 24;
 
@@ -55,19 +47,9 @@ pub const IMAGE_MACHINE_TYPE_X64: u16 = 0x8664;
 #[allow(dead_code)]
 pub const IMAGE_MACHINE_TYPE_AARCH64: u16 = 0xAA64;
 
-/// Enum representing the type of header in a PE32 image.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub enum HeaderType {
-    Te(usize),
-    #[default]
-    Pe,
-}
-
 /// Type containing information about a PE32 image.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct UefiPeInfo {
-    /// Type of header (PE32 or TE)
-    pub header_type: HeaderType,
     /// Offset into an image header where the `image_base` address is located.
     /// NOT the actual image base address.
     pub image_base_header_field_offset: usize,
@@ -94,10 +76,13 @@ pub struct UefiPeInfo {
 }
 
 impl UefiPeInfo {
+    /// Parses a PE32+ image, gathering the necessary data for operating on the image in a UEFI environment.
+    ///
+    /// Terse Executable (TE) images are not supported: they do not carry a section alignment, which Patina requires
+    /// to be a multiple of 4 KB in order to apply image memory protections.
     pub fn parse(bytes: &[u8]) -> error::Result<Self> {
         match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
             PE32_MAGIC => UefiPeInfo::from_pe(bytes, &goblin::pe::options::ParseOptions::default()),
-            TE_MAGIC => UefiPeInfo::from_te(bytes),
             sig => Err(error::Error::BadSignature(sig)),
         }
     }
@@ -106,72 +91,15 @@ impl UefiPeInfo {
     ///
     /// This method uses `resolve_rva: false` so that goblin treats RVAs as direct byte offsets into
     /// the slice. This is useful for images where sections have been mapped to their virtual addresses.
+    ///
+    /// TE images are not supported, see [`UefiPeInfo::parse`].
     pub fn parse_mapped(bytes: &[u8]) -> error::Result<Self> {
         let mut opts = goblin::pe::options::ParseOptions::default();
         opts.resolve_rva = false;
         match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
             PE32_MAGIC => UefiPeInfo::from_pe(bytes, &opts),
-            TE_MAGIC => UefiPeInfo::from_te(bytes),
             sig => Err(error::Error::BadSignature(sig)),
         }
-    }
-
-    /// Parses a PE with a TE header, gathering the necessary data for operating on the image in a UEFI environment.
-    fn from_te(bytes: &[u8]) -> error::Result<Self> {
-        let mut pe = UefiPeInfo::default();
-        let mut offset = 0;
-        let header = goblin::pe::header::TeHeader::parse(bytes, &mut offset)?;
-        let rva_offset = header.stripped_size as usize - core::mem::size_of::<goblin::pe::header::TeHeader>();
-        let sections = header.sections(bytes, &mut offset)?;
-
-        // Set the simple fields.
-        pe.image_base_header_field_offset = TE_IMAGE_BASE_HEADER_FIELD_OFFSET;
-        pe.header_type = HeaderType::Te(rva_offset);
-        pe.entry_point_offset = header.entry_point as usize;
-        pe.image_type = u16::from(header.subsystem);
-        pe.machine = header.machine;
-        pe.section_alignment = 0;
-        pe.size_of_headers = header.base_of_code as usize;
-        pe.sections = sections;
-        // TE doesn't have the optional header with DLL Characteristics, so we have to assume the image is NX_COMPAT
-        pe.nx_compat = true;
-
-        // TE headers always have a reloc dir, even if it's empty
-        // unlike PE32 headers.
-        if header.reloc_dir.size != 0 {
-            pe.reloc_dir = Some(header.reloc_dir);
-        }
-
-        // TE headers don't have a size of image filed like PE32 headers
-        // so it needs to be calculated.
-        let Some(last_section) = pe.sections.last() else {
-            return Err(error::Error::Goblin(goblin::error::Error::Malformed("No sections found in PE.".to_string())));
-        };
-        pe.size_of_image = last_section.virtual_address + last_section.virtual_size;
-
-        // Debug data is optional metadata. Use it when valid, but do not reject an otherwise
-        // loadable image when its debug directory cannot be resolved or parsed.
-        let mut debug_opts = goblin::pe::options::ParseOptions::default();
-        debug_opts.resolve_rva = false;
-        match goblin::pe::debug::DebugData::parse_with_opts_and_fixup(
-            bytes,
-            header.debug_dir,
-            &pe.sections,
-            0,
-            &debug_opts,
-            rva_offset as u32,
-        ) {
-            Ok(debug_data) => {
-                if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
-                    pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-                }
-            }
-            Err(err) => {
-                log::warn!("Failed to parse optional TE/COFF debug metadata: {err:?}");
-            }
-        }
-
-        Ok(pe)
     }
 
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
@@ -188,7 +116,6 @@ impl UefiPeInfo {
         let sections = parsed_header.coff_header.sections(bytes, &mut section_table_offset)?;
 
         // Set the simple fields
-        pe.header_type = HeaderType::Pe;
         pe.entry_point_offset = optional_header.standard_fields.address_of_entry_point as usize;
         pe.image_type = optional_header.windows_fields.subsystem;
         pe.machine = parsed_header.coff_header.machine;
@@ -273,10 +200,9 @@ impl UefiPeInfo {
 ///
 /// ## Errors
 ///
-/// Returns [`Parse`](error::Error::Parse) error if parsing a image containing a TE header
-/// failed.
+/// Returns [`Parse`](error::Error::Parse) error if reading data from the image failed.
 ///
-/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing the PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 ///
 /// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
@@ -318,10 +244,9 @@ pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -
 ///
 /// ## Errors
 ///
-/// Returns [`Parse`](error::Error::Parse) error if parsing a image containing a TE header
-/// failed.
+/// Returns [`Parse`](error::Error::Parse) error if reading data from the image failed.
 ///
-/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing the PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 ///
 /// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
@@ -332,16 +257,11 @@ pub fn relocate_image(
     image: &mut [u8],
     prev_reloc_blocks: &[relocation::RelocationBlock],
 ) -> error::Result<Vec<RelocationBlock>> {
-    let rva_offset = match pe_info.header_type {
-        HeaderType::Te(rva_offset) => rva_offset,
-        HeaderType::Pe => 0,
-    };
-
     // Read original image base for future relocations, then update it.
     let base = image.pread_with::<u64>(pe_info.image_base_header_field_offset, LE)?;
-    image.pwrite_with::<u64>(destination as u64 - rva_offset as u64, pe_info.image_base_header_field_offset, LE)?;
+    image.pwrite_with::<u64>(destination as u64, pe_info.image_base_header_field_offset, LE)?;
 
-    let adjustment = (destination as u64).wrapping_sub(base + rva_offset as u64);
+    let adjustment = (destination as u64).wrapping_sub(base);
 
     if adjustment == 0 || pe_info.reloc_dir.is_none() {
         return Ok(Vec::new());
@@ -360,8 +280,7 @@ pub fn relocate_image(
     for (block_idx, reloc_block) in relocation_block.iter_mut().enumerate() {
         for (reloc_idx, reloc) in reloc_block.relocations.iter_mut().enumerate() {
             let fixup_type = reloc.type_and_offset >> 12;
-            let fixup =
-                reloc_block.block_header.page_rva as usize + (reloc.type_and_offset & 0xFFF) as usize - rva_offset;
+            let fixup = reloc_block.block_header.page_rva as usize + (reloc.type_and_offset & 0xFFF) as usize;
 
             match fixup_type {
                 IMAGE_REL_BASED_ABSOLUTE => {}
@@ -452,10 +371,9 @@ pub fn flatten_runtime_relocation_data(relocation_data: &[RelocationBlock]) -> e
 ///
 /// ## Errors
 ///
-/// Returns [`Parse`](crate::error::Error::Parse) error if parsing a image containing a TE header
-/// failed.
+/// Returns [`Parse`](crate::error::Error::Parse) error if reading data from the image failed.
 ///
-/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing the PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Result<Option<(usize, usize)>> {
     let Some(resource_section) = get_section(".rsrc", pe_info, image)? else {
@@ -609,16 +527,16 @@ mod tests {
     }
 
     #[test]
-    fn te_image_info_should_be_correct() {
+    fn test_te_image_is_not_supported() {
         test_support::init_test_logger();
         let image = include_bytes!("../resources/test/te/test_image.te");
-        let image_info = UefiPeInfo::parse(image).unwrap();
 
-        assert_eq!(image_info.image_type, 11);
-        assert_eq!(image_info.section_alignment, 0x0);
-        assert_eq!(image_info.filename, Some(String::from("RustTerseImageTestDxe.efi")));
-        assert_eq!(image_info.size_of_image, 0x5ef8);
-        assert_eq!(image_info.entry_point_offset, 0x10a8);
+        // A TE image starts with the "VZ" magic, which is not a PE32 signature.
+        let result = UefiPeInfo::parse(image);
+        assert!(matches!(result, Err(error::Error::BadSignature(0x5A56))), "unexpected result: {result:?}");
+
+        let result = UefiPeInfo::parse_mapped(image);
+        assert!(matches!(result, Err(error::Error::BadSignature(0x5A56))), "unexpected result: {result:?}");
     }
 
     #[test]
@@ -662,38 +580,6 @@ mod tests {
         assert_eq!(image_info.filename, Some(String::from("DisplayEngine.efi")));
         assert_eq!(image_info.size_of_image, 0x12000);
         assert_eq!(image_info.entry_point_offset, 0xBE4B);
-    }
-
-    #[test]
-    fn te_load_image_should_load_the_image() {
-        test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image.te");
-        let image_info = UefiPeInfo::parse(image).unwrap();
-
-        let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-        assert_eq!(loaded_image.len(), image_info.size_of_image as usize);
-        load_image(&image_info, image, &mut loaded_image).unwrap();
-
-        let loaded_image_reference = include_bytes!("../resources/test/te/test_image_loaded.bin");
-
-        assert_eq!(loaded_image.len(), loaded_image_reference.len());
-        let first_mismatch = loaded_image.iter().enumerate().find(|(idx, byte)| &&loaded_image_reference[*idx] != byte);
-
-        assert!(first_mismatch.is_none(), "First mismatch at index {:x}", first_mismatch.unwrap().0);
-    }
-
-    #[test]
-    fn te_load_image_should_have_same_info() {
-        test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
-        let image_info = UefiPeInfo::parse(image).unwrap();
-
-        let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, image, &mut loaded_image).unwrap();
-
-        let loaded_image_info = UefiPeInfo::parse(&loaded_image).unwrap();
-
-        assert_eq!(image_info, loaded_image_info);
     }
 
     #[test]
@@ -746,35 +632,17 @@ mod tests {
     }
 
     #[test]
-    fn te_relocate_image_with_reloc_sections_should_work() {
+    fn pe_relocate_to_same_address_should_do_nothing() {
         test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
-        let reference_image = include_bytes!("../resources/test/te/test_image_with_reloc_section_relocated.bin");
+        let image = include_bytes!("../resources/test/pe32/test_image.pe32");
 
         let image_info = UefiPeInfo::parse(image).unwrap();
-
-        let mut relocated_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-
-        load_image(&image_info, image, &mut relocated_image).unwrap();
-        relocate_image(&image_info, 0x7CC5_8000, &mut relocated_image, &Vec::new()).unwrap();
-
-        assert_eq!(relocated_image.len(), reference_image.len());
-        let first_mismatch = relocated_image.iter().enumerate().find(|(idx, byte)| &&reference_image[*idx] != byte);
-        assert!(first_mismatch.is_none(), "First mismatch at index {:x}", first_mismatch.unwrap().0);
-    }
-
-    #[test]
-    fn te_relocate_to_same_address_should_do_nothing() {
-        test_support::init_test_logger();
-        let image1 = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
-
-        let image_info = UefiPeInfo::parse(image1).unwrap();
 
         let mut relocated_once = vec![0; image_info.size_of_image as usize];
         let mut relocated_twice = vec![0; image_info.size_of_image as usize];
 
-        load_image(&image_info, image1, &mut relocated_once).unwrap();
-        load_image(&image_info, image1, &mut relocated_twice).unwrap();
+        load_image(&image_info, image, &mut relocated_once).unwrap();
+        load_image(&image_info, image, &mut relocated_twice).unwrap();
 
         let blocks = relocate_image(&image_info, 0x0FFF_FFFF, &mut relocated_once, &Vec::new()).unwrap();
         let blocks = relocate_image(&image_info, 0x0FFF_FFFF, &mut relocated_twice, &blocks).unwrap();
@@ -831,7 +699,7 @@ mod tests {
     #[test]
     fn test_relocate_image_with_missing_reloc_dir() {
         test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
+        let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
         let mut loaded_image = vec![0; image_info.size_of_image as usize];
         load_image(&image_info, image, &mut loaded_image).unwrap();
@@ -848,7 +716,7 @@ mod tests {
     #[test]
     fn relocate_image_with_unsupported_reloc_type_returns_error() {
         test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image_with_reloc_section.te");
+        let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
         let mut loaded_image = vec![0; image_info.size_of_image as usize];
         load_image(&image_info, image, &mut loaded_image).unwrap();
@@ -950,19 +818,6 @@ mod tests {
                 [gcc_resource_section_offset..(gcc_resource_section_offset + gcc_resource_section_size)],
             ref_file
         );
-    }
-
-    #[test]
-    fn te_load_resource_section_should_succeed() {
-        test_support::init_test_logger();
-        let image = include_bytes!("../resources/test/te/test_image.te");
-        let image_info = UefiPeInfo::parse(image).unwrap();
-
-        let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, image, &mut loaded_image).unwrap();
-
-        let result = load_resource_section(&image_info, image).unwrap();
-        assert!(result.is_none());
     }
 
     #[test]
@@ -1135,25 +990,5 @@ mod tests {
 
         let mut loaded_image = vec![0; image_info.size_of_image as usize];
         load_image(&image_info, image, &mut loaded_image).unwrap();
-    }
-
-    #[test]
-    fn test_te_image_with_malformed_debug_directory_loads_without_filename() {
-        test_support::init_test_logger();
-        let mut image = include_bytes!("../resources/test/te/test_image.te").to_vec();
-
-        // debug_dir is the last field of TeHeader (a DataDirectory { virtual_address, size }).
-        // Corrupt its size so the debug directory can no longer be resolved, without disturbing
-        // anything else about the image.
-        const HEADER_SIZE: usize = core::mem::size_of::<goblin::pe::header::TeHeader>();
-        image[HEADER_SIZE - 8..HEADER_SIZE - 4].copy_from_slice(&0u32.to_le_bytes());
-        image[HEADER_SIZE - 4..HEADER_SIZE].copy_from_slice(&u32::MAX.to_le_bytes());
-
-        let image_info = UefiPeInfo::parse(&image).unwrap();
-
-        assert!(image_info.filename.is_none());
-
-        let mut loaded_image = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, &image, &mut loaded_image).unwrap();
     }
 }
