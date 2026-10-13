@@ -291,6 +291,9 @@ impl Event {
 
 struct EventDb {
     events: BTreeMap<usize, Event>,
+    // Set of event IDs that belong to a group. These are also maintained in the `events` map, but are separated out
+    // here for quick lookup and management of grouped events.
+    grouped_events: BTreeSet<usize>,
     next_event_id: usize,
     //TODO: using a BTreeSet here as a priority queue is slower [O(log n)] vs. the
     //per-TPL lists used in the reference C implementation [O(1)] for (de)queueing of event notifies.
@@ -305,7 +308,13 @@ impl EventDb {
     const RT_EVENT: usize = 1 << (usize::BITS - 1);
 
     const fn new() -> Self {
-        EventDb { events: BTreeMap::new(), next_event_id: 1, pending_notifies: BTreeSet::new(), notify_tags: 0 }
+        EventDb {
+            events: BTreeMap::new(),
+            grouped_events: BTreeSet::new(),
+            next_event_id: 1,
+            pending_notifies: BTreeSet::new(),
+            notify_tags: 0,
+        }
     }
 
     /// Creates a new event and inserts it into the event database.
@@ -350,6 +359,9 @@ impl EventDb {
         } else {
             let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
             self.events.insert(id, event);
+            if event_group.is_some() {
+                self.grouped_events.insert(id);
+            }
         }
 
         Ok(id as efi::Event)
@@ -367,6 +379,7 @@ impl EventDb {
             runtime::remove_runtime_event(id as efi::Event)?;
         } else {
             self.events.remove(&id).ok_or(EfiError::InvalidParameter)?;
+            self.grouped_events.remove(&id);
         }
 
         Ok(())
@@ -417,7 +430,17 @@ impl EventDb {
     }
 
     fn signal_group(&mut self, group: efi::Guid) {
-        for member_event in self.events.values_mut().rev().filter(|e| e.event_group == Some(group) && !e.signaled) {
+        for event_id in self.grouped_events.iter().rev() {
+            let member_event = if let Some(event) = self.events.get_mut(event_id) {
+                event
+            } else {
+                debug_assert!(false, "Grouped event missing from event database.");
+                continue;
+            };
+            if member_event.event_group != Some(group) || member_event.signaled {
+                continue;
+            }
+
             member_event.signaled = true;
 
             if member_event.event_type.is_notify_signal() {
@@ -909,6 +932,30 @@ mod tests {
             );
             assert_eq!(events.get(&index).unwrap().notify_context, None);
             assert_eq!(events.get(&index).unwrap().event_group, None);
+        });
+    }
+
+    #[test]
+    fn grouped_event_index_should_track_grouped_events() {
+        with_locked_state(|| {
+            let group = Guid::try_from_string("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap().to_efi_guid();
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+
+            let ungrouped_event = SPIN_LOCKED_EVENT_DB
+                .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
+                .unwrap();
+            let grouped_event = SPIN_LOCKED_EVENT_DB
+                .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify_function), None, Some(group))
+                .unwrap();
+
+            {
+                let event_db = SPIN_LOCKED_EVENT_DB.lock();
+                assert!(!event_db.grouped_events.contains(&(ungrouped_event as usize)));
+                assert!(event_db.grouped_events.contains(&(grouped_event as usize)));
+            }
+
+            SPIN_LOCKED_EVENT_DB.close_event(grouped_event).unwrap();
+            assert!(!SPIN_LOCKED_EVENT_DB.lock().grouped_events.contains(&(grouped_event as usize)));
         });
     }
 
