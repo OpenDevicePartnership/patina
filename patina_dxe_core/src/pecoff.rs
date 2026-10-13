@@ -102,6 +102,31 @@ impl UefiPeInfo {
         }
     }
 
+    /// Verifies that every section lies entirely within the loaded image, that is, within `size_of_image`.
+    ///
+    /// A section occupies `VirtualAddress..VirtualAddress + VirtualSize` of the loaded image, with `VirtualSize`
+    /// rounded up to the section alignment as it is when memory protections are applied. Sections are not required
+    /// to be contiguous, so the sum of the section sizes may be smaller than `size_of_image`; each section only has
+    /// to end within it. The end is computed in 64 bits so that the 32-bit header fields cannot wrap.
+    ///
+    /// ## Errors
+    ///
+    /// Returns [`BufferTooShort`](error::Error::BufferTooShort) if any section extends past the end of the image, or
+    /// if its `VirtualSize` cannot be aligned to the section alignment.
+    pub fn validate_sections(&self) -> error::Result<()> {
+        let image_size = u64::from(self.size_of_image);
+        for section in &self.sections {
+            let aligned_virtual_size = patina::align_up(section.virtual_size, self.section_alignment)
+                .map_err(|_| error::Error::BufferTooShort(section.virtual_size as usize, "loaded_image"))?;
+
+            let end = u64::from(section.virtual_address) + u64::from(aligned_virtual_size);
+            if end > image_size {
+                return Err(error::Error::BufferTooShort(usize::try_from(end).unwrap_or(usize::MAX), "loaded_image"));
+            }
+        }
+        Ok(())
+    }
+
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
     fn from_pe(bytes: &[u8], opts: &goblin::pe::options::ParseOptions) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
@@ -524,6 +549,71 @@ mod tests {
         let result = UefiPeInfo::parse(&image);
         assert!(result.is_err());
         assert_eq!(format!("{:?}", result.unwrap_err()), "BadSignature(23040)");
+    }
+
+    fn section_validation_test_info(size_of_image: u32, sections: &[(u32, u32)]) -> UefiPeInfo {
+        let mut pe_info = UefiPeInfo { size_of_image, section_alignment: 0x1000, ..Default::default() };
+        for &(virtual_address, virtual_size) in sections {
+            pe_info.sections.push(goblin::pe::section_table::SectionTable {
+                virtual_address,
+                virtual_size,
+                ..Default::default()
+            });
+        }
+        pe_info
+    }
+
+    #[test]
+    fn test_validate_sections_accepts_sections_within_the_image() {
+        // Sections need not be contiguous: the sizes below do not sum to the image size.
+        let pe_info = section_validation_test_info(0x10000, &[(0x1000, 0x1234), (0xF000, 0x10)]);
+        pe_info.validate_sections().expect("sections within the image are valid");
+
+        // A section whose size is not aligned, but which ends exactly at the end of the image once rounded up.
+        let pe_info = section_validation_test_info(0x3000, &[(0x2000, 0x10)]);
+        pe_info.validate_sections().expect("a section may end exactly at the end of the image");
+
+        let pe_info = section_validation_test_info(0x3000, &[]);
+        pe_info.validate_sections().expect("an image without sections is valid");
+    }
+
+    #[test]
+    fn test_validate_sections_accepts_the_test_images() {
+        for image in [
+            &include_bytes!("../resources/test/pe32/test_image.pe32")[..],
+            &include_bytes!("../resources/test/pe32/DisplayEngine512BFileAlignment.efi")[..],
+        ] {
+            UefiPeInfo::parse(image).unwrap().validate_sections().expect("a valid image has sections in the image");
+        }
+    }
+
+    #[test]
+    fn test_validate_sections_rejects_sections_beyond_the_image() {
+        const FAILING: &[(u32, u32, u32)] = &[
+            // (size_of_image, virtual_address, virtual_size)
+            (0x3000, 0x2000, 0x1001),        // rounds up to a page past the end
+            (0x3000, 0x2FF0, 0x10),          // unaligned start: the rounded size runs past the end
+            (0x3000, 0x4000, 0x10),          // section starts after the image
+            (0x3000, 0x1000, 0xFFFF_FFF1),   // virtual size that cannot be aligned
+            (0x50000, 0x40000, 0xFFFC_0000), // virtual address + virtual size wraps 32 bits
+            (0x3000, 0xFFFF_F000, 0x2000),   // virtual address + virtual size wraps 32 bits
+        ];
+        for &(size_of_image, virtual_address, virtual_size) in FAILING {
+            let pe_info = section_validation_test_info(size_of_image, &[(virtual_address, virtual_size)]);
+            assert!(
+                matches!(pe_info.validate_sections(), Err(error::Error::BufferTooShort(_, "loaded_image"))),
+                "image {size_of_image:#x} section {virtual_address:#x}/{virtual_size:#x} must be rejected"
+            );
+        }
+
+        // Only the last of several sections is out of range.
+        let pe_info = section_validation_test_info(0x3000, &[(0x1000, 0x1000), (0x2000, 0x2000)]);
+        assert!(matches!(pe_info.validate_sections(), Err(error::Error::BufferTooShort(_, "loaded_image"))));
+
+        // A section alignment that is not a power of two cannot be used to round the size.
+        let mut pe_info = section_validation_test_info(0x3000, &[(0x1000, 0x10)]);
+        pe_info.section_alignment = 0;
+        assert!(matches!(pe_info.validate_sections(), Err(error::Error::BufferTooShort(_, "loaded_image"))));
     }
 
     #[test]
