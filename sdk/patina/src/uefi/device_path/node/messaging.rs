@@ -23,7 +23,11 @@ use crate::BinaryGuid;
 use crate::{
     device_path_node,
     standard::efi,
-    uefi::device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
+    uefi::{
+        boot_services::BootServices,
+        device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
+        protocols::usb_io,
+    },
 };
 use alloc::{
     format,
@@ -1125,6 +1129,34 @@ fn usb_class_shortcut(node: &UsbClass) -> Option<(&'static str, bool)> {
     Some(name)
 }
 
+impl UsbClass {
+    /// Return true if the USB device matches this node; a field of all ones matches any value.
+    ///
+    /// When the device descriptor class is zero, each interface declares its own class, so the
+    /// class, subclass, and protocol come from the interface descriptor.
+    pub(crate) fn matches(&self, usb_io: &mut usb_io::Protocol) -> bool {
+        let mut device = usb_io::DeviceDescriptor::default();
+        if (usb_io.get_device_descriptor)(usb_io, &raw mut device) != efi::Status::SUCCESS {
+            return false;
+        }
+        let (mut class, mut subclass, mut protocol) =
+            (device.device_class, device.device_sub_class, device.device_protocol);
+        if class == 0 {
+            let mut interface = usb_io::InterfaceDescriptor::default();
+            if (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) != efi::Status::SUCCESS {
+                return false;
+            }
+            (class, subclass, protocol) =
+                (interface.interface_class, interface.interface_sub_class, interface.interface_protocol);
+        }
+        (self.vendor_id == u16::MAX || self.vendor_id == device.id_vendor)
+            && (self.product_id == u16::MAX || self.product_id == device.id_product)
+            && (self.device_class == u8::MAX || self.device_class == class)
+            && (self.device_subclass == u8::MAX || self.device_subclass == subclass)
+            && (self.device_protocol == u8::MAX || self.device_protocol == protocol)
+    }
+}
+
 impl fmt::Display for UsbClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
@@ -1532,6 +1564,71 @@ impl fmt::Display for IpV4 {
             write!(f, ",{},{}", network.gateway, network.subnet_mask)?;
         }
         f.write_str(")")
+    }
+}
+
+/// Maximum number of UTF-16 code units read from a USB string descriptor, which holds at
+/// most 126 characters.
+const MAX_USB_STRING_LENGTH: usize = 127;
+
+impl UsbWwid {
+    /// Return true if the USB device matches this node.
+    ///
+    /// The vendor ID, product ID, and interface number must be equal, and the device serial
+    /// number string, in one of the languages the device supports, must end with this node's
+    /// serial number.
+    pub(crate) fn matches<B: BootServices>(&self, boot_services: &B, usb_io: &mut usb_io::Protocol) -> bool {
+        let mut device = usb_io::DeviceDescriptor::default();
+        if (usb_io.get_device_descriptor)(usb_io, &raw mut device) != efi::Status::SUCCESS {
+            return false;
+        }
+        if device.id_vendor != self.vendor_id || device.id_product != self.product_id || device.str_serial_number == 0 {
+            return false;
+        }
+        let mut interface = usb_io::InterfaceDescriptor::default();
+        if (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) != efi::Status::SUCCESS
+            || u16::from(interface.interface_number) != self.interface
+        {
+            return false;
+        }
+
+        let mut serial_suffix = self.serial_number.as_slice();
+        if let [rest @ .., 0] = serial_suffix {
+            serial_suffix = rest;
+        }
+        let mut languages: *mut u16 = core::ptr::null_mut();
+        let mut table_size = 0u16;
+        if (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) != efi::Status::SUCCESS
+            || languages.is_null()
+        {
+            return false;
+        }
+        // SAFETY: The protocol returned a language table of `table_size` bytes, which it owns.
+        let languages = unsafe { core::slice::from_raw_parts(languages, usize::from(table_size) / 2) };
+        for &language in languages {
+            let mut serial: *mut u16 = core::ptr::null_mut();
+            if (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial)
+                != efi::Status::SUCCESS
+                || serial.is_null()
+            {
+                continue;
+            }
+            // SAFETY: The protocol returned a NUL-terminated string, read up to the longest USB string.
+            let length = (0..MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
+            let matches = length.is_some_and(|length| {
+                // SAFETY: The first `length` code units of the string were just read.
+                let serial = unsafe { core::slice::from_raw_parts(serial, length) };
+                serial.ends_with(serial_suffix)
+            });
+            // SAFETY: The string was allocated from pool memory by the protocol, and is not used after this.
+            if unsafe { boot_services.free_pool(serial.cast::<u8>()) }.is_err() {
+                log::warn!("Cannot free a USB serial number string");
+            }
+            if matches {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -2189,7 +2286,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pread, Pwrite, Clone)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sata {
         /// HBA Port Number.
         pub hba_port: u16,
@@ -2250,7 +2347,7 @@ device_path_node! {
         validate = nvm_express_validate,
     )]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pread, Pwrite, Clone)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmExpress {
         /// Namespace Identifier (NSID).
         pub namespace_id: u32,

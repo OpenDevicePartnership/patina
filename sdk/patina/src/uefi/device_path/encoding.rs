@@ -1,15 +1,30 @@
 //! Scroll encoding contexts for device path fields.
 //!
 //! Fixed-width integers and byte arrays use scroll's built-in conversions. These
-//! contexts cover the remaining UEFI 2.11 Chapter 10 field layouts: strings with a
-//! specific encoding and terminator, EFI GUIDs, and payloads bounded by the node
-//! length. Apply them with `#[scroll(ctx = ...)]` on derived fields.
+//! contexts cover the remaining field layouts of
+//! [UEFI 2.11 Chapter 10](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html):
+//! strings with a specific encoding and terminator, EFI GUIDs, and payloads bounded by
+//! the node length. Apply them with `#[scroll(ctx = ...)]` on derived fields.
+//!
+//! | Context | Rust type | Wire format |
+//! |---|---|---|
+//! | [`AsciiNul`] | [`String`] | ASCII bytes and a NUL terminator |
+//! | [`Char16Nul`] | [`String`] | Little-endian UCS-2 code units and a `0x0000` terminator |
+//! | [`Utf8Nul`] | [`String`] | UTF-8 bytes and a NUL terminator |
+//! | [`Ascii`] | [`String`] | ASCII bytes filling the rest of the payload, no terminator |
+//! | [`IpAddress`] | [`Ipv4Addr`], [`Ipv6Addr`] | `EFI_IPv4_ADDRESS` (4 bytes), `EFI_IPv6_ADDRESS` (16 bytes) |
+//! | [`EfiMacAddress`] | [`efi::MacAddress`] | `EFI_MAC_ADDRESS` (32 bytes, zero padded) |
+//! | [`Vector`] | `Vec<u8>`, `Vec<u16>`, `Vec<u32>` | Elements filling the rest of the payload; 16- and 32-bit values are little-endian |
+//!
+//! Reading produces the owned type; writing takes a borrowed `&T`.
 //!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
 //!
 //! SPDX-License-Identifier: Apache-2.0
+
+// cspell:ignore nvmeoftarget nvmeofdisk
 
 use crate::{BinaryGuid, Char16Str, Char16String, standard::efi};
 use alloc::{string::String, vec::Vec};
@@ -94,6 +109,27 @@ impl TryIntoCtx<AsciiNul> for &String {
 /// Reading rejects a missing terminator, an incomplete code unit, or surrogate
 /// code units. Writing rejects interior NULs, characters outside UCS-2, or
 /// insufficient destination space.
+///
+/// # Examples
+///
+/// ```rust
+/// # extern crate alloc;
+/// use alloc::{string::String, vec::Vec};
+/// use patina::uefi::device_path::encoding::Char16Nul;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Record {
+///     #[scroll(ctx = Char16Nul)]
+///     path: String,
+/// }
+///
+/// // The default boot file of UEFI 2.10 Section 3.5.1.1, as CHAR16 code units with a terminator.
+/// let bytes: Vec<u8> = r"\EFI\BOOT\BOOTX64.EFI".encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+/// let record: Record = bytes.pread_with(0, scroll::LE)?;
+/// assert_eq!(record.path, r"\EFI\BOOT\BOOTX64.EFI");
+/// # Ok::<(), scroll::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Char16Nul;
 
@@ -149,6 +185,26 @@ impl TryIntoCtx<Char16Nul> for &String {
 ///
 /// Reading rejects a missing terminator or invalid UTF-8. Writing rejects interior
 /// NULs or insufficient destination space.
+///
+/// # Examples
+///
+/// ```rust
+/// # extern crate alloc;
+/// use alloc::string::String;
+/// use patina::uefi::device_path::encoding::Utf8Nul;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Record {
+///     #[scroll(ctx = Utf8Nul)]
+///     subsystem_nqn: String,
+/// }
+///
+/// // The subsystem NQN of the NVMe-oF example in UEFI 2.10 Section 10.3.4.33.
+/// let record: Record = b"nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target\0".pread_with(0, scroll::LE)?;
+/// assert_eq!(record.subsystem_nqn, "nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target");
+/// # Ok::<(), scroll::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Utf8Nul;
 
@@ -347,6 +403,30 @@ impl TryIntoCtx<IpAddress> for &Ipv6Addr {
 /// node defines how many bytes are significant, such as 6 for Ethernet; producers pad the
 /// rest with zeros. The scroll endianness of the containing structure does not affect
 /// this layout.
+///
+/// # Examples
+///
+/// ```rust
+/// use patina::uefi::device_path::encoding::EfiMacAddress;
+/// use r_efi::efi;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Record {
+///     #[scroll(ctx = EfiMacAddress)]
+///     address: efi::MacAddress,
+///     interface_type: u8,
+/// }
+///
+/// // The Ethernet address of the iSCSI example in UEFI 2.10 Section 10.3.4.20.2, padded to 32 bytes.
+/// let mut bytes = [0u8; 33];
+/// bytes[..6].copy_from_slice(&[0x00, 0x13, 0x20, 0xf5, 0xfa, 0x77]);
+/// bytes[32] = 1;
+/// let record: Record = bytes.pread_with(0, scroll::LE)?;
+/// assert_eq!(record.address.addr[..6], [0x00, 0x13, 0x20, 0xf5, 0xfa, 0x77]);
+/// assert_eq!(record.interface_type, 1);
+/// # Ok::<(), scroll::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct EfiMacAddress;
 
@@ -379,6 +459,27 @@ impl TryIntoCtx<EfiMacAddress> for &efi::MacAddress {
 ///
 /// Reading rejects a byte count that is not a multiple of the element size.
 /// Writing rejects insufficient destination space.
+///
+/// # Examples
+///
+/// ```rust
+/// # extern crate alloc;
+/// use alloc::vec::Vec;
+/// use patina::uefi::device_path::encoding::Vector;
+/// use scroll::{Pread, Pwrite};
+///
+/// #[derive(Pread, Pwrite)]
+/// struct Record {
+///     #[scroll(ctx = Vector)]
+///     addresses: Vec<u32>,
+/// }
+///
+/// // Two ACPI `_ADR` values, as in an `AcpiAdr(0x80010100,0x80010200)` node.
+/// let bytes = [0x00, 0x01, 0x01, 0x80, 0x00, 0x02, 0x01, 0x80];
+/// let record: Record = bytes.pread_with(0, scroll::LE)?;
+/// assert_eq!(record.addresses, [0x80010100, 0x80010200]);
+/// # Ok::<(), scroll::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Vector;
 

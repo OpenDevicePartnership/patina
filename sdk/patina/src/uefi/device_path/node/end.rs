@@ -41,7 +41,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Entire)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct EndEntire;
 }
 
@@ -93,7 +93,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::End, EndSubType::Instance)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct EndInstance;
 }
 

@@ -94,7 +94,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Pci {
         /// PCI Function Number.
         pub function: u8,
@@ -130,7 +130,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct PcCard {
         /// Function Number, 0 is the first one.
         pub function_number: u8,
@@ -166,7 +166,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct MemoryMapped {
         /// EFI memory type.
         pub memory_type: efi::MemoryType,
@@ -204,7 +204,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Controller {
         /// Controller Number.
         pub number: u32,
@@ -241,7 +241,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = bmc_validate)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Bmc {
         /// BMC interface type: 0 unknown, 1 KCS, 2 SMIC, or 3 BT; other values are reserved.
         pub interface_type: u8,

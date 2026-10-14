@@ -61,7 +61,6 @@
 
 pub mod encoding;
 pub mod node;
-mod shorthand;
 
 use alloc::{
     borrow::ToOwned,
@@ -84,7 +83,7 @@ use crate::{
     base::error::EfiError,
     standard::efi,
     uefi::{
-        boot_services::BootServices,
+        boot_services::{BootServices, protocol_handler::HandleSearchType},
         device_path::node::{
             DevicePathNode, DevicePathType, EndEntire, EndInstance, FilePath, GenericDevicePathNode, HardDrive, Header,
             Iter, Uri, UsbClass, UsbWwid,
@@ -501,7 +500,7 @@ impl DevicePath {
     ///
     /// | First node | Matching devices | Candidate |
     /// |---|---|---|
-    /// | [`HardDrive`] | Device paths with a hard drive node of the same partition number, partition format, signature type, and signature | The device path up to the hard drive node, then the nodes after the first one |
+    /// | [`HardDrive`] | Device paths with an equal hard drive node | The device path up to the hard drive node, then the nodes after the first one |
     /// | [`UsbWwid`] | USB I/O handles with the same vendor ID, product ID, interface number, and serial number suffix | The handle's device path, then the nodes after the first one |
     /// | [`UsbClass`] | USB I/O handles with the same vendor ID, product ID, class, subclass, and protocol; a field of all ones matches any value | The handle's device path, then the nodes after the first one |
     /// | [`FilePath`] | Simple file system handles: removable media, then fixed media, then file systems without block I/O | The handle's device path, then the whole shorthand path |
@@ -539,41 +538,64 @@ impl DevicePath {
             Ok(candidate)
         };
 
+        // The handles that support `protocol`; none if no handle supports it.
+        let handles = |protocol: &'static efi::Guid| -> Result<Vec<efi::Handle>, EfiError> {
+            match boot_services.locate_handle_buffer(HandleSearchType::ByProtocol(protocol)) {
+                Ok(handles) => Ok(handles.iter().copied().collect()),
+                Err(efi::Status::NOT_FOUND) => Ok(Vec::new()),
+                Err(status) => Err(EfiError::from(status)),
+            }
+        };
+        // The device path installed on `handle`, if it has a valid one.
+        let device_path = |handle: efi::Handle| -> Option<&'static DevicePath> {
+            // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is the device path protocol.
+            let protocol =
+                unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }.ok()?;
+            // SAFETY: The pointer comes from a device path protocol interface installed on the handle.
+            unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(protocol).cast::<u8>()) }.ok()
+        };
+
         let mut candidates = Vec::new();
         if let Ok(target) = HardDrive::try_from(first_node) {
-            for handle in shorthand::handles(boot_services, &efi::protocols::device_path::PROTOCOL_GUID)? {
-                let Some(handle_path) = shorthand::device_path(boot_services, handle) else {
+            for handle in handles(&efi::protocols::device_path::PROTOCOL_GUID)? {
+                let Some(handle_path) = device_path(handle) else {
                     continue;
                 };
                 // The device path of the handle, up to its partition node, then the rest of the short form.
                 let mut candidate = DevicePathBuf::new();
                 for node in handle_path.iter().take_while(|node| node.header.r#type != DevicePathType::End as u8) {
                     candidate.append(node).map_err(|_| EfiError::OutOfResources)?;
-                    if HardDrive::try_from(node).is_ok_and(|hard_drive| shorthand::same_partition(&hard_drive, &target))
-                    {
+                    if HardDrive::try_from(node).is_ok_and(|hard_drive| hard_drive == target) {
                         candidate.append_device_path(rest).map_err(|_| EfiError::OutOfResources)?;
                         candidates.push(candidate);
                         break;
                     }
                 }
             }
-        } else if let Ok(wwid) = UsbWwid::try_from(first_node) {
-            for (handle_path, usb_io) in shorthand::usb_devices(boot_services)? {
-                if shorthand::usb_wwid_matches(boot_services, usb_io, &wwid) {
-                    candidates.push(extend(handle_path, rest)?);
-                }
-            }
-        } else if let Ok(class) = UsbClass::try_from(first_node) {
-            for (handle_path, usb_io) in shorthand::usb_devices(boot_services)? {
-                if shorthand::usb_class_matches(usb_io, &class) {
+        } else if UsbWwid::is_type(first_node.header.r#type, first_node.header.sub_type)
+            || UsbClass::is_type(first_node.header.r#type, first_node.header.sub_type)
+        {
+            let (wwid, class) = (UsbWwid::try_from(first_node).ok(), UsbClass::try_from(first_node).ok());
+            for handle in handles(&usb_io::PROTOCOL_GUID)? {
+                let Some(handle_path) = device_path(handle) else {
+                    continue;
+                };
+                // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is USB I/O. Each
+                // handle is visited once, so the interface is borrowed once.
+                let Ok(usb_io) = (unsafe { boot_services.handle_protocol::<usb_io::Protocol>(handle) }) else {
+                    continue;
+                };
+                if wwid.as_ref().is_some_and(|wwid| wwid.matches(boot_services, usb_io))
+                    || class.as_ref().is_some_and(|class| class.matches(usb_io))
+                {
                     candidates.push(extend(handle_path, rest)?);
                 }
             }
         } else if FilePath::try_from(first_node).is_ok() {
-            let file_systems = shorthand::handles(boot_services, &efi::protocols::simple_file_system::PROTOCOL_GUID)?;
+            let file_systems = handles(&efi::protocols::simple_file_system::PROTOCOL_GUID)?;
             let (mut removable, mut fixed, mut without_block_io) = (Vec::new(), Vec::new(), Vec::new());
             for handle in file_systems {
-                let Some(handle_path) = shorthand::device_path(boot_services, handle) else {
+                let Some(handle_path) = device_path(handle) else {
                     continue;
                 };
                 // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is block I/O.
@@ -590,8 +612,8 @@ impl DevicePath {
                 candidates.push(extend(handle_path, self)?);
             }
         } else if Uri::try_from(first_node).is_ok() {
-            for handle in shorthand::handles(boot_services, &efi::protocols::load_file::PROTOCOL_GUID)? {
-                if let Some(handle_path) = shorthand::device_path(boot_services, handle) {
+            for handle in handles(&efi::protocols::load_file::PROTOCOL_GUID)? {
+                if let Some(handle_path) = device_path(handle) {
                     candidates.push(extend(handle_path, self)?);
                 }
             }
@@ -696,12 +718,18 @@ impl Iterator for IterInstance<'_> {
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
+    extern crate std;
+
     use super::*;
-    use crate::devpath;
+    use crate::{
+        devpath,
+        uefi::{
+            boot_services::{MockBootServices, boxed::BootServicesBox},
+            device_path::node::{Acpi, AcpiSubType, EndSubType, Pci, PiwgFirmwareVolume, Usb},
+        },
+    };
     use alloc::format;
     use core::assert_eq;
-
-    use crate::uefi::device_path::node::{Acpi, AcpiSubType, EndSubType, Pci};
 
     #[test]
     fn test_new_device_path_buf_is_terminated() {
@@ -1017,5 +1045,441 @@ mod tests {
         assert_eq!(String::from(path), "PciRoot(0x0)/Pci(0x1d,0x0)");
         let text: String = path.into();
         assert_eq!(text, path.to_string());
+    }
+
+    fn path<T>(nodes: impl IntoIterator<Item = T>) -> DevicePathBuf
+    where
+        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
+    {
+        nodes.into_iter().try_fold(DevicePathBuf::new(), |mut path, node| path.append(node).map(|()| path)).unwrap()
+    }
+
+    fn join(paths: &[&DevicePathBuf]) -> DevicePathBuf {
+        let mut joined = DevicePathBuf::new();
+        for path in paths {
+            joined.append_device_path(path).unwrap();
+        }
+        joined
+    }
+
+    fn hard_drive(guid: [u8; 16]) -> HardDrive {
+        HardDrive::new_gpt(1, 2048, 1_000_000, guid)
+    }
+
+    fn boot_file() -> DevicePathBuf {
+        path([FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI")])
+    }
+
+    /// `HD(1,GPT,<guid>)/\EFI\BOOT\BOOTX64.EFI`.
+    fn shorthand_path(guid: [u8; 16]) -> DevicePathBuf {
+        join(&[&path([hard_drive(guid)]), &boot_file()])
+    }
+
+    /// `PciRoot(0)/Pci(0x1D,0)/HD(1,GPT,<guid>)`.
+    fn disk_path(guid: [u8; 16]) -> DevicePathBuf {
+        join(&[&path([Acpi::new_pci_root(0)]), &path([Pci { function: 0, device: 0x1D }]), &path([hard_drive(guid)])])
+    }
+
+    /// `PciRoot(0)/Pci(0x14,0)/USB(<port>,0)`.
+    fn usb_path(port: u8) -> DevicePathBuf {
+        join(&[
+            &path([Acpi::new_pci_root(0)]),
+            &path([Pci { function: 0, device: 0x14 }]),
+            &path([Usb { parent_port_number: port, interface_number: 0 }]),
+        ])
+    }
+
+    /// A USB I/O protocol whose functions read the descriptors that follow it.
+    #[repr(C)]
+    struct FakeUsb {
+        protocol: usb_io::Protocol,
+        device: usb_io::DeviceDescriptor,
+        interface: usb_io::InterfaceDescriptor,
+        serial: Vec<u16>,
+        languages: Vec<u16>,
+    }
+
+    fn fake(this: *mut usb_io::Protocol) -> &'static FakeUsb {
+        // SAFETY: Test code - every protocol is the first field of a leaked FakeUsb.
+        unsafe { &*this.cast::<FakeUsb>() }
+    }
+
+    extern "efiapi" fn get_device_descriptor(
+        this: *mut usb_io::Protocol,
+        descriptor: *mut usb_io::DeviceDescriptor,
+    ) -> efi::Status {
+        // SAFETY: Test code - the caller passes a valid descriptor.
+        unsafe { descriptor.write(fake(this).device) };
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn get_interface_descriptor(
+        this: *mut usb_io::Protocol,
+        descriptor: *mut usb_io::InterfaceDescriptor,
+    ) -> efi::Status {
+        // SAFETY: Test code - the caller passes a valid descriptor.
+        unsafe { descriptor.write(fake(this).interface) };
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn get_string_descriptor(
+        this: *mut usb_io::Protocol,
+        _lang_id: u16,
+        _string_id: u8,
+        string: *mut *mut u16,
+    ) -> efi::Status {
+        // SAFETY: Test code - the caller passes a valid output pointer; free_pool is a no-op.
+        unsafe { string.write(fake(this).serial.as_ptr().cast_mut()) };
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn get_supported_languages(
+        this: *mut usb_io::Protocol,
+        table: *mut *mut u16,
+        size: *mut u16,
+    ) -> efi::Status {
+        let languages = &fake(this).languages;
+        // SAFETY: Test code - the caller passes valid output pointers.
+        unsafe {
+            table.write(languages.as_ptr().cast_mut());
+            size.write(u16::try_from(languages.len() * 2).unwrap());
+        }
+        efi::Status::SUCCESS
+    }
+
+    fn usb_device(vendor_id: u16, product_id: u16, class: [u8; 3], interface: [u8; 3], serial: &str) -> FakeUsb {
+        let mut serial = serial.encode_utf16().collect::<Vec<_>>();
+        serial.push(0);
+        FakeUsb {
+            protocol: usb_io::Protocol {
+                control_transfer: core::ptr::null(),
+                bulk_transfer: core::ptr::null(),
+                async_interrupt_transfer: core::ptr::null(),
+                sync_interrupt_transfer: core::ptr::null(),
+                isochronous_transfer: core::ptr::null(),
+                async_isochronous_transfer: core::ptr::null(),
+                get_device_descriptor,
+                get_config_descriptor: core::ptr::null(),
+                get_interface_descriptor,
+                get_endpoint_descriptor: core::ptr::null(),
+                get_string_descriptor,
+                get_supported_languages,
+                port_reset: core::ptr::null(),
+            },
+            device: usb_io::DeviceDescriptor {
+                device_class: class[0],
+                device_sub_class: class[1],
+                device_protocol: class[2],
+                id_vendor: vendor_id,
+                id_product: product_id,
+                str_serial_number: 3,
+                ..Default::default()
+            },
+            interface: usb_io::InterfaceDescriptor {
+                interface_number: 0,
+                interface_class: interface[0],
+                interface_sub_class: interface[1],
+                interface_protocol: interface[2],
+                ..Default::default()
+            },
+            serial,
+            languages: Vec::from([0x0409]),
+        }
+    }
+
+    extern "efiapi" fn reset(_: *mut efi::protocols::block_io::Protocol, _: efi::Boolean) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn transfer(
+        _: *mut efi::protocols::block_io::Protocol,
+        _: u32,
+        _: efi::Lba,
+        _: usize,
+        _: *mut core::ffi::c_void,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn flush(_: *mut efi::protocols::block_io::Protocol) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    fn block_io(removable: bool) -> &'static mut efi::protocols::block_io::Protocol {
+        let media = std::boxed::Box::leak(std::boxed::Box::new(efi::protocols::block_io::Media {
+            media_id: 0,
+            removable_media: removable,
+            media_present: true,
+            logical_partition: false,
+            read_only: false,
+            write_caching: false,
+            block_size: 512,
+            io_align: 0,
+            last_block: 0,
+            lowest_aligned_lba: 0,
+            logical_blocks_per_physical_block: 1,
+            optimal_transfer_length_granularity: 0,
+        }));
+        std::boxed::Box::leak(std::boxed::Box::new(efi::protocols::block_io::Protocol {
+            revision: 0,
+            media,
+            reset,
+            read_blocks: transfer,
+            write_blocks: transfer,
+            flush_blocks: flush,
+        }))
+    }
+
+    /// A handle of the mocked system and the protocols installed on it.
+    #[derive(Default)]
+    struct Device {
+        path: Option<DevicePathBuf>,
+        usb: Option<FakeUsb>,
+        file_system: bool,
+        removable: Option<bool>,
+        load_file: bool,
+    }
+
+    impl Device {
+        fn with_path(path: DevicePathBuf) -> Self {
+            Self { path: Some(path), ..Default::default() }
+        }
+    }
+
+    /// A mock whose `LocateHandleBuffer` returns the handles that support a protocol, and
+    /// whose `HandleProtocol` returns the protocols of a handle. Handle `n` is `devices[n - 1]`.
+    fn mock_system(devices: Vec<Device>) -> MockBootServices {
+        let mut paths: Vec<Option<usize>> = Vec::new();
+        let mut usb_addresses: Vec<Option<usize>> = Vec::new();
+        let mut block_ios: Vec<Option<usize>> = Vec::new();
+        // The protocols each handle supports: device path, USB I/O, simple file system, load file.
+        let mut protocols: Vec<[bool; 4]> = Vec::new();
+        for device in devices {
+            protocols.push([device.path.is_some(), device.usb.is_some(), device.file_system, device.load_file]);
+            paths.push(
+                device
+                    .path
+                    .map(|path| std::boxed::Box::leak(path.as_bytes().to_vec().into_boxed_slice()).as_ptr() as usize),
+            );
+            usb_addresses.push(
+                device.usb.map(|usb| core::ptr::from_mut(std::boxed::Box::leak(std::boxed::Box::new(usb))) as usize),
+            );
+            block_ios.push(device.removable.map(|removable| core::ptr::from_mut(block_io(removable)) as usize));
+        }
+        let supports = move |guid: &efi::Guid, index: usize| -> bool {
+            let [path, usb, file_system, load_file] = protocols[index];
+            (*guid == efi::protocols::device_path::PROTOCOL_GUID && path)
+                || (*guid == usb_io::PROTOCOL_GUID && usb)
+                || (*guid == efi::protocols::simple_file_system::PROTOCOL_GUID && file_system)
+                || (*guid == efi::protocols::load_file::PROTOCOL_GUID && load_file)
+        };
+        let count = paths.len();
+        let free_pool: &'static MockBootServices = std::boxed::Box::leak(std::boxed::Box::new({
+            let mut mock = MockBootServices::new();
+            mock.expect_free_pool().returning(|_| Ok(()));
+            mock
+        }));
+
+        let mut mock = MockBootServices::new();
+        mock.expect_free_pool().returning(|_| Ok(()));
+        mock.expect_locate_handle_buffer().returning(move |search| {
+            let HandleSearchType::ByProtocol(guid) = search else {
+                return Err(efi::Status::INVALID_PARAMETER);
+            };
+            let handles: Vec<efi::Handle> =
+                (0..count).filter(|&index| supports(guid, index)).map(|index| (index + 1) as efi::Handle).collect();
+            if handles.is_empty() {
+                return Err(efi::Status::NOT_FOUND);
+            }
+            let handles = handles.leak();
+            // SAFETY: Test code - the leaked handle buffer outlives the returned box, and free_pool is a no-op.
+            Ok(unsafe { BootServicesBox::from_raw_parts_mut(handles.as_mut_ptr(), handles.len(), free_pool) })
+        });
+        mock.expect_handle_protocol::<efi::protocols::device_path::Protocol>().returning(move |handle| {
+            match paths.get(handle as usize - 1).copied().flatten() {
+                // SAFETY: Test code - the address points to a leaked, valid device path.
+                Some(address) => Ok(unsafe { &mut *(address as *mut efi::protocols::device_path::Protocol) }),
+                None => Err(efi::Status::UNSUPPORTED),
+            }
+        });
+        mock.expect_handle_protocol::<usb_io::Protocol>().returning(move |handle| {
+            match usb_addresses.get(handle as usize - 1).copied().flatten() {
+                // SAFETY: Test code - the address points to a leaked FakeUsb, which starts with its protocol.
+                Some(address) => Ok(unsafe { &mut *(address as *mut usb_io::Protocol) }),
+                None => Err(efi::Status::UNSUPPORTED),
+            }
+        });
+        mock.expect_handle_protocol::<efi::protocols::block_io::Protocol>().returning(move |handle| {
+            match block_ios.get(handle as usize - 1).copied().flatten() {
+                // SAFETY: Test code - the address points to a leaked block I/O protocol.
+                Some(address) => Ok(unsafe { &mut *(address as *mut efi::protocols::block_io::Protocol) }),
+                None => Err(efi::Status::UNSUPPORTED),
+            }
+        });
+        mock
+    }
+
+    #[test]
+    fn test_device_path_is_shorthand_notation() {
+        assert!(shorthand_path([0xaa; 16]).is_shorthand_notation());
+        assert!(boot_file().is_shorthand_notation());
+        assert!(path([Uri { uri: "http://a/b.efi".into() }]).is_shorthand_notation());
+        assert!(
+            path([UsbWwid { interface: 0, vendor_id: 1, product_id: 2, serial_number: Vec::from([0x41]) }])
+                .is_shorthand_notation()
+        );
+        assert!(
+            path([UsbClass {
+                vendor_id: u16::MAX,
+                product_id: u16::MAX,
+                device_class: u8::MAX,
+                device_subclass: u8::MAX,
+                device_protocol: u8::MAX,
+            }])
+            .is_shorthand_notation()
+        );
+        assert!(!disk_path([0xaa; 16]).is_shorthand_notation());
+        assert!(!path([Pci { function: 0, device: 0x1D }]).is_shorthand_notation());
+        assert!(
+            !path([PiwgFirmwareVolume { fv_name: crate::BinaryGuid::from_bytes(&[0x11; 16]) }]).is_shorthand_notation()
+        );
+        assert!(!path([EndEntire]).is_shorthand_notation());
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_full_path_is_unchanged() {
+        let full = disk_path([0xaa; 16]);
+        assert_eq!(full.expand_shorthand(&MockBootServices::new()).unwrap(), [full]);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_rejects_empty_path() {
+        assert_eq!(path([EndEntire]).expand_shorthand(&MockBootServices::new()), Err(EfiError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_matches_hard_drive() {
+        let guid = [0xaa; 16];
+        let file_system = join(&[&disk_path(guid), &path([FilePath::new("\\ignored")])]);
+        let mock = mock_system(Vec::from([
+            Device::default(),
+            Device::with_path(disk_path([0xbb; 16])),
+            Device::with_path(file_system),
+        ]));
+        let expected = join(&[&disk_path(guid), &boot_file()]);
+        assert_eq!(shorthand_path(guid).expand_shorthand(&mock).unwrap(), [expected]);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_requires_full_identity() {
+        let guid = [0xaa; 16];
+        let other_partition =
+            join(&[&path([Acpi::new_pci_root(0)]), &path([HardDrive::new_gpt(2, 2048, 1_000_000, guid)])]);
+        let mock = mock_system(Vec::from([Device::with_path(other_partition)]));
+        assert_eq!(shorthand_path(guid).expand_shorthand(&mock), Err(EfiError::NotFound));
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_returns_every_match() {
+        let guid = [0xaa; 16];
+        let second = join(&[&path([Acpi::new_pci_root(1)]), &path([hard_drive(guid)])]);
+        let mock = mock_system(Vec::from([Device::with_path(disk_path(guid)), Device::with_path(second.clone())]));
+        let expected = [join(&[&disk_path(guid), &boot_file()]), join(&[&second, &boot_file()])];
+        assert_eq!(shorthand_path(guid).expand_shorthand(&mock).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_reports_locate_errors() {
+        let mut mock = MockBootServices::new();
+        mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
+        assert_eq!(shorthand_path([0xaa; 16]).expand_shorthand(&mock), Err(EfiError::NotFound));
+
+        let mut mock = MockBootServices::new();
+        mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::DEVICE_ERROR));
+        assert_eq!(shorthand_path([0xaa; 16]).expand_shorthand(&mock), Err(EfiError::DeviceError));
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_matches_usb_wwid() {
+        let wwid = UsbWwid {
+            interface: 0,
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            serial_number: "123456".encode_utf16().collect(),
+        };
+        let shorthand = join(&[&path([wwid]), &boot_file()]);
+        let devices = Vec::from([
+            // Wrong serial number.
+            Device {
+                usb: Some(usb_device(0x1234, 0x5678, [0; 3], [8, 6, 0x50], "SN-999")),
+                ..Device::with_path(usb_path(1))
+            },
+            // The WWID holds the end of the serial number.
+            Device {
+                usb: Some(usb_device(0x1234, 0x5678, [0; 3], [8, 6, 0x50], "SN-123456")),
+                ..Device::with_path(usb_path(2))
+            },
+            // Wrong product.
+            Device {
+                usb: Some(usb_device(0x1234, 0x0001, [0; 3], [8, 6, 0x50], "123456")),
+                ..Device::with_path(usb_path(3))
+            },
+        ]);
+        let expected = join(&[&usb_path(2), &boot_file()]);
+        assert_eq!(shorthand.expand_shorthand(&mock_system(devices)).unwrap(), [expected]);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_matches_usb_class() {
+        let mass_storage = UsbClass {
+            vendor_id: u16::MAX,
+            product_id: u16::MAX,
+            device_class: 8,
+            device_subclass: u8::MAX,
+            device_protocol: 0x50,
+        };
+        let devices = || {
+            Vec::from([
+                // A HID device.
+                Device { usb: Some(usb_device(1, 1, [0; 3], [3, 1, 1], "a")), ..Device::with_path(usb_path(1)) },
+                // The device class is zero, so the interface descriptor declares the class.
+                Device { usb: Some(usb_device(2, 2, [0; 3], [8, 6, 0x50], "b")), ..Device::with_path(usb_path(2)) },
+                // The device descriptor declares the class.
+                Device { usb: Some(usb_device(3, 3, [8, 6, 0x50], [0; 3], "c")), ..Device::with_path(usb_path(3)) },
+            ])
+        };
+        let expected = [usb_path(2), usb_path(3)];
+        assert_eq!(path([mass_storage.clone()]).expand_shorthand(&mock_system(devices())).unwrap(), expected);
+
+        let vendor_two = UsbClass { vendor_id: 2, ..mass_storage };
+        assert_eq!(path([vendor_two]).expand_shorthand(&mock_system(devices())).unwrap(), [usb_path(2)]);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_orders_file_systems() {
+        let fixed = disk_path([1; 16]);
+        let removable = usb_path(1);
+        let no_block_io = path([Acpi::new_pci_root(7)]);
+        let mock = mock_system(Vec::from([
+            Device { file_system: true, removable: Some(false), ..Device::with_path(fixed.clone()) },
+            Device { file_system: true, ..Device::with_path(no_block_io.clone()) },
+            Device { file_system: true, removable: Some(true), ..Device::with_path(removable.clone()) },
+            // Not a file system.
+            Device { removable: Some(true), ..Device::with_path(path([Acpi::new_pci_root(8)])) },
+        ]));
+        let expected =
+            [join(&[&removable, &boot_file()]), join(&[&fixed, &boot_file()]), join(&[&no_block_io, &boot_file()])];
+        assert_eq!(boot_file().expand_shorthand(&mock).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_device_path_expand_shorthand_uses_load_file_handles() {
+        let uri = path([Uri { uri: "http://192.168.0.1/boot.efi".into() }]);
+        let network = path([Acpi::new_pci_root(3)]);
+        let mock = mock_system(Vec::from([
+            Device { load_file: true, ..Device::with_path(network.clone()) },
+            Device::with_path(disk_path([1; 16])),
+        ]));
+        assert_eq!(uri.expand_shorthand(&mock).unwrap(), [join(&[&network, &uri])]);
     }
 }

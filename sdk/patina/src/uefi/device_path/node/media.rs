@@ -360,7 +360,7 @@ device_path_node! {
         validate = hard_drive_validate,
     )]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pread, Pwrite, Clone)]
+    #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct HardDrive {
         /// Partition number (1-based).
         pub partition_number: u32,
@@ -471,7 +471,7 @@ device_path_node! {
         measure_size = file_path_measure_size,
     )]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Clone, Pread, Pwrite)]
+    #[derive(Clone, Pread, Pwrite, Eq, PartialEq)]
     pub struct FilePath {
         /// The file path string (stored as UTF-8, serialized as UTF-16).
         #[scroll(ctx = Char16Nul)]

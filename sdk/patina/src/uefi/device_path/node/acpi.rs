@@ -269,7 +269,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
     @[DevicePathNodeDerive(Debug)]
-    #[derive(Pwrite, Pread, Clone)]
+    #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Acpi {
         /// _HID
         pub hid: u32,

@@ -58,7 +58,6 @@ pub mod end;
 pub mod hardware;
 pub mod media;
 pub mod messaging;
-pub mod node_types;
 
 pub use acpi::*;
 pub use bios::*;
@@ -66,7 +65,6 @@ pub use end::*;
 pub use hardware::*;
 pub use media::*;
 pub use messaging::*;
-pub use node_types::*;
 
 use super::DevicePath;
 use crate::BinaryGuid;
@@ -76,6 +74,7 @@ use scroll::{
     Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
+use zerocopy::little_endian;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 /// Trait that every device path node must implement.
@@ -148,9 +147,9 @@ pub trait DevicePathNode: Debug + Display {
 /// #### Parameters
 ///
 /// - `<type>` (required): device path type, an enum value that converts to `u8`, from
-///   [`node_types`].
+///   [`DevicePathType`].
 /// - `<sub_type>` (required): device path sub-type, an enum value that converts to `u8`,
-///   from [`node_types`].
+///   such as [`HardwareSubType`].
 /// - `<function to override> = <function to use>` (optional): replaces the default
 ///   implementation of a [`DevicePathNode`] method with a function that takes the node
 ///   by reference. Can be repeated, in any order.
@@ -383,7 +382,7 @@ macro_rules! device_path_node {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 let header = $crate::uefi::device_path::node::DevicePathNode::header(self);
                 // Header is packed, so copy the length out before borrowing it.
-                let length = header.length;
+                let length = header.length.get();
                 f.debug_struct(stringify!($struct_name))
                     .field("type", &header.r#type)
                     .field("sub_type", &header.sub_type)
@@ -409,29 +408,190 @@ macro_rules! device_path_node {
     };
 }
 
-#[cfg(target_endian = "big")]
-compile_error!("UEFI device path node headers use native u16 fields and require a little-endian target");
+/// Device path type values (UEFI 2.10 Section 10.3.1, Table 10.1).
+///
+/// All undefined types and sub-types are reserved; extensions use a vendor node with the
+/// vendor's own GUID (Section 10.4.6).
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum DevicePathType {
+    /// Hardware device path.
+    Hardware = 1,
+    /// ACPI device path.
+    Acpi = 2,
+    /// Messaging device path.
+    Messaging = 3,
+    /// Media device path.
+    Media = 4,
+    /// BIOS Boot Specification device path.
+    Bios = 5,
+    /// End of hardware device path.
+    End = 0x7F,
+}
+
+/// Hardware device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum HardwareSubType {
+    /// PCI device path.
+    Pci = 1,
+    /// PC Card device path.
+    Pccard = 2,
+    /// Memory-mapped device path.
+    MemoryMapped = 3,
+    /// Vendor-defined device path.
+    Vendor = 4,
+    /// Controller device path.
+    Controller = 5,
+    /// BMC device path.
+    Bmc = 6,
+}
+
+/// ACPI device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum AcpiSubType {
+    /// ACPI device path.
+    Acpi = 1,
+    /// Extended ACPI device path.
+    ExtendedAcpi = 2,
+    /// ACPI address device path.
+    Adr = 3,
+    /// NVDIMM device identified by its NFIT device handle.
+    Nvdimm = 4,
+}
+
+/// Messaging device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum MessagingSubType {
+    /// ATAPI device path.
+    Atapi = 1,
+    /// SCSI device path.
+    Scsi = 2,
+    /// Fibre Channel device path.
+    FiberChannel = 3,
+    /// Fibre Channel Ex device path.
+    FiberChannelEx = 21,
+    /// 1394 device path.
+    _1394 = 4,
+    /// USB device path.
+    Usb = 5,
+    /// SATA device path.
+    Sata = 18,
+    /// USB WWID device path.
+    UsbWwid = 16,
+    /// Device Logical Unit device path.
+    DeviceLogicalUnit = 17,
+    /// USB Class device path.
+    UsbClass = 15,
+    /// I2O Random Block Storage Class device path.
+    I2oRandomBlockStorageClass = 6,
+    /// MAC Address device path.
+    MacAddress = 11,
+    /// IPv4 device path.
+    IpV4 = 12,
+    /// IPv6 device path.
+    IpV6 = 13,
+    /// VLAN device path.
+    Vlan = 20,
+    /// InfiniBand device path.
+    InfiniBand = 9,
+    /// UART device path.
+    Uart = 14,
+    /// Vendor-defined device path.
+    Vendor = 10,
+    /// SAS Ex device path.
+    SasEx = 22,
+    /// iSCSI device path.
+    Iscsi = 19,
+    /// NVM Express device path.
+    NvmExpress = 23,
+    /// URI device path.
+    Uri = 24,
+    /// UFS device path.
+    Ufs = 25,
+    /// SD device path.
+    Sd = 26,
+    /// Bluetooth device path.
+    Bluetooth = 27,
+    /// `WiFi` device path.
+    WiFi = 28,
+    /// Embedded Multi-Media Card device path.
+    Emmc = 29,
+    /// Bluetooth LE device path.
+    BluetoothLE = 30,
+    /// DNS device path.
+    Dns = 31,
+    /// NVDIMM device path.
+    Nvdimm = 32,
+    /// REST Service device path.
+    RestService = 33,
+    /// `NVMe` over Fabric device path.
+    NvmeOf = 34,
+}
+
+/// Media device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum MediaSubType {
+    /// Hard drive device path.
+    HardDrive = 1,
+    /// CD-ROM device path.
+    CdRom = 2,
+    /// Vendor-defined device path.
+    Vendor = 3,
+    /// File path device path.
+    FilePath = 4,
+    /// Media protocol device path.
+    MediaProtocol = 5,
+    /// PIWG firmware file device path.
+    PiwgFirmwareFile = 6,
+    /// PIWG firmware volume device path.
+    PiwgFirmwareVolume = 7,
+    /// Relative offset range device path.
+    RelativeOffsetRange = 8,
+    /// RAM disk device path.
+    RamDisk = 9,
+}
+
+/// BIOS Boot Specification device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum BiosSubType {
+    /// BIOS Boot Specification device path.
+    BiosBootSpecification = 1,
+}
+
+/// End device path sub-types.
+pub enum EndSubType {
+    /// End of entire device path.
+    Entire = 0xFF,
+    /// End of device path instance.
+    Instance = 0x01,
+}
 
 /// Header common to every device path node (UEFI 2.10 Table 10.1).
 ///
 /// The type, the sub-type whose meaning depends on the type, and the node length.
-/// The UEFI wire format stores the length as little-endian; this in-memory type
-/// uses a native `u16` and therefore assumes a little-endian target.
+/// The length is stored little-endian, as on the wire, so the header has the same layout
+/// on targets of either endianness.
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[derive(Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 pub struct Header {
     /// Type of the device path node.
     pub r#type: u8,
     /// Subtype of the device path node.
     pub sub_type: u8,
-    /// Total length in bytes of the device path node, including the header.
-    pub length: u16,
+    /// Total length in bytes of the device path node, including the header, in little-endian
+    /// byte order.
+    pub length: little_endian::U16,
 }
 
 impl Header {
     /// Creates a new [`Header`].
     pub const fn new(r#type: u8, sub_type: u8, length: u16) -> Self {
-        Self { r#type, sub_type, length }
+        Self { r#type, sub_type, length: little_endian::U16::new(length) }
     }
 
     /// Return the size of the header in bytes
@@ -440,20 +600,32 @@ impl Header {
     }
 }
 
+impl Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Header")
+            .field("type", &self.r#type)
+            .field("sub_type", &self.sub_type)
+            .field("length", &self.length.get())
+            .finish()
+    }
+}
+
 impl TryIntoCtx<scroll::Endian> for Header {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        if usize::from(self.length) < Self::size_of_header() {
+        let length = self.length.get();
+        if usize::from(length) < Self::size_of_header() {
             return Err(scroll::Error::BadInput {
-                size: usize::from(self.length),
+                size: usize::from(length),
                 msg: "device path node is shorter than its header",
             });
         }
         let mut offset = 0;
         dest.gwrite_with(self.r#type, &mut offset, ctx)?;
         dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        dest.gwrite_with(self.length, &mut offset, ctx)?;
+        // The length is little-endian on the wire whatever the context.
+        dest.gwrite_with(length, &mut offset, scroll::LE)?;
         Ok(offset)
     }
 }
@@ -467,7 +639,8 @@ impl TryFromCtx<'_, scroll::Endian> for Header {
             Header {
                 r#type: from.gread_with(&mut offset, ctx)?,
                 sub_type: from.gread_with(&mut offset, ctx)?,
-                length: from.gread_with::<u16>(&mut offset, ctx)?,
+                // The length is little-endian on the wire whatever the context.
+                length: little_endian::U16::new(from.gread_with::<u16>(&mut offset, scroll::LE)?),
             },
             offset,
         ))
@@ -590,79 +763,13 @@ fn write_vendor(f: &mut fmt::Formatter<'_>, name: &str, guid: &BinaryGuid, data:
     f.write_str(")")
 }
 
-macro_rules! try_fmt_node {
-    ($generic:expr, $f:expr, $($ty:ty),+ $(,)?) => {
-        $(
-            if let Ok(node) = <$ty>::try_from($generic) {
-                return fmt::Display::fmt(&node, $f);
-            }
-        )+
-    };
-}
-
-/// Format a node with the `Display` of its decoded type, or in the generic form if it is unknown.
+/// Format a node with the `Display` of its decoded type, or in the generic form if it is unknown
+/// or cannot be decoded.
 pub(crate) fn fmt_generic_node(node: &GenericDevicePathNode, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    try_fmt_node!(
-        node,
-        f,
-        Pci,
-        PcCard,
-        MemoryMapped,
-        HardwareVendor,
-        Controller,
-        Bmc,
-        Acpi,
-        ExtendedAcpi,
-        AcpiAdr,
-        NvdimmAcpi,
-        Atapi,
-        Scsi,
-        FiberChannel,
-        FiberChannelEx,
-        Ieee1394,
-        Usb,
-        I2oRandomBlockStorageClass,
-        MacAddress,
-        IpV4,
-        IpV6,
-        Vlan,
-        InfiniBand,
-        Uart,
-        UartFlowControl,
-        Sas,
-        MessagingVendor,
-        UsbWwid,
-        UsbClass,
-        DeviceLogicalUnit,
-        Sata,
-        Iscsi,
-        SasEx,
-        NvmExpress,
-        Uri,
-        Ufs,
-        Sd,
-        Bluetooth,
-        WiFi,
-        Emmc,
-        BluetoothLE,
-        Dns,
-        Nvdimm,
-        RestService,
-        NvmeOf,
-        MediaVendor,
-        CdRom,
-        MediaProtocol,
-        PiwgFirmwareFile,
-        PiwgFirmwareVolume,
-        RelativeOffsetRange,
-        RamDisk,
-        HardDrive,
-        FilePath,
-        Bios,
-        EndInstance,
-        EndEntire,
-    );
-    fmt::Display::fmt(node, f)
+    match <Box<dyn DevicePathNode>>::try_from(node) {
+        Ok(decoded) => Display::fmt(&decoded, f),
+        Err(_) => Display::fmt(node, f),
+    }
 }
 
 impl DevicePathNode for &GenericDevicePathNode {
@@ -880,8 +987,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn generic_node_bytes(header: Header, data: &[u8]) -> Vec<u8> {
-        let mut bytes = alloc::vec![header.r#type, header.sub_type];
-        bytes.extend_from_slice(&header.length.to_le_bytes());
+        let mut bytes = zerocopy::IntoBytes::as_bytes(&header).to_vec();
         bytes.extend_from_slice(data);
         bytes
     }
