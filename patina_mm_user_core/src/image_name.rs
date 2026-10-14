@@ -233,8 +233,8 @@ mod tests {
         // Point the debug directory at a raw offset that only resolves through the section
         // table, so the mapped attempt fails and the on-disk attempt succeeds.
         let mut image = build_mapped_pe(b"OnDiskLayout.pdb\0");
-        let opt = PE_OFFSET + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
-        let debug_entry = opt + 112 + DEBUG_DIRECTORY_INDEX * 8;
+        let optional_header = PE_OFFSET + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
+        let debug_entry = optional_header + 112 + DEBUG_DIRECTORY_INDEX * 8;
         // A directory size that is not a whole number of entries fails the mapped parse.
         image[debug_entry + 4..debug_entry + 8].copy_from_slice(&(DEBUG_DIRECTORY_SIZE as u32 - 1).to_le_bytes());
 
@@ -246,8 +246,8 @@ mod tests {
     fn test_parse_image_name_rejects_a_pe_without_a_debug_directory() {
         let mut image = build_mapped_pe(b"NoDebugDir.pdb\0");
         // Clear the debug data directory entry so the lookup finds nothing.
-        let opt = PE_OFFSET + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
-        let debug_entry = opt + 112 + DEBUG_DIRECTORY_INDEX * 8;
+        let optional_header = PE_OFFSET + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
+        let debug_entry = optional_header + 112 + DEBUG_DIRECTORY_INDEX * 8;
         image[debug_entry..debug_entry + 8].fill(0);
 
         assert_eq!(parse_image_name(&image), None);
@@ -267,11 +267,11 @@ mod tests {
     }
 
     #[test]
-    fn test_loaded_image_name_rejects_a_size_that_does_not_fit() {
+    fn test_loaded_image_name_accepts_a_size_that_fits() {
         let image = build_mapped_pe(b"Whatever.pdb\0");
 
-        // SAFETY: the size is rejected before any read when it cannot be a usize. On a
-        // 64-bit host this simply reads the live image and resolves normally.
+        // SAFETY: The size is rejected before any read when it cannot be a usize. On a
+        // 64-bit host this reads the live image and resolves normally.
         let name = unsafe { loaded_image_name(image.as_ptr() as u64, image.len() as u64) };
         assert_eq!(name.as_deref(), Some("Whatever.efi"));
     }
