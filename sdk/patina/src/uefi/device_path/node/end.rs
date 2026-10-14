@@ -123,7 +123,7 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::{
         DevicePathNode, GenericDevicePathNode,
-        test_support::{check_node, encode_node, raw_generic_node},
+        tests::{check_node, encode_node, raw_generic_node},
     };
     use scroll::Pread;
 

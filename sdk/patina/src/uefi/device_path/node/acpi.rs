@@ -21,7 +21,6 @@
 // cspell:ignore BCDEFGHIJ PNPZZZZ
 
 use super::{AcpiSubType, DevicePathType};
-use super::{allow_shortcuts, display_only};
 use crate::{
     device_path_node,
     uefi::device_path::encoding::{AsciiNul, Vector},
@@ -99,7 +98,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::ExtendedAcpi,
-        measure_size = extended_acpi_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -122,21 +121,24 @@ device_path_node! {
     }
 }
 
-fn extended_acpi_measure_size(node: &ExtendedAcpi) -> usize {
-    size_of_val(&node.hid)
-        + size_of_val(&node.uid)
-        + size_of_val(&node.cid)
-        + [&node.hid_string, &node.uid_string, &node.cid_string]
-            .iter()
-            .map(|value| value.len() + size_of::<u8>()) // NUL terminator
-            .sum::<usize>()
+impl ExtendedAcpi {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.hid)
+            + size_of_val(&self.uid)
+            + size_of_val(&self.cid)
+            + [&self.hid_string, &self.uid_string, &self.cid_string]
+                .iter()
+                .map(|value| value.len() + size_of::<u8>()) // NUL terminator
+                .sum::<usize>()
+    }
 }
 impl fmt::Display for ExtendedAcpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         // `PciRoot` and `PcieRoot` are shortcuts, and only the shorter display-only form uses them
         // for this node: their parseable form is the smaller `Acpi` node.
-        if display_only(f) && allow_shortcuts(f) {
+        if f.sign_minus() && !f.alternate() {
             if node.hid == Acpi::PCI_ROOT_HID || (node.cid == Acpi::PCI_ROOT_HID && node.hid != Acpi::PCIE_ROOT_HID) {
                 return write_root_shortcut(f, "PciRoot", node);
             }
@@ -153,7 +155,7 @@ impl fmt::Display for ExtendedAcpi {
             } else {
                 write!(f, "AcpiExp({hid},{cid},{})", node.uid_string)
             }
-        } else if display_only(f) {
+        } else if f.sign_minus() {
             write!(
                 f,
                 "AcpiEx({},{},{})",
@@ -211,8 +213,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Acpi, AcpiSubType::Adr,
-        measure_size = acpi_adr_measure_size,
-        validate = acpi_adr_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -223,16 +225,21 @@ device_path_node! {
     }
 }
 
-fn acpi_adr_measure_size(node: &AcpiAdr) -> usize {
-    size_of_val(node.addresses.as_slice())
+impl AcpiAdr {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(self.addresses.as_slice())
+    }
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.addresses.is_empty() {
+            return Err("ACPI address self requires at least one address");
+        }
+        Ok(())
+    }
 }
 
-fn acpi_adr_validate(node: &AcpiAdr) -> Result<(), &'static str> {
-    if node.addresses.is_empty() {
-        return Err("ACPI address node requires at least one address");
-    }
-    Ok(())
-}
 impl fmt::Display for AcpiAdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
@@ -374,7 +381,7 @@ fn acpi_shortcut(hid: u32) -> Option<&'static str> {
 impl fmt::Display for Acpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if allow_shortcuts(f)
+        if !f.alternate()
             && let Some(name) = acpi_shortcut(node.hid)
         {
             return write!(f, "{name}(0x{:x})", node.uid);
@@ -388,7 +395,7 @@ impl fmt::Display for Acpi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::uefi::device_path::node::test_support::{check_node, encode_node, fixture};
+    use crate::uefi::device_path::node::tests::{check_node, encode_node, fixture};
     use alloc::{format, string::String, vec};
     use scroll::ctx::TryFromCtx;
 
@@ -455,7 +462,7 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_acpi() {
-        use crate::uefi::device_path::node::test_support::check_text;
+        use crate::uefi::device_path::node::tests::check_text;
         use alloc::format;
 
         check_text!(r"PciRoot(1)", r"PciRoot(0x1)", r"PciRoot(0x1)", r"Acpi(PNP0A03,0x1)");

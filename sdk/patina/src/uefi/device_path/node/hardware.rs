@@ -16,7 +16,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::write_vendor;
 use super::{DevicePathType, HardwareSubType};
 use crate::{BinaryGuid, standard::efi};
 use crate::{device_path_node, uefi::device_path::encoding::Vector};
@@ -48,7 +47,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Hardware, HardwareSubType::Vendor,
-        measure_size = hardware_vendor_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -63,12 +62,22 @@ device_path_node! {
 impl fmt::Display for HardwareVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write_vendor(f, "VenHw", &node.guid, &node.data)
+        write!(f, "VenHw({}", node.guid)?;
+        if !node.data.is_empty() {
+            f.write_str(",")?;
+            for byte in &node.data {
+                write!(f, "{byte:02x}")?;
+            }
+        }
+        f.write_str(")")
     }
 }
 
-fn hardware_vendor_measure_size(node: &HardwareVendor) -> usize {
-    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
+impl HardwareVendor {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
 }
 
 device_path_node! {
@@ -239,7 +248,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "BMC(0x0,0xf0000000)");
     /// assert_eq!(format!("{node:-#}"), "BMC(0x0,0xf0000000)");
     /// ```
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = bmc_validate)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Bmc {
@@ -256,17 +265,20 @@ impl fmt::Display for Bmc {
     }
 }
 
-fn bmc_validate(node: &Bmc) -> Result<(), &'static str> {
-    if node.interface_type > 3 {
-        return Err("BMC interface types above 0x03 are reserved");
+impl Bmc {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.interface_type > 3 {
+            return Err("BMC interface types above 0x03 are reserved");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::uefi::device_path::node::test_support::{check_invalid, check_node, encode_node};
+    use crate::uefi::device_path::node::tests::{check_invalid, check_node, encode_node};
     use alloc::vec;
 
     #[test]
@@ -304,7 +316,7 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_hardware() {
-        use crate::uefi::device_path::node::test_support::check_text;
+        use crate::uefi::device_path::node::tests::check_text;
         use alloc::format;
 
         check_text!(r"Pci(0x1F,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)", r"Pci(0x1f,0x2)");

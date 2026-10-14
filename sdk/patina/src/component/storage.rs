@@ -206,7 +206,7 @@ pub struct Storage {
     service_indices: BTreeMap<TypeId, usize>,
     /// HOB parsers for converting guided HOBs into `Hob<T>` datums.
     hob_parsers: HobParsers,
-    /// A container for all [Hob](super::hob::Hob) datums.
+    /// A container for all [Hob] datums.
     hobs: SparseVec<Vec<Box<dyn Any>>>,
     /// a map to convert from `TypeId` to a hob index.
     hob_indices: BTreeMap<TypeId, usize>,

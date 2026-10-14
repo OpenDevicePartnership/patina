@@ -16,7 +16,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::display_only;
 use super::{BiosSubType, DevicePathType};
 use crate::{device_path_node, uefi::device_path::encoding::AsciiNul};
 use alloc::{
@@ -49,7 +48,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
-        measure_size = bios_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -64,8 +63,11 @@ device_path_node! {
     }
 }
 
-fn bios_measure_size(node: &Bios) -> usize {
-    size_of_val(&node.device_type) + size_of_val(&node.status_flag) + node.description_str.len() + size_of::<u8>() // NUL terminator
+impl Bios {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.device_type) + size_of_val(&self.status_flag) + self.description_str.len() + size_of::<u8>() // NUL terminator
+    }
 }
 impl fmt::Display for Bios {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -80,7 +82,7 @@ impl fmt::Display for Bios {
             other => format!("0x{other:x}"),
         };
         write!(f, "BBS({ty},{}", node.description_str)?;
-        if !display_only(f) {
+        if !f.sign_minus() {
             write!(f, ",0x{:x}", node.status_flag)?;
         }
         f.write_str(")")
@@ -90,7 +92,7 @@ impl fmt::Display for Bios {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::uefi::device_path::node::test_support::{check_node, encode_node};
+    use crate::uefi::device_path::node::tests::{check_node, encode_node};
     use scroll::ctx::TryFromCtx;
 
     #[test]
@@ -111,7 +113,7 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_bios() {
-        use crate::uefi::device_path::node::test_support::check_text;
+        use crate::uefi::device_path::node::tests::check_text;
 
         check_text!(r"BBS(HD,boot,0x0)", r"BBS(HD,boot,0x0)", r"BBS(HD,boot)", r"BBS(HD,boot,0x0)");
     }

@@ -16,7 +16,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::{DevicePathType, MediaSubType};
-use super::{allow_shortcuts, display_only, write_guid, write_vendor};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
@@ -61,7 +60,7 @@ device_path_node! {
 impl fmt::Display for CdRom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if display_only(f) {
+        if f.sign_minus() {
             write!(f, "CDROM(0x{:x})", node.boot_entry)
         } else {
             write!(f, "CDROM(0x{:x},0x{:x},0x{:x})", node.boot_entry, node.partition_start, node.partition_size)
@@ -258,20 +257,13 @@ const PERSISTENT_VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("08018188
 impl fmt::Display for RamDisk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        let name = if allow_shortcuts(f) {
-            if node.type_guid == VIRTUAL_DISK_GUID {
-                Some("VirtualDisk")
-            } else if node.type_guid == VIRTUAL_CD_GUID {
-                Some("VirtualCD")
-            } else if node.type_guid == PERSISTENT_VIRTUAL_DISK_GUID {
-                Some("PersistentVirtualDisk")
-            } else if node.type_guid == PERSISTENT_VIRTUAL_CD_GUID {
-                Some("PersistentVirtualCD")
-            } else {
-                None
-            }
-        } else {
-            None
+        let name = match node.type_guid {
+            _ if f.alternate() => None,
+            guid if guid == VIRTUAL_DISK_GUID => Some("VirtualDisk"),
+            guid if guid == VIRTUAL_CD_GUID => Some("VirtualCD"),
+            guid if guid == PERSISTENT_VIRTUAL_DISK_GUID => Some("PersistentVirtualDisk"),
+            guid if guid == PERSISTENT_VIRTUAL_CD_GUID => Some("PersistentVirtualCD"),
+            _ => None,
         };
         if let Some(name) = name {
             write!(f, "{name}(0x{:x},0x{:x},{})", node.starting_address, node.ending_address, node.instance)
@@ -309,7 +301,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::Vendor,
-        measure_size = media_vendor_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -324,12 +316,22 @@ device_path_node! {
 impl fmt::Display for MediaVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write_vendor(f, "VenMedia", &node.guid, &node.data)
+        write!(f, "VenMedia({}", node.guid)?;
+        if !node.data.is_empty() {
+            f.write_str(",")?;
+            for byte in &node.data {
+                write!(f, "{byte:02x}")?;
+            }
+        }
+        f.write_str(")")
     }
 }
 
-fn media_vendor_measure_size(node: &MediaVendor) -> usize {
-    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
+impl MediaVendor {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
 }
 
 device_path_node! {
@@ -357,7 +359,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::HardDrive,
-        validate = hard_drive_validate,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -388,11 +390,11 @@ impl fmt::Display for HardDrive {
             )?,
             HardDrive::SIGNATURE_TYPE_GUID => {
                 f.write_str("GPT,")?;
-                write_guid(f, &BinaryGuid::from_bytes(&node.partition_signature))?;
+                write!(f, "{}", BinaryGuid::from_bytes(&node.partition_signature))?;
             }
             other => write!(f, "{other},0")?,
         }
-        if !display_only(f) {
+        if !f.sign_minus() {
             write!(f, ",0x{:x},0x{:x}", node.partition_start, node.partition_size)?;
         }
         f.write_str(")")
@@ -429,20 +431,23 @@ impl HardDrive {
     }
 }
 
-fn hard_drive_validate(node: &HardDrive) -> Result<(), &'static str> {
-    if !matches!(node.partition_format, HardDrive::FORMAT_MBR | HardDrive::FORMAT_GPT) || node.signature_type > 2 {
-        return Err("invalid hard drive partition format or signature type");
+impl HardDrive {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if !matches!(self.partition_format, HardDrive::FORMAT_MBR | HardDrive::FORMAT_GPT) || self.signature_type > 2 {
+            return Err("invalid hard drive partition format or signature type");
+        }
+        if self.partition_format == HardDrive::FORMAT_MBR && self.partition_number > 4 {
+            return Err("MBR partition number must be at most 4");
+        }
+        if (self.signature_type == 0 && self.partition_signature != [0; 16])
+            || (self.signature_type == HardDrive::SIGNATURE_TYPE_MBR
+                && self.partition_signature[4..].iter().any(|byte| *byte != 0))
+        {
+            return Err("invalid hard drive signature padding");
+        }
+        Ok(())
     }
-    if node.partition_format == HardDrive::FORMAT_MBR && node.partition_number > 4 {
-        return Err("MBR partition number must be at most 4");
-    }
-    if (node.signature_type == 0 && node.partition_signature != [0; 16])
-        || (node.signature_type == HardDrive::SIGNATURE_TYPE_MBR
-            && node.partition_signature[4..].iter().any(|byte| *byte != 0))
-    {
-        return Err("invalid hard drive signature padding");
-    }
-    Ok(())
 }
 
 device_path_node! {
@@ -468,7 +473,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Media, MediaSubType::FilePath,
-        measure_size = file_path_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Pread, Pwrite, Eq, PartialEq)]
@@ -498,8 +503,11 @@ impl FilePath {
     }
 }
 
-fn file_path_measure_size(node: &FilePath) -> usize {
-    node.utf16_size()
+impl FilePath {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        self.utf16_size()
+    }
 }
 
 #[cfg(test)]
@@ -507,7 +515,7 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::{
         DevicePathNode, DevicePathType, GenericDevicePathNode, Header, MediaSubType,
-        test_support::{check_node, encode_node, fixture, generic_node_bytes},
+        tests::{check_node, encode_node, fixture, generic_node_bytes},
     };
     use alloc::{format, vec};
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
@@ -751,7 +759,7 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_media() {
-        use crate::uefi::device_path::node::test_support::check_text;
+        use crate::uefi::device_path::node::tests::check_text;
 
         check_text!(
             r"HD(1,GPT,00112233-4455-6677-8899-AABBCCDDEEFF,0x800,0x1000)",

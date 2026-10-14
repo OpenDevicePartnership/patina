@@ -18,7 +18,6 @@
 
 // cspell:ignore NGUID nguid sassata iscsitarget iscsidisk nvmeoftarget nvmeofdisk NSUUID
 use super::{DevicePathType, MessagingSubType};
-use super::{allow_shortcuts, display_only, write_hex_bytes, write_vendor};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
@@ -78,7 +77,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Ata(Primary,Master,0x0)");
     /// assert_eq!(format!("{node:-#}"), "Ata(0x0)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = atapi_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
@@ -93,7 +92,7 @@ device_path_node! {
 impl fmt::Display for Atapi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if display_only(f) {
+        if f.sign_minus() {
             write!(f, "Ata(0x{:x})", node.lun)
         } else {
             write!(
@@ -107,11 +106,14 @@ impl fmt::Display for Atapi {
     }
 }
 
-fn atapi_validate(node: &Atapi) -> Result<(), &'static str> {
-    if node.primary_secondary > 1 || node.slave_master > 1 {
-        return Err("invalid ATAPI channel or master/slave selector");
+impl Atapi {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.primary_secondary > 1 || self.slave_master > 1 {
+            return Err("invalid ATAPI channel or master/slave selector");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -171,7 +173,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Fibre(0x1020304050607,0x1020304050607)");
     /// assert_eq!(format!("{node:-#}"), "Fibre(0x1020304050607,0x1020304050607)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = fiber_channel_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannel, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannel {
@@ -190,8 +192,11 @@ impl fmt::Display for FiberChannel {
     }
 }
 
-fn fiber_channel_validate(node: &FiberChannel) -> Result<(), &'static str> {
-    reserved_zero(node.reserved)
+impl FiberChannel {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        reserved_zero(self.reserved)
+    }
 }
 
 device_path_node! {
@@ -218,7 +223,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "FibreEx(0x0001020304050607,0x0001020304050607)");
     /// assert_eq!(format!("{node:-#}"), "FibreEx(0x0001020304050607,0x0001020304050607)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = fiber_channel_ex_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::FiberChannelEx, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct FiberChannelEx {
@@ -234,15 +239,22 @@ impl fmt::Display for FiberChannelEx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         f.write_str("FibreEx(0x")?;
-        write_hex_bytes(f, &node.wwn)?;
+        for byte in &node.wwn {
+            write!(f, "{byte:02x}")?;
+        }
         f.write_str(",0x")?;
-        write_hex_bytes(f, &node.lun)?;
+        for byte in &node.lun {
+            write!(f, "{byte:02x}")?;
+        }
         f.write_str(")")
     }
 }
 
-fn fiber_channel_ex_validate(node: &FiberChannelEx) -> Result<(), &'static str> {
-    reserved_zero(node.reserved)
+impl FiberChannelEx {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        reserved_zero(self.reserved)
+    }
 }
 
 device_path_node! {
@@ -264,7 +276,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "I1394(0x0123456789abcdef)");
     /// assert_eq!(format!("{node:-#}"), "I1394(0x0123456789abcdef)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394, validate = ieee1394_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::_1394, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Ieee1394 {
@@ -283,8 +295,11 @@ impl fmt::Display for Ieee1394 {
     }
 }
 
-fn ieee1394_validate(node: &Ieee1394) -> Result<(), &'static str> {
-    reserved_zero(node.reserved)
+impl Ieee1394 {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        reserved_zero(self.reserved)
+    }
 }
 
 device_path_node! {
@@ -400,7 +415,9 @@ impl fmt::Display for MacAddress {
         let node = self;
         let length = if matches!(node.if_type, 0 | 1) { 6 } else { node.mac_address.addr.len() };
         f.write_str("MAC(")?;
-        write_hex_bytes(f, node.mac_address.addr.get(..length).ok_or(fmt::Error)?)?;
+        for byte in node.mac_address.addr.get(..length).ok_or(fmt::Error)? {
+            write!(f, "{byte:02x}")?;
+        }
         write!(f, ",0x{:x})", node.if_type)
     }
 }
@@ -444,7 +461,7 @@ device_path_node! {
     /// );
     /// assert_eq!(format!("{node:-#}"), "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = ip_v6_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
@@ -484,7 +501,7 @@ impl fmt::Display for IpV6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         write!(f, "IPv6({}", Ipv6Endpoint(node.remote_ip_address, node.remote_port))?;
-        if display_only(f) {
+        if f.sign_minus() {
             return f.write_str(")");
         }
         let origin = match node.ip_address_origin {
@@ -505,11 +522,14 @@ impl fmt::Display for IpV6 {
     }
 }
 
-fn ip_v6_validate(node: &IpV6) -> Result<(), &'static str> {
-    if node.ip_address_origin > 2 {
-        return Err("invalid IPv6 address origin");
+impl IpV6 {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.ip_address_origin > 2 {
+            return Err("invalid IPv6 address origin");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -531,7 +551,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Vlan(100)");
     /// assert_eq!(format!("{node:-#}"), "Vlan(100)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = vlan_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Vlan, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Vlan {
@@ -546,11 +566,14 @@ impl fmt::Display for Vlan {
     }
 }
 
-fn vlan_validate(node: &Vlan) -> Result<(), &'static str> {
-    if node.vlan_id > 4094 {
-        return Err("invalid VLAN identifier");
+impl Vlan {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.vlan_id > 4094 {
+            return Err("invalid VLAN identifier");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -579,7 +602,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
     /// assert_eq!(format!("{node:-#}"), "Infiniband(0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0x1,0x2,0x3)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand, validate = infiniband_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::InfiniBand, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct InfiniBand {
@@ -610,11 +633,14 @@ impl fmt::Display for InfiniBand {
     }
 }
 
-fn infiniband_validate(node: &InfiniBand) -> Result<(), &'static str> {
-    if node.resource_flags & !InfiniBand::RESOURCE_FLAGS_MASK != 0 {
-        return Err("InfiniBand resource flags bits 5 through 31 are reserved");
+impl InfiniBand {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.resource_flags & !InfiniBand::RESOURCE_FLAGS_MASK != 0 {
+            return Err("InfiniBand resource flags bits 5 through 31 are reserved");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 impl InfiniBand {
@@ -642,7 +668,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Uart(115200,8,N,1)");
     /// assert_eq!(format!("{node:-#}"), "Uart(115200,8,N,1)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = uart_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Uart, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Uart {
@@ -683,12 +709,15 @@ impl fmt::Display for Uart {
     }
 }
 
-fn uart_validate(node: &Uart) -> Result<(), &'static str> {
-    reserved_zero(node.reserved)?;
-    if node.parity > 5 || node.stop_bits > 3 {
-        return Err("invalid UART parity or stop bits");
+impl Uart {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        reserved_zero(self.reserved)?;
+        if self.parity > 5 || self.stop_bits > 3 {
+            return Err("invalid UART parity or stop bits");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -739,17 +768,24 @@ device_path_node! {
 impl fmt::Display for Sas {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if allow_shortcuts(f) {
-            write!(f, "SAS(0x{:x},0x{:x},0x{:x},", node.sas_address, node.lun, node.relative_target_port)?;
-            topology_text(f, node.device_topology, Some(node.reserved))?;
+        if f.alternate() {
+            // The vendor data: the reserved field, SAS address, LUN, topology, and relative target port.
+            write!(f, "VenMsg({},", Sas::GUID)?;
+            let data = node
+                .reserved
+                .to_le_bytes()
+                .into_iter()
+                .chain(node.sas_address.to_le_bytes())
+                .chain(node.lun.to_le_bytes())
+                .chain(node.device_topology.to_le_bytes())
+                .chain(node.relative_target_port.to_le_bytes());
+            for byte in data {
+                write!(f, "{byte:02x}")?;
+            }
             f.write_str(")")
         } else {
-            write!(f, "VenMsg({},", Sas::GUID)?;
-            write_hex_bytes(f, &node.reserved.to_le_bytes())?;
-            write_hex_bytes(f, &node.sas_address.to_le_bytes())?;
-            write_hex_bytes(f, &node.lun.to_le_bytes())?;
-            write_hex_bytes(f, &node.device_topology.to_le_bytes())?;
-            write_hex_bytes(f, &node.relative_target_port.to_le_bytes())?;
+            write!(f, "SAS(0x{:x},0x{:x},0x{:x},", node.sas_address, node.lun, node.relative_target_port)?;
+            topology_text(f, node.device_topology, Some(node.reserved))?;
             f.write_str(")")
         }
     }
@@ -759,9 +795,13 @@ impl fmt::Display for SasEx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         f.write_str("SasEx(0x")?;
-        write_hex_bytes(f, &node.sas_address)?;
+        for byte in &node.sas_address {
+            write!(f, "{byte:02x}")?;
+        }
         f.write_str(",0x")?;
-        write_hex_bytes(f, &node.lun)?;
+        for byte in &node.lun {
+            write!(f, "{byte:02x}")?;
+        }
         write!(f, ",0x{:x},", node.relative_target_port)?;
         topology_text(f, node.device_topology, None)?;
         f.write_str(")")
@@ -869,7 +909,9 @@ impl fmt::Display for Bluetooth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         f.write_str("Bluetooth(")?;
-        write_hex_bytes(f, &node.address)?;
+        for byte in &node.address {
+            write!(f, "{byte:02x}")?;
+        }
         f.write_str(")")
     }
 }
@@ -966,7 +1008,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::BluetoothLE,
-        validate = bluetooth_le_validate,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -981,16 +1023,21 @@ impl fmt::Display for BluetoothLE {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         f.write_str("BluetoothLE(")?;
-        write_hex_bytes(f, &node.address)?;
+        for byte in &node.address {
+            write!(f, "{byte:02x}")?;
+        }
         write!(f, ",0x{:02x})", node.address_type)
     }
 }
 
-fn bluetooth_le_validate(node: &BluetoothLE) -> Result<(), &'static str> {
-    if node.address_type > 1 {
-        return Err("invalid Bluetooth LE address type");
+impl BluetoothLE {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.address_type > 1 {
+            return Err("invalid Bluetooth LE address type");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -1160,7 +1207,7 @@ impl UsbClass {
 impl fmt::Display for UsbClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if allow_shortcuts(f)
+        if !f.alternate()
             && let Some((name, fixed_subclass)) = usb_class_shortcut(node)
         {
             if fixed_subclass {
@@ -1208,7 +1255,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
-        measure_size = messaging_vendor_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
@@ -1223,7 +1270,7 @@ device_path_node! {
 impl fmt::Display for MessagingVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if allow_shortcuts(f) && node.data.is_empty() {
+        if !f.alternate() && node.data.is_empty() {
             if node.guid == BinaryGuid::from_string("E0C14753-F9BE-11D2-9A0C-0090273FC14D") {
                 return f.write_str("VenPcAnsi()");
             }
@@ -1240,12 +1287,22 @@ impl fmt::Display for MessagingVendor {
                 return f.write_str("DebugPort()");
             }
         }
-        write_vendor(f, "VenMsg", &node.guid, &node.data)
+        write!(f, "VenMsg({}", node.guid)?;
+        if !node.data.is_empty() {
+            f.write_str(",")?;
+            for byte in &node.data {
+                write!(f, "{byte:02x}")?;
+            }
+        }
+        f.write_str(")")
     }
 }
 
-fn messaging_vendor_measure_size(node: &MessagingVendor) -> usize {
-    size_of_val(&node.guid) + size_of_val(node.data.as_slice())
+impl MessagingVendor {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.guid) + size_of_val(self.data.as_slice())
+    }
 }
 
 /// Check that a reserved field is zero, as the specification requires.
@@ -1288,8 +1345,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
-        measure_size = uart_flow_control_measure_size,
-        validate = uart_flow_control_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
@@ -1325,7 +1382,13 @@ fn topology_text(f: &mut fmt::Formatter<'_>, topology: u16, reserved: Option<u32
 impl fmt::Display for UartFlowControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if allow_shortcuts(f) {
+        if f.alternate() {
+            write!(f, "VenMsg({},", UartFlowControl::GUID)?;
+            for byte in node.flow_control_map.to_le_bytes() {
+                write!(f, "{byte:02x}")?;
+            }
+            f.write_str(")")
+        } else {
             let value = match node.flow_control_map {
                 0 => "None",
                 1 => "Hardware",
@@ -1333,10 +1396,6 @@ impl fmt::Display for UartFlowControl {
                 other => return write!(f, "UartFlowCtrl(0x{other:x})"),
             };
             write!(f, "UartFlowCtrl({value})")
-        } else {
-            write!(f, "VenMsg({},", UartFlowControl::GUID)?;
-            write_hex_bytes(f, &node.flow_control_map.to_le_bytes())?;
-            f.write_str(")")
         }
     }
 }
@@ -1350,15 +1409,19 @@ impl UartFlowControl {
     pub const XON_XOFF: u32 = 1 << 1;
 }
 
-fn uart_flow_control_measure_size(node: &UartFlowControl) -> usize {
-    size_of::<BinaryGuid>() + size_of_val(&node.flow_control_map)
-}
-
-fn uart_flow_control_validate(node: &UartFlowControl) -> Result<(), &'static str> {
-    if node.flow_control_map & !(UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF) != 0 {
-        return Err("UART flow control map bits 2 through 31 are reserved");
+impl UartFlowControl {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of::<BinaryGuid>() + size_of_val(&self.flow_control_map)
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.flow_control_map & !(UartFlowControl::HARDWARE | UartFlowControl::XON_XOFF) != 0 {
+            return Err("UART flow control map bits 2 through 31 are reserved");
+        }
+        Ok(())
+    }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for UartFlowControl {
@@ -1411,8 +1474,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Vendor,
-        measure_size = sas_measure_size,
-        validate = sas_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
@@ -1435,17 +1498,21 @@ impl Sas {
     pub const GUID: BinaryGuid = BinaryGuid::from_string("D487DDB4-008B-11D9-AFDC-001083FFCA4D");
 }
 
-fn sas_measure_size(node: &Sas) -> usize {
-    size_of::<BinaryGuid>()
-        + size_of_val(&node.reserved)
-        + size_of_val(&node.sas_address)
-        + size_of_val(&node.lun)
-        + size_of_val(&node.device_topology)
-        + size_of_val(&node.relative_target_port)
-}
+impl Sas {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of::<BinaryGuid>()
+            + size_of_val(&self.reserved)
+            + size_of_val(&self.sas_address)
+            + size_of_val(&self.lun)
+            + size_of_val(&self.device_topology)
+            + size_of_val(&self.relative_target_port)
+    }
 
-fn sas_validate(node: &Sas) -> Result<(), &'static str> {
-    reserved_zero(node.reserved)
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        reserved_zero(self.reserved)
+    }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Sas {
@@ -1505,8 +1572,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::UsbWwid,
-        measure_size = usb_wwid_measure_size,
-        validate = usb_wwid_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -1555,7 +1622,7 @@ impl fmt::Display for IpV4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         write!(f, "IPv4({}", Ipv4Endpoint(node.remote_ip, node.remote_port))?;
-        if display_only(f) {
+        if f.sign_minus() {
             return f.write_str(")");
         }
         write!(f, ",{},{}", protocol_name(node.protocol), if node.static_ip { "Static" } else { "DHCP" })?;
@@ -1640,19 +1707,24 @@ impl fmt::Display for UsbWwid {
     }
 }
 
-fn usb_wwid_measure_size(node: &UsbWwid) -> usize {
-    size_of_val(&node.interface)
-        + size_of_val(&node.vendor_id)
-        + size_of_val(&node.product_id)
-        + size_of_val(node.serial_number.as_slice())
-}
-
-fn usb_wwid_validate(node: &UsbWwid) -> Result<(), &'static str> {
-    if node.serial_number.len() > 64 || core::char::decode_utf16(node.serial_number.iter().copied()).any(|c| c.is_err())
-    {
-        return Err("USB WWID requires at most 64 valid UTF-16 code units");
+impl UsbWwid {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.interface)
+            + size_of_val(&self.vendor_id)
+            + size_of_val(&self.product_id)
+            + size_of_val(self.serial_number.as_slice())
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.serial_number.len() > 64
+            || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
+        {
+            return Err("USB WWID requires at most 64 valid UTF-16 code units");
+        }
+        Ok(())
+    }
 }
 
 /// Gateway and subnet fields added to the original IPv4 node.
@@ -1698,7 +1770,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::IpV4,
-        measure_size = ip_v4_measure_size,
+        measure_size = Self::payload_size,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
@@ -1720,14 +1792,20 @@ device_path_node! {
     }
 }
 
-fn ip_v4_measure_size(node: &IpV4) -> usize {
-    size_of_val(&node.local_ip)
-        + size_of_val(&node.remote_ip)
-        + size_of_val(&node.local_port)
-        + size_of_val(&node.remote_port)
-        + size_of_val(&node.protocol)
-        + size_of_val(&node.static_ip)
-        + node.network.as_ref().map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
+impl IpV4 {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.local_ip)
+            + size_of_val(&self.remote_ip)
+            + size_of_val(&self.local_port)
+            + size_of_val(&self.remote_port)
+            + size_of_val(&self.protocol)
+            + size_of_val(&self.static_ip)
+            + self
+                .network
+                .as_ref()
+                .map_or(0, |network| size_of_val(&network.gateway) + size_of_val(&network.subnet_mask))
+    }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for IpV4 {
@@ -1816,8 +1894,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Iscsi,
-        measure_size = iscsi_measure_size,
-        validate = iscsi_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -1848,25 +1926,31 @@ impl fmt::Display for Iscsi {
             "CHAP_BI"
         };
         write!(f, "iSCSI({},0x{:x},0x", node.target_name, node.portal_group)?;
-        write_hex_bytes(f, &node.lun)?;
+        for byte in &node.lun {
+            write!(f, "{byte:02x}")?;
+        }
         write!(f, ",{header},{data},{auth},TCP)")
     }
 }
 
-fn iscsi_measure_size(node: &Iscsi) -> usize {
-    size_of_val(&node.protocol)
-        + size_of_val(&node.options)
-        + size_of_val(&node.lun)
-        + size_of_val(&node.portal_group)
-        + node.target_name.len()
-        + size_of::<u8>() // NUL terminator
-}
-
-fn iscsi_validate(node: &Iscsi) -> Result<(), &'static str> {
-    if node.target_name.len() > 223 || node.protocol != 0 {
-        return Err("invalid iSCSI target name or network protocol");
+impl Iscsi {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.protocol)
+            + size_of_val(&self.options)
+            + size_of_val(&self.lun)
+            + size_of_val(&self.portal_group)
+            + self.target_name.len()
+            + size_of::<u8>() // NUL terminator
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.target_name.len() > 223 || self.protocol != 0 {
+            return Err("invalid iSCSI target name or network protocol");
+        }
+        Ok(())
+    }
 }
 
 device_path_node! {
@@ -1892,8 +1976,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Uri,
-        measure_size = uri_measure_size,
-        validate = uri_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -1910,15 +1994,19 @@ impl fmt::Display for Uri {
     }
 }
 
-fn uri_measure_size(node: &Uri) -> usize {
-    node.uri.len()
-}
-
-fn uri_validate(node: &Uri) -> Result<(), &'static str> {
-    if !node.uri.is_ascii() || node.uri.contains('\0') {
-        return Err("URI must be ASCII without embedded NUL");
+impl Uri {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        self.uri.len()
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if !self.uri.is_ascii() || self.uri.contains('\0') {
+            return Err("URI must be ASCII without embedded NUL");
+        }
+        Ok(())
+    }
 }
 
 device_path_node! {
@@ -1945,8 +2033,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::Dns,
-        measure_size = dns_measure_size,
-        validate = dns_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
@@ -1979,18 +2067,22 @@ impl Dns {
     }
 }
 
-fn dns_measure_size(node: &Dns) -> usize {
-    1 + node.addresses.len() * Dns::ADDRESS_SIZE
-}
+impl Dns {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        1 + self.addresses.len() * Dns::ADDRESS_SIZE
+    }
 
-fn dns_validate(node: &Dns) -> Result<(), &'static str> {
-    if node.addresses.is_empty() {
-        return Err("DNS node requires at least one address");
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.addresses.is_empty() {
+            return Err("DNS self requires at least one address");
+        }
+        if self.addresses.iter().any(|address| address.is_ipv6() != self.is_ipv6()) {
+            return Err("DNS self addresses must all be IPv4 or all be IPv6");
+        }
+        Ok(())
     }
-    if node.addresses.iter().any(|address| address.is_ipv6() != node.is_ipv6()) {
-        return Err("DNS node addresses must all be IPv4 or all be IPv6");
-    }
-    Ok(())
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Dns {
@@ -2078,8 +2170,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::RestService,
-        measure_size = rest_service_measure_size,
-        validate = rest_service_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
@@ -2105,21 +2197,25 @@ impl fmt::Display for RestService {
     }
 }
 
-fn rest_service_measure_size(node: &RestService) -> usize {
-    let vendor = match &node.service {
-        RestServiceType::Vendor { guid, data } => size_of_val(guid) + size_of_val(data.as_slice()),
-        _ => 0,
-    };
-    size_of::<u8>() // service type, encoded as one byte
-        + size_of_val(&node.access_mode)
-        + vendor
-}
-
-fn rest_service_validate(node: &RestService) -> Result<(), &'static str> {
-    if !matches!(node.access_mode, 1 | 2) {
-        return Err("invalid REST access mode");
+impl RestService {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        let vendor = match &self.service {
+            RestServiceType::Vendor { guid, data } => size_of_val(guid) + size_of_val(data.as_slice()),
+            _ => 0,
+        };
+        size_of::<u8>() // service type, encoded as one byte
+            + size_of_val(&self.access_mode)
+            + vendor
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if !matches!(self.access_mode, 1 | 2) {
+            return Err("invalid REST access mode");
+        }
+        Ok(())
+    }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for RestService {
@@ -2207,8 +2303,8 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmeOf,
-        measure_size = nvme_of_measure_size,
-        validate = nvme_of_validate,
+        measure_size = Self::payload_size,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -2228,7 +2324,10 @@ fn write_uuid_bytes(f: &mut fmt::Formatter<'_>, b: &[u8; 16]) -> fmt::Result {
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-",
         b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]
     )?;
-    write_hex_bytes(f, &b[10..])
+    for byte in &b[10..] {
+        write!(f, "{byte:02x}")?;
+    }
+    Ok(())
 }
 
 impl fmt::Display for NvmeOf {
@@ -2238,11 +2337,15 @@ impl fmt::Display for NvmeOf {
         match node.identifier_type {
             1 => {
                 f.write_str("eui.")?;
-                write_hex_bytes(f, &node.identifier[..8])?;
+                for byte in &node.identifier[..8] {
+                    write!(f, "{byte:02x}")?;
+                }
             }
             2 => {
                 f.write_str("nguid.")?;
-                write_hex_bytes(f, &node.identifier)?;
+                for byte in &node.identifier {
+                    write!(f, "{byte:02x}")?;
+                }
             }
             3 => {
                 f.write_str("urn:uuid:")?;
@@ -2254,15 +2357,19 @@ impl fmt::Display for NvmeOf {
     }
 }
 
-fn nvme_of_measure_size(node: &NvmeOf) -> usize {
-    size_of_val(&node.identifier_type) + size_of_val(&node.identifier) + node.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
-}
-
-fn nvme_of_validate(node: &NvmeOf) -> Result<(), &'static str> {
-    if !matches!(node.identifier_type, 1..=3) || node.subsystem_nqn.is_empty() || node.subsystem_nqn.len() > 223 {
-        return Err("invalid NVMe over Fabrics namespace identity");
+impl NvmeOf {
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    fn payload_size(&self) -> usize {
+        size_of_val(&self.identifier_type) + size_of_val(&self.identifier) + self.subsystem_nqn.len() + size_of::<u8>() // NUL terminator
     }
-    Ok(())
+
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if !matches!(self.identifier_type, 1..=3) || self.subsystem_nqn.is_empty() || self.subsystem_nqn.len() > 223 {
+            return Err("invalid NVMe over Fabrics namespace identity");
+        }
+        Ok(())
+    }
 }
 
 device_path_node! {
@@ -2284,7 +2391,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Sata(0x0,0xffff,0x0)");
     /// assert_eq!(format!("{node:-#}"), "Sata(0x0,0xffff,0x0)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = sata_validate)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Sata, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Sata {
@@ -2315,11 +2422,14 @@ impl Sata {
     }
 }
 
-fn sata_validate(node: &Sata) -> Result<(), &'static str> {
-    if node.hba_port == u16::MAX {
-        return Err("SATA HBA port 0xffff is reserved");
+impl Sata {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.hba_port == u16::MAX {
+            return Err("SATA HBA port 0xffff is reserved");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 device_path_node! {
@@ -2344,7 +2454,7 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::NvmExpress,
-        validate = nvm_express_validate,
+        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
@@ -2375,11 +2485,14 @@ impl NvmExpress {
     }
 }
 
-fn nvm_express_validate(node: &NvmExpress) -> Result<(), &'static str> {
-    if matches!(node.namespace_id, 0 | u32::MAX) {
-        return Err("NVMe namespace ID is reserved");
+impl NvmExpress {
+    /// Check the field values, for `DevicePathNode::validate`.
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if matches!(self.namespace_id, 0 | u32::MAX) {
+            return Err("NVMe namespace ID is reserved");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -2387,7 +2500,7 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::{
         DevicePathNode, GenericDevicePathNode,
-        test_support::{check_fixture, check_invalid, check_node, encode_node, fixture},
+        tests::{check_fixture, check_invalid, check_node, encode_node, fixture},
     };
     use alloc::{format, string::String, vec};
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
@@ -2925,7 +3038,7 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_messaging() {
-        use crate::uefi::device_path::node::test_support::check_text;
+        use crate::uefi::device_path::node::tests::check_text;
         use alloc::format;
 
         check_text!(r"Ata(Primary,Master,0)", r"Ata(Primary,Master,0x0)", r"Ata(0x0)", r"Ata(Primary,Master,0x0)");

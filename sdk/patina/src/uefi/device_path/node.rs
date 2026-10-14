@@ -67,7 +67,6 @@ pub use media::*;
 pub use messaging::*;
 
 use super::DevicePath;
-use crate::BinaryGuid;
 use alloc::boxed::Box;
 use core::fmt::{self, Debug, Display};
 use scroll::{
@@ -133,6 +132,513 @@ pub trait DevicePathNode: Debug + Display {
     }
 }
 
+/// Header common to every device path node (UEFI 2.10 Table 10.1).
+///
+/// The type, the sub-type whose meaning depends on the type, and the node length.
+/// The length is stored little-endian, as on the wire, so the header has the same layout
+/// on targets of either endianness.
+#[repr(C, packed)]
+#[derive(Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+pub struct Header {
+    /// Type of the device path node.
+    pub r#type: u8,
+    /// Subtype of the device path node.
+    pub sub_type: u8,
+    /// Total length in bytes of the device path node, including the header, in little-endian
+    /// byte order.
+    pub length: little_endian::U16,
+}
+
+impl Header {
+    /// Creates a new [`Header`].
+    pub const fn new(r#type: u8, sub_type: u8, length: u16) -> Self {
+        Self { r#type, sub_type, length: little_endian::U16::new(length) }
+    }
+
+    /// Return the size of the header in bytes
+    pub const fn size_of_header() -> usize {
+        core::mem::size_of::<Self>()
+    }
+}
+
+impl Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Header")
+            .field("type", &self.r#type)
+            .field("sub_type", &self.sub_type)
+            .field("length", &self.length.get())
+            .finish()
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for Header {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        let length = self.length.get();
+        if usize::from(length) < Self::size_of_header() {
+            return Err(scroll::Error::BadInput {
+                size: usize::from(length),
+                msg: "device path node is shorter than its header",
+            });
+        }
+        let mut offset = 0;
+        dest.gwrite_with(self.r#type, &mut offset, ctx)?;
+        dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
+        // The length is little-endian on the wire whatever the context.
+        dest.gwrite_with(length, &mut offset, scroll::LE)?;
+        Ok(offset)
+    }
+}
+
+impl TryFromCtx<'_, scroll::Endian> for Header {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let mut offset = 0;
+        Ok((
+            Header {
+                r#type: from.gread_with(&mut offset, ctx)?,
+                sub_type: from.gread_with(&mut offset, ctx)?,
+                // The length is little-endian on the wire whatever the context.
+                length: little_endian::U16::new(from.gread_with::<u16>(&mut offset, scroll::LE)?),
+            },
+            offset,
+        ))
+    }
+}
+
+/// Generic device path node (UEFI 2.10 Table 10.1).
+///
+/// A node whose payload is kept as raw bytes: the specific device path data that its
+/// type and sub-type define. It represents any node, including nodes that are not
+/// decoded into a specific type or whose type is not defined by the specification.
+///
+/// # Examples
+///
+/// ```
+/// use patina::uefi::device_path::node::GenericDevicePathNode;
+///
+/// let bytes = [9, 2, 6, 0, 0xaa, 0xbb];
+/// let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes).unwrap();
+/// assert!(remaining.is_empty());
+/// assert_eq!(node.to_string(), "Path(9,2,aabb)");
+/// // Display-only (`-`), without shortcuts (`#`), and both.
+/// assert_eq!(format!("{node:-}"), "Path(9,2,aabb)");
+/// assert_eq!(format!("{node:#}"), "Path(9,2,aabb)");
+/// assert_eq!(format!("{node:-#}"), "Path(9,2,aabb)");
+/// ```
+#[repr(C)]
+#[derive(Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+pub struct GenericDevicePathNode {
+    /// Header of the device path node.
+    pub header: Header,
+    /// Data of the device path node, could be anything depending on the header.
+    pub data: [u8],
+}
+
+impl GenericDevicePathNode {
+    /// Borrows the first device path node from `bytes` and returns the remaining bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the buffer is shorter than a header, the header length is
+    /// shorter than the header or longer than the buffer, or an end node has an
+    /// invalid subtype or length.
+    pub fn from_bytes(bytes: &[u8]) -> Result<(&Self, &[u8]), scroll::Error> {
+        let header = bytes.pread_with::<Header>(0, scroll::LE)?;
+        let length = usize::from(header.length);
+        if length < Header::size_of_header() {
+            return Err(scroll::Error::BadInput { size: length, msg: "device path node is shorter than its header" });
+        }
+        if length > bytes.len() {
+            return Err(scroll::Error::TooBig { size: length, len: bytes.len() });
+        }
+        if header.r#type == 0x7f && (length != Header::size_of_header() || !matches!(header.sub_type, 1 | 0xff)) {
+            return Err(scroll::Error::BadInput { size: length, msg: "invalid end device path node" });
+        }
+        <Self as zerocopy::FromBytes>::ref_from_prefix_with_elems(bytes, length - Header::size_of_header())
+            .map_err(|_| scroll::Error::BadInput { size: length, msg: "invalid device path node layout" })
+    }
+
+    /// Returns this node's exact in-memory bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        <Self as zerocopy::IntoBytes>::as_bytes(self)
+    }
+}
+impl fmt::Display for GenericDevicePathNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (r#type, sub_type) = (self.header.r#type, self.header.sub_type);
+        match r#type {
+            1 => write!(f, "HardwarePath({sub_type},")?,
+            2 => write!(f, "AcpiPath({sub_type},")?,
+            3 => write!(f, "Msg({sub_type},")?,
+            4 => write!(f, "MediaPath({sub_type},")?,
+            5 => write!(f, "BbsPath({sub_type},")?,
+            _ => write!(f, "Path({type},{sub_type},")?,
+        }
+        for byte in &self.data {
+            write!(f, "{byte:02x}")?;
+        }
+        f.write_str(")")
+    }
+}
+
+impl DevicePathNode for &GenericDevicePathNode {
+    /// Generic nodes have no fixed type. This placeholder is unused because
+    /// `header()` and `is_type()` are overridden.
+    fn r#type() -> u8 {
+        0
+    }
+
+    /// Generic nodes have no fixed sub-type; see `r#type()`.
+    fn sub_type() -> u8 {
+        0
+    }
+
+    fn measure_size(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Generic payloads are not interpreted. Only the End node rule from the header is
+    /// checked: an End node has sub-type 0x01 or 0xFF and no payload.
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.header.r#type == 0x7f && (!self.data.is_empty() || !matches!(self.header.sub_type, 1 | 0xff)) {
+            return Err("invalid end device path node");
+        }
+        Ok(())
+    }
+
+    fn header(&self) -> Header {
+        self.header
+    }
+
+    fn is_type(_type: u8, _sub_type: u8) -> bool {
+        // A generic node can represent every type, so it always returns true.
+        true
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for &GenericDevicePathNode {
+    type Error = scroll::Error;
+
+    /// Write the payload, like the typed nodes; the header is written by the caller.
+    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        dest.pwrite_with(&self.data, 0, ())
+    }
+}
+
+impl<'a> TryFromCtx<'a, scroll::Endian> for &'a GenericDevicePathNode {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], _ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let (node, _) = GenericDevicePathNode::from_bytes(from)?;
+        Ok((node, usize::from(node.header.length)))
+    }
+}
+
+/// Decode a generic node into the node type its header identifies.
+///
+/// Nodes whose type and sub-type are not defined by the specification are returned as
+/// the generic node itself, without interpretation.
+///
+/// # Errors
+///
+/// Returns an error for inconsistent lengths, invalid payloads, or trailing bytes
+/// in a recognized node.
+impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
+    type Error = scroll::Error;
+
+    fn try_from(unknown: &'a GenericDevicePathNode) -> Result<Self, Self::Error> {
+        fn decode_node<'a, T>(node: &'a GenericDevicePathNode) -> Result<Box<dyn DevicePathNode + 'a>, scroll::Error>
+        where
+            T: DevicePathNode + TryFrom<&'a GenericDevicePathNode, Error = scroll::Error> + 'a,
+        {
+            Ok(Box::new(T::try_from(node)?))
+        }
+
+        if usize::from(unknown.header.length) != Header::size_of_header() + unknown.data.len() {
+            return Err(scroll::Error::BadInput { size: 0, msg: "device path header and payload lengths differ" });
+        }
+        if unknown.header.r#type == 0x7f
+            && (usize::from(unknown.header.length) != Header::size_of_header()
+                || !matches!(unknown.header.sub_type, 1 | 0xff))
+        {
+            return Err(scroll::Error::BadInput { size: 0, msg: "invalid end device path node" });
+        }
+
+        match unknown.header {
+            // Hardware nodes.
+            h if Pci::is_type(h.r#type, h.sub_type) => decode_node::<Pci>(unknown),
+            h if PcCard::is_type(h.r#type, h.sub_type) => decode_node::<PcCard>(unknown),
+            h if MemoryMapped::is_type(h.r#type, h.sub_type) => decode_node::<MemoryMapped>(unknown),
+            h if Controller::is_type(h.r#type, h.sub_type) => decode_node::<Controller>(unknown),
+            h if Bmc::is_type(h.r#type, h.sub_type) => decode_node::<Bmc>(unknown),
+            h if HardwareVendor::is_type(h.r#type, h.sub_type) => decode_node::<HardwareVendor>(unknown),
+            // ACPI nodes.
+            h if Acpi::is_type(h.r#type, h.sub_type) => decode_node::<Acpi>(unknown),
+            h if ExtendedAcpi::is_type(h.r#type, h.sub_type) => decode_node::<ExtendedAcpi>(unknown),
+            h if AcpiAdr::is_type(h.r#type, h.sub_type) => decode_node::<AcpiAdr>(unknown),
+            h if NvdimmAcpi::is_type(h.r#type, h.sub_type) => decode_node::<NvdimmAcpi>(unknown),
+            // Messaging nodes.
+            h if NvmExpress::is_type(h.r#type, h.sub_type) => decode_node::<NvmExpress>(unknown),
+            h if Sata::is_type(h.r#type, h.sub_type) => decode_node::<Sata>(unknown),
+            h if Atapi::is_type(h.r#type, h.sub_type) => decode_node::<Atapi>(unknown),
+            h if Scsi::is_type(h.r#type, h.sub_type) => decode_node::<Scsi>(unknown),
+            h if FiberChannel::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannel>(unknown),
+            h if FiberChannelEx::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannelEx>(unknown),
+            h if Ieee1394::is_type(h.r#type, h.sub_type) => decode_node::<Ieee1394>(unknown),
+            h if Usb::is_type(h.r#type, h.sub_type) => decode_node::<Usb>(unknown),
+            h if UsbWwid::is_type(h.r#type, h.sub_type) => decode_node::<UsbWwid>(unknown),
+            h if UsbClass::is_type(h.r#type, h.sub_type) => decode_node::<UsbClass>(unknown),
+            h if DeviceLogicalUnit::is_type(h.r#type, h.sub_type) => decode_node::<DeviceLogicalUnit>(unknown),
+            h if I2oRandomBlockStorageClass::is_type(h.r#type, h.sub_type) => {
+                decode_node::<I2oRandomBlockStorageClass>(unknown)
+            }
+            h if MacAddress::is_type(h.r#type, h.sub_type) => decode_node::<MacAddress>(unknown),
+            h if IpV4::is_type(h.r#type, h.sub_type) => decode_node::<IpV4>(unknown),
+            h if IpV6::is_type(h.r#type, h.sub_type) => decode_node::<IpV6>(unknown),
+            h if Vlan::is_type(h.r#type, h.sub_type) => decode_node::<Vlan>(unknown),
+            h if InfiniBand::is_type(h.r#type, h.sub_type) => decode_node::<InfiniBand>(unknown),
+            h if Uart::is_type(h.r#type, h.sub_type) => decode_node::<Uart>(unknown),
+            // Vendor nodes whose GUID the specification defines decode as their own type.
+            h if UartFlowControl::is_type(h.r#type, h.sub_type)
+                && unknown.data.starts_with(UartFlowControl::GUID.as_bytes()) =>
+            {
+                decode_node::<UartFlowControl>(unknown)
+            }
+            h if Sas::is_type(h.r#type, h.sub_type) && unknown.data.starts_with(Sas::GUID.as_bytes()) => {
+                decode_node::<Sas>(unknown)
+            }
+            h if MessagingVendor::is_type(h.r#type, h.sub_type) => decode_node::<MessagingVendor>(unknown),
+            h if SasEx::is_type(h.r#type, h.sub_type) => decode_node::<SasEx>(unknown),
+            h if Iscsi::is_type(h.r#type, h.sub_type) => decode_node::<Iscsi>(unknown),
+            h if Uri::is_type(h.r#type, h.sub_type) => decode_node::<Uri>(unknown),
+            h if Ufs::is_type(h.r#type, h.sub_type) => decode_node::<Ufs>(unknown),
+            h if Sd::is_type(h.r#type, h.sub_type) => decode_node::<Sd>(unknown),
+            h if Bluetooth::is_type(h.r#type, h.sub_type) => decode_node::<Bluetooth>(unknown),
+            h if WiFi::is_type(h.r#type, h.sub_type) => decode_node::<WiFi>(unknown),
+            h if Emmc::is_type(h.r#type, h.sub_type) => decode_node::<Emmc>(unknown),
+            h if BluetoothLE::is_type(h.r#type, h.sub_type) => decode_node::<BluetoothLE>(unknown),
+            h if Dns::is_type(h.r#type, h.sub_type) => decode_node::<Dns>(unknown),
+            h if Nvdimm::is_type(h.r#type, h.sub_type) => decode_node::<Nvdimm>(unknown),
+            h if RestService::is_type(h.r#type, h.sub_type) => decode_node::<RestService>(unknown),
+            h if NvmeOf::is_type(h.r#type, h.sub_type) => decode_node::<NvmeOf>(unknown),
+            // Media nodes.
+            h if FilePath::is_type(h.r#type, h.sub_type) => decode_node::<FilePath>(unknown),
+            h if HardDrive::is_type(h.r#type, h.sub_type) => decode_node::<HardDrive>(unknown),
+            h if CdRom::is_type(h.r#type, h.sub_type) => decode_node::<CdRom>(unknown),
+            h if MediaVendor::is_type(h.r#type, h.sub_type) => decode_node::<MediaVendor>(unknown),
+            h if MediaProtocol::is_type(h.r#type, h.sub_type) => decode_node::<MediaProtocol>(unknown),
+            h if PiwgFirmwareFile::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareFile>(unknown),
+            h if PiwgFirmwareVolume::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareVolume>(unknown),
+            h if RelativeOffsetRange::is_type(h.r#type, h.sub_type) => decode_node::<RelativeOffsetRange>(unknown),
+            h if RamDisk::is_type(h.r#type, h.sub_type) => decode_node::<RamDisk>(unknown),
+            // BIOS nodes.
+            h if Bios::is_type(h.r#type, h.sub_type) => decode_node::<Bios>(unknown),
+            // End nodes.
+            h if EndEntire::is_type(h.r#type, h.sub_type) => decode_node::<EndEntire>(unknown),
+            h if EndInstance::is_type(h.r#type, h.sub_type) => decode_node::<EndInstance>(unknown),
+            _ => Ok(Box::new(unknown)),
+        }
+    }
+}
+
+/// Device path node iterator.
+pub struct Iter<'a> {
+    device_path: &'a DevicePath,
+    offset: usize,
+}
+
+impl<'a> Iter<'a> {
+    pub(super) fn new(device_path: &'a DevicePath) -> Iter<'a> {
+        Self { device_path, offset: 0 }
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = &'a GenericDevicePathNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // No more byte to read in the device path.
+        if self.offset == self.device_path.buffer.len() {
+            return None;
+        }
+
+        let Ok(unknown_device_path) =
+            self.device_path.buffer.gread_with::<&GenericDevicePathNode>(&mut self.offset, scroll::LE)
+        else {
+            debug_assert!(false, "The buffer is corrupted, could not read the device path node.");
+            return None;
+        };
+
+        Some(unknown_device_path)
+    }
+}
+
+/// Device path type values (UEFI 2.10 Section 10.3.1, Table 10.1).
+///
+/// All undefined types and sub-types are reserved; extensions use a vendor node with the
+/// vendor's own GUID (Section 10.4.6).
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum DevicePathType {
+    /// Hardware device path.
+    Hardware = 1,
+    /// ACPI device path.
+    Acpi = 2,
+    /// Messaging device path.
+    Messaging = 3,
+    /// Media device path.
+    Media = 4,
+    /// BIOS Boot Specification device path.
+    Bios = 5,
+    /// End of hardware device path.
+    End = 0x7F,
+}
+
+/// Hardware device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum HardwareSubType {
+    /// PCI device path.
+    Pci = 1,
+    /// PC Card device path.
+    Pccard = 2,
+    /// Memory-mapped device path.
+    MemoryMapped = 3,
+    /// Vendor-defined device path.
+    Vendor = 4,
+    /// Controller device path.
+    Controller = 5,
+    /// BMC device path.
+    Bmc = 6,
+}
+
+/// ACPI device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum AcpiSubType {
+    /// ACPI device path.
+    Acpi = 1,
+    /// Extended ACPI device path.
+    ExtendedAcpi = 2,
+    /// ACPI address device path.
+    Adr = 3,
+    /// NVDIMM device identified by its NFIT device handle.
+    Nvdimm = 4,
+}
+
+/// Messaging device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum MessagingSubType {
+    /// ATAPI device path.
+    Atapi = 1,
+    /// SCSI device path.
+    Scsi = 2,
+    /// Fibre Channel device path.
+    FiberChannel = 3,
+    /// Fibre Channel Ex device path.
+    FiberChannelEx = 21,
+    /// 1394 device path.
+    _1394 = 4,
+    /// USB device path.
+    Usb = 5,
+    /// SATA device path.
+    Sata = 18,
+    /// USB WWID device path.
+    UsbWwid = 16,
+    /// Device Logical Unit device path.
+    DeviceLogicalUnit = 17,
+    /// USB Class device path.
+    UsbClass = 15,
+    /// I2O Random Block Storage Class device path.
+    I2oRandomBlockStorageClass = 6,
+    /// MAC Address device path.
+    MacAddress = 11,
+    /// IPv4 device path.
+    IpV4 = 12,
+    /// IPv6 device path.
+    IpV6 = 13,
+    /// VLAN device path.
+    Vlan = 20,
+    /// InfiniBand device path.
+    InfiniBand = 9,
+    /// UART device path.
+    Uart = 14,
+    /// Vendor-defined device path.
+    Vendor = 10,
+    /// SAS Ex device path.
+    SasEx = 22,
+    /// iSCSI device path.
+    Iscsi = 19,
+    /// NVM Express device path.
+    NvmExpress = 23,
+    /// URI device path.
+    Uri = 24,
+    /// UFS device path.
+    Ufs = 25,
+    /// SD device path.
+    Sd = 26,
+    /// Bluetooth device path.
+    Bluetooth = 27,
+    /// `WiFi` device path.
+    WiFi = 28,
+    /// Embedded Multi-Media Card device path.
+    Emmc = 29,
+    /// Bluetooth LE device path.
+    BluetoothLE = 30,
+    /// DNS device path.
+    Dns = 31,
+    /// NVDIMM device path.
+    Nvdimm = 32,
+    /// REST Service device path.
+    RestService = 33,
+    /// `NVMe` over Fabric device path.
+    NvmeOf = 34,
+}
+
+/// Media device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum MediaSubType {
+    /// Hard drive device path.
+    HardDrive = 1,
+    /// CD-ROM device path.
+    CdRom = 2,
+    /// Vendor-defined device path.
+    Vendor = 3,
+    /// File path device path.
+    FilePath = 4,
+    /// Media protocol device path.
+    MediaProtocol = 5,
+    /// PIWG firmware file device path.
+    PiwgFirmwareFile = 6,
+    /// PIWG firmware volume device path.
+    PiwgFirmwareVolume = 7,
+    /// Relative offset range device path.
+    RelativeOffsetRange = 8,
+    /// RAM disk device path.
+    RamDisk = 9,
+}
+
+/// BIOS Boot Specification device path sub-types.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum BiosSubType {
+    /// BIOS Boot Specification device path.
+    BiosBootSpecification = 1,
+}
+
+/// End device path sub-types.
+pub enum EndSubType {
+    /// End of entire device path.
+    Entire = 0xFF,
+    /// End of device path instance.
+    Instance = 0x01,
+}
+
 /// Define a device path node struct and implement [`DevicePathNode`] for it.
 ///
 /// The macro also implements `TryFrom<&GenericDevicePathNode>`, which checks the node
@@ -152,7 +658,8 @@ pub trait DevicePathNode: Debug + Display {
 ///   such as [`HardwareSubType`].
 /// - `<function to override> = <function to use>` (optional): replaces the default
 ///   implementation of a [`DevicePathNode`] method with a function that takes the node
-///   by reference. Can be repeated, in any order.
+///   by reference, usually a private method such as `Self::validate_fields`. Can be
+///   repeated, in any order.
 ///
 ///   The methods that can be overridden are:
 ///
@@ -184,7 +691,7 @@ pub trait DevicePathNode: Debug + Display {
 ///
 /// device_path_node! {
 ///     /// Foo device path node.
-///     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor, validate = foo_validate)]
+///     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor, validate = Self::validate_fields)]
 ///     @[DevicePathNodeDerive(Debug, Display)]
 ///     #[derive(Pread, Pwrite, Clone)]
 ///     pub struct Foo {
@@ -195,11 +702,13 @@ pub trait DevicePathNode: Debug + Display {
 ///     }
 /// }
 ///
-/// fn foo_validate(node: &Foo) -> Result<(), &'static str> {
-///     if node.baz == 0 {
-///         return Err("baz must not be zero");
+/// impl Foo {
+///     fn validate_fields(&self) -> Result<(), &'static str> {
+///         if self.baz == 0 {
+///             return Err("baz must not be zero");
+///         }
+///         Ok(())
 ///     }
-///     Ok(())
 /// }
 ///
 /// // measure_size is not overridden, so it is the sum of the field sizes.
@@ -408,574 +917,14 @@ macro_rules! device_path_node {
     };
 }
 
-/// Device path type values (UEFI 2.10 Section 10.3.1, Table 10.1).
-///
-/// All undefined types and sub-types are reserved; extensions use a vendor node with the
-/// vendor's own GUID (Section 10.4.6).
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum DevicePathType {
-    /// Hardware device path.
-    Hardware = 1,
-    /// ACPI device path.
-    Acpi = 2,
-    /// Messaging device path.
-    Messaging = 3,
-    /// Media device path.
-    Media = 4,
-    /// BIOS Boot Specification device path.
-    Bios = 5,
-    /// End of hardware device path.
-    End = 0x7F,
-}
-
-/// Hardware device path sub-types.
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum HardwareSubType {
-    /// PCI device path.
-    Pci = 1,
-    /// PC Card device path.
-    Pccard = 2,
-    /// Memory-mapped device path.
-    MemoryMapped = 3,
-    /// Vendor-defined device path.
-    Vendor = 4,
-    /// Controller device path.
-    Controller = 5,
-    /// BMC device path.
-    Bmc = 6,
-}
-
-/// ACPI device path sub-types.
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum AcpiSubType {
-    /// ACPI device path.
-    Acpi = 1,
-    /// Extended ACPI device path.
-    ExtendedAcpi = 2,
-    /// ACPI address device path.
-    Adr = 3,
-    /// NVDIMM device identified by its NFIT device handle.
-    Nvdimm = 4,
-}
-
-/// Messaging device path sub-types.
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum MessagingSubType {
-    /// ATAPI device path.
-    Atapi = 1,
-    /// SCSI device path.
-    Scsi = 2,
-    /// Fibre Channel device path.
-    FiberChannel = 3,
-    /// Fibre Channel Ex device path.
-    FiberChannelEx = 21,
-    /// 1394 device path.
-    _1394 = 4,
-    /// USB device path.
-    Usb = 5,
-    /// SATA device path.
-    Sata = 18,
-    /// USB WWID device path.
-    UsbWwid = 16,
-    /// Device Logical Unit device path.
-    DeviceLogicalUnit = 17,
-    /// USB Class device path.
-    UsbClass = 15,
-    /// I2O Random Block Storage Class device path.
-    I2oRandomBlockStorageClass = 6,
-    /// MAC Address device path.
-    MacAddress = 11,
-    /// IPv4 device path.
-    IpV4 = 12,
-    /// IPv6 device path.
-    IpV6 = 13,
-    /// VLAN device path.
-    Vlan = 20,
-    /// InfiniBand device path.
-    InfiniBand = 9,
-    /// UART device path.
-    Uart = 14,
-    /// Vendor-defined device path.
-    Vendor = 10,
-    /// SAS Ex device path.
-    SasEx = 22,
-    /// iSCSI device path.
-    Iscsi = 19,
-    /// NVM Express device path.
-    NvmExpress = 23,
-    /// URI device path.
-    Uri = 24,
-    /// UFS device path.
-    Ufs = 25,
-    /// SD device path.
-    Sd = 26,
-    /// Bluetooth device path.
-    Bluetooth = 27,
-    /// `WiFi` device path.
-    WiFi = 28,
-    /// Embedded Multi-Media Card device path.
-    Emmc = 29,
-    /// Bluetooth LE device path.
-    BluetoothLE = 30,
-    /// DNS device path.
-    Dns = 31,
-    /// NVDIMM device path.
-    Nvdimm = 32,
-    /// REST Service device path.
-    RestService = 33,
-    /// `NVMe` over Fabric device path.
-    NvmeOf = 34,
-}
-
-/// Media device path sub-types.
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum MediaSubType {
-    /// Hard drive device path.
-    HardDrive = 1,
-    /// CD-ROM device path.
-    CdRom = 2,
-    /// Vendor-defined device path.
-    Vendor = 3,
-    /// File path device path.
-    FilePath = 4,
-    /// Media protocol device path.
-    MediaProtocol = 5,
-    /// PIWG firmware file device path.
-    PiwgFirmwareFile = 6,
-    /// PIWG firmware volume device path.
-    PiwgFirmwareVolume = 7,
-    /// Relative offset range device path.
-    RelativeOffsetRange = 8,
-    /// RAM disk device path.
-    RamDisk = 9,
-}
-
-/// BIOS Boot Specification device path sub-types.
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum BiosSubType {
-    /// BIOS Boot Specification device path.
-    BiosBootSpecification = 1,
-}
-
-/// End device path sub-types.
-pub enum EndSubType {
-    /// End of entire device path.
-    Entire = 0xFF,
-    /// End of device path instance.
-    Instance = 0x01,
-}
-
-/// Header common to every device path node (UEFI 2.10 Table 10.1).
-///
-/// The type, the sub-type whose meaning depends on the type, and the node length.
-/// The length is stored little-endian, as on the wire, so the header has the same layout
-/// on targets of either endianness.
-#[repr(C, packed)]
-#[derive(Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-pub struct Header {
-    /// Type of the device path node.
-    pub r#type: u8,
-    /// Subtype of the device path node.
-    pub sub_type: u8,
-    /// Total length in bytes of the device path node, including the header, in little-endian
-    /// byte order.
-    pub length: little_endian::U16,
-}
-
-impl Header {
-    /// Creates a new [`Header`].
-    pub const fn new(r#type: u8, sub_type: u8, length: u16) -> Self {
-        Self { r#type, sub_type, length: little_endian::U16::new(length) }
-    }
-
-    /// Return the size of the header in bytes
-    pub const fn size_of_header() -> usize {
-        core::mem::size_of::<Self>()
-    }
-}
-
-impl Debug for Header {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Header")
-            .field("type", &self.r#type)
-            .field("sub_type", &self.sub_type)
-            .field("length", &self.length.get())
-            .finish()
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for Header {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let length = self.length.get();
-        if usize::from(length) < Self::size_of_header() {
-            return Err(scroll::Error::BadInput {
-                size: usize::from(length),
-                msg: "device path node is shorter than its header",
-            });
-        }
-        let mut offset = 0;
-        dest.gwrite_with(self.r#type, &mut offset, ctx)?;
-        dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        // The length is little-endian on the wire whatever the context.
-        dest.gwrite_with(length, &mut offset, scroll::LE)?;
-        Ok(offset)
-    }
-}
-
-impl TryFromCtx<'_, scroll::Endian> for Header {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        Ok((
-            Header {
-                r#type: from.gread_with(&mut offset, ctx)?,
-                sub_type: from.gread_with(&mut offset, ctx)?,
-                // The length is little-endian on the wire whatever the context.
-                length: little_endian::U16::new(from.gread_with::<u16>(&mut offset, scroll::LE)?),
-            },
-            offset,
-        ))
-    }
-}
-
-/// Generic device path node (UEFI 2.10 Table 10.1).
-///
-/// A node whose payload is kept as raw bytes: the specific device path data that its
-/// type and sub-type define. It represents any node, including nodes that are not
-/// decoded into a specific type or whose type is not defined by the specification.
-///
-/// # Examples
-///
-/// ```
-/// use patina::uefi::device_path::node::GenericDevicePathNode;
-///
-/// let bytes = [9, 2, 6, 0, 0xaa, 0xbb];
-/// let (node, remaining) = GenericDevicePathNode::from_bytes(&bytes).unwrap();
-/// assert!(remaining.is_empty());
-/// assert_eq!(node.to_string(), "Path(9,2,aabb)");
-/// // Display-only (`-`), without shortcuts (`#`), and both.
-/// assert_eq!(format!("{node:-}"), "Path(9,2,aabb)");
-/// assert_eq!(format!("{node:#}"), "Path(9,2,aabb)");
-/// assert_eq!(format!("{node:-#}"), "Path(9,2,aabb)");
-/// ```
-#[repr(C)]
-#[derive(Debug, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-pub struct GenericDevicePathNode {
-    /// Header of the device path node.
-    pub header: Header,
-    /// Data of the device path node, could be anything depending on the header.
-    pub data: [u8],
-}
-
-impl GenericDevicePathNode {
-    /// Borrows the first device path node from `bytes` and returns the remaining bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the buffer is shorter than a header, the header length is
-    /// shorter than the header or longer than the buffer, or an end node has an
-    /// invalid subtype or length.
-    pub fn from_bytes(bytes: &[u8]) -> Result<(&Self, &[u8]), scroll::Error> {
-        let header = bytes.pread_with::<Header>(0, scroll::LE)?;
-        let length = usize::from(header.length);
-        if length < Header::size_of_header() {
-            return Err(scroll::Error::BadInput { size: length, msg: "device path node is shorter than its header" });
-        }
-        if length > bytes.len() {
-            return Err(scroll::Error::TooBig { size: length, len: bytes.len() });
-        }
-        if header.r#type == 0x7f && (length != Header::size_of_header() || !matches!(header.sub_type, 1 | 0xff)) {
-            return Err(scroll::Error::BadInput { size: length, msg: "invalid end device path node" });
-        }
-        <Self as zerocopy::FromBytes>::ref_from_prefix_with_elems(bytes, length - Header::size_of_header())
-            .map_err(|_| scroll::Error::BadInput { size: length, msg: "invalid device path node layout" })
-    }
-
-    /// Returns this node's exact in-memory bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        <Self as zerocopy::IntoBytes>::as_bytes(self)
-    }
-}
-fn write_generic(f: &mut fmt::Formatter<'_>, node: &GenericDevicePathNode) -> fmt::Result {
-    let name = match node.header.r#type {
-        1 => "HardwarePath",
-        2 => "AcpiPath",
-        3 => "Msg",
-        4 => "MediaPath",
-        5 => "BbsPath",
-        _ => "Path",
-    };
-    if name == "Path" {
-        write!(f, "Path({},{},", node.header.r#type, node.header.sub_type)?;
-    } else {
-        write!(f, "{name}({},", node.header.sub_type)?;
-    }
-    write_hex_bytes(f, &node.data)?;
-    f.write_str(")")
-}
-
-impl fmt::Display for GenericDevicePathNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_generic(f, self)
-    }
-}
-
-/// Return true if the `-` flag selects the shorter display-only form, which may omit fields.
-fn display_only(f: &fmt::Formatter<'_>) -> bool {
-    f.sign_minus()
-}
-
-/// Return true unless the `#` flag disables the shortcut node names.
-fn allow_shortcuts(f: &fmt::Formatter<'_>) -> bool {
-    !f.alternate()
-}
-
-/// Write bytes as a contiguous lowercase hexadecimal string.
-fn write_hex_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(f, "{byte:02x}")?;
-    }
-    Ok(())
-}
-
-/// Write a GUID in UEFI device path text form.
-fn write_guid(f: &mut fmt::Formatter<'_>, guid: &BinaryGuid) -> fmt::Result {
-    write!(f, "{guid}")
-}
-
-/// Write a vendor node with its GUID and optional hexadecimal payload.
-fn write_vendor(f: &mut fmt::Formatter<'_>, name: &str, guid: &BinaryGuid, data: &[u8]) -> fmt::Result {
-    write!(f, "{name}(")?;
-    write_guid(f, guid)?;
-    if !data.is_empty() {
-        f.write_str(",")?;
-        write_hex_bytes(f, data)?;
-    }
-    f.write_str(")")
-}
-
-/// Format a node with the `Display` of its decoded type, or in the generic form if it is unknown
-/// or cannot be decoded.
-pub(crate) fn fmt_generic_node(node: &GenericDevicePathNode, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match <Box<dyn DevicePathNode>>::try_from(node) {
-        Ok(decoded) => Display::fmt(&decoded, f),
-        Err(_) => Display::fmt(node, f),
-    }
-}
-
-impl DevicePathNode for &GenericDevicePathNode {
-    /// Generic nodes have no fixed type. This placeholder is unused because
-    /// `header()` and `is_type()` are overridden.
-    fn r#type() -> u8 {
-        0
-    }
-
-    /// Generic nodes have no fixed sub-type; see `r#type()`.
-    fn sub_type() -> u8 {
-        0
-    }
-
-    fn measure_size(&self) -> usize {
-        self.data.len()
-    }
-
-    /// Generic payloads are not interpreted. Only the End node rule from the header is
-    /// checked: an End node has sub-type 0x01 or 0xFF and no payload.
-    fn validate(&self) -> Result<(), &'static str> {
-        if self.header.r#type == 0x7f && (!self.data.is_empty() || !matches!(self.header.sub_type, 1 | 0xff)) {
-            return Err("invalid end device path node");
-        }
-        Ok(())
-    }
-
-    fn header(&self) -> Header {
-        self.header
-    }
-
-    fn is_type(_type: u8, _sub_type: u8) -> bool {
-        // A generic node can represent every type, so it always returns true.
-        true
-    }
-}
-
-impl TryIntoCtx<scroll::Endian> for &GenericDevicePathNode {
-    type Error = scroll::Error;
-
-    /// Write the payload, like the typed nodes; the header is written by the caller.
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        dest.pwrite_with(&self.data, 0, ())
-    }
-}
-
-impl<'a> TryFromCtx<'a, scroll::Endian> for &'a GenericDevicePathNode {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &'a [u8], _ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let (node, _) = GenericDevicePathNode::from_bytes(from)?;
-        Ok((node, usize::from(node.header.length)))
-    }
-}
-
-fn check_length(size: usize) -> Result<(), scroll::Error> {
-    if size > usize::from(u16::MAX) - 4 {
-        return Err(scroll::Error::BadInput { size: 0, msg: "device path payload exceeds the 16-bit node length" });
-    }
-    Ok(())
-}
-
-/// Decode a generic node into the node type its header identifies.
-///
-/// Nodes whose type and sub-type are not defined by the specification are returned as
-/// the generic node itself, without interpretation.
-///
-/// # Errors
-///
-/// Returns an error for inconsistent lengths, invalid payloads, or trailing bytes
-/// in a recognized node.
-impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
-    type Error = scroll::Error;
-
-    fn try_from(unknown: &'a GenericDevicePathNode) -> Result<Self, Self::Error> {
-        fn decode_node<'a, T>(node: &'a GenericDevicePathNode) -> Result<Box<dyn DevicePathNode + 'a>, scroll::Error>
-        where
-            T: DevicePathNode + TryFrom<&'a GenericDevicePathNode, Error = scroll::Error> + 'a,
-        {
-            Ok(Box::new(T::try_from(node)?))
-        }
-
-        if usize::from(unknown.header.length) != Header::size_of_header() + unknown.data.len() {
-            return Err(scroll::Error::BadInput { size: 0, msg: "device path header and payload lengths differ" });
-        }
-        check_length(unknown.data.len())?;
-        if unknown.header.r#type == 0x7f
-            && (usize::from(unknown.header.length) != Header::size_of_header()
-                || !matches!(unknown.header.sub_type, 1 | 0xff))
-        {
-            return Err(scroll::Error::BadInput { size: 0, msg: "invalid end device path node" });
-        }
-
-        match unknown.header {
-            // Hardware nodes.
-            h if Pci::is_type(h.r#type, h.sub_type) => decode_node::<Pci>(unknown),
-            h if PcCard::is_type(h.r#type, h.sub_type) => decode_node::<PcCard>(unknown),
-            h if MemoryMapped::is_type(h.r#type, h.sub_type) => decode_node::<MemoryMapped>(unknown),
-            h if Controller::is_type(h.r#type, h.sub_type) => decode_node::<Controller>(unknown),
-            h if Bmc::is_type(h.r#type, h.sub_type) => decode_node::<Bmc>(unknown),
-            h if HardwareVendor::is_type(h.r#type, h.sub_type) => decode_node::<HardwareVendor>(unknown),
-            // ACPI nodes.
-            h if Acpi::is_type(h.r#type, h.sub_type) => decode_node::<Acpi>(unknown),
-            h if ExtendedAcpi::is_type(h.r#type, h.sub_type) => decode_node::<ExtendedAcpi>(unknown),
-            h if AcpiAdr::is_type(h.r#type, h.sub_type) => decode_node::<AcpiAdr>(unknown),
-            h if NvdimmAcpi::is_type(h.r#type, h.sub_type) => decode_node::<NvdimmAcpi>(unknown),
-            // Messaging nodes.
-            h if NvmExpress::is_type(h.r#type, h.sub_type) => decode_node::<NvmExpress>(unknown),
-            h if Sata::is_type(h.r#type, h.sub_type) => decode_node::<Sata>(unknown),
-            h if Atapi::is_type(h.r#type, h.sub_type) => decode_node::<Atapi>(unknown),
-            h if Scsi::is_type(h.r#type, h.sub_type) => decode_node::<Scsi>(unknown),
-            h if FiberChannel::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannel>(unknown),
-            h if FiberChannelEx::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannelEx>(unknown),
-            h if Ieee1394::is_type(h.r#type, h.sub_type) => decode_node::<Ieee1394>(unknown),
-            h if Usb::is_type(h.r#type, h.sub_type) => decode_node::<Usb>(unknown),
-            h if UsbWwid::is_type(h.r#type, h.sub_type) => decode_node::<UsbWwid>(unknown),
-            h if UsbClass::is_type(h.r#type, h.sub_type) => decode_node::<UsbClass>(unknown),
-            h if DeviceLogicalUnit::is_type(h.r#type, h.sub_type) => decode_node::<DeviceLogicalUnit>(unknown),
-            h if I2oRandomBlockStorageClass::is_type(h.r#type, h.sub_type) => {
-                decode_node::<I2oRandomBlockStorageClass>(unknown)
-            }
-            h if MacAddress::is_type(h.r#type, h.sub_type) => decode_node::<MacAddress>(unknown),
-            h if IpV4::is_type(h.r#type, h.sub_type) => decode_node::<IpV4>(unknown),
-            h if IpV6::is_type(h.r#type, h.sub_type) => decode_node::<IpV6>(unknown),
-            h if Vlan::is_type(h.r#type, h.sub_type) => decode_node::<Vlan>(unknown),
-            h if InfiniBand::is_type(h.r#type, h.sub_type) => decode_node::<InfiniBand>(unknown),
-            h if Uart::is_type(h.r#type, h.sub_type) => decode_node::<Uart>(unknown),
-            // Vendor nodes whose GUID the specification defines decode as their own type.
-            h if UartFlowControl::is_type(h.r#type, h.sub_type)
-                && unknown.data.starts_with(UartFlowControl::GUID.as_bytes()) =>
-            {
-                decode_node::<UartFlowControl>(unknown)
-            }
-            h if Sas::is_type(h.r#type, h.sub_type) && unknown.data.starts_with(Sas::GUID.as_bytes()) => {
-                decode_node::<Sas>(unknown)
-            }
-            h if MessagingVendor::is_type(h.r#type, h.sub_type) => decode_node::<MessagingVendor>(unknown),
-            h if SasEx::is_type(h.r#type, h.sub_type) => decode_node::<SasEx>(unknown),
-            h if Iscsi::is_type(h.r#type, h.sub_type) => decode_node::<Iscsi>(unknown),
-            h if Uri::is_type(h.r#type, h.sub_type) => decode_node::<Uri>(unknown),
-            h if Ufs::is_type(h.r#type, h.sub_type) => decode_node::<Ufs>(unknown),
-            h if Sd::is_type(h.r#type, h.sub_type) => decode_node::<Sd>(unknown),
-            h if Bluetooth::is_type(h.r#type, h.sub_type) => decode_node::<Bluetooth>(unknown),
-            h if WiFi::is_type(h.r#type, h.sub_type) => decode_node::<WiFi>(unknown),
-            h if Emmc::is_type(h.r#type, h.sub_type) => decode_node::<Emmc>(unknown),
-            h if BluetoothLE::is_type(h.r#type, h.sub_type) => decode_node::<BluetoothLE>(unknown),
-            h if Dns::is_type(h.r#type, h.sub_type) => decode_node::<Dns>(unknown),
-            h if Nvdimm::is_type(h.r#type, h.sub_type) => decode_node::<Nvdimm>(unknown),
-            h if RestService::is_type(h.r#type, h.sub_type) => decode_node::<RestService>(unknown),
-            h if NvmeOf::is_type(h.r#type, h.sub_type) => decode_node::<NvmeOf>(unknown),
-            // Media nodes.
-            h if FilePath::is_type(h.r#type, h.sub_type) => decode_node::<FilePath>(unknown),
-            h if HardDrive::is_type(h.r#type, h.sub_type) => decode_node::<HardDrive>(unknown),
-            h if CdRom::is_type(h.r#type, h.sub_type) => decode_node::<CdRom>(unknown),
-            h if MediaVendor::is_type(h.r#type, h.sub_type) => decode_node::<MediaVendor>(unknown),
-            h if MediaProtocol::is_type(h.r#type, h.sub_type) => decode_node::<MediaProtocol>(unknown),
-            h if PiwgFirmwareFile::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareFile>(unknown),
-            h if PiwgFirmwareVolume::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareVolume>(unknown),
-            h if RelativeOffsetRange::is_type(h.r#type, h.sub_type) => decode_node::<RelativeOffsetRange>(unknown),
-            h if RamDisk::is_type(h.r#type, h.sub_type) => decode_node::<RamDisk>(unknown),
-            // BIOS nodes.
-            h if Bios::is_type(h.r#type, h.sub_type) => decode_node::<Bios>(unknown),
-            // End nodes.
-            h if EndEntire::is_type(h.r#type, h.sub_type) => decode_node::<EndEntire>(unknown),
-            h if EndInstance::is_type(h.r#type, h.sub_type) => decode_node::<EndInstance>(unknown),
-            _ => Ok(Box::new(unknown)),
-        }
-    }
-}
-
-/// Device path node iterator.
-pub struct Iter<'a> {
-    device_path: &'a DevicePath,
-    offset: usize,
-}
-
-impl<'a> Iter<'a> {
-    pub(super) fn new(device_path: &'a DevicePath) -> Iter<'a> {
-        Self { device_path, offset: 0 }
-    }
-}
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = &'a GenericDevicePathNode;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // No more byte to read in the device path.
-        if self.offset == self.device_path.buffer.len() {
-            return None;
-        }
-
-        let Ok(unknown_device_path) =
-            self.device_path.buffer.gread_with::<&GenericDevicePathNode>(&mut self.offset, scroll::LE)
-        else {
-            debug_assert!(false, "The buffer is corrupted, could not read the device path node.");
-            return None;
-        };
-
-        Some(unknown_device_path)
-    }
-}
-
 #[cfg(test)]
-pub(crate) mod test_support {
+#[cfg_attr(coverage, coverage(off))]
+pub(crate) mod tests {
+    //! Tests of the node module, and checks shared by the tests of each node file.
     use super::*;
+    use crate::uefi::device_path::DevicePathBuf;
     use alloc::{format, vec, vec::Vec};
+    use core::{fmt, mem};
     use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
 
     pub(crate) fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
@@ -1113,7 +1062,7 @@ pub(crate) mod test_support {
         ($test:ident, $node:expr, [$($wire:expr),* $(,)?]) => {
             #[test]
             fn $test() {
-                $crate::uefi::device_path::node::test_support::check_fixture($node, &[$($wire),*]);
+                $crate::uefi::device_path::node::tests::check_fixture($node, &[$($wire),*]);
             }
         };
     }
@@ -1140,17 +1089,6 @@ pub(crate) mod test_support {
     }
 
     pub(crate) use check_text;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::uefi::device_path::DevicePathBuf;
-    use alloc::{format, vec};
-    use core::{fmt, mem};
-    use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
-
-    use super::test_support::{encode_node, generic_node_bytes, raw_generic_node};
 
     #[derive(Debug)]
     struct HugeNode;
@@ -1316,7 +1254,7 @@ mod tests {
     device_path_node! {
         @[DevicePathNode(
             DevicePathType::Hardware, HardwareSubType::Vendor,
-            validate = checked_validate,
+            validate = Self::validate_fields,
         )]
         @[DevicePathNodeDerive(Debug, Display)]
         #[derive(Pread, Pwrite, Clone)]
@@ -1325,18 +1263,20 @@ mod tests {
         }
     }
 
-    fn checked_validate(node: &Checked) -> Result<(), &'static str> {
-        if node.value == 0 {
-            return Err("value must not be zero");
+    impl Checked {
+        fn validate_fields(&self) -> Result<(), &'static str> {
+            if self.value == 0 {
+                return Err("value must not be zero");
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     device_path_node! {
         @[DevicePathNode(
             DevicePathType::Hardware, HardwareSubType::Vendor,
-            validate = overridden_validate,
-            measure_size = overridden_measure_size,
+            validate = Self::validate_fields,
+            measure_size = Self::payload_size,
         )]
         @[DevicePathNodeDerive(Debug, Display)]
         #[derive(Pread, Pwrite, Clone)]
@@ -1345,12 +1285,14 @@ mod tests {
         }
     }
 
-    fn overridden_measure_size(_node: &Overridden) -> usize {
-        7
-    }
+    impl Overridden {
+        fn payload_size(&self) -> usize {
+            7
+        }
 
-    fn overridden_validate(_node: &Overridden) -> Result<(), &'static str> {
-        Err("always rejected")
+        fn validate_fields(&self) -> Result<(), &'static str> {
+            Err("always rejected")
+        }
     }
 
     #[test]
@@ -1383,8 +1325,6 @@ mod tests {
     /// parse back to the same bytes (UEFI 2.10 Section 10.6.1.3).
     #[test]
     fn test_device_path_text_generic() {
-        use crate::uefi::device_path::node::test_support::check_text;
-
         check_text!(r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)", r"Path(9,2,aabb)");
         check_text!(r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)", r"HardwarePath(9,aabb)");
         check_text!(r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)", r"AcpiPath(9,aabb)");

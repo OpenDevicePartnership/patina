@@ -470,16 +470,15 @@ impl DevicePath {
         IterInstance { node_iterator: self.iter() }
     }
 
-    /// Return true if this is a shorthand device path, which the specification calls a
-    /// short-form device path.
+    /// Return true if this is a short-form device path.
     ///
     /// [UEFI Spec Documentation: 3.1.2. Load Option Processing](https://uefi.org/specs/UEFI/2.10/03_Boot_Manager.html#load-option-processing)
     ///
     /// A short-form device path starts with a [`HardDrive`], [`FilePath`], [`Uri`],
     /// [`UsbWwid`], or [`UsbClass`] node instead of the system root, and must be expanded with
-    /// [`expand_shorthand`](Self::expand_shorthand) before the image it points to can be
+    /// [`expand_short_form`](Self::expand_short_form) before the image it points to can be
     /// loaded.
-    pub fn is_shorthand_notation(&self) -> bool {
+    pub fn is_short_form(&self) -> bool {
         self.iter().next().is_some_and(|node| {
             let (r#type, sub_type) = (node.header.r#type, node.header.sub_type);
             HardDrive::is_type(r#type, sub_type)
@@ -490,21 +489,21 @@ impl DevicePath {
         })
     }
 
-    /// Expand a shorthand device path into the full device paths it can refer to, in the
+    /// Expand a short-form device path into the full device paths it can refer to, in the
     /// order a boot manager tries them.
     ///
     /// [UEFI Spec Documentation: 3.1.2. Load Option Processing](https://uefi.org/specs/UEFI/2.10/03_Boot_Manager.html#load-option-processing)
     ///
-    /// A device path that is not shorthand is returned unchanged, as the only candidate. For a
-    /// shorthand device path, the first node selects how the devices are searched:
+    /// A device path that is not short-form is returned unchanged, as the only candidate. For a
+    /// short-form device path, the first node selects how the devices are searched:
     ///
     /// | First node | Matching devices | Candidate |
     /// |---|---|---|
     /// | [`HardDrive`] | Device paths with an equal hard drive node | The device path up to the hard drive node, then the nodes after the first one |
     /// | [`UsbWwid`] | USB I/O handles with the same vendor ID, product ID, interface number, and serial number suffix | The handle's device path, then the nodes after the first one |
     /// | [`UsbClass`] | USB I/O handles with the same vendor ID, product ID, class, subclass, and protocol; a field of all ones matches any value | The handle's device path, then the nodes after the first one |
-    /// | [`FilePath`] | Simple file system handles: removable media, then fixed media, then file systems without block I/O | The handle's device path, then the whole shorthand path |
-    /// | [`Uri`] | Load file handles | The handle's device path, then the whole shorthand path, so that loading it passes the shorthand path to the handle's `LoadFile` |
+    /// | [`FilePath`] | Simple file system handles: removable media, then fixed media, then file systems without block I/O | The handle's device path, then the whole short-form path |
+    /// | [`Uri`] | Load file handles | The handle's device path, then the whole short-form path, so that loading it passes the short-form path to the handle's `LoadFile` |
     ///
     /// For USB, the class, subclass, and protocol come from the interface descriptor when the
     /// device descriptor class is zero. The USB WWID serial number is compared with the end of
@@ -520,12 +519,12 @@ impl DevicePath {
     /// - [`EfiError::NotFound`] if no device matches.
     /// - [`EfiError::OutOfResources`] if a candidate cannot be allocated.
     /// - Any error other than `NOT_FOUND` returned by `LocateHandleBuffer`.
-    pub fn expand_shorthand<B: BootServices>(&self, boot_services: &B) -> Result<Vec<DevicePathBuf>, EfiError> {
+    pub fn expand_short_form<B: BootServices>(&self, boot_services: &B) -> Result<Vec<DevicePathBuf>, EfiError> {
         let Some(first_node) = self.iter().next().filter(|node| node.header.r#type != DevicePathType::End as u8) else {
             log::error!("Cannot expand an empty device path");
             return Err(EfiError::InvalidParameter);
         };
-        if !self.is_shorthand_notation() {
+        if !self.is_short_form() {
             return Ok(Vec::from([self.into()]));
         }
         // The short-form device path after its first node.
@@ -618,12 +617,12 @@ impl DevicePath {
                 }
             }
         } else {
-            log::error!("Shorthand device path starts with an invalid node");
+            log::error!("Short-form device path starts with an invalid node");
             return Err(EfiError::InvalidParameter);
         }
 
         if candidates.is_empty() {
-            log::error!("No device matches the shorthand device path");
+            log::error!("No device matches the short-form device path");
             return Err(EfiError::NotFound);
         }
         Ok(candidates)
@@ -645,7 +644,11 @@ impl fmt::Display for DevicePath {
             if need_separator && !is_end {
                 f.write_str("/")?;
             }
-            node::fmt_generic_node(generic, f)?;
+            // A node that is unknown or cannot be decoded is printed in the generic form.
+            match <Box<dyn DevicePathNode>>::try_from(generic) {
+                Ok(node) => fmt::Display::fmt(&node, f)?,
+                Err(_) => fmt::Display::fmt(generic, f)?,
+            }
             need_separator = !is_end;
         }
         Ok(())
@@ -1071,7 +1074,7 @@ mod tests {
     }
 
     /// `HD(1,GPT,<guid>)/\EFI\BOOT\BOOTX64.EFI`.
-    fn shorthand_path(guid: [u8; 16]) -> DevicePathBuf {
+    fn short_form_path(guid: [u8; 16]) -> DevicePathBuf {
         join(&[&path([hard_drive(guid)]), &boot_file()])
     }
 
@@ -1320,13 +1323,13 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_is_shorthand_notation() {
-        assert!(shorthand_path([0xaa; 16]).is_shorthand_notation());
-        assert!(boot_file().is_shorthand_notation());
-        assert!(path([Uri { uri: "http://a/b.efi".into() }]).is_shorthand_notation());
+    fn test_device_path_is_short_form() {
+        assert!(short_form_path([0xaa; 16]).is_short_form());
+        assert!(boot_file().is_short_form());
+        assert!(path([Uri { uri: "http://a/b.efi".into() }]).is_short_form());
         assert!(
             path([UsbWwid { interface: 0, vendor_id: 1, product_id: 2, serial_number: Vec::from([0x41]) }])
-                .is_shorthand_notation()
+                .is_short_form()
         );
         assert!(
             path([UsbClass {
@@ -1336,29 +1339,27 @@ mod tests {
                 device_subclass: u8::MAX,
                 device_protocol: u8::MAX,
             }])
-            .is_shorthand_notation()
+            .is_short_form()
         );
-        assert!(!disk_path([0xaa; 16]).is_shorthand_notation());
-        assert!(!path([Pci { function: 0, device: 0x1D }]).is_shorthand_notation());
-        assert!(
-            !path([PiwgFirmwareVolume { fv_name: crate::BinaryGuid::from_bytes(&[0x11; 16]) }]).is_shorthand_notation()
-        );
-        assert!(!path([EndEntire]).is_shorthand_notation());
+        assert!(!disk_path([0xaa; 16]).is_short_form());
+        assert!(!path([Pci { function: 0, device: 0x1D }]).is_short_form());
+        assert!(!path([PiwgFirmwareVolume { fv_name: crate::BinaryGuid::from_bytes(&[0x11; 16]) }]).is_short_form());
+        assert!(!path([EndEntire]).is_short_form());
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_full_path_is_unchanged() {
+    fn test_device_path_expand_short_form_full_path_is_unchanged() {
         let full = disk_path([0xaa; 16]);
-        assert_eq!(full.expand_shorthand(&MockBootServices::new()).unwrap(), [full]);
+        assert_eq!(full.expand_short_form(&MockBootServices::new()).unwrap(), [full]);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_rejects_empty_path() {
-        assert_eq!(path([EndEntire]).expand_shorthand(&MockBootServices::new()), Err(EfiError::InvalidParameter));
+    fn test_device_path_expand_short_form_rejects_empty_path() {
+        assert_eq!(path([EndEntire]).expand_short_form(&MockBootServices::new()), Err(EfiError::InvalidParameter));
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_matches_hard_drive() {
+    fn test_device_path_expand_short_form_matches_hard_drive() {
         let guid = [0xaa; 16];
         let file_system = join(&[&disk_path(guid), &path([FilePath::new("\\ignored")])]);
         let mock = mock_system(Vec::from([
@@ -1367,47 +1368,47 @@ mod tests {
             Device::with_path(file_system),
         ]));
         let expected = join(&[&disk_path(guid), &boot_file()]);
-        assert_eq!(shorthand_path(guid).expand_shorthand(&mock).unwrap(), [expected]);
+        assert_eq!(short_form_path(guid).expand_short_form(&mock).unwrap(), [expected]);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_requires_full_identity() {
+    fn test_device_path_expand_short_form_requires_full_identity() {
         let guid = [0xaa; 16];
         let other_partition =
             join(&[&path([Acpi::new_pci_root(0)]), &path([HardDrive::new_gpt(2, 2048, 1_000_000, guid)])]);
         let mock = mock_system(Vec::from([Device::with_path(other_partition)]));
-        assert_eq!(shorthand_path(guid).expand_shorthand(&mock), Err(EfiError::NotFound));
+        assert_eq!(short_form_path(guid).expand_short_form(&mock), Err(EfiError::NotFound));
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_returns_every_match() {
+    fn test_device_path_expand_short_form_returns_every_match() {
         let guid = [0xaa; 16];
         let second = join(&[&path([Acpi::new_pci_root(1)]), &path([hard_drive(guid)])]);
         let mock = mock_system(Vec::from([Device::with_path(disk_path(guid)), Device::with_path(second.clone())]));
         let expected = [join(&[&disk_path(guid), &boot_file()]), join(&[&second, &boot_file()])];
-        assert_eq!(shorthand_path(guid).expand_shorthand(&mock).unwrap(), expected);
+        assert_eq!(short_form_path(guid).expand_short_form(&mock).unwrap(), expected);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_reports_locate_errors() {
+    fn test_device_path_expand_short_form_reports_locate_errors() {
         let mut mock = MockBootServices::new();
         mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::NOT_FOUND));
-        assert_eq!(shorthand_path([0xaa; 16]).expand_shorthand(&mock), Err(EfiError::NotFound));
+        assert_eq!(short_form_path([0xaa; 16]).expand_short_form(&mock), Err(EfiError::NotFound));
 
         let mut mock = MockBootServices::new();
         mock.expect_locate_handle_buffer().returning(|_| Err(efi::Status::DEVICE_ERROR));
-        assert_eq!(shorthand_path([0xaa; 16]).expand_shorthand(&mock), Err(EfiError::DeviceError));
+        assert_eq!(short_form_path([0xaa; 16]).expand_short_form(&mock), Err(EfiError::DeviceError));
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_matches_usb_wwid() {
+    fn test_device_path_expand_short_form_matches_usb_wwid() {
         let wwid = UsbWwid {
             interface: 0,
             vendor_id: 0x1234,
             product_id: 0x5678,
             serial_number: "123456".encode_utf16().collect(),
         };
-        let shorthand = join(&[&path([wwid]), &boot_file()]);
+        let short_form = join(&[&path([wwid]), &boot_file()]);
         let devices = Vec::from([
             // Wrong serial number.
             Device {
@@ -1426,11 +1427,11 @@ mod tests {
             },
         ]);
         let expected = join(&[&usb_path(2), &boot_file()]);
-        assert_eq!(shorthand.expand_shorthand(&mock_system(devices)).unwrap(), [expected]);
+        assert_eq!(short_form.expand_short_form(&mock_system(devices)).unwrap(), [expected]);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_matches_usb_class() {
+    fn test_device_path_expand_short_form_matches_usb_class() {
         let mass_storage = UsbClass {
             vendor_id: u16::MAX,
             product_id: u16::MAX,
@@ -1449,14 +1450,14 @@ mod tests {
             ])
         };
         let expected = [usb_path(2), usb_path(3)];
-        assert_eq!(path([mass_storage.clone()]).expand_shorthand(&mock_system(devices())).unwrap(), expected);
+        assert_eq!(path([mass_storage.clone()]).expand_short_form(&mock_system(devices())).unwrap(), expected);
 
         let vendor_two = UsbClass { vendor_id: 2, ..mass_storage };
-        assert_eq!(path([vendor_two]).expand_shorthand(&mock_system(devices())).unwrap(), [usb_path(2)]);
+        assert_eq!(path([vendor_two]).expand_short_form(&mock_system(devices())).unwrap(), [usb_path(2)]);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_orders_file_systems() {
+    fn test_device_path_expand_short_form_orders_file_systems() {
         let fixed = disk_path([1; 16]);
         let removable = usb_path(1);
         let no_block_io = path([Acpi::new_pci_root(7)]);
@@ -1469,17 +1470,17 @@ mod tests {
         ]));
         let expected =
             [join(&[&removable, &boot_file()]), join(&[&fixed, &boot_file()]), join(&[&no_block_io, &boot_file()])];
-        assert_eq!(boot_file().expand_shorthand(&mock).unwrap(), expected);
+        assert_eq!(boot_file().expand_short_form(&mock).unwrap(), expected);
     }
 
     #[test]
-    fn test_device_path_expand_shorthand_uses_load_file_handles() {
+    fn test_device_path_expand_short_form_uses_load_file_handles() {
         let uri = path([Uri { uri: "http://192.168.0.1/boot.efi".into() }]);
         let network = path([Acpi::new_pci_root(3)]);
         let mock = mock_system(Vec::from([
             Device { load_file: true, ..Device::with_path(network.clone()) },
             Device::with_path(disk_path([1; 16])),
         ]));
-        assert_eq!(uri.expand_shorthand(&mock).unwrap(), [join(&[&network, &uri])]);
+        assert_eq!(uri.expand_short_form(&mock).unwrap(), [join(&[&network, &uri])]);
     }
 }
