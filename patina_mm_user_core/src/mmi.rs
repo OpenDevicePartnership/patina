@@ -380,3 +380,384 @@ impl MmiDatabase {
         });
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static GUID_X: efi::Guid = efi::Guid::from_fields(0x1111_0001, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
+    static GUID_Y: efi::Guid = efi::Guid::from_fields(0x2222_0002, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 2]);
+
+    #[test]
+    fn test_mmi_manage_reports_that_no_handler_is_registered() {
+        crate::test_support::init_test_logger();
+        let database = MmiDatabase::new();
+
+        // Nothing is registered for this type, so the dispatch reports not found.
+        let status =
+            database.mmi_manage(Some(&GUID_X), core::ptr::null(), core::ptr::null_mut(), core::ptr::null_mut());
+        assert_eq!(status, efi::Status::NOT_FOUND);
+
+        // The root chain is empty too.
+        let status = database.mmi_manage(None, core::ptr::null(), core::ptr::null_mut(), core::ptr::null_mut());
+        assert_eq!(status, efi::Status::NOT_FOUND);
+    }
+
+    /// The database the re-entrant handlers below reach back into. One per test process.
+    static REENTRANT_DATABASE: MmiDatabase = MmiDatabase::new();
+    /// Tags recorded by each handler as it runs, in dispatch order.
+    static CALLS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    const RAN_A: usize = 1;
+    const RAN_B: usize = 2;
+    const RAN_PENDING: usize = 3;
+    const RAN_QUIESCED: usize = 4;
+    const RAN_SOURCE_PENDING: usize = 5;
+    const RAN_UNSUPPORTED: usize = 6;
+    const RAN_SELF_UNREGISTER: usize = 7;
+    const RAN_REDISPATCH: usize = 8;
+    const RAN_INTERNAL: usize = 9;
+    /// Dispatch handle a re-entrant handler should unregister, and what it observed.
+    static VICTIM: AtomicUsize = AtomicUsize::new(0);
+    static NESTED_STATUS: AtomicUsize = AtomicUsize::new(0);
+    /// GUID the most recent internal handler was invoked with.
+    static INTERNAL_GUID: Mutex<Option<efi::Guid>> = Mutex::new(None);
+
+    fn record(tag: usize) {
+        CALLS.lock().push(tag);
+    }
+
+    fn calls() -> Vec<usize> {
+        CALLS.lock().clone()
+    }
+
+    macro_rules! external_handler {
+        ($name:ident, $tag:expr, $status:expr) => {
+            unsafe extern "efiapi" fn $name(
+                _dispatch_handle: efi::Handle,
+                _context: *const c_void,
+                _comm_buffer: *mut c_void,
+                _comm_buffer_size: *mut usize,
+            ) -> efi::Status {
+                record($tag);
+                $status
+            }
+        };
+    }
+
+    external_handler!(succeeds_a, RAN_A, efi::Status::SUCCESS);
+    external_handler!(succeeds_b, RAN_B, efi::Status::SUCCESS);
+    external_handler!(reports_pending, RAN_PENDING, INTERRUPT_PENDING);
+    external_handler!(reports_quiesced, RAN_QUIESCED, WARN_INTERRUPT_SOURCE_QUIESCED);
+    external_handler!(reports_source_pending, RAN_SOURCE_PENDING, WARN_INTERRUPT_SOURCE_PENDING);
+    external_handler!(reports_unsupported, RAN_UNSUPPORTED, efi::Status::UNSUPPORTED);
+
+    /// Doubles the caller's size and stamps the buffer, proving both pointers arrive intact.
+    unsafe extern "efiapi" fn echoes_comm_buffer(
+        _dispatch_handle: efi::Handle,
+        _context: *const c_void,
+        comm_buffer: *mut c_void,
+        comm_buffer_size: *mut usize,
+    ) -> efi::Status {
+        // SAFETY: the tests below always pass a live `usize` and a live byte buffer.
+        unsafe {
+            *comm_buffer_size *= 2;
+            *comm_buffer.cast::<u8>() = 0xCD;
+        }
+        efi::Status::SUCCESS
+    }
+
+    /// Unregisters itself while it is being dispatched.
+    unsafe extern "efiapi" fn unregisters_itself(
+        dispatch_handle: efi::Handle,
+        _context: *const c_void,
+        _comm_buffer: *mut c_void,
+        _comm_buffer_size: *mut usize,
+    ) -> efi::Status {
+        record(RAN_SELF_UNREGISTER);
+        REENTRANT_DATABASE.mmi_handler_unregister(dispatch_handle).expect("the running handler is registered");
+        efi::Status::SUCCESS
+    }
+
+    /// Unregisters another handler and immediately re-dispatches its type.
+    unsafe extern "efiapi" fn unregisters_victim_then_redispatches(
+        _dispatch_handle: efi::Handle,
+        _context: *const c_void,
+        _comm_buffer: *mut c_void,
+        _comm_buffer_size: *mut usize,
+    ) -> efi::Status {
+        record(RAN_REDISPATCH);
+        let victim = VICTIM.load(Ordering::Relaxed) as efi::Handle;
+        REENTRANT_DATABASE.mmi_handler_unregister(victim).expect("the victim is registered");
+
+        let nested = REENTRANT_DATABASE.mmi_manage(
+            Some(&GUID_X),
+            core::ptr::null(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
+        NESTED_STATUS.store(nested.as_usize(), Ordering::Relaxed);
+        efi::Status::SUCCESS
+    }
+
+    fn internal_recording(handler_type: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
+        record(RAN_INTERNAL);
+        *INTERNAL_GUID.lock() = Some(*handler_type);
+        efi::Status::SUCCESS
+    }
+
+    /// Dispatches `handler_type` with no context or buffer.
+    fn manage(database: &MmiDatabase, handler_type: Option<&efi::Guid>) -> efi::Status {
+        database.mmi_manage(handler_type, core::ptr::null(), core::ptr::null_mut(), core::ptr::null_mut())
+    }
+
+    fn register(database: &MmiDatabase, handler: MmiHandlerEntryPoint, guid: Option<&efi::Guid>) -> efi::Handle {
+        database.mmi_handler_register(handler, guid).expect("registration succeeds")
+    }
+
+    #[test]
+    fn test_pi_interrupt_status_codes_match_pi_multi_phase() {
+        // `PI_ENCODE_WARNING (a)` is `(MAX_BIT >> 2) | a`, and `PI_ENCODE_ERROR (a)` also sets `MAX_BIT`.
+        assert_eq!(WARN_INTERRUPT_SOURCE_PENDING.as_usize() as u64, 0x2000_0000_0000_0000);
+        assert_eq!(WARN_INTERRUPT_SOURCE_QUIESCED.as_usize() as u64, 0x2000_0000_0000_0001);
+        assert_eq!(INTERRUPT_PENDING.as_usize() as u64, 0xA000_0000_0000_0000);
+        assert!(INTERRUPT_PENDING.is_error());
+        assert!(!WARN_INTERRUPT_SOURCE_PENDING.is_error());
+    }
+
+    #[test]
+    fn test_dispatching_an_empty_database_reports_not_found() {
+        let database = MmiDatabase::default();
+
+        assert_eq!(manage(&database, None), efi::Status::NOT_FOUND);
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_a_guid_handler_only_runs_for_its_own_type() {
+        let database = MmiDatabase::new();
+        register(&database, succeeds_a, Some(&GUID_X));
+
+        assert_eq!(manage(&database, Some(&GUID_Y)), efi::Status::NOT_FOUND);
+        assert_eq!(manage(&database, None), efi::Status::NOT_FOUND, "a typed handler is not a root handler");
+        assert!(calls().is_empty());
+
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_A]);
+    }
+
+    #[test]
+    fn test_root_handlers_run_for_every_mmi_and_are_not_short_circuited() {
+        let database = MmiDatabase::new();
+        register(&database, succeeds_a, None);
+        register(&database, succeeds_b, None);
+
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_A, RAN_B], "every root handler runs even after one succeeds");
+    }
+
+    #[test]
+    fn test_a_typed_dispatch_stops_at_the_first_successful_handler() {
+        let database = MmiDatabase::new();
+        register(&database, succeeds_a, Some(&GUID_X));
+        register(&database, succeeds_b, Some(&GUID_X));
+
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_A], "dispatch short-circuits once a handler succeeds");
+    }
+
+    #[test]
+    fn test_a_typed_dispatch_stops_immediately_on_a_pending_interrupt() {
+        let database = MmiDatabase::new();
+        register(&database, reports_pending, Some(&GUID_X));
+        register(&database, succeeds_a, Some(&GUID_X));
+
+        assert_eq!(manage(&database, Some(&GUID_X)), INTERRUPT_PENDING);
+        assert_eq!(calls(), vec![RAN_PENDING], "a pending interrupt short-circuits the rest");
+    }
+
+    #[test]
+    fn test_a_root_pending_interrupt_is_reported_but_does_not_stop_dispatch() {
+        let database = MmiDatabase::new();
+        register(&database, reports_pending, None);
+        register(&database, reports_unsupported, None);
+
+        assert_eq!(manage(&database, None), INTERRUPT_PENDING);
+        assert_eq!(calls(), vec![RAN_PENDING, RAN_UNSUPPORTED]);
+    }
+
+    #[test]
+    fn test_a_success_outranks_a_pending_interrupt_from_another_root_handler() {
+        let database = MmiDatabase::new();
+        register(&database, succeeds_a, None);
+        register(&database, reports_pending, None);
+
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_A, RAN_PENDING]);
+    }
+
+    #[test]
+    fn test_a_quiesced_source_is_reported_as_success() {
+        let database = MmiDatabase::new();
+        register(&database, reports_quiesced, None);
+
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_a_pending_source_is_reported_only_when_nothing_succeeded() {
+        let database = MmiDatabase::new();
+        register(&database, reports_source_pending, None);
+        assert_eq!(manage(&database, None), WARN_INTERRUPT_SOURCE_PENDING);
+
+        register(&database, succeeds_a, None);
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS, "a success outranks a pending source");
+    }
+
+    #[test]
+    fn test_an_unhandled_status_leaves_the_mmi_unclaimed() {
+        let database = MmiDatabase::new();
+        register(&database, reports_unsupported, None);
+
+        assert_eq!(manage(&database, None), efi::Status::NOT_FOUND, "statuses outside the PI set are ignored");
+        assert_eq!(calls(), vec![RAN_UNSUPPORTED]);
+    }
+
+    #[test]
+    fn test_the_communication_buffer_and_size_reach_the_handler() {
+        let database = MmiDatabase::new();
+        register(&database, echoes_comm_buffer, Some(&GUID_X));
+
+        let mut buffer = [0u8; 4];
+        let mut size = 4usize;
+        assert_eq!(
+            database.mmi_manage(Some(&GUID_X), core::ptr::null(), buffer.as_mut_ptr().cast(), &raw mut size),
+            efi::Status::SUCCESS
+        );
+        assert_eq!(size, 8);
+        assert_eq!(buffer[0], 0xCD);
+    }
+
+    #[test]
+    fn test_handlers_sharing_a_guid_join_the_same_entry() {
+        let database = MmiDatabase::new();
+        register(&database, reports_unsupported, Some(&GUID_X));
+        register(&database, succeeds_a, Some(&GUID_X));
+        register(&database, succeeds_b, Some(&GUID_Y));
+
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_UNSUPPORTED, RAN_A], "both handlers for the GUID ran, in registration order");
+    }
+
+    #[test]
+    fn test_registration_hands_out_distinct_dispatch_handles() {
+        let database = MmiDatabase::new();
+
+        let first = register(&database, succeeds_a, None);
+        let second = register(&database, succeeds_b, Some(&GUID_X));
+        let third = database.register_internal_handler(internal_recording, None).expect("registration succeeds");
+
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert_ne!(first, third);
+    }
+
+    #[test]
+    fn test_unregistering_removes_a_root_handler_immediately() {
+        let database = MmiDatabase::new();
+        let handle = register(&database, succeeds_a, None);
+        register(&database, succeeds_b, None);
+
+        assert_eq!(database.mmi_handler_unregister(handle), Ok(()));
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_B]);
+    }
+
+    #[test]
+    fn test_unregistering_the_last_handler_for_a_guid_retires_the_entry() {
+        let database = MmiDatabase::new();
+        let handle = register(&database, succeeds_a, Some(&GUID_X));
+
+        assert_eq!(database.mmi_handler_unregister(handle), Ok(()));
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::NOT_FOUND);
+        assert!(calls().is_empty());
+    }
+
+    #[test]
+    fn test_unregistering_an_unknown_handle_is_reported_not_found() {
+        let database = MmiDatabase::new();
+        register(&database, succeeds_a, None);
+        register(&database, succeeds_b, Some(&GUID_X));
+
+        assert_eq!(
+            database.mmi_handler_unregister(core::ptr::without_provenance_mut(0x999)),
+            Err(efi::Status::INVALID_PARAMETER)
+        );
+    }
+
+    #[test]
+    fn test_a_handler_may_unregister_itself_while_it_is_running() {
+        register(&REENTRANT_DATABASE, unregisters_itself, None);
+        register(&REENTRANT_DATABASE, succeeds_a, None);
+
+        assert_eq!(manage(&REENTRANT_DATABASE, None), efi::Status::SUCCESS);
+        assert_eq!(
+            calls(),
+            vec![RAN_SELF_UNREGISTER, RAN_A],
+            "removal is deferred, so the rest of the snapshot still runs"
+        );
+
+        assert_eq!(manage(&REENTRANT_DATABASE, None), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_SELF_UNREGISTER, RAN_A, RAN_A], "the handler was removed once dispatch finished");
+    }
+
+    #[test]
+    fn test_a_handler_marked_for_removal_is_not_dispatched_by_a_nested_mmi() {
+        let victim = register(&REENTRANT_DATABASE, succeeds_b, Some(&GUID_X));
+        VICTIM.store(victim as usize, Ordering::Relaxed);
+        register(&REENTRANT_DATABASE, unregisters_victim_then_redispatches, None);
+
+        assert_eq!(manage(&REENTRANT_DATABASE, None), efi::Status::SUCCESS);
+        assert_eq!(
+            NESTED_STATUS.load(Ordering::Relaxed),
+            efi::Status::NOT_FOUND.as_usize(),
+            "the nested dispatch skipped the handler that was marked for removal"
+        );
+        assert_eq!(calls(), vec![RAN_REDISPATCH], "the victim never ran");
+
+        assert_eq!(
+            manage(&REENTRANT_DATABASE, Some(&GUID_X)),
+            efi::Status::NOT_FOUND,
+            "the victim was cleaned up afterwards"
+        );
+    }
+
+    #[test]
+    fn test_an_internal_handler_receives_the_guid_it_was_registered_for() {
+        let database = MmiDatabase::new();
+        database.register_internal_handler(internal_recording, Some(&GUID_X)).expect("registration succeeds");
+
+        assert_eq!(manage(&database, Some(&GUID_X)), efi::Status::SUCCESS);
+        assert_eq!(calls(), vec![RAN_INTERNAL]);
+        assert_eq!(*INTERNAL_GUID.lock(), Some(GUID_X));
+    }
+
+    #[test]
+    fn test_a_root_internal_handler_is_dispatched_with_a_null_guid() {
+        let database = MmiDatabase::new();
+        let handle = database.register_internal_handler(internal_recording, None).expect("registration succeeds");
+
+        assert_eq!(manage(&database, None), efi::Status::SUCCESS);
+        assert_eq!(*INTERNAL_GUID.lock(), Some(efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6])));
+
+        assert_eq!(database.mmi_handler_unregister(handle), Ok(()));
+        assert_eq!(manage(&database, None), efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_handler_kinds_are_distinguishable_when_logged() {
+        assert_eq!(alloc::format!("{:?}", HandlerKind::External(succeeds_a)), "External");
+        assert_eq!(alloc::format!("{:?}", HandlerKind::Internal(internal_recording)), "Internal");
+    }
+}

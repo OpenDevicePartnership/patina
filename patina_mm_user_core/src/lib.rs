@@ -619,15 +619,168 @@ impl MmUserCore {
 mod tests {
     use super::*;
 
+    use alloc::borrow::Cow;
     use core::sync::atomic::AtomicU64;
 
-    use patina::pi::hob::{END_OF_HOB_LIST, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader};
+    use patina::{
+        component::{
+            MetaData, Storage, UnsafeStorageCell, component,
+            hob::{FromHob, Hob as ComponentHob, HobParseError},
+            params::{Config as ConfigParam, ConfigMut, Param},
+        },
+        management_mode::{
+            event::MM_DISPATCH_EVENT_GROUP_GUID, mm_services::MmServiceProvider,
+            supervisor::MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+        },
+        pi::hob::{
+            END_OF_HOB_LIST, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader, MEMORY_ALLOCATION, MemoryAllocationHeader,
+            MemoryAllocationModule,
+        },
+    };
+
+    use crate::component_dispatcher::{Add, Component, Config};
 
     const HANDLER_GUID: efi::Guid = efi::Guid::from_fields(0x1111_0000, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
 
     static CORE: MmUserCore = MmUserCore::new();
     static AP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
     static HANDLER_CALLS: AtomicU64 = AtomicU64::new(0);
+    static DISPATCH_ORDER: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+    static NESTED_DISPATCH_STATUS: AtomicU64 = AtomicU64::new(0);
+    static NESTED_PREPARATION_STATUS: AtomicU64 = AtomicU64::new(0);
+    static PREPARATION_READY: AtomicBool = AtomicBool::new(false);
+    static DRIVER_READY: AtomicBool = AtomicBool::new(false);
+
+    struct PreparationProbe;
+
+    // SAFETY: this parameter accesses no storage and has no access requirements.
+    unsafe impl Param for PreparationProbe {
+        type State = ();
+        type Item<'storage, 'state> = Self;
+
+        unsafe fn get_param<'storage, 'state>(
+            _state: &'state Self::State,
+            _storage: UnsafeStorageCell<'storage>,
+        ) -> Self {
+            Self
+        }
+
+        fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
+            true
+        }
+
+        fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<(), Cow<'static, str>> {
+            DISPATCH_ORDER.lock().push("parameter initialization");
+            Ok(())
+        }
+    }
+
+    struct DispatchValue(u64);
+
+    impl FromHob for DispatchValue {
+        const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a1");
+
+        fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+            DISPATCH_ORDER.lock().push("HOB parsing");
+            Ok(Self(u64::from_le_bytes(bytes[..8].try_into().expect("test HOB contains a u64"))))
+        }
+    }
+
+    struct ConfigureDispatch;
+
+    impl ConfigureDispatch {
+        fn new() -> Self {
+            DISPATCH_ORDER.lock().push("construction");
+            Self
+        }
+    }
+
+    #[component]
+    impl ConfigureDispatch {
+        fn entry_point(
+            self,
+            mut config: ConfigMut<u64>,
+            hob: ComponentHob<DispatchValue>,
+            _probe: PreparationProbe,
+        ) -> patina::error::Result<()> {
+            *config = hob.0;
+            DISPATCH_ORDER.lock().push("mutable-config entry");
+            Ok(())
+        }
+    }
+
+    struct PublishDispatchProtocol;
+
+    #[component]
+    impl PublishDispatchProtocol {
+        fn entry_point(self, config: ConfigParam<u64>, services: MmServiceProvider) -> patina::error::Result<()> {
+            assert_eq!(*config, 42, "the mutable-config pass consumed the startup HOB");
+            DISPATCH_ORDER.lock().push("read-only-config entry");
+            // SAFETY: the installed protocol is a null marker with no borrowed interface.
+            unsafe {
+                services.install_protocol_interface(None, &HANDLER_GUID, core::ptr::null_mut()).unwrap();
+            }
+            // SAFETY: the dispatch event has no context or payload.
+            let nested = unsafe {
+                services.mmi_manage(
+                    Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                    core::ptr::null(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            NESTED_DISPATCH_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct DispatchPlatform;
+
+    impl MmComponentInfo for DispatchPlatform {
+        fn configs(mut add: Add<Config>) {
+            // SAFETY: the core builds the MM System Table before any component callback.
+            let table = unsafe { &*CORE.mm_system_table_ptr() };
+            PREPARATION_READY.store(
+                CORE.initialized.load(Ordering::Acquire)
+                    && table.currently_executing_cpu == 1
+                    && table.number_of_cpus == 4,
+                Ordering::SeqCst,
+            );
+            DISPATCH_ORDER.lock().push("config registration");
+            add.config(0u64);
+        }
+
+        fn services(_add: Add<crate::component_dispatcher::Service>) {
+            DISPATCH_ORDER.lock().push("service registration");
+        }
+
+        fn components(mut add: Add<Component>) {
+            DISPATCH_ORDER.lock().push("component registration");
+            let nested = CORE.mmi_db.mmi_manage(
+                Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                core::ptr::null(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            );
+            NESTED_PREPARATION_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            add.component(PublishDispatchProtocol);
+            add.component(ConfigureDispatch::new());
+        }
+    }
+
+    extern "efiapi" fn component_dependent_driver(handle: efi::Handle, table: *const c_void) -> efi::Status {
+        // SAFETY: the dispatcher passes the initialized MM System Table.
+        let table = unsafe { &*table.cast::<EfiMmSystemTable>() };
+        DRIVER_READY.store(
+            handle.is_null()
+                && table.currently_executing_cpu == 1
+                && table.number_of_cpus == 4
+                && CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_some(),
+            Ordering::SeqCst,
+        );
+        DISPATCH_ORDER.lock().push("driver entry");
+        efi::Status::SUCCESS
+    }
 
     /// Publishes the process-wide core instance. nextest gives each test its own process, so the
     /// `Once` behind `set_instance` starts empty every time.
@@ -641,7 +794,7 @@ mod tests {
     }
 
     /// A platform that registers no components, configs or services.
-    struct BarePlatform;
+    pub(super) struct BarePlatform;
     impl MmComponentInfo for BarePlatform {}
 
     fn counting_handler(_: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
@@ -661,13 +814,13 @@ mod tests {
     ///
     /// The HOB iterator walks raw memory from one header to the next, so the entries must be laid
     /// out consecutively with every length a multiple of eight to keep the next header aligned.
-    struct HobListBuffer {
+    pub(super) struct HobListBuffer {
         bytes: Vec<u8>,
         aligned: Vec<u64>,
     }
 
     impl HobListBuffer {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let phit = PhaseHandoffInformationTable {
                 header: HobHeader {
                     r#type: HANDOFF,
@@ -712,7 +865,35 @@ mod tests {
             self
         }
 
-        fn build(mut self) -> Self {
+        fn driver(mut self) -> Self {
+            static IMAGE: [u8; 64] = [0; 64];
+            let module = MemoryAllocationModule {
+                header: HobHeader {
+                    r#type: MEMORY_ALLOCATION,
+                    length: size_of::<MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: MemoryAllocationHeader {
+                    name: MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                    memory_base_address: IMAGE.as_ptr() as u64,
+                    memory_length: IMAGE.len() as u64,
+                    memory_type: efi::BOOT_SERVICES_CODE,
+                    reserved: [0; 4],
+                },
+                module_name: patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a2"),
+                entry_point: component_dependent_driver as *const () as u64,
+            };
+            // SAFETY: `MemoryAllocationModule` is repr(C), with all bytes initialized.
+            self.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::from_ref(&module).cast::<u8>(),
+                    size_of::<MemoryAllocationModule>(),
+                )
+            });
+            self
+        }
+
+        pub(super) fn build(mut self) -> Self {
             let end = HobHeader { r#type: END_OF_HOB_LIST, length: size_of::<HobHeader>() as u16, reserved: 0 };
             // SAFETY: `HobHeader` is `repr(C)` over integers.
             self.bytes.extend_from_slice(unsafe {
@@ -731,7 +912,7 @@ mod tests {
             self
         }
 
-        fn as_ptr(&self) -> *const c_void {
+        pub(super) fn as_ptr(&self) -> *const c_void {
             self.aligned.as_ptr().cast::<c_void>()
         }
 
@@ -883,10 +1064,10 @@ mod tests {
         assert!(core.initialized.load(Ordering::Acquire));
         assert!(!core.mm_system_table_ptr().is_null(), "the MM System Table was built");
         assert_eq!(COMM_BUFFER_BASE.load(Ordering::Acquire), 0x8000_0000);
-        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 2 * 4096);
+        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 2 * patina::UEFI_PAGE_SIZE as u64);
         // The HOB list is published so dispatched drivers can find it through the system table.
         assert_eq!(
-            core.config_table_db.get_configuration_table(&patina::guid::HOB_LIST),
+            core.config_table_db.get_configuration_table(&patina::pi::guid::HOB_LIST_TABLE_GUID),
             Some(hobs.as_ptr().cast_mut())
         );
 
@@ -894,6 +1075,80 @@ mod tests {
         let repeat =
             CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
         assert_eq!(repeat, efi::Status::ALREADY_STARTED.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_components_dispatch_with_drivers_only_on_the_dispatch_event() {
+        let comm = legacy_comm_buffer(MM_DISPATCH_EVENT_GROUP_GUID.into_inner(), &[], patina::UEFI_PAGE_SIZE);
+        let hobs = HobListBuffer::new()
+            .guid_hob(MM_COMM_BUFFER_HOB_GUID, &comm_buffer_hob_payload(comm.as_ptr() as u64, 1))
+            .guid_hob(DispatchValue::HOB_GUID, &42u64.to_le_bytes())
+            .driver()
+            .build();
+
+        let status =
+            CORE.entry_point_worker::<DispatchPlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+        assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+        assert!(DISPATCH_ORDER.lock().is_empty(), "startup must not execute any component-supplied code");
+        assert!(CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_none());
+        mm_mem::mock::set_handler(|index, _, _, _| {
+            assert_eq!(index, patina::management_mode::supervisor::SyscallIndex::MmIsCommBuffer.as_u64());
+            1
+        });
+
+        let expected = [
+            "config registration",
+            "service registration",
+            "component registration",
+            "construction",
+            "parameter initialization",
+            "HOB parsing",
+            "mutable-config entry",
+            "read-only-config entry",
+            "driver entry",
+        ];
+        for (valid, expected_order, expected_status) in [
+            (0, &[][..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::NOT_FOUND),
+        ] {
+            let buffer = SupvToUserBuffer::new(
+                EfiMmEntryContext {
+                    mm_startup_this_ap: 0,
+                    currently_executing_cpu: 1,
+                    number_of_cpus: 4,
+                    cpu_save_state_size: 0,
+                    cpu_save_state: 0,
+                },
+                MmCommBufferStatus {
+                    is_comm_buffer_valid: valid,
+                    _padding: [0; 7],
+                    return_status: 0,
+                    return_buffer_size: 0,
+                },
+            );
+            let result = CORE.entry_point_worker::<DispatchPlatform>(
+                UserCommandType::UserRequest as u64,
+                buffer.as_u64(),
+                SupvToUserBuffer::context_size(),
+            );
+            assert_eq!(result, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(DISPATCH_ORDER.lock().as_slice(), expected_order);
+            assert_eq!(buffer.status().return_status, expected_status.as_usize() as u64);
+        }
+
+        assert!(PREPARATION_READY.load(Ordering::SeqCst), "preparation must wait for the request's CPU context");
+        assert!(DRIVER_READY.load(Ordering::SeqCst), "components and CPU context must be ready before drivers");
+        assert_eq!(
+            NESTED_PREPARATION_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before invoking registration callbacks"
+        );
+        assert_eq!(
+            NESTED_DISPATCH_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before calling components to prevent recursive dispatch"
+        );
     }
 
     #[test]
@@ -941,7 +1196,7 @@ mod tests {
         core.discover_comm_buffer(&hobs.hob());
 
         assert_eq!(COMM_BUFFER_BASE.load(Ordering::Acquire), 0x1234_0000);
-        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 3 * 4096);
+        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 3 * patina::UEFI_PAGE_SIZE as u64);
     }
 
     #[test]
@@ -1078,7 +1333,7 @@ mod tests {
                 total - EfiMmCommunicateHeader::size() - message.len(),
             )
         };
-        assert!(tail.iter().all(|&b| b == 0));
+        assert!(tail.iter().all(|&byte| byte == 0));
     }
 
     #[test]
