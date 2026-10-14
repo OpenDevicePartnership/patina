@@ -298,5 +298,300 @@ unsafe impl<P: PageAllocatorBackend> GlobalAlloc for PoolAllocator<P> {
         log::warn!("Pool allocator: dealloc called with unknown pointer {addr:#018x}");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn page_size() -> usize {
+        uefi_pages_to_size!(1)
+    }
+
+    fn header_size() -> usize {
+        mem::size_of::<PoolBlockHeader>()
+    }
+
+    /// A page backend served from the host heap, so the blocks handed to the pool
+    /// allocator are genuinely writable and it can initialize its headers in place.
+    struct HeapPages {
+        ready: AtomicBool,
+        allocations_left: AtomicUsize,
+        free_fails: AtomicBool,
+        granted: Mutex<Vec<(u64, usize)>>,
+        released: Mutex<Vec<(u64, usize)>>,
+    }
+
+    impl HeapPages {
+        fn new() -> Self {
+            Self {
+                ready: AtomicBool::new(true),
+                allocations_left: AtomicUsize::new(usize::MAX),
+                free_fails: AtomicBool::new(false),
+                granted: Mutex::new(Vec::new()),
+                released: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn layout(num_pages: usize) -> Layout {
+            Layout::from_size_align(uefi_pages_to_size!(num_pages), page_size()).expect("valid page layout")
+        }
+
+        /// Every page run the pool allocator asked for, as `(base, pages)`.
+        fn granted(&self) -> Vec<(u64, usize)> {
+            self.granted.lock().clone()
+        }
+
+        /// Every page run the pool allocator tried to give back.
+        fn released(&self) -> Vec<(u64, usize)> {
+            self.released.lock().clone()
+        }
+    }
+
+    impl PageAllocatorBackend for HeapPages {
+        fn allocate_pages(&self, num_pages: usize) -> Result<u64, PageAllocError> {
+            if self.allocations_left.load(Ordering::Relaxed) == 0 {
+                return Err(PageAllocError::OutOfMemory);
+            }
+            self.allocations_left.fetch_sub(1, Ordering::Relaxed);
+
+            // SAFETY: `layout` has a non-zero size, satisfying the `alloc_zeroed` contract.
+            let ptr = unsafe { alloc::alloc::alloc_zeroed(Self::layout(num_pages)) };
+            assert!(!ptr.is_null(), "the host heap backs the fake page allocator");
+            self.granted.lock().push((ptr as u64, num_pages));
+            Ok(ptr as u64)
+        }
+
+        fn free_pages(&self, addr: u64, num_pages: usize) -> Result<(), PageAllocError> {
+            self.released.lock().push((addr, num_pages));
+            if self.free_fails.load(Ordering::Relaxed) {
+                return Err(PageAllocError::NotAllocated);
+            }
+            // SAFETY: `addr` was produced by `allocate_pages` with this exact layout and the pool
+            // allocator hands a block back exactly once.
+            unsafe { alloc::alloc::dealloc(addr as *mut u8, Self::layout(num_pages)) };
+            Ok(())
+        }
+
+        fn is_initialized(&self) -> bool {
+            self.ready.load(Ordering::Relaxed)
+        }
+    }
+
+    /// The allocator borrows its backend for `'static`, so the backend is leaked per test.
+    fn new_pool() -> (&'static HeapPages, PoolAllocator<HeapPages>) {
+        let backend: &'static HeapPages = alloc::boxed::Box::leak(alloc::boxed::Box::new(HeapPages::new()));
+        (backend, PoolAllocator::new(backend))
+    }
+
+    fn layout(size: usize, align: usize) -> Layout {
+        Layout::from_size_align(size, align).expect("valid layout")
+    }
+
+    /// Allocates and asserts the result is usable, returning the pointer.
+    fn alloc_ok(pool: &PoolAllocator<HeapPages>, layout: Layout) -> *mut u8 {
+        // SAFETY: `layout` has a non-zero size.
+        let ptr = unsafe { pool.alloc(layout) };
+        assert!(!ptr.is_null(), "allocation of {layout:?} succeeds");
+        ptr
+    }
+
+    fn free(pool: &PoolAllocator<HeapPages>, ptr: *mut u8, layout: Layout) {
+        // SAFETY: `ptr` came from `alloc` on this pool with this layout.
+        unsafe { pool.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn test_allocation_fails_until_the_page_backend_is_ready() {
+        let (backend, pool) = new_pool();
+        backend.ready.store(false, Ordering::Relaxed);
+
+        // SAFETY: `layout` has a non-zero size.
+        assert!(unsafe { pool.alloc(layout(32, 8)) }.is_null());
+        assert!(backend.granted().is_empty(), "no pages are requested before the backend is ready");
+
+        backend.ready.store(true, Ordering::Relaxed);
+        assert!(!alloc_ok(&pool, layout(32, 8)).is_null());
+    }
+
+    #[test]
+    fn test_an_allocation_is_writable_for_its_full_size() {
+        let (_, pool) = new_pool();
+        let layout = layout(512, 8);
+        let ptr = alloc_ok(&pool, layout);
+
+        // SAFETY: the allocator promised 512 writable bytes here.
+        unsafe {
+            ptr::write_bytes(ptr, 0xAB, 512);
+            assert!((0..512).all(|i| *ptr.add(i) == 0xAB));
+        }
+    }
+
+    #[test]
+    fn test_every_allocation_meets_the_minimum_alignment() {
+        let (_, pool) = new_pool();
+
+        // A one-byte, one-align request is still rounded up to the pool's floor.
+        let ptr = alloc_ok(&pool, layout(1, 1));
+        assert_eq!(ptr as usize % MIN_POOL_ALLOC_SIZE, 0);
+    }
+
+    #[test]
+    fn test_an_alignment_stricter_than_the_minimum_is_honoured() {
+        let (_, pool) = new_pool();
+
+        for align in [32usize, 64, 256] {
+            let ptr = alloc_ok(&pool, layout(8, align));
+            assert_eq!(ptr as usize % align, 0, "allocation is aligned to {align}");
+        }
+    }
+
+    #[test]
+    fn test_successive_allocations_are_carved_from_one_page_block() {
+        let (backend, pool) = new_pool();
+        let layout = layout(64, 8);
+
+        let first = alloc_ok(&pool, layout);
+        let second = alloc_ok(&pool, layout);
+
+        assert_eq!(backend.granted().len(), 1, "both allocations came from the same block");
+        assert!(second as usize >= first as usize + 64, "the allocations do not overlap");
+    }
+
+    #[test]
+    fn test_a_request_that_does_not_fit_grows_the_pool() {
+        let (backend, pool) = new_pool();
+        let large = layout(page_size() - header_size() - 64, 8);
+
+        alloc_ok(&pool, large);
+        assert_eq!(backend.granted().len(), 1);
+
+        // The first block is nearly full, so this one needs a block of its own.
+        alloc_ok(&pool, layout(256, 8));
+        assert_eq!(backend.granted().len(), 2, "the pool grew rather than failing");
+    }
+
+    #[test]
+    fn test_a_request_larger_than_a_page_asks_for_enough_pages() {
+        let (backend, pool) = new_pool();
+        let size = 3 * page_size();
+
+        alloc_ok(&pool, layout(size, 8));
+
+        let granted = backend.granted();
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0].1, uefi_size_to_pages!(size + header_size()), "the header is counted in the request");
+    }
+
+    #[test]
+    fn test_a_block_is_returned_only_after_its_last_allocation_is_freed() {
+        let (backend, pool) = new_pool();
+        let layout = layout(64, 8);
+        let first = alloc_ok(&pool, layout);
+        let second = alloc_ok(&pool, layout);
+        let block = backend.granted()[0];
+
+        free(&pool, first, layout);
+        assert!(backend.released().is_empty(), "the block is still holding a live allocation");
+
+        free(&pool, second, layout);
+        assert_eq!(backend.released(), alloc::vec![block], "the block went back once it was empty");
+    }
+
+    #[test]
+    fn test_freeing_the_newest_block_relinks_the_list_head() {
+        let (backend, pool) = new_pool();
+        let filling = layout(page_size() - header_size() - 64, 8);
+
+        let older = alloc_ok(&pool, filling);
+        let newest = alloc_ok(&pool, filling);
+        assert_eq!(backend.granted().len(), 2);
+
+        free(&pool, newest, filling);
+        assert_eq!(backend.released().len(), 1);
+
+        // The older block is still linked and still serves its own pointer back.
+        free(&pool, older, filling);
+        assert_eq!(backend.released().len(), 2);
+    }
+
+    #[test]
+    fn test_freeing_a_middle_block_keeps_its_neighbors_reachable() {
+        let (backend, pool) = new_pool();
+        let filling = layout(page_size() - header_size() - 64, 8);
+
+        let oldest = alloc_ok(&pool, filling);
+        let middle = alloc_ok(&pool, filling);
+        let newest = alloc_ok(&pool, filling);
+        assert_eq!(backend.granted().len(), 3);
+
+        free(&pool, middle, filling);
+        assert_eq!(backend.released().len(), 1);
+
+        // Both neighbors survive the unlink and can still be found by address.
+        free(&pool, newest, filling);
+        free(&pool, oldest, filling);
+        assert_eq!(backend.released().len(), 3, "the list was still walkable after the middle block left");
+    }
+
+    #[test]
+    fn test_dealloc_ignores_a_null_pointer() {
+        let (backend, pool) = new_pool();
+        alloc_ok(&pool, layout(64, 8));
+
+        free(&pool, ptr::null_mut(), layout(64, 8));
+
+        assert!(backend.released().is_empty());
+    }
+
+    #[test]
+    fn test_dealloc_ignores_a_pointer_outside_every_block() {
+        let (backend, pool) = new_pool();
+        alloc_ok(&pool, layout(64, 8));
+        let mut stray = 0u64;
+
+        free(&pool, ptr::from_mut(&mut stray).cast::<u8>(), layout(8, 8));
+
+        assert!(backend.released().is_empty(), "an unknown pointer does not retire someone else's block");
+    }
+
+    #[test]
+    fn test_allocation_returns_null_when_the_backend_is_out_of_pages() {
+        let (backend, pool) = new_pool();
+        backend.allocations_left.store(0, Ordering::Relaxed);
+
+        // SAFETY: `layout` has a non-zero size.
+        assert!(unsafe { pool.alloc(layout(64, 8)) }.is_null());
+    }
+
+    #[test]
+    fn test_a_block_whose_pages_cannot_be_returned_is_still_unlinked() {
+        let (backend, pool) = new_pool();
+        let layout = layout(64, 8);
+        let ptr = alloc_ok(&pool, layout);
+        backend.free_fails.store(true, Ordering::Relaxed);
+
+        free(&pool, ptr, layout);
+        assert_eq!(backend.released().len(), 1, "the pool tried to hand the pages back");
+
+        // The block is gone from the list even though the backend refused it, so the
+        // next allocation has to start a fresh one.
+        backend.free_fails.store(false, Ordering::Relaxed);
+        alloc_ok(&pool, layout);
+        assert_eq!(backend.granted().len(), 2);
+    }
+
+    #[test]
+    fn test_an_alignment_that_cannot_fit_beside_the_header_is_refused() {
+        let (backend, pool) = new_pool();
+        // Sized so the block is exactly one page: aligning past the header then leaves
+        // no room for the request itself.
+        let impossible = layout(page_size() - header_size(), page_size());
+
+        // SAFETY: `impossible` has a non-zero size.
+        assert!(unsafe { pool.alloc(impossible) }.is_null());
+        assert_eq!(backend.granted().len(), 1, "the refused request still consumed a block");
     }
 }

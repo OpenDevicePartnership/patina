@@ -926,7 +926,7 @@ mod tests {
         assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 2 * 4096);
         // The HOB list is published so dispatched drivers can find it through the system table.
         assert_eq!(
-            core.config_table_db.get_configuration_table(&patina::guid::HOB_LIST),
+            core.config_table_db.get_configuration_table(&patina::pi::guid::HOB_LIST_TABLE_GUID),
             Some(hobs.as_ptr().cast_mut())
         );
 

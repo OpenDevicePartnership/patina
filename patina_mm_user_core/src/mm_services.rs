@@ -762,3 +762,679 @@ impl MmServices for MmUserCore {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static PROTOCOL_A: efi::Guid = efi::Guid::from_fields(0xA000_0001, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
+    static PROTOCOL_B: efi::Guid = efi::Guid::from_fields(0xB000_0002, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 2]);
+    static TABLE_GUID: efi::Guid = efi::Guid::from_fields(0xC000_0003, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 3]);
+    static HANDLER_GUID: efi::Guid = efi::Guid::from_fields(0xD000_0004, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 4]);
+
+    /// The provider the thunks forward to. One per test process, so each test starts clean.
+    static CORE: MmUserCore = MmUserCore::new();
+    static MMI_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static NOTIFY_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Interface pointers only ever need to be distinct and non-null; they are never dereferenced.
+    fn interface(tag: usize) -> *mut c_void {
+        core::ptr::without_provenance_mut(tag)
+    }
+
+    /// Registers the core behind the table thunks and returns it.
+    fn services() -> &'static MmUserCore {
+        init_mm_services(&CORE);
+        &CORE
+    }
+
+    /// Makes the syscall-backed page allocator answer with `reply`.
+    fn page_allocator_replies(reply: u64) {
+        crate::mm_mem::mock::set_handler(move |_, _, _, _| reply);
+        crate::mm_mem::SYSCALL_PAGE_ALLOCATOR.set_initialized();
+    }
+
+    unsafe extern "efiapi" fn recording_handler(
+        _dispatch_handle: efi::Handle,
+        _context: *const c_void,
+        _comm_buffer: *mut c_void,
+        _comm_buffer_size: *mut usize,
+    ) -> efi::Status {
+        MMI_CALLS.fetch_add(1, Ordering::Relaxed);
+        efi::Status::SUCCESS
+    }
+
+    unsafe extern "efiapi" fn recording_notify(
+        _protocol: *const efi::Guid,
+        _interface: *mut c_void,
+        _handle: efi::Handle,
+    ) -> efi::Status {
+        NOTIFY_CALLS.fetch_add(1, Ordering::Relaxed);
+        efi::Status::SUCCESS
+    }
+
+    /// The notify callback as the `usize` the C ABI passes it in.
+    fn notify_fn() -> usize {
+        (recording_notify as MmNotifyFn) as usize
+    }
+
+    /// Installs a protocol through the table thunk and returns the handle it landed on.
+    fn install_on(
+        mut handle: efi::Handle,
+        mut guid: efi::Guid,
+        interface: *mut c_void,
+    ) -> Result<efi::Handle, efi::Status> {
+        let status =
+            mm_install_protocol_interface_impl(&raw mut handle, &raw mut guid, efi::NATIVE_INTERFACE, interface);
+        if status == efi::Status::SUCCESS { Ok(handle) } else { Err(status) }
+    }
+
+    fn install(guid: efi::Guid, interface: *mut c_void) -> efi::Handle {
+        install_on(core::ptr::null_mut(), guid, interface).expect("install succeeds")
+    }
+
+    #[test]
+    fn test_the_system_table_is_stamped_with_the_pi_signature_and_revision() {
+        let table = build_mm_system_table();
+
+        assert_eq!(table.hdr.signature, u64::from(MM_MMST_SIGNATURE));
+        assert_eq!(table.hdr.revision, MM_SYSTEM_TABLE_REVISION);
+        assert_eq!(table.hdr.header_size as usize, core::mem::size_of::<EfiMmSystemTable>());
+        assert_eq!(table.number_of_table_entries, 0);
+        assert!(table.mm_configuration_table.is_null());
+        assert!(table.cpu_save_state.is_null());
+    }
+
+    #[test]
+    fn test_cpu_io_and_ap_startup_report_themselves_unavailable() {
+        let table = build_mm_system_table();
+
+        // SAFETY: the stubs dereference none of their arguments.
+        unsafe {
+            assert_eq!(
+                (table.mm_io.mem.read)(&raw const table.mm_io.mem, 0, 0, 0, core::ptr::null_mut()),
+                efi::Status::UNSUPPORTED
+            );
+            assert_eq!(
+                (table.mm_io.io.write)(&raw const table.mm_io.io, 0, 0, 0, core::ptr::null_mut()),
+                efi::Status::UNSUPPORTED
+            );
+            assert_eq!((table.mm_startup_this_ap)(0, 0, core::ptr::null_mut()), efi::Status::UNSUPPORTED);
+        }
+    }
+
+    #[test]
+    fn test_allocate_pool_hands_back_writable_memory_and_free_pool_reclaims_it() {
+        services();
+        let mut buffer: *mut c_void = core::ptr::null_mut();
+
+        assert_eq!(mm_allocate_pool_impl(efi::RUNTIME_SERVICES_DATA, 64, &raw mut buffer), efi::Status::SUCCESS);
+        assert!(!buffer.is_null());
+
+        // SAFETY: `allocate_pool` returned a 64-byte allocation aligned to 8.
+        unsafe { core::ptr::write_bytes(buffer.cast::<u8>(), 0xAB, 64) };
+
+        assert_eq!(mm_free_pool_impl(buffer), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_allocate_pool_rejects_a_zero_size_and_a_null_out_parameter() {
+        services();
+        let mut buffer: *mut c_void = core::ptr::null_mut();
+
+        assert_eq!(
+            mm_allocate_pool_impl(efi::RUNTIME_SERVICES_DATA, 0, &raw mut buffer),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_allocate_pool_impl(efi::RUNTIME_SERVICES_DATA, 64, core::ptr::null_mut()),
+            efi::Status::INVALID_PARAMETER
+        );
+    }
+
+    #[test]
+    fn test_allocate_pool_rejects_a_size_that_cannot_form_a_layout() {
+        services();
+        let mut buffer: *mut c_void = core::ptr::null_mut();
+
+        assert_eq!(
+            mm_allocate_pool_impl(efi::RUNTIME_SERVICES_DATA, usize::MAX, &raw mut buffer),
+            efi::Status::INVALID_PARAMETER
+        );
+    }
+
+    #[test]
+    fn test_allocate_pool_reports_a_request_the_heap_cannot_satisfy() {
+        services();
+        let mut buffer: *mut c_void = core::ptr::null_mut();
+
+        // The largest size that still forms a valid layout, which no heap can supply.
+        let too_large = (isize::MAX as usize) - 7;
+        assert_eq!(
+            mm_allocate_pool_impl(efi::RUNTIME_SERVICES_DATA, too_large, &raw mut buffer),
+            efi::Status::OUT_OF_RESOURCES
+        );
+        assert!(buffer.is_null());
+    }
+
+    #[test]
+    fn test_report_passes_success_through_untouched() {
+        // Only failures are reported, so a success status is returned as-is.
+        assert_eq!(report("MmTest", efi::Status::SUCCESS), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_free_pool_rejects_a_null_buffer() {
+        services();
+
+        assert_eq!(mm_free_pool_impl(core::ptr::null_mut()), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_allocate_pages_returns_the_address_the_supervisor_supplied() {
+        services();
+        page_allocator_replies(0x4000);
+        let mut memory: efi::PhysicalAddress = 0;
+
+        assert_eq!(
+            mm_allocate_pages_impl(efi::ALLOCATE_ANY_PAGES, efi::RUNTIME_SERVICES_DATA, 2, &raw mut memory),
+            efi::Status::SUCCESS
+        );
+        assert_eq!(memory, 0x4000);
+        assert_eq!(mm_free_pages_impl(0x4000, 2), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_allocate_pages_reports_out_of_resources_when_the_supervisor_returns_null() {
+        services();
+        page_allocator_replies(0);
+        let mut memory: efi::PhysicalAddress = 0;
+
+        assert_eq!(
+            mm_allocate_pages_impl(efi::ALLOCATE_ANY_PAGES, efi::RUNTIME_SERVICES_DATA, 2, &raw mut memory),
+            efi::Status::OUT_OF_RESOURCES
+        );
+    }
+
+    #[test]
+    fn test_page_services_reject_degenerate_requests() {
+        services();
+        let mut memory: efi::PhysicalAddress = 0;
+
+        assert_eq!(
+            mm_allocate_pages_impl(efi::ALLOCATE_ANY_PAGES, efi::RUNTIME_SERVICES_DATA, 0, &raw mut memory),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_allocate_pages_impl(efi::ALLOCATE_ANY_PAGES, efi::RUNTIME_SERVICES_DATA, 1, core::ptr::null_mut()),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(mm_free_pages_impl(0, 1), efi::Status::INVALID_PARAMETER);
+        assert_eq!(mm_free_pages_impl(0x4000, 0), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_free_pages_fails_when_the_page_allocator_is_not_ready() {
+        services();
+
+        assert_eq!(mm_free_pages_impl(0x4000, 1), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_installing_a_protocol_allocates_a_handle_and_makes_it_locatable() {
+        let core = services();
+        let handle = install(PROTOCOL_A, interface(0x11));
+
+        assert!(!handle.is_null());
+        assert!(core.protocol_db.is_protocol_installed(&PROTOCOL_A));
+
+        let mut found: *mut c_void = core::ptr::null_mut();
+        let mut guid = PROTOCOL_A;
+        assert_eq!(mm_handle_protocol_impl(handle, &raw mut guid, &raw mut found), efi::Status::SUCCESS);
+        assert_eq!(found, interface(0x11));
+
+        found = core::ptr::null_mut();
+        assert_eq!(mm_locate_protocol_impl(&raw mut guid, core::ptr::null_mut(), &raw mut found), efi::Status::SUCCESS);
+        assert_eq!(found, interface(0x11));
+    }
+
+    #[test]
+    fn test_a_second_protocol_can_join_an_existing_handle() {
+        services();
+        let handle = install(PROTOCOL_A, interface(0x11));
+
+        assert_eq!(install_on(handle, PROTOCOL_B, interface(0x22)), Ok(handle));
+        // The same protocol cannot be installed twice on one handle.
+        assert_eq!(install_on(handle, PROTOCOL_B, interface(0x33)), Err(efi::Status::INVALID_PARAMETER));
+    }
+
+    #[test]
+    fn test_install_protocol_rejects_null_handle_and_protocol_pointers() {
+        services();
+        let mut handle: efi::Handle = core::ptr::null_mut();
+        let mut guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_install_protocol_interface_impl(
+                core::ptr::null_mut(),
+                &raw mut guid,
+                efi::NATIVE_INTERFACE,
+                interface(0x11)
+            ),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_install_protocol_interface_impl(
+                &raw mut handle,
+                core::ptr::null_mut(),
+                efi::NATIVE_INTERFACE,
+                interface(0x11)
+            ),
+            efi::Status::INVALID_PARAMETER
+        );
+    }
+
+    #[test]
+    fn test_uninstalling_a_protocol_removes_it_from_the_database() {
+        let core = services();
+        let handle = install(PROTOCOL_A, interface(0x11));
+        let mut guid = PROTOCOL_A;
+
+        assert_eq!(mm_uninstall_protocol_interface_impl(handle, &raw mut guid, interface(0x11)), efi::Status::SUCCESS);
+        assert!(!core.protocol_db.is_protocol_installed(&PROTOCOL_A));
+    }
+
+    #[test]
+    fn test_uninstall_protocol_rejects_null_arguments_and_unknown_handles() {
+        services();
+        let handle = install(PROTOCOL_A, interface(0x11));
+        let mut guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_uninstall_protocol_interface_impl(core::ptr::null_mut(), &raw mut guid, interface(0x11)),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_uninstall_protocol_interface_impl(handle, core::ptr::null_mut(), interface(0x11)),
+            efi::Status::INVALID_PARAMETER
+        );
+        // Right handle, protocol that was never installed on it.
+        let mut other = PROTOCOL_B;
+        assert_ne!(mm_uninstall_protocol_interface_impl(handle, &raw mut other, interface(0x11)), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_handle_protocol_clears_the_out_parameter_before_rejecting_a_null_handle() {
+        services();
+        let mut found: *mut c_void = interface(0xDEAD);
+        let mut guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_handle_protocol_impl(core::ptr::null_mut(), &raw mut guid, &raw mut found),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert!(found.is_null(), "the interface out-parameter is cleared before the handle is validated");
+    }
+
+    #[test]
+    fn test_handle_protocol_rejects_null_pointers_and_uninstalled_protocols() {
+        services();
+        let handle = install(PROTOCOL_A, interface(0x11));
+        let mut found: *mut c_void = core::ptr::null_mut();
+        let mut guid = PROTOCOL_A;
+        let mut absent = PROTOCOL_B;
+
+        assert_eq!(
+            mm_handle_protocol_impl(handle, core::ptr::null_mut(), &raw mut found),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_handle_protocol_impl(handle, &raw mut guid, core::ptr::null_mut()),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(mm_handle_protocol_impl(handle, &raw mut absent, &raw mut found), efi::Status::UNSUPPORTED);
+    }
+
+    #[test]
+    fn test_locate_protocol_reports_not_found_and_rejects_null_pointers() {
+        services();
+        let mut found: *mut c_void = core::ptr::null_mut();
+        let mut guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_locate_protocol_impl(&raw mut guid, core::ptr::null_mut(), &raw mut found),
+            efi::Status::NOT_FOUND
+        );
+        assert_eq!(
+            mm_locate_protocol_impl(core::ptr::null_mut(), core::ptr::null_mut(), &raw mut found),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_locate_protocol_impl(&raw mut guid, core::ptr::null_mut(), core::ptr::null_mut()),
+            efi::Status::INVALID_PARAMETER
+        );
+    }
+
+    #[test]
+    fn test_locate_handle_reports_the_required_size_before_filling_the_buffer() {
+        services();
+        let expected = install(PROTOCOL_A, interface(0x11));
+        let mut guid = PROTOCOL_A;
+
+        // Undersized buffer: the required size is reported and nothing is written.
+        let mut size = 0usize;
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::BY_PROTOCOL,
+                &raw mut guid,
+                core::ptr::null_mut(),
+                &raw mut size,
+                core::ptr::null_mut()
+            ),
+            efi::Status::BUFFER_TOO_SMALL
+        );
+        assert_eq!(size, core::mem::size_of::<efi::Handle>());
+
+        // Correctly sized buffer: the handle is copied out.
+        let mut handles = [core::ptr::null_mut::<c_void>(); 1];
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::BY_PROTOCOL,
+                &raw mut guid,
+                core::ptr::null_mut(),
+                &raw mut size,
+                handles.as_mut_ptr()
+            ),
+            efi::Status::SUCCESS
+        );
+        assert_eq!(handles[0], expected);
+    }
+
+    #[test]
+    fn test_locate_handle_rejects_a_null_buffer_that_claims_to_be_large_enough() {
+        services();
+        install(PROTOCOL_A, interface(0x11));
+        let mut guid = PROTOCOL_A;
+        let mut size = core::mem::size_of::<efi::Handle>();
+
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::BY_PROTOCOL,
+                &raw mut guid,
+                core::ptr::null_mut(),
+                &raw mut size,
+                core::ptr::null_mut()
+            ),
+            efi::Status::INVALID_PARAMETER
+        );
+    }
+
+    #[test]
+    fn test_locate_handle_returns_every_handle_for_an_all_handles_search() {
+        services();
+        install(PROTOCOL_A, interface(0x11));
+        install(PROTOCOL_B, interface(0x22));
+
+        let mut size = 2 * core::mem::size_of::<efi::Handle>();
+        let mut handles = [core::ptr::null_mut::<c_void>(); 2];
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::ALL_HANDLES,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &raw mut size,
+                handles.as_mut_ptr()
+            ),
+            efi::Status::SUCCESS
+        );
+        assert!(handles.iter().all(|h| !h.is_null()));
+    }
+
+    #[test]
+    fn test_locate_handle_rejects_unsupported_searches_and_missing_arguments() {
+        services();
+        let mut size = 0usize;
+
+        // No `buffer_size` out-parameter at all.
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::ALL_HANDLES,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut()
+            ),
+            efi::Status::INVALID_PARAMETER
+        );
+        // BY_PROTOCOL without a protocol.
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::BY_PROTOCOL,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &raw mut size,
+                core::ptr::null_mut()
+            ),
+            efi::Status::INVALID_PARAMETER
+        );
+        // A search type the user core does not implement.
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::BY_REGISTER_NOTIFY,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &raw mut size,
+                core::ptr::null_mut()
+            ),
+            efi::Status::UNSUPPORTED
+        );
+        // Nothing installed yet.
+        assert_eq!(
+            mm_locate_handle_impl(
+                efi::ALL_HANDLES,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &raw mut size,
+                core::ptr::null_mut()
+            ),
+            efi::Status::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn test_a_protocol_notify_fires_when_the_protocol_arrives_and_stops_once_unregistered() {
+        services();
+        let mut registration: *mut c_void = core::ptr::null_mut();
+        let guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_register_protocol_notify_impl(&raw const guid, notify_fn(), &raw mut registration),
+            efi::Status::SUCCESS
+        );
+        assert!(!registration.is_null());
+
+        install(PROTOCOL_A, interface(0x11));
+        assert_eq!(NOTIFY_CALLS.load(Ordering::Relaxed), 1);
+
+        // Function == NULL is the unregister form.
+        assert_eq!(mm_register_protocol_notify_impl(&raw const guid, 0, &raw mut registration), efi::Status::SUCCESS);
+
+        install_on(core::ptr::null_mut(), PROTOCOL_A, interface(0x22)).expect("install succeeds");
+        assert_eq!(NOTIFY_CALLS.load(Ordering::Relaxed), 1, "the callback was unregistered");
+    }
+
+    #[test]
+    fn test_register_protocol_notify_rejects_null_pointers_and_unknown_registrations() {
+        services();
+        let mut registration: *mut c_void = core::ptr::null_mut();
+        let guid = PROTOCOL_A;
+
+        assert_eq!(
+            mm_register_protocol_notify_impl(core::ptr::null_mut(), notify_fn(), &raw mut registration),
+            efi::Status::INVALID_PARAMETER
+        );
+        assert_eq!(
+            mm_register_protocol_notify_impl(&raw const guid, notify_fn(), core::ptr::null_mut()),
+            efi::Status::INVALID_PARAMETER
+        );
+        // Unregister form with a null token.
+        assert_eq!(
+            mm_register_protocol_notify_impl(&raw const guid, 0, &raw mut registration),
+            efi::Status::INVALID_PARAMETER
+        );
+        // Unregister form with a token that was never issued.
+        registration = interface(0xBEEF);
+        assert_ne!(mm_register_protocol_notify_impl(&raw const guid, 0, &raw mut registration), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_a_registered_mmi_handler_runs_when_its_type_is_dispatched() {
+        services();
+        let mut dispatch_handle: efi::Handle = core::ptr::null_mut();
+
+        // SAFETY: the thunks dereference only the pointers they null-check.
+        unsafe {
+            assert_eq!(
+                mmi_handler_register_impl(Some(recording_handler), &raw const HANDLER_GUID, &raw mut dispatch_handle),
+                efi::Status::SUCCESS
+            );
+
+            assert_eq!(
+                mmi_manage_impl(
+                    &raw const HANDLER_GUID,
+                    core::ptr::null(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut()
+                ),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(MMI_CALLS.load(Ordering::Relaxed), 1);
+
+            assert_eq!(mmi_handler_unregister_impl(dispatch_handle), efi::Status::SUCCESS);
+            assert_eq!(
+                mmi_manage_impl(
+                    &raw const HANDLER_GUID,
+                    core::ptr::null(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut()
+                ),
+                efi::Status::NOT_FOUND
+            );
+            assert_eq!(MMI_CALLS.load(Ordering::Relaxed), 1, "the handler was unregistered");
+        }
+    }
+
+    #[test]
+    fn test_a_root_mmi_handler_is_registered_when_no_type_is_given() {
+        services();
+        let mut dispatch_handle: efi::Handle = core::ptr::null_mut();
+
+        // SAFETY: the thunks dereference only the pointers they null-check.
+        unsafe {
+            assert_eq!(
+                mmi_handler_register_impl(Some(recording_handler), core::ptr::null(), &raw mut dispatch_handle),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(
+                mmi_manage_impl(core::ptr::null(), core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(MMI_CALLS.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn test_mmi_handler_register_requires_a_dispatch_handle_out_parameter() {
+        services();
+
+        // SAFETY: the thunk dereferences only the pointers it null-checks.
+        unsafe {
+            assert_eq!(
+                mmi_handler_register_impl(Some(recording_handler), &raw const HANDLER_GUID, core::ptr::null_mut()),
+                efi::Status::INVALID_PARAMETER
+            );
+        }
+    }
+
+    #[test]
+    fn test_mmi_handler_register_rejects_a_null_handler() {
+        services();
+        let mut dispatch_handle: efi::Handle = core::ptr::null_mut();
+
+        // SAFETY: the thunk dereferences only the pointers it null-checks.
+        unsafe {
+            assert_eq!(
+                mmi_handler_register_impl(None, &raw const HANDLER_GUID, &raw mut dispatch_handle),
+                efi::Status::INVALID_PARAMETER
+            );
+        }
+        assert!(dispatch_handle.is_null(), "no handle is returned for a rejected handler");
+    }
+
+    #[test]
+    fn test_unregistering_an_unknown_mmi_handler_is_reported_not_found() {
+        services();
+
+        // SAFETY: unregistering by handle never dereferences it.
+        unsafe {
+            assert_ne!(mmi_handler_unregister_impl(interface(0x99)), efi::Status::SUCCESS);
+        }
+    }
+
+    #[test]
+    fn test_a_configuration_table_entry_can_be_added_then_removed() {
+        let core = services();
+        core.init_mm_system_table();
+
+        // SAFETY: the thunk dereferences only the null-checked GUID pointer.
+        unsafe {
+            assert_eq!(
+                mm_install_configuration_table_impl(
+                    core.mm_system_table_ptr(),
+                    &raw const TABLE_GUID,
+                    interface(0x77),
+                    8
+                ),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(core.config_table_db.get_configuration_table(&TABLE_GUID), Some(interface(0x77)));
+
+            // A null table removes the entry.
+            assert_eq!(
+                mm_install_configuration_table_impl(
+                    core.mm_system_table_ptr(),
+                    &raw const TABLE_GUID,
+                    core::ptr::null_mut(),
+                    0
+                ),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(core.config_table_db.get_configuration_table(&TABLE_GUID), None);
+        }
+    }
+
+    #[test]
+    fn test_install_configuration_table_rejects_a_null_guid_and_an_unknown_removal() {
+        let core = services();
+
+        // SAFETY: the thunk dereferences only the null-checked GUID pointer.
+        unsafe {
+            assert_eq!(
+                mm_install_configuration_table_impl(core.mm_system_table_ptr(), core::ptr::null(), interface(0x77), 8),
+                efi::Status::INVALID_PARAMETER
+            );
+            // Removing an entry that was never added.
+            assert_eq!(
+                mm_install_configuration_table_impl(
+                    core.mm_system_table_ptr(),
+                    &raw const TABLE_GUID,
+                    core::ptr::null_mut(),
+                    0
+                ),
+                efi::Status::NOT_FOUND
+            );
+        }
+    }
+}
