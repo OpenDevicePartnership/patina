@@ -159,6 +159,10 @@ impl Header {
     pub const fn size_of_header() -> usize {
         core::mem::size_of::<Self>()
     }
+
+    pub fn length(&self) -> u16 {
+        self.length.get()
+    }
 }
 
 impl Debug for Header {
@@ -929,10 +933,17 @@ pub(crate) mod tests {
 
     pub(crate) fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
         node: T,
-    ) -> Result<Vec<u8>, scroll::Error> {
-        let mut bytes = Vec::new();
-        crate::uefi::device_path::DevicePathBuf::encode_node(&mut bytes, node)?;
-        Ok(bytes)
+    ) -> Result<Vec<u8>, String> {
+        // Append the node to an empty device path, then drop the end node that follows it. An
+        // end-entire node is not appended, so the path is that node alone.
+        let header = node.header();
+        let mut path = DevicePathBuf::new();
+        path.append(node)?;
+        let bytes = path.as_bytes();
+        if EndEntire::is_type(header.r#type, header.sub_type) {
+            return Ok(bytes.to_vec());
+        }
+        Ok(bytes.get(..bytes.len() - EndEntire::BYTES.len()).expect("a device path ends with its end node").to_vec())
     }
 
     pub(crate) fn generic_node_bytes(header: Header, data: &[u8]) -> Vec<u8> {

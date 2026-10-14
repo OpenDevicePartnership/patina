@@ -65,6 +65,7 @@ pub mod node;
 use alloc::{
     borrow::ToOwned,
     boxed::Box,
+    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -123,64 +124,57 @@ impl DevicePathBuf {
     /// is too large for a 16-bit length, the header length differs from
     /// [`measure_size`](DevicePathNode::measure_size), allocation fails, or the payload
     /// cannot be encoded. The device path is unchanged on failure.
-    pub fn append<T>(&mut self, node: T) -> Result<(), scroll::Error>
+    pub fn append<T>(&mut self, node: T) -> Result<(), String>
     where
         T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
     {
+        node.validate()?;
+
         let header = node.header();
+
+        // Addind an end entire do nothing. End Entire is managed automatically.
         if EndEntire::is_type(header.r#type, header.sub_type) {
             return Ok(());
         }
-        let end_start = self.buffer.len() - EndEntire::BYTES.len();
-        self.buffer.truncate(end_start);
-        let result = Self::encode_node(&mut self.buffer, node);
-        // On failure `encode_node` restores the buffer, so the end node is restored either way.
-        self.buffer.extend_from_slice(&EndEntire::BYTES);
-        result
-    }
 
-    /// Encode `node`, header included, at the end of `buffer`.
-    ///
-    /// On failure, `buffer` is unchanged.
-    fn encode_node<T>(buffer: &mut Vec<u8>, node: T) -> Result<(), scroll::Error>
-    where
-        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
-    {
-        node.validate().map_err(|msg| scroll::Error::BadInput { size: 0, msg })?;
-        let payload_length = node.measure_size();
-        let node_length = Header::size_of_header()
-            .checked_add(payload_length)
-            .filter(|length| u16::try_from(*length).is_ok())
-            .ok_or(scroll::Error::BadInput { size: payload_length, msg: "device path node is too large" })?;
-        let header = node.header();
-        if usize::from(header.length) != node_length {
-            return Err(scroll::Error::BadInput {
-                size: usize::from(header.length),
-                msg: "device path node header length differs from its size",
-            });
+        let node_payload_size = node.measure_size();
+        let node_size = Header::size_of_header()
+            .checked_add(node_payload_size)
+            .and_then(|s| u16::try_from(s).ok())
+            .ok_or(format!("device path node is too large. Node size = {node_payload_size}"))?
+            as usize;
+
+        if header.length() as usize != node_size {
+            return Err(format!(
+                "device path node header length differs from its size. Header length = {}, Node size = {node_payload_size}",
+                header.length()
+            ));
         }
 
-        let start = buffer.len();
-        // Also reserve room for the end node that `append` puts back after the node.
-        buffer
-            .try_reserve_exact(node_length + EndEntire::BYTES.len())
-            .map_err(|_| scroll::Error::BadInput { size: node_length, msg: "cannot allocate device path node" })?;
-        // No allocation will be done here, handled by the `try_reserve`.
-        buffer.resize(start + node_length, 0);
+        self.buffer
+            .try_reserve_exact(node_size)
+            .map_err(|_| format!("Cannot allocate device path node. Node size = {node_size}"))?;
 
-        let node_bytes = buffer.get_mut(start..).expect("buffer was just resized to fit");
-        let result = node_bytes.pwrite_with(header, 0, scroll::LE).and_then(|_| {
-            match node_bytes.pwrite_with(node, Header::size_of_header(), scroll::LE)? {
-                written if written == payload_length => Ok(()),
-                written => Err(scroll::Error::BadInput {
-                    size: written,
-                    msg: "encoded payload size differs from measure_size",
-                }),
-            }
-        });
+        // Write the node over the end node, then put the end node back after it. The buffer
+        // already has room for both, so this does not allocate.
+        let start = self.buffer.len() - EndEntire::BYTES.len();
+        self.buffer.truncate(start);
+        self.buffer.resize(start + node_size, 0);
+
+        let node_bytes_buffer = self.buffer.get_mut(start..).expect("Buffer was just resized to fit.");
+
+        let result = node_bytes_buffer
+            .pwrite_with(header, 0, scroll::LE)
+            .and_then(|offset| node_bytes_buffer.pwrite_with(node, offset, scroll::LE))
+            .map(|_| ())
+            .map_err(|e| format!("Cannot encode device path node. Error: {e}"));
+
         if result.is_err() {
-            buffer.truncate(start);
+            self.buffer.truncate(start);
         }
+
+        self.buffer.extend_from_slice(&EndEntire::BYTES);
+
         result
     }
 
@@ -192,8 +186,7 @@ impl DevicePathBuf {
     ///
     /// Returns an error if allocation fails.
     pub fn append_device_path(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
-        self.reserve(device_path.size())?;
-        // The other device path continues this one, and ends it with its EndEntire node.
+        self.reserve(device_path.size() - EndEntire::BYTES.len())?;
         self.buffer.truncate(self.buffer.len() - EndEntire::BYTES.len());
         self.buffer.extend_from_slice(device_path.as_bytes());
         Ok(())
@@ -698,7 +691,7 @@ pub struct IterInstance<'a> {
 }
 
 impl Iterator for IterInstance<'_> {
-    type Item = Result<DevicePathBuf, scroll::Error>;
+    type Item = Result<DevicePathBuf, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut item = None;
