@@ -866,10 +866,10 @@ mod tests {
         assert!(core.initialized.load(Ordering::Acquire));
         assert!(!core.mm_system_table_ptr().is_null(), "the MM System Table was built");
         assert_eq!(COMM_BUFFER_BASE.load(Ordering::Acquire), 0x8000_0000);
-        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 2 * 4096);
+        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 2 * patina::UEFI_PAGE_SIZE as u64);
         // The HOB list is published so dispatched drivers can find it through the system table.
         assert_eq!(
-            core.config_table_db.get_configuration_table(&patina::guid::HOB_LIST),
+            core.config_table_db.get_configuration_table(&patina::pi::guid::HOB_LIST_TABLE_GUID),
             Some(hobs.as_ptr().cast_mut())
         );
 
@@ -924,7 +924,7 @@ mod tests {
         core.discover_comm_buffer(&hobs.hob());
 
         assert_eq!(COMM_BUFFER_BASE.load(Ordering::Acquire), 0x1234_0000);
-        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 3 * 4096);
+        assert_eq!(COMM_BUFFER_SIZE.load(Ordering::Acquire), 3 * patina::UEFI_PAGE_SIZE as u64);
     }
 
     #[test]
@@ -1061,7 +1061,7 @@ mod tests {
                 total - EfiMmCommunicateHeader::size() - message.len(),
             )
         };
-        assert!(tail.iter().all(|&b| b == 0));
+        assert!(tail.iter().all(|&byte| byte == 0));
     }
 
     #[test]
