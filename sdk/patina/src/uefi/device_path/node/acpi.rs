@@ -25,12 +25,12 @@ use crate::{
     device_path_node,
     uefi::device_path::encoding::{AsciiNul, Vector},
 };
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{string::String, vec::Vec};
 use core::fmt;
-use scroll::{Pread, Pwrite};
+use scroll::{
+    Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
+};
 
 device_path_node! {
     /// ACPI NVDIMM device path node (UEFI 2.10 Table 10.12).
@@ -78,12 +78,12 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::{Acpi, ExtendedAcpi};
+    /// use patina::uefi::device_path::node::{Acpi, EisaId, ExtendedAcpi};
     ///
     /// // `AcpiEx(HWP0002,PNP0A03,0)`: a device with the HID HWP0002 that is compatible with a PCI
     /// // root bridge (UEFI 2.10 Section 10.6.1.5).
     /// let node = ExtendedAcpi {
-    ///     hid: Acpi::eisa_id("HWP0002"),
+    ///     hid: EisaId::new("HWP0002"),
     ///     uid: 0,
     ///     cid: Acpi::PCI_ROOT_HID,
     ///     hid_string: String::new(),
@@ -104,11 +104,11 @@ device_path_node! {
     #[derive(Clone, Eq, PartialEq, Pread, Pwrite)]
     pub struct ExtendedAcpi {
         /// Numeric hardware identifier.
-        pub hid: u32,
+        pub hid: EisaId,
         /// Numeric unique identifier.
         pub uid: u32,
         /// Numeric compatible identifier.
-        pub cid: u32,
+        pub cid: EisaId,
         /// Hardware identifier override, without its terminator.
         #[scroll(ctx = AsciiNul)]
         pub hid_string: String,
@@ -139,40 +139,37 @@ impl fmt::Display for ExtendedAcpi {
         // `PciRoot` and `PcieRoot` are shortcuts, and only the shorter display-only form uses them
         // for this node: their parseable form is the smaller `Acpi` node.
         if f.sign_minus() && !f.alternate() {
-            if node.hid == Acpi::PCI_ROOT_HID || (node.cid == Acpi::PCI_ROOT_HID && node.hid != Acpi::PCIE_ROOT_HID) {
-                return write_root_shortcut(f, "PciRoot", node);
-            }
-            if node.hid == Acpi::PCIE_ROOT_HID || node.cid == Acpi::PCIE_ROOT_HID {
-                return write_root_shortcut(f, "PcieRoot", node);
+            let root = if node.hid == Acpi::PCI_ROOT_HID
+                || (node.cid == Acpi::PCI_ROOT_HID && node.hid != Acpi::PCIE_ROOT_HID)
+            {
+                Some("PciRoot")
+            } else if node.hid == Acpi::PCIE_ROOT_HID || node.cid == Acpi::PCIE_ROOT_HID {
+                Some("PcieRoot")
+            } else {
+                None
+            };
+            if let Some(name) = root {
+                return if node.uid_string.is_empty() {
+                    write!(f, "{name}(0x{:x})", node.uid)
+                } else {
+                    write!(f, "{name}({})", node.uid_string)
+                };
             }
         }
 
-        let hid = eisa_string(node.hid);
-        let cid = eisa_string(node.cid);
+        let (hid, cid) = (node.hid, node.cid);
         if node.hid_string.is_empty() && node.cid_string.is_empty() && !node.uid_string.is_empty() {
-            if node.cid == 0 {
-                write!(f, "AcpiExp({hid},0,{})", node.uid_string)
-            } else {
-                write!(f, "AcpiExp({hid},{cid},{})", node.uid_string)
-            }
+            write!(f, "AcpiExp({hid},{cid},{})", node.uid_string)
         } else if f.sign_minus() {
-            write!(
-                f,
-                "AcpiEx({},{},{})",
-                if node.hid_string.is_empty() { hid.as_str() } else { &node.hid_string },
-                if node.cid_string.is_empty() { cid.as_str() } else { &node.cid_string },
-                if node.uid_string.is_empty() {
-                    return write!(
-                        f,
-                        "AcpiEx({},{},0x{:x})",
-                        if node.hid_string.is_empty() { hid.as_str() } else { &node.hid_string },
-                        if node.cid_string.is_empty() { cid.as_str() } else { &node.cid_string },
-                        node.uid
-                    );
-                } else {
-                    &node.uid_string
-                },
-            )
+            // The display-only form shows each identifier once: its string when present, else its
+            // numeric value.
+            let hid: &dyn fmt::Display = if node.hid_string.is_empty() { &hid } else { &node.hid_string };
+            let cid: &dyn fmt::Display = if node.cid_string.is_empty() { &cid } else { &node.cid_string };
+            if node.uid_string.is_empty() {
+                write!(f, "AcpiEx({hid},{cid},0x{:x})", node.uid)
+            } else {
+                write!(f, "AcpiEx({hid},{cid},{})", node.uid_string)
+            }
         } else {
             write!(
                 f,
@@ -180,14 +177,6 @@ impl fmt::Display for ExtendedAcpi {
                 node.uid, node.hid_string, node.cid_string, node.uid_string
             )
         }
-    }
-}
-
-fn write_root_shortcut(f: &mut fmt::Formatter<'_>, name: &str, node: &ExtendedAcpi) -> fmt::Result {
-    if node.uid_string.is_empty() {
-        write!(f, "{name}(0x{:x})", node.uid)
-    } else {
-        write!(f, "{name}({})", node.uid_string)
     }
 }
 
@@ -278,44 +267,76 @@ device_path_node! {
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Acpi {
-        /// _HID
-        pub hid: u32,
-        /// _UID
+        /// Numeric hardware identifier, the ACPI `_HID`.
+        pub hid: EisaId,
+        /// Numeric unique identifier, the ACPI `_UID`.
         pub uid: u32,
     }
 }
 
 impl Acpi {
     /// PCI Root Bridge HID (PNP0A03).
-    pub const PCI_ROOT_HID: u32 = Acpi::eisa_id("PNP0A03");
+    pub const PCI_ROOT_HID: EisaId = EisaId::new("PNP0A03");
     /// `PCIe` Root Bridge HID (PNP0A08).
-    pub const PCIE_ROOT_HID: u32 = Acpi::eisa_id("PNP0A08");
+    pub const PCIE_ROOT_HID: EisaId = EisaId::new("PNP0A08");
+    /// Floppy disk controller `_HID` (`PNP0604`), `Floppy` in text ([UEFI 2.10 Table 10.67](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-node-table)).
+    pub const FLOPPY_HID: EisaId = EisaId::new("PNP0604");
+    /// Keyboard `_HID` (`PNP0301`), `Keyboard` in text ([UEFI 2.10 Table 10.67](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-node-table)).
+    pub const KEYBOARD_HID: EisaId = EisaId::new("PNP0301");
+    /// Serial port `_HID` (`PNP0501`), `Serial` in text ([UEFI 2.10 Table 10.67](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-node-table)).
+    pub const SERIAL_HID: EisaId = EisaId::new("PNP0501");
+    /// Parallel port `_HID` (`PNP0401`), `ParallelPort` in text ([UEFI 2.10 Table 10.67](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-node-table)).
+    pub const PARALLEL_PORT_HID: EisaId = EisaId::new("PNP0401");
 
     /// Create a new PCI root bridge ACPI device path node.
     pub fn new_pci_root(uid: u32) -> Self {
         Self { hid: Acpi::PCI_ROOT_HID, uid }
     }
+}
 
-    /// Compress a seven-character identifier using UEFI device path byte order.
+/// A compressed EISA identifier: the numeric form of an ACPI `_HID` or `_CID`, such as
+/// `PNP0A03` for a PCI root bridge
+/// ([UEFI 2.10 Section 10.3.3](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path)).
+///
+/// The three letters of the vendor are stored as 5-bit values in the low 16 bits, and the
+/// four hex digits of the product in the high 16 bits. Zero means no identifier. The text
+/// form, from `Display`, is the seven-character identifier, or `0` when the value is zero.
+///
+/// # Examples
+///
+/// ```
+/// use patina::uefi::device_path::node::EisaId;
+///
+/// let id = EisaId::new("PNP0A03");
+/// assert_eq!(id.0, 0x0a03_41d0);
+/// assert_eq!(id.to_string(), "PNP0A03");
+/// assert!(EisaId::try_new("PNPZZZZ").is_err());
+/// ```
+#[repr(transparent)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Hash)]
+pub struct EisaId(pub u32);
+
+impl EisaId {
+    /// Compress a seven-character EISA identifier, such as `PNP0A03`.
     ///
     /// # Panics
     ///
-    /// Panics for an invalid identifier. Use [`Self::try_eisa_id`] for external input.
-    pub const fn eisa_id(hid: &str) -> u32 {
-        match Self::try_eisa_id(hid) {
+    /// Panics for an invalid identifier. Use [`Self::try_new`] for external input.
+    pub const fn new(id: &str) -> Self {
+        match Self::try_new(id) {
             Ok(id) => id,
             Err(_) => panic!("invalid EISA device path identifier"),
         }
     }
 
-    /// Compress a seven-character EISA identifier in UEFI device path byte order.
+    /// Compress a seven-character EISA identifier, such as `PNP0A03`.
     ///
     /// # Errors
     ///
     /// Rejects identifiers without three ASCII letters followed by four hex digits.
     #[allow(clippy::indexing_slicing)]
-    pub const fn try_eisa_id(hid: &str) -> Result<u32, &'static str> {
-        let bytes = hid.as_bytes();
+    pub const fn try_new(id: &str) -> Result<Self, &'static str> {
+        let bytes = id.as_bytes();
         if bytes.len() != 7 {
             return Err("EISA identifier must contain seven ASCII characters");
         }
@@ -337,58 +358,76 @@ impl Acpi {
             product = (product << 4) | digit;
             index += 1;
         }
-        Ok((product << 16) | vendor)
+        Ok(Self((product << 16) | vendor))
     }
-}
-fn write_eisa_id(f: &mut fmt::Formatter<'_>, value: u32) -> fmt::Result {
-    if value == 0 {
-        return f.write_str("0");
-    }
-    let vendor = value & 0x7fff;
-    let product = (value >> 16) & 0xffff;
-    let a = char::from_u32(((vendor >> 10) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
-    let b = char::from_u32(((vendor >> 5) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
-    let c = char::from_u32((vendor & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
-    write!(f, "{a}{b}{c}{product:04X}")
 }
 
-fn eisa_string(value: u32) -> String {
-    struct Eisa(u32);
-    impl fmt::Display for Eisa {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write_eisa_id(f, self.0)
+impl fmt::Display for EisaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self.0;
+        if value == 0 {
+            return f.write_str("0");
         }
-    }
-    Eisa(value).to_string()
-}
-
-const PNP0604: u32 = Acpi::eisa_id("PNP0604");
-const PNP0301: u32 = Acpi::eisa_id("PNP0301");
-const PNP0501: u32 = Acpi::eisa_id("PNP0501");
-const PNP0401: u32 = Acpi::eisa_id("PNP0401");
-
-fn acpi_shortcut(hid: u32) -> Option<&'static str> {
-    match hid {
-        Acpi::PCI_ROOT_HID => Some("PciRoot"),
-        Acpi::PCIE_ROOT_HID => Some("PcieRoot"),
-        PNP0604 => Some("Floppy"),
-        PNP0301 => Some("Keyboard"),
-        PNP0501 => Some("Serial"),
-        PNP0401 => Some("ParallelPort"),
-        _ => None,
+        let vendor = value & 0x7fff;
+        let product = (value >> 16) & 0xffff;
+        let a = char::from_u32(((vendor >> 10) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+        let b = char::from_u32(((vendor >> 5) & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+        let c = char::from_u32((vendor & 0x1f) + u32::from(b'A') - 1).unwrap_or('?');
+        write!(f, "{a}{b}{c}{product:04X}")
     }
 }
+
+impl fmt::Debug for EisaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("EisaId").field(&format_args!("{self}")).finish()
+    }
+}
+
+// Scroll encoding: a 32-bit value, like the `u32` it wraps.
+impl<'a> TryFromCtx<'a, scroll::Endian> for EisaId {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let (value, size) = u32::try_from_ctx(src, ctx)?;
+        Ok((Self(value), size))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for &EisaId {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for EisaId {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
 impl fmt::Display for Acpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if !f.alternate()
-            && let Some(name) = acpi_shortcut(node.hid)
-        {
-            return write!(f, "{name}(0x{:x})", node.uid);
+        if !f.alternate() {
+            // The shortcut text names of well-known `_HID` values (UEFI 2.10 Table 10.67).
+            let shortcut = match node.hid {
+                Acpi::PCI_ROOT_HID => Some("PciRoot"),
+                Acpi::PCIE_ROOT_HID => Some("PcieRoot"),
+                Acpi::FLOPPY_HID => Some("Floppy"),
+                Acpi::KEYBOARD_HID => Some("Keyboard"),
+                Acpi::SERIAL_HID => Some("Serial"),
+                Acpi::PARALLEL_PORT_HID => Some("ParallelPort"),
+                _ => None,
+            };
+            if let Some(name) = shortcut {
+                return write!(f, "{name}(0x{:x})", node.uid);
+            }
         }
-        write!(f, "Acpi(")?;
-        write_eisa_id(f, node.hid)?;
-        write!(f, ",0x{:x})", node.uid)
+        write!(f, "Acpi({},0x{:x})", node.hid, node.uid)
     }
 }
 
@@ -397,7 +436,6 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::tests::{check_node, encode_node, fixture};
     use alloc::{format, string::String, vec};
-    use scroll::ctx::TryFromCtx;
 
     fixture!(test_device_path_nvdimm_acpi, NvdimmAcpi { nfit_device_handle: 0x04030201 }, [2, 4, 8, 0, 1, 2, 3, 4]);
 
@@ -412,9 +450,9 @@ mod tests {
     fn test_device_path_extended_acpi() {
         check_node(
             ExtendedAcpi {
-                hid: 1,
+                hid: EisaId(1),
                 uid: 2,
-                cid: 3,
+                cid: EisaId(3),
                 hid_string: "A".into(),
                 uid_string: "B".into(),
                 cid_string: "C".into(),
@@ -434,9 +472,9 @@ mod tests {
         assert!(encode_node(AcpiAdr { addresses: vec![] }).is_err());
         assert!(
             encode_node(ExtendedAcpi {
-                hid: 0,
+                hid: EisaId(0),
                 uid: 0,
-                cid: 0,
+                cid: EisaId(0),
                 hid_string: "\u{e9}".into(),
                 uid_string: String::new(),
                 cid_string: String::new(),
@@ -452,10 +490,10 @@ mod tests {
     #[test]
     fn test_device_path_existing_validation_acpi() {
         for hid in ["", "PNP", "1NP0A03", "PNPZZZZ", "\u{e9}NP0A03"] {
-            assert!(Acpi::try_eisa_id(hid).is_err());
+            assert!(EisaId::try_new(hid).is_err());
         }
-        assert_eq!(Acpi::try_eisa_id("PNP0A03"), Ok(0x0a0341d0));
-        assert_eq!(Acpi::try_eisa_id("pnp0a08"), Ok(0x0a0841d0));
+        assert_eq!(EisaId::try_new("PNP0A03"), Ok(EisaId(0x0a0341d0)));
+        assert_eq!(EisaId::try_new("pnp0a08"), Ok(EisaId(0x0a0841d0)));
     }
 
     /// Check the text of each acpi node in the three text forms, and that the parseable forms
@@ -495,7 +533,7 @@ mod tests {
         let acpi_ex = ExtendedAcpi {
             hid: Acpi::PCI_ROOT_HID,
             uid: 0,
-            cid: 0,
+            cid: EisaId(0),
             hid_string: String::new(),
             uid_string: String::new(),
             cid_string: String::new(),

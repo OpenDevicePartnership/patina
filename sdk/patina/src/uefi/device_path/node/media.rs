@@ -220,14 +220,14 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::{BinaryGuid, uefi::device_path::node::RamDisk};
+    /// use patina::uefi::device_path::node::RamDisk;
     ///
     /// // A 64 MiB RAM disk of the virtual disk type `EFI_VIRTUAL_DISK_GUID` (UEFI 2.10 Section 10.3.5.9),
     /// // which displays as `VirtualDisk`.
     /// let node = RamDisk {
     ///     starting_address: 0x7000_0000,
     ///     ending_address: 0x73ff_ffff,
-    ///     type_guid: BinaryGuid::from_string("77AB535A-45FC-624B-5560-F7B281D1F96E"),
+    ///     type_guid: RamDisk::VIRTUAL_DISK_GUID,
     ///     instance: 0,
     /// };
     /// assert_eq!(node.to_string(), "VirtualDisk(0x70000000,0x73ffffff,0)");
@@ -250,19 +250,32 @@ device_path_node! {
         pub instance: u16,
     }
 }
-const VIRTUAL_DISK_GUID: BinaryGuid = BinaryGuid::from_string("77AB535A-45FC-624B-5560-F7B281D1F96E");
-const VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("3D5ABD30-4175-87CE-6D64-D2ADE523C4BB");
-const PERSISTENT_VIRTUAL_DISK_GUID: BinaryGuid = BinaryGuid::from_string("5CEA02C9-4D07-69D3-269F-4496FBE096F9");
-const PERSISTENT_VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("08018188-42CD-BB48-100F-5387D53DED3D");
+
+impl RamDisk {
+    /// `EFI_VIRTUAL_DISK_GUID`: a raw disk format in volatile memory, `VirtualDisk` in text
+    /// ([UEFI 2.10 Section 10.3.5.9](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk)).
+    pub const VIRTUAL_DISK_GUID: BinaryGuid = BinaryGuid::from_string("77AB535A-45FC-624B-5560-F7B281D1F96E");
+    /// `EFI_VIRTUAL_CD_GUID`: an ISO image in volatile memory, `VirtualCD` in text
+    /// ([UEFI 2.10 Section 10.3.5.9](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk)).
+    pub const VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("3D5ABD30-4175-87CE-6D64-D2ADE523C4BB");
+    /// `EFI_PERSISTENT_VIRTUAL_DISK_GUID`: a raw disk format in persistent memory,
+    /// `PersistentVirtualDisk` in text ([UEFI 2.10 Section 10.3.5.9](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk)).
+    pub const PERSISTENT_VIRTUAL_DISK_GUID: BinaryGuid =
+        BinaryGuid::from_string("5CEA02C9-4D07-69D3-269F-4496FBE096F9");
+    /// `EFI_PERSISTENT_VIRTUAL_CD_GUID`: an ISO image in persistent memory, `PersistentVirtualCD`
+    /// in text ([UEFI 2.10 Section 10.3.5.9](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ram-disk)).
+    pub const PERSISTENT_VIRTUAL_CD_GUID: BinaryGuid = BinaryGuid::from_string("08018188-42CD-BB48-100F-5387D53DED3D");
+}
+
 impl fmt::Display for RamDisk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         let name = match node.type_guid {
             _ if f.alternate() => None,
-            guid if guid == VIRTUAL_DISK_GUID => Some("VirtualDisk"),
-            guid if guid == VIRTUAL_CD_GUID => Some("VirtualCD"),
-            guid if guid == PERSISTENT_VIRTUAL_DISK_GUID => Some("PersistentVirtualDisk"),
-            guid if guid == PERSISTENT_VIRTUAL_CD_GUID => Some("PersistentVirtualCD"),
+            Self::VIRTUAL_DISK_GUID => Some("VirtualDisk"),
+            Self::VIRTUAL_CD_GUID => Some("VirtualCD"),
+            Self::PERSISTENT_VIRTUAL_DISK_GUID => Some("PersistentVirtualDisk"),
+            Self::PERSISTENT_VIRTUAL_CD_GUID => Some("PersistentVirtualCD"),
             _ => None,
         };
         if let Some(name) = name {

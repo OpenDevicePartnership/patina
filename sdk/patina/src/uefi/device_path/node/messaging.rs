@@ -29,33 +29,15 @@ use crate::{
     },
 };
 use alloc::{
-    format,
     string::{String, ToString},
     vec::Vec,
 };
 use core::fmt;
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
-
-fn write_dash_hex_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for (index, byte) in bytes.iter().enumerate() {
-        if index != 0 {
-            f.write_str("-")?;
-        }
-        write!(f, "{byte:02x}")?;
-    }
-    Ok(())
-}
-
-fn write_hex_u8_data(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(f, ",0x{byte:x}")?;
-    }
-    Ok(())
-}
 
 device_path_node! {
     /// ATAPI device path node (UEFI 2.10 Table 10.13).
@@ -195,7 +177,10 @@ impl fmt::Display for FiberChannel {
 impl FiberChannel {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        reserved_zero(self.reserved)
+        if self.reserved != 0 {
+            return Err("reserved field must be zero");
+        }
+        Ok(())
     }
 }
 
@@ -253,7 +238,10 @@ impl fmt::Display for FiberChannelEx {
 impl FiberChannelEx {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        reserved_zero(self.reserved)
+        if self.reserved != 0 {
+            return Err("reserved field must be zero");
+        }
+        Ok(())
     }
 }
 
@@ -298,7 +286,10 @@ impl fmt::Display for Ieee1394 {
 impl Ieee1394 {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        reserved_zero(self.reserved)
+        if self.reserved != 0 {
+            return Err("reserved field must be zero");
+        }
+        Ok(())
     }
 }
 
@@ -486,39 +477,32 @@ device_path_node! {
         pub gateway_ip_address: Ipv6Addr,
     }
 }
-struct Ipv6Endpoint(core::net::Ipv6Addr, u16);
-
-impl fmt::Display for Ipv6Endpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.1 {
-            0 => write!(f, "{}", self.0),
-            port => write!(f, "[{}]:{port}", self.0),
-        }
-    }
-}
-
 impl fmt::Display for IpV6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write!(f, "IPv6({}", Ipv6Endpoint(node.remote_ip_address, node.remote_port))?;
+        // An address is written with its port, as `[address]:port`, only when the port is not zero.
+        match node.remote_port {
+            0 => write!(f, "IPv6({}", node.remote_ip_address)?,
+            port => write!(f, "IPv6({}", SocketAddrV6::new(node.remote_ip_address, port, 0, 0))?,
+        }
         if f.sign_minus() {
             return f.write_str(")");
+        }
+        match node.protocol {
+            6 => f.write_str(",TCP")?,
+            17 => f.write_str(",UDP")?,
+            protocol => write!(f, ",0x{protocol:x}")?,
         }
         let origin = match node.ip_address_origin {
             0 => "Static",
             1 => "StatelessAutoConfigure",
             _ => "StatefulAutoConfigure",
         };
-        write!(
-            f,
-            ",{},{},{},0x{:x},{}",
-            protocol_name(node.protocol),
-            origin,
-            Ipv6Endpoint(node.local_ip_address, node.local_port),
-            node.prefix_length,
-            node.gateway_ip_address
-        )?;
-        f.write_str(")")
+        match node.local_port {
+            0 => write!(f, ",{origin},{}", node.local_ip_address)?,
+            port => write!(f, ",{origin},{}", SocketAddrV6::new(node.local_ip_address, port, 0, 0))?,
+        }
+        write!(f, ",0x{:x},{})", node.prefix_length, node.gateway_ip_address)
     }
 }
 
@@ -712,7 +696,9 @@ impl fmt::Display for Uart {
 impl Uart {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        reserved_zero(self.reserved)?;
+        if self.reserved != 0 {
+            return Err("reserved field must be zero");
+        }
         if self.parity > 5 || self.stop_bits > 3 {
             return Err("invalid UART parity or stop bits");
         }
@@ -735,14 +721,14 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::SasEx;
+    /// use patina::uefi::device_path::node::{SasEx, SasTopology};
     ///
     /// // The device of `SAS(0x31000004CF13F6BD,0)` (UEFI 2.10 Section 10.3.4.18.4) in the extended node,
     /// // where the address and LUN are byte arrays.
     /// let node = SasEx {
     ///     sas_address: [0x31, 0x00, 0x00, 0x04, 0xcf, 0x13, 0xf6, 0xbd],
     ///     lun: [0; 8],
-    ///     device_topology: 0,
+    ///     device_topology: SasTopology(0),
     ///     relative_target_port: 0,
     /// };
     /// assert_eq!(node.to_string(), "SasEx(0x31000004cf13f6bd,0x0000000000000000,0x0,NoTopology)");
@@ -760,7 +746,7 @@ device_path_node! {
         /// Eight SCSI REPORT LUNS bytes in wire order.
         pub lun: [u8; 8],
         /// SAS/SATA device and topology information, including reserved bits.
-        pub device_topology: u16,
+        pub device_topology: SasTopology,
         /// Relative target port.
         pub relative_target_port: u16,
     }
@@ -777,7 +763,7 @@ impl fmt::Display for Sas {
                 .into_iter()
                 .chain(node.sas_address.to_le_bytes())
                 .chain(node.lun.to_le_bytes())
-                .chain(node.device_topology.to_le_bytes())
+                .chain(node.device_topology.0.to_le_bytes())
                 .chain(node.relative_target_port.to_le_bytes());
             for byte in data {
                 write!(f, "{byte:02x}")?;
@@ -785,7 +771,14 @@ impl fmt::Display for Sas {
             f.write_str(")")
         } else {
             write!(f, "SAS(0x{:x},0x{:x},0x{:x},", node.sas_address, node.lun, node.relative_target_port)?;
-            topology_text(f, node.device_topology, Some(node.reserved))?;
+            write!(f, "{}", node.device_topology)?;
+            if node.reserved != 0 {
+                // The reserved field is the fifth argument after the topology.
+                for _ in node.device_topology.argument_count()..4 {
+                    f.write_str(",")?;
+                }
+                write!(f, ",0x{:x}", node.reserved)?;
+            }
             f.write_str(")")
         }
     }
@@ -802,9 +795,7 @@ impl fmt::Display for SasEx {
         for byte in &node.lun {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:x},", node.relative_target_port)?;
-        topology_text(f, node.device_topology, None)?;
-        f.write_str(")")
+        write!(f, ",0x{:x},{})", node.relative_target_port, node.device_topology)
     }
 }
 
@@ -1154,29 +1145,31 @@ device_path_node! {
         pub device_protocol: u8,
     }
 }
-fn usb_class_shortcut(node: &UsbClass) -> Option<(&'static str, bool)> {
-    let name = match (node.device_class, node.device_subclass) {
-        (1, _) => ("UsbAudio", false),
-        (2, _) => ("UsbCDCControl", false),
-        (3, _) => ("UsbHID", false),
-        (6, _) => ("UsbImage", false),
-        (7, _) => ("UsbPrinter", false),
-        (8, _) => ("UsbMassStorage", false),
-        (9, _) => ("UsbHub", false),
-        (10, _) => ("UsbCDCData", false),
-        (11, _) => ("UsbSmartCard", false),
-        (14, _) => ("UsbVideo", false),
-        (220, _) => ("UsbDiagnostic", false),
-        (224, _) => ("UsbWireless", false),
-        (254, 1) => ("UsbDeviceFirmwareUpdate", true),
-        (254, 2) => ("UsbIrdaBridge", true),
-        (254, 3) => ("UsbTestAndMeasurement", true),
-        _ => return None,
-    };
-    Some(name)
-}
-
 impl UsbClass {
+    /// The shortcut text name of this node's class (UEFI 2.10 Table 10.67), and whether the
+    /// name also fixes the subclass, so that the subclass is left out of the text.
+    fn shortcut(&self) -> Option<(&'static str, bool)> {
+        let name = match (self.device_class, self.device_subclass) {
+            (1, _) => ("UsbAudio", false),
+            (2, _) => ("UsbCDCControl", false),
+            (3, _) => ("UsbHID", false),
+            (6, _) => ("UsbImage", false),
+            (7, _) => ("UsbPrinter", false),
+            (8, _) => ("UsbMassStorage", false),
+            (9, _) => ("UsbHub", false),
+            (10, _) => ("UsbCDCData", false),
+            (11, _) => ("UsbSmartCard", false),
+            (14, _) => ("UsbVideo", false),
+            (220, _) => ("UsbDiagnostic", false),
+            (224, _) => ("UsbWireless", false),
+            (254, 1) => ("UsbDeviceFirmwareUpdate", true),
+            (254, 2) => ("UsbIrdaBridge", true),
+            (254, 3) => ("UsbTestAndMeasurement", true),
+            _ => return None,
+        };
+        Some(name)
+    }
+
     /// Return true if the USB device matches this node; a field of all ones matches any value.
     ///
     /// When the device descriptor class is zero, each interface declares its own class, so the
@@ -1208,7 +1201,7 @@ impl fmt::Display for UsbClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         if !f.alternate()
-            && let Some((name, fixed_subclass)) = usb_class_shortcut(node)
+            && let Some((name, fixed_subclass)) = node.shortcut()
         {
             if fixed_subclass {
                 return write!(
@@ -1241,12 +1234,12 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::{BinaryGuid, uefi::device_path::node::MessagingVendor};
+    /// use patina::uefi::device_path::node::MessagingVendor;
     ///
     /// // The `DebugPort()` node of
     /// // `PciRoot(0)/Pci(0x1f,0)/ACPI(PNP0501,0)/UART(115200,N,8,1)/UartFlowCtrl(2)/DebugPort()`
     /// // (UEFI 2.10 Section 10.3.4.17): a vendor node with `EFI_DEBUGPORT_PROTOCOL_GUID` and no data.
-    /// let node = MessagingVendor { guid: BinaryGuid::from_string("EBA4E8D2-3858-41EC-A281-2647BA9660D0"), data: Vec::new() };
+    /// let node = MessagingVendor { guid: MessagingVendor::DEBUG_PORT_GUID, data: Vec::new() };
     /// assert_eq!(node.to_string(), "DebugPort()");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "DebugPort()");
@@ -1271,20 +1264,16 @@ impl fmt::Display for MessagingVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         if !f.alternate() && node.data.is_empty() {
-            if node.guid == BinaryGuid::from_string("E0C14753-F9BE-11D2-9A0C-0090273FC14D") {
-                return f.write_str("VenPcAnsi()");
-            }
-            if node.guid == BinaryGuid::from_string("DFA66065-B419-11D3-9A2D-0090273FC14D") {
-                return f.write_str("VenVt100()");
-            }
-            if node.guid == BinaryGuid::from_string("7BAEC70B-57E0-4C76-8E87-2F9E28088343") {
-                return f.write_str("VenVt100Plus()");
-            }
-            if node.guid == BinaryGuid::from_string("AD15A0D6-8BEC-4ACF-A073-D01DE77E2D88") {
-                return f.write_str("VenUtf8()");
-            }
-            if node.guid == BinaryGuid::from_string("EBA4E8D2-3858-41EC-A281-2647BA9660D0") {
-                return f.write_str("DebugPort()");
+            let shortcut = match node.guid {
+                Self::PC_ANSI_GUID => Some("VenPcAnsi()"),
+                Self::VT_100_GUID => Some("VenVt100()"),
+                Self::VT_100_PLUS_GUID => Some("VenVt100Plus()"),
+                Self::VT_UTF8_GUID => Some("VenUtf8()"),
+                Self::DEBUG_PORT_GUID => Some("DebugPort()"),
+                _ => None,
+            };
+            if let Some(shortcut) = shortcut {
+                return f.write_str(shortcut);
             }
         }
         write!(f, "VenMsg({}", node.guid)?;
@@ -1299,27 +1288,26 @@ impl fmt::Display for MessagingVendor {
 }
 
 impl MessagingVendor {
+    /// `EFI_PC_ANSI_GUID`: a PC-ANSI terminal, `VenPcAnsi()` in text
+    /// ([UEFI 2.10 Section 10.3.4.16](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path)).
+    pub const PC_ANSI_GUID: BinaryGuid = BinaryGuid::from_string("E0C14753-F9BE-11D2-9A0C-0090273FC14D");
+    /// `EFI_VT_100_GUID`: a VT-100 terminal, `VenVt100()` in text
+    /// ([UEFI 2.10 Section 10.3.4.16](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path)).
+    pub const VT_100_GUID: BinaryGuid = BinaryGuid::from_string("DFA66065-B419-11D3-9A2D-0090273FC14D");
+    /// `EFI_VT_100_PLUS_GUID`: a VT-100+ terminal, `VenVt100Plus()` in text
+    /// ([UEFI 2.10 Section 10.3.4.16](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path)).
+    pub const VT_100_PLUS_GUID: BinaryGuid = BinaryGuid::from_string("7BAEC70B-57E0-4C76-8E87-2F9E28088343");
+    /// `EFI_VT_UTF8_GUID`: a VT-UTF8 terminal, `VenUtf8()` in text
+    /// ([UEFI 2.10 Section 10.3.4.16](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#vendor-defined-messaging-device-path)).
+    pub const VT_UTF8_GUID: BinaryGuid = BinaryGuid::from_string("AD15A0D6-8BEC-4ACF-A073-D01DE77E2D88");
+    /// `DEVICE_PATH_MESSAGING_DEBUGPORT`, the same value as `EFI_DEBUGPORT_PROTOCOL_GUID`: a
+    /// debug port, `DebugPort()` in text ([UEFI 2.10 Section 18.3.7](https://uefi.org/specs/UEFI/2.10/18_Protocols_Debugger_Support.html#debugport-device-path)).
+    pub const DEBUG_PORT_GUID: BinaryGuid = BinaryGuid::from_string("EBA4E8D2-3858-41EC-A281-2647BA9660D0");
+
     /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
     fn payload_size(&self) -> usize {
         size_of_val(&self.guid) + size_of_val(self.data.as_slice())
     }
-}
-
-/// Check that a reserved field is zero, as the specification requires.
-fn reserved_zero(reserved: u32) -> Result<(), &'static str> {
-    if reserved != 0 {
-        return Err("reserved field must be zero");
-    }
-    Ok(())
-}
-
-/// Read the vendor GUID at the start of a vendor messaging payload and check it is `expected`.
-fn read_vendor_guid(data: &[u8], offset: &mut usize, expected: BinaryGuid) -> Result<(), scroll::Error> {
-    let guid: BinaryGuid = data.gread_with(offset, scroll::LE)?;
-    if guid != expected {
-        return Err(scroll::Error::BadInput { size: 0, msg: "vendor GUID does not match the node" });
-    }
-    Ok(())
 }
 
 device_path_node! {
@@ -1356,27 +1344,93 @@ device_path_node! {
         pub flow_control_map: u32,
     }
 }
-fn topology_text(f: &mut fmt::Formatter<'_>, topology: u16, reserved: Option<u32>) -> fmt::Result {
-    let information = topology & 0x0f;
-    let keywords = topology & 0x80 == 0 && (information == 2 || (information == 1 && topology >> 8 == 0));
-    let mut arguments: [String; 5] = Default::default();
-    if topology == 0 {
-        arguments[0] = "NoTopology".to_string();
-    } else if keywords {
-        arguments[0] = (if topology & 0x10 != 0 { "SATA" } else { "SAS" }).to_string();
-        arguments[1] = (if topology & 0x20 != 0 { "External" } else { "Internal" }).to_string();
-        arguments[2] = (if topology & 0x40 != 0 { "Expanded" } else { "Direct" }).to_string();
-        if information == 2 {
-            arguments[3] = format!("0x{:x}", (topology >> 8) + 1);
+/// The SAS/SATA device and topology information of a [`Sas`] or [`SasEx`] node
+/// ([UEFI 2.10 Sections 10.3.4.18.1 and 10.3.4.18.2](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-and-topology-information)).
+///
+/// The low byte describes the device: bits 0-3 say how much information is valid (`0` none, `1`
+/// the low byte, `2` both bytes), bits 4-5 give the device type (SAS or SATA, internal or
+/// external), and bits 6-7 the interconnect (direct, or through expanders). When both bytes are
+/// valid, the high byte is the internal drive bay, `0` to `255` for drives 1 to 256.
+///
+/// The text form, from `Display`, is the topology arguments of the `SAS` and `SasEx` text
+/// (UEFI 2.10 Table 10.67): `NoTopology`; the keywords such as `SATA,Internal,Direct` followed by
+/// the drive bay when present; or the raw value, such as `0x81`, when it has reserved bits set.
+///
+/// # Examples
+///
+/// ```
+/// use patina::uefi::device_path::node::SasTopology;
+///
+/// assert_eq!(SasTopology(0).to_string(), "NoTopology");
+/// // A SATA device in internal drive bay 256, connected directly to the HBA.
+/// assert_eq!(SasTopology(0xff12).to_string(), "SATA,Internal,Direct,0x100");
+/// assert_eq!(SasTopology(0x81).to_string(), "0x81");
+/// ```
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub struct SasTopology(pub u16);
+
+impl SasTopology {
+    /// Return true if the value is written as keywords rather than as a number: some information
+    /// is valid, no reserved bit is set, and the high byte is zero unless it is valid.
+    fn has_keywords(self) -> bool {
+        let information = self.0 & 0x0f;
+        self.0 & 0x80 == 0 && (information == 2 || (information == 1 && self.0 >> 8 == 0))
+    }
+
+    /// Number of comma-separated arguments of the text form.
+    fn argument_count(self) -> usize {
+        match self.0 & 0x0f {
+            2 if self.has_keywords() => 4,
+            _ if self.has_keywords() => 3,
+            _ => 1,
         }
-    } else {
-        arguments[0] = format!("0x{topology:x}");
     }
-    if let Some(reserved) = reserved.filter(|reserved| *reserved != 0) {
-        arguments[4] = format!("0x{reserved:x}");
+}
+
+impl fmt::Display for SasTopology {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self.0;
+        if value == 0 {
+            return f.write_str("NoTopology");
+        }
+        if !self.has_keywords() {
+            return write!(f, "0x{value:x}");
+        }
+        f.write_str(if value & 0x10 != 0 { "SATA" } else { "SAS" })?;
+        f.write_str(if value & 0x20 != 0 { ",External" } else { ",Internal" })?;
+        f.write_str(if value & 0x40 != 0 { ",Expanded" } else { ",Direct" })?;
+        if value & 0x0f == 2 {
+            write!(f, ",0x{:x}", (value >> 8) + 1)?;
+        }
+        Ok(())
     }
-    let count = arguments.iter().rposition(|argument| !argument.is_empty()).map_or(0, |last| last + 1);
-    f.write_str(&arguments.get(..count).unwrap_or_default().join(","))
+}
+
+// Scroll encoding: a 16-bit value, like the `u16` it wraps.
+impl<'a> TryFromCtx<'a, Endian> for SasTopology {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+        let (value, size) = u16::try_from_ctx(src, ctx)?;
+        Ok((Self(value), size))
+    }
+}
+
+impl TryIntoCtx<Endian> for &SasTopology {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+impl TryIntoCtx<Endian> for SasTopology {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
 }
 
 impl fmt::Display for UartFlowControl {
@@ -1428,7 +1482,10 @@ impl TryFromCtx<'_, scroll::Endian> for UartFlowControl {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
         let mut offset = 0;
-        read_vendor_guid(data, &mut offset, Self::GUID)?;
+        let guid: BinaryGuid = data.gread_with(&mut offset, scroll::LE)?;
+        if guid != Self::GUID {
+            return Err(scroll::Error::BadInput { size: 0, msg: "vendor GUID does not match the node" });
+        }
         let flow_control_map = data.gread_with(&mut offset, endian)?;
         Ok((Self { flow_control_map }, offset))
     }
@@ -1455,11 +1512,11 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::Sas;
+    /// use patina::uefi::device_path::node::{Sas, SasTopology};
     ///
     /// // `SAS(0x31000004CF13F6BD,0)`: LUN 0 of a SAS device reached through SSP, without additional
     /// // topology information (UEFI 2.10 Section 10.3.4.18.4).
-    /// let node = Sas { reserved: 0, sas_address: 0x3100_0004_cf13_f6bd, lun: 0, device_topology: 0, relative_target_port: 0 };
+    /// let node = Sas { reserved: 0, sas_address: 0x3100_0004_cf13_f6bd, lun: 0, device_topology: SasTopology(0), relative_target_port: 0 };
     /// assert_eq!(node.to_string(), "SAS(0x31000004cf13f6bd,0x0,0x0,NoTopology)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "SAS(0x31000004cf13f6bd,0x0,0x0,NoTopology)");
@@ -1487,7 +1544,7 @@ device_path_node! {
         /// SAS logical unit number.
         pub lun: u64,
         /// SAS/SATA device and topology information.
-        pub device_topology: u16,
+        pub device_topology: SasTopology,
         /// Relative target port.
         pub relative_target_port: u16,
     }
@@ -1511,7 +1568,10 @@ impl Sas {
 
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        reserved_zero(self.reserved)
+        if self.reserved != 0 {
+            return Err("reserved field must be zero");
+        }
+        Ok(())
     }
 }
 
@@ -1519,7 +1579,10 @@ impl TryFromCtx<'_, scroll::Endian> for Sas {
     type Error = scroll::Error;
     fn try_from_ctx(data: &[u8], endian: Endian) -> Result<(Self, usize), scroll::Error> {
         let mut offset = 0;
-        read_vendor_guid(data, &mut offset, Self::GUID)?;
+        let guid: BinaryGuid = data.gread_with(&mut offset, scroll::LE)?;
+        if guid != Self::GUID {
+            return Err(scroll::Error::BadInput { size: 0, msg: "vendor GUID does not match the node" });
+        }
         let node = Self {
             reserved: data.gread_with(&mut offset, endian)?,
             sas_address: data.gread_with(&mut offset, endian)?,
@@ -1591,42 +1654,27 @@ device_path_node! {
         pub serial_number: Vec<u16>,
     }
 }
-fn protocol_name(protocol: u16) -> ProtocolDisplay {
-    ProtocolDisplay(protocol)
-}
-
-struct ProtocolDisplay(u16);
-
-impl fmt::Display for ProtocolDisplay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            6 => f.write_str("TCP"),
-            17 => f.write_str("UDP"),
-            value => write!(f, "0x{value:x}"),
-        }
-    }
-}
-
-struct Ipv4Endpoint(core::net::Ipv4Addr, u16);
-
-impl fmt::Display for Ipv4Endpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.1 {
-            0 => write!(f, "{}", self.0),
-            port => write!(f, "{}:{port}", self.0),
-        }
-    }
-}
-
 impl fmt::Display for IpV4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write!(f, "IPv4({}", Ipv4Endpoint(node.remote_ip, node.remote_port))?;
+        // An address is written with its port, as `address:port`, only when the port is not zero.
+        match node.remote_port {
+            0 => write!(f, "IPv4({}", node.remote_ip)?,
+            port => write!(f, "IPv4({}", SocketAddrV4::new(node.remote_ip, port))?,
+        }
         if f.sign_minus() {
             return f.write_str(")");
         }
-        write!(f, ",{},{}", protocol_name(node.protocol), if node.static_ip { "Static" } else { "DHCP" })?;
-        write!(f, ",{}", Ipv4Endpoint(node.local_ip, node.local_port))?;
+        match node.protocol {
+            6 => f.write_str(",TCP")?,
+            17 => f.write_str(",UDP")?,
+            protocol => write!(f, ",0x{protocol:x}")?,
+        }
+        f.write_str(if node.static_ip { ",Static" } else { ",DHCP" })?;
+        match node.local_port {
+            0 => write!(f, ",{}", node.local_ip)?,
+            port => write!(f, ",{}", SocketAddrV4::new(node.local_ip, port))?,
+        }
         if let Some(network) = &node.network {
             write!(f, ",{},{}", network.gateway, network.subnet_mask)?;
         }
@@ -1634,11 +1682,11 @@ impl fmt::Display for IpV4 {
     }
 }
 
-/// Maximum number of UTF-16 code units read from a USB string descriptor, which holds at
-/// most 126 characters.
-const MAX_USB_STRING_LENGTH: usize = 127;
-
 impl UsbWwid {
+    /// Maximum number of UTF-16 code units read from a USB string descriptor, which holds at
+    /// most 126 characters.
+    const MAX_USB_STRING_LENGTH: usize = 127;
+
     /// Return true if the USB device matches this node.
     ///
     /// The vendor ID, product ID, and interface number must be equal, and the device serial
@@ -1681,7 +1729,7 @@ impl UsbWwid {
                 continue;
             }
             // SAFETY: The protocol returned a NUL-terminated string, read up to the longest USB string.
-            let length = (0..MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
+            let length = (0..Self::MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
             let matches = length.is_some_and(|length| {
                 // SAFETY: The first `length` code units of the string were just read.
                 let serial = unsafe { core::slice::from_raw_parts(serial, length) };
@@ -2190,7 +2238,9 @@ impl fmt::Display for RestService {
             RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", node.access_mode),
             RestServiceType::Vendor { guid, data } => {
                 write!(f, "RestService(0xff,0x{:x},{}", node.access_mode, guid)?;
-                write_hex_u8_data(f, data)?;
+                for byte in data {
+                    write!(f, ",0x{byte:x}")?;
+                }
                 f.write_str(")")
             }
         }
@@ -2318,18 +2368,6 @@ device_path_node! {
         pub subsystem_nqn: String,
     }
 }
-fn write_uuid_bytes(f: &mut fmt::Formatter<'_>, b: &[u8; 16]) -> fmt::Result {
-    write!(
-        f,
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]
-    )?;
-    for byte in &b[10..] {
-        write!(f, "{byte:02x}")?;
-    }
-    Ok(())
-}
-
 impl fmt::Display for NvmeOf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
@@ -2349,7 +2387,13 @@ impl fmt::Display for NvmeOf {
             }
             3 => {
                 f.write_str("urn:uuid:")?;
-                write_uuid_bytes(f, &node.identifier)?;
+                // The namespace UUID is written in byte order, not in the mixed-endian GUID layout.
+                for (index, byte) in node.identifier.iter().enumerate() {
+                    if matches!(index, 4 | 6 | 8 | 10) {
+                        f.write_str("-")?;
+                    }
+                    write!(f, "{byte:02x}")?;
+                }
             }
             other => write!(f, "unknown{other}.")?,
         }
@@ -2469,7 +2513,12 @@ impl fmt::Display for NvmExpress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         write!(f, "NVMe(0x{:x},", node.namespace_id)?;
-        write_dash_hex_bytes(f, &node.eui64.to_be_bytes())?;
+        for (index, byte) in node.eui64.to_be_bytes().iter().enumerate() {
+            if index != 0 {
+                f.write_str("-")?;
+            }
+            write!(f, "{byte:02x}")?;
+        }
         f.write_str(")")
     }
 }
@@ -2657,7 +2706,7 @@ mod tests {
         SasEx {
             sas_address: [1, 2, 3, 4, 5, 6, 7, 8],
             lun: [9, 10, 11, 12, 13, 14, 15, 16],
-            device_topology: 0x1211,
+            device_topology: SasTopology(0x1211),
             relative_target_port: 0x1413,
         },
         [3, 22, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
@@ -2842,7 +2891,7 @@ mod tests {
             reserved: 0,
             sas_address: 0x0807060504030201,
             lun: 0x100f0e0d0c0b0a09,
-            device_topology: 0x1211,
+            device_topology: SasTopology(0x1211),
             relative_target_port: 0x1413,
         };
         check_node(sas.clone(), &expected);

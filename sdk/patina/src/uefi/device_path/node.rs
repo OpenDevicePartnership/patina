@@ -160,6 +160,7 @@ impl Header {
         core::mem::size_of::<Self>()
     }
 
+    /// Return the total length of the node in bytes, including the header.
     pub fn length(&self) -> u16 {
         self.length.get()
     }
@@ -1174,9 +1175,9 @@ pub(crate) mod tests {
 
         for (hid, uid, cid) in [("", "", ""), ("PNP0A03", "", "PNP0A08"), ("A", "BCDEFGHIJ", "K")] {
             let node = ExtendedAcpi {
-                hid: 0,
+                hid: EisaId(0),
                 uid: 0,
-                cid: 0,
+                cid: EisaId(0),
                 hid_string: hid.into(),
                 uid_string: uid.into(),
                 cid_string: cid.into(),

@@ -35,11 +35,11 @@
 //! `PciRoot` shortcut.
 //!
 //! ```
-//! use patina::uefi::device_path::node::{Acpi, ExtendedAcpi};
+//! use patina::uefi::device_path::node::{Acpi, EisaId, ExtendedAcpi};
 //!
 //! // AcpiEx(HWP0002,PNP0A03,0)
 //! let node = ExtendedAcpi {
-//!     hid: Acpi::eisa_id("HWP0002"),
+//!     hid: EisaId::new("HWP0002"),
 //!     uid: 0,
 //!     cid: Acpi::PCI_ROOT_HID,
 //!     hid_string: String::new(),
@@ -185,8 +185,11 @@ impl DevicePathBuf {
     /// # Errors
     ///
     /// Returns an error if allocation fails.
-    pub fn append_device_path(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
-        self.reserve(device_path.size() - EndEntire::BYTES.len())?;
+    pub fn append_device_path(&mut self, device_path: &DevicePath) -> Result<(), String> {
+        // Reserve first, so that appending cannot fail after the device path is changed.
+        self.buffer.try_reserve_exact(device_path.size() - EndEntire::BYTES.len()).map_err(|_| {
+            format!("Cannot allocate {} bytes to append a device path.", device_path.size() - EndEntire::BYTES.len())
+        })?;
         self.buffer.truncate(self.buffer.len() - EndEntire::BYTES.len());
         self.buffer.extend_from_slice(device_path.as_bytes());
         Ok(())
@@ -199,22 +202,17 @@ impl DevicePathBuf {
     /// # Errors
     ///
     /// Returns an error if allocation fails.
-    pub fn append_device_path_instance(&mut self, device_path: &DevicePath) -> Result<(), scroll::Error> {
-        self.reserve(device_path.size())?;
+    pub fn append_device_path_instance(&mut self, device_path: &DevicePath) -> Result<(), String> {
+        // Reserve first, so that appending cannot fail after the device path is changed.
+        self.buffer
+            .try_reserve_exact(device_path.size())
+            .map_err(|_| format!("Cannot allocate {} bytes to append a device path.", device_path.size()))?;
         // The EndEntire node of this device path becomes the EndInstance node that separates
         // the two instances: it differs only by its sub-type.
         let sub_type = self.buffer.len() - EndEntire::BYTES.len() + 1;
         *self.buffer.get_mut(sub_type).expect("a device path ends with EndEntire") = node::EndSubType::Instance as u8;
         self.buffer.extend_from_slice(device_path.as_bytes());
         Ok(())
-    }
-
-    /// Reserve space for `additional` more bytes, so that appending cannot fail after the
-    /// device path is changed.
-    fn reserve(&mut self, additional: usize) -> Result<(), scroll::Error> {
-        self.buffer
-            .try_reserve_exact(additional)
-            .map_err(|_| scroll::Error::BadInput { size: additional, msg: "cannot allocate appended device path" })
     }
 }
 
@@ -364,16 +362,17 @@ impl DevicePath {
     /// # Errors
     ///
     /// Returns an error if `bytes` is not a complete device path, or a node is malformed.
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<&DevicePath, scroll::Error> {
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<&DevicePath, String> {
         let mut rest = bytes;
         loop {
-            let (node, next) = GenericDevicePathNode::from_bytes(rest)?;
+            let (node, next) = GenericDevicePathNode::from_bytes(rest)
+                .map_err(|error| format!("Invalid device path node: {error}"))?;
             // Decode the node as the type its header identifies, which checks its payload and the
             // specification rules. Node types that are not known are accepted as they are.
-            <Box<dyn DevicePathNode>>::try_from(node)?;
+            <Box<dyn DevicePathNode>>::try_from(node).map_err(|error| format!("Invalid device path node: {error}"))?;
             if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
                 if !next.is_empty() {
-                    return Err(scroll::Error::BadInput { size: next.len(), msg: "data follows EndEntire" });
+                    return Err(format!("Device path has {} bytes after its EndEntire node.", next.len()));
                 }
                 break;
             }
@@ -828,10 +827,10 @@ mod tests {
             AcpiSubType::Acpi as u8,
             12, // length lower byte
             0,  // length upper byte
-            (Acpi::PCI_ROOT_HID & 0xFF) as u8,
-            ((Acpi::PCI_ROOT_HID >> 8) & 0xFF) as u8,
-            ((Acpi::PCI_ROOT_HID >> 16) & 0xFF) as u8,
-            ((Acpi::PCI_ROOT_HID >> 24) & 0xFF) as u8,
+            (Acpi::PCI_ROOT_HID.0 & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID.0 >> 8) & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID.0 >> 16) & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID.0 >> 24) & 0xFF) as u8,
             0, // uid byte 0
             0, // uid byte 1
             0, // uid byte 2
