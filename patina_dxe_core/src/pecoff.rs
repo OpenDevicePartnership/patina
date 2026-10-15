@@ -24,7 +24,7 @@ mod resource_directory;
 pub use goblin::pe::section_table::IMAGE_SCN_CNT_CODE;
 
 use relocation::{RelocationBlock, parse_relocation_blocks};
-use resource_directory::{DataEntry, Directory, DirectoryEntry, DirectoryString};
+use resource_directory::{DataEntry, Directory, DirectoryString};
 
 // Magic value for TE header.
 const TE_MAGIC: u16 = 0x5A56;
@@ -47,6 +47,7 @@ const IMAGE_REL_BASED_HIGHLOW: u16 = 3;
 // Relocation type that requires the adjustment be applied to the entire
 // 64-bit value.
 const IMAGE_REL_BASED_DIR64: u16 = 10;
+const HII_RESOURCE_NAME: [u16; 3] = [b'H' as u16, b'I' as u16, b'I' as u16];
 
 /// PE/COFF Specification Machine Type for `IMAGE_FILE_MACHINE_AMD64` images.
 #[allow(dead_code)]
@@ -452,54 +453,59 @@ pub fn flatten_runtime_relocation_data(relocation_data: &[RelocationBlock]) -> e
 ///
 /// ## Errors
 ///
-/// Returns [`Parse`](crate::error::Error::Parse) error if parsing a image containing a TE header
-/// failed.
-///
 /// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
+///
+/// Returns [`BufferTooShort`](error::Error::BufferTooShort) if a resource directory structure extends beyond the
+/// resource section.
 pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Result<Option<(usize, usize)>> {
     let Some(resource_section) = get_section(".rsrc", pe_info, image)? else {
         return Ok(None);
     };
-    let directory: Directory = resource_section.pread(0)?;
+    let directory = Directory::parse(resource_section)?;
 
-    for i in 0..directory.number_of_named_entries {
-        let entry_offset = core::mem::size_of::<Directory>() + (i as usize) * core::mem::size_of::<DirectoryEntry>();
-        let mut directory_entry: DirectoryEntry = resource_section.pread(entry_offset)?;
+    for directory_entry in directory.named_entries() {
+        let mut directory_entry = directory_entry;
 
         if directory_entry.name_is_string() {
             let resource_directory_string =
-                resource_section.pread::<DirectoryString>(directory_entry.name_offset() as usize)?;
+                DirectoryString::parse(resource_section_at(resource_section, directory_entry.name_offset())?)?;
 
-            let name_start_offset = directory_entry.name_offset() as usize + core::mem::size_of::<DirectoryString>();
-            let name_end_offset = name_start_offset + (resource_directory_string.length as usize) * 2;
-            let string_val = resource_section
-                .get(name_start_offset..name_end_offset)
-                .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(name_end_offset, "bytes")))?;
-
-            // L"HII" in UTF-16LE = [0x48, 0x00, 0x49, 0x00, 0x49, 0x00]
-            if resource_directory_string.length == 3 && string_val == [0x48, 0x00, 0x49, 0x00, 0x49, 0x00] {
+            if resource_directory_string.matches(&HII_RESOURCE_NAME) {
                 // We found the HII resource section. The actual resource data can be located up to two levels deep in
                 // subdirectories.
-                if directory_entry.data_is_directory() {
-                    directory_entry = resource_section
-                        .pread((directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>())?;
-
-                    if directory_entry.data_is_directory() {
-                        directory_entry = resource_section.pread(
-                            (directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>(),
-                        )?;
+                for _ in 0..2 {
+                    if !directory_entry.data_is_directory() {
+                        break;
                     }
+                    let directory = Directory::parse(resource_section_at(
+                        resource_section,
+                        directory_entry.offset_to_directory(),
+                    )?)?;
+                    let Some(entry) = directory.first_entry() else {
+                        break;
+                    };
+                    directory_entry = entry;
                 }
 
                 if !directory_entry.data_is_directory() {
-                    let resource_data_entry: DataEntry = resource_section.pread(directory_entry.data as usize)?;
-                    return Ok(Some((resource_data_entry.offset_to_data as usize, resource_data_entry.size as usize)));
+                    let resource_data_entry =
+                        DataEntry::parse(resource_section_at(resource_section, directory_entry.data_offset())?)?;
+                    return Ok(Some((
+                        resource_data_entry.offset_to_data() as usize,
+                        resource_data_entry.size() as usize,
+                    )));
                 }
             }
         }
     }
     Ok(None)
+}
+
+/// Returns the resource section bytes beginning at `offset`.
+fn resource_section_at(resource_section: &[u8], offset: u32) -> error::Result<&[u8]> {
+    let offset = offset as usize;
+    resource_section.get(offset..).ok_or(error::Error::BufferTooShort(offset, "resource section"))
 }
 
 /// Returns a slice of the provided image containing the data in the requested section, if it exists.
@@ -1004,17 +1010,17 @@ mod tests {
         pe_info
     }
 
-    // The entry counts are not validated against the section size, so a directory that claims far more entries than
-    // it has is still parsed until the HII entry is found. The sum of these counts does not fit in 16 bits, which is
-    // how the fuzzer found an arithmetic overflow in an earlier version that added them.
+    // The complete declared entry array is validated before searching it, so an overclaimed count is rejected even
+    // when a valid HII entry appears before the end of the section.
     #[test]
-    fn test_load_resource_section_with_overclaimed_entry_counts_finds_hii_before_the_end() {
+    fn test_load_resource_section_with_overclaimed_entry_counts_rejects_early_hii() {
         test_support::init_test_logger();
 
         for names in [&["HII"][..], &["ABC", "HII"][..]] {
             let rsrc = rsrc_section_with_named_entries(names, u16::MAX, u16::MAX);
             let pe_info = pe_info_with_rsrc_section(&rsrc);
-            assert_eq!(load_resource_section(&pe_info, &rsrc).unwrap(), Some((0xABCD, 0x100)), "{names:?}");
+            let result = load_resource_section(&pe_info, &rsrc);
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{names:?}: {result:?}");
         }
     }
 
@@ -1026,17 +1032,24 @@ mod tests {
         let rsrc = rsrc_section_with_named_entries(&["ABC"], u16::MAX, u16::MAX);
         let pe_info = pe_info_with_rsrc_section(&rsrc);
         let result = load_resource_section(&pe_info, &rsrc);
-        assert!(matches!(result, Err(error::Error::Parse(_))), "unexpected result: {result:?}");
+        assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "unexpected result: {result:?}");
     }
 
     #[test]
     fn test_load_resource_section_with_underclaimed_entry_counts_does_not_find_hii() {
         test_support::init_test_logger();
 
-        for (declared_named, declared_id) in [(1, 0), (0, 0), (1, u16::MAX), (0, u16::MAX)] {
+        for (declared_named, declared_id) in [(1, 0), (0, 0)] {
             let rsrc = rsrc_section_with_named_entries(&["ABC", "HII"], declared_named, declared_id);
             let pe_info = pe_info_with_rsrc_section(&rsrc);
             assert_eq!(load_resource_section(&pe_info, &rsrc).unwrap(), None, "{declared_named} {declared_id}");
+        }
+
+        for declared_named in [0, 1] {
+            let rsrc = rsrc_section_with_named_entries(&["ABC", "HII"], declared_named, u16::MAX);
+            let pe_info = pe_info_with_rsrc_section(&rsrc);
+            let result = load_resource_section(&pe_info, &rsrc);
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{declared_named}: {result:?}");
         }
 
         // The same section with an accurate count does find it.
@@ -1060,6 +1073,7 @@ mod tests {
         let mut nested = valid.clone();
         nested.extend_from_slice(&[0u8; 0x18]);
         nested[0x14..0x18].copy_from_slice(&(IS_DIRECTORY_OR_STRING | 0x30).to_le_bytes());
+        nested[0x3C..0x3E].copy_from_slice(&1u16.to_le_bytes());
 
         let cases = [
             ("name", valid.clone(), 0x10, IS_DIRECTORY_OR_STRING | OUT_OF_BOUNDS),
@@ -1073,7 +1087,7 @@ mod tests {
             rsrc[field..field + 4].copy_from_slice(&value.to_le_bytes());
             let pe_info = pe_info_with_rsrc_section(&rsrc);
             let result = load_resource_section(&pe_info, &rsrc);
-            assert!(matches!(result, Err(error::Error::Parse(_))), "{what}: unexpected result: {result:?}");
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{what}: unexpected result: {result:?}");
         }
     }
 
