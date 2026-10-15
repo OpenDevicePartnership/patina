@@ -138,3 +138,150 @@ fn process_mm_exit_boot_services(state: &InitState) -> efi::Status {
 
     efi::Status::SUCCESS
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use core::cell::Cell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+    use crate::policy::{PolicyGateError, SecurePolicyDataV1_0};
+
+    #[derive(Clone, Copy, Debug)]
+    struct TestSnapshotError;
+
+    struct TestGate {
+        locked: bool,
+    }
+
+    struct TestReadyToLockContext {
+        gate: Option<TestGate>,
+        snapshot_result: Result<(), TestSnapshotError>,
+        snapshot_calls: Cell<usize>,
+        lock_unblocked_memory_calls: Cell<usize>,
+    }
+
+    impl TestReadyToLockContext {
+        fn new(gate: Option<TestGate>, snapshot_result: Result<(), TestSnapshotError>) -> Self {
+            Self { gate, snapshot_result, snapshot_calls: Cell::new(0), lock_unblocked_memory_calls: Cell::new(0) }
+        }
+    }
+
+    impl ReadyToLockContext for TestReadyToLockContext {
+        type Gate = TestGate;
+        type SnapshotError = TestSnapshotError;
+
+        fn policy_gate(&self) -> Option<&Self::Gate> {
+            self.gate.as_ref()
+        }
+
+        fn is_locked(&self, gate: &Self::Gate) -> bool {
+            gate.locked
+        }
+
+        fn take_snapshot(&self, _gate: &Self::Gate) -> Result<(), Self::SnapshotError> {
+            self.snapshot_calls.set(self.snapshot_calls.get() + 1);
+            self.snapshot_result
+        }
+
+        fn lock_unblocked_memory(&self) {
+            self.lock_unblocked_memory_calls.set(self.lock_unblocked_memory_calls.get() + 1);
+        }
+    }
+
+    fn unlocked_policy_gate() -> PolicyGate {
+        let policy = Box::leak(Box::new(SecurePolicyDataV1_0 {
+            version_major: 1,
+            size: core::mem::size_of::<SecurePolicyDataV1_0>() as u32,
+            ..Default::default()
+        }));
+        // SAFETY: `policy` is a valid V1.0 policy header and is leaked for the duration of the
+        // process, so it outlives the returned gate.
+        unsafe { PolicyGate::new(core::ptr::from_ref(policy).cast(), core::mem::size_of::<SecurePolicyDataV1_0>()) }
+            .expect("test policy must be valid")
+    }
+
+    #[test]
+    #[should_panic(expected = "policy gate must be initialized")]
+    fn ready_to_lock_panics_without_a_policy_gate() {
+        let context = TestReadyToLockContext::new(None, Ok(()));
+
+        process_mm_ready_to_lock(&context);
+    }
+
+    #[test]
+    fn ready_to_lock_is_idempotent_when_the_gate_is_already_locked() {
+        let context = TestReadyToLockContext::new(Some(TestGate { locked: true }), Ok(()));
+
+        assert_eq!(process_mm_ready_to_lock(&context), efi::Status::SUCCESS);
+        assert_eq!(context.snapshot_calls.get(), 0);
+        assert_eq!(context.lock_unblocked_memory_calls.get(), 0);
+    }
+
+    #[test]
+    fn ready_to_lock_panics_on_snapshot_failure() {
+        let context = TestReadyToLockContext::new(Some(TestGate { locked: false }), Err(TestSnapshotError));
+
+        let panic = catch_unwind(AssertUnwindSafe(|| process_mm_ready_to_lock(&context)))
+            .expect_err("a failed snapshot must panic");
+        let message = panic.downcast_ref::<String>().expect("panic payload must be a formatted message");
+        assert!(message.contains("memory policy snapshot failed"), "unexpected panic message: {message}");
+        assert_eq!(context.snapshot_calls.get(), 1);
+        assert_eq!(context.lock_unblocked_memory_calls.get(), 0);
+    }
+
+    #[test]
+    fn ready_to_lock_locks_unblocked_memory_after_a_successful_snapshot() {
+        let context = TestReadyToLockContext::new(Some(TestGate { locked: false }), Ok(()));
+
+        assert_eq!(process_mm_ready_to_lock(&context), efi::Status::SUCCESS);
+        assert_eq!(context.snapshot_calls.get(), 1);
+        assert_eq!(context.lock_unblocked_memory_calls.get(), 1);
+    }
+
+    #[test]
+    fn supervisor_ready_to_lock_context_delegates_to_its_real_state() {
+        let gate = unlocked_policy_gate();
+        let tracker = UnblockedMemoryTracker::new();
+        let context = SupervisorReadyToLockContext { gate: Some(&gate), unblocked_tracker: &tracker };
+
+        let context_gate = context.policy_gate().expect("test context must expose its policy gate");
+        assert!(!context.is_locked(context_gate));
+        assert_eq!(context.take_snapshot(context_gate), Err(PolicyGateError::InternalError.into()));
+        assert!(!tracker.is_core_init_complete());
+        context.lock_unblocked_memory();
+        assert!(tracker.is_core_init_complete());
+    }
+
+    #[test]
+    fn ready_to_lock_entry_point_uses_the_global_context() {
+        // The global gate is one-time, so this is a no-op when another test installed it first.
+        // Either way the installed gate has no snapshot buffer configured, so the snapshot fails.
+        security_state().set_policy_gate(unlocked_policy_gate());
+
+        let mut size = 0;
+        let result = catch_unwind(AssertUnwindSafe(|| mm_ready_to_lock_handler(core::ptr::null_mut(), &mut size)));
+
+        assert!(result.is_err(), "a failed snapshot must panic");
+    }
+
+    #[test]
+    fn exit_boot_services_marks_runtime_and_tolerates_duplicates() {
+        let state = InitState::new();
+
+        assert!(!state.is_at_runtime());
+        assert_eq!(process_mm_exit_boot_services(&state), efi::Status::SUCCESS);
+        assert!(state.is_at_runtime());
+        assert_eq!(process_mm_exit_boot_services(&state), efi::Status::SUCCESS);
+        assert!(state.is_at_runtime());
+    }
+
+    #[test]
+    fn exit_boot_services_entry_point_marks_the_global_state() {
+        let mut size = 0;
+
+        assert_eq!(mm_exit_boot_services_handler(core::ptr::null_mut(), &mut size), efi::Status::SUCCESS);
+        assert!(init_state().is_at_runtime());
+    }
+}

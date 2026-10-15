@@ -195,3 +195,98 @@ pub unsafe fn dump_policy(policy_ptr: *const u8) {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    use super::super::test_support::{Descriptors, PolicyBuilder, full_policy, instruction, io, msr, save_state};
+    use super::super::{ACCESS_ATTR_DENY, Instruction, RESOURCE_ATTR_COND_READ, SaveStateCondition, SaveStateField};
+
+    #[test]
+    fn test_dump_mem_policy_entry() {
+        // Just verify it doesn't panic
+        let desc = MemDescriptorV1_0 {
+            base_address: 0x1000,
+            size: 0x1000,
+            mem_attributes: RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE,
+            reserved: 0,
+        };
+        dump_mem_policy_entry(&desc);
+
+        // An entry granting nothing renders every permission as absent.
+        dump_mem_policy_entry(&MemDescriptorV1_0 { mem_attributes: 0, ..desc });
+        dump_mem_policy_entry(&MemDescriptorV1_0 { mem_attributes: RESOURCE_ATTR_EXECUTE, ..desc });
+    }
+
+    #[test]
+    fn test_dump_policy_walks_every_root_type() {
+        let policy = full_policy()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Instruction(vec![]))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Unknown(99))
+            .build();
+
+        // SAFETY: the builder produced a valid policy buffer that outlives this call.
+        unsafe { dump_policy(policy.as_ptr()) };
+    }
+
+    #[test]
+    fn test_dump_policy_renders_unset_attributes_and_unknown_entries() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_DENY, Descriptors::Io(vec![io(0x60, 1, 0)]))
+            .root(ACCESS_ATTR_DENY, Descriptors::Msr(vec![msr(0x1B, 1, 0)]))
+            .root(
+                ACCESS_ATTR_DENY,
+                Descriptors::Instruction(vec![
+                    instruction(Instruction::Cli, 0),
+                    instruction(Instruction::Wbinvd, RESOURCE_ATTR_EXECUTE as u16),
+                    InstructionDescriptorV1_0 { instruction_index: 9, attributes: 0, reserved: 0 },
+                ]),
+            )
+            .root(
+                ACCESS_ATTR_DENY,
+                Descriptors::SaveState(vec![
+                    save_state(SaveStateField::IoTrap, RESOURCE_ATTR_COND_READ, SaveStateCondition::IoWrite),
+                    SaveStateDescriptorV1_0 { map_field: 9, attributes: 0, access_condition: 9, reserved: 0 },
+                ]),
+            )
+            .build();
+
+        // SAFETY: the builder produced a valid policy buffer that outlives this call.
+        unsafe { dump_policy(policy.as_ptr()) };
+    }
+
+    #[test]
+    fn test_dump_policy_rejects_null_and_undersized_buffers() {
+        // SAFETY: `dump_policy` checks for null before dereferencing.
+        unsafe { dump_policy(core::ptr::null()) };
+
+        let policy = PolicyBuilder::new().declared_size(4).build();
+        // SAFETY: the header is valid; only its `size` field is understated.
+        unsafe { dump_policy(policy.as_ptr()) };
+    }
+
+    #[test]
+    fn test_dump_policy_formats_entry_ranges_when_logging_is_enabled() {
+        // The dump builds every range through log::info!, which skips its arguments when no
+        // logger is installed. The silent test logger reports every level as enabled, so the
+        // end address arithmetic for a memory, I/O and MSR entry runs rather than being
+        // skipped.
+        crate::test_support::init_test_logger();
+
+        let policy = full_policy().build();
+        // SAFETY: the builder produced a valid policy buffer that outlives this call.
+        unsafe { dump_policy(policy.as_ptr()) };
+
+        dump_mem_policy_entry(&MemDescriptorV1_0 {
+            base_address: 0x2000,
+            size: 0x1000,
+            mem_attributes: RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE | RESOURCE_ATTR_EXECUTE,
+            reserved: 0,
+        });
+
+        // A zero-sized entry would underflow without the saturating subtraction.
+        dump_mem_policy_entry(&MemDescriptorV1_0 { base_address: 0, size: 0, mem_attributes: 0, reserved: 0 });
+    }
+}

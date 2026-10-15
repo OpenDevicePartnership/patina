@@ -161,3 +161,93 @@ impl MmSupvPassDownHobData {
         Ok(pass_down)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    use crate::test_support::*;
+
+    #[test]
+    fn test_parse_pass_down_hob() {
+        let expected = valid_pass_down_hob();
+        let parsed =
+            MmSupvPassDownHobData::parse(&pass_down_hob_data(&expected)).expect("valid PassDown HOB should parse");
+
+        assert_eq!(parsed.revision, expected.revision);
+        assert_eq!(parsed.cpl3_stack_base, expected.cpl3_stack_base);
+        assert_eq!(parsed.sm_base_array, expected.sm_base_array);
+        assert_eq!(parsed.firmware_policy_buffer, expected.firmware_policy_buffer);
+        assert_eq!(parsed.mmi_entry_size, expected.mmi_entry_size);
+    }
+
+    #[test]
+    fn test_parse_pass_down_hob_rejects_truncated_data() {
+        let data = pass_down_hob_data(&valid_pass_down_hob());
+
+        assert_eq!(
+            MmSupvPassDownHobData::parse(&data[..data.len() - 1]).expect_err("truncated PassDown HOB should fail"),
+            PassDownHobError::TooSmall.into()
+        );
+    }
+
+    #[test]
+    fn test_parse_pass_down_hob_rejects_invalid_revision() {
+        let mut pass_down = valid_pass_down_hob();
+        pass_down.revision += 1;
+
+        assert_eq!(
+            MmSupvPassDownHobData::parse(&pass_down_hob_data(&pass_down))
+                .expect_err("invalid PassDown HOB revision should fail"),
+            PassDownHobError::InvalidRevision { found: pass_down.revision, expected: MM_SUPV_PASS_DOWN_HOB_REVISION }
+                .into()
+        );
+    }
+
+    #[test]
+    fn test_parse_pass_down_hob_rejects_invalid_policy_buffer() {
+        for (address, size, expected) in [
+            (0, 0x1000, PassDownHobError::NullFirmwarePolicyBuffer),
+            (0x1000, 0, PassDownHobError::NullFirmwarePolicyBuffer),
+            (
+                u64::MAX - 0xFFF,
+                0x1000,
+                PassDownHobError::FirmwarePolicyBufferOverflows { base: u64::MAX - 0xFFF, size: 0x1000 },
+            ),
+        ] {
+            let mut pass_down = valid_pass_down_hob();
+            pass_down.firmware_policy_buffer = address;
+            pass_down.firmware_policy_buffer_size = size;
+
+            assert_eq!(
+                MmSupvPassDownHobData::parse(&pass_down_hob_data(&pass_down))
+                    .expect_err("invalid policy buffer should fail"),
+                expected.into()
+            );
+        }
+    }
+    #[test]
+    fn test_pass_down_hob_error_displays_each_variant() {
+        let errors = [
+            PassDownHobError::Missing,
+            PassDownHobError::TooSmall,
+            PassDownHobError::InvalidRevision { found: 3, expected: 2 },
+            PassDownHobError::PointerOutsideMmram {
+                field: "sm_base_array",
+                range: MemoryRange::new(0x1000, 8).unwrap(),
+            },
+            PassDownHobError::NullFirmwarePolicyBuffer,
+            PassDownHobError::FirmwarePolicyBufferSizeUnsupported { size: u64::MAX },
+            PassDownHobError::FirmwarePolicyBufferOverflows { base: u64::MAX - 0xFFF, size: 0x1000 },
+        ];
+        for err in errors {
+            assert!(!format!("{err}").is_empty(), "every variant must render a message");
+        }
+    }
+
+    #[test]
+    fn test_pass_down_hob_layout_matches_c_abi() {
+        assert_eq!(core::mem::size_of::<MmSupvPassDownHobData>(), 64);
+    }
+}

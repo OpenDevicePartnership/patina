@@ -374,10 +374,10 @@ mod tests {
         // the build selected.
         let rax = SaveState::register_info(MmSaveStateRegister::Rax).unwrap();
         if cfg!(feature = "save_state_amd") {
-            assert_eq!((VENDOR_NAME, rax.lo_offset), ("AMD", 0x03F8));
+            assert_eq!((vendor_name(), rax.lo_offset), ("AMD", 0x03F8));
             assert!(vendor_constants().lma_always_64);
         } else {
-            assert_eq!((VENDOR_NAME, rax.lo_offset), ("Intel", 0x035C));
+            assert_eq!((vendor_name(), rax.lo_offset), ("Intel", 0x035C));
             assert!(!vendor_constants().lma_always_64);
         }
     }
@@ -699,6 +699,6 @@ mod tests {
     fn test_save_state_data_debug_hides_the_register_contents() {
         let mut map = new_map();
         write_u64(&mut map, vendor_constants().rax_offset, 0x5EC2_E7DA_7A00_0000);
-        assert_eq!(format!("{:?}", SaveState::new(*map)), format!("SaveState({VENDOR_NAME:?})"));
+        assert_eq!(format!("{:?}", SaveState::new(*map)), format!("SaveState({:?})", vendor_name()));
     }
 }

@@ -208,3 +208,23 @@ pub(crate) unsafe fn enable_smap() {
     }
 }
 
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_idtr_is_zeroed_in_unit_tests() {
+        let idtr = read_idtr();
+        let base = idtr.base;
+        let limit = idtr.limit;
+
+        assert_eq!(base, 0);
+        assert_eq!(limit, 0);
+    }
+
+    #[test]
+    fn test_descriptor_table_pointer_layout_matches_c_abi() {
+        assert_eq!(core::mem::size_of::<DescriptorTablePointer>(), 10);
+    }
+}

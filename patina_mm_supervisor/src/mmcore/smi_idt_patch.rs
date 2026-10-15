@@ -300,3 +300,277 @@ pub(crate) fn patch_smi_handler_idt(sm_base_array: u64, number_of_cpus: usize, m
         "Patched the SMI handler IDT descriptor on {patched}/{number_of_cpus} CPU(s): base=0x{idtr_base:016x}, limit=0x{idtr_limit:04x}"
     );
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use core::mem::size_of;
+
+    use serial_test::serial;
+
+    use crate::memory;
+    use crate::state::security_state;
+    use crate::test_support::{self, PageAlignedMemory, init_global_state_over, mmi_entry};
+
+    #[test]
+    fn test_smi_handler_idt_patch_errors_render_each_variant_distinctly() {
+        // Both the arguments and the MMI entry come from outside the supervisor, and every
+        // failure here is logged rather than returned, so the message is the only record of
+        // which check rejected the patch. The table is exhaustive, so a variant added without a
+        // Display arm fails here rather than rendering as another variant's text.
+        let all = [
+            (SmiHandlerIdtPatchError::ZeroEntrySize, "the MMI entry size is zero"),
+            (SmiHandlerIdtPatchError::MissingSmBaseArray, "the SMBASE array pointer is null, or no CPUs were reported"),
+            (
+                SmiHandlerIdtPatchError::SmBaseArraySizeOverflow,
+                "the SMBASE array size overflows, so the array cannot be addressed",
+            ),
+            (SmiHandlerIdtPatchError::SmBaseArrayOutsideMmram, "the SMBASE array is not entirely inside MMRAM"),
+            (SmiHandlerIdtPatchError::EntrySizeTooLarge, "the MMI entry size does not fit the target architecture"),
+            (
+                SmiHandlerIdtPatchError::EntryTooSmall,
+                "the MMI entry is too small to hold its trailing structure-size field",
+            ),
+            (
+                SmiHandlerIdtPatchError::FixupStructureOutOfBounds,
+                "the fixup structure the MMI entry trailer points at lies outside the entry",
+            ),
+            (SmiHandlerIdtPatchError::FixupHeaderTooSmall, "the fixup structure is smaller than its own header"),
+            (
+                SmiHandlerIdtPatchError::Fixup64ArrayTooSmall { found: 2 },
+                "the Fixup64 array holds 2 entries, too few for the IDTR slot the supervisor patches",
+            ),
+            (
+                SmiHandlerIdtPatchError::Fixup64EntryOutOfBounds,
+                "the addressed Fixup64 entry lies outside the MMI entry",
+            ),
+        ];
+
+        for (error, expected) in all {
+            assert_eq!(format!("{error}"), expected);
+        }
+
+        // The count is carried in the message, so two short arrays stay distinguishable.
+        assert_ne!(
+            format!("{}", SmiHandlerIdtPatchError::Fixup64ArrayTooSmall { found: 2 }),
+            format!("{}", SmiHandlerIdtPatchError::Fixup64ArrayTooSmall { found: 3 })
+        );
+    }
+
+    #[test]
+    fn test_validate_smi_handler_idt_patch_inputs() {
+        let inputs = validate_smi_handler_idt_patch_inputs(0x1000, 4, 0x200, |range| {
+            *range == MemoryRange::new(0x1000, 4 * size_of::<u64>() as u64).unwrap()
+        })
+        .expect("valid patch inputs should pass");
+
+        assert_eq!(
+            inputs,
+            SmiHandlerIdtPatchInputs {
+                sm_base_array_size: 4 * size_of::<u64>(),
+                mmi_entry_size: 0x200,
+                mmi_entry_size_u64: 0x200,
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_smi_handler_idt_patch_inputs_rejects_invalid_values() {
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0x1000, 1, 0, |_| true),
+            Err(SmiHandlerIdtPatchError::ZeroEntrySize.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0, 1, 0x100, |_| true),
+            Err(SmiHandlerIdtPatchError::MissingSmBaseArray.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0x1000, 0, 0x100, |_| true),
+            Err(SmiHandlerIdtPatchError::MissingSmBaseArray.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0x1000, usize::MAX, 0x100, |_| true),
+            Err(SmiHandlerIdtPatchError::SmBaseArraySizeOverflow.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0x1000, 1, 0x100, |_| false),
+            Err(SmiHandlerIdtPatchError::SmBaseArrayOutsideMmram.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(u64::MAX - 3, 1, 0x100, |_| true),
+            Err(SmiHandlerIdtPatchError::SmBaseArrayOutsideMmram.into())
+        );
+        assert_eq!(
+            validate_smi_handler_idt_patch_inputs(0x1000, 1, isize::MAX as u64 + 1, |_| true),
+            Err(SmiHandlerIdtPatchError::EntrySizeTooLarge.into())
+        );
+    }
+
+    #[test]
+    fn test_parse_smi_handler_idt_descriptor() {
+        let entry = mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, 0x1234_5678_9ABC_DEF0);
+
+        assert_eq!(parse_smi_handler_idt_descriptor(&entry), Ok(0x1234_5678_9ABC_DEF0));
+    }
+
+    #[test]
+    fn test_parse_smi_handler_idt_descriptor_rejects_malformed_metadata() {
+        assert_eq!(parse_smi_handler_idt_descriptor(&[0; 3]), Err(SmiHandlerIdtPatchError::EntryTooSmall.into()));
+
+        let mut oversized_structure = [0_u8; 4];
+        oversized_structure.copy_from_slice(&1_u32.to_ne_bytes());
+        assert_eq!(
+            parse_smi_handler_idt_descriptor(&oversized_structure),
+            Err(SmiHandlerIdtPatchError::FixupStructureOutOfBounds.into())
+        );
+
+        let mut short_header = vec![0_u8; 5];
+        short_header[1..].copy_from_slice(&1_u32.to_ne_bytes());
+        assert_eq!(
+            parse_smi_handler_idt_descriptor(&short_header),
+            Err(SmiHandlerIdtPatchError::FixupHeaderTooSmall.into())
+        );
+
+        let too_few_fixups = mmi_entry(FIXUP64_SMI_HANDLER_IDTR as u8, 0);
+        assert_eq!(
+            parse_smi_handler_idt_descriptor(&too_few_fixups),
+            Err(SmiHandlerIdtPatchError::Fixup64ArrayTooSmall { found: FIXUP64_SMI_HANDLER_IDTR as u8 }.into())
+        );
+
+        let mut out_of_bounds_fixup = mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, 0);
+        out_of_bounds_fixup[8 + 6] = u8::MAX;
+        assert_eq!(
+            parse_smi_handler_idt_descriptor(&out_of_bounds_fixup),
+            Err(SmiHandlerIdtPatchError::Fixup64EntryOutOfBounds.into())
+        );
+    }
+
+    #[test]
+    fn test_mmi_entry_header_layout_matches_c_abi() {
+        assert_eq!(size_of::<PerCoreMmiEntryStructHdr>(), 22);
+    }
+
+    /// Pages reserved inside the test MMRAM region, laid out the way the C relocation code
+    /// leaves one core: the MMI entry sits at `smbase + SMM_HANDLER_OFFSET`, so the block has
+    /// to be longer than that offset.
+    const CPU_BLOCK_PAGES: usize = 16;
+
+    /// Reserves one core's block inside MMRAM and writes `entry` where the patch expects it.
+    fn place_cpu_block(entry: &[u8]) -> u64 {
+        let smbase = security_state().page_allocator().allocate_pages(CPU_BLOCK_PAGES).expect("a CPU block in MMRAM");
+        // SAFETY: the block is a live allocation of CPU_BLOCK_PAGES pages, and the entry ends
+        // well inside it because SMM_HANDLER_OFFSET covers only the first eight pages.
+        unsafe {
+            core::ptr::copy_nonoverlapping(entry.as_ptr(), (smbase + SMM_HANDLER_OFFSET) as *mut u8, entry.len());
+        }
+        smbase
+    }
+
+    /// Writes `bases` into a page inside MMRAM and returns its address.
+    fn place_sm_base_array(bases: &[u64]) -> u64 {
+        let array = security_state().page_allocator().allocate_pages(1).expect("an SMBASE array page in MMRAM");
+        // SAFETY: `array` is a live page, and one page holds far more than the handful of
+        // entries any of these tests uses.
+        unsafe { core::ptr::copy_nonoverlapping(bases.as_ptr(), array as *mut u64, bases.len()) };
+        array
+    }
+
+    /// Reserves a descriptor slot inside MMRAM and fills it so a patch is visible as a change.
+    fn place_descriptor() -> u64 {
+        let descriptor = security_state().page_allocator().allocate_pages(1).expect("a descriptor page in MMRAM");
+        // SAFETY: `descriptor` is a live page and a DescriptorTablePointer is 10 bytes.
+        unsafe { core::ptr::write_bytes(descriptor as *mut u8, 0xFF, size_of::<DescriptorTablePointer>()) };
+        descriptor
+    }
+
+    /// Reads back a descriptor the patch may have rewritten, as `(limit, base)`.
+    ///
+    /// The fields are copied out rather than compared in place, because the struct is
+    /// `packed(2)` and a reference to a field of a packed struct is undefined behavior.
+    fn read_descriptor(address: u64) -> (u16, u64) {
+        // SAFETY: the address came from `place_descriptor`, so it is a live, initialized slot.
+        let descriptor = unsafe { core::ptr::read_unaligned(address as *const DescriptorTablePointer) };
+        (descriptor.limit, descriptor.base)
+    }
+
+    #[test]
+    #[serial]
+    fn test_patch_smi_handler_idt_writes_the_supervisor_idt_to_every_cpu() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 64);
+        init_global_state_over(&memory);
+
+        let descriptors = [place_descriptor(), place_descriptor()];
+        let entries: Vec<Vec<u8>> =
+            descriptors.iter().map(|&descriptor| mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, descriptor)).collect();
+        let bases: Vec<u64> = entries.iter().map(|entry| place_cpu_block(entry)).collect();
+        let sm_base_array = place_sm_base_array(&bases);
+
+        patch_smi_handler_idt(sm_base_array, bases.len(), entries[0].len() as u64);
+
+        // `read_idtr` reads as zero in a host test, so a patched slot is the one that no longer
+        // holds the 0xFF fill. Both cores are patched from the same IDTR.
+        for descriptor in descriptors {
+            assert_eq!(read_descriptor(descriptor), (0, 0));
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_patch_smi_handler_idt_rejects_bad_arguments_before_touching_any_core() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 64);
+        init_global_state_over(&memory);
+
+        let descriptor = place_descriptor();
+        let entry = mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, descriptor);
+        let smbase = place_cpu_block(&entry);
+        let sm_base_array = place_sm_base_array(&[smbase]);
+        let untouched = read_descriptor(descriptor);
+
+        // A zero entry size, a null array, a CPU count of zero and an array outside MMRAM are
+        // all rejected by the up-front check, so no core's entry is read.
+        patch_smi_handler_idt(sm_base_array, 1, 0);
+        patch_smi_handler_idt(0, 1, entry.len() as u64);
+        patch_smi_handler_idt(sm_base_array, 0, entry.len() as u64);
+        patch_smi_handler_idt(0x1000, 1, entry.len() as u64);
+
+        assert_eq!(read_descriptor(descriptor), untouched);
+    }
+
+    #[test]
+    #[serial]
+    fn test_patch_smi_handler_idt_skips_the_cores_it_cannot_patch() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 96);
+        init_global_state_over(&memory);
+
+        let good_descriptor = place_descriptor();
+        let good_entry = mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, good_descriptor);
+        let good_smbase = place_cpu_block(&good_entry);
+
+        // A core whose fixup structure does not parse.
+        let malformed = place_cpu_block(&vec![0_u8; good_entry.len()]);
+        // A core whose Fixup64 slot is null.
+        let null_slot = place_cpu_block(&mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, 0));
+        // A core whose Fixup64 slot points outside MMRAM.
+        let outside = place_cpu_block(&mmi_entry((FIXUP64_SMI_HANDLER_IDTR + 1) as u8, 0x1000));
+
+        let bases = [
+            0,                                 // never relocated
+            u64::MAX - SMM_HANDLER_OFFSET + 1, // SMBASE + 0x8000 overflows
+            0x1000,                            // entry would sit outside MMRAM
+            malformed,
+            null_slot,
+            outside,
+            good_smbase,
+        ];
+        let sm_base_array = place_sm_base_array(&bases);
+
+        patch_smi_handler_idt(sm_base_array, bases.len(), good_entry.len() as u64);
+
+        // One bad core does not stop the scan: the healthy core that follows them is patched.
+        assert_eq!(read_descriptor(good_descriptor), (0, 0));
+    }
+}

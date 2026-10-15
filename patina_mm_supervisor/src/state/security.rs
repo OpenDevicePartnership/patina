@@ -129,3 +129,67 @@ static SECURITY_STATE: SecurityState = SecurityState::new();
 pub(crate) fn security_state() -> &'static SecurityState {
     &SECURITY_STATE
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::comm_buffer::CommChannel;
+    use patina_internal_cpu::save_state::MmSaveStateRegister;
+
+    #[test]
+    fn test_security_state_defaults() {
+        let state = SecurityState::new();
+
+        assert!(state.policy_gate().is_none());
+        assert!(state.lock_page_table().is_none());
+        assert!(state.comm_buffer_config().is_none());
+        assert!(state.save_state_info().is_none());
+        assert!(state.lock_save_state_access().is_none());
+
+        assert!(!state.page_allocator().is_initialized());
+        assert!(!state.paging_allocator().is_initialized());
+        assert_eq!(state.unblocked_tracker().region_count(), 0);
+        assert!(!state.unblocked_tracker().is_core_init_complete());
+    }
+
+    #[test]
+    fn test_security_state_one_time_values_ignore_later_writes() {
+        let state = SecurityState::new();
+
+        state.set_comm_buffer_config(CommBufferConfig {
+            supervisor: CommChannel { external: 0x1000, ..Default::default() },
+            ..Default::default()
+        });
+        state.set_comm_buffer_config(CommBufferConfig {
+            supervisor: CommChannel { external: 0x2000, ..Default::default() },
+            ..Default::default()
+        });
+        assert_eq!(state.comm_buffer_config().unwrap().supervisor.external, 0x1000);
+
+        // SAFETY: the SMBASE addresses are placeholders that nothing in this test reads through.
+        let (first, second) =
+            unsafe { (SaveStateInfo::new(4, 0x3000).unwrap(), SaveStateInfo::new(8, 0x9000).unwrap()) };
+        state.set_save_state_info(first);
+        state.set_save_state_info(second);
+        let info = state.save_state_info().unwrap();
+        assert_eq!((info.number_of_cpus(), info.smbase_array()), (4, 0x3000));
+    }
+
+    #[test]
+    fn test_security_state_save_state_handoff_slot_round_trips() {
+        let state = SecurityState::new();
+
+        *state.lock_save_state_access() = Some(SaveStateAccessHolder {
+            caller: 1,
+            user_protocol: 0x1234,
+            register: MmSaveStateRegister::Rax,
+            cpu_index: 2,
+        });
+
+        let holder = state.lock_save_state_access().take().expect("hand-off is staged");
+        assert_eq!(holder.user_protocol, 0x1234);
+        assert_eq!(holder.cpu_index, 2);
+        assert!(state.lock_save_state_access().is_none());
+    }
+}

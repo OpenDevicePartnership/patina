@@ -225,3 +225,188 @@ impl From<PageUpdateError> for MmSupervisorError {
         Self::PageUpdate(error)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mm_supervisor_error_wraps_each_subsystem_error() {
+        assert_eq!(
+            MmSupervisorError::from(HobValidationError::NoMmramRegions),
+            MmSupervisorError::HobValidation(HobValidationError::NoMmramRegions)
+        );
+        assert_eq!(
+            MmSupervisorError::from(CommBufferError::Missing),
+            MmSupervisorError::CommBuffer(CommBufferError::Missing)
+        );
+        assert_eq!(
+            MmSupervisorError::from(PassDownHobError::TooSmall),
+            MmSupervisorError::PassDownHob(PassDownHobError::TooSmall)
+        );
+        assert_eq!(
+            MmSupervisorError::from(CoreInitError::InitializedBufferUnavailable),
+            MmSupervisorError::CoreInit(CoreInitError::InitializedBufferUnavailable)
+        );
+        assert_eq!(
+            MmSupervisorError::from(MmramBoundError::NoSmrrRange),
+            MmSupervisorError::MmramBound(MmramBoundError::NoSmrrRange)
+        );
+        assert_eq!(MmSupervisorError::from(AllocError::OutOfMemory), MmSupervisorError::Alloc(AllocError::OutOfMemory));
+        assert_eq!(
+            MmSupervisorError::from(AllocError::PoolTooSmall),
+            MmSupervisorError::Alloc(AllocError::PoolTooSmall)
+        );
+        assert_eq!(
+            MmSupervisorError::from(PolicyGateError::AccessDenied),
+            MmSupervisorError::PolicyGate(PolicyGateError::AccessDenied)
+        );
+        assert_eq!(
+            MmSupervisorError::from(PolicyValidationError::UnrecognizedHeaderBits),
+            MmSupervisorError::PolicyValidation(PolicyValidationError::UnrecognizedHeaderBits)
+        );
+        assert_eq!(
+            MmSupervisorError::from(PageTableWalkError::InvalidCr3),
+            MmSupervisorError::PageTableWalk(PageTableWalkError::InvalidCr3)
+        );
+        assert_eq!(
+            MmSupervisorError::from(SyscallSetupError::NotInitialized),
+            MmSupervisorError::SyscallSetup(SyscallSetupError::NotInitialized)
+        );
+        assert_eq!(
+            MmSupervisorError::from(SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 0, smbase: 0x3000 }),
+            MmSupervisorError::SaveStateValidation(SaveStateValidationError::UnusableSaveStateRegion {
+                cpu_index: 0,
+                smbase: 0x3000
+            })
+        );
+        assert_eq!(
+            MmSupervisorError::from(SmrrError::SmrrUnsupported),
+            MmSupervisorError::Smrr(SmrrError::SmrrUnsupported)
+        );
+        assert_eq!(
+            MmSupervisorError::from(CallGateError::GdtTooSmall),
+            MmSupervisorError::CallGate(CallGateError::GdtTooSmall)
+        );
+        assert_eq!(
+            MmSupervisorError::from(SmiHandlerIdtPatchError::EntryTooSmall),
+            MmSupervisorError::SmiHandlerIdtPatch(SmiHandlerIdtPatchError::EntryTooSmall)
+        );
+        assert_eq!(
+            MmSupervisorError::from(MailboxError::CommandAlreadyPending { index: 2 }),
+            MmSupervisorError::Mailbox(MailboxError::CommandAlreadyPending { index: 2 })
+        );
+        assert_eq!(
+            MmSupervisorError::from(UnblockError::OverlapsWithMmram),
+            MmSupervisorError::Unblock(UnblockError::OverlapsWithMmram)
+        );
+        assert_eq!(
+            MmSupervisorError::from(PageUpdateError::AlreadyMapped),
+            MmSupervisorError::PageUpdate(PageUpdateError::AlreadyMapped)
+        );
+    }
+
+    #[test]
+    fn test_mm_supervisor_error_distinguishes_subsystems() {
+        assert_ne!(
+            MmSupervisorError::Alloc(AllocError::NotInitialized),
+            MmSupervisorError::Alloc(AllocError::PoolTooSmall)
+        );
+        assert_ne!(
+            MmSupervisorError::PolicyGate(PolicyGateError::InvalidVersion),
+            MmSupervisorError::PolicyValidation(PolicyValidationError::UnrecognizedHeaderBits)
+        );
+    }
+
+    #[test]
+    fn test_mm_supervisor_error_displays_the_subsystem_and_the_cause() {
+        // Every variant names its subsystem and then defers to the wrapped error's own message,
+        // so widening never loses the detail the subsystem reported. The table is exhaustive so a
+        // new variant added without a Display arm fails here rather than printing the wrong stage.
+        let cases: [(MmSupervisorError, &str); 17] = [
+            (HobValidationError::NoMmramRegions.into(), "HOB validation: "),
+            (CommBufferError::Missing.into(), "Communication buffer: "),
+            (PassDownHobError::TooSmall.into(), "PassDown HOB: "),
+            (CoreInitError::UserEntryPointMissing.into(), "Core bring-up: "),
+            (AllocError::OutOfMemory.into(), "Alloc allocation: "),
+            (PolicyGateError::AccessDenied.into(), "Policy gate: "),
+            (PolicyValidationError::UnrecognizedHeaderBits.into(), "Policy validation: "),
+            (PageTableWalkError::InvalidCr3.into(), "Page table walk: "),
+            (SyscallSetupError::NotInitialized.into(), "Syscall setup: "),
+            (
+                SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 0, smbase: 0x3000 }.into(),
+                "Save-state validation: ",
+            ),
+            (MmramBoundError::NoSmrrRange.into(), "MMRAM bound: "),
+            (SmrrError::SmrrUnsupported.into(), "SMRR Programming: "),
+            (CallGateError::GdtTooSmall.into(), "Call gate setup: "),
+            (SmiHandlerIdtPatchError::EntryTooSmall.into(), "SMI handler IDT patch: "),
+            (MailboxError::CommandAlreadyPending { index: 2 }.into(), "AP mailbox: "),
+            (UnblockError::OverlapsWithMmram.into(), "Unblock memory: "),
+            (PageUpdateError::AlreadyMapped.into(), "Unblock page table update: "),
+        ];
+
+        for (error, prefix) in cases {
+            let rendered = format!("{error}");
+            assert!(rendered.starts_with(prefix), "{rendered:?} should start with {prefix:?}");
+            // The wrapped message follows the prefix rather than being replaced by it.
+            assert!(rendered.len() > prefix.len(), "{rendered:?} carries no message from the subsystem");
+        }
+
+        // The two policy stages are told apart by their prefix, so a reader can see which one
+        // rejected the blob without reading the rest of the message.
+        let gate = format!("{}", MmSupervisorError::from(PolicyGateError::InvalidVersion));
+        let validation = format!("{}", MmSupervisorError::from(PolicyValidationError::UnrecognizedHeaderBits));
+        assert!(gate.starts_with("Policy gate: "));
+        assert!(validation.starts_with("Policy validation: "));
+        assert_ne!(gate, validation);
+    }
+
+    #[test]
+    fn test_mm_supervisor_error_exposes_the_subsystem_error_as_its_source() {
+        use core::error::Error;
+
+        // Every variant wraps a subsystem error, so a source is always reachable.
+        let errors = [
+            MmSupervisorError::from(HobValidationError::NoMmramRegions),
+            MmSupervisorError::from(CommBufferError::Missing),
+            MmSupervisorError::from(PassDownHobError::TooSmall),
+            MmSupervisorError::from(CoreInitError::UserEntryPointMissing),
+            MmSupervisorError::from(AllocError::OutOfMemory),
+            MmSupervisorError::from(PolicyGateError::AccessDenied),
+            MmSupervisorError::from(PolicyValidationError::UnrecognizedHeaderBits),
+            MmSupervisorError::from(PageTableWalkError::InvalidCr3),
+            MmSupervisorError::from(SyscallSetupError::NotInitialized),
+            MmSupervisorError::from(SaveStateValidationError::UnusableSaveStateRegion { cpu_index: 0, smbase: 0 }),
+            MmSupervisorError::from(MmramBoundError::NoSmrrRange),
+            MmSupervisorError::from(SmrrError::SmrrUnsupported),
+            MmSupervisorError::from(CallGateError::GdtTooSmall),
+            MmSupervisorError::from(SmiHandlerIdtPatchError::EntryTooSmall),
+            MmSupervisorError::from(MailboxError::CommandAlreadyPending { index: 2 }),
+            MmSupervisorError::from(UnblockError::OverlapsWithMmram),
+            MmSupervisorError::from(PageUpdateError::AlreadyMapped),
+        ];
+        for error in errors {
+            assert!(error.source().is_some(), "{error} should expose its subsystem error as a source");
+        }
+    }
+
+    #[test]
+    fn test_mm_supervisor_error_separates_policy_from_core_bring_up() {
+        // Both are initialization failures, but they stay distinguishable in the aggregate.
+        let policy = MmSupervisorError::from(PolicyGateError::MalformedPolicy);
+        let core = CoreInitError::UserEntryPointMissing.into();
+        assert_ne!(policy, core);
+
+        let MmSupervisorError::CoreInit(inner) = core else {
+            panic!("expected a core bring-up error");
+        };
+        assert_eq!(inner, CoreInitError::UserEntryPointMissing);
+
+        assert_ne!(
+            MmSupervisorError::from(CoreInitError::CpuIndexOutOfRange { index: 4, len: 2 }),
+            MmSupervisorError::from(CoreInitError::CpuIndexOutOfRange { index: 5, len: 2 })
+        );
+    }
+}

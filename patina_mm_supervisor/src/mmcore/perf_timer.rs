@@ -116,3 +116,123 @@ where
 
     false
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn leaf(eax: u32, ebx: u32, ecx: u32) -> CpuidResult {
+        CpuidResult { eax, ebx, ecx, edx: 0 }
+    }
+
+    #[test]
+    fn test_tsc_frequency_from_cpuid_ratio() {
+        // A 24 MHz crystal with a 100/1 ratio yields a 2.4 GHz counter.
+        assert_eq!(tsc_frequency(leaf(1, 100, 24_000_000)), Some(2_400_000_000));
+    }
+
+    #[test]
+    fn test_tsc_frequency_requires_every_term() {
+        // A zero in any term means the CPU does not enumerate leaf 0x15.
+        assert_eq!(tsc_frequency(leaf(0, 100, 24_000_000)), None);
+        assert_eq!(tsc_frequency(leaf(1, 0, 24_000_000)), None);
+        assert_eq!(tsc_frequency(leaf(1, 100, 0)), None);
+    }
+
+    #[test]
+    fn test_base_frequency_scales_mhz_to_hz() {
+        assert_eq!(base_frequency(leaf(0, 0, 0)), 0);
+        assert_eq!(base_frequency(leaf(2_400, 0, 0)), 2_400_000_000);
+        // Above 4294 MHz the conversion overflows if it is done in 32-bit arithmetic.
+        assert_eq!(base_frequency(leaf(5_000, 0, 0)), 5_000_000_000);
+    }
+
+    #[test]
+    fn test_arch_perf_frequency_queries_the_host_cpu() {
+        // The value depends on the host CPU, but the query must not panic.
+        let _ = arch_perf_frequency();
+    }
+
+    #[test]
+    fn test_us_to_ticks_at_a_known_frequency() {
+        // At 1 MHz a tick is exactly one microsecond.
+        assert_eq!(us_to_ticks_at(1_000, 1_000_000), Some(1_000));
+        assert_eq!(us_to_ticks_at(1_000, 2_400_000_000), Some(2_400_000));
+        // Sub-microsecond resolution truncates rather than rounding.
+        assert_eq!(us_to_ticks_at(0, 2_400_000_000), Some(0));
+        // The intermediate product is computed in 128 bits, so a long timeout at a high
+        // frequency does not overflow.
+        assert_eq!(us_to_ticks_at(u64::MAX / 1_000_000, 1_000_000), Some(u64::MAX / 1_000_000));
+    }
+
+    #[test]
+    fn test_us_to_ticks_at_an_unknown_frequency() {
+        assert_eq!(us_to_ticks_at(1_000, 0), None);
+    }
+
+    #[test]
+    fn test_us_to_ticks_follows_the_frequency_the_cpu_reports() {
+        // A virtualized host need not enumerate the CPUID frequency leaves at all, in
+        // which case no conversion is possible and `None` is the correct answer.
+        match arch_perf_frequency() {
+            0 => assert_eq!(us_to_ticks(1_000), None),
+            freq => assert_eq!(us_to_ticks(1_000), Some(((u128::from(freq) * 1_000) / 1_000_000) as u64)),
+        }
+    }
+
+    #[test]
+    fn test_spin_until_immediate_true() {
+        let result = spin_until(1_000, || true);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_spin_until_reports_a_satisfied_condition_after_polling() {
+        let mut polls = 0;
+        assert!(spin_until(1_000_000, || {
+            polls += 1;
+            polls == 5
+        }));
+        assert_eq!(polls, 5);
+    }
+
+    #[test]
+    fn test_spin_until_times_out() {
+        // A condition that never holds must return once the deadline passes.
+        assert!(!spin_until(1, || false));
+    }
+
+    #[test]
+    fn test_spin_iterations_stops_on_the_condition() {
+        let mut polls = 0;
+        assert!(spin_iterations(10, || {
+            polls += 1;
+            polls == 3
+        }));
+        assert_eq!(polls, 3);
+    }
+
+    #[test]
+    fn test_spin_iterations_gives_up_after_its_budget() {
+        let mut polls = 0;
+        assert!(!spin_iterations(10, || {
+            polls += 1;
+            false
+        }));
+        // The budget is ten iterations per microsecond.
+        assert_eq!(polls, 100);
+    }
+
+    #[test]
+    fn test_spin_iterations_with_no_budget() {
+        assert!(!spin_iterations(0, || panic!("condition must not be polled")));
+        // A timeout large enough to overflow the budget saturates instead of wrapping to zero.
+        let mut polled = false;
+        assert!(spin_iterations(u64::MAX, || {
+            polled = true;
+            true
+        }));
+        assert!(polled);
+    }
+}

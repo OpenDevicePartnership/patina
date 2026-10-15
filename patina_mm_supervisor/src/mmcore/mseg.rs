@@ -86,3 +86,40 @@ pub(crate) fn program_mseg_base(cpu_id: u32) {
     unsafe { write_msr(IA32_SMM_MONITOR_CTL_MSR, value) };
     log::debug!("CPU {cpu_id} programmed IA32_SMM_MONITOR_CTL = 0x{value:x}");
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::test_support::*;
+
+    #[test]
+    fn test_parse_mseg_smram_hob_returns_cpu_start() {
+        let data = mseg_smram_hob_data(0x0080_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data), Some(0x0040_0000));
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_truncated_descriptor() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0x0002_0000);
+
+        assert_eq!(parse_mseg_smram_hob(&data[..data.len() - 1]), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_empty_region() {
+        let data = mseg_smram_hob_data(0x0040_0000, 0x0040_0000, 0);
+
+        assert_eq!(parse_mseg_smram_hob(&data), None);
+    }
+
+    #[test]
+    fn test_parse_mseg_smram_hob_rejects_invalid_base() {
+        for invalid_base in [0x0040_0001, 0x1_0000_0000] {
+            let data = mseg_smram_hob_data(invalid_base, invalid_base, 0x0002_0000);
+
+            assert_eq!(parse_mseg_smram_hob(&data), None);
+        }
+    }
+}

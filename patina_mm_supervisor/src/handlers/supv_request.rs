@@ -108,3 +108,167 @@ fn write_request_result(comm_buffer: *mut u8, status: efi::Status) {
         comm_buffer.cast::<MmSupervisorRequestHeader>().write_unaligned(header);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::handlers::{PATCH_LEVEL, VERSION};
+    use patina::management_mode::protocol::mm_supervisor_request::MmSupervisorVersionInfo;
+    use zerocopy::IntoBytes;
+
+    const VERSION_RESPONSE_SIZE: usize = MmSupervisorRequestHeader::SIZE + MmSupervisorVersionInfo::SIZE;
+
+    fn request_header(signature: u32, revision: u32, request: u32) -> MmSupervisorRequestHeader {
+        MmSupervisorRequestHeader { signature, revision, request, reserved: 0, result: 0 }
+    }
+
+    fn request_buffer<const N: usize>(header: MmSupervisorRequestHeader) -> [u8; N] {
+        let mut buffer = [0; N];
+        buffer
+            .get_mut(..MmSupervisorRequestHeader::SIZE)
+            .expect("test request buffer must fit the request header")
+            .copy_from_slice(header.as_bytes());
+        buffer
+    }
+
+    fn response_header(buffer: &[u8]) -> MmSupervisorRequestHeader {
+        MmSupervisorRequestHeader::from_bytes(
+            buffer.get(..MmSupervisorRequestHeader::SIZE).expect("response buffer must contain the request header"),
+        )
+        .expect("response header must have a valid layout")
+    }
+
+    #[test]
+    fn rejects_a_null_buffer() {
+        let mut size = MmSupervisorRequestHeader::SIZE;
+
+        assert_eq!(mm_supv_request_handler(core::ptr::null_mut(), &mut size), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn rejects_a_buffer_smaller_than_the_request_header() {
+        let mut buffer = [0; MmSupervisorRequestHeader::SIZE];
+        let mut size = MmSupervisorRequestHeader::SIZE - 1;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn rejects_an_invalid_signature() {
+        let header = request_header(0, REVISION, RequestType::VersionInfo.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::INVALID_PARAMETER);
+        assert_eq!(size, VERSION_RESPONSE_SIZE);
+        assert_eq!(response_header(&buffer).result, 0);
+    }
+
+    #[test]
+    fn rejects_an_unsupported_revision() {
+        let header = request_header(SIGNATURE, REVISION + 1, RequestType::VersionInfo.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::UNSUPPORTED);
+        assert_eq!(size, VERSION_RESPONSE_SIZE);
+        assert_eq!(response_header(&buffer).result, 0);
+    }
+
+    #[test]
+    fn reports_an_unknown_request_in_the_response_header() {
+        let header = request_header(SIGNATURE, REVISION, u32::MAX);
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+        assert_eq!(response_header(&buffer).result, efi::Status::UNSUPPORTED.as_usize() as u64);
+    }
+
+    #[test]
+    fn returns_version_information() {
+        let header = request_header(SIGNATURE, REVISION, RequestType::VersionInfo.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, VERSION_RESPONSE_SIZE);
+        assert_eq!(response_header(&buffer).result, efi::Status::SUCCESS.as_usize() as u64);
+
+        let version_info = MmSupervisorVersionInfo::from_bytes(
+            buffer
+                .get(MmSupervisorRequestHeader::SIZE..VERSION_RESPONSE_SIZE)
+                .expect("version response must contain its payload"),
+        )
+        .expect("version response payload must have a valid layout");
+        assert_eq!(version_info.version, VERSION);
+        assert_eq!(version_info.patch_level, PATCH_LEVEL);
+        assert_eq!(version_info.max_supervisor_request_level, RequestType::MAX_REQUEST_TYPE);
+    }
+
+    #[test]
+    fn reports_comm_update_as_access_denied_in_the_response_header() {
+        let header = request_header(SIGNATURE, REVISION, RequestType::CommUpdate.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+        assert_eq!(response_header(&buffer).result, efi::Status::ACCESS_DENIED.as_usize() as u64);
+    }
+
+    #[test]
+    fn reports_a_short_version_response_buffer_in_the_response_header() {
+        let header = request_header(SIGNATURE, REVISION, RequestType::VersionInfo.into());
+        let mut buffer = request_buffer::<{ MmSupervisorRequestHeader::SIZE }>(header);
+        let mut size = buffer.len();
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+        assert_eq!(response_header(&buffer).result, efi::Status::BUFFER_TOO_SMALL.as_usize() as u64);
+    }
+
+    #[test]
+    fn routes_fetch_policy_to_its_handler() {
+        // Without an installed policy gate the handler refuses the request, but the dispatch arm
+        // still runs, which is what this covers. The communication status stays SUCCESS because
+        // the request was delivered; the refusal is reported in the header result field.
+        let header = request_header(SIGNATURE, REVISION, RequestType::FetchPolicy.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_ne!(response_header(&buffer).result, efi::Status::SUCCESS.as_usize() as u64);
+    }
+
+    #[test]
+    fn routes_unblock_mem_to_its_handler() {
+        // Same as the fetch policy case: the request reaches unblock_memory, which rejects a
+        // header with no descriptor behind it.
+        let header = request_header(SIGNATURE, REVISION, RequestType::UnblockMem.into());
+        let mut buffer = request_buffer::<VERSION_RESPONSE_SIZE>(header);
+        let mut size = VERSION_RESPONSE_SIZE;
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+        assert_ne!(response_header(&buffer).result, efi::Status::SUCCESS.as_usize() as u64);
+    }
+
+    #[test]
+    fn accepts_an_unaligned_communication_buffer() {
+        let header = request_header(SIGNATURE, 0, RequestType::VersionInfo.into());
+        let mut storage = [0u8; VERSION_RESPONSE_SIZE + 1];
+        let buffer = storage.get_mut(1..).expect("test storage must provide an intentionally unaligned buffer");
+        buffer
+            .get_mut(..MmSupervisorRequestHeader::SIZE)
+            .expect("test request buffer must fit the request header")
+            .copy_from_slice(header.as_bytes());
+        let mut size = buffer.len();
+
+        assert_eq!(mm_supv_request_handler(buffer.as_mut_ptr(), &mut size), efi::Status::SUCCESS);
+        assert_eq!(size, VERSION_RESPONSE_SIZE);
+        assert_eq!(response_header(buffer).result, efi::Status::SUCCESS.as_usize() as u64);
+    }
+}

@@ -48,3 +48,71 @@ pub(crate) fn query_address_ownership(range: &MemoryRange) -> Option<PageOwnersh
         Some(PageOwnership::User)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::test_support::{PageAlignedMemory, init_global_state_over};
+
+    #[test]
+    fn test_page_ownership_is_copy_and_comparable() {
+        let owner = PageOwnership::Supervisor;
+        let copied = owner;
+        assert_eq!(owner, copied);
+        assert_ne!(PageOwnership::Supervisor, PageOwnership::User);
+    }
+
+    fn mr(base: u64, size: u64) -> MemoryRange {
+        MemoryRange::new(base, size).unwrap()
+    }
+
+    fn map(range: &MemoryRange, attributes: MemoryAttributes) {
+        let mut page_table = security_state().lock_page_table();
+        let page_table = page_table.as_mut().expect("a page table is installed");
+        page_table.map_memory_region(range.base(), range.size(), attributes).expect("map the test pages");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_query_address_ownership_returns_none_without_page_table() {
+        *security_state().lock_page_table() = None;
+        assert_eq!(query_address_ownership(&mr(0x2000, 0x1000)), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_query_address_ownership_identifies_user_and_supervisor_pages() {
+        let pool = PageAlignedMemory::new(crate::memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&pool);
+        let buffer = PageAlignedMemory::new(2);
+        let range = mr(buffer.base() + 0x234, 0x1000);
+
+        map(&buffer.range(), MemoryAttributes::ExecuteProtect);
+        assert_eq!(query_address_ownership(&range), Some(PageOwnership::User));
+
+        map(&buffer.range(), MemoryAttributes::ExecuteProtect | MemoryAttributes::Supervisor);
+        assert_eq!(query_address_ownership(&range), Some(PageOwnership::Supervisor));
+
+        *security_state().lock_page_table() = None;
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_query_address_ownership_widens_range_to_whole_pages() {
+        let pool = PageAlignedMemory::new(crate::memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&pool);
+        let buffer = PageAlignedMemory::new(2);
+        map(&mr(buffer.base(), UEFI_PAGE_SIZE as u64), MemoryAttributes::ExecuteProtect);
+
+        // Both ranges start inside the mapped first page. Only the second one reaches into the
+        // unmapped second page, so only its query fails.
+        assert_eq!(query_address_ownership(&mr(buffer.base() + 0x234, 0x10)), Some(PageOwnership::User));
+        assert_eq!(query_address_ownership(&mr(buffer.base() + 0x234, 0x1000)), None);
+
+        // A range in the last page cannot be widened, because its rounded end would pass u64::MAX.
+        assert_eq!(query_address_ownership(&mr(u64::MAX - 0xfff, 0xfff)), None);
+
+        *security_state().lock_page_table() = None;
+    }
+}

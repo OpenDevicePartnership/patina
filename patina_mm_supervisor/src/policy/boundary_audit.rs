@@ -138,3 +138,133 @@ fn audit_boundary_io_grants(gate: &PolicyGate) -> usize {
 
     granted
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::policy::{
+        ACCESS_ATTR_ALLOW, RESOURCE_ATTR_READ, RESOURCE_ATTR_WRITE,
+        test_support::{Descriptors, PolicyBuilder, io, msr},
+    };
+
+    const WRITE: u16 = RESOURCE_ATTR_WRITE as u16;
+    const READ_WRITE: u16 = (RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE) as u16;
+
+    #[test]
+    fn test_boundary_msr_audit_passes_a_policy_modelled_on_a_shipping_platform() {
+        // The MSR grants from a real platform MM policy, including the security-relevant ones the
+        // list deliberately leaves to the platform. None of these may be reported, or the audit is
+        // noise that platform authors will learn to ignore.
+        let granted = [
+            msr(0x0000_001B, 4, READ_WRITE), // IA32_APIC_BASE
+            msr(0x0000_003A, 1, READ_WRITE), // IA32_FEATURE_CONTROL
+            msr(0x0000_00FE, 1, READ_WRITE), // IA32_MTRRCAP
+            msr(0x0000_01A0, 1, READ_WRITE), // IA32_MISC_ENABLE
+            msr(0x0000_01FE, 2, READ_WRITE), // chipset-specific, directly below the variable MTRRs
+            msr(0x0000_0830, 1, READ_WRITE), // x2APIC interrupt command
+        ];
+        let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Msr(granted.to_vec())).build();
+
+        assert_eq!(audit_boundary_msr_grants(&policy.gate()), 0);
+    }
+
+    #[test]
+    fn test_boundary_msr_audit_reports_a_policy_that_grants_the_syscall_entry() {
+        // An allow range that starts at IA32_EFER and runs over the syscall MSRs - the shape of
+        // policy mistake the audit exists to surface.
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![msr(0xC000_0080, 5, READ_WRITE)]))
+            .build();
+
+        assert_eq!(audit_boundary_msr_grants(&policy.gate()), 5);
+    }
+
+    #[test]
+    fn test_boundary_msr_audit_reports_each_granted_register_once() {
+        let policy = PolicyBuilder::new()
+            .root(
+                ACCESS_ATTR_ALLOW,
+                Descriptors::Msr(vec![
+                    msr(0x0000_01F2, 2, WRITE),      // both SMRR registers
+                    msr(0x0000_06A4, 1, READ_WRITE), // IA32_PL0_SSP alone
+                ]),
+            )
+            .build();
+
+        assert_eq!(audit_boundary_msr_grants(&policy.gate()), 3);
+    }
+
+    #[test]
+    fn test_boundary_msr_audit_ignores_read_only_grants() {
+        // Reads are the platform's call; only a write voids the boundary.
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![msr(0xC000_0080, 5, RESOURCE_ATTR_READ as u16)]))
+            .build();
+
+        assert_eq!(audit_boundary_msr_grants(&policy.gate()), 0);
+    }
+
+    #[test]
+    fn test_boundary_msr_audit_covers_the_syscall_flag_mask() {
+        // `IA32_FMASK` is what clears DF and AC when Ring 3 enters Ring 0; a policy that lets
+        // Ring 3 write it hands back the flags the supervisor runs under.
+        const IA32_FMASK: u32 = 0xC000_0084;
+
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![msr(IA32_FMASK, 1, READ_WRITE)]))
+            .build();
+
+        assert_eq!(audit_boundary_msr_grants(&policy.gate()), 1);
+    }
+
+    #[test]
+    fn test_boundary_io_audit_stays_quiet_on_ports_a_platform_legitimately_drives() {
+        let granted = [
+            io(0x0062, 2, READ_WRITE),    // embedded controller
+            io(0x0070, 2, READ_WRITE),    // CMOS index/data
+            io(0x0400, 0x40, READ_WRITE), // an ACPI PM block
+            io(0x0CF9, 1, READ_WRITE),    // reset control, inside the PCI config window but not it
+        ];
+        let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Io(granted.to_vec())).build();
+
+        // 0xCF9 sits within the audited 0xCF8-0xCFF span, so it is reported; the rest are not.
+        assert_eq!(audit_boundary_io_grants(&policy.gate()), 1);
+    }
+
+    #[test]
+    fn test_boundary_io_audit_reports_a_policy_that_grants_pci_config_space() {
+        let policy =
+            PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Io(vec![io(0x0CF8, 8, READ_WRITE)])).build();
+
+        assert_eq!(audit_boundary_io_grants(&policy.gate()), 8);
+    }
+
+    #[test]
+    fn test_boundary_io_audit_ignores_read_only_grants() {
+        // Reading PCI config space does not move the boundary; writing it does.
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Io(vec![io(0x0CF8, 8, RESOURCE_ATTR_READ as u16)]))
+            .build();
+
+        assert_eq!(audit_boundary_io_grants(&policy.gate()), 0);
+    }
+
+    #[test]
+    fn test_boundary_audit_totals_both_halves() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![msr(0xC000_0080, 5, READ_WRITE)]))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Io(vec![io(0x0CF8, 8, READ_WRITE)]))
+            .build();
+
+        // The five syscall MSRs plus the eight PCI configuration ports.
+        assert_eq!(audit_boundary_grants(&policy.gate()), 13);
+    }
+
+    #[test]
+    fn test_boundary_audit_reports_nothing_for_an_empty_policy() {
+        let policy = PolicyBuilder::new().build();
+
+        assert_eq!(audit_boundary_grants(&policy.gate()), 0);
+    }
+}

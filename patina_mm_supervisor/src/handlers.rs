@@ -130,3 +130,52 @@ pub(crate) static DEFAULT_SUPERVISOR_MMI_HANDLERS: &[SupervisorMmiHandler] = &[
         handle: mm_exit_boot_services_handler,
     },
 ];
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn assert_sync<T: Sync>() {}
+
+    #[test]
+    fn supervisor_mmi_handler_is_sync_without_an_unsafe_impl() {
+        assert_sync::<SupervisorMmiHandler>();
+    }
+
+    #[test]
+    fn default_handlers_have_the_expected_order_and_metadata() {
+        let expected = [
+            (
+                "MmReadyToLock",
+                MM_DXE_READY_TO_LOCK_PROTOCOL_GUID.into_inner(),
+                mm_ready_to_lock_handler as fn(*mut u8, &mut usize) -> efi::Status,
+            ),
+            (
+                "MmSupvRequest",
+                MM_SUPERVISOR_REQUEST_HANDLER_GUID.into_inner(),
+                mm_supv_request_handler as fn(*mut u8, &mut usize) -> efi::Status,
+            ),
+            (
+                "MmExitBootServices",
+                EXIT_BOOT_SERVICES_EVENT_GROUP_GUID.into_inner(),
+                mm_exit_boot_services_handler as fn(*mut u8, &mut usize) -> efi::Status,
+            ),
+        ];
+
+        assert_eq!(DEFAULT_SUPERVISOR_MMI_HANDLERS.len(), expected.len());
+        for (handler, (name, guid, handle)) in DEFAULT_SUPERVISOR_MMI_HANDLERS.iter().zip(expected) {
+            assert_eq!(handler.name, name);
+            assert_eq!(handler.handler_guid, guid);
+            assert!(core::ptr::fn_addr_eq(handler.handle, handle));
+        }
+    }
+
+    #[test]
+    fn version_constants_encode_the_supported_release() {
+        assert_eq!(VERSION >> 16, 0x13);
+        assert_eq!(VERSION & 0xFFFF, 0x08);
+        assert_eq!(PATCH_LEVEL >> 16, 0x01);
+        assert_eq!(PATCH_LEVEL & 0xFFFF, 0x01);
+    }
+}

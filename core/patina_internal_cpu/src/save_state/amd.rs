@@ -278,6 +278,11 @@ pub(super) fn io_info_supported(_smm_rev_id: u32) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_vendor_name() {
+        assert_eq!(VENDOR_NAME, "AMD");
+    }
+
     // ----------------------------------------------------------------
     // Register map tests
     // ----------------------------------------------------------------

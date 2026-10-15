@@ -241,6 +241,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_vendor_name() {
+        assert_eq!(VENDOR_NAME, "Intel");
+    }
+
+    #[test]
     fn test_gpr_offsets() {
         let rax = register_info(MmSaveStateRegister::Rax).unwrap();
         assert_eq!(rax.lo_offset, 0x035C);

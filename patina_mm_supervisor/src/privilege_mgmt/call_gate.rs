@@ -329,3 +329,222 @@ pub unsafe extern "efiapi" fn setup_call_gate(return_pointer: u64, cpl0_stack_pt
 
     log::trace!("Call gate set to 0x{return_pointer:016x}, CPL0 stack pointer set to 0x{cpl0_stack_ptr:016x}");
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use zerocopy::FromZeros;
+
+    #[test]
+    fn test_call_gate_error_names_the_undersized_gdt() {
+        // The GDT image comes from outside the supervisor, so the one way programming can fail is
+        // an image that does not reach the entries being written.
+        assert_eq!(
+            format!("{}", CallGateError::GdtTooSmall),
+            "the GDT image does not contain the privilege transition entries to program"
+        );
+    }
+
+    /// A zeroed GDT image large enough for the entries the supervisor programs.
+    fn empty_gdt() -> Vec<u8> {
+        vec![0u8; GDT_PROGRAMMED_SIZE]
+    }
+
+    /// Reads the entry of type `T` at `offset` out of a GDT image.
+    fn entry_at<T: FromBytes>(gdt: &[u8], offset: usize) -> T {
+        let bytes = gdt.get(offset..offset + core::mem::size_of::<T>()).expect("entry lies within the GDT image");
+        T::read_from_bytes(bytes).expect("entry is exactly its byte size")
+    }
+
+    /// Writes `entry` into a GDT image at `offset`.
+    fn write_entry_at<T: IntoBytes + Immutable>(gdt: &mut [u8], offset: usize, entry: &T) {
+        let bytes = gdt.get_mut(offset..offset + core::mem::size_of::<T>()).expect("entry lies within the GDT image");
+        entry.write_to(bytes).expect("entry is exactly its byte size");
+    }
+
+    fn call_gate_of(gdt: &[u8]) -> CallGateDescriptor {
+        entry_at(gdt, CALL_GATE_OFFSET as usize)
+    }
+
+    fn tss_descriptor_of(gdt: &[u8]) -> TssDescriptor {
+        entry_at(gdt, TSS_SEL_OFFSET as usize)
+    }
+
+    fn tss_of(gdt: &[u8]) -> TaskStateSegment {
+        entry_at(gdt, TSS_DESC_OFFSET as usize)
+    }
+
+    #[test]
+    fn test_descriptor_layout_matches_hardware() {
+        // The CPU reads these structures directly, so their sizes are part of the contract.
+        assert_eq!(core::mem::size_of::<CallGateDescriptor>(), 16);
+        assert_eq!(core::mem::size_of::<TssDescriptor>(), 16);
+        assert_eq!(core::mem::size_of::<TaskStateSegment>(), 0x68);
+        assert_eq!(core::mem::size_of::<GdtRegister>(), 10);
+        // The programmed window covers the TSS that follows the descriptors.
+        assert_eq!(GDT_PROGRAMMED_SIZE, 0x80 + 0x68);
+    }
+
+    #[test]
+    fn test_call_gate_offset_round_trips() {
+        let mut desc = CallGateDescriptor::default();
+
+        desc.set_offset(0x1234_5678_9ABC_DEF0);
+        assert_eq!(desc.offset(), 0x1234_5678_9ABC_DEF0);
+        // The 64-bit target is split across three fields of the descriptor.
+        let (low, mid, high) = (desc.offset_low, desc.offset_mid, desc.offset_high);
+        assert_eq!((low, mid, high), (0xDEF0, 0x9ABC, 0x1234_5678));
+
+        desc.set_offset(0);
+        assert_eq!(desc.offset(), 0);
+    }
+
+    #[test]
+    fn test_tss_descriptor_base_round_trips() {
+        let mut desc = TssDescriptor::default();
+
+        desc.set_base(0xFEDC_BA98_7654_3210);
+        assert_eq!(desc.base(), 0xFEDC_BA98_7654_3210);
+        // The 64-bit base is split across four fields of the descriptor.
+        let (low, mid_low, mid_high, high) = (desc.base_low, desc.base_mid_low, desc.base_mid_high, desc.base_high);
+        assert_eq!((low, mid_low, mid_high, high), (0x3210, 0x54, 0x76, 0xFEDC_BA98));
+
+        desc.set_base(0);
+        assert_eq!(desc.base(), 0);
+    }
+
+    #[test]
+    fn test_return_gate_is_callable_from_ring_3() {
+        let mut desc = CallGateDescriptor::default();
+
+        desc.set_return_gate(0xFFFF_8000_0000_1000);
+
+        assert_eq!(desc.offset(), 0xFFFF_8000_0000_1000);
+        // The gate must target the Ring 0 code segment...
+        let selector = desc.selector;
+        assert_eq!(selector, LONG_CS_R0);
+        // ...be present, be a 64-bit call gate (type 0xC) and have DPL 3 so Ring 3 can call it.
+        assert_eq!(desc.type_attr, CALL_GATE_TYPE_ATTR);
+        assert_eq!(desc.type_attr & 0x80, 0x80, "present bit");
+        assert_eq!((desc.type_attr >> 5) & 0x3, 3, "DPL");
+        assert_eq!(desc.type_attr & 0xF, 0xC, "64-bit call gate type");
+    }
+
+    #[test]
+    fn test_program_privilege_transition_entries() {
+        const GDT_BASE: u64 = 0x0000_7FFF_1234_0000;
+        const RETURN_POINTER: u64 = 0xFFFF_8000_0BAD_F00D;
+        const CPL0_STACK: u64 = 0x0000_4000_0000_8000;
+
+        let mut gdt = empty_gdt();
+        assert_eq!(program_privilege_transition_entries(&mut gdt, GDT_BASE, RETURN_POINTER, CPL0_STACK), Ok(()));
+
+        let call_gate = call_gate_of(&gdt);
+        let selector = call_gate.selector;
+        assert_eq!(call_gate.offset(), RETURN_POINTER);
+        assert_eq!(selector, LONG_CS_R0);
+        assert_eq!(call_gate.type_attr, CALL_GATE_TYPE_ATTR);
+
+        // The TSS descriptor must point at the TSS that follows it in the GDT.
+        assert_eq!(tss_descriptor_of(&gdt).base(), GDT_BASE + u64::from(TSS_DESC_OFFSET));
+
+        // RSP0 is what the CPU loads when Ring 3 transitions back into Ring 0.
+        let rsp0 = tss_of(&gdt).privilege_stack_table[0];
+        assert_eq!(rsp0, CPL0_STACK);
+    }
+
+    #[test]
+    fn test_program_privilege_transition_entries_preserves_untouched_fields() {
+        const GDT_BASE: u64 = 0x1000;
+
+        // Start from a GDT whose entries already carry values the supervisor does not program.
+        let mut gdt = empty_gdt();
+
+        let call_gate = CallGateDescriptor { ist: 0x3, ..Default::default() };
+        write_entry_at(&mut gdt, CALL_GATE_OFFSET as usize, &call_gate);
+
+        let tss_desc = TssDescriptor { limit_low: 0x67, type_attr: 0x89, ..Default::default() };
+        write_entry_at(&mut gdt, TSS_SEL_OFFSET as usize, &tss_desc);
+
+        let mut tss = TaskStateSegment::new_zeroed();
+        tss.privilege_stack_table[1] = 0xAAAA;
+        tss.interrupt_stack_table[0] = 0xBBBB;
+        tss.io_map_base = 0x68;
+        write_entry_at(&mut gdt, TSS_DESC_OFFSET as usize, &tss);
+
+        assert_eq!(program_privilege_transition_entries(&mut gdt, GDT_BASE, 0x2000, 0x3000), Ok(()));
+
+        // Only the fields the supervisor owns change; everything else survives.
+        assert_eq!(call_gate_of(&gdt).ist, 0x3);
+        let (limit_low, type_attr) = {
+            let desc = tss_descriptor_of(&gdt);
+            (desc.limit_low, desc.type_attr)
+        };
+        assert_eq!(limit_low, 0x67);
+        // The type/attribute byte of the TSS descriptor is set by the GDT builder, not here.
+        assert_eq!(type_attr, 0x89);
+
+        let programmed_tss = tss_of(&gdt);
+        let (rsp0, rsp1, ist1, io_map_base) = (
+            programmed_tss.privilege_stack_table[0],
+            programmed_tss.privilege_stack_table[1],
+            programmed_tss.interrupt_stack_table[0],
+            programmed_tss.io_map_base,
+        );
+        assert_eq!(rsp0, 0x3000);
+        assert_eq!(rsp1, 0xAAAA);
+        assert_eq!(ist1, 0xBBBB);
+        assert_eq!(io_map_base, 0x68);
+    }
+
+    #[test]
+    fn test_program_privilege_transition_entries_rejects_short_gdt() {
+        // A GDT image that stops before the TSS (or before either descriptor) is reported rather
+        // than written past.
+        for size in [0, CALL_GATE_OFFSET as usize, TSS_SEL_OFFSET as usize, GDT_PROGRAMMED_SIZE - 1] {
+            let mut gdt = vec![0u8; size];
+            assert_eq!(
+                program_privilege_transition_entries(&mut gdt, 0x1000, 0x2000, 0x3000),
+                Err(CallGateError::GdtTooSmall.into()),
+                "unexpected result for a {size} byte GDT"
+            );
+        }
+    }
+
+    #[test]
+    fn test_update_entry_rejects_an_offset_that_overflows() {
+        // The offset arithmetic is guarded so a bogus descriptor offset can never wrap around and
+        // end up addressing memory outside the GDT image.
+        let mut gdt = empty_gdt();
+
+        assert_eq!(
+            update_entry::<CallGateDescriptor, _>(&mut gdt, usize::MAX, |desc| desc.set_offset(0x1000)),
+            Err(CallGateError::GdtTooSmall.into())
+        );
+        assert_eq!(
+            update_entry::<TaskStateSegment, _>(&mut gdt, usize::MAX - 4, |tss| tss.io_map_base = 0),
+            Err(CallGateError::GdtTooSmall.into())
+        );
+
+        // A rejected offset must leave the GDT untouched.
+        assert_eq!(gdt, empty_gdt());
+    }
+
+    #[test]
+    fn test_program_privilege_transition_entries_is_idempotent() {
+        let mut gdt = empty_gdt();
+
+        assert_eq!(program_privilege_transition_entries(&mut gdt, 0x1000, 0x2000, 0x3000), Ok(()));
+        let first = gdt.clone();
+
+        assert_eq!(program_privilege_transition_entries(&mut gdt, 0x1000, 0x2000, 0x3000), Ok(()));
+        assert_eq!(gdt, first);
+
+        // Re-programming for a different demotion replaces the previous values.
+        assert_eq!(program_privilege_transition_entries(&mut gdt, 0x1000, 0x4000, 0x5000), Ok(()));
+        assert_eq!(call_gate_of(&gdt).offset(), 0x4000);
+        let rsp0 = tss_of(&gdt).privilege_stack_table[0];
+        assert_eq!(rsp0, 0x5000);
+    }
+}

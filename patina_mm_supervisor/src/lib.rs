@@ -100,22 +100,44 @@ pub trait PlatformInfo: 'static {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
+    use crate::comm_buffer::MM_COMMON_REGION_HOB_GUID;
+
     use super::*;
+    use patina::standard::efi;
 
     struct TestPlatform;
 
     impl PlatformInfo for TestPlatform {}
 
-    #[test]
-    fn test_supervisor_creation() {
-        let _supervisor: MmSupervisorCore<TestPlatform, 4> = MmSupervisorCore::new();
-        // Just verify it compiles and creates without panic
+    fn test_mmi_handler(_: *mut u8, _: &mut usize) -> efi::Status {
+        efi::Status::SUCCESS
+    }
+
+    static TEST_MMI_HANDLERS: &[SupervisorMmiHandler] = &[SupervisorMmiHandler {
+        name: "TestHandler",
+        handler_guid: MM_COMMON_REGION_HOB_GUID.into_inner(),
+        handle: test_mmi_handler,
+    }];
+
+    struct PlatformWithHandler;
+
+    impl PlatformInfo for PlatformWithHandler {
+        fn mmi_handlers() -> &'static [SupervisorMmiHandler] {
+            TEST_MMI_HANDLERS
+        }
     }
 
     #[test]
-    fn test_supervisor_is_const() {
-        // Verify we can create a static instance (no heap allocation)
-        static _SUPERVISOR: MmSupervisorCore<TestPlatform, 4> = MmSupervisorCore::new();
+    fn test_platform_info_default_and_custom_handlers() {
+        assert!(TestPlatform::mmi_handlers().is_empty());
+
+        let handlers = PlatformWithHandler::mmi_handlers();
+        assert!(core::ptr::eq(handlers, TEST_MMI_HANDLERS));
+        assert_eq!(handlers[0].name, "TestHandler");
+
+        let mut buffer_size = 0;
+        assert_eq!((handlers[0].handle)(core::ptr::null_mut(), &mut buffer_size), efi::Status::SUCCESS);
     }
 }

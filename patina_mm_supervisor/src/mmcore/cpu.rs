@@ -329,3 +329,292 @@ impl<const MAX_CPUS: usize> Default for CpuManager<MAX_CPUS> {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ap_state_maps_every_byte_value() {
+        // The state is stored as a byte in an atomic, so every value that can be read back has to
+        // map to something. Anything the supervisor did not write reads as NotPresent, which
+        // fails closed: an unrecognized byte never presents an AP as available for work.
+        assert_eq!(ApState::from(0), ApState::NotPresent);
+        assert_eq!(ApState::from(1), ApState::InHoldingPen);
+        assert_eq!(ApState::from(2), ApState::Busy);
+        assert_eq!(ApState::from(3), ApState::Halted);
+
+        for value in 4..=u8::MAX {
+            assert_eq!(ApState::from(value), ApState::NotPresent, "byte {value} should read as NotPresent");
+        }
+
+        // The four named states round-trip through the byte they are stored as.
+        for state in [ApState::NotPresent, ApState::InHoldingPen, ApState::Busy, ApState::Halted] {
+            assert_eq!(ApState::from(state as u8), state);
+        }
+    }
+
+    #[test]
+    fn test_cpu_slot_starts_unused() {
+        // A fresh slot must not look like a registered CPU, or the first AP to arrive would be
+        // matched against it.
+        let slot = CpuSlot::new();
+        assert!(!slot.is_used());
+        assert_eq!(slot.get_cpu_id(), None);
+        assert_eq!(ApState::from(slot.state.load(Ordering::Acquire)), ApState::NotPresent);
+    }
+
+    #[test]
+    fn test_cpu_manager_creation() {
+        let manager: CpuManager<4> = CpuManager::new();
+        assert_eq!(manager.registered_count(), 0);
+        assert!(manager.bsp_id().is_none());
+        assert_eq!(manager.max_cpus(), 4);
+    }
+
+    #[test]
+    fn test_cpu_manager_is_const() {
+        // Verify we can create a static instance
+        static _MANAGER: CpuManager<8> = CpuManager::new();
+    }
+
+    #[test]
+    fn test_cpu_registration() {
+        let manager: CpuManager<4> = CpuManager::new();
+
+        // Register BSP
+        let bsp_idx = manager.register_cpu(0, 0, true);
+        assert_eq!(bsp_idx, Ok(0));
+        assert_eq!(manager.bsp_id(), Some(0));
+        assert!(manager.is_bsp(0));
+
+        // Register APs
+        let ap1_idx = manager.register_cpu(1, 1, false);
+        assert_eq!(ap1_idx, Ok(1));
+        assert!(!manager.is_bsp(1));
+
+        let ap2_idx = manager.register_cpu(2, 2, false);
+        assert_eq!(ap2_idx, Ok(2));
+
+        assert_eq!(manager.registered_count(), 3);
+    }
+
+    #[test]
+    fn test_duplicate_registration() {
+        let manager: CpuManager<4> = CpuManager::new();
+
+        // Registering the same CPU twice is idempotent: the second call returns the
+        // same index and does not consume another slot.
+        let idx = manager.register_cpu(1, 1, false);
+        assert!(idx.is_ok());
+        assert_eq!(manager.register_cpu(1, 1, false), idx);
+        assert_eq!(manager.registered_count(), 1);
+    }
+
+    #[test]
+    fn test_register_decouples_apic_id_from_cpu_index() {
+        // APIC IDs are sparse and unordered; cpu_index is dense and 0-based. The CPU
+        // must land in slots[cpu_index] regardless of APIC ID or registration order.
+        let manager: CpuManager<4> = CpuManager::new();
+
+        // Register out of order with non-contiguous APIC IDs.
+        assert_eq!(manager.register_cpu(0x20, 2, false), Ok(2));
+        assert_eq!(manager.register_cpu(0x00, 0, true), Ok(0));
+        assert_eq!(manager.register_cpu(0x10, 1, false), Ok(1));
+
+        // cpu_index -> APIC ID
+        assert_eq!(manager.get_cpu_id_by_index(0), Some(0x00));
+        assert_eq!(manager.get_cpu_id_by_index(1), Some(0x10));
+        assert_eq!(manager.get_cpu_id_by_index(2), Some(0x20));
+
+        // APIC ID -> cpu_index
+        assert_eq!(manager.find_cpu_index(0x00), Some(0));
+        assert_eq!(manager.find_cpu_index(0x10), Some(1));
+        assert_eq!(manager.find_cpu_index(0x20), Some(2));
+
+        // A different APIC ID cannot take an already-occupied cpu_index.
+        assert_eq!(
+            manager.register_cpu(0x30, 1, false),
+            Err(CoreInitError::CpuIndexAlreadyRegistered { index: 1, existing: 0x10, requested: 0x30 }.into())
+        );
+    }
+
+    #[test]
+    fn test_ap_state_management() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true).unwrap();
+        manager.register_cpu(1, 1, false).unwrap();
+        // APs register as NotPresent and only enter the holding pen on check-in.
+        assert_eq!(manager.get_ap_state(1), Some(ApState::NotPresent));
+
+        // Change state
+        assert!(manager.set_ap_state(1, ApState::Busy));
+        assert_eq!(manager.get_ap_state(1), Some(ApState::Busy));
+
+        // Cannot change BSP state
+        assert!(!manager.set_ap_state(0, ApState::Halted));
+
+        // An APIC ID that was never registered has no slot to change, so the request is refused
+        // rather than silently applied to an adjacent slot.
+        assert!(!manager.set_ap_state(0x99, ApState::Busy));
+        assert_eq!(manager.get_ap_state(0x99), None);
+    }
+
+    #[test]
+    fn test_ap_state_by_index_tracks_only_used_slots() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0x20, 0, true).unwrap();
+        manager.register_cpu(0x30, 1, false).unwrap();
+        manager.set_ap_state(0x30, ApState::InHoldingPen);
+
+        // The index here is the dense CPU index, not the APIC ID, so a lookup by index reports
+        // the state of whichever core registered at that position. The BSP registers as Busy
+        // because it is the core currently running, while an AP starts out NotPresent until it
+        // checks in.
+        assert_eq!(manager.get_ap_state_by_index(1), Some(ApState::InHoldingPen));
+        assert_eq!(manager.get_ap_state_by_index(0), Some(ApState::Busy));
+
+        // A slot nobody registered into reports nothing, which is what keeps an unregistered
+        // core from being counted as present and waiting for work.
+        assert_eq!(manager.get_ap_state_by_index(2), None);
+        // An index past the array is out of range rather than wrapping onto a live slot.
+        assert_eq!(manager.get_ap_state_by_index(4), None);
+        assert_eq!(manager.get_ap_state_by_index(usize::MAX), None);
+    }
+
+    #[test]
+    fn test_take_release_by_index_refuses_an_index_out_of_range() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0x20, 0, true).unwrap();
+
+        // An AP polling with an index outside the array must not take a release token from
+        // another slot; it simply sees nothing to take.
+        assert!(!manager.take_release_by_index(4));
+        assert!(!manager.take_release_by_index(usize::MAX));
+
+        // A registered slot with no pending release is also empty, but for the ordinary reason.
+        assert!(!manager.take_release_by_index(0));
+    }
+
+    #[test]
+    fn test_cpu_manager_default_matches_new() {
+        // CpuManager is held in a static, so Default has to produce the same empty manager that
+        // new() does.
+        let manager: CpuManager<4> = CpuManager::default();
+        assert_eq!(manager.registered_count(), 0);
+        assert_eq!(manager.max_cpus(), 4);
+        assert!(manager.bsp_id().is_none());
+    }
+
+    #[test]
+    fn test_for_each_ap() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true).unwrap();
+        manager.register_cpu(1, 1, false).unwrap();
+        manager.register_cpu(2, 2, false).unwrap();
+        let mut ap_ids = [0u32; 4];
+        let mut count = 0;
+        manager.for_each_ap(|id| {
+            if count < 4 {
+                ap_ids[count] = id;
+                count += 1;
+            }
+        });
+
+        assert_eq!(count, 2);
+        assert!(ap_ids[..count].contains(&1));
+        assert!(ap_ids[..count].contains(&2));
+    }
+
+    #[test]
+    fn test_max_cpu_limit() {
+        let manager: CpuManager<2> = CpuManager::new();
+        assert!(manager.register_cpu(0, 0, true).is_ok());
+        assert!(manager.register_cpu(1, 1, false).is_ok());
+        // cpu_index 2 is out of range for CpuManager<2>.
+        assert_eq!(
+            manager.register_cpu(2, 2, false),
+            Err(CoreInitError::CpuIndexOutOfRange { index: 2, len: 2 }.into())
+        );
+    }
+
+    #[test]
+    fn test_count_aps_in_state() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true).unwrap();
+        manager.register_cpu(1, 1, false).unwrap();
+        manager.register_cpu(2, 2, false).unwrap();
+        // APs register as NotPresent; they only count as InHoldingPen after checking in.
+        assert_eq!(manager.count_aps_in_state(ApState::NotPresent), 2);
+        assert_eq!(manager.count_aps_in_state(ApState::InHoldingPen), 0);
+
+        // Simulate both APs checking in to the holding pen.
+        manager.set_ap_state(1, ApState::InHoldingPen);
+        manager.set_ap_state(2, ApState::InHoldingPen);
+        assert_eq!(manager.count_aps_in_state(ApState::InHoldingPen), 2);
+        assert_eq!(manager.count_aps_in_state(ApState::Busy), 0);
+
+        manager.set_ap_state(1, ApState::Busy);
+        assert_eq!(manager.count_aps_in_state(ApState::InHoldingPen), 1);
+        assert_eq!(manager.count_aps_in_state(ApState::Busy), 1);
+    }
+
+    #[test]
+    fn test_exit_barrier_rendezvous() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true).unwrap(); // BSP at slot 0
+        manager.register_cpu(10, 1, false).unwrap(); // AP at slot 1
+        manager.register_cpu(20, 2, false).unwrap(); // AP at slot 2
+
+        // Nothing is pending before the BSP releases.
+        assert!(!manager.take_release_by_index(1));
+        assert!(!manager.take_release_by_index(2));
+
+        // BSP releases all APs; each AP consumes its release exactly once.
+        manager.release_all_aps();
+        assert!(manager.take_release_by_index(1));
+        assert!(!manager.take_release_by_index(1));
+        assert!(manager.take_release_by_index(2));
+        assert!(!manager.take_release_by_index(2));
+
+        // Each AP acknowledges exit; the BSP's barrier then completes without blocking
+        // (the acks were already counted into the BSP's semaphore).
+        manager.ack_exit_to_bsp();
+        manager.ack_exit_to_bsp();
+        assert_eq!(manager.wait_for_ap_exit_acks(2, 1_000_000), 2);
+
+        // The semaphores are balanced again, ready for the next round.
+        assert!(!manager.take_release_by_index(1));
+    }
+
+    #[test]
+    fn test_exit_barrier_gives_up_on_an_ap_that_never_checks_out() {
+        let manager: CpuManager<4> = CpuManager::new();
+        manager.register_cpu(0, 0, true).unwrap(); // BSP at slot 0
+        manager.register_cpu(10, 1, false).unwrap(); // AP at slot 1
+        manager.register_cpu(20, 2, false).unwrap(); // AP at slot 2
+
+        manager.release_all_aps();
+        manager.ack_exit_to_bsp();
+
+        // Only one of the two APs checked out, so the barrier reports a short count rather than
+        // spinning forever on a core running code the supervisor does not control.
+        assert_eq!(manager.wait_for_ap_exit_acks(2, 1), 1);
+    }
+
+    #[test]
+    fn test_exit_barrier_returns_immediately_when_there_is_nothing_to_wait_for() {
+        let manager: CpuManager<4> = CpuManager::new();
+
+        // A BSP running alone has no acknowledgements to collect, so the barrier must not spin
+        // for the whole exit window.
+        manager.register_cpu(0, 0, true).unwrap();
+        assert_eq!(manager.wait_for_ap_exit_acks(0, u64::MAX), 0);
+
+        // Without a registered BSP there is no semaphore the APs could have signaled, so the
+        // barrier reports a short count instead of waiting on one that can never be posted.
+        let unregistered: CpuManager<4> = CpuManager::new();
+        assert_eq!(unregistered.wait_for_ap_exit_acks(2, u64::MAX), 0);
+    }
+}

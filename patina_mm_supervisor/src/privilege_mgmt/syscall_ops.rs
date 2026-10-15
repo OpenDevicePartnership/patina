@@ -295,6 +295,8 @@ impl SyscallOps for FirmwareOps {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::memory::AllocError;
+    use crate::policy::PolicyGateError;
     use patina::standard::efi::Status;
     use serial_test::serial;
 
@@ -302,12 +304,12 @@ mod tests {
     fn test_policy_decision_from_gate_result() {
         assert_eq!(PolicyDecision::from(Ok(())), PolicyDecision::Allowed);
         assert_eq!(
-            PolicyDecision::from(Err(PolicyError::AccessDenied)),
-            PolicyDecision::Denied(PolicyError::AccessDenied)
+            PolicyDecision::from(Err(PolicyGateError::AccessDenied.into())),
+            PolicyDecision::Denied(PolicyGateError::AccessDenied.into())
         );
         assert_eq!(
-            PolicyDecision::from(Err(PolicyError::PolicyRootNotFound)),
-            PolicyDecision::Denied(PolicyError::PolicyRootNotFound)
+            PolicyDecision::from(Err(PolicyGateError::PolicyRootNotFound.into())),
+            PolicyDecision::Denied(PolicyGateError::PolicyRootNotFound.into())
         );
     }
 
@@ -319,17 +321,17 @@ mod tests {
         let ops = FirmwareOps;
 
         // The page allocator refuses to serve or release memory it does not own yet.
-        assert_eq!(ops.allocate_user_pages(1), Err(PageAllocError::NotInitialized));
-        assert_eq!(ops.free_user_pages(0x1000, 1), Err(PageAllocError::NotInitialized));
+        assert_eq!(ops.allocate_user_pages(1), Err(AllocError::NotInitialized.into()));
+        assert_eq!(ops.free_user_pages(0x1000, 1), Err(AllocError::NotInitialized.into()));
         assert_eq!(ops.allocation_type(0x1000), None);
 
         // With no page table installed, ownership of an address is unknown rather than "user".
-        assert_eq!(ops.query_address_ownership(0x1000, 0x1000), None);
+        assert_eq!(ops.query_address_ownership(&MemoryRange::new(0x1000, 0x1000).unwrap()), None);
 
         // Nothing has been unblocked and no communication buffer has been published. Note the
         // tracker is deliberately permissive until core initialization completes (see
         // `UnblockedMemoryTracker::is_memory_blocked`), so this reports the bootstrap answer.
-        assert!(ops.is_within_unblocked_region(0x1000, 0x1000));
+        assert!(ops.is_within_unblocked_region(&MemoryRange::new(0x1000, 0x1000).unwrap()));
         assert!(ops.comm_buffer_config().is_none());
 
         // Save-state metadata is published during initialization, so phase 1 is not ready.
@@ -358,7 +360,7 @@ mod tests {
         buf.extend_from_slice(&policy_type.to_le_bytes());
         buf.extend_from_slice(&offset.to_le_bytes());
         buf.extend_from_slice(&count.to_le_bytes());
-        buf.push(crate::mm_policy::ACCESS_ATTR_ALLOW);
+        buf.push(crate::policy::ACCESS_ATTR_ALLOW);
         buf.extend_from_slice(&[0u8; 3]); // reserved
     }
 
@@ -381,28 +383,28 @@ mod tests {
         buf.extend_from_slice(&ROOTS_OFFSET.to_le_bytes()); // policy_root_offset
         buf.extend_from_slice(&3u32.to_le_bytes()); // policy_root_count
 
-        push_policy_root(&mut buf, crate::mm_policy::TYPE_MSR, MSR_DESC_OFFSET, 1);
-        push_policy_root(&mut buf, crate::mm_policy::TYPE_IO, IO_DESC_OFFSET, 1);
-        push_policy_root(&mut buf, crate::mm_policy::TYPE_INSTRUCTION, INSTRUCTION_DESC_OFFSET, 1);
+        push_policy_root(&mut buf, crate::policy::TYPE_MSR, MSR_DESC_OFFSET, 1);
+        push_policy_root(&mut buf, crate::policy::TYPE_IO, IO_DESC_OFFSET, 1);
+        push_policy_root(&mut buf, crate::policy::TYPE_INSTRUCTION, INSTRUCTION_DESC_OFFSET, 1);
 
         // `MsrDescriptorV1_0`: read and write of a single MSR.
         buf.extend_from_slice(&ALLOWED_MSR.to_le_bytes());
         buf.extend_from_slice(&1u16.to_le_bytes()); // length
         buf.extend_from_slice(
-            &((crate::mm_policy::RESOURCE_ATTR_READ | crate::mm_policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
+            &((crate::policy::RESOURCE_ATTR_READ | crate::policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
         );
 
         // `IoDescriptorV1_0`: read and write of a single byte-wide port.
         buf.extend_from_slice(&ALLOWED_PORT.to_le_bytes());
         buf.extend_from_slice(&1u16.to_le_bytes()); // length_or_width
         buf.extend_from_slice(
-            &((crate::mm_policy::RESOURCE_ATTR_READ | crate::mm_policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
+            &((crate::policy::RESOURCE_ATTR_READ | crate::policy::RESOURCE_ATTR_WRITE) as u16).to_le_bytes(),
         );
         buf.extend_from_slice(&0u16.to_le_bytes()); // reserved
 
         // `InstructionDescriptorV1_0`: execution of `CLI` only.
         buf.extend_from_slice(&Instruction::Cli.as_index().to_le_bytes());
-        buf.extend_from_slice(&(crate::mm_policy::RESOURCE_ATTR_EXECUTE as u16).to_le_bytes());
+        buf.extend_from_slice(&(crate::policy::RESOURCE_ATTR_EXECUTE as u16).to_le_bytes());
         buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
 
         assert_eq!(buf.len(), POLICY_SIZE as usize, "policy blob layout must match its offsets");
@@ -411,9 +413,10 @@ mod tests {
         // where the policy lives in a reserved region.
         let policy: &'static [u8] = Vec::leak(buf);
 
-        // SAFETY: `policy` points at a valid V1.0 policy blob (built above) that lives for the
-        // rest of the process, which is what `PolicyGate::new` requires.
-        let gate = unsafe { crate::mm_policy::PolicyGate::new(policy.as_ptr()) }.expect("policy blob is valid");
+        // SAFETY: `policy` points at a valid V1.0 policy blob (built above) of `policy.len()`
+        // bytes that lives for the rest of the process, which is what `PolicyGate::new` requires.
+        let gate =
+            unsafe { crate::policy::PolicyGate::new(policy.as_ptr(), policy.len()) }.expect("policy blob is valid");
         security_state().set_policy_gate(gate);
     }
 
@@ -442,17 +445,23 @@ mod tests {
         assert_eq!(ops.check_instruction(Instruction::Cli), PolicyDecision::Allowed);
 
         // ...and everything outside the allow list is denied.
-        assert_eq!(ops.check_msr(0x200, AccessType::Read), PolicyDecision::Denied(PolicyError::AccessDenied));
+        assert_eq!(
+            ops.check_msr(0x200, AccessType::Read),
+            PolicyDecision::Denied(PolicyGateError::AccessDenied.into())
+        );
         assert_eq!(
             ops.check_io(0x70, IoWidth::Byte, AccessType::Read),
-            PolicyDecision::Denied(PolicyError::AccessDenied)
+            PolicyDecision::Denied(PolicyGateError::AccessDenied.into())
         );
-        assert_eq!(ops.check_instruction(Instruction::Hlt), PolicyDecision::Denied(PolicyError::AccessDenied));
+        assert_eq!(
+            ops.check_instruction(Instruction::Hlt),
+            PolicyDecision::Denied(PolicyGateError::AccessDenied.into())
+        );
 
         // A wider access than the descriptor covers is denied even on an allowed port.
         assert_eq!(
             ops.check_io(ALLOWED_PORT, IoWidth::Dword, AccessType::Read),
-            PolicyDecision::Denied(PolicyError::AccessDenied)
+            PolicyDecision::Denied(PolicyGateError::AccessDenied.into())
         );
     }
 
@@ -470,7 +479,10 @@ mod tests {
         assert!(init_state().ap_startup_fn().is_some());
 
         // `u64::MAX` is never a registered CPU index, so the registered function rejects it
-        // without dispatching any work to a processor.
+        // without dispatching any work to a processor. The silent test logger is installed
+        // first because the dispatch message formats the function pointer, and those arguments
+        // are skipped when no logger is present.
+        crate::test_support::init_test_logger();
         let status = ops.start_ap_procedure(u64::MAX, 0x1000, 0);
         assert!(status.is_some(), "a registered startup function must yield a status");
         assert_ne!(status, Some(0), "an invalid CPU index must not report success");
