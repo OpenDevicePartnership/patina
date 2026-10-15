@@ -96,13 +96,10 @@ impl core::fmt::Display for SaveStateError {
     }
 }
 
-/// Name of the save state layout this build uses, for logs.
-#[cfg(feature = "save_state_amd")]
-pub const VENDOR_NAME: &str = "AMD";
-
-/// Name of the save state layout this build uses, for logs.
-#[cfg(not(feature = "save_state_amd"))]
-pub const VENDOR_NAME: &str = "Intel";
+/// Returns the name of the save state layout this build uses, for logs.
+pub fn vendor_name() -> &'static str {
+    vendor::VENDOR_NAME
+}
 
 /// Returns the field offsets and behaviour flags of the layout this build uses.
 pub fn vendor_constants() -> &'static VendorConstants {
@@ -326,7 +323,7 @@ impl SaveState {
 // deliberately left out of the debug output.
 impl core::fmt::Debug for SaveState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("SaveState").field(&VENDOR_NAME).finish()
+        f.debug_tuple("SaveState").field(&vendor_name()).finish()
     }
 }
 

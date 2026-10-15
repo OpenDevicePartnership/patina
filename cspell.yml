@@ -70,6 +70,7 @@ words:
   - cudimm
   - cuviper
   - deassertion
+  - debugctl
   - depex
   - deque
   - descs
@@ -98,6 +99,7 @@ words:
   - expressx
   - fastrlp
   - feprom
+  - fmask
   - fnent
   - funty
   - fvmain
@@ -145,11 +147,13 @@ words:
   - mdbook
   - mdscr
   - mmbase
+  - mmcore
   - mmiport
   - mmram
   - mpidr
   - mrdimm
   - msdia
+  - mtrrcap
   - mtrrs
   - nestedfv
   - nocapture
@@ -215,9 +219,11 @@ words:
   - socketr
   - sodimm
   - srimm
+  - swapgs
   - swmmis
   - syscall
   - syscalls
+  - sysenter
   - sysreg
   - sysret
   - tiano
@@ -231,6 +237,7 @@ words:
   - unaccepte
   - unarray
   - uncacheable
+  - unconfigured
   - uncontained
   - uncrustify
   - unmaps

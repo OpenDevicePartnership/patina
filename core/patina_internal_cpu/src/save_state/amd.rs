@@ -45,6 +45,9 @@ const IO_SIZE_WORD: u32 = bit!(5);
 // IO_DWord bit 6 (SZ32, 32-bit) is the default when neither SZ8 nor SZ16 is
 // set, so it does not need a named constant in the decode path.
 
+/// Name of this save state layout, for logs.
+pub(super) const VENDOR_NAME: &str = "AMD";
+
 /// AMD-specific offsets and behaviour constants.
 pub(super) const VENDOR_CONSTANTS: VendorConstants = VendorConstants {
     smmrevid_offset: 0x02FC,

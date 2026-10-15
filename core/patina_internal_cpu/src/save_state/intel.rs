@@ -26,6 +26,9 @@ const IO_MISC_TYPE_OUT_IMMEDIATE: u32 = 8;
 /// `IOMisc` Type field value: IN instruction (immediate port operand).
 const IO_MISC_TYPE_IN_IMMEDIATE: u32 = 9;
 
+/// Name of this save state layout, for logs.
+pub(super) const VENDOR_NAME: &str = "Intel";
+
 /// Intel-specific offsets and behaviour constants.
 pub(super) const VENDOR_CONSTANTS: VendorConstants = VendorConstants {
     smmrevid_offset: 0x02FC,
