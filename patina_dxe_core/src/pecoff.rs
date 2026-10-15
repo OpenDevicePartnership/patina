@@ -20,7 +20,7 @@ mod resource_directory;
 pub use goblin::pe::section_table::IMAGE_SCN_CNT_CODE;
 
 use relocation::{RelocationBlock, parse_relocation_blocks};
-use resource_directory::{DataEntry, Directory, DirectoryEntry, DirectoryString};
+use resource_directory::{DataEntry, Directory, DirectoryString};
 
 // Magic value for PE32 header.
 const PE32_MAGIC: u16 = 0x5A4D;
@@ -39,6 +39,7 @@ const IMAGE_REL_BASED_HIGHLOW: u16 = 3;
 // Relocation type that requires the adjustment be applied to the entire
 // 64-bit value.
 const IMAGE_REL_BASED_DIR64: u16 = 10;
+const HII_RESOURCE_NAME: [u16; 3] = [b'H' as u16, b'I' as u16, b'I' as u16];
 
 /// PE/COFF Specification Machine Type for `IMAGE_FILE_MACHINE_AMD64` images.
 #[allow(dead_code)]
@@ -396,101 +397,59 @@ pub fn flatten_runtime_relocation_data(relocation_data: &[RelocationBlock]) -> e
 ///
 /// ## Errors
 ///
-/// Returns [`Parse`](crate::error::Error::Parse) error if reading data from the image failed.
-///
-/// Returns [`Goblin`](error::Error::Goblin) error if parsing the PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
+///
+/// Returns [`BufferTooShort`](error::Error::BufferTooShort) if a resource directory structure extends beyond the
+/// resource section.
 pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Result<Option<(usize, usize)>> {
     let Some(resource_section) = get_section(".rsrc", pe_info, image)? else {
         return Ok(None);
     };
-    let size = resource_section.len() as u32;
-    let mut directory: Directory = resource_section.pread(0)?;
+    let directory = Directory::parse(resource_section)?;
 
-    let mut offset = directory.size_in_bytes();
-
-    if offset > size as usize {
-        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
-    }
-
-    for i in 0..directory.number_of_named_entries {
-        let entry_offset = core::mem::size_of::<Directory>() + (i as usize) * core::mem::size_of::<DirectoryEntry>();
-        let mut directory_entry: DirectoryEntry = resource_section.pread(entry_offset)?;
+    for directory_entry in directory.named_entries() {
+        let mut directory_entry = directory_entry;
 
         if directory_entry.name_is_string() {
-            if directory_entry.name_offset() >= size {
-                return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                    directory_entry.name_offset() as usize,
-                    "bytes",
-                )));
-            }
-
             let resource_directory_string =
-                resource_section.pread::<DirectoryString>(directory_entry.name_offset() as usize)?;
+                DirectoryString::parse(resource_section_at(resource_section, directory_entry.name_offset())?)?;
 
-            let name_start_offset = directory_entry.name_offset() as usize + core::mem::size_of::<DirectoryString>();
-            let name_end_offset = name_start_offset + (resource_directory_string.length as usize) * 2;
-            let string_val = resource_section
-                .get(name_start_offset..name_end_offset)
-                .ok_or(error::Error::Goblin(goblin::error::Error::BufferTooShort(name_end_offset, "bytes")))?;
-
-            // L"HII" in UTF-16LE = [0x48, 0x00, 0x49, 0x00, 0x49, 0x00]
-            if resource_directory_string.length == 3 && string_val == [0x48, 0x00, 0x49, 0x00, 0x49, 0x00] {
-                if directory_entry.data_is_directory() {
-                    if directory_entry.offset_to_directory() > size {
-                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                            directory_entry.offset_to_directory() as usize,
-                            "bytes",
-                        )));
+            if resource_directory_string.matches(&HII_RESOURCE_NAME) {
+                // We found the HII resource section. The actual resource data can be located up to two levels deep in
+                // subdirectories.
+                for _ in 0..2 {
+                    if !directory_entry.data_is_directory() {
+                        break;
                     }
-
-                    directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
-                    offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
-
-                    if offset > size as usize {
-                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
-                    }
-
-                    directory_entry = resource_section
-                        .pread((directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>())?;
-
-                    if directory_entry.data_is_directory() {
-                        if directory_entry.offset_to_directory() > size {
-                            return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                                directory_entry.offset_to_directory() as usize,
-                                "bytes",
-                            )));
-                        }
-
-                        directory = resource_section.pread(directory_entry.offset_to_directory() as usize)?;
-
-                        offset = (directory_entry.offset_to_directory() as usize) + directory.size_in_bytes();
-
-                        if offset > size as usize {
-                            return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(offset, "bytes")));
-                        }
-
-                        directory_entry = resource_section.pread(
-                            (directory_entry.offset_to_directory() as usize) + core::mem::size_of::<Directory>(),
-                        )?;
-                    }
+                    let directory = Directory::parse(resource_section_at(
+                        resource_section,
+                        directory_entry.offset_to_directory(),
+                    )?)?;
+                    let Some(entry) = directory.first_entry() else {
+                        break;
+                    };
+                    directory_entry = entry;
                 }
 
                 if !directory_entry.data_is_directory() {
-                    if directory_entry.data >= size {
-                        return Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(
-                            directory_entry.data as usize,
-                            "bytes",
-                        )));
-                    }
-
-                    let resource_data_entry: DataEntry = resource_section.pread(directory_entry.data as usize)?;
-                    return Ok(Some((resource_data_entry.offset_to_data as usize, resource_data_entry.size as usize)));
+                    let resource_data_entry =
+                        DataEntry::parse(resource_section_at(resource_section, directory_entry.data_offset())?)?;
+                    return Ok(Some((
+                        resource_data_entry.offset_to_data() as usize,
+                        resource_data_entry.size() as usize,
+                    )));
                 }
             }
         }
     }
     Ok(None)
+}
+
+/// Returns the resource section bytes beginning at `offset`.
+fn resource_section_at(resource_section: &[u8], offset: u32) -> error::Result<&[u8]> {
+    let offset = offset as usize;
+    resource_section.get(offset..).ok_or(error::Error::BufferTooShort(offset, "resource section"))
 }
 
 /// Returns a slice of the provided image containing the data in the requested section, if it exists.
@@ -946,6 +905,135 @@ mod tests {
             Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(..))) => {}
             Ok(_) => panic!("Expected BufferTooShort error"),
             Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
+        }
+    }
+
+    /// Builds a `.rsrc` section whose root directory has the named entries in `names` (each three characters),
+    /// but claims `declared_named` named entries and `declared_id` ID entries regardless of how many it really has.
+    ///
+    /// The entry named "HII" points to a data entry with `offset_to_data` 0xABCD and `size` 0x100. Layout:
+    ///   0x00: Directory (16 bytes)
+    ///   then: one 8 byte entry for each name, one 8 byte `DirectoryString` for each name, and the 16 byte `DataEntry`.
+    fn rsrc_section_with_named_entries(names: &[&str], declared_named: u16, declared_id: u16) -> Vec<u8> {
+        let entries_end = 0x10 + names.len() * 8;
+        let data_entry = entries_end + names.len() * 8;
+        let mut rsrc = vec![0u8; data_entry + 16];
+
+        rsrc[12..14].copy_from_slice(&declared_named.to_le_bytes());
+        rsrc[14..16].copy_from_slice(&declared_id.to_le_bytes());
+
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(name.chars().count(), 3, "the test strings are three characters long");
+            let entry = 0x10 + i * 8;
+            let string = entries_end + i * 8;
+
+            // Named by the string at `string`, with data (not a directory) at the DataEntry for "HII".
+            rsrc[entry..entry + 4].copy_from_slice(&(0x8000_0000 | string as u32).to_le_bytes());
+            if *name == "HII" {
+                rsrc[entry + 4..entry + 8].copy_from_slice(&(data_entry as u32).to_le_bytes());
+            }
+
+            rsrc[string..string + 2].copy_from_slice(&3u16.to_le_bytes());
+            for (j, unit) in name.encode_utf16().enumerate() {
+                rsrc[string + 2 + j * 2..string + 4 + j * 2].copy_from_slice(&unit.to_le_bytes());
+            }
+        }
+
+        rsrc[data_entry..data_entry + 4].copy_from_slice(&0xABCDu32.to_le_bytes());
+        rsrc[data_entry + 4..data_entry + 8].copy_from_slice(&0x100u32.to_le_bytes());
+        rsrc
+    }
+
+    fn pe_info_with_rsrc_section(rsrc: &[u8]) -> UefiPeInfo {
+        let mut pe_info = UefiPeInfo::default();
+        pe_info.sections.push(goblin::pe::section_table::SectionTable {
+            name: *b".rsrc\0\0\0",
+            virtual_size: rsrc.len() as u32,
+            size_of_raw_data: rsrc.len() as u32,
+            pointer_to_raw_data: 0,
+            ..Default::default()
+        });
+        pe_info
+    }
+
+    // The complete declared entry array is validated before searching it, so an overclaimed count is rejected even
+    // when a valid HII entry appears before the end of the section.
+    #[test]
+    fn test_load_resource_section_with_overclaimed_entry_counts_rejects_early_hii() {
+        test_support::init_test_logger();
+
+        for names in [&["HII"][..], &["ABC", "HII"][..]] {
+            let rsrc = rsrc_section_with_named_entries(names, u16::MAX, u16::MAX);
+            let pe_info = pe_info_with_rsrc_section(&rsrc);
+            let result = load_resource_section(&pe_info, &rsrc);
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{names:?}: {result:?}");
+        }
+    }
+
+    // Parsing the claimed entries stops at the end of the section with an error, instead of reading past it.
+    #[test]
+    fn test_load_resource_section_with_overclaimed_entry_counts_stops_at_the_end_of_the_section() {
+        test_support::init_test_logger();
+
+        let rsrc = rsrc_section_with_named_entries(&["ABC"], u16::MAX, u16::MAX);
+        let pe_info = pe_info_with_rsrc_section(&rsrc);
+        let result = load_resource_section(&pe_info, &rsrc);
+        assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "unexpected result: {result:?}");
+    }
+
+    #[test]
+    fn test_load_resource_section_with_underclaimed_entry_counts_does_not_find_hii() {
+        test_support::init_test_logger();
+
+        for (declared_named, declared_id) in [(1, 0), (0, 0)] {
+            let rsrc = rsrc_section_with_named_entries(&["ABC", "HII"], declared_named, declared_id);
+            let pe_info = pe_info_with_rsrc_section(&rsrc);
+            assert_eq!(load_resource_section(&pe_info, &rsrc).unwrap(), None, "{declared_named} {declared_id}");
+        }
+
+        for declared_named in [0, 1] {
+            let rsrc = rsrc_section_with_named_entries(&["ABC", "HII"], declared_named, u16::MAX);
+            let pe_info = pe_info_with_rsrc_section(&rsrc);
+            let result = load_resource_section(&pe_info, &rsrc);
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{declared_named}: {result:?}");
+        }
+
+        // The same section with an accurate count does find it.
+        let rsrc = rsrc_section_with_named_entries(&["ABC", "HII"], 2, 0);
+        let pe_info = pe_info_with_rsrc_section(&rsrc);
+        assert_eq!(load_resource_section(&pe_info, &rsrc).unwrap(), Some((0xABCD, 0x100)));
+    }
+
+    #[test]
+    fn test_load_resource_section_with_out_of_bounds_offsets_returns_error() {
+        test_support::init_test_logger();
+
+        const OUT_OF_BOUNDS: u32 = 0x7FFF_FFF0;
+        const IS_DIRECTORY_OR_STRING: u32 = 0x8000_0000;
+
+        // The only entry is at 0x10: its name is at 0x10..0x14 and its data is at 0x14..0x18.
+        let valid = rsrc_section_with_named_entries(&["HII"], 1, 0);
+        let end_of_section = valid.len() as u32;
+
+        // A section with a valid nested directory at 0x30 whose first entry (at 0x40) is another directory.
+        let mut nested = valid.clone();
+        nested.extend_from_slice(&[0u8; 0x18]);
+        nested[0x14..0x18].copy_from_slice(&(IS_DIRECTORY_OR_STRING | 0x30).to_le_bytes());
+        nested[0x3C..0x3E].copy_from_slice(&1u16.to_le_bytes());
+
+        let cases = [
+            ("name", valid.clone(), 0x10, IS_DIRECTORY_OR_STRING | OUT_OF_BOUNDS),
+            ("name at the end of the section", valid.clone(), 0x10, IS_DIRECTORY_OR_STRING | end_of_section),
+            ("directory", valid.clone(), 0x14, IS_DIRECTORY_OR_STRING | OUT_OF_BOUNDS),
+            ("data entry", valid.clone(), 0x14, OUT_OF_BOUNDS),
+            ("nested directory", nested, 0x44, IS_DIRECTORY_OR_STRING | OUT_OF_BOUNDS),
+        ];
+
+        for (what, mut rsrc, field, value) in cases {
+            rsrc[field..field + 4].copy_from_slice(&value.to_le_bytes());
+            let pe_info = pe_info_with_rsrc_section(&rsrc);
+            let result = load_resource_section(&pe_info, &rsrc);
+            assert!(matches!(result, Err(error::Error::BufferTooShort(..))), "{what}: unexpected result: {result:?}");
         }
     }
 
