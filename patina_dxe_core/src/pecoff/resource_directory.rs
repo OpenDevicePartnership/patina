@@ -44,7 +44,8 @@ impl Directory {
         let (header, _) = Self::ref_from_prefix_with_elems(bytes, 0)
             .map_err(|_| error::Error::BufferTooShort(Self::HEADER_SIZE, RESOURCE_SECTION))?;
         let entry_count = usize::from(header.number_of_named_entries.get())
-            .saturating_add(usize::from(header.number_of_id_entries.get()));
+            .checked_add(usize::from(header.number_of_id_entries.get()))
+            .ok_or(error::Error::BufferTooShort(usize::MAX, RESOURCE_SECTION))?;
         let entries_size = entry_count
             .checked_mul(size_of::<DirectoryEntry>())
             .ok_or(error::Error::BufferTooShort(usize::MAX, RESOURCE_SECTION))?;
