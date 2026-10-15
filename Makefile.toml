@@ -402,8 +402,8 @@ command = "cargo"
 args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
 
 [tasks.coverage]
-description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports). Arguments are forwarded to `cargo llvm-cov nextest`. Example `cargo make coverage -p patina`"
-dependencies = ["test-cov", "test-cov-fallback", "coverage-lcov", "coverage-html"]
+description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports). Arguments are forwarded to `cargo llvm-cov nextest`. Example `cargo make coverage -p patina`. In CI, also runs a second pass with the `ci_features` feature enabled (outside of coverage collection) since only `cargo make coverage` is run in CI."
+dependencies = ["test-cov", "test-cov-fallback", "coverage-lcov", "coverage-html", "test-ci-features"]
 clear = true
 
 [tasks.build-aarch64]
