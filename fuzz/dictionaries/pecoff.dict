@@ -1,0 +1,65 @@
+# libFuzzer dictionary for the PE/COFF fuzz targets.
+#
+# Tokens are values that a byte-level mutator would take a long time to find on its own: format magics, names that the
+# loader looks up, and the boundary values that the PE/COFF advisories turn on (section sizes that wrap a 32-bit
+# addition, page-aligned sizes, and relocation entries at the end of a 4 KB page).
+#
+# Format: https://llvm.org/docs/LibFuzzer.html#dictionaries
+
+# DOS and PE headers
+dos_magic="MZ"
+te_magic="VZ"
+pe_signature="PE\x00\x00"
+optional_header_pe32_magic="\x0b\x01"
+optional_header_pe32plus_magic="\x0b\x02"
+
+# COFF machine types: AMD64, ARM64, i386
+machine_x64="\x64\x86"
+machine_aarch64="\x64\xaa"
+machine_i386="\x4c\x01"
+
+# Subsystems: EFI application, EFI boot service driver, EFI runtime driver
+subsystem_efi_application="\x0a\x00"
+subsystem_efi_boot_driver="\x0b\x00"
+subsystem_efi_runtime_driver="\x0c\x00"
+
+# Section names, padded to the 8 byte field. The loader looks up .rsrc, and relocation processing needs .reloc.
+section_text=".text\x00\x00\x00"
+section_rdata=".rdata\x00\x00"
+section_data=".data\x00\x00\x00"
+section_pdata=".pdata\x00\x00"
+section_xdata=".xdata\x00\x00"
+section_rsrc=".rsrc\x00\x00\x00"
+section_reloc=".reloc\x00\x00"
+
+# The HII resource name ("HII" in UTF-16LE) that load_resource_section searches for
+resource_name_hii="H\x00I\x00I\x00"
+
+# CodeView debug data signatures
+codeview_pdb70="RSDS"
+codeview_pdb20="NB10"
+
+# Sizes, alignments and addresses (little endian)
+value_0x200="\x00\x02\x00\x00"
+value_0x1000="\x00\x10\x00\x00"
+value_0x2000="\x00\x20\x00\x00"
+value_0x10000="\x00\x00\x01\x00"
+value_0x100000="\x00\x00\x10\x00"
+value_0x80000000="\x00\x00\x00\x80"
+value_u32_max="\xff\xff\xff\xff"
+# Wrap a 32-bit VirtualAddress + VirtualSize (GHSA-g9xw-g9h3-6vhh, GHSA-8mph-pmvv-rgqr)
+value_0xfffffff1="\xf1\xff\xff\xff"
+value_0xfffffff0="\xf0\xff\xff\xff"
+value_0xfffc0000="\x00\x00\xfc\xff"
+value_0xfffff000="\x00\xf0\xff\xff"
+
+# Base relocation entries (type in the top 4 bits, page offset in the low 12): ABSOLUTE, HIGH, LOW, HIGHLOW, DIR64
+reloc_absolute="\x00\x00"
+reloc_high="\x00\x10"
+reloc_low="\x00\x20"
+reloc_highlow="\x00\x30"
+reloc_dir64="\x00\xa0"
+# Entries at the last bytes of a page, where a full-width fixup runs off the end of the image
+reloc_highlow_at_page_end="\xff\x3f"
+reloc_dir64_at_page_end="\xff\xaf"
+reloc_dir64_last_slot="\xf8\xaf"

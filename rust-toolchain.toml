@@ -12,6 +12,7 @@ components = ["rust-src", "clippy", "rustfmt"]
 # A custom section for CI pipelines to install tools
 [tools]
 cargo-deny = "^0.18"
+cargo-fuzz = "0.13.2"
 cargo-geiger = "0.13.0"
 cargo-llvm-cov = "0.6.18"
 cargo-make = "0.37.21"

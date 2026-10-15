@@ -1,0 +1,40 @@
+[package]
+name = "patina_dxe_core_fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "cargo-fuzz targets for Patina. See docs/src/dev/testing/fuzzing.md."
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# `std` is required so the host (non-UEFI) fuzz build links against the standard library. cargo-fuzz sets
+# `--cfg fuzzing`, which makes the `pecoff` module public.
+patina_dxe_core = { path = "../patina_dxe_core", features = ["std"] }
+
+# The fuzz crate is its own workspace so that building or linting the Patina workspace never builds the fuzz targets.
+# The build settings that cargo-fuzz needs (and the repository's .cargo/config.toml profile overrides) are applied by
+# the cargo-make tasks in this directory.
+[workspace]
+members = ["."]
+
+#
+# PE/COFF parsing and loading.
+#
+
+[[bin]]
+name = "pecoff_parse"
+path = "fuzz_targets/pecoff_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pecoff_load"
+path = "fuzz_targets/pecoff_load.rs"
+test = false
+doc = false
+bench = false

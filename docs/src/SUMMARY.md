@@ -48,6 +48,7 @@
   - [On-Platform Testing](dev/testing/platform.md)
   - [QEMU PR Validation](dev/testing/qemu_pr_validation.md)
   - [Unit Testing](dev/testing/unit.md)
+  - [Fuzzing](dev/testing/fuzzing.md)
 - [Toolchain Configuration](dev/toolchain_configuration.md)
 
 # Patina Component Model

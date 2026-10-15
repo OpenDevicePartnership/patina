@@ -1,0 +1,152 @@
+# @file nightly-fuzzing.yml
+#
+# A workflow that fuzzes Patina with cargo-fuzz (libFuzzer) every night. See docs/src/dev/testing/fuzzing.md.
+#
+# Every fuzz target in fuzz/Cargo.toml is run in two build configurations: `test` (integer overflow checks enabled and
+# debug assertions disabled, like Patina's test profile) and `release` (both disabled). The corpus of each target is
+# cached between runs so that every night continues from the coverage reached by the previous ones. A crash fails its
+# job, and the crashing input is uploaded as an artifact.
+#
+# A new fuzz target needs no change here. The targets are read from fuzz/Cargo.toml, and a target's dictionary and
+# seed inputs are found by the fuzz tasks from the target's name.
+#
+# NOTE: Unlike most workflows in this directory, this one is specific to this repository and is not synchronized
+#       from Patina DevOps.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+name: Nightly Fuzzing
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds to fuzz each target in each build configuration'
+        required: false
+        default: '900'
+        type: string
+  schedule:
+    # Run daily at 10:30 AM UTC (2:30 AM PST, 3:30 AM PDT). GitHub Actions cron is always in UTC.
+    - cron: '30 10 * * *'
+
+permissions:
+  contents: read
+
+# Do not run more than one instance of this workflow for the same ref at the same time.
+concurrency:
+  group: fuzzing-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  list-targets:
+    name: List Fuzz Targets
+    # Scheduled runs are only useful in the upstream repository.
+    if: github.event_name != 'schedule' || github.repository_owner == 'OpenDevicePartnership'
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Only the manifest is read, so any installed toolchain will do.
+      - name: List Fuzz Targets
+        id: list
+        working-directory: fuzz
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          targets="$(cargo metadata --no-deps --format-version 1 \
+            | jq -c '[.packages[].targets[] | select(.kind | index("bin")) | .name]')"
+          echo "Fuzz targets: ${targets}"
+          echo "targets=${targets}" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }} (${{ matrix.mode }})
+    needs: list-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.list-targets.outputs.targets) }}
+        mode: [test, release]
+
+    env:
+      FUZZ_MODE: ${{ matrix.mode }}
+      FUZZ_SECONDS: ${{ inputs.seconds || '900' }}
+      # Print a stack trace with the panic message in the fuzz log.
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@37902f7991125091a91ca4054395d2d65576a7f5 # v0.3.16
+
+      # Continue from the corpus of the previous run. The key is unique to this run so that the cache is always saved
+      # (a cache entry cannot be overwritten), and the most recent corpus of the target is restored.
+      - name: Restore Corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-${{ matrix.mode }}-
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: 🧪 Fuzz ${{ matrix.target }} 🧪
+        working-directory: fuzz
+        run: |
+          set -o pipefail
+          cargo make fuzz ${{ matrix.target }} 2>&1 | tee fuzz.log
+
+      # Drop inputs that no longer add coverage so that the cached corpus does not grow without bound.
+      - name: Minimize Corpus
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: fuzz
+        run: cargo make minimize ${{ matrix.target }}
+
+      - name: Save Corpus
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Summarize Crash
+        if: ${{ failure() }}
+        run: |
+          {
+            echo "### Fuzzing found a crash in \`${{ matrix.target }}\` (${{ matrix.mode }} build)"
+            echo
+            echo '```text'
+            grep -m1 -B1 -A4 'panicked at' fuzz/fuzz.log || tail -n 20 fuzz/fuzz.log
+            echo '```'
+            echo
+            echo "Download the \`fuzz-crashes-${{ matrix.target }}-${{ matrix.mode }}\` artifact and run:"
+            echo
+            echo '```text'
+            echo "cd fuzz"
+            echo "FUZZ_MODE=${{ matrix.mode }} cargo make reproduce ${{ matrix.target }} <path to the crash file>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Crashing Inputs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashes-${{ matrix.target }}-${{ matrix.mode }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+            fuzz/fuzz.log
+          if-no-files-found: warn
