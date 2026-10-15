@@ -6,7 +6,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use core::mem;
 use scroll::Pread;
 
 /// Type that represents a header for the UEFI image resource directory.
@@ -26,16 +25,6 @@ pub struct Directory {
     /// The number of ID entries in the resource directory.
     pub number_of_id_entries: u16,
     // Array of EfiImageResourceDirectoryEntry entries follows.
-}
-
-impl Directory {
-    pub fn total_entries(&self) -> usize {
-        (self.number_of_named_entries + self.number_of_id_entries) as usize
-    }
-
-    pub fn size_in_bytes(&self) -> usize {
-        mem::size_of::<Self>() + self.total_entries() * mem::size_of::<DirectoryEntry>()
-    }
 }
 
 /// Type that represents a string in the UEFI image resource directory.
