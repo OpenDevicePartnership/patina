@@ -87,6 +87,9 @@ mod memory_attributes_protocol;
 mod memory_bin;
 mod memory_manager;
 mod misc_boot_services;
+#[cfg(fuzzing)]
+pub mod pecoff;
+#[cfg(not(fuzzing))]
 mod pecoff;
 mod performance;
 mod pi_dispatcher;
