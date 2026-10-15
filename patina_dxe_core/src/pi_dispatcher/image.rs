@@ -3376,7 +3376,7 @@ mod tests {
             // manipulate global state (GCD, protocol DB, system table)
 
             let child_device_path =
-                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+                device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
 
             // SAFETY: Test-only initialization of global tables happens under the global lock.
             unsafe {
@@ -3427,9 +3427,9 @@ mod tests {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
 
-            let parent_device_path = device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/END"));
+            let parent_device_path = device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/END"));
             let child_device_path =
-                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+                device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
             let child_filename = device_path_from_string(String::from("EFI/BOOT/BOOT_X64.EFI/END"));
 
             // SAFETY: Test-only initialization of global tables happens under the global lock.

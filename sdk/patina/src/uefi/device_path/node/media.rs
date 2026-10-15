@@ -15,7 +15,8 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, MediaSubType};
+use super::TextString;
+use super::{DevicePathType, MediaSubType, device_path_enum};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
@@ -347,6 +348,32 @@ impl MediaVendor {
     }
 }
 
+device_path_enum! {
+    /// Partition table format of a [`HardDrive`] node. Table 10.54 reserves unused values, so
+    /// any other value is rejected
+    /// ([UEFI 2.10 Table 10.54](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive)).
+    pub enum PartitionFormat: u8 {
+        /// PC-AT compatible legacy MBR.
+        Mbr = 1,
+        /// GUID Partition Table.
+        Gpt = 2,
+    }
+}
+
+device_path_enum! {
+    /// Type of the disk signature of a [`HardDrive`] node. Table 10.54 reserves unused values, so
+    /// any other value is rejected
+    /// ([UEFI 2.10 Table 10.54](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#hard-drive)).
+    pub enum PartitionSignatureType: u8 {
+        /// No disk signature.
+        None = 0,
+        /// The 32-bit signature from address `0x1b8` of the MBR.
+        Mbr = 1,
+        /// A GUID signature.
+        Guid = 2,
+    }
+}
+
 device_path_node! {
     /// Hard drive media device path node (UEFI 2.10 Table 10.54).
     ///
@@ -385,10 +412,10 @@ device_path_node! {
         pub partition_size: u64,
         /// Partition signature (GUID for GPT, 4-byte signature for MBR).
         pub partition_signature: [u8; 16],
-        /// Partition format: 0x01 = PC-AT MBR, 0x02 = GPT.
-        pub partition_format: u8,
-        /// Signature type: 0x00 = None, 0x01 = 32-bit MBR, 0x02 = GUID.
-        pub signature_type: u8,
+        /// Partition table format.
+        pub partition_format: PartitionFormat,
+        /// Type of the partition signature.
+        pub signature_type: PartitionSignatureType,
     }
 }
 impl fmt::Display for HardDrive {
@@ -396,18 +423,19 @@ impl fmt::Display for HardDrive {
         let node = self;
         write!(f, "HD({},", node.partition_number)?;
         match node.signature_type {
-            HardDrive::SIGNATURE_TYPE_MBR => write!(
+            PartitionSignatureType::Mbr => write!(
                 f,
                 "MBR,0x{:08x}",
                 u32::from_le_bytes(node.partition_signature[..4].try_into().map_err(|_| fmt::Error)?)
             )?,
-            HardDrive::SIGNATURE_TYPE_GUID => {
+            PartitionSignatureType::Guid => {
                 f.write_str("GPT,")?;
                 write!(f, "{}", BinaryGuid::from_bytes(&node.partition_signature))?;
             }
-            other => write!(f, "{other},0")?,
+            PartitionSignatureType::None => f.write_str("0,0")?,
         }
-        if !f.sign_minus() {
+        // Start and Size are prohibited for partition 0, the whole device (UEFI 2.10 Table 10.67).
+        if !f.sign_minus() && node.partition_number != 0 {
             write!(f, ",0x{:x},0x{:x}", node.partition_start, node.partition_size)?;
         }
         f.write_str(")")
@@ -415,16 +443,6 @@ impl fmt::Display for HardDrive {
 }
 
 impl HardDrive {
-    /// Partition format: GPT
-    pub const FORMAT_GPT: u8 = 0x02;
-    /// Partition format: MBR
-    pub const FORMAT_MBR: u8 = 0x01;
-
-    /// Signature type: GUID
-    pub const SIGNATURE_TYPE_GUID: u8 = 0x02;
-    /// Signature type: MBR 32-bit signature
-    pub const SIGNATURE_TYPE_MBR: u8 = 0x01;
-
     /// Create a new `HardDrive` device path node for a GPT partition.
     ///
     /// # Arguments
@@ -438,23 +456,18 @@ impl HardDrive {
             partition_start,
             partition_size,
             partition_signature: partition_guid,
-            partition_format: Self::FORMAT_GPT,
-            signature_type: Self::SIGNATURE_TYPE_GUID,
+            partition_format: PartitionFormat::Gpt,
+            signature_type: PartitionSignatureType::Guid,
         }
     }
-}
 
-impl HardDrive {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        if !matches!(self.partition_format, HardDrive::FORMAT_MBR | HardDrive::FORMAT_GPT) || self.signature_type > 2 {
-            return Err("invalid hard drive partition format or signature type");
-        }
-        if self.partition_format == HardDrive::FORMAT_MBR && self.partition_number > 4 {
+        if self.partition_format == PartitionFormat::Mbr && self.partition_number > 4 {
             return Err("MBR partition number must be at most 4");
         }
-        if (self.signature_type == 0 && self.partition_signature != [0; 16])
-            || (self.signature_type == HardDrive::SIGNATURE_TYPE_MBR
+        if (self.signature_type == PartitionSignatureType::None && self.partition_signature != [0; 16])
+            || (self.signature_type == PartitionSignatureType::Mbr
                 && self.partition_signature[4..].iter().any(|byte| *byte != 0))
         {
             return Err("invalid hard drive signature padding");
@@ -499,7 +512,7 @@ device_path_node! {
 impl fmt::Display for FilePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        f.write_str(&node.path)
+        write!(f, "{}", TextString(&node.path))
     }
 }
 
@@ -528,7 +541,7 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::{
         DevicePathNode, DevicePathType, GenericDevicePathNode, Header, MediaSubType,
-        tests::{check_node, encode_node, fixture, generic_node_bytes},
+        tests::{check_node, check_rejected, encode_node, fixture, generic_node_bytes},
     };
     use alloc::{format, vec};
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
@@ -541,8 +554,8 @@ mod tests {
         assert_eq!(hd.partition_start, 2048);
         assert_eq!(hd.partition_size, 1000000);
         assert_eq!(hd.partition_signature, guid);
-        assert_eq!(hd.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(hd.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+        assert_eq!(hd.partition_format, PartitionFormat::Gpt);
+        assert_eq!(hd.signature_type, PartitionSignatureType::Guid);
     }
 
     #[test]
@@ -559,8 +572,8 @@ mod tests {
         assert_eq!(parsed.partition_start, 4096);
         assert_eq!(parsed.partition_size, 500000);
         assert_eq!(parsed.partition_signature, guid);
-        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+        assert_eq!(parsed.partition_format, PartitionFormat::Gpt);
+        assert_eq!(parsed.signature_type, PartitionSignatureType::Guid);
     }
 
     #[test]
@@ -584,8 +597,8 @@ mod tests {
         assert_eq!(parsed.partition_start, 0x1000);
         assert_eq!(parsed.partition_size, 0x4000);
         assert_eq!(parsed.partition_signature, guid);
-        assert_eq!(parsed.partition_format, HardDrive::FORMAT_GPT);
-        assert_eq!(parsed.signature_type, HardDrive::SIGNATURE_TYPE_GUID);
+        assert_eq!(parsed.partition_format, PartitionFormat::Gpt);
+        assert_eq!(parsed.signature_type, PartitionSignatureType::Guid);
     }
 
     #[test]
@@ -604,8 +617,8 @@ mod tests {
             partition_start: 0,
             partition_size: 0,
             partition_signature: signature,
-            partition_format: HardDrive::FORMAT_MBR,
-            signature_type: HardDrive::SIGNATURE_TYPE_MBR,
+            partition_format: PartitionFormat::Mbr,
+            signature_type: PartitionSignatureType::Mbr,
         };
         let mut signature = [0; 16];
         signature[..4].copy_from_slice(&[1, 2, 3, 4]);
@@ -614,9 +627,20 @@ mod tests {
         }
         assert!(mbr(5, signature).validate().is_err());
         assert!(mbr(1, [1; 16]).validate().is_err());
-        assert!(HardDrive { partition_format: 3, ..mbr(1, signature) }.validate().is_err());
-        assert!(HardDrive { signature_type: 3, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
-        assert!(HardDrive { signature_type: 0, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }.validate().is_err());
+        assert!(
+            HardDrive { signature_type: PartitionSignatureType::None, ..HardDrive::new_gpt(1, 0, 0, [1; 16]) }
+                .validate()
+                .is_err()
+        );
+        // Reserved partition formats and signature types cannot be decoded.
+        let wire = encode_node(HardDrive::new_gpt(1, 0, 0, [1; 16])).unwrap();
+        for (offset, value) in [(40, 0), (40, 3), (41, 3)] {
+            let mut reserved = wire.clone();
+            reserved[offset] = value;
+            check_rejected::<HardDrive>(&reserved);
+        }
+        assert!(PartitionFormat::try_from(3).is_err());
+        assert!(PartitionSignatureType::try_from(3).is_err());
         assert!(HardDrive::new_gpt(128, 0, 0, [1; 16]).validate().is_ok());
 
         let mut data = [0u8; 38];
@@ -825,5 +849,19 @@ mod tests {
             r"VirtualDisk(0x1000,0x1fff,0)",
             r"RamDisk(0x1000,0x1fff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)"
         );
+    }
+
+    /// Partition 0 is the whole device: its text has no Start and Size (UEFI 2.10 Table 10.67).
+    #[test]
+    fn test_device_path_hard_drive_text_whole_device() {
+        let node = HardDrive { partition_number: 0, ..HardDrive::new_gpt(1, 0x22, 0x100, [0x11; 16]) };
+        assert_eq!(format!("{node}"), "HD(0,GPT,11111111-1111-1111-1111-111111111111)");
+    }
+
+    /// File paths with characters the text cannot hold bare are written in double quotes.
+    #[test]
+    fn test_device_path_file_path_text_quoting() {
+        assert_eq!(format!("{}", FilePath::new(r"\EFI\BOOT\BOOTX64.EFI")), r"\EFI\BOOT\BOOTX64.EFI");
+        assert_eq!(format!("{}", FilePath::new(r"\EFI\My App.efi")), r#""\EFI\My App.efi""#);
     }
 }

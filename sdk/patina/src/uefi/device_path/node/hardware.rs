@@ -21,7 +21,10 @@ use crate::{BinaryGuid, standard::efi};
 use crate::{device_path_node, uefi::device_path::encoding::Vector};
 use alloc::vec::Vec;
 use core::fmt;
-use scroll::{Pread, Pwrite};
+use scroll::{
+    Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
+};
 
 device_path_node! {
     /// Vendor-defined hardware device path node (UEFI 2.10 Table 10.6).
@@ -101,7 +104,7 @@ device_path_node! {
     /// assert_eq!(format!("{node:#}"), "Pci(0x1f,0x2)");
     /// assert_eq!(format!("{node:-#}"), "Pci(0x1f,0x2)");
     /// ```
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci, validate = Self::validate_fields)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Pci {
@@ -115,6 +118,17 @@ impl fmt::Display for Pci {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         write!(f, "Pci(0x{:x},0x{:x})", node.device, node.function)
+    }
+}
+
+impl Pci {
+    /// Check the field values, for `DevicePathNode::validate`: a PCI device number is 0-31 and a
+    /// function number is 0-7 (UEFI 2.10 Table 10.67).
+    fn validate_fields(&self) -> Result<(), &'static str> {
+        if self.device > 31 || self.function > 7 {
+            return Err("PCI device must be 0-31 and function 0-7");
+        }
+        Ok(())
     }
 }
 
@@ -226,6 +240,54 @@ impl fmt::Display for Controller {
     }
 }
 
+/// Host interface type of a Baseboard Management Controller, in a [`Bmc`] node
+/// ([UEFI 2.10 Table 10.8](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bmc-device-path)).
+///
+/// Table 10.8 lists [`UNKNOWN`](Self::UNKNOWN), [`KCS`](Self::KCS), [`SMIC`](Self::SMIC), and
+/// [`BT`](Self::BT) without reserving the other values, and the device path text allows any value
+/// from 0 to 255 (Table 10.67), so every value is accepted. The device path text writes it as a
+/// number, such as `BMC(0x1,0xca2)`.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub struct BmcInterfaceType(pub u8);
+
+impl BmcInterfaceType {
+    /// The interface type is not known.
+    pub const UNKNOWN: Self = Self(0);
+    /// KCS: Keyboard Controller Style.
+    pub const KCS: Self = Self(1);
+    /// SMIC: Server Management Interface Chip.
+    pub const SMIC: Self = Self(2);
+    /// BT: Block Transfer.
+    pub const BT: Self = Self(3);
+}
+
+// Scroll encoding: an 8-bit value, like the `u8` it wraps.
+impl<'a> TryFromCtx<'a, scroll::Endian> for BmcInterfaceType {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let (value, size) = u8::try_from_ctx(src, ctx)?;
+        Ok((Self(value), size))
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for &BmcInterfaceType {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+impl TryIntoCtx<scroll::Endian> for BmcInterfaceType {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
 device_path_node! {
     /// BMC device path node (UEFI 2.10 Table 10.8).
     ///
@@ -237,23 +299,23 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::Bmc;
+    /// use patina::uefi::device_path::node::{Bmc, BmcInterfaceType};
     ///
     /// // The BMC of `PciRoot(0x2)/Pci(0x2,0x0)/Pci(0x0,0x0)/BMC(0,0xf0000000)/RestService(...)`
     /// // (UEFI 2.10 Section 10.3.4.31).
-    /// let node = Bmc { interface_type: 0, base_address: 0xf000_0000 };
+    /// let node = Bmc { interface_type: BmcInterfaceType::UNKNOWN, base_address: 0xf000_0000 };
     /// assert_eq!(node.to_string(), "BMC(0x0,0xf0000000)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "BMC(0x0,0xf0000000)");
     /// assert_eq!(format!("{node:#}"), "BMC(0x0,0xf0000000)");
     /// assert_eq!(format!("{node:-#}"), "BMC(0x0,0xf0000000)");
     /// ```
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc, validate = Self::validate_fields)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone, Eq, PartialEq)]
     pub struct Bmc {
-        /// BMC interface type: 0 unknown, 1 KCS, 2 SMIC, or 3 BT; other values are reserved.
-        pub interface_type: u8,
+        /// BMC host interface type.
+        pub interface_type: BmcInterfaceType,
         /// BMC base address.
         pub base_address: u64,
     }
@@ -261,24 +323,14 @@ device_path_node! {
 impl fmt::Display for Bmc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write!(f, "BMC(0x{:x},0x{:x})", node.interface_type, node.base_address)
-    }
-}
-
-impl Bmc {
-    /// Check the field values, for `DevicePathNode::validate`.
-    fn validate_fields(&self) -> Result<(), &'static str> {
-        if self.interface_type > 3 {
-            return Err("BMC interface types above 0x03 are reserved");
-        }
-        Ok(())
+        write!(f, "BMC(0x{:x},0x{:x})", node.interface_type.0, node.base_address)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::uefi::device_path::node::tests::{check_invalid, check_node, encode_node};
+    use crate::uefi::device_path::node::{DevicePathNode, tests::check_node};
     use alloc::vec;
 
     #[test]
@@ -294,10 +346,11 @@ mod tests {
 
     #[test]
     fn test_device_path_reserved_values_are_rejected_hardware() {
-        for interface_type in 0..=3 {
-            encode_node(Bmc { interface_type, base_address: 0 }).unwrap();
+        // Values past the listed ones, such as 4 for SSIF, are accepted.
+        for value in [0, 1, 2, 3, 4, u8::MAX] {
+            let interface_type = BmcInterfaceType(value);
+            check_node(Bmc { interface_type, base_address: 0 }, &[1, 6, 13, 0, value, 0, 0, 0, 0, 0, 0, 0, 0]);
         }
-        check_invalid(Bmc { interface_type: 4, base_address: 0 }, &[4, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -309,7 +362,10 @@ mod tests {
             MemoryMapped { memory_type: 3, start_address: 0x1234, end_address: 0x5678 },
             &[1, 3, 24, 0, 3, 0, 0, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0x78, 0x56, 0, 0, 0, 0, 0, 0],
         );
-        check_node(Bmc { interface_type: 1, base_address: 0x1234 }, &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0]);
+        check_node(
+            Bmc { interface_type: BmcInterfaceType::KCS, base_address: 0x1234 },
+            &[1, 6, 13, 0, 1, 0x34, 0x12, 0, 0, 0, 0, 0, 0],
+        );
     }
 
     /// Check the text of each hardware node in the three text forms, and that the parseable forms
@@ -341,5 +397,13 @@ mod tests {
         for text in [format!("{pci}"), format!("{pci:-}"), format!("{pci:#}"), format!("{pci:+}")] {
             assert_eq!(text, "Pci(0x1f,0x2)");
         }
+    }
+
+    /// A PCI device number is 0-31 and a function number 0-7 (UEFI 2.10 Table 10.67).
+    #[test]
+    fn test_device_path_pci_ranges() {
+        check_node(Pci { function: 7, device: 31 }, &[1, 1, 6, 0, 7, 31]);
+        assert!(Pci { function: 8, device: 0 }.validate().is_err());
+        assert!(Pci { function: 0, device: 32 }.validate().is_err());
     }
 }

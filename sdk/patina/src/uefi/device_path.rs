@@ -75,7 +75,8 @@ use core::{
     convert::{AsRef, From},
     fmt::{self, Debug, Display},
     iter::Iterator,
-    ops::{Deref, DerefMut},
+    ops::Deref,
+    ptr, slice,
 };
 
 use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
@@ -86,8 +87,8 @@ use crate::{
     uefi::{
         boot_services::{BootServices, protocol_handler::HandleSearchType},
         device_path::node::{
-            DevicePathNode, DevicePathType, EndEntire, EndInstance, FilePath, GenericDevicePathNode, HardDrive, Header,
-            Iter, Uri, UsbClass, UsbWwid,
+            DevicePathNode, EndEntire, EndInstance, FilePath, GenericDevicePathNode, HardDrive, Header, Iter, Uri,
+            UsbClass, UsbWwid,
         },
         protocols::usb_io,
     },
@@ -97,7 +98,7 @@ use crate::{
 ///
 /// A `DevicePathBuf` always holds a complete device path: its last node is an
 /// [`EndEntire`] node, and every operation keeps it that way.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevicePathBuf {
     buffer: Vec<u8>,
 }
@@ -133,7 +134,7 @@ impl DevicePathBuf {
         let header = node.header();
 
         // Addind an end entire do nothing. End Entire is managed automatically.
-        if EndEntire::is_type(header.r#type, header.sub_type) {
+        if header.is_type::<EndEntire>() {
             return Ok(());
         }
 
@@ -144,7 +145,7 @@ impl DevicePathBuf {
             .ok_or(format!("device path node is too large. Node size = {node_payload_size}"))?
             as usize;
 
-        if header.length() as usize != node_size {
+        if header.length() != node_size {
             return Err(format!(
                 "device path node header length differs from its size. Header length = {}, Node size = {node_payload_size}",
                 header.length()
@@ -210,7 +211,7 @@ impl DevicePathBuf {
         // The EndEntire node of this device path becomes the EndInstance node that separates
         // the two instances: it differs only by its sub-type.
         let sub_type = self.buffer.len() - EndEntire::BYTES.len() + 1;
-        *self.buffer.get_mut(sub_type).expect("a device path ends with EndEntire") = node::EndSubType::Instance as u8;
+        *self.buffer.get_mut(sub_type).expect("A device path ends with EndEntire") = node::EndSubType::Instance as u8;
         self.buffer.extend_from_slice(device_path.as_bytes());
         Ok(())
     }
@@ -239,21 +240,8 @@ impl Deref for DevicePathBuf {
     }
 }
 
-impl DerefMut for DevicePathBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // SAFETY: DevicePath has the same memory layout as `[u8]`.
-        unsafe { &mut *(core::ptr::from_mut::<[u8]>(self.buffer.as_mut_slice()) as *mut DevicePath) }
-    }
-}
-
 impl AsRef<DevicePath> for DevicePathBuf {
     fn as_ref(&self) -> &DevicePath {
-        self
-    }
-}
-
-impl AsMut<DevicePath> for DevicePathBuf {
-    fn as_mut(&mut self) -> &mut DevicePath {
         self
     }
 }
@@ -271,28 +259,20 @@ impl From<&DevicePath> for DevicePathBuf {
 impl<'a> From<&'a DevicePathBuf> for &'a DevicePath {
     fn from(value: &'a DevicePathBuf) -> Self {
         // SAFETY: DevicePath is repr(transparent) over `[u8]`, so it has the same memory layout.
-        unsafe { &*(core::ptr::from_ref::<[u8]>(value.buffer.as_slice()) as *const DevicePath) }
+        unsafe { &*(ptr::from_ref::<[u8]>(value.buffer.as_slice()) as *const DevicePath) }
     }
 }
 
 impl Display for DevicePathBuf {
     /// Write the UEFI text representation of the device path; see [`DevicePath`].
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self.as_ref(), f)
     }
 }
 
-impl PartialEq for DevicePathBuf {
-    fn eq(&self, other: &DevicePathBuf) -> bool {
-        self.buffer == other.buffer
-    }
-}
-
-impl Eq for DevicePathBuf {}
-
 /// `DevicePath` is the borrowed version of a [`DevicePathBuf`].
 /// Only immutable operations are possible on this type.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct DevicePath {
     buffer: [u8],
@@ -327,7 +307,7 @@ impl DevicePath {
         loop {
             // SAFETY: The caller guarantees a valid device path up to its EndEntire node. The
             // previous nodes were not EndEntire, so a node header starts at `size`.
-            let header_bytes = unsafe { core::slice::from_raw_parts(buffer.add(size), Header::size_of_header()) };
+            let header_bytes = unsafe { slice::from_raw_parts(buffer.add(size), Header::size_of_header()) };
             let header =
                 header_bytes.pread_with::<Header>(0, scroll::LE).map_err(|_| "Error while trying to read header.")?;
             let length = usize::from(header.length);
@@ -338,14 +318,15 @@ impl DevicePath {
                 .checked_add(length)
                 .filter(|size| isize::try_from(*size).is_ok())
                 .ok_or("Device path is too large.")?;
-            if EndEntire::is_type(header.r#type, header.sub_type) {
+
+            if header.is_type::<EndEntire>() {
                 break;
             }
         }
 
         // SAFETY: The caller guarantees that the device path, which spans `size` bytes up to and
         // including its EndEntire node, is valid for 'a.
-        let bytes = unsafe { core::slice::from_raw_parts(buffer, size) };
+        let bytes = unsafe { slice::from_raw_parts(buffer, size) };
         DevicePath::try_from_bytes(bytes).map_err(|_| "Invalid device path.")
     }
 
@@ -370,7 +351,7 @@ impl DevicePath {
             // Decode the node as the type its header identifies, which checks its payload and the
             // specification rules. Node types that are not known are accepted as they are.
             <Box<dyn DevicePathNode>>::try_from(node).map_err(|error| format!("Invalid device path node: {error}"))?;
-            if EndEntire::is_type(node.header.r#type, node.header.sub_type) {
+            if node.header.is_type::<EndEntire>() {
                 if !next.is_empty() {
                     return Err(format!("Device path has {} bytes after its EndEntire node.", next.len()));
                 }
@@ -380,7 +361,7 @@ impl DevicePath {
         }
         // SAFETY: DevicePath is repr(transparent) over [u8], and the bytes were checked to be a
         // complete device path.
-        Ok(unsafe { &*(core::ptr::from_ref::<[u8]>(bytes) as *const DevicePath) })
+        Ok(unsafe { &*(ptr::from_ref::<[u8]>(bytes) as *const DevicePath) })
     }
 
     /// Return the size in bytes of the device path.
@@ -404,18 +385,16 @@ impl DevicePath {
     ///
     /// [UEFI Spec Documentation: 10.5.9. EFI_DEVICE_PATH_UTILITIES_PROTOCOL.IsDevicePathMultiInstance()](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-device-path-utilities-protocol-isdevicepathmultiinstance)
     pub fn is_multi_instance(&self) -> bool {
-        self.iter().any(|n| EndInstance::is_type(n.header.r#type, n.header.sub_type))
+        self.iter().any(|n| n.header.is_type::<EndInstance>())
     }
 
     /// Return true if the device path starts with the other device path.
     pub fn starts_with(&self, other: &DevicePath) -> bool {
-        let self_iter = self.iter();
-        let other_iter = other.iter();
-        for (self_node, other_node) in self_iter.zip(other_iter) {
-            if other_node.header.r#type == DevicePathType::End as u8 {
+        for (node, other_node) in self.iter().zip(other.iter()) {
+            if other_node.header.is_type::<EndEntire>() || other_node.header.is_type::<EndInstance>() {
                 return true;
             }
-            if self_node != other_node {
+            if node != other_node {
                 return false;
             }
         }
@@ -432,22 +411,21 @@ impl DevicePath {
     ///
     /// Returns `None` if `prefix` is not a prefix of this device path.
     pub fn strip_prefix(&self, prefix: &DevicePath) -> Option<&DevicePath> {
-        let mut nodes = self.iter();
         let mut offset = 0;
-        for prefix_node in prefix.iter() {
-            if EndEntire::is_type(prefix_node.header.r#type, prefix_node.header.sub_type) {
+        for (node, prefix_node) in self.iter().zip(prefix.iter()) {
+            if prefix_node.header.is_type::<EndEntire>() {
                 break;
             }
-            let node = nodes.next()?;
             if node != prefix_node {
                 return None;
             }
-            offset += node.as_bytes().len();
+            offset += node.header.length();
         }
+
         let rest = self.buffer.get(offset..)?;
         // SAFETY: DevicePath is repr(transparent) over [u8]. `rest` starts at a node boundary of a
         // complete device path, so it is itself a complete device path.
-        Some(unsafe { &*(core::ptr::from_ref::<[u8]>(rest) as *const DevicePath) })
+        Some(unsafe { &*(ptr::from_ref::<[u8]>(rest) as *const DevicePath) })
     }
 
     /// Iterate through every node of a device path.
@@ -472,12 +450,12 @@ impl DevicePath {
     /// loaded.
     pub fn is_short_form(&self) -> bool {
         self.iter().next().is_some_and(|node| {
-            let (r#type, sub_type) = (node.header.r#type, node.header.sub_type);
-            HardDrive::is_type(r#type, sub_type)
-                || FilePath::is_type(r#type, sub_type)
-                || Uri::is_type(r#type, sub_type)
-                || UsbWwid::is_type(r#type, sub_type)
-                || UsbClass::is_type(r#type, sub_type)
+            let header = node.header;
+            header.is_type::<HardDrive>()
+                || header.is_type::<FilePath>()
+                || header.is_type::<Uri>()
+                || header.is_type::<UsbWwid>()
+                || header.is_type::<UsbClass>()
         })
     }
 
@@ -512,7 +490,7 @@ impl DevicePath {
     /// - [`EfiError::OutOfResources`] if a candidate cannot be allocated.
     /// - Any error other than `NOT_FOUND` returned by `LocateHandleBuffer`.
     pub fn expand_short_form<B: BootServices>(&self, boot_services: &B) -> Result<Vec<DevicePathBuf>, EfiError> {
-        let Some(first_node) = self.iter().next().filter(|node| node.header.r#type != DevicePathType::End as u8) else {
+        let Some(first_node) = self.iter().next().filter(|node| !node.header.is_type::<EndEntire>()) else {
             log::error!("Cannot expand an empty device path");
             return Err(EfiError::InvalidParameter);
         };
@@ -522,102 +500,143 @@ impl DevicePath {
         // The short-form device path after its first node.
         let rest = DevicePath::try_from_bytes(self.buffer.get(first_node.as_bytes().len()..).unwrap_or_default())
             .map_err(|_| EfiError::InvalidParameter)?;
-        // A device path that continues `prefix` with `tail`.
-        let extend = |prefix: &DevicePath, tail: &DevicePath| -> Result<DevicePathBuf, EfiError> {
-            let mut candidate = DevicePathBuf::from(prefix);
-            candidate.append_device_path(tail).map_err(|_| EfiError::OutOfResources)?;
-            Ok(candidate)
-        };
 
-        // The handles that support `protocol`; none if no handle supports it.
-        let handles = |protocol: &'static efi::Guid| -> Result<Vec<efi::Handle>, EfiError> {
-            match boot_services.locate_handle_buffer(HandleSearchType::ByProtocol(protocol)) {
-                Ok(handles) => Ok(handles.iter().copied().collect()),
-                Err(efi::Status::NOT_FOUND) => Ok(Vec::new()),
-                Err(status) => Err(EfiError::from(status)),
-            }
-        };
-        // The device path installed on `handle`, if it has a valid one.
-        let device_path = |handle: efi::Handle| -> Option<&'static DevicePath> {
-            // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is the device path protocol.
-            let protocol =
-                unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }.ok()?;
-            // SAFETY: The pointer comes from a device path protocol interface installed on the handle.
-            unsafe { DevicePath::try_from_ptr(core::ptr::from_ref(protocol).cast::<u8>()) }.ok()
-        };
-
-        let mut candidates = Vec::new();
-        if let Ok(target) = HardDrive::try_from(first_node) {
-            for handle in handles(&efi::protocols::device_path::PROTOCOL_GUID)? {
-                let Some(handle_path) = device_path(handle) else {
-                    continue;
-                };
-                // The device path of the handle, up to its partition node, then the rest of the short form.
-                let mut candidate = DevicePathBuf::new();
-                for node in handle_path.iter().take_while(|node| node.header.r#type != DevicePathType::End as u8) {
-                    candidate.append(node).map_err(|_| EfiError::OutOfResources)?;
-                    if HardDrive::try_from(node).is_ok_and(|hard_drive| hard_drive == target) {
-                        candidate.append_device_path(rest).map_err(|_| EfiError::OutOfResources)?;
-                        candidates.push(candidate);
-                        break;
-                    }
-                }
-            }
-        } else if UsbWwid::is_type(first_node.header.r#type, first_node.header.sub_type)
-            || UsbClass::is_type(first_node.header.r#type, first_node.header.sub_type)
-        {
-            let (wwid, class) = (UsbWwid::try_from(first_node).ok(), UsbClass::try_from(first_node).ok());
-            for handle in handles(&usb_io::PROTOCOL_GUID)? {
-                let Some(handle_path) = device_path(handle) else {
-                    continue;
-                };
-                // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is USB I/O. Each
-                // handle is visited once, so the interface is borrowed once.
-                let Ok(usb_io) = (unsafe { boot_services.handle_protocol::<usb_io::Protocol>(handle) }) else {
-                    continue;
-                };
-                if wwid.as_ref().is_some_and(|wwid| wwid.matches(boot_services, usb_io))
-                    || class.as_ref().is_some_and(|class| class.matches(usb_io))
-                {
-                    candidates.push(extend(handle_path, rest)?);
-                }
-            }
-        } else if FilePath::try_from(first_node).is_ok() {
-            let file_systems = handles(&efi::protocols::simple_file_system::PROTOCOL_GUID)?;
-            let (mut removable, mut fixed, mut without_block_io) = (Vec::new(), Vec::new(), Vec::new());
-            for handle in file_systems {
-                let Some(handle_path) = device_path(handle) else {
-                    continue;
-                };
-                // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is block I/O.
-                match unsafe { boot_services.handle_protocol::<efi::protocols::block_io::Protocol>(handle) } {
-                    // SAFETY: The block I/O protocol of a handle points to its media description.
-                    Ok(block_io) if unsafe { block_io.media.as_ref() }.is_some_and(|media| media.removable_media) => {
-                        removable.push(handle_path);
-                    }
-                    Ok(_) => fixed.push(handle_path),
-                    Err(_) => without_block_io.push(handle_path),
-                }
-            }
-            for handle_path in removable.into_iter().chain(fixed).chain(without_block_io) {
-                candidates.push(extend(handle_path, self)?);
-            }
-        } else if Uri::try_from(first_node).is_ok() {
-            for handle in handles(&efi::protocols::load_file::PROTOCOL_GUID)? {
-                if let Some(handle_path) = device_path(handle) {
-                    candidates.push(extend(handle_path, self)?);
-                }
-            }
+        let header = first_node.header;
+        let candidates = if header.is_type::<HardDrive>() {
+            let target = HardDrive::try_from(first_node).map_err(|_| EfiError::InvalidParameter)?;
+            Self::expand_hard_drive_short_form(boot_services, &target, rest)?
+        } else if header.is_type::<UsbWwid>() {
+            let wwid = UsbWwid::try_from(first_node).map_err(|_| EfiError::InvalidParameter)?;
+            Self::expand_usb_short_form(boot_services, rest, |usb_io| wwid.matches(boot_services, usb_io))?
+        } else if header.is_type::<UsbClass>() {
+            let class = UsbClass::try_from(first_node).map_err(|_| EfiError::InvalidParameter)?;
+            Self::expand_usb_short_form(boot_services, rest, |usb_io| class.matches(usb_io))?
+        } else if header.is_type::<FilePath>() {
+            self.expand_file_path_short_form(boot_services)?
+        } else if header.is_type::<Uri>() {
+            self.expand_uri_short_form(boot_services)?
         } else {
             log::error!("Short-form device path starts with an invalid node");
             return Err(EfiError::InvalidParameter);
-        }
+        };
 
         if candidates.is_empty() {
             log::error!("No device matches the short-form device path");
             return Err(EfiError::NotFound);
         }
         Ok(candidates)
+    }
+
+    /// Expand a short-form device path that starts with a hard drive node: for each device path
+    /// with an equal hard drive node, that path up to its hard drive node, then `rest`.
+    fn expand_hard_drive_short_form<B: BootServices>(
+        boot_services: &B,
+        target: &HardDrive,
+        rest: &DevicePath,
+    ) -> Result<Vec<DevicePathBuf>, EfiError> {
+        let mut candidates = Vec::new();
+        for handle in Self::handles(boot_services, &efi::protocols::device_path::PROTOCOL_GUID)? {
+            let Some(handle_path) = Self::handle_device_path(boot_services, handle) else {
+                continue;
+            };
+            let mut candidate = DevicePathBuf::new();
+            for node in handle_path.iter().take_while(|node| !node.header.is_type::<EndEntire>()) {
+                candidate.append(node).map_err(|_| EfiError::OutOfResources)?;
+                if HardDrive::try_from(node).is_ok_and(|hard_drive| hard_drive == *target) {
+                    candidate.append_device_path(rest).map_err(|_| EfiError::OutOfResources)?;
+                    candidates.push(candidate);
+                    break;
+                }
+            }
+        }
+        Ok(candidates)
+    }
+
+    /// Expand a short-form device path that starts with a USB WWID or USB class node: for each
+    /// USB device that `matches`, its device path, then `rest`.
+    fn expand_usb_short_form<B: BootServices>(
+        boot_services: &B,
+        rest: &DevicePath,
+        mut matches: impl FnMut(&mut usb_io::Protocol) -> bool,
+    ) -> Result<Vec<DevicePathBuf>, EfiError> {
+        let mut candidates = Vec::new();
+        for handle in Self::handles(boot_services, &usb_io::PROTOCOL_GUID)? {
+            let Some(handle_path) = Self::handle_device_path(boot_services, handle) else {
+                continue;
+            };
+            // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is USB I/O. Each
+            // handle is visited once, so the interface is borrowed once.
+            let Ok(usb_io) = (unsafe { boot_services.handle_protocol::<usb_io::Protocol>(handle) }) else {
+                continue;
+            };
+            if matches(usb_io) {
+                candidates.push(Self::extend(handle_path, rest)?);
+            }
+        }
+        Ok(candidates)
+    }
+
+    /// Expand a short-form device path that starts with a file path node: for each file system, its
+    /// device path, then this whole path. File systems on removable media come first, then those on
+    /// fixed media, then those without block I/O.
+    fn expand_file_path_short_form<B: BootServices>(&self, boot_services: &B) -> Result<Vec<DevicePathBuf>, EfiError> {
+        let (mut removable, mut fixed, mut without_block_io) = (Vec::new(), Vec::new(), Vec::new());
+        for handle in Self::handles(boot_services, &efi::protocols::simple_file_system::PROTOCOL_GUID)? {
+            let Some(handle_path) = Self::handle_device_path(boot_services, handle) else {
+                continue;
+            };
+            // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is block I/O.
+            match unsafe { boot_services.handle_protocol::<efi::protocols::block_io::Protocol>(handle) } {
+                // SAFETY: The block I/O protocol of a handle points to its media description.
+                Ok(block_io) if unsafe { block_io.media.as_ref() }.is_some_and(|media| media.removable_media) => {
+                    removable.push(handle_path);
+                }
+                Ok(_) => fixed.push(handle_path),
+                Err(_) => without_block_io.push(handle_path),
+            }
+        }
+        removable
+            .into_iter()
+            .chain(fixed)
+            .chain(without_block_io)
+            .map(|handle_path| Self::extend(handle_path, self))
+            .collect()
+    }
+
+    /// Expand a short-form device path that starts with a URI node: for each load file handle, its
+    /// device path, then this whole path, so that loading it passes the short-form path to the
+    /// handle's `LoadFile`.
+    fn expand_uri_short_form<B: BootServices>(&self, boot_services: &B) -> Result<Vec<DevicePathBuf>, EfiError> {
+        Self::handles(boot_services, &efi::protocols::load_file::PROTOCOL_GUID)?
+            .into_iter()
+            .filter_map(|handle| Self::handle_device_path(boot_services, handle))
+            .map(|handle_path| Self::extend(handle_path, self))
+            .collect()
+    }
+
+    /// Return the handles that support `protocol`; none if no handle supports it.
+    fn handles<B: BootServices>(boot_services: &B, protocol: &'static efi::Guid) -> Result<Vec<efi::Handle>, EfiError> {
+        match boot_services.locate_handle_buffer(HandleSearchType::ByProtocol(protocol)) {
+            Ok(handles) => Ok(handles.iter().copied().collect()),
+            Err(efi::Status::NOT_FOUND) => Ok(Vec::new()),
+            Err(status) => Err(EfiError::from(status)),
+        }
+    }
+
+    /// Return the device path installed on `handle`, if it has a valid one.
+    fn handle_device_path<B: BootServices>(boot_services: &B, handle: efi::Handle) -> Option<&'static DevicePath> {
+        // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is the device path protocol.
+        let protocol =
+            unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }.ok()?;
+        // SAFETY: The pointer comes from a device path protocol interface installed on the handle.
+        unsafe { DevicePath::try_from_ptr(ptr::from_ref(protocol).cast::<u8>()) }.ok()
+    }
+
+    /// Return a device path that continues `prefix` with `tail`.
+    fn extend(prefix: &DevicePath, tail: &DevicePath) -> Result<DevicePathBuf, EfiError> {
+        let mut candidate = DevicePathBuf::from(prefix);
+        candidate.append_device_path(tail).map_err(|_| EfiError::OutOfResources)?;
+        Ok(candidate)
     }
 }
 impl fmt::Display for DevicePath {
@@ -656,14 +675,6 @@ impl From<&DevicePath> for String {
     }
 }
 
-impl PartialEq for &DevicePath {
-    fn eq(&self, other: &&DevicePath) -> bool {
-        self.buffer == other.buffer
-    }
-}
-
-impl Eq for &DevicePath {}
-
 impl ToOwned for DevicePath {
     type Owned = DevicePathBuf;
 
@@ -696,9 +707,7 @@ impl Iterator for IterInstance<'_> {
         let mut item = None;
         for node in self.node_iterator.by_ref() {
             let header = node.header;
-            if EndInstance::is_type(header.r#type, header.sub_type)
-                || EndEntire::is_type(header.r#type, header.sub_type)
-            {
+            if header.is_type::<EndInstance>() || header.is_type::<EndEntire>() {
                 item.get_or_insert_with(DevicePathBuf::new);
                 break;
             }
@@ -720,11 +729,11 @@ mod tests {
         devpath,
         uefi::{
             boot_services::{MockBootServices, boxed::BootServicesBox},
-            device_path::node::{Acpi, AcpiSubType, EndSubType, Pci, PiwgFirmwareVolume, Usb},
+            device_path::node::{Acpi, AcpiSubType, DevicePathType, EndSubType, Pci, PiwgFirmwareVolume, Sata, Usb},
         },
     };
     use alloc::format;
-    use core::assert_eq;
+    use core::{assert_eq, ffi::c_void};
 
     #[test]
     fn test_new_device_path_buf_is_terminated() {
@@ -746,7 +755,7 @@ mod tests {
         // The device path already ends with EndEntire, so appending it changes nothing.
         device_path.append(EndEntire).unwrap();
         assert_eq!(device_path, before);
-        assert!(device_path.append(crate::uefi::device_path::node::Sata::new(u16::MAX, 0, 0)).is_err());
+        assert!(device_path.append(Sata::new(u16::MAX, 0, 0)).is_err());
         assert_eq!(device_path, before);
     }
 
@@ -789,7 +798,7 @@ mod tests {
         // SAFETY: The buffer holds the five bytes the end node claims.
         assert!(unsafe { DevicePath::try_from_ptr(bytes.as_ptr()) }.is_err());
         // SAFETY: A null pointer is rejected before any read.
-        assert!(unsafe { DevicePath::try_from_ptr(core::ptr::null()) }.is_err());
+        assert!(unsafe { DevicePath::try_from_ptr(ptr::null()) }.is_err());
     }
 
     #[test]
@@ -1147,19 +1156,19 @@ mod tests {
         serial.push(0);
         FakeUsb {
             protocol: usb_io::Protocol {
-                control_transfer: core::ptr::null(),
-                bulk_transfer: core::ptr::null(),
-                async_interrupt_transfer: core::ptr::null(),
-                sync_interrupt_transfer: core::ptr::null(),
-                isochronous_transfer: core::ptr::null(),
-                async_isochronous_transfer: core::ptr::null(),
+                control_transfer: ptr::null(),
+                bulk_transfer: ptr::null(),
+                async_interrupt_transfer: ptr::null(),
+                sync_interrupt_transfer: ptr::null(),
+                isochronous_transfer: ptr::null(),
+                async_isochronous_transfer: ptr::null(),
                 get_device_descriptor,
-                get_config_descriptor: core::ptr::null(),
+                get_config_descriptor: ptr::null(),
                 get_interface_descriptor,
-                get_endpoint_descriptor: core::ptr::null(),
+                get_endpoint_descriptor: ptr::null(),
                 get_string_descriptor,
                 get_supported_languages,
-                port_reset: core::ptr::null(),
+                port_reset: ptr::null(),
             },
             device: usb_io::DeviceDescriptor {
                 device_class: class[0],
@@ -1191,7 +1200,7 @@ mod tests {
         _: u32,
         _: efi::Lba,
         _: usize,
-        _: *mut core::ffi::c_void,
+        _: *mut c_void,
     ) -> efi::Status {
         efi::Status::UNSUPPORTED
     }
@@ -1201,7 +1210,7 @@ mod tests {
     }
 
     fn block_io(removable: bool) -> &'static mut efi::protocols::block_io::Protocol {
-        let media = std::boxed::Box::leak(std::boxed::Box::new(efi::protocols::block_io::Media {
+        let media = Box::leak(Box::new(efi::protocols::block_io::Media {
             media_id: 0,
             removable_media: removable,
             media_present: true,
@@ -1215,7 +1224,7 @@ mod tests {
             logical_blocks_per_physical_block: 1,
             optimal_transfer_length_granularity: 0,
         }));
-        std::boxed::Box::leak(std::boxed::Box::new(efi::protocols::block_io::Protocol {
+        Box::leak(Box::new(efi::protocols::block_io::Protocol {
             revision: 0,
             media,
             reset,
@@ -1251,15 +1260,10 @@ mod tests {
         let mut protocols: Vec<[bool; 4]> = Vec::new();
         for device in devices {
             protocols.push([device.path.is_some(), device.usb.is_some(), device.file_system, device.load_file]);
-            paths.push(
-                device
-                    .path
-                    .map(|path| std::boxed::Box::leak(path.as_bytes().to_vec().into_boxed_slice()).as_ptr() as usize),
-            );
-            usb_addresses.push(
-                device.usb.map(|usb| core::ptr::from_mut(std::boxed::Box::leak(std::boxed::Box::new(usb))) as usize),
-            );
-            block_ios.push(device.removable.map(|removable| core::ptr::from_mut(block_io(removable)) as usize));
+            paths
+                .push(device.path.map(|path| Box::leak(path.as_bytes().to_vec().into_boxed_slice()).as_ptr() as usize));
+            usb_addresses.push(device.usb.map(|usb| ptr::from_mut(Box::leak(Box::new(usb))) as usize));
+            block_ios.push(device.removable.map(|removable| ptr::from_mut(block_io(removable)) as usize));
         }
         let supports = move |guid: &efi::Guid, index: usize| -> bool {
             let [path, usb, file_system, load_file] = protocols[index];
@@ -1269,7 +1273,7 @@ mod tests {
                 || (*guid == efi::protocols::load_file::PROTOCOL_GUID && load_file)
         };
         let count = paths.len();
-        let free_pool: &'static MockBootServices = std::boxed::Box::leak(std::boxed::Box::new({
+        let free_pool: &'static MockBootServices = Box::leak(Box::new({
             let mut mock = MockBootServices::new();
             mock.expect_free_pool().returning(|_| Ok(()));
             mock

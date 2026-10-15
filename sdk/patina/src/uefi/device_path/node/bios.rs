@@ -16,6 +16,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+use super::TextString;
 use super::{BiosSubType, DevicePathType};
 use crate::{device_path_node, uefi::device_path::encoding::AsciiNul};
 use alloc::{
@@ -40,11 +41,12 @@ device_path_node! {
     ///
     /// // A legacy hard drive entry of the BIOS Boot Specification table.
     /// let node = Bios { device_type: 2, status_flag: 0, description_str: "SATA HDD".into() };
-    /// assert_eq!(node.to_string(), "BBS(HD,SATA HDD,0x0)");
+    /// // The description has a space, so it is written in double quotes (UEFI 2.10 Section 10.6.1.5).
+    /// assert_eq!(node.to_string(), r#"BBS(HD,"SATA HDD",0x0)"#);
     /// // Display-only (`-`), without shortcuts (`#`), and both.
-    /// assert_eq!(format!("{node:-}"), "BBS(HD,SATA HDD)");
-    /// assert_eq!(format!("{node:#}"), "BBS(HD,SATA HDD,0x0)");
-    /// assert_eq!(format!("{node:-#}"), "BBS(HD,SATA HDD)");
+    /// assert_eq!(format!("{node:-}"), r#"BBS(HD,"SATA HDD")"#);
+    /// assert_eq!(format!("{node:#}"), r#"BBS(HD,"SATA HDD",0x0)"#);
+    /// assert_eq!(format!("{node:-#}"), r#"BBS(HD,"SATA HDD")"#);
     /// ```
     @[DevicePathNode(
         DevicePathType::Bios, BiosSubType::BiosBootSpecification,
@@ -81,7 +83,7 @@ impl fmt::Display for Bios {
             6 => "Network".to_string(),
             other => format!("0x{other:x}"),
         };
-        write!(f, "BBS({ty},{}", node.description_str)?;
+        write!(f, "BBS({ty},{}", TextString(&node.description_str))?;
         if !f.sign_minus() {
             write!(f, ",0x{:x}", node.status_flag)?;
         }

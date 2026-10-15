@@ -17,7 +17,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 // cspell:ignore NGUID nguid sassata iscsitarget iscsidisk nvmeoftarget nvmeofdisk NSUUID
-use super::{DevicePathType, MessagingSubType};
+use super::TextString;
+use super::{DevicePathType, MessagingSubType, device_path_enum};
 use crate::BinaryGuid;
 use crate::{
     device_path_node,
@@ -28,16 +29,34 @@ use crate::{
         protocols::usb_io,
     },
 };
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
-use core::fmt;
+use alloc::{string::String, vec::Vec};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use core::{fmt, ptr, slice};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
 };
+
+device_path_enum! {
+    /// ATAPI channel of an [`Atapi`] node ([UEFI 2.10 Table 10.13](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path)).
+    pub enum AtapiChannel: u8 {
+        /// Primary channel.
+        Primary = 0 => "Primary",
+        /// Secondary channel.
+        Secondary = 1 => "Secondary",
+    }
+}
+
+device_path_enum! {
+    /// ATAPI drive of an [`Atapi`] node, master or slave on its channel
+    /// ([UEFI 2.10 Table 10.13](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#atapi-device-path)).
+    pub enum AtapiDrive: u8 {
+        /// Master drive.
+        Master = 0 => "Master",
+        /// Slave drive.
+        Slave = 1 => "Slave",
+    }
+}
 
 device_path_node! {
     /// ATAPI device path node (UEFI 2.10 Table 10.13).
@@ -50,23 +69,23 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::Atapi;
+    /// use patina::uefi::device_path::node::{Atapi, AtapiChannel, AtapiDrive};
     ///
-    /// let node = Atapi { primary_secondary: 0, slave_master: 0, lun: 0 };
+    /// let node = Atapi { primary_secondary: AtapiChannel::Primary, slave_master: AtapiDrive::Master, lun: 0 };
     /// assert_eq!(node.to_string(), "Ata(Primary,Master,0x0)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "Ata(0x0)");
     /// assert_eq!(format!("{node:#}"), "Ata(Primary,Master,0x0)");
     /// assert_eq!(format!("{node:-#}"), "Ata(0x0)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi, validate = Self::validate_fields)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::Atapi)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct Atapi {
-        /// Zero for the primary channel, one for the secondary channel.
-        pub primary_secondary: u8,
-        /// Zero for master mode, one for slave mode.
-        pub slave_master: u8,
+        /// Channel of the drive.
+        pub primary_secondary: AtapiChannel,
+        /// Master or slave drive on the channel.
+        pub slave_master: AtapiDrive,
         /// Logical unit number.
         pub lun: u16,
     }
@@ -77,24 +96,8 @@ impl fmt::Display for Atapi {
         if f.sign_minus() {
             write!(f, "Ata(0x{:x})", node.lun)
         } else {
-            write!(
-                f,
-                "Ata({},{},0x{:x})",
-                if node.primary_secondary == 1 { "Secondary" } else { "Primary" },
-                if node.slave_master == 1 { "Slave" } else { "Master" },
-                node.lun
-            )
+            write!(f, "Ata({},{},0x{:x})", node.primary_secondary, node.slave_master, node.lun)
         }
-    }
-}
-
-impl Atapi {
-    /// Check the field values, for `DevicePathNode::validate`.
-    fn validate_fields(&self) -> Result<(), &'static str> {
-        if self.primary_secondary > 1 || self.slave_master > 1 {
-            return Err("invalid ATAPI channel or master/slave selector");
-        }
-        Ok(())
     }
 }
 
@@ -413,6 +416,80 @@ impl fmt::Display for MacAddress {
     }
 }
 
+/// IP protocol number of an [`IpV4`] or [`IpV6`] node
+/// ([UEFI 2.10 Tables 10.28 and 10.29](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv4-device-path)), as assigned by IANA, such as
+/// [`TCP`](Self::TCP) or [`UDP`](Self::UDP).
+///
+/// The text form, from `Display`, is `TCP`, `UDP`, or the number in hexadecimal.
+///
+/// # Examples
+///
+/// ```
+/// use patina::uefi::device_path::node::IpProtocol;
+///
+/// assert_eq!(IpProtocol::TCP.to_string(), "TCP");
+/// assert_eq!(IpProtocol(0x2f).to_string(), "0x2f");
+/// ```
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub struct IpProtocol(pub u16);
+
+impl IpProtocol {
+    /// Transmission Control Protocol.
+    pub const TCP: Self = Self(6);
+    /// User Datagram Protocol.
+    pub const UDP: Self = Self(17);
+}
+
+impl fmt::Display for IpProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::TCP => f.write_str("TCP"),
+            Self::UDP => f.write_str("UDP"),
+            Self(value) => write!(f, "0x{value:x}"),
+        }
+    }
+}
+
+// Scroll encoding: a 16-bit value, like the `u16` it wraps.
+impl<'a> TryFromCtx<'a, Endian> for IpProtocol {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+        let (value, size) = u16::try_from_ctx(src, ctx)?;
+        Ok((Self(value), size))
+    }
+}
+
+impl TryIntoCtx<Endian> for &IpProtocol {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+impl TryIntoCtx<Endian> for IpProtocol {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+device_path_enum! {
+    /// How the local address of an [`IpV6`] node was assigned
+    /// ([UEFI 2.10 Table 10.29](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#ipv6-device-path)).
+    pub enum Ipv6AddressOrigin: u8 {
+        /// The local address is manually configured.
+        Static = 0 => "Static",
+        /// The local address comes from stateless auto-configuration.
+        StatelessAutoConfigure = 1 => "StatelessAutoConfigure",
+        /// The local address comes from stateful configuration.
+        StatefulAutoConfigure = 2 => "StatefulAutoConfigure",
+    }
+}
+
 device_path_node! {
     /// IPv6 device path node (UEFI 2.10 Table 10.29).
     ///
@@ -425,7 +502,7 @@ device_path_node! {
     ///
     /// ```
     /// use core::net::Ipv6Addr;
-    /// use patina::uefi::device_path::node::IpV6;
+    /// use patina::uefi::device_path::node::{IpProtocol, IpV6, Ipv6AddressOrigin};
     ///
     /// // The IPv6 node of the iSCSI example (UEFI 2.10 Section 10.3.4.20.2): the target
     /// // 2001:4898:a:1005:95a6:ee6c:bed3:4859 over TCP, with the local address 2001:4898:a:1005:215:17ff:fe21:5593
@@ -435,8 +512,8 @@ device_path_node! {
     ///     remote_ip_address: Ipv6Addr::new(0x2001, 0x4898, 0xa, 0x1005, 0x95a6, 0xee6c, 0xbed3, 0x4859),
     ///     local_port: 0,
     ///     remote_port: 0,
-    ///     protocol: 6,
-    ///     ip_address_origin: 2,
+    ///     protocol: IpProtocol::TCP,
+    ///     ip_address_origin: Ipv6AddressOrigin::StatefulAutoConfigure,
     ///     prefix_length: 0,
     ///     gateway_ip_address: Ipv6Addr::UNSPECIFIED,
     /// };
@@ -452,7 +529,7 @@ device_path_node! {
     /// );
     /// assert_eq!(format!("{node:-#}"), "IPv6(2001:4898:a:1005:95a6:ee6c:bed3:4859)");
     /// ```
-    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6, validate = Self::validate_fields)]
+    @[DevicePathNode(DevicePathType::Messaging, MessagingSubType::IpV6)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct IpV6 {
@@ -466,10 +543,10 @@ device_path_node! {
         pub local_port: u16,
         /// Remote port number, encoded as a UEFI integer.
         pub remote_port: u16,
-        /// Network protocol number, such as 6 for TCP or 17 for UDP.
-        pub protocol: u16,
-        /// Address origin: 0 is manual, 1 is stateless, and 2 is stateful configuration.
-        pub ip_address_origin: u8,
+        /// Network protocol.
+        pub protocol: IpProtocol,
+        /// How the local address was assigned.
+        pub ip_address_origin: Ipv6AddressOrigin,
         /// Number of prefix bits.
         pub prefix_length: u8,
         /// Gateway IPv6 address.
@@ -488,31 +565,13 @@ impl fmt::Display for IpV6 {
         if f.sign_minus() {
             return f.write_str(")");
         }
-        match node.protocol {
-            6 => f.write_str(",TCP")?,
-            17 => f.write_str(",UDP")?,
-            protocol => write!(f, ",0x{protocol:x}")?,
-        }
-        let origin = match node.ip_address_origin {
-            0 => "Static",
-            1 => "StatelessAutoConfigure",
-            _ => "StatefulAutoConfigure",
-        };
+        write!(f, ",{}", node.protocol)?;
+        let origin = node.ip_address_origin;
         match node.local_port {
             0 => write!(f, ",{origin},{}", node.local_ip_address)?,
             port => write!(f, ",{origin},{}", SocketAddrV6::new(node.local_ip_address, port, 0, 0))?,
         }
         write!(f, ",0x{:x},{})", node.prefix_length, node.gateway_ip_address)
-    }
-}
-
-impl IpV6 {
-    /// Check the field values, for `DevicePathNode::validate`.
-    fn validate_fields(&self) -> Result<(), &'static str> {
-        if self.ip_address_origin > 2 {
-            return Err("invalid IPv6 address origin");
-        }
-        Ok(())
     }
 }
 
@@ -632,6 +691,42 @@ impl InfiniBand {
     pub const RESOURCE_FLAGS_MASK: u32 = 0x1f;
 }
 
+device_path_enum! {
+    /// Parity of a [`Uart`] node ([UEFI 2.10 Table 10.32](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path)).
+    ///
+    /// The text form, from `Display`, is the letter of the `Uart` text.
+    pub enum UartParity: u8 {
+        /// The device default.
+        Default = 0 => "D",
+        /// No parity.
+        None = 1 => "N",
+        /// Even parity.
+        Even = 2 => "E",
+        /// Odd parity.
+        Odd = 3 => "O",
+        /// Mark parity.
+        Mark = 4 => "M",
+        /// Space parity.
+        Space = 5 => "S",
+    }
+}
+
+device_path_enum! {
+    /// Number of stop bits of a [`Uart`] node ([UEFI 2.10 Table 10.32](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#uart-device-path)).
+    ///
+    /// The text form, from `Display`, is the value of the `Uart` text.
+    pub enum UartStopBits: u8 {
+        /// The device default.
+        Default = 0 => "D",
+        /// One stop bit.
+        One = 1 => "1",
+        /// One and a half stop bits.
+        OneAndHalf = 2 => "1.5",
+        /// Two stop bits.
+        Two = 3 => "2",
+    }
+}
+
 device_path_node! {
     /// UART device path node (UEFI 2.10 Table 10.32).
     ///
@@ -643,9 +738,9 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::Uart;
+    /// use patina::uefi::device_path::node::{Uart, UartParity, UartStopBits};
     ///
-    /// let node = Uart { reserved: 0, baud_rate: 115200, data_bits: 8, parity: 1, stop_bits: 1 };
+    /// let node = Uart { reserved: 0, baud_rate: 115200, data_bits: 8, parity: UartParity::None, stop_bits: UartStopBits::One };
     /// assert_eq!(node.to_string(), "Uart(115200,8,N,1)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "Uart(115200,8,N,1)");
@@ -662,34 +757,17 @@ device_path_node! {
         pub baud_rate: u64,
         /// Number of data bits, or zero to use the device default.
         pub data_bits: u8,
-        /// Parity: 0 default, 1 none, 2 even, 3 odd, 4 mark, or 5 space.
-        pub parity: u8,
-        /// Stop bits: 0 default, 1 one, 2 one-and-a-half, or 3 two.
-        pub stop_bits: u8,
+        /// Parity.
+        pub parity: UartParity,
+        /// Number of stop bits.
+        pub stop_bits: UartStopBits,
     }
 }
 impl fmt::Display for Uart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        let baud = if node.baud_rate == 0 { "DEFAULT".to_string() } else { node.baud_rate.to_string() };
-        let data = if node.data_bits == 0 { "DEFAULT".to_string() } else { node.data_bits.to_string() };
-        let parity = match node.parity {
-            0 => "D",
-            1 => "N",
-            2 => "E",
-            3 => "O",
-            4 => "M",
-            5 => "S",
-            _ => "x",
-        };
-        let stop = match node.stop_bits {
-            0 => "D",
-            1 => "1",
-            2 => "1.5",
-            3 => "2",
-            _ => "x",
-        };
-        write!(f, "Uart({baud},{data},{parity},{stop})")
+        // Zero, the device default, is written as a number: the text has no keyword for it.
+        write!(f, "Uart({},{},{},{})", node.baud_rate, node.data_bits, node.parity, node.stop_bits)
     }
 }
 
@@ -698,9 +776,6 @@ impl Uart {
     fn validate_fields(&self) -> Result<(), &'static str> {
         if self.reserved != 0 {
             return Err("reserved field must be zero");
-        }
-        if self.parity > 5 || self.stop_bits > 3 {
-            return Err("invalid UART parity or stop bits");
         }
         Ok(())
     }
@@ -940,7 +1015,7 @@ impl fmt::Display for WiFi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         let len = node.ssid.iter().position(|b| *b == 0).unwrap_or(node.ssid.len());
-        write!(f, "Wi-Fi({})", String::from_utf8_lossy(node.ssid.get(..len).ok_or(fmt::Error)?))
+        write!(f, "Wi-Fi({})", TextString(&String::from_utf8_lossy(node.ssid.get(..len).ok_or(fmt::Error)?)))
     }
 }
 
@@ -978,6 +1053,19 @@ impl fmt::Display for Emmc {
     }
 }
 
+device_path_enum! {
+    /// Address type of a [`BluetoothLE`] node
+    /// ([UEFI 2.10 Table 10.47](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path)).
+    ///
+    /// The device path text writes it as a number, such as `BluetoothLE(001122334455,0x01)`.
+    pub enum BluetoothLeAddressType: u8 {
+        /// Public device address.
+        Public = 0,
+        /// Random device address.
+        Random = 1,
+    }
+}
+
 device_path_node! {
     /// Bluetooth LE device path node (UEFI 2.10 Table 10.47).
     ///
@@ -988,9 +1076,9 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::BluetoothLE;
+    /// use patina::uefi::device_path::node::{BluetoothLE, BluetoothLeAddressType};
     ///
-    /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: 1 };
+    /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: BluetoothLeAddressType::Random };
     /// assert_eq!(node.to_string(), "BluetoothLE(001122334455,0x01)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "BluetoothLE(001122334455,0x01)");
@@ -999,15 +1087,14 @@ device_path_node! {
     /// ```
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::BluetoothLE,
-        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct BluetoothLE {
         /// Six Bluetooth address bytes in wire order.
         pub address: [u8; 6],
-        /// Address type: zero for public, one for random.
-        pub address_type: u8,
+        /// Address type.
+        pub address_type: BluetoothLeAddressType,
     }
 }
 impl fmt::Display for BluetoothLE {
@@ -1017,17 +1104,7 @@ impl fmt::Display for BluetoothLE {
         for byte in &node.address {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:02x})", node.address_type)
-    }
-}
-
-impl BluetoothLE {
-    /// Check the field values, for `DevicePathNode::validate`.
-    fn validate_fields(&self) -> Result<(), &'static str> {
-        if self.address_type > 1 {
-            return Err("invalid Bluetooth LE address type");
-        }
-        Ok(())
+        write!(f, ",0x{:02x})", u8::from(node.address_type))
     }
 }
 
@@ -1436,21 +1513,23 @@ impl TryIntoCtx<Endian> for SasTopology {
 impl fmt::Display for UartFlowControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        if f.alternate() {
-            write!(f, "VenMsg({},", UartFlowControl::GUID)?;
-            for byte in node.flow_control_map.to_le_bytes() {
-                write!(f, "{byte:02x}")?;
-            }
-            f.write_str(")")
-        } else {
-            let value = match node.flow_control_map {
-                0 => "None",
-                1 => "Hardware",
-                2 => "XonXoff",
-                other => return write!(f, "UartFlowCtrl(0x{other:x})"),
-            };
-            write!(f, "UartFlowCtrl({value})")
+        // `UartFlowCtrl` takes only 0, 1, or 2 (UEFI 2.10 Table 10.67), so any other map, such as
+        // both bits set, is written in the vendor form.
+        let shortcut = match node.flow_control_map {
+            _ if f.alternate() => None,
+            0 => Some("None"),
+            1 => Some("Hardware"),
+            2 => Some("XonXoff"),
+            _ => None,
+        };
+        if let Some(value) = shortcut {
+            return write!(f, "UartFlowCtrl({value})");
         }
+        write!(f, "VenMsg({},", UartFlowControl::GUID)?;
+        for byte in node.flow_control_map.to_le_bytes() {
+            write!(f, "{byte:02x}")?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -1665,11 +1744,7 @@ impl fmt::Display for IpV4 {
         if f.sign_minus() {
             return f.write_str(")");
         }
-        match node.protocol {
-            6 => f.write_str(",TCP")?,
-            17 => f.write_str(",UDP")?,
-            protocol => write!(f, ",0x{protocol:x}")?,
-        }
+        write!(f, ",{}", node.protocol)?;
         f.write_str(if node.static_ip { ",Static" } else { ",DHCP" })?;
         match node.local_port {
             0 => write!(f, ",{}", node.local_ip)?,
@@ -1711,7 +1786,7 @@ impl UsbWwid {
         if let [rest @ .., 0] = serial_suffix {
             serial_suffix = rest;
         }
-        let mut languages: *mut u16 = core::ptr::null_mut();
+        let mut languages: *mut u16 = ptr::null_mut();
         let mut table_size = 0u16;
         if (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) != efi::Status::SUCCESS
             || languages.is_null()
@@ -1719,9 +1794,9 @@ impl UsbWwid {
             return false;
         }
         // SAFETY: The protocol returned a language table of `table_size` bytes, which it owns.
-        let languages = unsafe { core::slice::from_raw_parts(languages, usize::from(table_size) / 2) };
+        let languages = unsafe { slice::from_raw_parts(languages, usize::from(table_size) / 2) };
         for &language in languages {
-            let mut serial: *mut u16 = core::ptr::null_mut();
+            let mut serial: *mut u16 = ptr::null_mut();
             if (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial)
                 != efi::Status::SUCCESS
                 || serial.is_null()
@@ -1732,7 +1807,7 @@ impl UsbWwid {
             let length = (0..Self::MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
             let matches = length.is_some_and(|length| {
                 // SAFETY: The first `length` code units of the string were just read.
-                let serial = unsafe { core::slice::from_raw_parts(serial, length) };
+                let serial = unsafe { slice::from_raw_parts(serial, length) };
                 serial.ends_with(serial_suffix)
             });
             // SAFETY: The string was allocated from pool memory by the protocol, and is not used after this.
@@ -1766,9 +1841,7 @@ impl UsbWwid {
 
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        if self.serial_number.len() > 64
-            || core::char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err())
-        {
+        if self.serial_number.len() > 64 || char::decode_utf16(self.serial_number.iter().copied()).any(|c| c.is_err()) {
             return Err("USB WWID requires at most 64 valid UTF-16 code units");
         }
         Ok(())
@@ -1797,7 +1870,7 @@ device_path_node! {
     ///
     /// ```
     /// use core::net::Ipv4Addr;
-    /// use patina::uefi::device_path::node::IpV4;
+    /// use patina::uefi::device_path::node::{IpProtocol, IpV4};
     ///
     /// // `IPv4(192.168.0.100,TCP,Static,192.168.0.1)` of the iSCSI example (UEFI 2.10 Section 10.3.4.20.2):
     /// // the target is 192.168.0.100 and the static local address is 192.168.0.1.
@@ -1806,7 +1879,7 @@ device_path_node! {
     ///     remote_ip: Ipv4Addr::new(192, 168, 0, 100),
     ///     local_port: 0,
     ///     remote_port: 0,
-    ///     protocol: 6,
+    ///     protocol: IpProtocol::TCP,
     ///     static_ip: true,
     ///     network: None,
     /// };
@@ -1831,8 +1904,8 @@ device_path_node! {
         pub local_port: u16,
         /// Remote port, encoded as a UEFI little-endian integer.
         pub remote_port: u16,
-        /// IP protocol number.
-        pub protocol: u16,
+        /// Network protocol.
+        pub protocol: IpProtocol,
         /// True for a static address, false for an address assigned through DHCP.
         pub static_ip: bool,
         /// Absent only for the original 19-byte node.
@@ -1973,7 +2046,7 @@ impl fmt::Display for Iscsi {
         } else {
             "CHAP_BI"
         };
-        write!(f, "iSCSI({},0x{:x},0x", node.target_name, node.portal_group)?;
+        write!(f, "iSCSI({},0x{:x},0x", TextString(&node.target_name), node.portal_group)?;
         for byte in &node.lun {
             write!(f, "{byte:02x}")?;
         }
@@ -2038,7 +2111,7 @@ device_path_node! {
 impl fmt::Display for Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write!(f, "Uri({})", node.uri)
+        write!(f, "Uri({})", TextString(&node.uri))
     }
 }
 
@@ -2124,10 +2197,10 @@ impl Dns {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
         if self.addresses.is_empty() {
-            return Err("DNS self requires at least one address");
+            return Err("DNS node requires at least one address");
         }
         if self.addresses.iter().any(|address| address.is_ipv6() != self.is_ipv6()) {
-            return Err("DNS self addresses must all be IPv4 or all be IPv6");
+            return Err("DNS node addresses must all be IPv4 or all be IPv6");
         }
         Ok(())
     }
@@ -2193,6 +2266,18 @@ pub enum RestServiceType {
     },
 }
 
+device_path_enum! {
+    /// Access mode of a [`RestService`] node ([UEFI 2.10 Table 10.50](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#rest-service-device-path)).
+    ///
+    /// The device path text writes it as a number, such as `RestService(0x1,0x2)`.
+    pub enum RestAccessMode: u8 {
+        /// In-band access to the REST service.
+        InBand = 1,
+        /// Out-of-band access to the REST service.
+        OutOfBand = 2,
+    }
+}
+
 device_path_node! {
     /// REST service device path node (UEFI 2.10 Tables 10.50 and 10.51).
     ///
@@ -2204,12 +2289,12 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::{RestService, RestServiceType};
+    /// use patina::uefi::device_path::node::{RestAccessMode, RestService, RestServiceType};
     ///
     /// // `RestService(1,2)`: an out-of-band Redfish service, from
     /// // `PciRoot(0x2)/Pci(0x2,0x0)/Pci(0x0,0x0)/MAC(FD19FA100672,0x0)/IPv4(...)/RestService(1,2)`
     /// // (UEFI 2.10 Section 10.3.4.31).
-    /// let node = RestService { service: RestServiceType::Redfish, access_mode: 2 };
+    /// let node = RestService { service: RestServiceType::Redfish, access_mode: RestAccessMode::OutOfBand };
     /// assert_eq!(node.to_string(), "RestService(0x1,0x2)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "RestService(0x1,0x2)");
@@ -2219,25 +2304,24 @@ device_path_node! {
     @[DevicePathNode(
         DevicePathType::Messaging, MessagingSubType::RestService,
         measure_size = Self::payload_size,
-        validate = Self::validate_fields,
     )]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Clone, Eq, PartialEq)]
     pub struct RestService {
         /// Standard service or vendor payload.
         pub service: RestServiceType,
-        /// One for in-band access, two for out-of-band access.
-        pub access_mode: u8,
+        /// Access mode of the service.
+        pub access_mode: RestAccessMode,
     }
 }
 impl fmt::Display for RestService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
         match &node.service {
-            RestServiceType::Redfish => write!(f, "RestService(0x1,0x{:x})", node.access_mode),
-            RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", node.access_mode),
+            RestServiceType::Redfish => write!(f, "RestService(0x1,0x{:x})", u8::from(node.access_mode)),
+            RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", u8::from(node.access_mode)),
             RestServiceType::Vendor { guid, data } => {
-                write!(f, "RestService(0xff,0x{:x},{}", node.access_mode, guid)?;
+                write!(f, "RestService(0xff,0x{:x},{}", u8::from(node.access_mode), guid)?;
                 for byte in data {
                     write!(f, ",0x{byte:x}")?;
                 }
@@ -2257,14 +2341,6 @@ impl RestService {
         size_of::<u8>() // service type, encoded as one byte
             + size_of_val(&self.access_mode)
             + vendor
-    }
-
-    /// Check the field values, for `DevicePathNode::validate`.
-    fn validate_fields(&self) -> Result<(), &'static str> {
-        if !matches!(self.access_mode, 1 | 2) {
-            return Err("invalid REST access mode");
-        }
-        Ok(())
     }
 }
 
@@ -2311,6 +2387,19 @@ impl TryIntoCtx<scroll::Endian> for RestService {
     }
 }
 
+device_path_enum! {
+    /// Type of the namespace identifier of an [`NvmeOf`] node
+    /// ([UEFI 2.10 Table 10.52](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#nvme-over-fabric-nvme-of-namespace-device-path)).
+    pub enum NvmeOfIdentifierType: u8 {
+        /// IEEE Extended Unique Identifier (EUI-64), in the first eight identifier bytes.
+        Eui64 = 1,
+        /// Namespace Globally Unique Identifier (NGUID).
+        Nguid = 2,
+        /// Namespace UUID.
+        Uuid = 3,
+    }
+}
+
 device_path_node! {
     /// `NVMe` over Fabrics namespace device path node (UEFI 2.10 Table 10.52).
     ///
@@ -2322,12 +2411,12 @@ device_path_node! {
     /// # Examples
     ///
     /// ```
-    /// use patina::uefi::device_path::node::NvmeOf;
+    /// use patina::uefi::device_path::node::{NvmeOf, NvmeOfIdentifierType};
     ///
     /// // `NVMEoF(nqn.1991-05.org.uefi:nvmeoftarget-nvmeofdisk-target,urn:uuid:4eff7f8e-d353-4e9b-a4ec-deea8eab84d7)`
     /// // (UEFI 2.10 Section 10.3.4.33): the namespace identifier is an NSUUID (type 3), in big-endian order.
     /// let node = NvmeOf {
-    ///     identifier_type: 3,
+    ///     identifier_type: NvmeOfIdentifierType::Uuid,
     ///     identifier: [
     ///         0x4e, 0xff, 0x7f, 0x8e, 0xd3, 0x53, 0x4e, 0x9b, 0xa4, 0xec, 0xde, 0xea, 0x8e, 0xab, 0x84, 0xd7,
     ///     ],
@@ -2359,8 +2448,8 @@ device_path_node! {
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct NvmeOf {
-        /// Namespace identifier type: 1 for EUI-64, 2 for NGUID, 3 for UUID.
-        pub identifier_type: u8,
+        /// Type of the namespace identifier.
+        pub identifier_type: NvmeOfIdentifierType,
         /// Identifier bytes; EUI-64 uses the first eight bytes, UUID uses RFC byte order.
         pub identifier: [u8; 16],
         /// UTF-8 subsystem NQN without its wire NUL terminator, at most 223 bytes.
@@ -2371,21 +2460,21 @@ device_path_node! {
 impl fmt::Display for NvmeOf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let node = self;
-        write!(f, "NVMEoF({},", node.subsystem_nqn)?;
+        write!(f, "NVMEoF({},", TextString(&node.subsystem_nqn))?;
         match node.identifier_type {
-            1 => {
+            NvmeOfIdentifierType::Eui64 => {
                 f.write_str("eui.")?;
                 for byte in &node.identifier[..8] {
                     write!(f, "{byte:02x}")?;
                 }
             }
-            2 => {
+            NvmeOfIdentifierType::Nguid => {
                 f.write_str("nguid.")?;
                 for byte in &node.identifier {
                     write!(f, "{byte:02x}")?;
                 }
             }
-            3 => {
+            NvmeOfIdentifierType::Uuid => {
                 f.write_str("urn:uuid:")?;
                 // The namespace UUID is written in byte order, not in the mixed-endian GUID layout.
                 for (index, byte) in node.identifier.iter().enumerate() {
@@ -2395,7 +2484,6 @@ impl fmt::Display for NvmeOf {
                     write!(f, "{byte:02x}")?;
                 }
             }
-            other => write!(f, "unknown{other}.")?,
         }
         f.write_str(")")
     }
@@ -2409,7 +2497,7 @@ impl NvmeOf {
 
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
-        if !matches!(self.identifier_type, 1..=3) || self.subsystem_nqn.is_empty() || self.subsystem_nqn.len() > 223 {
+        if self.subsystem_nqn.is_empty() || self.subsystem_nqn.len() > 223 {
             return Err("invalid NVMe over Fabrics namespace identity");
         }
         Ok(())
@@ -2549,7 +2637,7 @@ mod tests {
     use super::*;
     use crate::uefi::device_path::node::{
         DevicePathNode, GenericDevicePathNode,
-        tests::{check_fixture, check_invalid, check_node, encode_node, fixture},
+        tests::{check_fixture, check_invalid, check_node, check_rejected, encode_node, fixture},
     };
     use alloc::{format, string::String, vec};
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
@@ -2610,7 +2698,7 @@ mod tests {
 
     fixture!(
         test_device_path_atapi,
-        Atapi { primary_secondary: 1, slave_master: 0, lun: 0x0403 },
+        Atapi { primary_secondary: AtapiChannel::Secondary, slave_master: AtapiDrive::Master, lun: 0x0403 },
         [3, 1, 8, 0, 1, 0, 3, 4]
     );
 
@@ -2641,7 +2729,7 @@ mod tests {
     fixture!(
         test_device_path_mac_address,
         MacAddress {
-            mac_address: crate::standard::efi::MacAddress {
+            mac_address: efi::MacAddress {
                 addr: [
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
                     28, 29, 30, 31, 32,
@@ -2658,18 +2746,14 @@ mod tests {
     fixture!(
         test_device_path_ipv6,
         IpV6 {
-            local_ip_address: core::net::Ipv6Addr::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-            remote_ip_address: core::net::Ipv6Addr::from([
-                17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-            ]),
+            local_ip_address: Ipv6Addr::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            remote_ip_address: Ipv6Addr::from([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]),
             local_port: 0x2221,
             remote_port: 0x2423,
-            protocol: 0x2625,
-            ip_address_origin: 2,
+            protocol: IpProtocol(0x2625),
+            ip_address_origin: Ipv6AddressOrigin::StatefulAutoConfigure,
             prefix_length: 128,
-            gateway_ip_address: core::net::Ipv6Addr::from([
-                41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56
-            ]),
+            gateway_ip_address: Ipv6Addr::from([41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]),
         },
         [
             3, 13, 60, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -2697,7 +2781,13 @@ mod tests {
 
     fixture!(
         test_device_path_uart,
-        Uart { reserved: 0, baud_rate: 0x0c0b0a0908070605, data_bits: 8, parity: 5, stop_bits: 3 },
+        Uart {
+            reserved: 0,
+            baud_rate: 0x0c0b0a0908070605,
+            data_bits: 8,
+            parity: UartParity::Space,
+            stop_bits: UartStopBits::Two,
+        },
         [3, 14, 19, 0, 0, 0, 0, 0, 5, 6, 7, 8, 9, 10, 11, 12, 8, 5, 3]
     );
 
@@ -2736,7 +2826,7 @@ mod tests {
 
     fixture!(
         test_device_path_bluetooth_le,
-        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: 1 },
+        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: BluetoothLeAddressType::Random },
         [3, 30, 11, 0, 1, 2, 3, 4, 5, 6, 1]
     );
 
@@ -2756,14 +2846,19 @@ mod tests {
 
     #[test]
     fn test_device_path_atapi_selectors() {
-        for primary_secondary in 0..=1 {
-            for slave_master in 0..=1 {
-                encode_node(Atapi { primary_secondary, slave_master, lun: u16::MAX }).unwrap();
+        for channel in 0..=1 {
+            for drive in 0..=1 {
+                let primary_secondary = AtapiChannel::try_from(channel).unwrap();
+                let slave_master = AtapiDrive::try_from(drive).unwrap();
+                check_node(
+                    Atapi { primary_secondary, slave_master, lun: u16::MAX },
+                    &[3, 1, 8, 0, channel, drive, 0xff, 0xff],
+                );
             }
         }
-        for invalid in [2, u8::MAX] {
-            check_invalid(Atapi { primary_secondary: invalid, slave_master: 0, lun: 0 }, &[invalid, 0, 0, 0]);
-            check_invalid(Atapi { primary_secondary: 0, slave_master: invalid, lun: 0 }, &[0, invalid, 0, 0]);
+        for reserved in [2, u8::MAX] {
+            check_rejected::<Atapi>(&[3, 1, 8, 0, reserved, 0, 0, 0]);
+            check_rejected::<Atapi>(&[3, 1, 8, 0, 0, reserved, 0, 0]);
         }
     }
 
@@ -2778,24 +2873,26 @@ mod tests {
     #[test]
     fn test_device_path_ipv6_ranges() {
         let node = IpV6 {
-            local_ip_address: core::net::Ipv6Addr::from([0; 16]),
-            remote_ip_address: core::net::Ipv6Addr::from([0; 16]),
+            local_ip_address: Ipv6Addr::from([0; 16]),
+            remote_ip_address: Ipv6Addr::from([0; 16]),
             local_port: 0,
             remote_port: 0,
-            protocol: 0,
-            ip_address_origin: 0,
+            protocol: IpProtocol(0),
+            ip_address_origin: Ipv6AddressOrigin::Static,
             prefix_length: 0,
-            gateway_ip_address: core::net::Ipv6Addr::from([0; 16]),
+            gateway_ip_address: Ipv6Addr::from([0; 16]),
         };
-        for ip_address_origin in 0..=2 {
+        for origin in 0..=2 {
+            let ip_address_origin = Ipv6AddressOrigin::try_from(origin).unwrap();
             for prefix_length in [0, 64, 128] {
                 encode_node(IpV6 { ip_address_origin, prefix_length, ..node.clone() }).unwrap();
             }
         }
-        for ip_address_origin in [3, u8::MAX] {
-            let mut payload = [0; 56];
-            payload[38] = ip_address_origin;
-            check_invalid(IpV6 { ip_address_origin, ..node.clone() }, &payload);
+        let wire = encode_node(node.clone()).unwrap();
+        for reserved in [3, u8::MAX] {
+            let mut reserved_origin = wire.clone();
+            reserved_origin[42] = reserved;
+            check_rejected::<IpV6>(&reserved_origin);
         }
         // The specification does not bound the prefix length.
         encode_node(IpV6 { prefix_length: u8::MAX, ..node.clone() }).unwrap();
@@ -2803,31 +2900,36 @@ mod tests {
 
     #[test]
     fn test_device_path_uart_ranges() {
-        let node = Uart { reserved: 0, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 };
+        let node = Uart {
+            reserved: 0,
+            baud_rate: 0,
+            data_bits: 0,
+            parity: UartParity::Default,
+            stop_bits: UartStopBits::Default,
+        };
         for parity in 0..=5 {
             for stop_bits in 0..=3 {
+                let parity = UartParity::try_from(parity).unwrap();
+                let stop_bits = UartStopBits::try_from(stop_bits).unwrap();
                 encode_node(Uart { parity, stop_bits, ..node.clone() }).unwrap();
             }
         }
-        for parity in [6, u8::MAX] {
-            let mut payload = [0; 15];
-            payload[13] = parity;
-            check_invalid(Uart { parity, ..node.clone() }, &payload);
-        }
-        for stop_bits in [4, u8::MAX] {
-            let mut payload = [0; 15];
-            payload[14] = stop_bits;
-            check_invalid(Uart { stop_bits, ..node.clone() }, &payload);
+        let wire = encode_node(node).unwrap();
+        for (offset, reserved) in [(17, 6), (17, u8::MAX), (18, 4), (18, u8::MAX)] {
+            let mut reserved_value = wire.clone();
+            reserved_value[offset] = reserved;
+            check_rejected::<Uart>(&reserved_value);
         }
     }
 
     #[test]
     fn test_device_path_bluetooth_le_address_type() {
-        for address_type in 0..=1 {
-            encode_node(BluetoothLE { address: [0; 6], address_type }).unwrap();
+        for value in 0..=1 {
+            let address_type = BluetoothLeAddressType::try_from(value).unwrap();
+            check_node(BluetoothLE { address: [0; 6], address_type }, &[3, 30, 11, 0, 0, 0, 0, 0, 0, 0, value]);
         }
-        for address_type in [2, u8::MAX] {
-            check_invalid(BluetoothLE { address: [0; 6], address_type }, &[0, 0, 0, 0, 0, 0, address_type]);
+        for reserved in [2, u8::MAX] {
+            check_rejected::<BluetoothLE>(&[3, 30, 11, 0, 0, 0, 0, 0, 0, 0, reserved]);
         }
     }
 
@@ -2917,7 +3019,16 @@ mod tests {
         check_invalid(FiberChannel { reserved: 1, wwn: 0, lun: 0 }, &payload);
         check_invalid(FiberChannelEx { reserved: 1, wwn: [0; 8], lun: [0; 8] }, &payload);
         check_invalid(Ieee1394 { reserved: 1, guid: 0 }, &payload[..12]);
-        check_invalid(Uart { reserved: 1, baud_rate: 0, data_bits: 0, parity: 0, stop_bits: 0 }, &payload[..15]);
+        check_invalid(
+            Uart {
+                reserved: 1,
+                baud_rate: 0,
+                data_bits: 0,
+                parity: UartParity::Default,
+                stop_bits: UartStopBits::Default,
+            },
+            &payload[..15],
+        );
         let mut payload = vec![0x20, 0, 0, 0];
         payload.extend_from_slice(&[0; 40]);
         check_invalid(
@@ -2937,19 +3048,19 @@ mod tests {
     #[test]
     fn test_device_path_ipv4_legacy_and_current() {
         let mut node = IpV4 {
-            local_ip: core::net::Ipv4Addr::from([1, 2, 3, 4]),
-            remote_ip: core::net::Ipv4Addr::from([5, 6, 7, 8]),
+            local_ip: Ipv4Addr::from([1, 2, 3, 4]),
+            remote_ip: Ipv4Addr::from([5, 6, 7, 8]),
             local_port: 0x1234,
             remote_port: 0x5678,
-            protocol: 6,
+            protocol: IpProtocol::TCP,
             static_ip: true,
             network: None,
         };
         let mut expected = vec![3, 12, 19, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x34, 0x12, 0x78, 0x56, 6, 0, 1];
         check_node(node.clone(), &expected);
         node.network = Some(IpV4Network {
-            gateway: core::net::Ipv4Addr::from([9, 10, 11, 12]),
-            subnet_mask: core::net::Ipv4Addr::from([255, 255, 255, 0]),
+            gateway: Ipv4Addr::from([9, 10, 11, 12]),
+            subnet_mask: Ipv4Addr::from([255, 255, 255, 0]),
         });
         expected[2] = 27;
         expected.extend_from_slice(&[9, 10, 11, 12, 255, 255, 255, 0]);
@@ -3016,8 +3127,14 @@ mod tests {
 
     #[test]
     fn test_device_path_rest_variants() {
-        check_node(RestService { service: RestServiceType::Redfish, access_mode: 1 }, &[3, 33, 6, 0, 1, 1]);
-        check_node(RestService { service: RestServiceType::OData, access_mode: 2 }, &[3, 33, 6, 0, 2, 2]);
+        check_node(
+            RestService { service: RestServiceType::Redfish, access_mode: RestAccessMode::InBand },
+            &[3, 33, 6, 0, 1, 1],
+        );
+        check_node(
+            RestService { service: RestServiceType::OData, access_mode: RestAccessMode::OutOfBand },
+            &[3, 33, 6, 0, 2, 2],
+        );
         let mut expected = vec![3, 33, 24, 0, 255, 1];
         expected.extend_from_slice(&[0x33; 16]);
         expected.extend_from_slice(&[0x44, 0x55]);
@@ -3027,7 +3144,7 @@ mod tests {
                     guid: crate::BinaryGuid::from_bytes(&[0x33; 16]),
                     data: vec![0x44, 0x55],
                 },
-                access_mode: 1,
+                access_mode: RestAccessMode::InBand,
             },
             &expected,
         );
@@ -3038,7 +3155,10 @@ mod tests {
         let mut expected = vec![3, 34, 25, 0, 3];
         expected.extend_from_slice(&[0x22; 16]);
         expected.extend_from_slice(b"nqn\0");
-        check_node(NvmeOf { identifier_type: 3, identifier: [0x22; 16], subsystem_nqn: "nqn".into() }, &expected);
+        check_node(
+            NvmeOf { identifier_type: NvmeOfIdentifierType::Uuid, identifier: [0x22; 16], subsystem_nqn: "nqn".into() },
+            &expected,
+        );
     }
 
     #[test]
@@ -3056,7 +3176,8 @@ mod tests {
         assert!(
             encode_node(UsbWwid { interface: 0, vendor_id: 0, product_id: 0, serial_number: vec![0xd800] }).is_err()
         );
-        assert!(encode_node(RestService { service: RestServiceType::Redfish, access_mode: 3 }).is_err());
+        // Reserved REST access modes and NVMe-oF identifier types cannot be decoded.
+        check_rejected::<RestService>(&[3, 33, 6, 0, 1, 3]);
         assert!(encode_node(Uri { uri: "a\0b".into() }).is_err());
         assert!(encode_node(Uri { uri: "\u{e9}".into() }).is_err());
         assert!(encode_node(Uri { uri: "a".repeat(65532) }).is_err());
@@ -3064,9 +3185,17 @@ mod tests {
             encode_node(Iscsi { protocol: 1, options: 0, lun: [0; 8], portal_group: 0, target_name: "iqn".into() })
                 .is_err()
         );
-        assert!(encode_node(NvmeOf { identifier_type: 0, identifier: [0; 16], subsystem_nqn: "nqn".into() }).is_err());
+        let mut reserved_type = vec![3, 34, 25, 0, 0];
+        reserved_type.extend_from_slice(&[0; 16]);
+        reserved_type.extend_from_slice(b"nqn\0");
+        check_rejected::<NvmeOf>(&reserved_type);
         // The specification does not require the unused EUI-64 bytes to be zero.
-        encode_node(NvmeOf { identifier_type: 1, identifier: [1; 16], subsystem_nqn: "nqn".into() }).unwrap();
+        encode_node(NvmeOf {
+            identifier_type: NvmeOfIdentifierType::Eui64,
+            identifier: [1; 16],
+            subsystem_nqn: "nqn".into(),
+        })
+        .unwrap();
         // An empty iSCSI target name fits the variable-length field.
         encode_node(Iscsi { protocol: 0, options: 0, lun: [0; 8], portal_group: 0, target_name: String::new() })
             .unwrap();
@@ -3274,5 +3403,24 @@ mod tests {
         let uart = UartFlowControl { flow_control_map: UartFlowControl::HARDWARE };
         assert_eq!(format!("{uart}"), "UartFlowCtrl(Hardware)");
         assert_eq!(format!("{uart:#}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,01000000)");
+    }
+
+    /// UEFI text forms for values the shortcut keywords cannot hold.
+    #[test]
+    fn test_device_path_messaging_text_edge_values() {
+        // Zero, the device default, is written as a number.
+        let uart = Uart {
+            reserved: 0,
+            baud_rate: 0,
+            data_bits: 0,
+            parity: UartParity::Default,
+            stop_bits: UartStopBits::Default,
+        };
+        assert_eq!(format!("{uart}"), "Uart(0,0,D,D)");
+        // Both flow control bits set has no `UartFlowCtrl` keyword, so the vendor form is used.
+        let flow = UartFlowControl { flow_control_map: 3 };
+        assert_eq!(format!("{flow}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,03000000)");
+        // A string with `=` is quoted, so it is not read as a named parameter.
+        assert_eq!(format!("{}", Uri { uri: "http://a/b?c=d".into() }), r#"Uri("http://a/b?c=d")"#);
     }
 }

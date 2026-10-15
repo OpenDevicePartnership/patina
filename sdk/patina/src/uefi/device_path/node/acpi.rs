@@ -20,6 +20,7 @@
 
 // cspell:ignore BCDEFGHIJ PNPZZZZ
 
+use super::TextString;
 use super::{AcpiSubType, DevicePathType};
 use crate::{
     device_path_node,
@@ -152,29 +153,33 @@ impl fmt::Display for ExtendedAcpi {
                 return if node.uid_string.is_empty() {
                     write!(f, "{name}(0x{:x})", node.uid)
                 } else {
-                    write!(f, "{name}({})", node.uid_string)
+                    write!(f, "{name}({})", TextString(&node.uid_string))
                 };
             }
         }
 
         let (hid, cid) = (node.hid, node.cid);
-        if node.hid_string.is_empty() && node.cid_string.is_empty() && !node.uid_string.is_empty() {
-            write!(f, "AcpiExp({hid},{cid},{})", node.uid_string)
+        // `AcpiExp` has no UID number, so it is used only when the UID number is zero.
+        if node.hid_string.is_empty() && node.cid_string.is_empty() && !node.uid_string.is_empty() && node.uid == 0 {
+            write!(f, "AcpiExp({hid},{cid},{})", TextString(&node.uid_string))
         } else if f.sign_minus() {
             // The display-only form shows each identifier once: its string when present, else its
             // numeric value.
-            let hid: &dyn fmt::Display = if node.hid_string.is_empty() { &hid } else { &node.hid_string };
-            let cid: &dyn fmt::Display = if node.cid_string.is_empty() { &cid } else { &node.cid_string };
+            let hid: &dyn fmt::Display = if node.hid_string.is_empty() { &hid } else { &TextString(&node.hid_string) };
+            let cid: &dyn fmt::Display = if node.cid_string.is_empty() { &cid } else { &TextString(&node.cid_string) };
             if node.uid_string.is_empty() {
                 write!(f, "AcpiEx({hid},{cid},0x{:x})", node.uid)
             } else {
-                write!(f, "AcpiEx({hid},{cid},{})", node.uid_string)
+                write!(f, "AcpiEx({hid},{cid},{})", TextString(&node.uid_string))
             }
         } else {
             write!(
                 f,
                 "AcpiEx({hid},{cid},0x{:x},{},{},{})",
-                node.uid, node.hid_string, node.cid_string, node.uid_string
+                node.uid,
+                TextString(&node.hid_string),
+                TextString(&node.cid_string),
+                TextString(&node.uid_string)
             )
         }
     }
@@ -223,7 +228,7 @@ impl AcpiAdr {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
         if self.addresses.is_empty() {
-            return Err("ACPI address self requires at least one address");
+            return Err("ACPI address node requires at least one address");
         }
         Ok(())
     }
@@ -540,5 +545,22 @@ mod tests {
         };
         assert_eq!(format!("{acpi_ex:-}"), "PciRoot(0x0)");
         assert_eq!(format!("{acpi_ex:-#}"), "AcpiEx(PNP0A03,0,0x0)");
+    }
+
+    /// `AcpiExp` has no UID number, and strings that the text cannot hold bare are quoted.
+    #[test]
+    fn test_device_path_extended_acpi_text_uid_and_quoting() {
+        let node = ExtendedAcpi {
+            hid: EisaId::new("HWP0002"),
+            uid: 1,
+            cid: EisaId(0),
+            hid_string: String::new(),
+            uid_string: "Unique Id".into(),
+            cid_string: String::new(),
+        };
+        // A nonzero UID number cannot use `AcpiExp`, so the full form keeps it.
+        assert_eq!(format!("{node}"), r#"AcpiEx(HWP0002,0,0x1,,,"Unique Id")"#);
+        let node = ExtendedAcpi { uid: 0, ..node };
+        assert_eq!(format!("{node}"), r#"AcpiExp(HWP0002,0,"Unique Id")"#);
     }
 }

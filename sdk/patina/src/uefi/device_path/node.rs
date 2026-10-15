@@ -157,12 +157,30 @@ impl Header {
 
     /// Return the size of the header in bytes
     pub const fn size_of_header() -> usize {
-        core::mem::size_of::<Self>()
+        size_of::<Self>()
     }
 
     /// Return the total length of the node in bytes, including the header.
-    pub fn length(&self) -> u16 {
-        self.length.get()
+    pub fn length(&self) -> usize {
+        self.length.get() as usize
+    }
+
+    /// Return true if this header identifies a node of type `T`, by its type and sub-type.
+    ///
+    /// For a vendor node that the specification defines by its GUID, such as
+    /// [`UartFlowControl`], only the type and sub-type are compared, not the GUID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::device_path::node::{DevicePathNode, EndEntire, Header, Pci};
+    ///
+    /// let header = Pci { function: 0, device: 0x1f }.header();
+    /// assert!(header.is_type::<Pci>());
+    /// assert!(!header.is_type::<EndEntire>());
+    /// ```
+    pub fn is_type<T: DevicePathNode>(&self) -> bool {
+        T::is_type(self.r#type, self.sub_type)
     }
 }
 
@@ -271,6 +289,7 @@ impl GenericDevicePathNode {
         <Self as zerocopy::IntoBytes>::as_bytes(self)
     }
 }
+
 impl fmt::Display for GenericDevicePathNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (r#type, sub_type) = (self.header.r#type, self.header.sub_type);
@@ -286,6 +305,25 @@ impl fmt::Display for GenericDevicePathNode {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(")")
+    }
+}
+
+/// A string parameter of the device path text, written in double quotes when it holds a
+/// character that cannot appear in it bare.
+///
+/// Spaces are allowed only between double quotes
+/// ([UEFI 2.10 Section 10.6.1.5](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#text-representation-basics)),
+/// a `,` or `=` would end or name the parameter, and a String cannot hold `)`, `|`, `<`, or `>`
+/// (Table 10.66), so a string with white space or any of `,=()|<>"` is quoted.
+struct TextString<'a>(&'a str);
+
+impl fmt::Display for TextString<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.chars().any(|c| c.is_whitespace() || matches!(c, ',' | '=' | '(' | ')' | '|' | '<' | '>' | '"')) {
+            write!(f, "\"{}\"", self.0)
+        } else {
+            f.write_str(self.0)
+        }
     }
 }
 
@@ -374,76 +412,70 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
 
         match unknown.header {
             // Hardware nodes.
-            h if Pci::is_type(h.r#type, h.sub_type) => decode_node::<Pci>(unknown),
-            h if PcCard::is_type(h.r#type, h.sub_type) => decode_node::<PcCard>(unknown),
-            h if MemoryMapped::is_type(h.r#type, h.sub_type) => decode_node::<MemoryMapped>(unknown),
-            h if Controller::is_type(h.r#type, h.sub_type) => decode_node::<Controller>(unknown),
-            h if Bmc::is_type(h.r#type, h.sub_type) => decode_node::<Bmc>(unknown),
-            h if HardwareVendor::is_type(h.r#type, h.sub_type) => decode_node::<HardwareVendor>(unknown),
+            h if h.is_type::<Pci>() => decode_node::<Pci>(unknown),
+            h if h.is_type::<PcCard>() => decode_node::<PcCard>(unknown),
+            h if h.is_type::<MemoryMapped>() => decode_node::<MemoryMapped>(unknown),
+            h if h.is_type::<Controller>() => decode_node::<Controller>(unknown),
+            h if h.is_type::<Bmc>() => decode_node::<Bmc>(unknown),
+            h if h.is_type::<HardwareVendor>() => decode_node::<HardwareVendor>(unknown),
             // ACPI nodes.
-            h if Acpi::is_type(h.r#type, h.sub_type) => decode_node::<Acpi>(unknown),
-            h if ExtendedAcpi::is_type(h.r#type, h.sub_type) => decode_node::<ExtendedAcpi>(unknown),
-            h if AcpiAdr::is_type(h.r#type, h.sub_type) => decode_node::<AcpiAdr>(unknown),
-            h if NvdimmAcpi::is_type(h.r#type, h.sub_type) => decode_node::<NvdimmAcpi>(unknown),
+            h if h.is_type::<Acpi>() => decode_node::<Acpi>(unknown),
+            h if h.is_type::<ExtendedAcpi>() => decode_node::<ExtendedAcpi>(unknown),
+            h if h.is_type::<AcpiAdr>() => decode_node::<AcpiAdr>(unknown),
+            h if h.is_type::<NvdimmAcpi>() => decode_node::<NvdimmAcpi>(unknown),
             // Messaging nodes.
-            h if NvmExpress::is_type(h.r#type, h.sub_type) => decode_node::<NvmExpress>(unknown),
-            h if Sata::is_type(h.r#type, h.sub_type) => decode_node::<Sata>(unknown),
-            h if Atapi::is_type(h.r#type, h.sub_type) => decode_node::<Atapi>(unknown),
-            h if Scsi::is_type(h.r#type, h.sub_type) => decode_node::<Scsi>(unknown),
-            h if FiberChannel::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannel>(unknown),
-            h if FiberChannelEx::is_type(h.r#type, h.sub_type) => decode_node::<FiberChannelEx>(unknown),
-            h if Ieee1394::is_type(h.r#type, h.sub_type) => decode_node::<Ieee1394>(unknown),
-            h if Usb::is_type(h.r#type, h.sub_type) => decode_node::<Usb>(unknown),
-            h if UsbWwid::is_type(h.r#type, h.sub_type) => decode_node::<UsbWwid>(unknown),
-            h if UsbClass::is_type(h.r#type, h.sub_type) => decode_node::<UsbClass>(unknown),
-            h if DeviceLogicalUnit::is_type(h.r#type, h.sub_type) => decode_node::<DeviceLogicalUnit>(unknown),
-            h if I2oRandomBlockStorageClass::is_type(h.r#type, h.sub_type) => {
-                decode_node::<I2oRandomBlockStorageClass>(unknown)
-            }
-            h if MacAddress::is_type(h.r#type, h.sub_type) => decode_node::<MacAddress>(unknown),
-            h if IpV4::is_type(h.r#type, h.sub_type) => decode_node::<IpV4>(unknown),
-            h if IpV6::is_type(h.r#type, h.sub_type) => decode_node::<IpV6>(unknown),
-            h if Vlan::is_type(h.r#type, h.sub_type) => decode_node::<Vlan>(unknown),
-            h if InfiniBand::is_type(h.r#type, h.sub_type) => decode_node::<InfiniBand>(unknown),
-            h if Uart::is_type(h.r#type, h.sub_type) => decode_node::<Uart>(unknown),
+            h if h.is_type::<NvmExpress>() => decode_node::<NvmExpress>(unknown),
+            h if h.is_type::<Sata>() => decode_node::<Sata>(unknown),
+            h if h.is_type::<Atapi>() => decode_node::<Atapi>(unknown),
+            h if h.is_type::<Scsi>() => decode_node::<Scsi>(unknown),
+            h if h.is_type::<FiberChannel>() => decode_node::<FiberChannel>(unknown),
+            h if h.is_type::<FiberChannelEx>() => decode_node::<FiberChannelEx>(unknown),
+            h if h.is_type::<Ieee1394>() => decode_node::<Ieee1394>(unknown),
+            h if h.is_type::<Usb>() => decode_node::<Usb>(unknown),
+            h if h.is_type::<UsbWwid>() => decode_node::<UsbWwid>(unknown),
+            h if h.is_type::<UsbClass>() => decode_node::<UsbClass>(unknown),
+            h if h.is_type::<DeviceLogicalUnit>() => decode_node::<DeviceLogicalUnit>(unknown),
+            h if h.is_type::<I2oRandomBlockStorageClass>() => decode_node::<I2oRandomBlockStorageClass>(unknown),
+            h if h.is_type::<MacAddress>() => decode_node::<MacAddress>(unknown),
+            h if h.is_type::<IpV4>() => decode_node::<IpV4>(unknown),
+            h if h.is_type::<IpV6>() => decode_node::<IpV6>(unknown),
+            h if h.is_type::<Vlan>() => decode_node::<Vlan>(unknown),
+            h if h.is_type::<InfiniBand>() => decode_node::<InfiniBand>(unknown),
+            h if h.is_type::<Uart>() => decode_node::<Uart>(unknown),
             // Vendor nodes whose GUID the specification defines decode as their own type.
-            h if UartFlowControl::is_type(h.r#type, h.sub_type)
-                && unknown.data.starts_with(UartFlowControl::GUID.as_bytes()) =>
-            {
+            h if h.is_type::<UartFlowControl>() && unknown.data.starts_with(UartFlowControl::GUID.as_bytes()) => {
                 decode_node::<UartFlowControl>(unknown)
             }
-            h if Sas::is_type(h.r#type, h.sub_type) && unknown.data.starts_with(Sas::GUID.as_bytes()) => {
-                decode_node::<Sas>(unknown)
-            }
-            h if MessagingVendor::is_type(h.r#type, h.sub_type) => decode_node::<MessagingVendor>(unknown),
-            h if SasEx::is_type(h.r#type, h.sub_type) => decode_node::<SasEx>(unknown),
-            h if Iscsi::is_type(h.r#type, h.sub_type) => decode_node::<Iscsi>(unknown),
-            h if Uri::is_type(h.r#type, h.sub_type) => decode_node::<Uri>(unknown),
-            h if Ufs::is_type(h.r#type, h.sub_type) => decode_node::<Ufs>(unknown),
-            h if Sd::is_type(h.r#type, h.sub_type) => decode_node::<Sd>(unknown),
-            h if Bluetooth::is_type(h.r#type, h.sub_type) => decode_node::<Bluetooth>(unknown),
-            h if WiFi::is_type(h.r#type, h.sub_type) => decode_node::<WiFi>(unknown),
-            h if Emmc::is_type(h.r#type, h.sub_type) => decode_node::<Emmc>(unknown),
-            h if BluetoothLE::is_type(h.r#type, h.sub_type) => decode_node::<BluetoothLE>(unknown),
-            h if Dns::is_type(h.r#type, h.sub_type) => decode_node::<Dns>(unknown),
-            h if Nvdimm::is_type(h.r#type, h.sub_type) => decode_node::<Nvdimm>(unknown),
-            h if RestService::is_type(h.r#type, h.sub_type) => decode_node::<RestService>(unknown),
-            h if NvmeOf::is_type(h.r#type, h.sub_type) => decode_node::<NvmeOf>(unknown),
+            h if h.is_type::<Sas>() && unknown.data.starts_with(Sas::GUID.as_bytes()) => decode_node::<Sas>(unknown),
+            h if h.is_type::<MessagingVendor>() => decode_node::<MessagingVendor>(unknown),
+            h if h.is_type::<SasEx>() => decode_node::<SasEx>(unknown),
+            h if h.is_type::<Iscsi>() => decode_node::<Iscsi>(unknown),
+            h if h.is_type::<Uri>() => decode_node::<Uri>(unknown),
+            h if h.is_type::<Ufs>() => decode_node::<Ufs>(unknown),
+            h if h.is_type::<Sd>() => decode_node::<Sd>(unknown),
+            h if h.is_type::<Bluetooth>() => decode_node::<Bluetooth>(unknown),
+            h if h.is_type::<WiFi>() => decode_node::<WiFi>(unknown),
+            h if h.is_type::<Emmc>() => decode_node::<Emmc>(unknown),
+            h if h.is_type::<BluetoothLE>() => decode_node::<BluetoothLE>(unknown),
+            h if h.is_type::<Dns>() => decode_node::<Dns>(unknown),
+            h if h.is_type::<Nvdimm>() => decode_node::<Nvdimm>(unknown),
+            h if h.is_type::<RestService>() => decode_node::<RestService>(unknown),
+            h if h.is_type::<NvmeOf>() => decode_node::<NvmeOf>(unknown),
             // Media nodes.
-            h if FilePath::is_type(h.r#type, h.sub_type) => decode_node::<FilePath>(unknown),
-            h if HardDrive::is_type(h.r#type, h.sub_type) => decode_node::<HardDrive>(unknown),
-            h if CdRom::is_type(h.r#type, h.sub_type) => decode_node::<CdRom>(unknown),
-            h if MediaVendor::is_type(h.r#type, h.sub_type) => decode_node::<MediaVendor>(unknown),
-            h if MediaProtocol::is_type(h.r#type, h.sub_type) => decode_node::<MediaProtocol>(unknown),
-            h if PiwgFirmwareFile::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareFile>(unknown),
-            h if PiwgFirmwareVolume::is_type(h.r#type, h.sub_type) => decode_node::<PiwgFirmwareVolume>(unknown),
-            h if RelativeOffsetRange::is_type(h.r#type, h.sub_type) => decode_node::<RelativeOffsetRange>(unknown),
-            h if RamDisk::is_type(h.r#type, h.sub_type) => decode_node::<RamDisk>(unknown),
+            h if h.is_type::<FilePath>() => decode_node::<FilePath>(unknown),
+            h if h.is_type::<HardDrive>() => decode_node::<HardDrive>(unknown),
+            h if h.is_type::<CdRom>() => decode_node::<CdRom>(unknown),
+            h if h.is_type::<MediaVendor>() => decode_node::<MediaVendor>(unknown),
+            h if h.is_type::<MediaProtocol>() => decode_node::<MediaProtocol>(unknown),
+            h if h.is_type::<PiwgFirmwareFile>() => decode_node::<PiwgFirmwareFile>(unknown),
+            h if h.is_type::<PiwgFirmwareVolume>() => decode_node::<PiwgFirmwareVolume>(unknown),
+            h if h.is_type::<RelativeOffsetRange>() => decode_node::<RelativeOffsetRange>(unknown),
+            h if h.is_type::<RamDisk>() => decode_node::<RamDisk>(unknown),
             // BIOS nodes.
-            h if Bios::is_type(h.r#type, h.sub_type) => decode_node::<Bios>(unknown),
+            h if h.is_type::<Bios>() => decode_node::<Bios>(unknown),
             // End nodes.
-            h if EndEntire::is_type(h.r#type, h.sub_type) => decode_node::<EndEntire>(unknown),
-            h if EndInstance::is_type(h.r#type, h.sub_type) => decode_node::<EndInstance>(unknown),
+            h if h.is_type::<EndEntire>() => decode_node::<EndEntire>(unknown),
+            h if h.is_type::<EndInstance>() => decode_node::<EndInstance>(unknown),
             _ => Ok(Box::new(unknown)),
         }
     }
@@ -787,7 +819,7 @@ macro_rules! device_path_node {
             ) -> Result<Self, Self::Error> {
                 use $crate::uefi::device_path::node::DevicePathNode as _;
                 let header = node.header;
-                if !Self::is_type(header.r#type, header.sub_type) {
+                if !header.is_type::<Self>() {
                     return Err(::scroll::Error::BadInput { size: 0, msg: "device path node type does not match" });
                 }
                 let (decoded, consumed) =
@@ -862,7 +894,7 @@ macro_rules! device_path_node {
     // The default implementation is the size of every field.
     (@Default measure_size [$($field_name:ident: $field_type:ty),*],) => {
         fn measure_size(&self) -> usize {
-            0 $(+ core::mem::size_of::<$field_type>())*
+            0 $(+ size_of::<$field_type>())*
         }
     };
 
@@ -922,6 +954,104 @@ macro_rules! device_path_node {
     };
 }
 
+/// Define an enum for a node field whose values the specification lists, every other value
+/// being reserved.
+///
+/// The enum has the given integer representation, and converts from that integer with
+/// `TryFrom` (rejecting reserved values) and to it with `From`. It decodes and encodes with
+/// scroll as that integer, so node structs can derive `Pread` and `Pwrite` with it as a field;
+/// decoding a reserved value fails.
+///
+/// When every variant has a `=> "text"`, the enum also implements `Display` with that text,
+/// which is the field's keyword in the device path text (UEFI 2.10 Table 10.67).
+///
+/// ```ignore
+/// device_path_enum! {
+///     /// ATAPI channel.
+///     pub enum AtapiChannel: u8 {
+///         /// Primary channel.
+///         Primary = 0 => "Primary",
+///         /// Secondary channel.
+///         Secondary = 1 => "Secondary",
+///     }
+/// }
+/// ```
+macro_rules! device_path_enum {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident: $repr:ident {
+            $( $(#[$variant_meta:meta])* $variant:ident = $value:literal $(=> $text:literal)? ),+ $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        #[repr($repr)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+        $vis enum $name {
+            $( $(#[$variant_meta])* $variant = $value ),+
+        }
+
+        impl ::core::convert::TryFrom<$repr> for $name {
+            type Error = ::alloc::string::String;
+
+            fn try_from(value: $repr) -> Result<Self, Self::Error> {
+                match value {
+                    $( $value => Ok(Self::$variant), )+
+                    _ => Err(::alloc::format!(concat!("{:#x} is a reserved ", stringify!($name), " value"), value)),
+                }
+            }
+        }
+
+        impl From<$name> for $repr {
+            fn from(value: $name) -> Self {
+                value as $repr
+            }
+        }
+
+        impl<'a> ::scroll::ctx::TryFromCtx<'a, ::scroll::Endian> for $name {
+            type Error = ::scroll::Error;
+
+            fn try_from_ctx(src: &'a [u8], ctx: ::scroll::Endian) -> Result<(Self, usize), Self::Error> {
+                let (value, size) = <$repr as ::scroll::ctx::TryFromCtx<'a, ::scroll::Endian>>::try_from_ctx(src, ctx)?;
+                let value = Self::try_from(value)
+                    .map_err(|_| ::scroll::Error::BadInput { size: 0, msg: concat!("reserved ", stringify!($name), " value") })?;
+                Ok((value, size))
+            }
+        }
+
+        impl ::scroll::ctx::TryIntoCtx<::scroll::Endian> for $name {
+            type Error = ::scroll::Error;
+
+            fn try_into_ctx(self, dst: &mut [u8], ctx: ::scroll::Endian) -> Result<usize, Self::Error> {
+                ::scroll::ctx::TryIntoCtx::try_into_ctx(self as $repr, dst, ctx)
+            }
+        }
+
+        impl ::scroll::ctx::TryIntoCtx<::scroll::Endian> for &$name {
+            type Error = ::scroll::Error;
+
+            fn try_into_ctx(self, dst: &mut [u8], ctx: ::scroll::Endian) -> Result<usize, Self::Error> {
+                ::scroll::ctx::TryIntoCtx::try_into_ctx(*self as $repr, dst, ctx)
+            }
+        }
+
+        $crate::uefi::device_path::node::device_path_enum!(@Display $name $( $variant $(=> $text)? ),+);
+    };
+    // Every variant has a text: implement `Display`.
+    (@Display $name:ident $( $variant:ident => $text:literal ),+) => {
+        impl ::core::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(match self {
+                    $( Self::$variant => $text, )+
+                })
+            }
+        }
+    };
+    // No variant has a text: the field is written as a number.
+    (@Display $name:ident $( $variant:ident ),+) => {};
+}
+
+pub(crate) use device_path_enum;
+
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
 pub(crate) mod tests {
@@ -929,6 +1059,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::uefi::device_path::DevicePathBuf;
     use alloc::{format, vec, vec::Vec};
+    use core::any;
     use core::{fmt, mem};
     use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
 
@@ -941,7 +1072,7 @@ pub(crate) mod tests {
         let mut path = DevicePathBuf::new();
         path.append(node)?;
         let bytes = path.as_bytes();
-        if EndEntire::is_type(header.r#type, header.sub_type) {
+        if header.is_type::<EndEntire>() {
             return Ok(bytes.to_vec());
         }
         Ok(bytes.get(..bytes.len() - EndEntire::BYTES.len()).expect("a device path ends with its end node").to_vec())
@@ -994,7 +1125,7 @@ pub(crate) mod tests {
         mismatched[1] ^= 0x80;
         assert!(read::<T>(&mismatched).is_err());
         let dynamic = <Box<dyn DevicePathNode>>::try_from(unknown).unwrap();
-        let type_name = core::any::type_name::<T>().rsplit("::").next().unwrap();
+        let type_name = any::type_name::<T>().rsplit("::").next().unwrap();
         let debug = format!("{dynamic:?}");
         assert!(debug.starts_with(&format!("{type_name} {{")), "unexpected decoded type: {debug}");
         assert_eq!(debug, format!("{node:?}"));
@@ -1029,6 +1160,16 @@ pub(crate) mod tests {
         let mut big_endian = vec![0; payload.len()];
         assert_eq!(big_endian.pwrite_with(node.clone(), 0, scroll::BE).unwrap(), payload.len());
         assert_eq!(big_endian.pread_with::<T>(0, scroll::BE).unwrap(), node);
+    }
+
+    /// Check that a whole node on the wire, header included, cannot be decoded, for example
+    /// because it holds a reserved value that its field type cannot represent.
+    pub(crate) fn check_rejected<T>(wire: &[u8])
+    where
+        T: for<'a> TryFrom<&'a GenericDevicePathNode, Error = scroll::Error>,
+    {
+        assert!(read::<T>(wire).is_err(), "decoded {wire:?}");
+        assert!(<Box<dyn DevicePathNode>>::try_from(raw_generic_node(wire)).is_err(), "decoded {wire:?}");
     }
 
     pub(crate) fn check_invalid<T>(node: T, payload: &[u8])
@@ -1168,8 +1309,8 @@ pub(crate) mod tests {
         // Derived sizes sum encoded fields rather than including Rust layout padding.
         let mapped = MemoryMapped { memory_type: 3, start_address: 0x1000, end_address: 0x1fff };
         assert_eq!(mapped.measure_size(), 20);
-        assert_eq!(core::mem::size_of::<MemoryMapped>(), 24);
-        assert_eq!(Bmc { interface_type: 1, base_address: 0 }.measure_size(), 9);
+        assert_eq!(size_of::<MemoryMapped>(), 24);
+        assert_eq!(Bmc { interface_type: BmcInterfaceType::KCS, base_address: 0 }.measure_size(), 9);
         assert_eq!(EndEntire.measure_size(), 0);
         assert_eq!(EndInstance.measure_size(), 0);
 
