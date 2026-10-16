@@ -39,6 +39,8 @@ pub mod peripheral;
 pub mod pi;
 pub mod standard;
 pub mod uefi;
+#[cfg(any(test, feature = "alloc"))]
+pub mod vendor_protocols;
 
 /// Re-export of the [`safe-mmio`](https://crates.io/crates/safe-mmio) crate.
 ///
