@@ -24,7 +24,7 @@ use core::{cmp::Ordering, ffi::c_void};
 use patina::standard::efi;
 use patina::{
     BinaryGuid, Char16Str, OwnedGuid,
-    component::service::Service,
+    component::service::{Service, cell::ServiceCell},
     crc32,
     error::EfiError,
     pi::{
@@ -97,7 +97,7 @@ pub(crate) struct PiDispatcher<P: PlatformInfo> {
     /// Section extractor used when working with firmware volumes.
     section_extractor: CoreExtractor<P::Extractor>,
     /// Optional performance service reference.
-    performance: Service<CorePerformance>,
+    performance: ServiceCell<CorePerformance>,
 }
 
 impl<P: PlatformInfo> PiDispatcher<P> {
@@ -109,12 +109,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             debug_image_data: debug_image_info_table::DebugImageInfoData::new_locked(),
             fv_data: fv::FvProtocolData::new_locked(),
             section_extractor: CoreExtractor::new(section_extractor),
-            performance: Service::new_uninit(),
+            performance: ServiceCell::new(),
         }
     }
 
     pub(crate) fn set_performance(&self, performance: &Service<performance::CorePerformance>) {
-        self.performance.replace(performance);
+        self.performance.publish(*performance).expect("Performance service was already set on the PI dispatcher!");
     }
 
     fn instance<'a>() -> &'a Self {
@@ -162,7 +162,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
-        self.image_data.lock().set_system_table(system_table.as_mut_ptr() as *mut _);
+        self.image_data.lock().set_system_table(system_table.as_mut_ptr().cast());
         self.image_data.lock().install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
 
         let mut bs = system_table.boot_services().get();
@@ -282,7 +282,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                 dispatcher.arch_protocols_available =
                     Depex::from(ALL_ARCH_DEPEX).eval(&PROTOCOL_DB.registered_protocols());
             }
-            let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
+            let driver_candidates: Vec<_> = core::mem::take(&mut dispatcher.pending_drivers);
             let mut scheduled_driver_candidates = Vec::new();
             for mut candidate in driver_candidates {
                 log::debug!(target: "depex", "Evaluating depex for candidate: {} ({:?})", candidate.name.as_deref().unwrap_or("Unnamed"), OwnedGuid::from(candidate.file_name));
@@ -380,7 +380,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
 
         {
             let mut dispatcher = self.dispatcher_context.lock();
-            let fv_image_candidates: Vec<_> = dispatcher.pending_firmware_volume_images.drain(..).collect();
+            let fv_image_candidates: Vec<_> = core::mem::take(&mut dispatcher.pending_firmware_volume_images);
 
             for mut candidate in fv_image_candidates {
                 let depex_satisfied = match candidate.depex {
@@ -490,7 +490,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             else {
                 continue;
             };
-            let fvb_ptr = ptr as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let fvb_ptr = ptr.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
 
             // SAFETY: fvb_ptr is obtained from a valid handle that has a FVB protocol instance
             // and the as_ref() call checks for null
@@ -557,7 +557,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         //Note: runs at TPL_CALLBACK
         match PROTOCOL_DB.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID.into_inner())) {
             Ok(fv_handles) => pd.add_fv_handles(fv_handles).expect("Error adding FV handles"),
-            Err(_) => panic!("could not locate handles in protocol call back"),
+            Err(e) => panic!("could not locate handles in protocol call back: {e:?}"),
         }
     }
 }
@@ -586,7 +586,8 @@ impl PendingFirmwareVolumeImage {
         // SAFETY: locate_protocol returns a valid pointer when present. as_ref is used for shared access.
         let security_protocol = unsafe {
             match PROTOCOL_DB.locate_protocol(patina::pi::protocol::security::PROTOCOL_GUID.into_inner()) {
-                Ok(protocol) => (protocol as *mut patina::pi::protocol::security::SecurityProtocol)
+                Ok(protocol) => protocol
+                    .cast::<patina::pi::protocol::security::SecurityProtocol>()
                     .as_ref()
                     .expect("Security Protocol should not be null"),
                 //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
@@ -682,12 +683,12 @@ impl DispatcherContext {
                 let fvb_ptr = match PROTOCOL_DB
                     .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 {
-                    Err(_) => {
+                    Err(e) => {
                         panic!(
-                            "get_interface_for_handle failed to return an interface on a handle where it should have existed"
+                            "get_interface_for_handle failed to return an interface on a handle where it should have existed: {e:?}"
                         )
                     }
-                    Ok(protocol) => protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol,
+                    Ok(protocol) => protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>(),
                 };
 
                 // SAFETY: fvb_ptr was successfully returned from get_interface_for_handle and should point to a
@@ -711,7 +712,7 @@ impl DispatcherContext {
 
                 let fv_device_path =
                     PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID);
-                let fv_device_path = fv_device_path.unwrap_or_default() as *mut efi::protocols::device_path::Protocol;
+                let fv_device_path = fv_device_path.unwrap_or_default().cast::<efi::protocols::device_path::Protocol>();
 
                 // SAFETY: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV,
                 // and that the memory backing the FVB is essentially permanent while the dispatcher is running (i.e.
@@ -748,12 +749,8 @@ impl DispatcherContext {
                             .find(|x| x.section_type() == Some(ffs::section::Type::UserInterface))
                             .and_then(|x| x.try_content_as_slice().ok())
                             .and_then(|data| {
-                                let units: Vec<u16> = data
-                                    .chunks_exact(2)
-                                    .map(|c| {
-                                        u16::from_le_bytes(c.try_into().expect("chunks_exact(2) guarantees length"))
-                                    })
-                                    .collect();
+                                let units: Vec<u16> =
+                                    data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
                                 Char16Str::from_units_until_nul(&units).ok().map(|s| s.chars().collect())
                             });
 
@@ -768,8 +765,10 @@ impl DispatcherContext {
                                 let fv_path = unsafe { DevicePath::try_from_ptr(fv_device_path as *const u8) }.ok()?;
                                 let mut full_path = DevicePathBuf::from(fv_path);
                                 full_path.append(PiwgFirmwareFile { fv_file_name: file_name.into() }).ok()?;
-                                Some(Box::into_raw(Box::<DevicePath>::from(full_path))
-                                    as *mut efi::protocols::device_path::Protocol)
+                                Some(
+                                    Box::into_raw(Box::<DevicePath>::from(full_path))
+                                        .cast::<efi::protocols::device_path::Protocol>(),
+                                )
                             };
                             let full_device_path_for_file = full_device_path_for_file().unwrap_or(fv_device_path);
 
@@ -961,8 +960,8 @@ mod tests {
         );
         assert!(OrdGuid(g7) >= OrdGuid(g7));
         assert!(OrdGuid(g7) <= OrdGuid(g7));
-        assert!(OrdGuid(g7) != OrdGuid(g6));
-        assert!(OrdGuid(g7) == OrdGuid(g7));
+        assert_ne!(OrdGuid(g7), OrdGuid(g6));
+        assert_eq!(OrdGuid(g7), OrdGuid(g7));
         assert_eq!(g1.partial_cmp(&g2), Some(Ordering::Less));
         assert_eq!(g2.partial_cmp(&g1), Some(Ordering::Greater));
         assert_eq!(g1.partial_cmp(&g1), Some(Ordering::Equal));
@@ -1062,7 +1061,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
@@ -1100,7 +1099,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
@@ -1135,7 +1134,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
@@ -1655,7 +1654,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // Patch get_physical_address to return an error
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
@@ -1694,7 +1693,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
@@ -1737,7 +1736,7 @@ mod tests {
             let protocol = PROTOCOL_DB
                 .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID.into_inner())
                 .expect("Failed to get FVB protocol");
-            let protocol = protocol as *mut firmware_volume_block::FirmwareVolumeBlockProtocol;
+            let protocol = protocol.cast::<firmware_volume_block::FirmwareVolumeBlockProtocol>();
             // SAFETY: protocol was retrieved from PROTOCOL_DB and remains valid for this test scope.
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 

@@ -287,12 +287,11 @@ mod tests {
             unimplemented!("not used by Protocol<P>")
         }
 
-        #[cfg(feature = "unstable-device-path")]
         fn locate_device_path(
             &self,
             _protocol: BinaryGuid,
-            _path: &crate::uefi::device_path::paths::DevicePath,
-        ) -> Result<(Handle, crate::uefi::device_path::paths::DevicePathBuf), ProtocolError> {
+            _path: &crate::uefi::device_path::DevicePath,
+        ) -> Result<(Handle, crate::uefi::device_path::DevicePathBuf), ProtocolError> {
             unimplemented!("not used by Protocol<P>")
         }
 

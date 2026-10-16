@@ -4,8 +4,8 @@
 //! images. Images are referred to by the opaque [`Handle`] token, and image contents are supplied as
 //! a byte slice rather than a raw pointer.
 //!
-//! Images can be loaded either from an in-memory buffer ([`ImageServices::load_image`]) or, when the
-//! `unstable-device-path` feature is enabled, by device path.
+//! Images can be loaded either from an in-memory buffer ([`ImageServices::load_image`]) or by
+//! device path ([`ImageServices::load_image_from_device_path`]).
 //!
 //! ## License
 //!
@@ -15,8 +15,7 @@
 //!
 
 use crate::base::error::EfiError;
-#[cfg(feature = "unstable-device-path")]
-use crate::uefi::device_path::paths::DevicePath;
+use crate::uefi::device_path::DevicePath;
 
 pub use super::handle::Handle;
 
@@ -99,8 +98,7 @@ pub trait ImageServices {
     /// This is a simpler alternative to `load_image_from_device_path` when the image is
     /// already available in memory that sets `boot_policy` to `false`. If a device path needs
     /// to be specified or `boot_policy` needs to be `true`, use `load_image_from_device_path`
-    /// instead. `load_image_from_device_path` is only available when the `unstable-device-path`
-    /// feature is enabled.
+    /// instead.
     ///
     /// # Errors
     ///
@@ -130,14 +128,10 @@ pub trait ImageServices {
     /// as originating from the boot manager (matching the UEFI `LoadImage` `BootPolicy` parameter);
     /// most callers pass `false`.
     ///
-    /// This method is available only when the `unstable-device-path` feature is enabled, as it
-    /// depends on the SDK's unstable device path API.
-    ///
     /// # Errors
     ///
     /// Returns [`ImageError::NotFound`] if no provider could produce the image for the given device
     /// path, or the other [`ImageError`] variants as for [`Self::load_image`].
-    #[cfg(feature = "unstable-device-path")]
     fn load_image_from_device_path(
         &self,
         parent: Handle,
@@ -188,10 +182,9 @@ mod tests {
         assert_eq!(mock.unload_image(image), Err(ImageError::InvalidParameter));
     }
 
-    #[cfg(feature = "unstable-device-path")]
     #[test]
     fn test_image_services_mock_load_from_device_path() {
-        use crate::uefi::device_path::paths::DevicePath;
+        use crate::uefi::device_path::DevicePath;
 
         // Minimal valid device path: a single End-of-Entire node (type 0x7F, sub-type 0xFF, len 4).
         let bytes = [0x7Fu8, 0xFF, 0x04, 0x00];
