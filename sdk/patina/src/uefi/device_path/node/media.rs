@@ -849,6 +849,24 @@ mod tests {
             r"VirtualDisk(0x1000,0x1fff,0)",
             r"RamDisk(0x1000,0x1fff,0,77AB535A-45FC-624B-5560-F7B281D1F96E)"
         );
+        check_text!(
+            r"VirtualCD(0x1000,0x1FFF,0)",
+            r"VirtualCD(0x1000,0x1fff,0)",
+            r"VirtualCD(0x1000,0x1fff,0)",
+            r"RamDisk(0x1000,0x1fff,0,3D5ABD30-4175-87CE-6D64-D2ADE523C4BB)"
+        );
+        check_text!(
+            r"PersistentVirtualDisk(0x1000,0x1FFF,0)",
+            r"PersistentVirtualDisk(0x1000,0x1fff,0)",
+            r"PersistentVirtualDisk(0x1000,0x1fff,0)",
+            r"RamDisk(0x1000,0x1fff,0,5CEA02C9-4D07-69D3-269F-4496FBE096F9)"
+        );
+        check_text!(
+            r"PersistentVirtualCD(0x1000,0x1FFF,0)",
+            r"PersistentVirtualCD(0x1000,0x1fff,0)",
+            r"PersistentVirtualCD(0x1000,0x1fff,0)",
+            r"RamDisk(0x1000,0x1fff,0,08018188-42CD-BB48-100F-5387D53DED3D)"
+        );
     }
 
     /// Partition 0 is the whole device: its text has no Start and Size (UEFI 2.10 Table 10.67).

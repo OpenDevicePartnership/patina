@@ -118,5 +118,12 @@ mod tests {
         use crate::uefi::device_path::node::tests::check_text;
 
         check_text!(r"BBS(HD,boot,0x0)", r"BBS(HD,boot,0x0)", r"BBS(HD,boot)", r"BBS(HD,boot,0x0)");
+        // The other device type keywords, and a type without a keyword (UEFI 2.10 Table 10.67).
+        check_text!(r"BBS(Floppy,a,0)", r"BBS(Floppy,a,0x0)", r"BBS(Floppy,a)", r"BBS(Floppy,a,0x0)");
+        check_text!(r"BBS(CDROM,a,0)", r"BBS(CDROM,a,0x0)", r"BBS(CDROM,a)", r"BBS(CDROM,a,0x0)");
+        check_text!(r"BBS(PCMCIA,a,0)", r"BBS(PCMCIA,a,0x0)", r"BBS(PCMCIA,a)", r"BBS(PCMCIA,a,0x0)");
+        check_text!(r"BBS(USB,a,0)", r"BBS(USB,a,0x0)", r"BBS(USB,a)", r"BBS(USB,a,0x0)");
+        check_text!(r"BBS(Network,a,0)", r"BBS(Network,a,0x0)", r"BBS(Network,a)", r"BBS(Network,a,0x0)");
+        check_text!(r"BBS(0x80,a,0)", r"BBS(0x80,a,0x0)", r"BBS(0x80,a)", r"BBS(0x80,a,0x0)");
     }
 }

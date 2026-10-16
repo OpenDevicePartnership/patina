@@ -3393,6 +3393,31 @@ mod tests {
             r"Dns(192.168.0.1,192.168.0.2)"
         );
         check_text!(r"RestService(1,1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)", r"RestService(0x1,0x1)");
+        check_text!(r"RestService(2,2)", r"RestService(0x2,0x2)", r"RestService(0x2,0x2)", r"RestService(0x2,0x2)");
+        check_text!(
+            r"RestService(0xff,1,00112233-4455-6677-8899-AABBCCDDEEFF,0xaa,0x55)",
+            r"RestService(0xff,0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0xaa,0x55)",
+            r"RestService(0xff,0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0xaa,0x55)",
+            r"RestService(0xff,0x1,00112233-4455-6677-8899-AABBCCDDEEFF,0xaa,0x55)"
+        );
+        check_text!(
+            r"NVMEoF(nqn.x,eui.0011223344556677)",
+            r"NVMEoF(nqn.x,eui.0011223344556677)",
+            r"NVMEoF(nqn.x,eui.0011223344556677)",
+            r"NVMEoF(nqn.x,eui.0011223344556677)"
+        );
+        check_text!(
+            r"NVMEoF(nqn.x,nguid.00112233445566778899aabbccddeeff)",
+            r"NVMEoF(nqn.x,nguid.00112233445566778899aabbccddeeff)",
+            r"NVMEoF(nqn.x,nguid.00112233445566778899aabbccddeeff)",
+            r"NVMEoF(nqn.x,nguid.00112233445566778899aabbccddeeff)"
+        );
+        check_text!(
+            r"iSCSI(iqn.x,1,0001020304050607,None,None,CHAP_UNI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)",
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)"
+        );
         check_text!(
             r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
             r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",
@@ -3422,5 +3447,94 @@ mod tests {
         assert_eq!(format!("{flow}"), "VenMsg(37499A9D-542F-4C89-A026-35DA142094E4,03000000)");
         // A string with `=` is quoted, so it is not read as a named parameter.
         assert_eq!(format!("{}", Uri { uri: "http://a/b?c=d".into() }), r#"Uri("http://a/b?c=d")"#);
+    }
+
+    /// Each USB class with a shortcut name is written with it, and the classes that fix the
+    /// subclass leave the subclass out (UEFI 2.10 Table 10.67).
+    #[test]
+    fn test_device_path_usb_class_shortcuts() {
+        let shortcuts = [
+            (1, 0x10, "UsbAudio", false),
+            (2, 0x10, "UsbCDCControl", false),
+            (3, 0x10, "UsbHID", false),
+            (6, 0x10, "UsbImage", false),
+            (7, 0x10, "UsbPrinter", false),
+            (8, 0x10, "UsbMassStorage", false),
+            (9, 0x10, "UsbHub", false),
+            (10, 0x10, "UsbCDCData", false),
+            (11, 0x10, "UsbSmartCard", false),
+            (14, 0x10, "UsbVideo", false),
+            (220, 0x10, "UsbDiagnostic", false),
+            (224, 0x10, "UsbWireless", false),
+            (254, 1, "UsbDeviceFirmwareUpdate", true),
+            (254, 2, "UsbIrdaBridge", true),
+            (254, 3, "UsbTestAndMeasurement", true),
+        ];
+        for (class, subclass, name, fixed_subclass) in shortcuts {
+            let node = UsbClass {
+                vendor_id: 0x1234,
+                product_id: 0x5678,
+                device_class: class,
+                device_subclass: subclass,
+                device_protocol: 0x20,
+            };
+            let expected = if fixed_subclass {
+                format!("{name}(0x1234,0x5678,0x20)")
+            } else {
+                format!("{name}(0x1234,0x5678,0x{subclass:x},0x20)")
+            };
+            assert_eq!(format!("{node}"), expected);
+            assert_eq!(format!("{node:-}"), expected);
+            assert_eq!(format!("{node:#}"), format!("UsbClass(0x1234,0x5678,0x{class:x},0x{subclass:x},0x20)"));
+        }
+
+        // A class without a shortcut, or a fixed-subclass class with another subclass, has no name.
+        for (class, subclass) in [(4, 0x10), (254, 4)] {
+            let node = UsbClass {
+                vendor_id: 0x1234,
+                product_id: 0x5678,
+                device_class: class,
+                device_subclass: subclass,
+                device_protocol: 0x20,
+            };
+            assert_eq!(format!("{node}"), format!("UsbClass(0x1234,0x5678,0x{class:x},0x{subclass:x},0x20)"));
+        }
+    }
+
+    /// The subsystem NQN of an NVMe-oF node holds 1 to 223 characters.
+    #[test]
+    fn test_device_path_nvme_of_nqn_length() {
+        for length in [0, 224] {
+            let nqn = "a".repeat(length);
+            let mut payload = vec![3];
+            payload.extend_from_slice(&[0x22; 16]);
+            payload.extend_from_slice(nqn.as_bytes());
+            payload.push(0);
+            check_invalid(
+                NvmeOf { identifier_type: NvmeOfIdentifierType::Uuid, identifier: [0x22; 16], subsystem_nqn: nqn },
+                &payload,
+            );
+        }
+        let nqn = "a".repeat(223);
+        let node = NvmeOf { identifier_type: NvmeOfIdentifierType::Uuid, identifier: [0x22; 16], subsystem_nqn: nqn };
+        assert!(node.validate().is_ok());
+    }
+
+    /// A nonzero reserved SAS field is written as the eighth argument, after the empty topology
+    /// arguments (UEFI 2.10 Table 10.67).
+    #[test]
+    fn test_device_path_sas_text_reserved() {
+        for (topology, text) in
+            [(0, "NoTopology,,,,0x5"), (0x0001, "SAS,Internal,Direct,,0x5"), (0x0062, "SAS,External,Expanded,0x1,0x5")]
+        {
+            let node = Sas {
+                reserved: 5,
+                sas_address: 0x1234,
+                lun: 0,
+                device_topology: SasTopology(topology),
+                relative_target_port: 0,
+            };
+            assert_eq!(format!("{node}"), format!("SAS(0x1234,0x0,0x0,{text})"));
+        }
     }
 }

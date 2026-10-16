@@ -759,6 +759,21 @@ mod tests {
         assert_eq!(device_path, before);
     }
 
+    /// A node whose header length differs from its size is refused (UEFI 2.10 Table 10.1), and
+    /// the device path is left unchanged.
+    #[test]
+    fn test_append_rejects_inconsistent_header_length() {
+        use crate::uefi::device_path::node::{
+            Header,
+            tests::{generic_node_bytes, raw_generic_node},
+        };
+
+        let bytes = generic_node_bytes(Header::new(1, 1, 7), &[0, 2]);
+        let mut device_path = DevicePathBuf::new();
+        assert!(device_path.append(raw_generic_node(&bytes)).is_err());
+        assert_eq!(device_path, DevicePathBuf::new());
+    }
+
     #[test]
     fn test_device_path_try_from_bytes() {
         let mut device_path = DevicePathBuf::new();
