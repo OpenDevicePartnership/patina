@@ -86,14 +86,13 @@ mod dxe_services;
 mod event_db;
 mod events;
 mod filesystems;
+#[cfg(fuzzing)]
+pub mod fuzz;
 mod gcd;
 mod memory_attributes_protocol;
 mod memory_bin;
 mod memory_manager;
 mod misc_boot_services;
-#[cfg(fuzzing)]
-pub mod pecoff;
-#[cfg(not(fuzzing))]
 mod pecoff;
 mod performance;
 mod pi_dispatcher;

@@ -1,9 +1,8 @@
 //! Fuzz target for PE/COFF image loading and relocation.
 //!
-//! This follows the order in which the Patina DXE Core processes an image that parsed successfully: it checks that
-//! every section is inside the image, reads the HII resource section from the source image, copies the headers and
-//! sections into a zeroed buffer of `SizeOfImage` bytes, and then applies relocation fixups for the address the image
-//! was allocated at. The relocation step is
+//! This follows the order in which the Patina DXE Core processes an image that parsed successfully: it reads the HII
+//! resource section from the source image, copies the headers and sections into a zeroed buffer of `SizeOfImage`
+//! bytes, and then applies relocation fixups for the address the image was allocated at. The relocation step is
 //! repeated for a second address, passing the blocks from the first, because that is how the DXE Core moves an
 //! image again (for example when runtime images are relocated for `SetVirtualAddressMap()`).
 //!
@@ -25,7 +24,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use patina_dxe_core::pecoff::{self, UefiPeInfo};
+use patina_dxe_core::fuzz::pecoff::{self, UefiPeInfo};
 
 /// The largest `SizeOfImage` the target will allocate a buffer for.
 ///

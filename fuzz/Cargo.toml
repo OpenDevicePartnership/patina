@@ -12,7 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 # `std` is required so the host (non-UEFI) fuzz build links against the standard library. cargo-fuzz sets
-# `--cfg fuzzing`, which makes the `pecoff` module public.
+# `--cfg fuzzing`, which enables the `patina_dxe_core::fuzz` module that re-exports the internals to fuzz.
 patina_dxe_core = { path = "../patina_dxe_core", features = ["std"] }
 
 # The fuzz crate is its own workspace so that building or linting the Patina workspace never builds the fuzz targets.

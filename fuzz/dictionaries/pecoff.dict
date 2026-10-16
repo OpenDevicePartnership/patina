@@ -13,10 +13,9 @@ pe_signature="PE\x00\x00"
 optional_header_pe32_magic="\x0b\x01"
 optional_header_pe32plus_magic="\x0b\x02"
 
-# COFF machine types: AMD64, ARM64, i386
+# COFF machine types: AMD64, ARM64
 machine_x64="\x64\x86"
 machine_aarch64="\x64\xaa"
-machine_i386="\x4c\x01"
 
 # Subsystems: EFI application, EFI boot service driver, EFI runtime driver
 subsystem_efi_application="\x0a\x00"
