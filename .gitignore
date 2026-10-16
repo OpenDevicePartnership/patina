@@ -5,3 +5,8 @@
 Cargo.lock
 docs/book/
 docs/target/
+
+# cargo-fuzz output (see docs/src/dev/testing/fuzzing.md)
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

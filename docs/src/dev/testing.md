@@ -4,7 +4,7 @@ One of the benefits of Rust is that testing is "baked-in" and made easy. There i
 testing in Rust, so if you are unfamiliar with Rust testing, start with the official documentation and return here
 for project-specific details.
 
-Testing in Rust can be broken up into four core categories:
+Testing in Rust can be broken up into five core categories:
 
 1. **[Unit Testing](https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html):** The developer has access to
    the internal, private state of the module to ensure the internals work as expected.
@@ -14,6 +14,7 @@ Testing in Rust can be broken up into four core categories:
 4. **[Doc Testing](https://doc.rust-lang.org/rust-by-example/testing/doc_testing.html):** Code snippets in inline
    documentation can be compiled and executed. See
      - See also: [Rust Documentation Tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html).
+5. **[Fuzz Testing](testing/fuzzing.md):** Automatically generated inputs are fed to code that parses untrusted data.
 
 In addition, pull requests are automatically validated on QEMU virtual platforms to catch integration regressions before
 merge. See [QEMU PR Validation](testing/qemu_pr_validation.md) for details.
@@ -28,6 +29,7 @@ When writing tests, consider the following questions to help choose a testing st
   - Internal logic -> Unit tests (nearly all logic should have associated unit tests)
   - Public interfaces -> Integration tests
   - Platform-specific behavior -> Platform tests
+  - Code that parses untrusted input -> Fuzz tests, in addition to unit tests
 - **What level of isolation do I need?**
   - Unit tests provide isolation from other modules, while integration tests may involve multiple modules working
     together.
