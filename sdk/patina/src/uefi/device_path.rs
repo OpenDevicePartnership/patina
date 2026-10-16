@@ -139,7 +139,7 @@ impl DevicePathBuf {
         }
 
         let node_payload_size = node.measure_size();
-        let node_size = Header::size_of_header()
+        let node_size = size_of::<Header>()
             .checked_add(node_payload_size)
             .and_then(|s| u16::try_from(s).ok())
             .ok_or(format!("device path node is too large. Node size = {node_payload_size}"))?
@@ -307,11 +307,11 @@ impl DevicePath {
         loop {
             // SAFETY: The caller guarantees a valid device path up to its EndEntire node. The
             // previous nodes were not EndEntire, so a node header starts at `size`.
-            let header_bytes = unsafe { slice::from_raw_parts(buffer.add(size), Header::size_of_header()) };
+            let header_bytes = unsafe { slice::from_raw_parts(buffer.add(size), size_of::<Header>()) };
             let header =
                 header_bytes.pread_with::<Header>(0, scroll::LE).map_err(|_| "Error while trying to read header.")?;
             let length = usize::from(header.length);
-            if length < Header::size_of_header() {
+            if length < size_of::<Header>() {
                 return Err("Device path node is shorter than its header.");
             }
             size = size

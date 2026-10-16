@@ -67,7 +67,7 @@ pub use media::*;
 pub use messaging::*;
 
 use super::DevicePath;
-use alloc::boxed::Box;
+use alloc::{boxed::Box, format, string::String};
 use core::fmt::{self, Debug, Display};
 use scroll::{
     Pread, Pwrite,
@@ -119,7 +119,7 @@ pub trait DevicePathNode: Debug + Display {
     where
         Self: Sized,
     {
-        let length = Header::size_of_header() + self.measure_size();
+        let length = size_of::<Header>() + self.measure_size();
         Header::new(Self::r#type(), Self::sub_type(), u16::try_from(length).unwrap_or(u16::MAX))
     }
 
@@ -138,7 +138,7 @@ pub trait DevicePathNode: Debug + Display {
 /// The length is stored little-endian, as on the wire, so the header has the same layout
 /// on targets of either endianness.
 #[repr(C, packed)]
-#[derive(Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 pub struct Header {
     /// Type of the device path node.
     pub r#type: u8,
@@ -153,11 +153,6 @@ impl Header {
     /// Creates a new [`Header`].
     pub const fn new(r#type: u8, sub_type: u8, length: u16) -> Self {
         Self { r#type, sub_type, length: little_endian::U16::new(length) }
-    }
-
-    /// Return the size of the header in bytes
-    pub const fn size_of_header() -> usize {
-        size_of::<Self>()
     }
 
     /// Return the total length of the node in bytes, including the header.
@@ -182,15 +177,19 @@ impl Header {
     pub fn is_type<T: DevicePathNode>(&self) -> bool {
         T::is_type(self.r#type, self.sub_type)
     }
-}
 
-impl Debug for Header {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Header")
-            .field("type", &self.r#type)
-            .field("sub_type", &self.sub_type)
-            .field("length", &self.length.get())
-            .finish()
+    /// Return false for a malformed End node.
+    ///
+    /// An End node has sub-type End Entire or End Instance and no payload
+    /// ([UEFI 2.10 Section 10.3.1](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)).
+    /// Code locates End nodes by their type, so a malformed one would make walkers
+    /// disagree on where a path or instance ends. Other node types are not checked.
+    fn is_valid_end(&self) -> bool {
+        if self.r#type == DevicePathType::End as u8 {
+            self.length() == size_of::<Self>() && EndSubType::try_from(self.sub_type).is_ok()
+        } else {
+            true
+        }
     }
 }
 
@@ -198,18 +197,14 @@ impl TryIntoCtx<scroll::Endian> for Header {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let length = self.length.get();
-        if usize::from(length) < Self::size_of_header() {
-            return Err(scroll::Error::BadInput {
-                size: usize::from(length),
-                msg: "device path node is shorter than its header",
-            });
+        let length = self.length();
+        if length < size_of::<Self>() {
+            return Err(scroll::Error::BadInput { size: length, msg: "device path node is shorter than its header" });
         }
         let mut offset = 0;
         dest.gwrite_with(self.r#type, &mut offset, ctx)?;
         dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        // The length is little-endian on the wire whatever the context.
-        dest.gwrite_with(length, &mut offset, scroll::LE)?;
+        dest.gwrite_with(length as u16, &mut offset, scroll::LE)?;
         Ok(offset)
     }
 }
@@ -271,16 +266,16 @@ impl GenericDevicePathNode {
     pub fn from_bytes(bytes: &[u8]) -> Result<(&Self, &[u8]), scroll::Error> {
         let header = bytes.pread_with::<Header>(0, scroll::LE)?;
         let length = usize::from(header.length);
-        if length < Header::size_of_header() {
+        if length < size_of::<Header>() {
             return Err(scroll::Error::BadInput { size: length, msg: "device path node is shorter than its header" });
         }
         if length > bytes.len() {
             return Err(scroll::Error::TooBig { size: length, len: bytes.len() });
         }
-        if header.r#type == 0x7f && (length != Header::size_of_header() || !matches!(header.sub_type, 1 | 0xff)) {
+        if !header.is_valid_end() {
             return Err(scroll::Error::BadInput { size: length, msg: "invalid end device path node" });
         }
-        <Self as zerocopy::FromBytes>::ref_from_prefix_with_elems(bytes, length - Header::size_of_header())
+        <Self as zerocopy::FromBytes>::ref_from_prefix_with_elems(bytes, length - size_of::<Header>())
             .map_err(|_| scroll::Error::BadInput { size: length, msg: "invalid device path node layout" })
     }
 
@@ -308,25 +303,6 @@ impl fmt::Display for GenericDevicePathNode {
     }
 }
 
-/// A string parameter of the device path text, written in double quotes when it holds a
-/// character that cannot appear in it bare.
-///
-/// Spaces are allowed only between double quotes
-/// ([UEFI 2.10 Section 10.6.1.5](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#text-representation-basics)),
-/// a `,` or `=` would end or name the parameter, and a String cannot hold `)`, `|`, `<`, or `>`
-/// (Table 10.66), so a string with white space or any of `,=()|<>"` is quoted.
-struct TextString<'a>(&'a str);
-
-impl fmt::Display for TextString<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.chars().any(|c| c.is_whitespace() || matches!(c, ',' | '=' | '(' | ')' | '|' | '<' | '>' | '"')) {
-            write!(f, "\"{}\"", self.0)
-        } else {
-            f.write_str(self.0)
-        }
-    }
-}
-
 impl DevicePathNode for &GenericDevicePathNode {
     /// Generic nodes have no fixed type. This placeholder is unused because
     /// `header()` and `is_type()` are overridden.
@@ -346,7 +322,7 @@ impl DevicePathNode for &GenericDevicePathNode {
     /// Generic payloads are not interpreted. Only the End node rule from the header is
     /// checked: an End node has sub-type 0x01 or 0xFF and no payload.
     fn validate(&self) -> Result<(), &'static str> {
-        if self.header.r#type == 0x7f && (!self.data.is_empty() || !matches!(self.header.sub_type, 1 | 0xff)) {
+        if !self.header.is_valid_end() {
             return Err("invalid end device path node");
         }
         Ok(())
@@ -400,13 +376,10 @@ impl<'a> TryFrom<&'a GenericDevicePathNode> for Box<dyn DevicePathNode + 'a> {
             Ok(Box::new(T::try_from(node)?))
         }
 
-        if usize::from(unknown.header.length) != Header::size_of_header() + unknown.data.len() {
+        if usize::from(unknown.header.length) != size_of::<Header>() + unknown.data.len() {
             return Err(scroll::Error::BadInput { size: 0, msg: "device path header and payload lengths differ" });
         }
-        if unknown.header.r#type == 0x7f
-            && (usize::from(unknown.header.length) != Header::size_of_header()
-                || !matches!(unknown.header.sub_type, 1 | 0xff))
-        {
+        if !unknown.header.is_valid_end() {
             return Err(scroll::Error::BadInput { size: 0, msg: "invalid end device path node" });
         }
 
@@ -668,12 +641,45 @@ pub enum BiosSubType {
     BiosBootSpecification = 1,
 }
 
-/// End device path sub-types.
+/// End device path sub-types (UEFI 2.10 Section 10.3.1, Table 10.3).
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[repr(u8)]
 pub enum EndSubType {
     /// End of entire device path.
     Entire = 0xFF,
     /// End of device path instance.
     Instance = 0x01,
+}
+
+impl TryFrom<u8> for EndSubType {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0xFF => Ok(Self::Entire),
+            0x01 => Ok(Self::Instance),
+            _ => Err(format!("invalid end device path sub-type {value:#04x}")),
+        }
+    }
+}
+
+/// A string parameter of the device path text, written in double quotes when it holds a
+/// character that cannot appear in it bare.
+///
+/// Spaces are allowed only between double quotes
+/// ([UEFI 2.10 Section 10.6.1.5](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#text-representation-basics)),
+/// a `,` or `=` would end or name the parameter, and a String cannot hold `)`, `|`, `<`, or `>`
+/// (Table 10.66), so a string with white space or any of `,=()|<>"` is quoted.
+struct TextString<'a>(&'a str);
+
+impl fmt::Display for TextString<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.chars().any(|c| c.is_whitespace() || matches!(c, ',' | '=' | '(' | ')' | '|' | '<' | '>' | '"')) {
+            write!(f, "\"{}\"", self.0)
+        } else {
+            f.write_str(self.0)
+        }
+    }
 }
 
 /// Define a device path node struct and implement [`DevicePathNode`] for it.
@@ -1087,7 +1093,7 @@ pub(crate) mod tests {
     pub(crate) fn raw_generic_node(bytes: &[u8]) -> &GenericDevicePathNode {
         <GenericDevicePathNode as zerocopy::FromBytes>::ref_from_bytes_with_elems(
             bytes,
-            bytes.len() - Header::size_of_header(),
+            bytes.len() - size_of::<Header>(),
         )
         .unwrap()
     }
