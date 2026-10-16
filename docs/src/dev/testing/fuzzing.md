@@ -41,7 +41,7 @@ These environment variables control the tasks:
 | Variable       | Default  | Description                                                                   |
 | -------------- | -------- | ----------------------------------------------------------------------------- |
 | `FUZZ_SECONDS` | `60`     | Seconds to fuzz one target.                                                   |
-| `FUZZ_MODE`    | `dev`    | The build configuration: `dev`, `test` or `release`. See below.               |
+| `FUZZ_MODE`    | `test`   | The build configuration: `test` or `release`. See below.                      |
 | `FUZZ_MAX_LEN` | `262144` | The longest input in bytes. Raise it for a target whose inputs can be larger. |
 
 For example, to fuzz in the release configuration for ten minutes:
@@ -54,15 +54,12 @@ FUZZ_MODE=release FUZZ_SECONDS=600 cargo make fuzz pecoff_load
 
 The build configuration is selected with `FUZZ_MODE`:
 
-- `dev` (the default): Integer overflow checks and debug assertions are enabled, like Patina's `dev` profile. An
-  arithmetic wrap is a panic, and so is a failed `debug_assert!` (including `log_debug_assert!`).
-- `test`: Overflow checks are enabled and debug assertions are disabled, like Patina's `test` profile. An arithmetic
-  wrap is a panic, but a debug assertion that crafted input can reach does not stop the run.
+- `test` (the default): Overflow checks are enabled and debug assertions are disabled, like Patina's `test` profile. An
+  arithmetic wrap is a panic.
 - `release`: Both are disabled, like Patina's `release` profile. This is the code that ships.
 
-The nightly workflow fuzzes `test` and `release`. Overflow checks make a wrap that a release build ignores very easy to
-find, and the `release` configuration finds what remains when they are off. `dev` is for investigating a debug
-assertion locally.
+The nightly workflow fuzzes both. Overflow checks make a wrap that a release build ignores very easy to find, and the
+`release` configuration finds what remains when they are off.
 
 ## What Is Fuzzed
 
@@ -70,7 +67,7 @@ The targets are in the [`fuzz`](https://github.com/OpenDevicePartnership/patina/
 
 | Target         | Code under test                                                                                             |
 | -------------- | ----------------------------------------------------------------------------------------------------------- |
-| `pecoff_parse` | `UefiPeInfo::parse`, `parse_mapped` and `validate_sections`: the checks every image gets first.             |
+| `pecoff_parse` | `UefiPeInfo::parse` and `UefiPeInfo::parse_mapped`: the PE/COFF header parser that sees every image first.  |
 | `pecoff_load`  | The rest of image processing: reading the HII resource section, `load_image`, and `relocate_image` (twice). |
 
 ## Nightly Fuzzing
@@ -94,7 +91,7 @@ A crash comes from either a local run or the nightly workflow.
    - From a local run, it is in `fuzz/artifacts/<target>/`, and the path is printed when the crash is found.
    - From the nightly workflow, download the `fuzz-crashes-<target>-<mode>` artifact from the failed run.
 2. Reproduce it in the same build configuration that found it. A crash from the nightly workflow names it in the
-   artifact. For a local run, it is the `FUZZ_MODE` you used (`dev` unless you set it).
+   artifact. For a local run, it is the `FUZZ_MODE` you used (`test` unless you set it).
 
    ```text
    cd fuzz
@@ -109,8 +106,8 @@ A crash comes from either a local run or the nightly workflow.
 
 1. Add `fuzz/fuzz_targets/<area>_<name>.rs` and a matching `[[bin]]` entry in `fuzz/Cargo.toml`. The name starts with
    the area, such as `pecoff_`, because the area selects the optional files in the next step.
-2. If the code under test is private, expose it from its crate only under `#[cfg(fuzzing)]`, as `pecoff` is in
-   `patina_dxe_core`.
+2. If the code under test is private, re-export it from the `fuzz` module in `patina_dxe_core/src/fuzz.rs`, which only
+   exists under `#[cfg(fuzzing)]`. The fuzz targets import it from `patina_dxe_core::fuzz`, as they do `pecoff`.
 3. Optionally, add files that help the fuzzer. They are chosen by the area, so every target in the area uses them:
    - `fuzz/dictionaries/<area>.dict`: a [libFuzzer dictionary](https://llvm.org/docs/LibFuzzer.html#dictionaries) of
      the tokens that are hard to find by mutation, such as format magic values.
