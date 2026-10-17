@@ -50,5 +50,5 @@ required by a given architecture.
 
 ## Related documentation
 
-- `[Memory Management](https://opendevicepartnership.github.io/patina/dxe_core/memory_management.html)` — Describes how
+- `[Memory Management](https://opendevicepartnership.github.io/patina/dxe_core/memory_management.html)` - Describes how
   some of the concepts in this crate are used by the Patina DXE Core.
