@@ -21,16 +21,15 @@ use super::TextString;
 use super::{DevicePathType, MessagingSubType, device_path_enum, device_path_node};
 use crate::BinaryGuid;
 use crate::{
-    standard::efi,
+    standard::efi::{self, protocols::usb_io},
     uefi::{
         boot_services::BootServices,
         device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
-        protocols::usb_io,
     },
 };
 use alloc::{string::String, vec::Vec};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-use core::{fmt, ptr, slice};
+use core::{fmt, mem, ptr, slice};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -1251,15 +1250,19 @@ impl UsbClass {
     /// When the device descriptor class is zero, each interface declares its own class, so the
     /// class, subclass, and protocol come from the interface descriptor.
     pub(crate) fn matches(&self, usb_io: &mut usb_io::Protocol) -> bool {
-        let mut device = usb_io::DeviceDescriptor::default();
-        if (usb_io.get_device_descriptor)(usb_io, &raw mut device) != efi::Status::SUCCESS {
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
             return false;
         }
         let (mut class, mut subclass, mut protocol) =
             (device.device_class, device.device_sub_class, device.device_protocol);
         if class == 0 {
-            let mut interface = usb_io::InterfaceDescriptor::default();
-            if (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) != efi::Status::SUCCESS {
+            // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+            let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
+            // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+            if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS {
                 return false;
             }
             (class, subclass, protocol) =
@@ -1767,15 +1770,19 @@ impl UsbWwid {
     /// number string, in one of the languages the device supports, must end with this node's
     /// serial number.
     pub(crate) fn matches<B: BootServices>(&self, boot_services: &B, usb_io: &mut usb_io::Protocol) -> bool {
-        let mut device = usb_io::DeviceDescriptor::default();
-        if (usb_io.get_device_descriptor)(usb_io, &raw mut device) != efi::Status::SUCCESS {
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
             return false;
         }
         if device.id_vendor != self.vendor_id || device.id_product != self.product_id || device.str_serial_number == 0 {
             return false;
         }
-        let mut interface = usb_io::InterfaceDescriptor::default();
-        if (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) != efi::Status::SUCCESS
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS
             || u16::from(interface.interface_number) != self.interface
         {
             return false;
@@ -1787,7 +1794,9 @@ impl UsbWwid {
         }
         let mut languages: *mut u16 = ptr::null_mut();
         let mut table_size = 0u16;
-        if (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) != efi::Status::SUCCESS
+        // SAFETY: The protocol is installed on a USB device handle, and both outputs are writable.
+        if unsafe { (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) }
+            != efi::Status::SUCCESS
             || languages.is_null()
         {
             return false;
@@ -1796,7 +1805,8 @@ impl UsbWwid {
         let languages = unsafe { slice::from_raw_parts(languages, usize::from(table_size) / 2) };
         for &language in languages {
             let mut serial: *mut u16 = ptr::null_mut();
-            if (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial)
+            // SAFETY: The protocol is installed on a USB device handle, and the output is writable.
+            if unsafe { (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial) }
                 != efi::Status::SUCCESS
                 || serial.is_null()
             {

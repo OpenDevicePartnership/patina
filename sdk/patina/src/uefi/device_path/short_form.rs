@@ -18,14 +18,13 @@ use core::ptr;
 
 use crate::{
     base::error::EfiError,
-    standard::efi,
+    standard::efi::{self, protocols::usb_io},
     uefi::{
         boot_services::{BootServices, protocol_handler::HandleSearchType},
         device_path::{
             DevicePath, DevicePathBuf,
             node::{EndEntire, FilePath, HardDrive, Uri, UsbClass, UsbWwid},
         },
-        protocols::usb_io,
     },
 };
 
@@ -308,6 +307,81 @@ mod tests {
         ])
     }
 
+    extern "efiapi" fn unsupported_control_transfer(
+        _: *mut usb_io::Protocol,
+        _: *mut usb_io::DeviceRequest,
+        _: usb_io::DataDirection,
+        _: u32,
+        _: *mut c_void,
+        _: usize,
+        _: *mut u32,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_bulk_transfer(
+        _: *mut usb_io::Protocol,
+        _: u8,
+        _: *mut c_void,
+        _: *mut usize,
+        _: usize,
+        _: *mut u32,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_async_interrupt_transfer(
+        _: *mut usb_io::Protocol,
+        _: u8,
+        _: efi::Boolean,
+        _: usize,
+        _: usize,
+        _: Option<usb_io::AsyncUsbTransferCallback>,
+        _: *mut c_void,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_isochronous_transfer(
+        _: *mut usb_io::Protocol,
+        _: u8,
+        _: *mut c_void,
+        _: usize,
+        _: *mut u32,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_async_isochronous_transfer(
+        _: *mut usb_io::Protocol,
+        _: u8,
+        _: *mut c_void,
+        _: usize,
+        _: usb_io::AsyncUsbTransferCallback,
+        _: *mut c_void,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_get_config_descriptor(
+        _: *mut usb_io::Protocol,
+        _: *mut usb_io::ConfigDescriptor,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_get_endpoint_descriptor(
+        _: *mut usb_io::Protocol,
+        _: u8,
+        _: *mut usb_io::EndpointDescriptor,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn unsupported_port_reset(_: *mut usb_io::Protocol) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
     /// A USB I/O protocol whose functions read the descriptors that follow it.
     #[repr(C)]
     struct MockUsb {
@@ -371,19 +445,19 @@ mod tests {
         serial.push(0);
         MockUsb {
             protocol: usb_io::Protocol {
-                control_transfer: ptr::null(),
-                bulk_transfer: ptr::null(),
-                async_interrupt_transfer: ptr::null(),
-                sync_interrupt_transfer: ptr::null(),
-                isochronous_transfer: ptr::null(),
-                async_isochronous_transfer: ptr::null(),
+                control_transfer: unsupported_control_transfer,
+                bulk_transfer: unsupported_bulk_transfer,
+                async_interrupt_transfer: unsupported_async_interrupt_transfer,
+                sync_interrupt_transfer: unsupported_bulk_transfer,
+                isochronous_transfer: unsupported_isochronous_transfer,
+                async_isochronous_transfer: unsupported_async_isochronous_transfer,
                 get_device_descriptor,
-                get_config_descriptor: ptr::null(),
+                get_config_descriptor: unsupported_get_config_descriptor,
                 get_interface_descriptor,
-                get_endpoint_descriptor: ptr::null(),
+                get_endpoint_descriptor: unsupported_get_endpoint_descriptor,
                 get_string_descriptor,
                 get_supported_languages,
-                port_reset: ptr::null(),
+                port_reset: unsupported_port_reset,
             },
             device: usb_io::DeviceDescriptor {
                 device_class: class[0],
@@ -392,14 +466,25 @@ mod tests {
                 id_vendor: vendor_id,
                 id_product: product_id,
                 str_serial_number: 3,
-                ..Default::default()
+                length: 18,
+                descriptor_type: 1,
+                bcd_usb: 0x0200,
+                max_packet_size0: 64,
+                bcd_device: 0,
+                str_manufacturer: 0,
+                str_product: 0,
+                num_configurations: 1,
             },
             interface: usb_io::InterfaceDescriptor {
                 interface_number: 0,
                 interface_class: interface[0],
                 interface_sub_class: interface[1],
                 interface_protocol: interface[2],
-                ..Default::default()
+                length: 9,
+                descriptor_type: 4,
+                alternate_setting: 0,
+                num_endpoints: 0,
+                interface: 0,
             },
             serial,
             languages: Vec::from([0x0409]),
