@@ -157,26 +157,6 @@ fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protoco
     driver_bindings
 }
 
-// The device path to authenticate for a connect call: the controller device path, followed by the
-// remaining device path unless the connection is recursive.
-fn authentication_file_path(
-    device_path: *mut core::ffi::c_void,
-    remaining_device_path: Option<NonNull<Protocol>>,
-    recursive: bool,
-) -> Result<DevicePathBuf, EfiError> {
-    // SAFETY: The device path protocol installed on the controller handle points to a valid device path.
-    let device_path =
-        unsafe { DevicePath::try_from_ptr(device_path as *const u8) }.map_err(|_| EfiError::InvalidParameter)?;
-    let mut file_path = DevicePathBuf::from(device_path);
-    if !recursive && let Some(remaining_path) = remaining_device_path {
-        // SAFETY: The caller guarantees that remaining_device_path points to a valid device path.
-        let remaining_path = unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) }
-            .map_err(|_| EfiError::InvalidParameter)?;
-        file_path.append_device_path(remaining_path).map_err(|_| EfiError::OutOfResources)?;
-    }
-    Ok(file_path)
-}
-
 // authenticate a connect call through the security2 arch protocol
 fn authenticate_connect(
     controller_handle: efi::Handle,
@@ -185,26 +165,50 @@ fn authenticate_connect(
 ) -> Result<(), EfiError> {
     if let Ok(device_path) =
         PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
-        && let Ok(security2_ptr) =
-            PROTOCOL_DB.locate_protocol(patina::pi::protocol::security2::PROTOCOL_GUID.into_inner())
-        && let Ok(file_path) = authentication_file_path(device_path, remaining_device_path, recursive)
     {
-        // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
-        let security2 = unsafe {
-            security2_ptr
-                .cast::<patina::pi::protocol::security2::Security2Protocol>()
-                .as_ref()
-                .expect("security2 should not be null")
-        };
-        let security_status = (security2.file_authentication)(
-            security2_ptr.cast(),
-            // FileAuthentication takes the device path as `CONST`, so it does not write through it.
-            file_path.as_bytes().as_ptr().cast_mut().cast(),
-            core::ptr::null_mut(),
-            0,
-            false,
-        );
-        EfiError::status_to_result(security_status)?;
+        let device_path = device_path.cast::<efi::protocols::device_path::Protocol>();
+        if let Ok(security2_ptr) =
+            PROTOCOL_DB.locate_protocol(patina::pi::protocol::security2::PROTOCOL_GUID.into_inner())
+        {
+            let file_path = {
+                // SAFETY: The device path protocol installed on the controller handle points to a valid device path.
+                let device_path = unsafe { DevicePath::try_from_ptr(device_path.cast::<u8>()) };
+                if recursive {
+                    device_path.map(DevicePathBuf::from)
+                } else if let Some(remaining_path) = remaining_device_path {
+                    // SAFETY: The caller guarantees that remaining_device_path points to a valid device path.
+                    let remaining_path = unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) };
+                    device_path.and_then(|device_path| {
+                        let mut file_path = DevicePathBuf::from(device_path);
+                        file_path
+                            .append_device_path(remaining_path?)
+                            .map_err(|_| "Cannot append the remaining device path.")?;
+                        Ok(file_path)
+                    })
+                } else {
+                    device_path.map(DevicePathBuf::from)
+                }
+            };
+
+            if let Ok(file_path) = file_path {
+                // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
+                let security2 = unsafe {
+                    security2_ptr
+                        .cast::<patina::pi::protocol::security2::Security2Protocol>()
+                        .as_ref()
+                        .expect("security2 should not be null")
+                };
+                let security_status = (security2.file_authentication)(
+                    security2_ptr.cast(),
+                    // FileAuthentication takes the device path as `CONST`, so it does not write through it.
+                    file_path.as_bytes().as_ptr().cast_mut().cast(),
+                    core::ptr::null_mut(),
+                    0,
+                    false,
+                );
+                EfiError::status_to_result(security_status)?;
+            }
+        }
     }
     //if there is no device path on the controller handle,
     //or if there is no security2 protocol instance,
