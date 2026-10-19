@@ -300,6 +300,30 @@ mod tests {
             unimplemented!("not used by Protocol<P>")
         }
 
+        fn open_interface(
+            &self,
+            _handle: Handle,
+            _protocol: BinaryGuid,
+            _agent: Handle,
+            _attributes: crate::component::service::uefi_services::protocol::OpenAttributes,
+        ) -> Result<ProtocolPtr, ProtocolError> {
+            unimplemented!("not used by Protocol<P>")
+        }
+
+        fn close_interface(
+            &self,
+            _handle: Handle,
+            _protocol: BinaryGuid,
+            _agent: Handle,
+            _controller: Option<Handle>,
+        ) -> Result<(), ProtocolError> {
+            unimplemented!("not used by Protocol<P>")
+        }
+
+        fn register_agent(&self) -> Result<Handle, ProtocolError> {
+            unimplemented!("not used by Protocol<P>")
+        }
+
         fn register_install_notify(
             &self,
             _protocol: BinaryGuid,

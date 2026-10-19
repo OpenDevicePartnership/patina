@@ -18,7 +18,7 @@ use patina::BinaryGuid;
 use patina::component::service::{
     IntoService,
     uefi_services::protocol::{
-        Handle, NotifyCallback, NotifyRegistration, ProtocolError, ProtocolPtr, ProtocolServices, Tpl,
+        Handle, NotifyCallback, NotifyRegistration, OpenAttributes, ProtocolError, ProtocolPtr, ProtocolServices, Tpl,
     },
 };
 use patina::error::EfiError;
@@ -29,7 +29,10 @@ use patina::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 use crate::events::EVENT_DB;
 #[cfg(feature = "unstable-device-path")]
 use crate::protocols::core_locate_device_path;
-use crate::protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface};
+use crate::protocols::{
+    PROTOCOL_DB, core_close_protocol, core_install_protocol_interface, core_open_protocol,
+    core_uninstall_protocol_interface,
+};
 
 use super::event::tpl_to_efi;
 use super::state::UEFI_SERVICES_STATE;
@@ -72,6 +75,8 @@ extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c
 #[derive(IntoService)]
 #[service(dyn ProtocolServices)]
 pub(crate) struct CoreProtocolServices;
+
+const PRIVATE_AGENT_MARKER_GUID: BinaryGuid = BinaryGuid::from_string("7B6F3A21-9E4D-4C88-B2A5-1D8C6F0E3A97");
 
 impl ProtocolServices for CoreProtocolServices {
     fn install_interface(
@@ -145,6 +150,47 @@ impl ProtocolServices for CoreProtocolServices {
             .get_interface_for_handle(handle.as_raw(), protocol.into_inner())
             .map_err(ProtocolError::from)?;
         ProtocolPtr::from_raw(interface).ok_or(ProtocolError::NotFound)
+    }
+
+    fn open_interface(
+        &self,
+        handle: Handle,
+        protocol: BinaryGuid,
+        agent: Handle,
+        attributes: OpenAttributes,
+    ) -> Result<ProtocolPtr, ProtocolError> {
+        let raw_handle = handle.as_raw();
+        let guid = protocol.into_inner();
+        let raw_agent = Some(agent.as_raw());
+        let raw_controller = attributes.controller(handle).map(|controller| controller.as_raw());
+
+        // SAFETY: `raw_handle`/`raw_agent`/`raw_controller` come from validated `Handle` values.
+        // The implicit UEFI spec assumption that driver bindings remain valid for the duration of
+        // the call cannot be verified here (see `core_disconnect_controller`'s safety documentation).
+        let interface = unsafe { core_open_protocol(raw_handle, guid, raw_agent, raw_controller, attributes.bits()) }
+            .map_err(ProtocolError::from)?;
+
+        ProtocolPtr::from_raw(interface).ok_or(ProtocolError::NotFound)
+    }
+
+    fn close_interface(
+        &self,
+        handle: Handle,
+        protocol: BinaryGuid,
+        agent: Handle,
+        controller: Option<Handle>,
+    ) -> Result<(), ProtocolError> {
+        core_close_protocol(
+            handle.as_raw(),
+            protocol.into_inner(),
+            agent.as_raw(),
+            controller.map(|controller| controller.as_raw()),
+        )
+        .map_err(ProtocolError::from)
+    }
+
+    fn register_agent(&self) -> Result<Handle, ProtocolError> {
+        self.install_marker(None, PRIVATE_AGENT_MARKER_GUID)
     }
 
     fn register_install_notify(
@@ -229,8 +275,13 @@ mod tests {
     use super::*;
     use crate::{events::restore_tpl, test_support};
     use core::str::FromStr;
+    use patina::component::service::uefi_services::{driver_binding::DriverBinding, protocol::ProtocolServicesExt};
+    use patina::uefi::device_path::walker::BorrowedDevicePathWalker;
     use std::{cell::RefCell, rc::Rc};
     use uuid::Uuid;
+
+    const BY_DRIVER: OpenAttributes = OpenAttributes::ByDriver { controller: None };
+    const BY_DRIVER_EXCLUSIVE: OpenAttributes = OpenAttributes::ByDriverExclusive { controller: None };
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_clean_global_lock(|| {
@@ -477,6 +528,363 @@ mod tests {
             let handle = service.install_interface(None, installed_guid, fake_interface(0x5000)).unwrap();
 
             assert_eq!(service.interface_on_handle(handle, other_guid), Err(ProtocolError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_returns_installed_interface() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("f87243cb-d5f6-4538-9475-c50bb7acb405");
+            let interface = fake_interface(0x7000);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.register_agent().unwrap();
+            let opened = service.open_interface(handle, guid, agent, OpenAttributes::Shared).unwrap();
+
+            assert_eq!(opened, interface);
+            service.close_interface(handle, guid, agent, None).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_missing_protocol_is_unsupported() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let installed_guid = test_guid("ae667572-4cce-4812-a0ba-e258599a7b83");
+            let other_guid = test_guid("368e9e2f-e4fa-449c-8f22-a9a4c25361e5");
+
+            let handle = service.install_interface(None, installed_guid, fake_interface(0x8000)).unwrap();
+            let agent = service.register_agent().unwrap();
+
+            assert_eq!(
+                service.open_interface(handle, other_guid, agent, OpenAttributes::Shared),
+                Err(ProtocolError::Unsupported)
+            );
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_close_interface_without_open_returns_not_found() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("531575e8-5dfa-4102-ad6a-913d952a383d");
+
+            let handle = service.install_interface(None, guid, fake_interface(0x9000)).unwrap();
+            let agent = service.register_agent().unwrap();
+
+            assert_eq!(service.close_interface(handle, guid, agent, None), Err(ProtocolError::NotFound));
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_usage_is_advisory_not_blocking() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("92d405ac-731b-4d52-8fc7-352b3c25259e");
+            let interface = fake_interface(0xa000);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.register_agent().unwrap();
+            service.open_interface(handle, guid, agent, OpenAttributes::Shared).unwrap();
+
+            // The usage is recorded and visible...
+            let usages =
+                PROTOCOL_DB.get_open_protocol_information_by_protocol(handle.as_raw(), guid.into_inner()).unwrap();
+            assert_eq!(usages.len(), 1);
+
+            // A `GET_PROTOCOL` usage does not block uninstall: `UninstallProtocolInterface` clears
+            // `GET_PROTOCOL`/`BY_HANDLE_PROTOCOL`/`TEST_PROTOCOL` usages. Only `BY_DRIVER` usages can
+            // block removal, when a `DisconnectController` attempt that may fail.
+            assert!(service.uninstall_interface(handle, guid, interface).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_exclusive_blocks_uninstall_until_closed() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("f9ca168c-d0e7-4c79-84cb-ea4df9938077");
+            let interface = fake_interface(0xb000);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.register_agent().unwrap();
+            service.open_interface(handle, guid, agent, OpenAttributes::Exclusive).unwrap();
+
+            // `Exclusive` is not force-cleared by uninstall (unlike `Shared`).
+            assert_eq!(service.uninstall_interface(handle, guid, interface), Err(ProtocolError::AccessDenied));
+
+            service.close_interface(handle, guid, agent, None).unwrap();
+            assert!(service.uninstall_interface(handle, guid, interface).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_exclusive_different_agent_denied() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("2d50afa0-5ac9-4f19-ac8a-37dea0668196");
+            let handle = service.install_interface(None, guid, fake_interface(0xb100)).unwrap();
+            let agent_a = service.register_agent().unwrap();
+            let agent_b = service.register_agent().unwrap();
+
+            service.open_interface(handle, guid, agent_a, OpenAttributes::Exclusive).unwrap();
+
+            assert_eq!(
+                service.open_interface(handle, guid, agent_b, OpenAttributes::Exclusive),
+                Err(ProtocolError::AccessDenied)
+            );
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_by_driver_blocks_uninstall_without_driver_binding() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("fe0b9ba0-5bfd-4fd6-8c09-dd009f65b1b8");
+            let interface = fake_interface(0xb200);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            // A simple call to register_agent handle has no driver binding installed, so DisconnectController
+            // cannot find a Stop() to call and the release is permanently denied.
+            let agent = service.register_agent().unwrap();
+            service.open_interface(handle, guid, agent, BY_DRIVER).unwrap();
+
+            assert_eq!(service.uninstall_interface(handle, guid, interface), Err(ProtocolError::AccessDenied));
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_by_driver_reopen_same_agent_returns_already_started() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("afc9e470-2eb1-4279-b457-a1daf26259e5");
+            let interface = fake_interface(0xb300);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.register_agent().unwrap();
+            let attributes = BY_DRIVER;
+            service.open_interface(handle, guid, agent, attributes).unwrap();
+
+            // The original usage is unaffected by the rejected reopen.
+            assert_eq!(service.open_interface(handle, guid, agent, attributes), Err(ProtocolError::AlreadyStarted));
+            let usages =
+                PROTOCOL_DB.get_open_protocol_information_by_protocol(handle.as_raw(), guid.into_inner()).unwrap();
+            assert_eq!(usages.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_open_interface_by_driver_different_agent_denied() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("88a54816-7034-407f-8bb4-de94fd9be3b0");
+            let handle = service.install_interface(None, guid, fake_interface(0xb400)).unwrap();
+            let agent_a = service.register_agent().unwrap();
+            let agent_b = service.register_agent().unwrap();
+
+            service.open_interface(handle, guid, agent_a, BY_DRIVER).unwrap();
+
+            assert_eq!(service.open_interface(handle, guid, agent_b, BY_DRIVER), Err(ProtocolError::AccessDenied));
+        });
+    }
+
+    /// A test driver binding instance that can be configured to either allow or deny a `Stop()` call,
+    /// to test behavior when uninstalling a protocol that has a `BY_DRIVER` usage.
+    struct StopWith {
+        guid: BinaryGuid,
+        should_stop: bool,
+    }
+
+    impl DriverBinding for StopWith {
+        fn start(
+            &self,
+            _agent: Handle,
+            _controller: Handle,
+            _remaining: Option<BorrowedDevicePathWalker>,
+        ) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn stop(&self, agent: Handle, controller: Handle, _children: &[Handle]) -> Result<(), ProtocolError> {
+            if !self.should_stop {
+                return Err(ProtocolError::AccessDenied);
+            }
+            CoreProtocolServices.close_interface(controller, self.guid, agent, Some(controller))
+        }
+    }
+
+    #[test]
+    fn test_protocol_services_uninstall_releases_by_driver_when_stop_returns_ok() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("fb57ed13-d572-4001-8be2-a67ae92bc8df");
+            let interface = fake_interface(0xb500);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.install_driver_binding(StopWith { guid, should_stop: true }).unwrap();
+            service.open_interface(handle, guid, agent, BY_DRIVER).unwrap();
+
+            assert!(service.uninstall_interface(handle, guid, interface).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_uninstall_blocked_by_driver_when_stop_returns_err() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("34549404-9c92-479c-909e-8711a07d28d8");
+            let interface = fake_interface(0xb600);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.install_driver_binding(StopWith { guid, should_stop: false }).unwrap();
+            service.open_interface(handle, guid, agent, BY_DRIVER).unwrap();
+
+            assert_eq!(service.uninstall_interface(handle, guid, interface), Err(ProtocolError::AccessDenied));
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_by_driver_exclusive_preempts_holder_with_driver_binding() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("567aca28-2230-452d-a734-6c44d248e752");
+            let handle = service.install_interface(None, guid, fake_interface(0xb700)).unwrap();
+
+            let holder = service.install_driver_binding(StopWith { guid, should_stop: true }).unwrap();
+            service.open_interface(handle, guid, holder, BY_DRIVER).unwrap();
+
+            let preempting = service.register_agent().unwrap();
+            // ByDriverExclusive should preempt the existing ByDriver holder, since its Stop() allows release.
+            service.open_interface(handle, guid, preempting, BY_DRIVER_EXCLUSIVE).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_by_driver_exclusive_fails_when_holder_has_no_driver_binding() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("965c4543-6507-465c-9d04-3fb005bb8756");
+            let handle = service.install_interface(None, guid, fake_interface(0xb800)).unwrap();
+
+            let holder = service.register_agent().unwrap();
+            service.open_interface(handle, guid, holder, BY_DRIVER).unwrap();
+
+            let preempting = service.register_agent().unwrap();
+            assert_eq!(
+                service.open_interface(handle, guid, preempting, BY_DRIVER_EXCLUSIVE),
+                Err(ProtocolError::AccessDenied)
+            );
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_by_child_controller_same_handle_invalid_parameter() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("66ef06ec-35a4-4820-b78a-a948aac22033");
+            let handle = service.install_interface(None, guid, fake_interface(0xb900)).unwrap();
+            let agent = service.register_agent().unwrap();
+
+            assert_eq!(
+                service.open_interface(handle, guid, agent, OpenAttributes::ByChildController { controller: handle }),
+                Err(ProtocolError::InvalidParameter)
+            );
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_by_child_controller_visible_via_get_child_handles() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("5199113e-b1e4-4cbd-821d-f7d67ade3270");
+            let parent = service.install_interface(None, guid, fake_interface(0xba00)).unwrap();
+            let child = service.install_interface(None, guid, fake_interface(0xbb00)).unwrap();
+            let agent = service.register_agent().unwrap();
+
+            service
+                .open_interface(parent, guid, agent, OpenAttributes::ByChildController { controller: child })
+                .unwrap();
+
+            let children = PROTOCOL_DB.get_child_handles(parent.as_raw());
+            assert_eq!(children, alloc::vec![child.as_raw()]);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_register_agent_returns_distinct_handles() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let agent_a = service.register_agent().unwrap();
+            let agent_b = service.register_agent().unwrap();
+
+            assert_ne!(agent_a, agent_b);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_install_driver_binding_returns_distinct_handles() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("78c3dc9b-3d97-404a-a198-0a96b5678b83");
+            let handle_a = service.install_driver_binding(StopWith { guid, should_stop: true }).unwrap();
+            let handle_b = service.install_driver_binding(StopWith { guid, should_stop: true }).unwrap();
+
+            assert_ne!(handle_a, handle_b);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_install_driver_binding_installs_driver_binding_protocol() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("7982a0ba-ff85-43e9-a740-87873ae549f3");
+            let handle = service.install_driver_binding(StopWith { guid, should_stop: true }).unwrap();
+
+            let interface = PROTOCOL_DB
+                .get_interface_for_handle(handle.as_raw(), efi::protocols::driver_binding::PROTOCOL_GUID)
+                .unwrap();
+            let protocol = interface as *const efi::protocols::driver_binding::Protocol;
+            // SAFETY: `install_driver_binding` just installed a valid `DriverBindingHolder` at this
+            // address, whose first field is the `Protocol` struct itself.
+            let protocol = unsafe { &*protocol };
+            assert_eq!(protocol.driver_binding_handle, handle.as_raw());
+            assert_eq!(protocol.image_handle, handle.as_raw());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_install_driver_binding_on_existing_agent_serves_by_driver_stop() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("a62be7d2-2493-4f6b-944a-2cb1438562f4");
+            let interface = fake_interface(0xbc00);
+
+            let handle = service.install_interface(None, guid, interface).unwrap();
+            let agent = service.register_agent().unwrap();
+            service.open_interface(handle, guid, agent, BY_DRIVER).unwrap();
+
+            // Without a driver binding on the agent, the ByDriver usage cannot be released.
+            assert_eq!(service.uninstall_interface(handle, guid, interface), Err(ProtocolError::AccessDenied));
+
+            service.install_driver_binding_on(agent, StopWith { guid, should_stop: true }).unwrap();
+            assert!(service.uninstall_interface(handle, guid, interface).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_install_driver_binding_on_agent_twice_is_invalid_parameter() {
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = test_guid("324064b2-cdde-4d50-ad55-750cc44424d8");
+            let agent = service.register_agent().unwrap();
+
+            service.install_driver_binding_on(agent, StopWith { guid, should_stop: true }).unwrap();
+
+            assert_eq!(
+                service.install_driver_binding_on(agent, StopWith { guid, should_stop: true }),
+                Err(ProtocolError::InvalidParameter)
+            );
         });
     }
 

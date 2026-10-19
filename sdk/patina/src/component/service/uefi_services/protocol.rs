@@ -29,6 +29,32 @@
 //!   for each present and future install of the protocol. Useful when another component installs the
 //!   protocol later.
 //!
+//! [`open_protocol`](ProtocolServicesExt::open_protocol) records a usage in the protocol database
+//! for as long as the guard is held (see [`ProtocolGuard`]), so the access is visible to other
+//! agents through `OpenProtocolInformation()`. The other accessors do not record a usage.
+//!
+//! # Opening with attributes
+//!
+//! [`open_protocol`](ProtocolServicesExt::open_protocol) takes an [`OpenAttributes`] value and the
+//! caller's agent [`Handle`], which is obtained from [`ProtocolServices::register_agent`] and kept
+//! by the component. The attribute chosen determines what happens when another agent tries to uninstall
+//! the protocol while the guard is held:
+//!
+//! - [`OpenAttributes::Shared`] is advisory only and the DXE Core clears it automatically on uninstall,
+//!   so it never blocks.
+//! - [`OpenAttributes::Exclusive`] blocks uninstall until closed, and first attempts to disconnect
+//!   an existing `ByDriver` holder so the exclusive open can succeed.
+//! - [`OpenAttributes::ByDriver`] and [`OpenAttributes::ByDriverExclusive`] mark the caller as
+//!   managing a controller with this protocol. Uninstall attempts to release them by calling the
+//!   caller's driver binding `Stop()`, if one was installed with
+//!   [`install_driver_binding`](ProtocolServicesExt::install_driver_binding). `Stop()` must close the
+//!   usage to actually release it (returning `Ok(())` alone does not). See [`super::driver_binding`]
+//!   for details.
+//! - [`OpenAttributes::ByChildController`] records that a child controller depends on the parent's
+//!   protocol. Like `Exclusive`, it blocks uninstall until closed.
+//!
+//! Dropping the guard releases the usage automatically.
+//!
 //! # Marker protocols
 //!
 //! Some UEFI protocols exist only as a signal, with no interface data. These are marked by a NULL
@@ -53,12 +79,19 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
+use crate::base::driver::{
+    OPEN_PROTOCOL_BY_CHILD_CONTROLLER, OPEN_PROTOCOL_BY_DRIVER, OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
+    OPEN_PROTOCOL_EXCLUSIVE, OPEN_PROTOCOL_GET,
+};
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
 use crate::base::protocol::{MarkerProtocol, ProtocolInterface};
+use crate::standard::efi;
 #[cfg(feature = "unstable-device-path")]
 use crate::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
+use super::driver_binding;
+pub use super::driver_binding::DriverBinding;
 pub use super::handle::Handle;
 pub use super::tpl::Tpl;
 
@@ -145,6 +178,156 @@ impl NotifyRegistration {
     }
 }
 
+/// The UEFI `OpenProtocol()` attribute a component is opening a protocol with.
+///
+/// Each variant matches one of the attribute combinations the UEFI spec defines for
+/// `EFI_BOOT_SERVICES.OpenProtocol()`. `BY_HANDLE_PROTOCOL` and `TEST_PROTOCOL` are not
+/// represented. `BY_HANDLE_PROTOCOL` only matters for the `HandleProtocol()` compatibility, which is
+/// served by [`ProtocolServices::interface_on_handle`], and `TEST_PROTOCOL` does not return an
+/// actual interface, so it does not fit the interface of [`ProtocolServicesExt::open_protocol`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAttributes {
+    /// A shared, non-exclusive open. Matches `GET_PROTOCOL`.
+    Shared,
+    /// An exclusive open. Matches `EXCLUSIVE`.
+    Exclusive,
+    /// Opens as a driver managing a controller. Matches `BY_DRIVER`.
+    ///
+    /// `controller` is the controller the driver manages with this protocol. `None` records the handle the protocol
+    /// is opened on, which is the usual case. `Some` is for a driver that opens a protocol on another handle on behalf
+    /// of the controller it manages, for example a child it created through a service binding protocol.
+    ByDriver {
+        /// The controller this usage is recorded for, or `None` for the handle being opened.
+        controller: Option<Handle>,
+    },
+    /// Like [`Self::ByDriver`], but also attempts to disconnect an existing `BY_DRIVER` holder
+    /// first. Matches `BY_DRIVER | EXCLUSIVE`.
+    ByDriverExclusive {
+        /// The controller this usage is recorded for, or `None` for the handle being opened.
+        controller: Option<Handle>,
+    },
+    /// Records that a child controller uses the protocol. Matches `BY_CHILD_CONTROLLER`.
+    ByChildController {
+        /// The child controller using the protocol. Must differ from the handle being opened.
+        controller: Handle,
+    },
+}
+
+impl OpenAttributes {
+    /// Returns the controller handle recorded for a usage of `handle` opened with this attribute, if any.
+    #[doc(hidden)]
+    pub fn controller(self, handle: Handle) -> Option<Handle> {
+        match self {
+            Self::Shared | Self::Exclusive => None,
+            Self::ByDriver { controller } | Self::ByDriverExclusive { controller } => {
+                Some(controller.unwrap_or(handle))
+            }
+            Self::ByChildController { controller } => Some(controller),
+        }
+    }
+
+    /// Returns the raw `EFI_OPEN_PROTOCOL_*` attribute bits this value represents.
+    #[doc(hidden)]
+    pub fn bits(self) -> u32 {
+        match self {
+            Self::Shared => OPEN_PROTOCOL_GET,
+            Self::Exclusive => OPEN_PROTOCOL_EXCLUSIVE,
+            Self::ByDriver { .. } => OPEN_PROTOCOL_BY_DRIVER,
+            Self::ByDriverExclusive { .. } => OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
+            Self::ByChildController { .. } => OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+        }
+    }
+}
+
+/// A view of a protocol interface on a specific handle.
+///
+/// Returned by [`ProtocolServicesExt::open_protocol`]. It dereferences to the protocol interface
+/// and ties that reference to the borrow of the service. For access that must persist across dispatch,
+/// a [`ProtocolToken`] should be used instead.
+///
+/// Opening the guard records a usage in the protocol database under the caller's agent handle and
+/// chosen [`OpenAttributes`], visible to other agents through `OpenProtocolInformation()`. Dropping
+/// the guard releases that usage. See the module documentation for what each attribute means for
+/// uninstall.
+///
+/// A guard returned by [`ProtocolServicesExt::open_protocol_or_started`] for a usage the agent already held
+/// (see [`Self::is_already_started`]) does not own that usage and leaves it open when dropped.
+#[must_use]
+pub struct ProtocolGuard<'a, P: ProtocolInterface, S: ProtocolServices + ?Sized> {
+    interface: &'a P,
+    handle: Handle,
+    agent: Handle,
+    controller: Option<Handle>,
+    service: &'a S,
+    owned: bool,
+}
+
+impl<P: ProtocolInterface, S: ProtocolServices + ?Sized> ProtocolGuard<'_, P, S> {
+    /// Returns `true` if the agent already held this usage before the guard was opened, so dropping the guard
+    /// leaves it open.
+    pub fn is_already_started(&self) -> bool {
+        !self.owned
+    }
+
+    /// Keeps the usage open after the guard goes away and returns a [`ProtocolToken`] for the interface.
+    ///
+    /// Use this in a driver binding's `Start()` to hold a `ByDriver` or `ByChildController` usage until `Stop()`,
+    /// which must then release it with [`ProtocolServicesExt::close_protocol`].
+    pub fn keep_open(self) -> ProtocolToken<P> {
+        let token = ProtocolToken::new(self.handle);
+        core::mem::forget(self);
+        token
+    }
+}
+
+impl<P: ProtocolInterface, S: ProtocolServices + ?Sized> core::ops::Deref for ProtocolGuard<'_, P, S> {
+    type Target = P;
+
+    fn deref(&self) -> &P {
+        self.interface
+    }
+}
+
+impl<P: ProtocolInterface, S: ProtocolServices + ?Sized> Drop for ProtocolGuard<'_, P, S> {
+    fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
+        let result = self.service.close_interface(self.handle, P::PROTOCOL_GUID, self.agent, self.controller);
+        debug_assert!(result.is_ok(), "closing a usage opened by open_protocol should not fail");
+    }
+}
+
+/// A protocol interface installed from a `Box<P>` by [`ProtocolServicesExt::install_protocol_owned`].
+///
+/// The token owns the allocation. It should be passed to [`ProtocolServicesExt::uninstall_protocol`] to uninstall
+/// the interface and get the box back. Dropping the token leaves the interface installed and leaks the allocation.
+#[must_use]
+pub struct InstalledProtocol<P: ProtocolInterface> {
+    handle: Handle,
+    interface: NonNull<P>,
+}
+
+impl<P: ProtocolInterface> InstalledProtocol<P> {
+    /// The handle the interface is installed on.
+    pub fn handle(&self) -> Handle {
+        self.handle
+    }
+
+    /// The installed interface.
+    pub fn interface(&self) -> &P {
+        // SAFETY: `interface` came from `Box::into_raw` and is only freed by `uninstall_protocol`, which consumes
+        // this token.
+        unsafe { self.interface.as_ref() }
+    }
+}
+
+impl<P: ProtocolInterface> core::fmt::Debug for InstalledProtocol<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("InstalledProtocol").field("handle", &self.handle).field("interface", &self.interface).finish()
+    }
+}
+
 /// A revocable reference to a protocol interface on a specific handle.
 ///
 /// Unlike a `&P`, a token never dangles. It only stores a handle, so it is safe to keep for the
@@ -193,8 +376,18 @@ pub enum ProtocolError {
     InvalidParameter,
     /// The requested protocol or handle was not found.
     NotFound,
+    /// The requested operation is not supported, for example a driver binding that does not support a controller.
+    Unsupported,
     /// The system is out of resources to complete the operation.
     OutOfResources,
+    /// The requested access conflicts with an existing exclusive or driver-owned usage.
+    AccessDenied,
+    /// The same agent already has the protocol open `BY_DRIVER` (or `BY_DRIVER | EXCLUSIVE`) on the
+    /// same handle. The original usage is left in place and no new usage is recorded, so
+    /// [`ProtocolServicesExt::open_protocol`] returns this as an `Err` rather than a guard.
+    AlreadyStarted,
+    /// A device error occurred, for example a driver binding that could not start or stop a controller.
+    DeviceError,
     /// An unexpected internal error occurred.
     Internal,
 }
@@ -204,8 +397,11 @@ impl From<ProtocolError> for EfiError {
         match value {
             ProtocolError::InvalidParameter => EfiError::InvalidParameter,
             ProtocolError::NotFound => EfiError::NotFound,
+            ProtocolError::Unsupported | ProtocolError::Internal => EfiError::Unsupported,
             ProtocolError::OutOfResources => EfiError::OutOfResources,
-            ProtocolError::Internal => EfiError::Unsupported,
+            ProtocolError::AccessDenied => EfiError::AccessDenied,
+            ProtocolError::AlreadyStarted => EfiError::AlreadyStarted,
+            ProtocolError::DeviceError => EfiError::DeviceError,
         }
     }
 }
@@ -215,7 +411,11 @@ impl From<EfiError> for ProtocolError {
         match value {
             EfiError::InvalidParameter => ProtocolError::InvalidParameter,
             EfiError::NotFound => ProtocolError::NotFound,
+            EfiError::Unsupported => ProtocolError::Unsupported,
             EfiError::OutOfResources => ProtocolError::OutOfResources,
+            EfiError::AccessDenied => ProtocolError::AccessDenied,
+            EfiError::AlreadyStarted => ProtocolError::AlreadyStarted,
+            EfiError::DeviceError => ProtocolError::DeviceError,
             _ => ProtocolError::Internal,
         }
     }
@@ -310,10 +510,69 @@ pub trait ProtocolServices {
 
     /// Returns the interface for `protocol` installed on a specific `handle`.
     ///
+    /// This is a raw interface lookup. Unlike the UEFI `OpenProtocol()`/`HandleProtocol()` boot
+    /// services, it does not record a usage (`AgentHandle`/`ControllerHandle`/`Attributes`) in the
+    /// protocol database, so it has no effect on whether the protocol can later be uninstalled.
+    ///
     /// # Errors
     ///
     /// Returns [`ProtocolError::NotFound`] if `handle` does not have `protocol` installed.
     fn interface_on_handle(&self, handle: Handle, protocol: BinaryGuid) -> Result<ProtocolPtr, ProtocolError>;
+
+    /// Opens `protocol` on `handle`, recording a usage in the protocol database so `protocol` is
+    /// visible to other agents through `OpenProtocolInformation()`.
+    ///
+    /// `agent` should be a handle obtained once from [`Self::register_agent`] and kept by the
+    /// caller. `attributes` selects the UEFI `OpenProtocol()` semantics to use. See the module
+    /// documentation for what each variant means for uninstall.
+    ///
+    /// Component authors should consider using [`ProtocolServicesExt::open_protocol`], which pairs
+    /// this with [`Self::close_interface`] automatically through a [`ProtocolGuard`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::Unsupported`] if `handle` does not have `protocol` installed, matching
+    /// `OpenProtocol()`.
+    /// Returns [`ProtocolError::AccessDenied`] if `attributes` conflicts with an existing usage
+    /// held by a different agent (for example, another agent already holds `Exclusive` or
+    /// `ByDriver`).
+    /// Returns [`ProtocolError::AlreadyStarted`] if `attributes` is `ByDriver` or `ByDriverExclusive`
+    /// and `agent` already holds the protocol open with those attributes on `handle`.
+    /// Returns [`ProtocolError::InvalidParameter`] if `attributes` is not valid for the given
+    /// handles (for example, `ByChildController` with `controller` equal to `handle`).
+    fn open_interface(
+        &self,
+        handle: Handle,
+        protocol: BinaryGuid,
+        agent: Handle,
+        attributes: OpenAttributes,
+    ) -> Result<ProtocolPtr, ProtocolError>;
+
+    /// Releases a usage previously recorded by [`Self::open_interface`] for the same `agent` and
+    /// `controller`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if no matching usage is currently open.
+    fn close_interface(
+        &self,
+        handle: Handle,
+        protocol: BinaryGuid,
+        agent: Handle,
+        controller: Option<Handle>,
+    ) -> Result<(), ProtocolError>;
+
+    /// Creates a fresh, stable handle a component can use as its own agent identity.
+    ///
+    /// Call this once and keep the returned [`Handle`] as a component field (the same "stored
+    /// dependencies" pattern used for other services), then pass it as `agent` to
+    /// [`Self::open_interface`]/[`Self::close_interface`]. The handle has no protocols installed on
+    /// it beyond an internal marker, so it exists only as an identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a handle could not be created, for example [`ProtocolError::OutOfResources`].
+    fn register_agent(&self) -> Result<Handle, ProtocolError>;
 
     /// Registers `callback` to run for each handle on which `protocol` is installed.
     ///
@@ -556,6 +815,136 @@ pub trait ProtocolServicesExt: ProtocolServices {
         Ok(f(interface))
     }
 
+    /// Opens protocol `P` on `handle` for `agent` with `attributes`, returning a [`ProtocolGuard`]
+    /// for block-scoped access.
+    ///
+    /// The guard dereferences to the interface and keeps the reference tied to this service
+    /// borrow. It can be useful when several statements need the interface. For a single expression,
+    /// [`Self::with_protocol_on`] can be used instead.
+    ///
+    /// `agent` should be a handle obtained once from [`ProtocolServices::register_agent`] and kept
+    /// by the caller. `attributes` selects the UEFI `OpenProtocol()` semantics to use. See the
+    /// module documentation for what each [`OpenAttributes`] variant means for uninstall. Dropping
+    /// the guard releases the usage automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::Unsupported`] if `handle` does not have `P` installed.
+    /// Returns [`ProtocolError::InvalidParameter`] if `attributes` is not valid for the given handles (for
+    /// example, `ByChildController` with `controller` equal to `handle`).
+    /// Returns [`ProtocolError::AccessDenied`] if `attributes` conflicts with an existing usage
+    /// held by a different agent.
+    /// Returns [`ProtocolError::AlreadyStarted`] if `agent` already holds `P` open `ByDriver` (or
+    /// `ByDriverExclusive`) on the same handle. No guard is returned in that case, so the
+    /// existing usage is not released. Use [`Self::open_protocol_or_started`] to get the interface anyway.
+    fn open_protocol<P: ProtocolInterface>(
+        &self,
+        handle: Handle,
+        agent: Handle,
+        attributes: OpenAttributes,
+    ) -> Result<ProtocolGuard<'_, P, Self>, ProtocolError> {
+        let controller = attributes.controller(handle);
+        let ptr = self.open_interface(handle, P::PROTOCOL_GUID, agent, attributes)?;
+        // SAFETY: as in `with_protocol`. The reference is bound to `&self`, so it cannot outlive
+        // the borrow of the service.
+        let interface = unsafe { &*(ptr.as_raw() as *const P) };
+        Ok(ProtocolGuard { interface, handle, agent, controller, service: self, owned: true })
+    }
+
+    /// Like [`Self::open_protocol`], but treats [`ProtocolError::AlreadyStarted`] as success.
+    ///
+    /// When `agent` already holds `P` open `ByDriver` on `handle`, the returned guard refers to the existing usage,
+    /// reports [`ProtocolGuard::is_already_started`], and leaves the usage open when dropped. This is what a bus
+    /// driver that creates children over several `Supported()`/`Start()` calls needs, matching how the UEFI
+    /// `OpenProtocol()` still returns the interface along with `EFI_ALREADY_STARTED`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::open_protocol`], except [`ProtocolError::AlreadyStarted`].
+    fn open_protocol_or_started<P: ProtocolInterface>(
+        &self,
+        handle: Handle,
+        agent: Handle,
+        attributes: OpenAttributes,
+    ) -> Result<ProtocolGuard<'_, P, Self>, ProtocolError> {
+        match self.open_protocol::<P>(handle, agent, attributes) {
+            Err(ProtocolError::AlreadyStarted) => {
+                let ptr = self.interface_on_handle(handle, P::PROTOCOL_GUID)?;
+                // SAFETY: as in `with_protocol`. The agent's existing `ByDriver` usage keeps the interface
+                // installed until its own `Stop()` runs, and the reference is bound to `&self`.
+                let interface = unsafe { &*(ptr.as_raw() as *const P) };
+                let controller = attributes.controller(handle);
+                Ok(ProtocolGuard { interface, handle, agent, controller, service: self, owned: false })
+            }
+            result => result,
+        }
+    }
+
+    /// Releases a usage of protocol `P` on `handle` held by `agent` for `controller`.
+    ///
+    /// This is the typed counterpart to [`ProtocolServices::close_interface`], used to release a usage kept open
+    /// with [`ProtocolGuard::keep_open`]. `controller` is the controller recorded for the usage, which is
+    /// `Some(handle)` for a usual `ByDriver` open and `None` for `Shared`/`Exclusive`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::NotFound`] if no matching usage is open.
+    fn close_protocol<P: ProtocolInterface>(
+        &self,
+        handle: Handle,
+        agent: Handle,
+        controller: Option<Handle>,
+    ) -> Result<(), ProtocolError> {
+        self.close_interface(handle, P::PROTOCOL_GUID, agent, controller)
+    }
+
+    /// Installs `interface` for protocol `P` and returns an [`InstalledProtocol`] that can uninstall it later.
+    ///
+    /// This does not leak the allocation like [`Self::install_protocol`]. It is returned by
+    /// [`Self::uninstall_protocol`], which makes this suitable for a protocol a driver produces in `Start()` and
+    /// removes in `Stop()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from [`ProtocolServices::install_interface`]. `interface` is dropped in that case.
+    fn install_protocol_owned<P: ProtocolInterface>(
+        &self,
+        handle: Option<Handle>,
+        interface: Box<P>,
+    ) -> Result<InstalledProtocol<P>, ProtocolError> {
+        let interface = NonNull::from(Box::leak(interface));
+        let ptr = ProtocolPtr::from_raw(interface.as_ptr().cast::<c_void>()).ok_or(ProtocolError::InvalidParameter)?;
+        match self.install_interface(handle, P::PROTOCOL_GUID, ptr) {
+            Ok(handle) => Ok(InstalledProtocol { handle, interface }),
+            Err(err) => {
+                // SAFETY: `interface` was leaked from a `Box` above and was not installed.
+                drop(unsafe { Box::from_raw(interface.as_ptr()) });
+                Err(err)
+            }
+        }
+    }
+
+    /// Uninstalls an interface installed with [`Self::install_protocol_owned`] and returns its allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from [`ProtocolServices::uninstall_interface`] along with `installed`, which is still
+    /// installed, for example [`ProtocolError::AccessDenied`] if another agent holds the protocol open.
+    fn uninstall_protocol<P: ProtocolInterface>(
+        &self,
+        installed: InstalledProtocol<P>,
+    ) -> Result<Box<P>, (ProtocolError, InstalledProtocol<P>)> {
+        let Some(ptr) = ProtocolPtr::from_raw(installed.interface.as_ptr().cast::<c_void>()) else {
+            return Err((ProtocolError::InvalidParameter, installed));
+        };
+        match self.uninstall_interface(installed.handle, P::PROTOCOL_GUID, ptr) {
+            // SAFETY: the interface came from `Box::leak` in `install_protocol_owned`, is no longer installed, and
+            // `installed` is consumed here, so it cannot be freed twice.
+            Ok(()) => Ok(unsafe { Box::from_raw(installed.interface.as_ptr()) }),
+            Err(err) => Err((err, installed)),
+        }
+    }
+
     /// Locates the first handle with protocol `P` and returns a [`ProtocolToken`].
     ///
     /// The token can be stored and re-validated later with [`Self::resolve`].
@@ -604,6 +993,57 @@ pub trait ProtocolServicesExt: ProtocolServices {
     fn cancel(&self, registration: NotifyRegistration) -> Result<(), ProtocolError> {
         self.cancel_install_notify(registration)
     }
+
+    /// Builds and installs a driver binding protocol from `binding`, using a newly generated agent
+    /// handle as both the driver binding's image handle and its own handle.
+    ///
+    /// This is how a component participates in the UEFI driver model. Once installed, `binding`
+    /// receives `Supported()`/`Start()`/`Stop()` calls from `ConnectController()`/`DisconnectController()`,
+    /// and an existing [`OpenAttributes::ByDriver`] or [`OpenAttributes::ByDriverExclusive`] usage recorded
+    /// under the returned handle can be released or preempted, since there is now a `Stop()` for the core to
+    /// call. See [`super::driver_binding`] for details.
+    ///
+    /// A component that already has an agent handle from [`ProtocolServices::register_agent`] should use
+    /// [`Self::install_driver_binding_on`] instead, so its existing usages are served by the same driver binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the agent handle could not be created (see [`ProtocolServices::register_agent`]), or
+    /// if the driver binding protocol could not be installed (see [`Self::install_driver_binding_on`]).
+    fn install_driver_binding<B: DriverBinding + 'static>(&self, binding: B) -> Result<Handle, ProtocolError> {
+        let agent = self.register_agent()?;
+        self.install_driver_binding_on(agent, binding)?;
+        Ok(agent)
+    }
+
+    /// Builds and installs a driver binding protocol from `binding` on an existing `agent` handle.
+    ///
+    /// `agent` is used as both the driver binding's image handle and its own handle, and is passed to `binding`
+    /// as its agent. It is typically a handle obtained from [`ProtocolServices::register_agent`] that the
+    /// component already uses for [`ProtocolServicesExt::open_protocol`]. See [`Self::install_driver_binding`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError::InvalidParameter`] if `agent` is not a valid handle or already has a driver
+    /// binding protocol installed.
+    /// Returns another error if the driver binding protocol could not be installed (for example
+    /// [`ProtocolError::OutOfResources`]).
+    fn install_driver_binding_on<B: DriverBinding + 'static>(
+        &self,
+        agent: Handle,
+        binding: B,
+    ) -> Result<(), ProtocolError> {
+        let protocol = efi::protocols::driver_binding::Protocol {
+            version: B::VERSION,
+            supported: driver_binding::supported_trampoline::<B>,
+            start: driver_binding::start_trampoline::<B>,
+            stop: driver_binding::stop_trampoline::<B>,
+            driver_binding_handle: agent.as_raw(),
+            image_handle: agent.as_raw(),
+        };
+        let holder = Box::new(driver_binding::DriverBindingHolder { protocol, binding });
+        self.install_protocol::<driver_binding::DriverBindingHolder<B>>(Some(agent), holder).map(|_| ())
+    }
 }
 
 impl<T: ProtocolServices + ?Sized> ProtocolServicesExt for T {}
@@ -611,6 +1051,7 @@ impl<T: ProtocolServices + ?Sized> ProtocolServicesExt for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uefi::device_path::walker::BorrowedDevicePathWalker;
 
     #[repr(C)]
     struct FakeProtocol {
@@ -639,15 +1080,23 @@ mod tests {
     fn test_protocol_services_error_to_efi() {
         assert_eq!(EfiError::from(ProtocolError::InvalidParameter), EfiError::InvalidParameter);
         assert_eq!(EfiError::from(ProtocolError::NotFound), EfiError::NotFound);
+        assert_eq!(EfiError::from(ProtocolError::Unsupported), EfiError::Unsupported);
         assert_eq!(EfiError::from(ProtocolError::OutOfResources), EfiError::OutOfResources);
+        assert_eq!(EfiError::from(ProtocolError::AccessDenied), EfiError::AccessDenied);
+        assert_eq!(EfiError::from(ProtocolError::AlreadyStarted), EfiError::AlreadyStarted);
+        assert_eq!(EfiError::from(ProtocolError::DeviceError), EfiError::DeviceError);
         assert_eq!(EfiError::from(ProtocolError::Internal), EfiError::Unsupported);
     }
 
     #[test]
     fn test_protocol_services_error_from_efi() {
         assert_eq!(ProtocolError::from(EfiError::NotFound), ProtocolError::NotFound);
+        assert_eq!(ProtocolError::from(EfiError::Unsupported), ProtocolError::Unsupported);
         assert_eq!(ProtocolError::from(EfiError::OutOfResources), ProtocolError::OutOfResources);
-        assert_eq!(ProtocolError::from(EfiError::DeviceError), ProtocolError::Internal);
+        assert_eq!(ProtocolError::from(EfiError::AccessDenied), ProtocolError::AccessDenied);
+        assert_eq!(ProtocolError::from(EfiError::AlreadyStarted), ProtocolError::AlreadyStarted);
+        assert_eq!(ProtocolError::from(EfiError::DeviceError), ProtocolError::DeviceError);
+        assert_eq!(ProtocolError::from(EfiError::BadBufferSize), ProtocolError::Internal);
     }
 
     #[test]
@@ -808,6 +1257,303 @@ mod tests {
 
         let value = mock.with_protocol_on::<FakeProtocol, _>(fake_handle(), |p| p.value).unwrap();
         assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn test_open_attributes_controller() {
+        let handle = fake_handle();
+        let child = fake_controller();
+        assert_eq!(OpenAttributes::Shared.controller(handle), None);
+        assert_eq!(OpenAttributes::Exclusive.controller(handle), None);
+        assert_eq!(OpenAttributes::ByDriver { controller: None }.controller(handle), Some(handle));
+        assert_eq!(OpenAttributes::ByDriverExclusive { controller: None }.controller(handle), Some(handle));
+        assert_eq!(OpenAttributes::ByDriver { controller: Some(child) }.controller(handle), Some(child));
+        assert_eq!(OpenAttributes::ByDriverExclusive { controller: Some(child) }.controller(handle), Some(child));
+        assert_eq!(OpenAttributes::ByChildController { controller: child }.controller(handle), Some(child));
+    }
+
+    #[test]
+    fn test_open_attributes_bits() {
+        let controller = fake_handle();
+        assert_eq!(OpenAttributes::Shared.bits(), efi::OPEN_PROTOCOL_GET_PROTOCOL);
+        assert_eq!(OpenAttributes::Exclusive.bits(), efi::OPEN_PROTOCOL_EXCLUSIVE);
+        assert_eq!(OpenAttributes::ByDriver { controller: None }.bits(), efi::OPEN_PROTOCOL_BY_DRIVER);
+        assert_eq!(
+            OpenAttributes::ByDriverExclusive { controller: Some(controller) }.bits(),
+            efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE
+        );
+        assert_eq!(OpenAttributes::ByChildController { controller }.bits(), efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, guid, opened_agent, attributes| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            assert_eq!(opened_agent, fake_handle());
+            assert_eq!(attributes, OpenAttributes::Shared);
+            Ok(fake_ptr())
+        });
+        mock.expect_close_interface().times(1).returning(|_, guid, closed_agent, controller| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            assert_eq!(closed_agent, fake_handle());
+            assert_eq!(controller, None);
+            Ok(())
+        });
+
+        let guard = mock.open_protocol::<FakeProtocol>(fake_handle(), fake_handle(), OpenAttributes::Shared).unwrap();
+        assert_eq!(guard.value, 42);
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_by_driver_records_handle_as_controller() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|opened_handle, _, _, attributes| {
+            assert_eq!(opened_handle, fake_controller());
+            assert_eq!(attributes, OpenAttributes::ByDriver { controller: None });
+            Ok(fake_ptr())
+        });
+        mock.expect_close_interface().times(1).returning(|closed_handle, _, _, closed_controller| {
+            assert_eq!(closed_handle, fake_controller());
+            assert_eq!(closed_controller, Some(fake_controller()));
+            Ok(())
+        });
+
+        let guard = mock
+            .open_protocol::<FakeProtocol>(
+                fake_controller(),
+                fake_handle(),
+                OpenAttributes::ByDriver { controller: None },
+            )
+            .unwrap();
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_by_driver_records_explicit_controller() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Ok(fake_ptr()));
+        mock.expect_close_interface().times(1).returning(|closed_handle, _, _, closed_controller| {
+            assert_eq!(closed_handle, fake_handle());
+            assert_eq!(closed_controller, Some(fake_controller()));
+            Ok(())
+        });
+
+        let attributes = OpenAttributes::ByDriver { controller: Some(fake_controller()) };
+        let guard = mock.open_protocol::<FakeProtocol>(fake_handle(), fake_handle(), attributes).unwrap();
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_by_child_controller_records_child() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Ok(fake_ptr()));
+        mock.expect_close_interface().times(1).returning(|_, _, _, closed_controller| {
+            assert_eq!(closed_controller, Some(fake_controller()));
+            Ok(())
+        });
+
+        let guard = mock
+            .open_protocol::<FakeProtocol>(
+                fake_handle(),
+                fake_handle(),
+                OpenAttributes::ByChildController { controller: fake_controller() },
+            )
+            .unwrap();
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_or_started_keeps_existing_usage() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Err(ProtocolError::AlreadyStarted));
+        mock.expect_interface_on_handle().times(1).returning(|_, _| Ok(fake_ptr()));
+        mock.expect_close_interface().never();
+
+        let guard = mock
+            .open_protocol_or_started::<FakeProtocol>(
+                fake_controller(),
+                fake_handle(),
+                OpenAttributes::ByDriver { controller: None },
+            )
+            .unwrap();
+        assert!(guard.is_already_started());
+        assert_eq!(guard.value, 42);
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_or_started_owns_new_usage() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Ok(fake_ptr()));
+        mock.expect_close_interface().times(1).returning(|_, _, _, _| Ok(()));
+
+        let guard = mock
+            .open_protocol_or_started::<FakeProtocol>(
+                fake_controller(),
+                fake_handle(),
+                OpenAttributes::ByDriver { controller: None },
+            )
+            .unwrap();
+        assert!(!guard.is_already_started());
+        drop(guard);
+    }
+
+    #[test]
+    fn test_protocol_services_ext_open_protocol_or_started_propagates_other_errors() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Err(ProtocolError::Unsupported));
+
+        let result =
+            mock.open_protocol_or_started::<FakeProtocol>(fake_controller(), fake_handle(), OpenAttributes::Shared);
+        assert_eq!(result.err(), Some(ProtocolError::Unsupported));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_keep_open_then_close_protocol() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_open_interface().times(1).returning(|_, _, _, _| Ok(fake_ptr()));
+        mock.expect_interface_on_handle().times(1).returning(|_, _| Ok(fake_ptr()));
+        mock.expect_close_interface().times(1).returning(|closed_handle, guid, closed_agent, closed_controller| {
+            assert_eq!(closed_handle, fake_controller());
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            assert_eq!(closed_agent, fake_handle());
+            assert_eq!(closed_controller, Some(fake_controller()));
+            Ok(())
+        });
+
+        let token = mock
+            .open_protocol::<FakeProtocol>(
+                fake_controller(),
+                fake_handle(),
+                OpenAttributes::ByDriver { controller: None },
+            )
+            .unwrap()
+            .keep_open();
+        assert_eq!(token.handle(), fake_controller());
+        assert_eq!(mock.resolve(&token).map(|p| p.value), Some(42));
+        mock.close_protocol::<FakeProtocol>(fake_controller(), fake_handle(), Some(fake_controller())).unwrap();
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_protocol_owned_round_trip() {
+        let dropped = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let protocol = Box::new(TrackedProtocol { _value: 9, dropped: dropped.clone() });
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_interface().times(1).returning(|_, _, _| Ok(fake_controller()));
+        mock.expect_uninstall_interface().times(1).returning(|handle, guid, _| {
+            assert_eq!(handle, fake_controller());
+            assert_eq!(guid, TrackedProtocol::PROTOCOL_GUID);
+            Ok(())
+        });
+
+        let installed = mock.install_protocol_owned(None, protocol).unwrap();
+        assert_eq!(installed.handle(), fake_controller());
+        assert!(!installed.interface().dropped.load(core::sync::atomic::Ordering::SeqCst));
+
+        let protocol = mock.uninstall_protocol(installed).unwrap();
+        assert!(!dropped.load(core::sync::atomic::Ordering::SeqCst));
+        drop(protocol);
+        assert!(dropped.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_protocol_owned_failure_drops_interface() {
+        let dropped = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let protocol = Box::new(TrackedProtocol { _value: 9, dropped: dropped.clone() });
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_interface().times(1).returning(|_, _, _| Err(ProtocolError::OutOfResources));
+
+        assert_eq!(mock.install_protocol_owned(None, protocol).err(), Some(ProtocolError::OutOfResources));
+        assert!(dropped.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_uninstall_protocol_failure_returns_token() {
+        let dropped = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let protocol = Box::new(TrackedProtocol { _value: 9, dropped: dropped.clone() });
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_install_interface().times(1).returning(|_, _, _| Ok(fake_controller()));
+        mock.expect_uninstall_interface().times(1).returning(|_, _, _| Err(ProtocolError::AccessDenied));
+
+        let installed = mock.install_protocol_owned(None, protocol).unwrap();
+        let Err((err, installed)) = mock.uninstall_protocol(installed) else {
+            panic!("uninstall should fail");
+        };
+        assert_eq!(err, ProtocolError::AccessDenied);
+        assert_eq!(installed.handle(), fake_controller());
+        assert!(!dropped.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_register_agent() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_agent().times(1).returning(|| Ok(fake_handle()));
+
+        assert_eq!(mock.register_agent().unwrap(), fake_handle());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_driver_binding() {
+        struct NoOpBinding;
+        impl DriverBinding for NoOpBinding {
+            fn start(
+                &self,
+                _agent: Handle,
+                _controller: Handle,
+                _remaining: Option<BorrowedDevicePathWalker>,
+            ) -> Result<(), ProtocolError> {
+                Ok(())
+            }
+
+            fn stop(&self, _agent: Handle, _controller: Handle, _children: &[Handle]) -> Result<(), ProtocolError> {
+                Ok(())
+            }
+        }
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_agent().times(1).returning(|| Ok(fake_handle()));
+        mock.expect_install_interface().times(1).returning(|handle, guid, _| {
+            assert_eq!(handle, Some(fake_handle()));
+            assert_eq!(guid, super::driver_binding::DriverBindingHolder::<NoOpBinding>::PROTOCOL_GUID);
+            Ok(fake_handle())
+        });
+
+        let handle = mock.install_driver_binding(NoOpBinding).unwrap();
+        assert_eq!(handle, fake_handle());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_install_driver_binding_on_existing_agent() {
+        struct NoOpBinding;
+        impl DriverBinding for NoOpBinding {
+            fn start(
+                &self,
+                _agent: Handle,
+                _controller: Handle,
+                _remaining: Option<BorrowedDevicePathWalker>,
+            ) -> Result<(), ProtocolError> {
+                Ok(())
+            }
+
+            fn stop(&self, _agent: Handle, _controller: Handle, _children: &[Handle]) -> Result<(), ProtocolError> {
+                Ok(())
+            }
+        }
+
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_agent().never();
+        mock.expect_install_interface().times(1).returning(|handle, guid, _| {
+            assert_eq!(handle, Some(fake_handle()));
+            assert_eq!(guid, super::driver_binding::DriverBindingHolder::<NoOpBinding>::PROTOCOL_GUID);
+            Ok(fake_handle())
+        });
+
+        assert_eq!(mock.install_driver_binding_on(fake_handle(), NoOpBinding), Ok(()));
     }
 
     #[test]

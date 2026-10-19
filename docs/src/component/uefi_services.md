@@ -37,6 +37,8 @@ These are examples of when a design might call for UEFI Services:
   example. Registering a callback in the event database, through `EventServices`, is the only way to find out.
 - A component needs to publish a protocol that C drivers, or other UEFI aware code, expect to find. Installing it
   through `ProtocolServices` is not optional once that requirement exists.
+- Locating a controller and connecting a driver to it as part of the UEFI driver model. This is possible by using
+ `DriverServices`.
 
 In each case, the problem itself requires the service.
 
@@ -98,6 +100,7 @@ a normal `Service<T>` parameter, consumed the same way as any other service.
 | Service                      | Covers                                                    | Reference                             |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------- |
 | `ConfigurationTableServices` | Installing and looking up UEFI configuration tables       | [docs.rs][ConfigurationTableServices] |
+| `DriverServices`             | Connecting and disconnecting drivers and controllers      | [docs.rs][DriverServices]             |
 | `EventServices`              | Creating events and registering closures as notifications | [docs.rs][EventServices]              |
 | `ImageServices`              | Loading, starting, and unloading UEFI images              | [docs.rs][ImageServices]              |
 | `ProtocolServices`           | Installing, locating, and opening protocols               | [docs.rs][ProtocolServices]           |
@@ -113,6 +116,7 @@ with no dispatch-ordering requirement, so components and the DXE Core call the p
 
 [ConfigurationTableServices]:
   https://docs.rs/patina/latest/patina/component/service/uefi_services/config_table/trait.ConfigurationTableServices.html
+[DriverServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/driver/trait.DriverServices.html
 [EventServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/event/trait.EventServices.html
 [ImageServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/image/trait.ImageServices.html
 [calculate_crc32]: https://docs.rs/patina/latest/patina/crc32/fn.calculate_crc32.html

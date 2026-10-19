@@ -500,6 +500,7 @@ impl<P: PlatformInfo> Core<P> {
         component_dispatcher.add_service(uefi_services::CoreEventServices);
         component_dispatcher.add_service(uefi_services::CoreProtocolServices);
         component_dispatcher.add_service(uefi_services::CoreConfigurationTableServices);
+        component_dispatcher.add_service(uefi_services::CoreDriverServices);
         component_dispatcher.add_service(uefi_services::CoreImageServices::new::<P>());
         component_dispatcher.add_service(uefi_services::CoreTplServices);
         self.initialize_performance(perf_frequency, &mut component_dispatcher);

@@ -12,7 +12,7 @@ use patina::{
     component::service::{
         Service,
         uefi_services::{
-            handle::Handle,
+            driver::Handle,
             protocol::{ProtocolServices, ProtocolServicesExt},
         },
     },
