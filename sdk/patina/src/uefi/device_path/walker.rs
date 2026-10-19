@@ -12,6 +12,7 @@ use crate::standard::efi::protocols::device_path::{End, Hardware, Media, Protoco
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
 use core::{
     fmt::Write,
+    marker::PhantomData,
     mem::size_of_val,
     ptr::{NonNull, slice_from_raw_parts},
     slice::from_raw_parts,
@@ -367,6 +368,7 @@ impl GenericDevicePathNode {
 /// This iterator copies the device path data into `DevicePathNode` structs to abstract
 /// the unsafe raw pointer operations necessary for direct interaction with a device path.
 ///
+#[derive(Clone)]
 pub struct DevicePathWalker {
     next_node: Option<*const efi::protocols::device_path::Protocol>,
 }
@@ -400,7 +402,8 @@ impl DevicePathWalker {
     ///
     /// ## Safety
     /// Caller must ensure that the raw pointer points to a valid device path structure,
-    /// including a proper device path end node.
+    /// including a proper device path end node, that remains valid and unchanged while the walker or its clones
+    /// are used.
     pub unsafe fn new(device_path: *const efi::protocols::device_path::Protocol) -> Self {
         Self { next_node: Some(device_path) }
     }
@@ -424,6 +427,62 @@ impl Iterator for DevicePathWalker {
             }
             None => None,
         }
+    }
+}
+
+/// A device path iterator whose access is restricted to the lifetime of the backing device path.
+///
+/// Unlike [`DevicePathWalker`], this type can be passed to safe callbacks without allowing them to retain the
+/// iterator beyond the borrowed path's lifetime. Its nodes contain owned copies and can be retained independently.
+///
+/// ```compile_fail
+/// use patina::uefi::device_path::walker::BorrowedDevicePathWalker;
+///
+/// fn retain(walker: BorrowedDevicePathWalker<'_>) -> BorrowedDevicePathWalker<'static> {
+///     walker
+/// }
+/// ```
+#[derive(Clone)]
+pub struct BorrowedDevicePathWalker<'a> {
+    walker: DevicePathWalker,
+    _device_path: PhantomData<&'a efi::protocols::device_path::Protocol>,
+}
+
+impl<'a> BorrowedDevicePathWalker<'a> {
+    /// Creates an iterator over a borrowed device path.
+    ///
+    /// # Safety
+    ///
+    /// `device_path` must point to a valid, properly terminated device path that remains valid and unchanged
+    /// for `'a`, including while any clones of the iterator exist.
+    pub unsafe fn new(device_path: *const efi::protocols::device_path::Protocol) -> Self {
+        // SAFETY: the caller provides a valid device path for `'a`.
+        Self { walker: unsafe { DevicePathWalker::new(device_path) }, _device_path: PhantomData }
+    }
+
+    /// Returns `true` if the remaining path is an end-of-entire-path node or the iterator is exhausted.
+    ///
+    /// An end-only `RemainingDevicePath` tells a bus driver to start without creating child handles.
+    pub fn is_end_only(&self) -> bool {
+        match self.walker.next_node {
+            // SAFETY: the pointer is valid for `'a`, per the contract on `new`.
+            Some(node) => unsafe { is_device_path_end(node) },
+            None => true,
+        }
+    }
+}
+
+impl Iterator for BorrowedDevicePathWalker<'_> {
+    type Item = GenericDevicePathNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.walker.next()
+    }
+}
+
+impl From<BorrowedDevicePathWalker<'_>> for String {
+    fn from(device_path_walker: BorrowedDevicePathWalker<'_>) -> Self {
+        device_path_walker.walker.into()
     }
 }
 
@@ -471,6 +530,33 @@ mod tests {
     use efi::protocols::device_path::{TYPE_ACPI, TYPE_MEDIA};
 
     use super::*;
+
+    #[test]
+    fn test_borrowed_device_path_walker_clones_preserve_position() {
+        let bytes = crate::devpath!("PciRoot(0)/Pci(0x11,0)");
+        // SAFETY: bytes is a well-formed device path and outlives both walkers.
+        let mut walker = unsafe { BorrowedDevicePathWalker::new(bytes.as_ptr().cast()) };
+        assert!(!walker.is_end_only());
+        walker.next().unwrap();
+        let cloned = walker.clone();
+        assert_eq!(String::from(cloned.clone()), String::from(walker.clone()));
+        assert_eq!(cloned.collect::<Vec<_>>(), walker.collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_borrowed_device_path_walker_recognizes_end_and_exhaustion() {
+        let bytes = crate::devpath!("PciRoot(0)");
+        // SAFETY: bytes is a well-formed device path and outlives the walker.
+        let mut walker = unsafe { BorrowedDevicePathWalker::new(bytes.as_ptr().cast()) };
+        assert!(!walker.is_end_only());
+        walker.next().unwrap();
+        assert!(walker.is_end_only());
+        let end = walker.next().unwrap();
+        assert_eq!(end.header().r#type, TYPE_END);
+        assert_eq!(end.header().sub_type, End::SUBTYPE_ENTIRE);
+        assert!(walker.is_end_only());
+        assert_eq!(walker.next(), None);
+    }
 
     #[test]
     fn device_path_node_count_should_return_the_right_number_of_nodes_and_length() {
