@@ -21,11 +21,8 @@
 // cspell:ignore BCDEFGHIJ PNPZZZZ
 
 use super::TextString;
-use super::{AcpiSubType, DevicePathType};
-use crate::{
-    device_path_node,
-    uefi::device_path::encoding::{AsciiNul, Vector},
-};
+use super::{AcpiSubType, DevicePathType, device_path_node};
+use crate::uefi::device_path::encoding::{AsciiNul, Vector};
 use alloc::{string::String, vec::Vec};
 use core::fmt;
 use scroll::{

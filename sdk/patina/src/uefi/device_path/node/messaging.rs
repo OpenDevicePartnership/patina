@@ -18,10 +18,9 @@
 
 // cspell:ignore NGUID nguid sassata iscsitarget iscsidisk nvmeoftarget nvmeofdisk NSUUID
 use super::TextString;
-use super::{DevicePathType, MessagingSubType, device_path_enum};
+use super::{DevicePathType, MessagingSubType, device_path_enum, device_path_node};
 use crate::BinaryGuid;
 use crate::{
-    device_path_node,
     standard::efi,
     uefi::{
         boot_services::BootServices,

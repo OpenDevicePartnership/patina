@@ -17,8 +17,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::TextString;
-use super::{BiosSubType, DevicePathType};
-use crate::{device_path_node, uefi::device_path::encoding::AsciiNul};
+use super::{BiosSubType, DevicePathType, device_path_node};
+use crate::uefi::device_path::encoding::AsciiNul;
 use alloc::{
     format,
     string::{String, ToString},

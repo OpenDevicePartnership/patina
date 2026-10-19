@@ -15,8 +15,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, EndSubType};
-use crate::device_path_node;
+use super::{DevicePathType, EndSubType, device_path_node};
 use core::fmt;
 use scroll::ctx::{TryFromCtx, TryIntoCtx};
 

@@ -78,7 +78,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 /// Trait that every device path node must implement.
 ///
-/// Nodes defined with [`device_path_node!`](crate::device_path_node) get this impl
+/// Nodes defined with `device_path_node!` get this impl
 /// from the macro, which can override [`measure_size`](Self::measure_size) and
 /// [`validate`](Self::validate) in its `@[DevicePathNode(...)]` attribute.
 pub trait DevicePathNode: Debug + Display {
@@ -725,13 +725,7 @@ impl fmt::Display for TextString<'_> {
 ///
 /// # Example
 ///
-/// ```
-/// use patina::{
-///     device_path_node,
-///     uefi::device_path::node::{DevicePathNode, DevicePathType, HardwareSubType},
-/// };
-/// use scroll::{Pread, Pwrite};
-///
+/// ```ignore
 /// device_path_node! {
 ///     /// Foo device path node.
 ///     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor, validate = Self::validate_fields)]
@@ -758,7 +752,6 @@ impl fmt::Display for TextString<'_> {
 /// assert_eq!(Foo { bar: 1, baz: 2 }.measure_size(), 3);
 /// assert_eq!(Foo { bar: 1, baz: 0 }.validate(), Err("baz must not be zero"));
 /// ```
-#[macro_export]
 macro_rules! device_path_node {
     // Entry point of the macro.
     //
@@ -959,6 +952,8 @@ macro_rules! device_path_node {
         compile_error!(concat!("`", stringify!($other), "` cannot be derived by device_path_node!"));
     };
 }
+
+pub(crate) use device_path_node;
 
 /// Define an enum for a node field whose values the specification lists, every other value
 /// being reserved.

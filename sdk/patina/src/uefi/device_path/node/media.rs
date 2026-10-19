@@ -16,12 +16,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use super::TextString;
-use super::{DevicePathType, MediaSubType, device_path_enum};
+use super::{DevicePathType, MediaSubType, device_path_enum, device_path_node};
 use crate::BinaryGuid;
-use crate::{
-    device_path_node,
-    uefi::device_path::encoding::{Char16Nul, Vector},
-};
+use crate::uefi::device_path::encoding::{Char16Nul, Vector};
 use alloc::{string::String, vec::Vec};
 use core::fmt;
 use scroll::{Pread, Pwrite};

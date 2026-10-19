@@ -16,9 +16,9 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use super::{DevicePathType, HardwareSubType};
+use super::{DevicePathType, HardwareSubType, device_path_node};
+use crate::uefi::device_path::encoding::Vector;
 use crate::{BinaryGuid, standard::efi};
-use crate::{device_path_node, uefi::device_path::encoding::Vector};
 use alloc::vec::Vec;
 use core::fmt;
 use scroll::{
