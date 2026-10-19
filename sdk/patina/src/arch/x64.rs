@@ -18,6 +18,16 @@ impl super::ArchSupport for X64 {}
 /// Cache writeback granule for `x86_64`, using 4 bytes following precedence set by Tianocore.
 const CACHE_WRITEBACK_GRANULE: u32 = 4;
 
+/// Returns the active virtual address width selected by `CR4.LA57`.
+pub fn virtual_address_bits() -> u32 {
+    let cr4: u64;
+    // SAFETY: Reading CR4 has no unsafe side effects
+    unsafe {
+        asm!("mov {}, cr4", out(reg) cr4, options(nostack, nomem, preserves_flags));
+    }
+    if cr4 & (1 << 12) != 0 { 57 } else { 48 }
+}
+
 /// Writes a byte to an x64 I/O port.
 ///
 /// # Safety

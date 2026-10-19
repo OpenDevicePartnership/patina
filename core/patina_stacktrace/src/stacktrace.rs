@@ -1,4 +1,7 @@
-use crate::{error::StResult, pe::PE};
+use crate::{
+    error::{Error, StResult},
+    pe::PE,
+};
 use core::fmt::{self, Display, Formatter};
 
 cfg_if::cfg_if! {
@@ -79,6 +82,11 @@ impl StackTrace {
         loop {
             let no_name = "<no module>";
 
+            if stack_frame.end_of_stack() {
+                log::warn!("Finished dumping stack trace");
+                break;
+            }
+
             // SAFETY: The caller of `dump_with` supplies a valid PC captured from
             // a live stack frame. We rely on that guarantee to probe memory for the
             // surrounding PE image without triggering undefined behavior.
@@ -87,7 +95,14 @@ impl StackTrace {
 
             let runtime_function = RuntimeFunction::find_function(&image, &mut stack_frame)?;
             let unwind_info = runtime_function.get_unwind_info()?;
-            let prev_stack_frame = unwind_info.get_previous_stack_frame(&stack_frame)?;
+            let prev_stack_frame = match unwind_info.get_previous_stack_frame(&stack_frame) {
+                Ok(previous) => previous,
+                Err(Error::InvalidReturnAddress { pc }) => {
+                    log::warn!("Stopping stack trace at {stack_frame}: invalid return address {pc:#018X}");
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
 
             let pc_rva = stack_frame.pc - image.base_address;
             let image_name = image.image_name.unwrap_or(no_name);
@@ -256,6 +271,19 @@ impl StackTrace {
                 const MAX_FRAME_COUNT: usize = 20;
                 loop {
                     let no_name = "<no module>";
+
+                    if pc == 0 || fp == 0 {
+                        log::warn!("Finished dumping stack trace");
+                        break;
+                    }
+                    if !crate::aarch64::is_valid_address(pc)
+                        || !crate::aarch64::is_valid_address(fp)
+                        || pc & 3 != 0
+                        || fp & 0xf != 0
+                    {
+                        log::warn!("Stopping stack trace: invalid PC {pc:#018X} or FP {fp:#018X}");
+                        break;
+                    }
 
                     // SAFETY: The caller of `dump_with_fp_chain` supplies a
                     // valid PC captured from a live stack frame. We rely on
