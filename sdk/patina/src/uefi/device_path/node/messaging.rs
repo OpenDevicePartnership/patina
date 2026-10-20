@@ -3237,7 +3237,7 @@ mod tests {
             r"Fibre(0x1122334455667788,0x10)"
         );
         check_text!(
-            r"FibreEx(0102030405060708,1112131415161718)",
+            @node FiberChannelEx { reserved: 0, wwn: [1, 2, 3, 4, 5, 6, 7, 8], lun: [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18] },
             r"FibreEx(0x0102030405060708,0x1112131415161718)",
             r"FibreEx(0x0102030405060708,0x1112131415161718)",
             r"FibreEx(0x0102030405060708,0x1112131415161718)"
@@ -3309,13 +3309,30 @@ mod tests {
             r"IPv6(2001:db8::1,UDP,Static,::,0x0,::)"
         );
         check_text!(
-            r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080)",
+            @node IpV4 {
+                local_ip: Ipv4Addr::new(192, 168, 0, 2),
+                remote_ip: Ipv4Addr::new(192, 168, 0, 1),
+                local_port: 8080,
+                remote_port: 80,
+                protocol: IpProtocol::TCP,
+                static_ip: true,
+                network: Some(IpV4Network { gateway: Ipv4Addr::UNSPECIFIED, subnet_mask: Ipv4Addr::UNSPECIFIED }),
+            },
             r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)",
             r"IPv4(192.168.0.1:80)",
             r"IPv4(192.168.0.1:80,TCP,Static,192.168.0.2:8080,0.0.0.0,0.0.0.0)"
         );
         check_text!(
-            r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,64,2001:db8::ffff)",
+            @node IpV6 {
+                local_ip_address: "2001:db8::2".parse().unwrap(),
+                remote_ip_address: "2001:db8::1".parse().unwrap(),
+                local_port: 8443,
+                remote_port: 443,
+                protocol: IpProtocol::TCP,
+                ip_address_origin: Ipv6AddressOrigin::StatefulAutoConfigure,
+                prefix_length: 64,
+                gateway_ip_address: "2001:db8::ffff".parse().unwrap(),
+            },
             r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)",
             r"IPv6([2001:db8::1]:443)",
             r"IPv6([2001:db8::1]:443,TCP,StatefulAutoConfigure,[2001:db8::2]:8443,0x40,2001:db8::ffff)"
@@ -3345,26 +3362,30 @@ mod tests {
             r"iSCSI(iqn.x,1,0001020304050607,CRC32C,None,CHAP_BI,TCP)",
             r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
             r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
-            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)"
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,CRC32C,None,CHAP_BI,TCP)",
+            no_parse_back
         );
         check_text!(r"Vlan(100)", r"Vlan(100)", r"Vlan(100)", r"Vlan(100)");
         check_text!(
             r"SasEx(0102030405060708,1112131415161718,0x6,SATA,Internal,Direct)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
-            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)"
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,SATA,Internal,Direct)",
+            no_parse_back
         );
         check_text!(
             r"SasEx(0102030405060708,1112131415161718,0x6)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
-            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)"
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,NoTopology)",
+            no_parse_back
         );
         check_text!(
             r"SasEx(0102030405060708,1112131415161718,0x6,0x81)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
             r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
-            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)"
+            r"SasEx(0x0102030405060708,0x1112131415161718,0x6,0x81)",
+            no_parse_back
         );
         check_text!(
             r"SAS(0x1234,0,0,SATA,Internal,Direct,256)",
@@ -3425,7 +3446,8 @@ mod tests {
             r"iSCSI(iqn.x,1,0001020304050607,None,None,CHAP_UNI,TCP)",
             r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)",
             r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)",
-            r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)"
+            r"iSCSI(iqn.x,0x1,0x0001020304050607,None,None,CHAP_UNI,TCP)",
+            no_parse_back
         );
         check_text!(
             r"NVMEoF(nqn.x,urn:uuid:00112233-4455-6677-8899-aabbccddeeff)",

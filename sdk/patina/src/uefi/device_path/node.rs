@@ -1225,7 +1225,24 @@ pub(crate) mod tests {
 
     /// Check a node's text in the default, display-only (`-`) and no-shortcut (`#`) forms,
     /// and that the parseable forms parse back to the same bytes.
+    ///
+    /// With a trailing `no_parse_back`, or with `@node` and a node value instead of an input
+    /// text, only the three text forms are checked: `devpath!` does not parse that text yet.
     macro_rules! check_text {
+        (@node $node:expr, $text:literal, $display_only:literal, $no_shortcuts:literal) => {{
+            let mut path = $crate::uefi::device_path::DevicePathBuf::new();
+            path.append($node).expect($text);
+            assert_eq!(alloc::format!("{path}"), $text, "default text of {}", $text);
+            assert_eq!(alloc::format!("{path:-}"), $display_only, "display-only text of {}", $text);
+            assert_eq!(alloc::format!("{path:#}"), $no_shortcuts, "text without shortcuts of {}", $text);
+        }};
+        ($input:literal, $text:literal, $display_only:literal, $no_shortcuts:literal, no_parse_back) => {{
+            let bytes = $crate::devpath!($input);
+            let path = $crate::uefi::device_path::DevicePath::try_from_bytes(&bytes).expect($input);
+            assert_eq!(alloc::format!("{path}"), $text, "default text of {}", $input);
+            assert_eq!(alloc::format!("{path:-}"), $display_only, "display-only text of {}", $input);
+            assert_eq!(alloc::format!("{path:#}"), $no_shortcuts, "text without shortcuts of {}", $input);
+        }};
         ($input:literal, $text:literal, $display_only:literal, $no_shortcuts:literal) => {{
             let bytes = $crate::devpath!($input);
             let path = $crate::uefi::device_path::DevicePath::try_from_bytes(&bytes).expect($input);

@@ -668,8 +668,6 @@ fn encode_fibre_ex(node: &ParsedNode, arguments: &[ParsedArgument]) -> Result<Ve
     let wwn = args.required(0)?;
     let lun = args.required(1)?;
     let mut writer = NodeWriter::new(node, 3, 21);
-    // Reserved field (UEFI 2.10 Table 10.16).
-    writer.u32(0);
     writer.bytes(&parse_fixed_hex::<8>(&wwn.value, wwn.offset, "WWN")?);
     writer.bytes(&parse_fixed_hex::<8>(&lun.value, lun.offset, "LUN")?);
     writer.finish()
@@ -792,16 +790,15 @@ fn encode_ipv4(node: &ParsedNode, arguments: &[ParsedArgument]) -> Result<Vec<u8
         "Static" => 1,
         _ => return Err(DevicePathError::new(args.offset(2), "Type must be DHCP or Static")),
     };
-    let (local, local_port) = parse_ipv4_endpoint(args.text(3, "0.0.0.0"), args.offset(3), "LocalIp")?;
+    let local = parse_ipv4(args.text(3, "0.0.0.0"), args.offset(3), "LocalIp")?;
     let gateway = parse_ipv4(args.text(4, "0.0.0.0"), args.offset(4), "GatewayIPAddress")?;
     let subnet = parse_ipv4(args.text(5, "0.0.0.0"), args.offset(5), "SubnetMask")?;
-    let (remote, remote_port) = parse_ipv4_endpoint(&remote.value, remote.offset, "RemoteIp")?;
 
     let mut writer = NodeWriter::new(node, 3, 12);
     writer.bytes(&local);
-    writer.bytes(&remote);
-    writer.u16(local_port);
-    writer.u16(remote_port);
+    writer.bytes(&parse_ipv4(&remote.value, remote.offset, "RemoteIp")?);
+    writer.u16(0);
+    writer.u16(0);
     writer.u16(u16::from(protocol));
     writer.byte(address_type);
     writer.bytes(&gateway);
@@ -828,46 +825,24 @@ fn encode_ipv6(node: &ParsedNode, arguments: &[ParsedArgument]) -> Result<Vec<u8
             ));
         }
     };
-    let (local, local_port) = parse_ipv6_endpoint(args.text(3, "::"), args.offset(3), "LocalIp")?;
+    let local = parse_ipv6(args.text(3, "::"), args.offset(3), "LocalIp")?;
     let prefix =
         args.optional(4).map_or(Ok(0), |argument| parse_u8(&argument.value, argument.offset, "PrefixLength"))?;
+    if prefix > 128 {
+        return Err(DevicePathError::new(args.offset(4), "PrefixLength must be between 0 and 128"));
+    }
     let gateway = parse_ipv6(args.text(5, "::"), args.offset(5), "GatewayIPAddress")?;
-    let (remote, remote_port) = parse_ipv6_endpoint(&remote.value, remote.offset, "RemoteIp")?;
 
     let mut writer = NodeWriter::new(node, 3, 13);
     writer.bytes(&local);
-    writer.bytes(&remote);
-    writer.u16(local_port);
-    writer.u16(remote_port);
+    writer.bytes(&parse_ipv6(&remote.value, remote.offset, "RemoteIp")?);
+    writer.u16(0);
+    writer.u16(0);
     writer.u16(u16::from(protocol));
     writer.byte(origin);
     writer.byte(prefix);
     writer.bytes(&gateway);
     writer.finish()
-}
-
-/// Parse an IPv4 address with an optional `:port` suffix (UEFI 2.10 Table 10.66); the port defaults to zero.
-fn parse_ipv4_endpoint(value: &str, offset: usize, field: &str) -> Result<([u8; 4], u16), DevicePathError> {
-    match value.split_once(':') {
-        Some((address, port)) => Ok((parse_ipv4(address, offset, field)?, parse_u16(port, offset, field)?)),
-        None => Ok((parse_ipv4(value, offset, field)?, 0)),
-    }
-}
-
-/// Parse an IPv6 address, or `[address]:port` (UEFI 2.10 Table 10.66); the port defaults to zero.
-fn parse_ipv6_endpoint(value: &str, offset: usize, field: &str) -> Result<([u8; 16], u16), DevicePathError> {
-    let Some(bracketed) = value.strip_prefix('[') else {
-        return Ok((parse_ipv6(value, offset, field)?, 0));
-    };
-    let Some((address, rest)) = bracketed.split_once(']') else {
-        return Err(DevicePathError::new(offset, format!("{field} is missing its closing bracket")));
-    };
-    let port = match rest.strip_prefix(':') {
-        Some(port) => parse_u16(port, offset, field)?,
-        None if rest.is_empty() => 0,
-        None => return Err(DevicePathError::new(offset, format!("{field} has text after its closing bracket"))),
-    };
-    Ok((parse_ipv6(address, offset, field)?, port))
 }
 
 fn encode_uart(node: &ParsedNode, arguments: &[ParsedArgument]) -> Result<Vec<u8>, DevicePathError> {

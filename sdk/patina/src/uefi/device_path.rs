@@ -852,10 +852,9 @@ mod tests {
     // cspell:ignore iscsitarget iscsidisk
     #[test]
     fn test_device_path_text_format_flags() {
-        // The iSCSI boot device of UEFI 2.10 Section 10.3.4.20.2, with the LUN written as the
-        // 8-byte hex dump that Table 10.67 requires.
+        // The iSCSI boot device of UEFI 2.10 Section 10.3.4.20.2.
         let bytes = devpath!(
-            "PciRoot(0)/Pci(0x19,0)/MAC(001320F5FA77,0x1)/IPv4(192.168.0.100,TCP,Static,192.168.0.1)/iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)/HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)"
+            "PciRoot(0)/Pci(0x19,0)/MAC(001320F5FA77,0x1)/IPv4(192.168.0.100,TCP,Static,192.168.0.1)/iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0000000000000000,None,None,None,TCP)/HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)"
         );
         let path = DevicePath::try_from_bytes(&bytes).expect("macro output is a valid path");
         let nodes = "/Pci(0x19,0x0)/MAC(001320f5fa77,0x1)/IPv4(192.168.0.100,TCP,Static,192.168.0.1,0.0.0.0,0.0.0.0)/iSCSI(iqn.1991-05.com.microsoft:iscsitarget-iscsidisk-target,0x1,0x0000000000000000,None,None,None,TCP)/HD(1,GPT,15E39A00-1DD2-1000-8D7F-00A0C92408FC,0x22,0x2710000)";
