@@ -995,16 +995,47 @@ impl fmt::Display for Emmc {
     }
 }
 
-device_path_enum! {
-    /// Address type of a [`BluetoothLE`] node
-    /// ([UEFI 2.10 Table 10.47](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path)).
-    ///
-    /// The device path text writes it as a number, such as `BluetoothLE(001122334455,0x01)`.
-    pub enum BluetoothLeAddressType: u8 {
-        /// Public device address.
-        Public = 0,
-        /// Random device address.
-        Random = 1,
+/// Address type of a [`BluetoothLE`] node
+/// ([UEFI 2.10 Table 10.47](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#efi-bluetoothle-device-path)).
+///
+/// Table 10.47 lists [`PUBLIC`](Self::PUBLIC) and [`RANDOM`](Self::RANDOM) without reserving the
+/// other values, and the device path text writes the address type as an integer (Table 10.67), so
+/// every value is accepted. The device path text writes it as a number, such as
+/// `BluetoothLE(001122334455,0x01)`.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub struct BluetoothLeAddressType(pub u8);
+
+impl BluetoothLeAddressType {
+    /// Public device address.
+    pub const PUBLIC: Self = Self(0);
+    /// Random device address.
+    pub const RANDOM: Self = Self(1);
+}
+
+// Scroll encoding: an 8-bit value, like the `u8` it wraps.
+impl<'a> TryFromCtx<'a, Endian> for BluetoothLeAddressType {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(src: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+        let (value, size) = u8::try_from_ctx(src, ctx)?;
+        Ok((Self(value), size))
+    }
+}
+
+impl TryIntoCtx<Endian> for &BluetoothLeAddressType {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
+    }
+}
+
+impl TryIntoCtx<Endian> for BluetoothLeAddressType {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, dst: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
+        self.0.try_into_ctx(dst, ctx)
     }
 }
 
@@ -1020,7 +1051,7 @@ device_path_node! {
     /// ```
     /// use patina::uefi::device_path::node::{BluetoothLE, BluetoothLeAddressType};
     ///
-    /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: BluetoothLeAddressType::Random };
+    /// let node = BluetoothLE { address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], address_type: BluetoothLeAddressType::RANDOM };
     /// assert_eq!(node.to_string(), "BluetoothLE(001122334455,0x01)");
     /// // Display-only (`-`), without shortcuts (`#`), and both.
     /// assert_eq!(format!("{node:-}"), "BluetoothLE(001122334455,0x01)");
@@ -1045,7 +1076,7 @@ impl fmt::Display for BluetoothLE {
         for byte in &self.address {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:02x})", u8::from(self.address_type))
+        write!(f, ",0x{:02x})", self.address_type.0)
     }
 }
 
@@ -2675,7 +2706,7 @@ mod tests {
 
     fixture!(
         test_device_path_bluetooth_le,
-        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: BluetoothLeAddressType::Random },
+        BluetoothLE { address: [1, 2, 3, 4, 5, 6], address_type: BluetoothLeAddressType::RANDOM },
         [3, 30, 11, 0, 1, 2, 3, 4, 5, 6, 1]
     );
 
@@ -2772,13 +2803,11 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_bluetooth_le_address_type() {
-        for value in 0..=1 {
-            let address_type = BluetoothLeAddressType::try_from(value).unwrap();
+    fn test_device_path_bluetooth_le_address_type_accepts_any_value() {
+        // Values past the listed public and random types are not reserved, so they are accepted.
+        for value in [0, 1, 2, u8::MAX] {
+            let address_type = BluetoothLeAddressType(value);
             check_node(BluetoothLE { address: [0; 6], address_type }, &[3, 30, 11, 0, 0, 0, 0, 0, 0, 0, value]);
-        }
-        for reserved in [2, u8::MAX] {
-            check_rejected::<BluetoothLE>(&[3, 30, 11, 0, 0, 0, 0, 0, 0, 0, reserved]);
         }
     }
 

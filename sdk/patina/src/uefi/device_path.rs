@@ -154,8 +154,17 @@ impl DevicePathBuf {
         let result = node_bytes_buffer
             .pwrite_with(header, 0, scroll::LE)
             .and_then(|offset| node_bytes_buffer.pwrite_with(node, offset, scroll::LE))
-            .map(|_| ())
-            .map_err(|e| format!("Cannot encode device path node. Error: {e}"));
+            .map_err(|e| format!("Cannot encode device path node. Error: {e}"))
+            .and_then(|written| {
+                // An encoder that writes less than `measure_size` would leave zero bytes in the node.
+                if written == node_payload_size {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "device path node payload size differs from its measured size. Written = {written}, Measured = {node_payload_size}"
+                    ))
+                }
+            });
 
         if result.is_err() {
             self.buffer.truncate(start);

@@ -1298,6 +1298,49 @@ pub(crate) mod tests {
         }
     }
 
+    /// A node whose encoder writes one byte less than its measured size.
+    #[derive(Debug)]
+    struct ShortWriteNode;
+
+    impl fmt::Display for ShortWriteNode {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("ShortWriteNode")
+        }
+    }
+
+    impl DevicePathNode for ShortWriteNode {
+        fn r#type() -> u8 {
+            6
+        }
+
+        fn sub_type() -> u8 {
+            1
+        }
+
+        fn measure_size(&self) -> usize {
+            2
+        }
+
+        fn validate(&self) -> Result<(), &'static str> {
+            Ok(())
+        }
+    }
+
+    impl TryIntoCtx<scroll::Endian> for ShortWriteNode {
+        type Error = scroll::Error;
+
+        fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
+            dest.pwrite_with(0xaa_u8, 0, scroll::LE)
+        }
+    }
+
+    #[test]
+    fn test_device_path_append_rejects_payload_shorter_than_measured() {
+        let mut path = DevicePathBuf::new();
+        assert!(path.append(ShortWriteNode).is_err());
+        assert_eq!(path, DevicePathBuf::new());
+    }
+
     #[test]
     fn test_device_path_header_layout_is_c_packed() {
         assert_eq!(mem::align_of::<Header>(), 1);
