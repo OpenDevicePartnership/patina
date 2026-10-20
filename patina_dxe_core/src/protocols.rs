@@ -936,8 +936,8 @@ pub fn core_locate_device_path(
         let Some(remaining_path) = search_path.strip_prefix(handle_path) else {
             continue;
         };
-        // The nodes of the handle path, without its end node, all matched.
-        let matching_nodes = handle_path.node_count() - 1;
+        // The nodes of the search path before the remaining path all matched.
+        let matching_nodes = search_path.node_count() - remaining_path.node_count();
 
         if best_match.is_none_or(|best_match| matching_nodes > best_match) {
             best_match = Some(matching_nodes);

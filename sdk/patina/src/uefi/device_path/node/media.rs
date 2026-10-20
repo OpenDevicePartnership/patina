@@ -57,11 +57,10 @@ device_path_node! {
 }
 impl fmt::Display for CdRom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         if f.sign_minus() {
-            write!(f, "CDROM(0x{:x})", node.boot_entry)
+            write!(f, "CDROM(0x{:x})", self.boot_entry)
         } else {
-            write!(f, "CDROM(0x{:x},0x{:x},0x{:x})", node.boot_entry, node.partition_start, node.partition_size)
+            write!(f, "CDROM(0x{:x},0x{:x},0x{:x})", self.boot_entry, self.partition_start, self.partition_size)
         }
     }
 }
@@ -95,8 +94,7 @@ device_path_node! {
 }
 impl fmt::Display for MediaProtocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Media({})", node.protocol)
+        write!(f, "Media({})", self.protocol)
     }
 }
 
@@ -129,8 +127,7 @@ device_path_node! {
 }
 impl fmt::Display for PiwgFirmwareFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "FvFile({})", node.fv_file_name)
+        write!(f, "FvFile({})", self.fv_file_name)
     }
 }
 
@@ -163,8 +160,7 @@ device_path_node! {
 }
 impl fmt::Display for PiwgFirmwareVolume {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Fv({})", node.fv_name)
+        write!(f, "Fv({})", self.fv_name)
     }
 }
 
@@ -203,8 +199,7 @@ device_path_node! {
 }
 impl fmt::Display for RelativeOffsetRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Offset(0x{:x},0x{:x})", node.starting_offset, node.ending_offset)
+        write!(f, "Offset(0x{:x},0x{:x})", self.starting_offset, self.ending_offset)
     }
 }
 
@@ -267,8 +262,7 @@ impl RamDisk {
 
 impl fmt::Display for RamDisk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let name = match node.type_guid {
+        let name = match self.type_guid {
             _ if f.alternate() => None,
             Self::VIRTUAL_DISK_GUID => Some("VirtualDisk"),
             Self::VIRTUAL_CD_GUID => Some("VirtualCD"),
@@ -277,12 +271,12 @@ impl fmt::Display for RamDisk {
             _ => None,
         };
         if let Some(name) = name {
-            write!(f, "{name}(0x{:x},0x{:x},{})", node.starting_address, node.ending_address, node.instance)
+            write!(f, "{name}(0x{:x},0x{:x},{})", self.starting_address, self.ending_address, self.instance)
         } else {
             write!(
                 f,
                 "RamDisk(0x{:x},0x{:x},{},{})",
-                node.starting_address, node.ending_address, node.instance, node.type_guid
+                self.starting_address, self.ending_address, self.instance, self.type_guid
             )
         }
     }
@@ -326,11 +320,10 @@ device_path_node! {
 }
 impl fmt::Display for MediaVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "VenMedia({}", node.guid)?;
-        if !node.data.is_empty() {
+        write!(f, "VenMedia({}", self.guid)?;
+        if !self.data.is_empty() {
             f.write_str(",")?;
-            for byte in &node.data {
+            for byte in &self.data {
                 write!(f, "{byte:02x}")?;
             }
         }
@@ -401,7 +394,7 @@ device_path_node! {
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pread, Pwrite, Clone, Eq, PartialEq)]
     pub struct HardDrive {
-        /// Partition number (1-based).
+        /// Partition number, starting at 1; 0 is the whole device.
         pub partition_number: u32,
         /// Starting LBA of the partition.
         pub partition_start: u64,
@@ -417,36 +410,30 @@ device_path_node! {
 }
 impl fmt::Display for HardDrive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "HD({},", node.partition_number)?;
-        match node.signature_type {
+        write!(f, "HD({},", self.partition_number)?;
+        match self.signature_type {
             PartitionSignatureType::Mbr => write!(
                 f,
                 "MBR,0x{:08x}",
-                u32::from_le_bytes(node.partition_signature[..4].try_into().map_err(|_| fmt::Error)?)
+                u32::from_le_bytes(self.partition_signature[..4].try_into().map_err(|_| fmt::Error)?)
             )?,
             PartitionSignatureType::Guid => {
                 f.write_str("GPT,")?;
-                write!(f, "{}", BinaryGuid::from_bytes(&node.partition_signature))?;
+                write!(f, "{}", BinaryGuid::from_bytes(&self.partition_signature))?;
             }
             PartitionSignatureType::None => f.write_str("0,0")?,
         }
         // Start and Size are prohibited for partition 0, the whole device (UEFI 2.10 Table 10.67).
-        if !f.sign_minus() && node.partition_number != 0 {
-            write!(f, ",0x{:x},0x{:x}", node.partition_start, node.partition_size)?;
+        if !f.sign_minus() && self.partition_number != 0 {
+            write!(f, ",0x{:x},0x{:x}", self.partition_start, self.partition_size)?;
         }
         f.write_str(")")
     }
 }
 
 impl HardDrive {
-    /// Create a new `HardDrive` device path node for a GPT partition.
-    ///
-    /// # Arguments
-    /// * `partition_number` - 1-based partition number
-    /// * `partition_start` - Starting LBA
-    /// * `partition_size` - Size in blocks
-    /// * `partition_guid` - The unique GUID of the partition
+    /// Create a new `HardDrive` device path node for the GPT partition `partition_guid`, which
+    /// starts at LBA `partition_start` and holds `partition_size` blocks.
     pub fn new_gpt(partition_number: u32, partition_start: u64, partition_size: u64, partition_guid: [u8; 16]) -> Self {
         Self {
             partition_number,
@@ -508,8 +495,7 @@ device_path_node! {
 }
 impl fmt::Display for FilePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "{}", TextString(&node.path))
+        write!(f, "{}", TextString(&self.path))
     }
 }
 
@@ -519,17 +505,10 @@ impl FilePath {
         Self { path: path.into() }
     }
 
-    /// Calculate the CHAR16 encoded size of the path including its NUL terminator.
-    fn utf16_size(&self) -> usize {
-        // Each UCS-2 character is one CHAR16 code unit, followed by a CHAR16 terminator.
-        (self.path.chars().count() + 1) * size_of::<u16>()
-    }
-}
-
-impl FilePath {
-    /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
+    /// Size of the payload in bytes, for `DevicePathNode::measure_size`: the path in CHAR16 code
+    /// units, one per UCS-2 character, followed by a CHAR16 terminator.
     fn payload_size(&self) -> usize {
-        self.utf16_size()
+        (self.path.chars().count() + 1) * size_of::<u16>()
     }
 }
 
@@ -544,7 +523,7 @@ mod tests {
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
 
     #[test]
-    fn test_hard_drive_new_gpt() {
+    fn test_device_path_hard_drive_new_gpt() {
         let guid = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10];
         let hd = HardDrive::new_gpt(1, 2048, 1000000, guid);
         assert_eq!(hd.partition_number, 1);
@@ -556,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hard_drive_serialization_roundtrip() {
+    fn test_device_path_hard_drive_serialization_roundtrip() {
         let guid = [0xAA; 16];
         let hd = HardDrive::new_gpt(2, 4096, 500000, guid);
         // Payload is 4 + 8 + 8 + 16 + 1 + 1 = 38 bytes (no header in TryIntoCtx).
@@ -574,14 +553,14 @@ mod tests {
     }
 
     #[test]
-    fn test_hard_drive_display() {
+    fn test_device_path_hard_drive_display() {
         let hd = HardDrive::new_gpt(1, 0, 0, [0; 16]);
         let display = format!("{hd}");
         assert!(display.contains("HD"));
     }
 
     #[test]
-    fn test_hard_drive_try_from_success() {
+    fn test_device_path_hard_drive_try_from_success() {
         let guid = [0x11u8; 16];
         let hd = HardDrive::new_gpt(3, 0x1000, 0x4000, guid);
         let mut data = [0u8; 38];
@@ -599,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hard_drive_try_from_wrong_type() {
+    fn test_device_path_hard_drive_try_from_wrong_type() {
         let data = [0u8; 38];
         let bytes =
             generic_node_bytes(Header::new(DevicePathType::Messaging as u8, MediaSubType::HardDrive as u8, 42), &data);
@@ -608,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hard_drive_validate() {
+    fn test_device_path_hard_drive_validate() {
         let mbr = |partition_number, signature: [u8; 16]| HardDrive {
             partition_number,
             partition_start: 0,
@@ -650,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hard_drive_try_from_short_data() {
+    fn test_device_path_hard_drive_try_from_short_data() {
         let data = [0u8; 16]; // shorter than the 38-byte HardDrive payload
         let bytes =
             generic_node_bytes(Header::new(DevicePathType::Media as u8, MediaSubType::HardDrive as u8, 20), &data);
@@ -659,13 +638,13 @@ mod tests {
     }
 
     #[test]
-    fn test_file_path_new() {
+    fn test_device_path_file_path_new() {
         let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
         assert_eq!(fp.path, "\\EFI\\BOOT\\BOOTX64.EFI");
     }
 
     #[test]
-    fn test_file_path_serialization_roundtrip() {
+    fn test_device_path_file_path_serialization_roundtrip() {
         let fp = FilePath::new("\\test.efi");
         // UTF-16: 9 chars (\test.efi) + null = 10 * 2 = 20 bytes
         let mut buf = [0u8; 20];
@@ -677,14 +656,14 @@ mod tests {
     }
 
     #[test]
-    fn test_file_path_display() {
+    fn test_device_path_file_path_display() {
         let fp = FilePath::new("\\EFI\\BOOT\\BOOTX64.EFI");
         let display = format!("{fp}");
         assert_eq!(display, "\\EFI\\BOOT\\BOOTX64.EFI");
     }
 
     #[test]
-    fn test_file_path_utf16_encoding() {
+    fn test_device_path_file_path_utf16_encoding() {
         let fp = FilePath::new("A");
         // 'A' (0x0041) + null (0x0000) = 4 bytes
         let mut buf = [0u8; 4];

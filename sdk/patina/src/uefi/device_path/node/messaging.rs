@@ -21,15 +21,12 @@ use super::TextString;
 use super::{DevicePathType, MessagingSubType, device_path_enum, device_path_node};
 use crate::BinaryGuid;
 use crate::{
-    standard::efi::{self, protocols::usb_io},
-    uefi::{
-        boot_services::BootServices,
-        device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
-    },
+    standard::efi,
+    uefi::device_path::encoding::{Ascii, AsciiNul, EfiMacAddress, IpAddress, Utf8Nul, Vector},
 };
 use alloc::{string::String, vec::Vec};
+use core::fmt;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-use core::{fmt, mem, ptr, slice};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -90,11 +87,10 @@ device_path_node! {
 }
 impl fmt::Display for Atapi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         if f.sign_minus() {
-            write!(f, "Ata(0x{:x})", node.lun)
+            write!(f, "Ata(0x{:x})", self.lun)
         } else {
-            write!(f, "Ata({},{},0x{:x})", node.primary_secondary, node.slave_master, node.lun)
+            write!(f, "Ata({},{},0x{:x})", self.primary_secondary, self.slave_master, self.lun)
         }
     }
 }
@@ -130,8 +126,7 @@ device_path_node! {
 }
 impl fmt::Display for Scsi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Scsi(0x{:x},0x{:x})", node.pun, node.lun)
+        write!(f, "Scsi(0x{:x},0x{:x})", self.pun, self.lun)
     }
 }
 
@@ -170,8 +165,7 @@ device_path_node! {
 }
 impl fmt::Display for FiberChannel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Fibre(0x{:x},0x{:x})", node.wwn, node.lun)
+        write!(f, "Fibre(0x{:x},0x{:x})", self.wwn, self.lun)
     }
 }
 
@@ -223,13 +217,12 @@ device_path_node! {
 }
 impl fmt::Display for FiberChannelEx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("FibreEx(0x")?;
-        for byte in &node.wwn {
+        for byte in &self.wwn {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(",0x")?;
-        for byte in &node.lun {
+        for byte in &self.lun {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(")")
@@ -277,10 +270,9 @@ device_path_node! {
 }
 impl fmt::Display for Ieee1394 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         // The 1394 GUID is an 8-byte integer (UEFI 2.10 Table 10.18), so it is written as a hexadecimal
         // integer (Table 10.66) that parses back to the same value.
-        write!(f, "I1394(0x{:016x})", node.guid)
+        write!(f, "I1394(0x{:016x})", self.guid)
     }
 }
 
@@ -327,8 +319,7 @@ device_path_node! {
 }
 impl fmt::Display for Usb {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "USB(0x{:x},0x{:x})", node.parent_port_number, node.interface_number)
+        write!(f, "USB(0x{:x},0x{:x})", self.parent_port_number, self.interface_number)
     }
 }
 
@@ -361,8 +352,7 @@ device_path_node! {
 }
 impl fmt::Display for I2oRandomBlockStorageClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "I2O(0x{:x})", node.tid)
+        write!(f, "I2O(0x{:x})", self.tid)
     }
 }
 
@@ -404,13 +394,12 @@ device_path_node! {
 }
 impl fmt::Display for MacAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let length = if matches!(node.if_type, 0 | 1) { 6 } else { node.mac_address.addr.len() };
+        let length = if matches!(self.if_type, 0 | 1) { 6 } else { self.mac_address.addr.len() };
         f.write_str("MAC(")?;
-        for byte in node.mac_address.addr.get(..length).ok_or(fmt::Error)? {
+        for byte in self.mac_address.addr.get(..length).ok_or(fmt::Error)? {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:x})", node.if_type)
+        write!(f, ",0x{:x})", self.if_type)
     }
 }
 
@@ -554,22 +543,21 @@ device_path_node! {
 }
 impl fmt::Display for IpV6 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         // An address is written with its port, as `[address]:port`, only when the port is not zero.
-        match node.remote_port {
-            0 => write!(f, "IPv6({}", node.remote_ip_address)?,
-            port => write!(f, "IPv6({}", SocketAddrV6::new(node.remote_ip_address, port, 0, 0))?,
+        match self.remote_port {
+            0 => write!(f, "IPv6({}", self.remote_ip_address)?,
+            port => write!(f, "IPv6({}", SocketAddrV6::new(self.remote_ip_address, port, 0, 0))?,
         }
         if f.sign_minus() {
             return f.write_str(")");
         }
-        write!(f, ",{}", node.protocol)?;
-        let origin = node.ip_address_origin;
-        match node.local_port {
-            0 => write!(f, ",{origin},{}", node.local_ip_address)?,
-            port => write!(f, ",{origin},{}", SocketAddrV6::new(node.local_ip_address, port, 0, 0))?,
+        write!(f, ",{}", self.protocol)?;
+        let origin = self.ip_address_origin;
+        match self.local_port {
+            0 => write!(f, ",{origin},{}", self.local_ip_address)?,
+            port => write!(f, ",{origin},{}", SocketAddrV6::new(self.local_ip_address, port, 0, 0))?,
         }
-        write!(f, ",0x{:x},{})", node.prefix_length, node.gateway_ip_address)
+        write!(f, ",0x{:x},{})", self.prefix_length, self.gateway_ip_address)
     }
 }
 
@@ -602,8 +590,7 @@ device_path_node! {
 }
 impl fmt::Display for Vlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Vlan({})", node.vlan_id)
+        write!(f, "Vlan({})", self.vlan_id)
     }
 }
 
@@ -661,15 +648,14 @@ device_path_node! {
 }
 impl fmt::Display for InfiniBand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         write!(
             f,
             "Infiniband(0x{:x},{},0x{:x},0x{:x},0x{:x})",
-            node.resource_flags,
-            BinaryGuid::from_bytes(&node.port_gid),
-            node.service_id,
-            node.target_port_id,
-            node.device_id
+            self.resource_flags,
+            BinaryGuid::from_bytes(&self.port_gid),
+            self.service_id,
+            self.target_port_id,
+            self.device_id
         )
     }
 }
@@ -682,9 +668,7 @@ impl InfiniBand {
         }
         Ok(())
     }
-}
 
-impl InfiniBand {
     /// Defined resource flag bits 0 through 4; the other bits are reserved and must be zero.
     pub const RESOURCE_FLAGS_MASK: u32 = 0x1f;
 }
@@ -763,9 +747,8 @@ device_path_node! {
 }
 impl fmt::Display for Uart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         // Zero, the device default, is written as a number: the text has no keyword for it.
-        write!(f, "Uart({},{},{},{})", node.baud_rate, node.data_bits, node.parity, node.stop_bits)
+        write!(f, "Uart({},{},{},{})", self.baud_rate, self.data_bits, self.parity, self.stop_bits)
     }
 }
 
@@ -824,51 +807,17 @@ device_path_node! {
         pub relative_target_port: u16,
     }
 }
-impl fmt::Display for Sas {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        if f.alternate() {
-            // The vendor data: the reserved field, SAS address, LUN, topology, and relative target port.
-            write!(f, "VenMsg({},", Sas::GUID)?;
-            let data = node
-                .reserved
-                .to_le_bytes()
-                .into_iter()
-                .chain(node.sas_address.to_le_bytes())
-                .chain(node.lun.to_le_bytes())
-                .chain(node.device_topology.0.to_le_bytes())
-                .chain(node.relative_target_port.to_le_bytes());
-            for byte in data {
-                write!(f, "{byte:02x}")?;
-            }
-            f.write_str(")")
-        } else {
-            write!(f, "SAS(0x{:x},0x{:x},0x{:x},", node.sas_address, node.lun, node.relative_target_port)?;
-            write!(f, "{}", node.device_topology)?;
-            if node.reserved != 0 {
-                // The reserved field is the fifth argument after the topology.
-                for _ in node.device_topology.argument_count()..4 {
-                    f.write_str(",")?;
-                }
-                write!(f, ",0x{:x}", node.reserved)?;
-            }
-            f.write_str(")")
-        }
-    }
-}
-
 impl fmt::Display for SasEx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("SasEx(0x")?;
-        for byte in &node.sas_address {
+        for byte in &self.sas_address {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(",0x")?;
-        for byte in &node.lun {
+        for byte in &self.lun {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:x},{})", node.relative_target_port, node.device_topology)
+        write!(f, ",0x{:x},{})", self.relative_target_port, self.device_topology)
     }
 }
 
@@ -903,8 +852,7 @@ device_path_node! {
 }
 impl fmt::Display for Ufs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "UFS(0x{:x},0x{:x})", node.pun, node.lun)
+        write!(f, "UFS(0x{:x},0x{:x})", self.pun, self.lun)
     }
 }
 
@@ -937,8 +885,7 @@ device_path_node! {
 }
 impl fmt::Display for Sd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "SD(0x{:x})", node.slot_number)
+        write!(f, "SD(0x{:x})", self.slot_number)
     }
 }
 
@@ -971,9 +918,8 @@ device_path_node! {
 }
 impl fmt::Display for Bluetooth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("Bluetooth(")?;
-        for byte in &node.address {
+        for byte in &self.address {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(")")
@@ -1011,9 +957,8 @@ device_path_node! {
 }
 impl fmt::Display for WiFi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let len = node.ssid.iter().position(|b| *b == 0).unwrap_or(node.ssid.len());
-        write!(f, "Wi-Fi({})", TextString(&String::from_utf8_lossy(node.ssid.get(..len).ok_or(fmt::Error)?)))
+        let len = self.ssid.iter().position(|b| *b == 0).unwrap_or(self.ssid.len());
+        write!(f, "Wi-Fi({})", TextString(&String::from_utf8_lossy(self.ssid.get(..len).ok_or(fmt::Error)?)))
     }
 }
 
@@ -1046,8 +991,7 @@ device_path_node! {
 }
 impl fmt::Display for Emmc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "eMMC(0x{:x})", node.slot_number)
+        write!(f, "eMMC(0x{:x})", self.slot_number)
     }
 }
 
@@ -1097,12 +1041,11 @@ device_path_node! {
 }
 impl fmt::Display for BluetoothLE {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("BluetoothLE(")?;
-        for byte in &node.address {
+        for byte in &self.address {
             write!(f, "{byte:02x}")?;
         }
-        write!(f, ",0x{:02x})", u8::from(node.address_type))
+        write!(f, ",0x{:02x})", u8::from(self.address_type))
     }
 }
 
@@ -1136,8 +1079,7 @@ device_path_node! {
 }
 impl fmt::Display for Nvdimm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "NVDIMM({})", node.uuid)
+        write!(f, "NVDIMM({})", self.uuid)
     }
 }
 
@@ -1171,8 +1113,7 @@ device_path_node! {
 }
 impl fmt::Display for DeviceLogicalUnit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Unit(0x{:x})", node.lun)
+        write!(f, "Unit(0x{:x})", self.lun)
     }
 }
 
@@ -1182,7 +1123,7 @@ device_path_node! {
     /// Matches USB devices by vendor ID, product ID, class, subclass, and protocol. A
     /// value of `0xFFFF` or `0xFF` matches any value.
     ///
-    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#device-logical-unit>
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#usb-class-device-path>
     ///
     /// # Examples
     ///
@@ -1244,61 +1185,30 @@ impl UsbClass {
         };
         Some(name)
     }
-
-    /// Return true if the USB device matches this node; a field of all ones matches any value.
-    ///
-    /// When the device descriptor class is zero, each interface declares its own class, so the
-    /// class, subclass, and protocol come from the interface descriptor.
-    pub(crate) fn matches(&self, usb_io: &mut usb_io::Protocol) -> bool {
-        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
-        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
-        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
-        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
-            return false;
-        }
-        let (mut class, mut subclass, mut protocol) =
-            (device.device_class, device.device_sub_class, device.device_protocol);
-        if class == 0 {
-            // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
-            let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
-            // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
-            if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS {
-                return false;
-            }
-            (class, subclass, protocol) =
-                (interface.interface_class, interface.interface_sub_class, interface.interface_protocol);
-        }
-        (self.vendor_id == u16::MAX || self.vendor_id == device.id_vendor)
-            && (self.product_id == u16::MAX || self.product_id == device.id_product)
-            && (self.device_class == u8::MAX || self.device_class == class)
-            && (self.device_subclass == u8::MAX || self.device_subclass == subclass)
-            && (self.device_protocol == u8::MAX || self.device_protocol == protocol)
-    }
 }
 
 impl fmt::Display for UsbClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         if !f.alternate()
-            && let Some((name, fixed_subclass)) = node.shortcut()
+            && let Some((name, fixed_subclass)) = self.shortcut()
         {
             if fixed_subclass {
                 return write!(
                     f,
                     "{name}(0x{:x},0x{:x},0x{:x})",
-                    node.vendor_id, node.product_id, node.device_protocol
+                    self.vendor_id, self.product_id, self.device_protocol
                 );
             }
             return write!(
                 f,
                 "{name}(0x{:x},0x{:x},0x{:x},0x{:x})",
-                node.vendor_id, node.product_id, node.device_subclass, node.device_protocol
+                self.vendor_id, self.product_id, self.device_subclass, self.device_protocol
             );
         }
         write!(
             f,
             "UsbClass(0x{:x},0x{:x},0x{:x},0x{:x},0x{:x})",
-            node.vendor_id, node.product_id, node.device_class, node.device_subclass, node.device_protocol
+            self.vendor_id, self.product_id, self.device_class, self.device_subclass, self.device_protocol
         )
     }
 }
@@ -1341,9 +1251,8 @@ device_path_node! {
 }
 impl fmt::Display for MessagingVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        if !f.alternate() && node.data.is_empty() {
-            let shortcut = match node.guid {
+        if !f.alternate() && self.data.is_empty() {
+            let shortcut = match self.guid {
                 Self::PC_ANSI_GUID => Some("VenPcAnsi()"),
                 Self::VT_100_GUID => Some("VenVt100()"),
                 Self::VT_100_PLUS_GUID => Some("VenVt100Plus()"),
@@ -1355,10 +1264,10 @@ impl fmt::Display for MessagingVendor {
                 return f.write_str(shortcut);
             }
         }
-        write!(f, "VenMsg({}", node.guid)?;
-        if !node.data.is_empty() {
+        write!(f, "VenMsg({}", self.guid)?;
+        if !self.data.is_empty() {
             f.write_str(",")?;
-            for byte in &node.data {
+            for byte in &self.data {
                 write!(f, "{byte:02x}")?;
             }
         }
@@ -1514,10 +1423,9 @@ impl TryIntoCtx<Endian> for SasTopology {
 
 impl fmt::Display for UartFlowControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         // `UartFlowCtrl` takes only 0, 1, or 2 (UEFI 2.10 Table 10.67), so any other map, such as
         // both bits set, is written in the vendor form.
-        let shortcut = match node.flow_control_map {
+        let shortcut = match self.flow_control_map {
             _ if f.alternate() => None,
             0 => Some("None"),
             1 => Some("Hardware"),
@@ -1528,7 +1436,7 @@ impl fmt::Display for UartFlowControl {
             return write!(f, "UartFlowCtrl({value})");
         }
         write!(f, "VenMsg({},", UartFlowControl::GUID)?;
-        for byte in node.flow_control_map.to_le_bytes() {
+        for byte in self.flow_control_map.to_le_bytes() {
             write!(f, "{byte:02x}")?;
         }
         f.write_str(")")
@@ -1542,9 +1450,7 @@ impl UartFlowControl {
     pub const HARDWARE: u32 = 1 << 0;
     /// XON/XOFF flow control bit.
     pub const XON_XOFF: u32 = 1 << 1;
-}
 
-impl UartFlowControl {
     /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
     fn payload_size(&self) -> usize {
         size_of::<BinaryGuid>() + size_of_val(&self.flow_control_map)
@@ -1630,13 +1536,42 @@ device_path_node! {
         pub relative_target_port: u16,
     }
 }
+impl fmt::Display for Sas {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            // The vendor data: the reserved field, SAS address, LUN, topology, and relative target port.
+            write!(f, "VenMsg({},", Sas::GUID)?;
+            let data = self
+                .reserved
+                .to_le_bytes()
+                .into_iter()
+                .chain(self.sas_address.to_le_bytes())
+                .chain(self.lun.to_le_bytes())
+                .chain(self.device_topology.0.to_le_bytes())
+                .chain(self.relative_target_port.to_le_bytes());
+            for byte in data {
+                write!(f, "{byte:02x}")?;
+            }
+            f.write_str(")")
+        } else {
+            write!(f, "SAS(0x{:x},0x{:x},0x{:x},", self.sas_address, self.lun, self.relative_target_port)?;
+            write!(f, "{}", self.device_topology)?;
+            if self.reserved != 0 {
+                // The reserved field is the fifth argument after the topology.
+                for _ in self.device_topology.argument_count()..4 {
+                    f.write_str(",")?;
+                }
+                write!(f, ",0x{:x}", self.reserved)?;
+            }
+            f.write_str(")")
+        }
+    }
+}
 
 impl Sas {
     /// Vendor GUID `DEVICE_PATH_MESSAGING_SAS` that identifies this node.
     pub const GUID: BinaryGuid = BinaryGuid::from_string("D487DDB4-008B-11D9-AFDC-001083FFCA4D");
-}
 
-impl Sas {
     /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
     fn payload_size(&self) -> usize {
         size_of::<BinaryGuid>()
@@ -1735,107 +1670,10 @@ device_path_node! {
         pub serial_number: Vec<u16>,
     }
 }
-impl fmt::Display for IpV4 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        // An address is written with its port, as `address:port`, only when the port is not zero.
-        match node.remote_port {
-            0 => write!(f, "IPv4({}", node.remote_ip)?,
-            port => write!(f, "IPv4({}", SocketAddrV4::new(node.remote_ip, port))?,
-        }
-        if f.sign_minus() {
-            return f.write_str(")");
-        }
-        write!(f, ",{}", node.protocol)?;
-        f.write_str(if node.static_ip { ",Static" } else { ",DHCP" })?;
-        match node.local_port {
-            0 => write!(f, ",{}", node.local_ip)?,
-            port => write!(f, ",{}", SocketAddrV4::new(node.local_ip, port))?,
-        }
-        if let Some(network) = &node.network {
-            write!(f, ",{},{}", network.gateway, network.subnet_mask)?;
-        }
-        f.write_str(")")
-    }
-}
-
-impl UsbWwid {
-    /// Maximum number of UTF-16 code units read from a USB string descriptor, which holds at
-    /// most 126 characters.
-    const MAX_USB_STRING_LENGTH: usize = 127;
-
-    /// Return true if the USB device matches this node.
-    ///
-    /// The vendor ID, product ID, and interface number must be equal, and the device serial
-    /// number string, in one of the languages the device supports, must end with this node's
-    /// serial number.
-    pub(crate) fn matches<B: BootServices>(&self, boot_services: &B, usb_io: &mut usb_io::Protocol) -> bool {
-        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
-        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
-        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
-        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
-            return false;
-        }
-        if device.id_vendor != self.vendor_id || device.id_product != self.product_id || device.str_serial_number == 0 {
-            return false;
-        }
-        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
-        let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
-        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
-        if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS
-            || u16::from(interface.interface_number) != self.interface
-        {
-            return false;
-        }
-
-        let mut serial_suffix = self.serial_number.as_slice();
-        if let [rest @ .., 0] = serial_suffix {
-            serial_suffix = rest;
-        }
-        let mut languages: *mut u16 = ptr::null_mut();
-        let mut table_size = 0u16;
-        // SAFETY: The protocol is installed on a USB device handle, and both outputs are writable.
-        if unsafe { (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) }
-            != efi::Status::SUCCESS
-            || languages.is_null()
-        {
-            return false;
-        }
-        // SAFETY: The protocol returned a language table of `table_size` bytes, which it owns.
-        let languages = unsafe { slice::from_raw_parts(languages, usize::from(table_size) / 2) };
-        for &language in languages {
-            let mut serial: *mut u16 = ptr::null_mut();
-            // SAFETY: The protocol is installed on a USB device handle, and the output is writable.
-            if unsafe { (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial) }
-                != efi::Status::SUCCESS
-                || serial.is_null()
-            {
-                continue;
-            }
-            // SAFETY: The protocol returned a NUL-terminated string, read up to the longest USB string.
-            let length = (0..Self::MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
-            let matches = length.is_some_and(|length| {
-                // SAFETY: The first `length` code units of the string were just read.
-                let serial = unsafe { slice::from_raw_parts(serial, length) };
-                serial.ends_with(serial_suffix)
-            });
-            // SAFETY: The string was allocated from pool memory by the protocol, and is not used after this.
-            if unsafe { boot_services.free_pool(serial.cast::<u8>()) }.is_err() {
-                log::warn!("Cannot free a USB serial number string");
-            }
-            if matches {
-                return true;
-            }
-        }
-        false
-    }
-}
-
 impl fmt::Display for UsbWwid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let serial = String::from_utf16_lossy(&node.serial_number);
-        write!(f, "UsbWwid(0x{:x},0x{:x},0x{:x},\"{}\")", node.vendor_id, node.product_id, node.interface, serial)
+        let serial = String::from_utf16_lossy(&self.serial_number);
+        write!(f, "UsbWwid(0x{:x},0x{:x},0x{:x},\"{}\")", self.vendor_id, self.product_id, self.interface, serial)
     }
 }
 
@@ -1919,6 +1757,28 @@ device_path_node! {
         pub static_ip: bool,
         /// Absent only for the original 19-byte node.
         pub network: Option<IpV4Network>,
+    }
+}
+impl fmt::Display for IpV4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // An address is written with its port, as `address:port`, only when the port is not zero.
+        match self.remote_port {
+            0 => write!(f, "IPv4({}", self.remote_ip)?,
+            port => write!(f, "IPv4({}", SocketAddrV4::new(self.remote_ip, port))?,
+        }
+        if f.sign_minus() {
+            return f.write_str(")");
+        }
+        write!(f, ",{}", self.protocol)?;
+        f.write_str(if self.static_ip { ",Static" } else { ",DHCP" })?;
+        match self.local_port {
+            0 => write!(f, ",{}", self.local_ip)?,
+            port => write!(f, ",{}", SocketAddrV4::new(self.local_ip, port))?,
+        }
+        if let Some(network) = &self.network {
+            write!(f, ",{},{}", network.gateway, network.subnet_mask)?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -2045,18 +1905,17 @@ device_path_node! {
 }
 impl fmt::Display for Iscsi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let header = if node.options & (1 << 1) != 0 { "CRC32C" } else { "None" };
-        let data = if node.options & (1 << 3) != 0 { "CRC32C" } else { "None" };
-        let auth = if node.options & (1 << 11) != 0 {
+        let header = if self.options & (1 << 1) != 0 { "CRC32C" } else { "None" };
+        let data = if self.options & (1 << 3) != 0 { "CRC32C" } else { "None" };
+        let auth = if self.options & (1 << 11) != 0 {
             "None"
-        } else if node.options & (1 << 12) != 0 {
+        } else if self.options & (1 << 12) != 0 {
             "CHAP_UNI"
         } else {
             "CHAP_BI"
         };
-        write!(f, "iSCSI({},0x{:x},0x", TextString(&node.target_name), node.portal_group)?;
-        for byte in &node.lun {
+        write!(f, "iSCSI({},0x{:x},0x", TextString(&self.target_name), self.portal_group)?;
+        for byte in &self.lun {
             write!(f, "{byte:02x}")?;
         }
         write!(f, ",{header},{data},{auth},TCP)")
@@ -2119,8 +1978,7 @@ device_path_node! {
 }
 impl fmt::Display for Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Uri({})", TextString(&node.uri))
+        write!(f, "Uri({})", TextString(&self.uri))
     }
 }
 
@@ -2175,9 +2033,8 @@ device_path_node! {
 }
 impl fmt::Display for Dns {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("Dns(")?;
-        for (index, addr) in node.addresses.iter().enumerate() {
+        for (index, addr) in self.addresses.iter().enumerate() {
             if index != 0 {
                 f.write_str(",")?;
             }
@@ -2195,9 +2052,7 @@ impl Dns {
     pub fn is_ipv6(&self) -> bool {
         self.addresses.first().is_some_and(IpAddr::is_ipv6)
     }
-}
 
-impl Dns {
     /// Size of the payload in bytes, for `DevicePathNode::measure_size`.
     fn payload_size(&self) -> usize {
         1 + self.addresses.len() * Dns::ADDRESS_SIZE
@@ -2325,12 +2180,11 @@ device_path_node! {
 }
 impl fmt::Display for RestService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        match &node.service {
-            RestServiceType::Redfish => write!(f, "RestService(0x1,0x{:x})", u8::from(node.access_mode)),
-            RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", u8::from(node.access_mode)),
+        match &self.service {
+            RestServiceType::Redfish => write!(f, "RestService(0x1,0x{:x})", u8::from(self.access_mode)),
+            RestServiceType::OData => write!(f, "RestService(0x2,0x{:x})", u8::from(self.access_mode)),
             RestServiceType::Vendor { guid, data } => {
-                write!(f, "RestService(0xff,0x{:x},{}", u8::from(node.access_mode), guid)?;
+                write!(f, "RestService(0xff,0x{:x},{}", u8::from(self.access_mode), guid)?;
                 for byte in data {
                     write!(f, ",0x{byte:x}")?;
                 }
@@ -2468,25 +2322,24 @@ device_path_node! {
 }
 impl fmt::Display for NvmeOf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "NVMEoF({},", TextString(&node.subsystem_nqn))?;
-        match node.identifier_type {
+        write!(f, "NVMEoF({},", TextString(&self.subsystem_nqn))?;
+        match self.identifier_type {
             NvmeOfIdentifierType::Eui64 => {
                 f.write_str("eui.")?;
-                for byte in &node.identifier[..8] {
+                for byte in &self.identifier[..8] {
                     write!(f, "{byte:02x}")?;
                 }
             }
             NvmeOfIdentifierType::Nguid => {
                 f.write_str("nguid.")?;
-                for byte in &node.identifier {
+                for byte in &self.identifier {
                     write!(f, "{byte:02x}")?;
                 }
             }
             NvmeOfIdentifierType::Uuid => {
                 f.write_str("urn:uuid:")?;
                 // The namespace UUID is written in byte order, not in the mixed-endian GUID layout.
-                for (index, byte) in node.identifier.iter().enumerate() {
+                for (index, byte) in self.identifier.iter().enumerate() {
                     if matches!(index, 4 | 6 | 8 | 10) {
                         f.write_str("-")?;
                     }
@@ -2546,24 +2399,17 @@ device_path_node! {
 }
 impl fmt::Display for Sata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Sata(0x{:x},0x{:x},0x{:x})", node.hba_port, node.port_multiplier_port, node.lun)
+        write!(f, "Sata(0x{:x},0x{:x},0x{:x})", self.hba_port, self.port_multiplier_port, self.lun)
     }
 }
 
 impl Sata {
-    /// Create a new SATA device path node.
-    ///
-    /// # Arguments
-    /// * `hba_port` - HBA port number
-    /// * `port_multiplier_port` - Port multiplier port number (0xFFFF if not present)
-    /// * `lun` - Logical unit number
+    /// Create a new SATA device path node. `port_multiplier_port` is `0xFFFF` when the device
+    /// is connected directly to the HBA port.
     pub fn new(hba_port: u16, port_multiplier_port: u16, lun: u16) -> Self {
         Self { hba_port, port_multiplier_port, lun }
     }
-}
 
-impl Sata {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
         if self.hba_port == u16::MAX {
@@ -2608,9 +2454,8 @@ device_path_node! {
 }
 impl fmt::Display for NvmExpress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "NVMe(0x{:x},", node.namespace_id)?;
-        for (index, byte) in node.eui64.to_be_bytes().iter().enumerate() {
+        write!(f, "NVMe(0x{:x},", self.namespace_id)?;
+        for (index, byte) in self.eui64.to_be_bytes().iter().enumerate() {
             if index != 0 {
                 f.write_str("-")?;
             }
@@ -2621,17 +2466,12 @@ impl fmt::Display for NvmExpress {
 }
 
 impl NvmExpress {
-    /// Create a new `NvmExpress` device path node.
-    ///
-    /// # Arguments
-    /// * `namespace_id` - The namespace identifier (typically 1 for the first namespace)
-    /// * `eui64` - The IEEE Extended Unique Identifier (can be 0 if not specified)
+    /// Create a new `NvmExpress` device path node. `eui64` is 0 when the namespace has no
+    /// EUI-64.
     pub fn new(namespace_id: u32, eui64: u64) -> Self {
         Self { namespace_id, eui64 }
     }
-}
 
-impl NvmExpress {
     /// Check the field values, for `DevicePathNode::validate`.
     fn validate_fields(&self) -> Result<(), &'static str> {
         if matches!(self.namespace_id, 0 | u32::MAX) {
@@ -2652,7 +2492,7 @@ mod tests {
     use scroll::{Pread, Pwrite, ctx::TryFromCtx};
 
     #[test]
-    fn test_sata_new() {
+    fn test_device_path_sata_new() {
         let sata = Sata::new(1, 0xFFFF, 0);
         assert_eq!(sata.hba_port, 1);
         assert_eq!(sata.port_multiplier_port, 0xFFFF);
@@ -2660,7 +2500,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sata_serialization_roundtrip() {
+    fn test_device_path_sata_serialization_roundtrip() {
         let sata = Sata::new(2, 0, 1);
         let mut buf = [0u8; 6];
         let written = buf.pwrite_with(sata.clone(), 0, scroll::LE).unwrap();
@@ -2673,21 +2513,21 @@ mod tests {
     }
 
     #[test]
-    fn test_sata_display() {
+    fn test_device_path_sata_display() {
         let sata = Sata::new(1, 0xFFFF, 0);
         let display = format!("{sata}");
         assert!(display.contains("Sata"));
     }
 
     #[test]
-    fn test_nvme_new() {
+    fn test_device_path_nvme_new() {
         let nvme = NvmExpress::new(1, 0x123456789ABCDEF0);
         assert_eq!(nvme.namespace_id, 1);
         assert_eq!(nvme.eui64, 0x123456789ABCDEF0);
     }
 
     #[test]
-    fn test_nvme_serialization_roundtrip() {
+    fn test_device_path_nvme_serialization_roundtrip() {
         let nvme = NvmExpress::new(1, 0xDEADBEEF12345678);
         let mut buf = [0u8; 12];
         let written = buf.pwrite_with(nvme.clone(), 0, scroll::LE).unwrap();
@@ -2699,7 +2539,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nvme_display() {
+    fn test_device_path_nvme_display() {
         let nvme = NvmExpress::new(1, 0);
         let display = format!("{nvme}");
         assert_eq!(display, "NVMe(0x1,00-00-00-00-00-00-00-00)");

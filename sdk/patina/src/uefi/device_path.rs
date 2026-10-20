@@ -72,10 +72,7 @@ use alloc::{
 };
 use core::{
     borrow::Borrow,
-    clone::Clone,
-    convert::{AsRef, From},
     fmt::{self, Debug, Display},
-    iter::Iterator,
     ops::Deref,
     ptr, slice,
 };
@@ -126,7 +123,7 @@ impl DevicePathBuf {
 
         let header = node.header();
 
-        // Addind an end entire do nothing. End Entire is managed automatically.
+        // Appending an EndEntire node does nothing: the device path always ends with one.
         if header.is_type::<EndEntire>() {
             return Ok(());
         }
@@ -135,12 +132,12 @@ impl DevicePathBuf {
         let node_size = size_of::<Header>()
             .checked_add(node_payload_size)
             .and_then(|s| u16::try_from(s).ok())
-            .ok_or(format!("device path node is too large. Node size = {node_payload_size}"))?
+            .ok_or(format!("device path node is too large. Payload size = {node_payload_size}"))?
             as usize;
 
         if header.length() != node_size {
             return Err(format!(
-                "device path node header length differs from its size. Header length = {}, Node size = {node_payload_size}",
+                "device path node header length differs from its size. Header length = {}, Node size = {node_size}",
                 header.length()
             ));
         }
@@ -277,22 +274,23 @@ impl DevicePath {
     ///
     /// [UEFI Spec Documentation: 10.3.1. Generic Device Path Structures](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)
     ///
-    /// The nodes are walked up to the [`EndEntire`] node, then the device path is checked like
-    /// [`try_from_bytes`](Self::try_from_bytes) does, including each node's payload.
+    /// The nodes are walked up to the [`EndEntire`] node, checking the structure like
+    /// [`try_from_bytes`](Self::try_from_bytes) does. Node payloads are not decoded; use
+    /// [`validate`](Self::validate) for that.
     ///
     /// # Errors
     ///
-    /// Returns an error if the pointer is null, a node is shorter than its header or
-    /// malformed, or the device path is too large to address.
+    /// Returns an error if the pointer is null, a node is shorter than its header, an end node
+    /// is malformed, or the device path is too large to address.
     ///
     /// # Safety
     ///
     /// The buffer pointer must point to valid device path data that remains valid
     /// for the lifetime 'a. The device path must be properly terminated with an
     /// `EndEntire` node.
-    pub unsafe fn try_from_ptr<'a>(buffer: *const u8) -> Result<&'a DevicePath, &'static str> {
+    pub unsafe fn try_from_ptr<'a>(buffer: *const u8) -> Result<&'a DevicePath, String> {
         if buffer.is_null() {
-            return Err("Null pointer provided");
+            return Err("Null device path pointer.".into());
         }
 
         // Find the size of the device path by walking the node headers.
@@ -301,11 +299,17 @@ impl DevicePath {
             // SAFETY: The caller guarantees a valid device path up to its EndEntire node. The
             // previous nodes were not EndEntire, so a node header starts at `size`.
             let header_bytes = unsafe { slice::from_raw_parts(buffer.add(size), size_of::<Header>()) };
-            let header =
-                header_bytes.pread_with::<Header>(0, scroll::LE).map_err(|_| "Error while trying to read header.")?;
-            let length = usize::from(header.length);
+            let header = header_bytes
+                .pread_with::<Header>(0, scroll::LE)
+                .map_err(|error| format!("Cannot read a device path node header: {error}"))?;
+            let length = header.length();
             if length < size_of::<Header>() {
-                return Err("Device path node is shorter than its header.");
+                return Err(format!("Device path node at offset {size} is shorter than its header."));
+            }
+            // Check end nodes before using their length, so that a malformed end node cannot make
+            // the device path span memory past its end.
+            if !header.is_valid_end() {
+                return Err(format!("Invalid end device path node at offset {size}."));
             }
             size = size
                 .checked_add(length)
@@ -320,30 +324,27 @@ impl DevicePath {
         // SAFETY: The caller guarantees that the device path, which spans `size` bytes up to and
         // including its EndEntire node, is valid for 'a.
         let bytes = unsafe { slice::from_raw_parts(buffer, size) };
-        DevicePath::try_from_bytes(bytes).map_err(|_| "Invalid device path.")
+        DevicePath::try_from_bytes(bytes)
     }
 
     /// Borrow a complete device path from `bytes`.
     ///
     /// [UEFI Spec Documentation: 10.3.1. Generic Device Path Structures](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)
     ///
-    /// Every node must have a length of at least its header, end nodes must follow the
-    /// specification, and the last node, and only the last node, must be [`EndEntire`]. Each
-    /// node of a known type is decoded, and must have a well-formed payload that passes
-    /// [`validate`](DevicePathNode::validate); nodes of an unknown type are accepted, since
-    /// the specification lets them be skipped.
+    /// Only the structure is checked: every node must have a length of at least its header,
+    /// end nodes must follow the specification, and the last node, and only the last node, must
+    /// be [`EndEntire`]. Node payloads are not decoded, so that a device path from firmware can
+    /// be walked and compared even when it holds a node this crate would reject; use
+    /// [`validate`](Self::validate) to also check every node.
     ///
     /// # Errors
     ///
-    /// Returns an error if `bytes` is not a complete device path, or a node is malformed.
+    /// Returns an error if `bytes` is not a complete device path.
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&DevicePath, String> {
         let mut rest = bytes;
         loop {
             let (node, next) = GenericDevicePathNode::from_bytes(rest)
                 .map_err(|error| format!("Invalid device path node: {error}"))?;
-            // Decode the node as the type its header identifies, which checks its payload and the
-            // specification rules. Node types that are not known are accepted as they are.
-            <Box<dyn DevicePathNode>>::try_from(node).map_err(|error| format!("Invalid device path node: {error}"))?;
             if node.header.is_type::<EndEntire>() {
                 if !next.is_empty() {
                     return Err(format!("Device path has {} bytes after its EndEntire node.", next.len()));
@@ -355,6 +356,21 @@ impl DevicePath {
         // SAFETY: DevicePath is repr(transparent) over [u8], and the bytes were checked to be a
         // complete device path.
         Ok(unsafe { &*(ptr::from_ref::<[u8]>(bytes) as *const DevicePath) })
+    }
+
+    /// Check that every node of a known type has a well-formed payload that passes
+    /// [`validate`](DevicePathNode::validate).
+    ///
+    /// Nodes of an unknown type are accepted, since the specification lets them be skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error describing the first node that does not decode.
+    pub fn validate(&self) -> Result<(), String> {
+        for node in self.iter() {
+            <Box<dyn DevicePathNode>>::try_from(node).map_err(|error| format!("Invalid device path node: {error}"))?;
+        }
+        Ok(())
     }
 
     /// Return the size in bytes of the device path.
@@ -396,8 +412,9 @@ impl DevicePath {
 
     /// Return the rest of this device path after `prefix`.
     ///
-    /// Every node of `prefix` before its end node must be equal, byte for byte, to the node at
-    /// the same position in this device path. The result borrows this device path, starts at
+    /// Every node of `prefix` before its first end node, [`EndInstance`] or [`EndEntire`], must
+    /// be equal, byte for byte, to the node at the same position in this device path, as
+    /// [`starts_with`](Self::starts_with) checks. The result borrows this device path, starts at
     /// the first node after the matched ones, and keeps this device path's end node. This is
     /// the match that `LocateDevicePath` makes between the device path of a handle and the
     /// device path it searches for.
@@ -406,7 +423,7 @@ impl DevicePath {
     pub fn strip_prefix(&self, prefix: &DevicePath) -> Option<&DevicePath> {
         let mut offset = 0;
         for (node, prefix_node) in self.iter().zip(prefix.iter()) {
-            if prefix_node.header.is_type::<EndEntire>() {
+            if prefix_node.header.is_type::<EndEntire>() || prefix_node.header.is_type::<EndInstance>() {
                 break;
             }
             if node != prefix_node {
@@ -547,14 +564,14 @@ mod tests {
     use core::assert_eq;
 
     #[test]
-    fn test_new_device_path_buf_is_terminated() {
+    fn test_device_path_buf_new_is_terminated() {
         let device_path = DevicePathBuf::new();
         assert_eq!(device_path.buffer, EndEntire::BYTES);
         assert_eq!(DevicePathBuf::default(), device_path);
     }
 
     #[test]
-    fn test_append_inserts_before_end_entire() {
+    fn test_device_path_append_inserts_before_end_entire() {
         let mut device_path = DevicePathBuf::new();
         device_path.append(Acpi::new_pci_root(0)).unwrap();
         device_path.append(EndInstance).unwrap();
@@ -573,7 +590,7 @@ mod tests {
     /// A node whose header length differs from its size is refused (UEFI 2.10 Table 10.1), and
     /// the device path is left unchanged.
     #[test]
-    fn test_append_rejects_inconsistent_header_length() {
+    fn test_device_path_append_rejects_inconsistent_header_length() {
         use crate::uefi::device_path::node::{
             Header,
             tests::{generic_node_bytes, raw_generic_node},
@@ -604,11 +621,17 @@ mod tests {
             assert!(DevicePath::try_from_bytes(bytes).is_err(), "accepted {bytes:?}");
         }
 
-        // A PCI node with a payload one byte too short, and a SATA node with the reserved HBA port.
-        assert!(DevicePath::try_from_bytes(&[1, 1, 5, 0, 0, 0x7f, 0xff, 4, 0]).is_err());
-        assert!(DevicePath::try_from_bytes(&[3, 18, 10, 0, 0xff, 0xff, 0, 0, 0, 0, 0x7f, 0xff, 4, 0]).is_err());
+        // A PCI node with a payload one byte too short, and a SATA node with the reserved HBA port,
+        // have a valid structure but do not decode.
+        for bytes in [&[1, 1, 5, 0, 0, 0x7f, 0xff, 4, 0][..], &[3, 18, 10, 0, 0xff, 0xff, 0, 0, 0, 0, 0x7f, 0xff, 4, 0]]
+        {
+            let path = DevicePath::try_from_bytes(bytes).unwrap();
+            assert!(path.validate().is_err(), "validated {bytes:?}");
+        }
         // A node of a reserved type is not decoded.
-        assert!(DevicePath::try_from_bytes(&[9, 2, 6, 0, 0xaa, 0xbb, 0x7f, 0xff, 4, 0]).is_ok());
+        let path = DevicePath::try_from_bytes(&[9, 2, 6, 0, 0xaa, 0xbb, 0x7f, 0xff, 4, 0]).unwrap();
+        assert!(path.validate().is_ok());
+        assert!(device_path.validate().is_ok());
     }
 
     #[test]
@@ -619,16 +642,17 @@ mod tests {
             // SAFETY: The buffer is readable up to its end node.
             assert!(unsafe { DevicePath::try_from_ptr(bytes.as_ptr()) }.is_err());
         }
-        // An end node with a payload.
-        let bytes = [0x7f, 0xff, 5, 0, 0];
-        // SAFETY: The buffer holds the five bytes the end node claims.
+        // An end node with a payload is rejected before its length is used, so only its
+        // header needs to be readable.
+        let bytes = [0x7f, 0xff, 0xff, 0xff];
+        // SAFETY: The end node header is readable; its claimed length is not trusted.
         assert!(unsafe { DevicePath::try_from_ptr(bytes.as_ptr()) }.is_err());
         // SAFETY: A null pointer is rejected before any read.
         assert!(unsafe { DevicePath::try_from_ptr(ptr::null()) }.is_err());
     }
 
     #[test]
-    fn test_iter_instances_splits_on_end_instance() {
+    fn test_device_path_iter_instances_splits_on_end_instance() {
         let mut device_path = DevicePathBuf::new();
         device_path.append(Acpi::new_pci_root(0)).unwrap();
         device_path.append(EndInstance).unwrap();
@@ -653,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn test_append_node() {
+    fn test_device_path_append_node() {
         let mut device_path = DevicePathBuf::new();
         device_path.append(Acpi::new_pci_root(0)).unwrap();
 
@@ -680,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn test_append_device_path() {
+    fn test_device_path_append_device_path() {
         let mut device_path = DevicePathBuf::new();
         device_path.append(Acpi::new_pci_root(0)).unwrap();
 
@@ -697,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn test_append_device_path_instance() {
+    fn test_device_path_append_device_path_instance() {
         let mut device_path = DevicePathBuf::new();
         device_path.append(Acpi::new_pci_root(0)).unwrap();
 
@@ -730,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_buff_to_boxed_device_path() {
+    fn test_device_path_buf_to_boxed_device_path() {
         let mut device_path_buf = DevicePathBuf::new();
         device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
         device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
@@ -791,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_start_with() {
+    fn test_device_path_starts_with() {
         let mut device_path_buf = DevicePathBuf::new();
         device_path_buf.append(Acpi::new_pci_root(0)).unwrap();
         device_path_buf.append(Pci { function: 1, device: 2 }).unwrap();
@@ -829,6 +853,11 @@ mod tests {
         // The remaining path borrows the original bytes.
         let remaining = path.strip_prefix(&prefix).unwrap();
         assert_eq!(remaining.as_bytes().as_ptr(), path.as_bytes()[12..].as_ptr());
+        // Only the first instance of a multi-instance prefix is matched.
+        let mut multi_instance = prefix.clone();
+        multi_instance.append_device_path_instance(&other).unwrap();
+        assert!(path.starts_with(&multi_instance));
+        assert_eq!(path.strip_prefix(&multi_instance), Some(rest.as_ref()));
     }
 
     #[test]

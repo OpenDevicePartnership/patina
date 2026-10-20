@@ -64,11 +64,10 @@ device_path_node! {
 }
 impl fmt::Display for HardwareVendor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "VenHw({}", node.guid)?;
-        if !node.data.is_empty() {
+        write!(f, "VenHw({}", self.guid)?;
+        if !self.data.is_empty() {
             f.write_str(",")?;
-            for byte in &node.data {
+            for byte in &self.data {
                 write!(f, "{byte:02x}")?;
             }
         }
@@ -116,8 +115,7 @@ device_path_node! {
 }
 impl fmt::Display for Pci {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Pci(0x{:x},0x{:x})", node.device, node.function)
+        write!(f, "Pci(0x{:x},0x{:x})", self.device, self.function)
     }
 }
 
@@ -161,8 +159,7 @@ device_path_node! {
 }
 impl fmt::Display for PcCard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "PcCard(0x{:x})", node.function_number)
+        write!(f, "PcCard(0x{:x})", self.function_number)
     }
 }
 
@@ -201,8 +198,7 @@ device_path_node! {
 }
 impl fmt::Display for MemoryMapped {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "MemoryMapped(0x{:x},0x{:x},0x{:x})", node.memory_type, node.start_address, node.end_address)
+        write!(f, "MemoryMapped(0x{:x},0x{:x},0x{:x})", self.memory_type, self.start_address, self.end_address)
     }
 }
 
@@ -235,8 +231,7 @@ device_path_node! {
 }
 impl fmt::Display for Controller {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "Ctrl(0x{:x})", node.number)
+        write!(f, "Ctrl(0x{:x})", self.number)
     }
 }
 
@@ -322,8 +317,7 @@ device_path_node! {
 }
 impl fmt::Display for Bmc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "BMC(0x{:x},0x{:x})", node.interface_type.0, node.base_address)
+        write!(f, "BMC(0x{:x},0x{:x})", self.interface_type.0, self.base_address)
     }
 }
 
@@ -345,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_device_path_reserved_values_are_rejected_hardware() {
+    fn test_device_path_bmc_interface_type_accepts_any_value() {
         // Values past the listed ones, such as 4 for SSIF, are accepted.
         for value in [0, 1, 2, 3, 4, u8::MAX] {
             let interface_type = BmcInterfaceType(value);

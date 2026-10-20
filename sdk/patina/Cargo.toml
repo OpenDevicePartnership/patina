@@ -44,6 +44,10 @@ required-features = ["alloc"]
 name = "compile_fail_tests"
 required-features = ["alloc"]
 
+[[test]]
+name = "devpath"
+required-features = ["alloc"]
+
 [dependencies]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true, optional = true }

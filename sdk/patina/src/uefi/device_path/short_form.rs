@@ -14,7 +14,7 @@
 //!
 
 use alloc::vec::Vec;
-use core::ptr;
+use core::{mem, ptr, slice};
 
 use crate::{
     base::error::EfiError,
@@ -109,19 +109,23 @@ impl DevicePath {
         }
     }
 
-    /// Return the device path installed on `handle`, if it has a valid one.
-    fn handle_device_path<B: BootServices>(boot_services: &B, handle: efi::Handle) -> Option<&'static DevicePath> {
+    /// Return a copy of the device path installed on `handle`, if it has a valid one.
+    ///
+    /// The device path is copied because the protocol interface can be uninstalled while the
+    /// candidates are still in use.
+    fn handle_device_path<B: BootServices>(boot_services: &B, handle: efi::Handle) -> Option<DevicePathBuf> {
         // SAFETY: The handle comes from LocateHandleBuffer and the requested protocol is the device path protocol.
         let protocol =
             unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(handle) }.ok()?;
-        // SAFETY: The pointer comes from a device path protocol interface installed on the handle.
-        unsafe { DevicePath::try_from_ptr(ptr::from_ref(protocol).cast::<u8>()) }.ok()
+        // SAFETY: The pointer comes from a device path protocol interface installed on the handle, which
+        // stays installed while it is copied here.
+        unsafe { DevicePath::try_from_ptr(ptr::from_ref(protocol).cast::<u8>()) }.ok().map(DevicePathBuf::from)
     }
 
     /// Return the USB devices that have a device path, with their USB I/O protocol.
     fn usb_devices<B: BootServices>(
         boot_services: &B,
-    ) -> Result<Vec<(&'static DevicePath, &'static mut usb_io::Protocol)>, EfiError> {
+    ) -> Result<Vec<(DevicePathBuf, &'static mut usb_io::Protocol)>, EfiError> {
         let mut devices = Vec::new();
         for handle in Self::handles(boot_services, &usb_io::PROTOCOL_GUID)? {
             let Some(handle_path) = Self::handle_device_path(boot_services, handle) else {
@@ -136,11 +140,10 @@ impl DevicePath {
         Ok(devices)
     }
 
-    /// Return a device path that continues `prefix` with `tail`.
-    fn extend(prefix: &DevicePath, tail: &DevicePath) -> Result<DevicePathBuf, EfiError> {
-        let mut candidate = DevicePathBuf::from(prefix);
-        candidate.append_device_path(tail).map_err(|_| EfiError::OutOfResources)?;
-        Ok(candidate)
+    /// Return `prefix` continued with `tail`.
+    fn extend(mut prefix: DevicePathBuf, tail: &DevicePath) -> Result<DevicePathBuf, EfiError> {
+        prefix.append_device_path(tail).map_err(|_| EfiError::OutOfResources)?;
+        Ok(prefix)
     }
 }
 
@@ -185,6 +188,76 @@ impl UsbWwid {
             .map(|handle_path| DevicePath::extend(handle_path, rest))
             .collect()
     }
+
+    /// Maximum number of UTF-16 code units read from a USB string descriptor, which holds at
+    /// most 126 characters.
+    const MAX_USB_STRING_LENGTH: usize = 127;
+
+    /// Return true if the USB device matches this node.
+    ///
+    /// The vendor ID, product ID, and interface number must be equal, and the device serial
+    /// number string, in one of the languages the device supports, must end with this node's
+    /// serial number.
+    fn matches<B: BootServices>(&self, boot_services: &B, usb_io: &mut usb_io::Protocol) -> bool {
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
+            return false;
+        }
+        if device.id_vendor != self.vendor_id || device.id_product != self.product_id || device.str_serial_number == 0 {
+            return false;
+        }
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS
+            || u16::from(interface.interface_number) != self.interface
+        {
+            return false;
+        }
+
+        let mut serial_suffix = self.serial_number.as_slice();
+        if let [rest @ .., 0] = serial_suffix {
+            serial_suffix = rest;
+        }
+        let mut languages: *mut u16 = ptr::null_mut();
+        let mut table_size = 0u16;
+        // SAFETY: The protocol is installed on a USB device handle, and both outputs are writable.
+        if unsafe { (usb_io.get_supported_languages)(usb_io, &raw mut languages, &raw mut table_size) }
+            != efi::Status::SUCCESS
+            || languages.is_null()
+        {
+            return false;
+        }
+        // SAFETY: The protocol returned a language table of `table_size` bytes, which it owns.
+        let languages = unsafe { slice::from_raw_parts(languages, usize::from(table_size) / 2) };
+        for &language in languages {
+            let mut serial: *mut u16 = ptr::null_mut();
+            // SAFETY: The protocol is installed on a USB device handle, and the output is writable.
+            if unsafe { (usb_io.get_string_descriptor)(usb_io, language, device.str_serial_number, &raw mut serial) }
+                != efi::Status::SUCCESS
+                || serial.is_null()
+            {
+                continue;
+            }
+            // SAFETY: The protocol returned a NUL-terminated string, read up to the longest USB string.
+            let length = (0..Self::MAX_USB_STRING_LENGTH).find(|&index| unsafe { serial.add(index).read() } == 0);
+            let matches = length.is_some_and(|length| {
+                // SAFETY: The first `length` code units of the string were just read.
+                let serial = unsafe { slice::from_raw_parts(serial, length) };
+                serial.ends_with(serial_suffix)
+            });
+            // SAFETY: The string was allocated from pool memory by the protocol, and is not used after this.
+            if unsafe { boot_services.free_pool(serial.cast::<u8>()) }.is_err() {
+                log::warn!("Cannot free a USB serial number string");
+            }
+            if matches {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl UsbClass {
@@ -200,6 +273,36 @@ impl UsbClass {
             .filter_map(|(handle_path, usb_io)| self.matches(usb_io).then_some(handle_path))
             .map(|handle_path| DevicePath::extend(handle_path, rest))
             .collect()
+    }
+
+    /// Return true if the USB device matches this node; a field of all ones matches any value.
+    ///
+    /// When the device descriptor class is zero, each interface declares its own class, so the
+    /// class, subclass, and protocol come from the interface descriptor.
+    fn matches(&self, usb_io: &mut usb_io::Protocol) -> bool {
+        // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+        let mut device: usb_io::DeviceDescriptor = unsafe { mem::zeroed() };
+        // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+        if unsafe { (usb_io.get_device_descriptor)(usb_io, &raw mut device) } != efi::Status::SUCCESS {
+            return false;
+        }
+        let (mut class, mut subclass, mut protocol) =
+            (device.device_class, device.device_sub_class, device.device_protocol);
+        if class == 0 {
+            // SAFETY: The descriptor holds only integers, so all zero bytes is a valid value.
+            let mut interface: usb_io::InterfaceDescriptor = unsafe { mem::zeroed() };
+            // SAFETY: The protocol is installed on a USB device handle, and the descriptor is writable.
+            if unsafe { (usb_io.get_interface_descriptor)(usb_io, &raw mut interface) } != efi::Status::SUCCESS {
+                return false;
+            }
+            (class, subclass, protocol) =
+                (interface.interface_class, interface.interface_sub_class, interface.interface_protocol);
+        }
+        (self.vendor_id == u16::MAX || self.vendor_id == device.id_vendor)
+            && (self.product_id == u16::MAX || self.product_id == device.id_product)
+            && (self.device_class == u8::MAX || self.device_class == class)
+            && (self.device_subclass == u8::MAX || self.device_subclass == subclass)
+            && (self.device_protocol == u8::MAX || self.device_protocol == protocol)
     }
 }
 
@@ -794,7 +897,7 @@ mod tests {
     #[test]
     fn test_device_path_short_form_extend() {
         let prefix = disk_path([1; 16]);
-        assert_eq!(DevicePath::extend(&prefix, &boot_file()).unwrap(), join(&[&prefix, &boot_file()]));
+        assert_eq!(DevicePath::extend(prefix.clone(), &boot_file()).unwrap(), join(&[&prefix, &boot_file()]));
     }
 
     #[test]
@@ -805,7 +908,7 @@ mod tests {
         ]));
         let devices = DevicePath::usb_devices(&mock).unwrap();
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].0, &*usb_path(2));
+        assert_eq!(devices[0].0, usb_path(2));
     }
 
     /// The hard drive candidate keeps the device path up to its hard drive node only.

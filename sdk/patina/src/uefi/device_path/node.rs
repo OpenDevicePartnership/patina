@@ -184,7 +184,7 @@ impl Header {
     /// ([UEFI 2.10 Section 10.3.1](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#generic-device-path-structures)).
     /// Code locates End nodes by their type, so a malformed one would make walkers
     /// disagree on where a path or instance ends. Other node types are not checked.
-    fn is_valid_end(&self) -> bool {
+    pub(crate) fn is_valid_end(&self) -> bool {
         if self.r#type == DevicePathType::End as u8 {
             self.length() == size_of::<Self>() && EndSubType::try_from(self.sub_type).is_ok()
         } else {
@@ -196,33 +196,26 @@ impl Header {
 impl TryIntoCtx<scroll::Endian> for Header {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+    /// Write the header as it is on the wire; the endian context is ignored, since the length
+    /// is always little-endian.
+    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let length = self.length();
         if length < size_of::<Self>() {
             return Err(scroll::Error::BadInput { size: length, msg: "device path node is shorter than its header" });
         }
-        let mut offset = 0;
-        dest.gwrite_with(self.r#type, &mut offset, ctx)?;
-        dest.gwrite_with(self.sub_type, &mut offset, ctx)?;
-        dest.gwrite_with(length as u16, &mut offset, scroll::LE)?;
-        Ok(offset)
+        dest.pwrite_with(zerocopy::IntoBytes::as_bytes(&self), 0, ())
     }
 }
 
 impl TryFromCtx<'_, scroll::Endian> for Header {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
-        let mut offset = 0;
-        Ok((
-            Header {
-                r#type: from.gread_with(&mut offset, ctx)?,
-                sub_type: from.gread_with(&mut offset, ctx)?,
-                // The length is little-endian on the wire whatever the context.
-                length: little_endian::U16::new(from.gread_with::<u16>(&mut offset, scroll::LE)?),
-            },
-            offset,
-        ))
+    /// Read the header as it is on the wire; the endian context is ignored, since the length
+    /// is always little-endian.
+    fn try_from_ctx(from: &[u8], _ctx: scroll::Endian) -> Result<(Self, usize), Self::Error> {
+        let (header, _) = <Self as zerocopy::FromBytes>::read_from_prefix(from)
+            .map_err(|_| scroll::Error::TooBig { size: size_of::<Self>(), len: from.len() })?;
+        Ok((header, size_of::<Self>()))
     }
 }
 
@@ -1412,6 +1405,7 @@ pub(crate) mod tests {
         assert!(path.append(FilePath::new("bad\0path")).is_err());
         assert_eq!(path.as_bytes(), expected);
     }
+
     device_path_node! {
         @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Vendor)]
         @[DevicePathNodeDerive(Debug, Display)]

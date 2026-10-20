@@ -595,8 +595,7 @@ impl PendingFirmwareVolumeImage {
                 Err(_) => return Ok(()),
             }
         };
-        let file_path = device_path_for_fv_file(self.parent_fv_handle, self.file_name)
-            .map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
+        let file_path = device_path_for_fv_file(self.parent_fv_handle, self.file_name).map_err(EfiError::from)?;
 
         //Important Note: the present section extraction implementation does not support section extraction-based
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage

@@ -19,10 +19,7 @@
 use super::TextString;
 use super::{BiosSubType, DevicePathType, device_path_node};
 use crate::uefi::device_path::encoding::AsciiNul;
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::string::String;
 use core::fmt;
 use scroll::{Pread, Pwrite};
 
@@ -73,19 +70,19 @@ impl Bios {
 }
 impl fmt::Display for Bios {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        let ty = match node.device_type {
-            1 => "Floppy".to_string(),
-            2 => "HD".to_string(),
-            3 => "CDROM".to_string(),
-            4 => "PCMCIA".to_string(),
-            5 => "USB".to_string(),
-            6 => "Network".to_string(),
-            other => format!("0x{other:x}"),
-        };
-        write!(f, "BBS({ty},{}", TextString(&node.description_str))?;
+        f.write_str("BBS(")?;
+        match self.device_type {
+            1 => f.write_str("Floppy")?,
+            2 => f.write_str("HD")?,
+            3 => f.write_str("CDROM")?,
+            4 => f.write_str("PCMCIA")?,
+            5 => f.write_str("USB")?,
+            6 => f.write_str("Network")?,
+            other => write!(f, "0x{other:x}")?,
+        }
+        write!(f, ",{}", TextString(&self.description_str))?;
         if !f.sign_minus() {
-            write!(f, ",0x{:x}", node.status_flag)?;
+            write!(f, ",0x{:x}", self.status_flag)?;
         }
         f.write_str(")")
     }

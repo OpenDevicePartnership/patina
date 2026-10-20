@@ -60,8 +60,7 @@ device_path_node! {
 }
 impl fmt::Display for NvdimmAcpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
-        write!(f, "NvdimmAcpiAdr(0x{:x})", node.nfit_device_handle)
+        write!(f, "NvdimmAcpiAdr(0x{:x})", self.nfit_device_handle)
     }
 }
 
@@ -133,50 +132,49 @@ impl ExtendedAcpi {
 }
 impl fmt::Display for ExtendedAcpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         // `PciRoot` and `PcieRoot` are shortcuts, and only the shorter display-only form uses them
-        // for this node: their parseable form is the smaller `Acpi` node.
+        // for this self: their parseable form is the smaller `Acpi` self.
         if f.sign_minus() && !f.alternate() {
-            let root = if node.hid == Acpi::PCI_ROOT_HID
-                || (node.cid == Acpi::PCI_ROOT_HID && node.hid != Acpi::PCIE_ROOT_HID)
+            let root = if self.hid == Acpi::PCI_ROOT_HID
+                || (self.cid == Acpi::PCI_ROOT_HID && self.hid != Acpi::PCIE_ROOT_HID)
             {
                 Some("PciRoot")
-            } else if node.hid == Acpi::PCIE_ROOT_HID || node.cid == Acpi::PCIE_ROOT_HID {
+            } else if self.hid == Acpi::PCIE_ROOT_HID || self.cid == Acpi::PCIE_ROOT_HID {
                 Some("PcieRoot")
             } else {
                 None
             };
             if let Some(name) = root {
-                return if node.uid_string.is_empty() {
-                    write!(f, "{name}(0x{:x})", node.uid)
+                return if self.uid_string.is_empty() {
+                    write!(f, "{name}(0x{:x})", self.uid)
                 } else {
-                    write!(f, "{name}({})", TextString(&node.uid_string))
+                    write!(f, "{name}({})", TextString(&self.uid_string))
                 };
             }
         }
 
-        let (hid, cid) = (node.hid, node.cid);
+        let (hid, cid) = (self.hid, self.cid);
         // `AcpiExp` has no UID number, so it is used only when the UID number is zero.
-        if node.hid_string.is_empty() && node.cid_string.is_empty() && !node.uid_string.is_empty() && node.uid == 0 {
-            write!(f, "AcpiExp({hid},{cid},{})", TextString(&node.uid_string))
+        if self.hid_string.is_empty() && self.cid_string.is_empty() && !self.uid_string.is_empty() && self.uid == 0 {
+            write!(f, "AcpiExp({hid},{cid},{})", TextString(&self.uid_string))
         } else if f.sign_minus() {
             // The display-only form shows each identifier once: its string when present, else its
             // numeric value.
-            let hid: &dyn fmt::Display = if node.hid_string.is_empty() { &hid } else { &TextString(&node.hid_string) };
-            let cid: &dyn fmt::Display = if node.cid_string.is_empty() { &cid } else { &TextString(&node.cid_string) };
-            if node.uid_string.is_empty() {
-                write!(f, "AcpiEx({hid},{cid},0x{:x})", node.uid)
+            let hid: &dyn fmt::Display = if self.hid_string.is_empty() { &hid } else { &TextString(&self.hid_string) };
+            let cid: &dyn fmt::Display = if self.cid_string.is_empty() { &cid } else { &TextString(&self.cid_string) };
+            if self.uid_string.is_empty() {
+                write!(f, "AcpiEx({hid},{cid},0x{:x})", self.uid)
             } else {
-                write!(f, "AcpiEx({hid},{cid},{})", TextString(&node.uid_string))
+                write!(f, "AcpiEx({hid},{cid},{})", TextString(&self.uid_string))
             }
         } else {
             write!(
                 f,
                 "AcpiEx({hid},{cid},0x{:x},{},{},{})",
-                node.uid,
-                TextString(&node.hid_string),
-                TextString(&node.cid_string),
-                TextString(&node.uid_string)
+                self.uid,
+                TextString(&self.hid_string),
+                TextString(&self.cid_string),
+                TextString(&self.uid_string)
             )
         }
     }
@@ -233,9 +231,8 @@ impl AcpiAdr {
 
 impl fmt::Display for AcpiAdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         f.write_str("AcpiAdr(")?;
-        for (index, address) in node.addresses.iter().enumerate() {
+        for (index, address) in self.addresses.iter().enumerate() {
             if index != 0 {
                 f.write_str(",")?;
             }
@@ -413,10 +410,9 @@ impl TryIntoCtx<scroll::Endian> for EisaId {
 
 impl fmt::Display for Acpi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let node = self;
         if !f.alternate() {
             // The shortcut text names of well-known `_HID` values (UEFI 2.10 Table 10.67).
-            let shortcut = match node.hid {
+            let shortcut = match self.hid {
                 Acpi::PCI_ROOT_HID => Some("PciRoot"),
                 Acpi::PCIE_ROOT_HID => Some("PcieRoot"),
                 Acpi::FLOPPY_HID => Some("Floppy"),
@@ -426,10 +422,10 @@ impl fmt::Display for Acpi {
                 _ => None,
             };
             if let Some(name) = shortcut {
-                return write!(f, "{name}(0x{:x})", node.uid);
+                return write!(f, "{name}(0x{:x})", self.uid);
             }
         }
-        write!(f, "Acpi({},0x{:x})", node.hid, node.uid)
+        write!(f, "Acpi({},0x{:x})", self.hid, self.uid)
     }
 }
 

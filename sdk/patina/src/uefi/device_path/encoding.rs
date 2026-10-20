@@ -2,7 +2,7 @@
 //!
 //! Fixed-width integers and byte arrays use scroll's built-in conversions. These
 //! contexts cover the remaining field layouts of
-//! [UEFI 2.11 Chapter 10](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html):
+//! [UEFI 2.10 Chapter 10](https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html):
 //! strings with a specific encoding and terminator, EFI GUIDs, and payloads bounded by
 //! the node length. Apply them with `#[scroll(ctx = ...)]` on derived fields.
 //!

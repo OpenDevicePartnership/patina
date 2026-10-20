@@ -334,17 +334,15 @@ impl PrivateImageData {
         let full_path = unsafe { DevicePath::try_from_ptr(file_path.as_ptr().cast::<u8>()) }
             .map_err(|_| EfiError::InvalidParameter)?;
 
-        // If the device handle has a device path protocol, the file path is the rest of the full path after it.
+        // If the device handle has a valid device path, the file path is the rest of the full path after it.
         let mut relative_path = full_path;
         if let Ok(device_path) = PROTOCOL_DB
             .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
-        {
             // SAFETY: The device path protocol installed on the device handle points to a valid device path.
-            let device_path = unsafe { DevicePath::try_from_ptr(device_path as *const u8) }
-                .map_err(|_| EfiError::InvalidParameter)?;
-            if let Some(rest) = full_path.strip_prefix(device_path) {
-                relative_path = rest;
-            }
+            && let Ok(device_path) = unsafe { DevicePath::try_from_ptr(device_path.cast::<u8>().cast_const()) }
+            && let Some(rest) = full_path.strip_prefix(device_path)
+        {
+            relative_path = rest;
         }
 
         // The `file_path` field in the loaded image protocol is really just the filename (more specifically the remaining portion
