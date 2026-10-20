@@ -15,7 +15,7 @@
 //!
 use crate::{
     __private_api::{TestCase, TestTrigger},
-    alloc::{boxed::Box, collections::BTreeMap, fmt::Display, string::String, vec::Vec},
+    alloc::{boxed::Box, collections::BTreeMap, fmt::Display, vec::Vec},
 };
 
 use core::{ptr::NonNull, time::Duration};
@@ -166,15 +166,21 @@ impl TestRecord {
         Ok(())
     }
 
-    /// Serializes the test record to a JSON string for logging or reporting purposes.
-    fn json(&self) -> String {
-        alloc::format!(
-            r#"{{"name":"{}","pass":{},"fail":{},"err_msg":{}}}"#,
-            self.test_case.name,
-            self.pass,
-            self.fail,
-            self.err_msg.map_or(String::from("null"), |msg| alloc::format!(r#""{msg}""#))
-        )
+    /// Formats the test record as JSON for logging or reporting purposes. This must not allocate because it may be
+    /// called during `ExitBootServices`.
+    fn json(&self) -> impl Display + '_ {
+        core::fmt::from_fn(move |formatter| {
+            write!(
+                formatter,
+                r#"{{"name":"{}","pass":{},"fail":{},"err_msg":"#,
+                self.test_case.name, self.pass, self.fail
+            )?;
+            match self.err_msg {
+                Some(message) => write!(formatter, "\"{message}\""),
+                None => formatter.write_str("null"),
+            }?;
+            formatter.write_str("}")
+        })
     }
 }
 
@@ -255,19 +261,19 @@ impl Recorder {
         });
     }
 
-    /// Serializes all test records to a JSON string for logging or reporting purposes.
-    fn json(&self) -> String {
-        self.with_mut(|records| {
-            let mut json_records = String::from("[");
-            for record in records.values() {
-                json_records.push_str(&record.json());
-                json_records.push(',');
-            }
-            if !records.is_empty() {
-                json_records.pop();
-            }
-            json_records.push(']');
-            json_records
+    /// Formats all test records as JSON. This must not allocate because it can be called during `ExitBootServices`.
+    fn json(&self) -> impl Display + '_ {
+        core::fmt::from_fn(move |formatter| {
+            self.with_mut(|records| {
+                formatter.write_str("[")?;
+                for (index, record) in records.values().enumerate() {
+                    if index != 0 {
+                        formatter.write_str(",")?;
+                    }
+                    write!(formatter, "{}", record.json())?;
+                }
+                formatter.write_str("]")
+            })
         })
     }
 
@@ -319,7 +325,10 @@ mod tests {
     use std::boxed::Box;
 
     use super::*;
-    use crate::{alloc::format, component::tests::*};
+    use crate::{
+        alloc::{format, string::String},
+        component::tests::*,
+    };
 
     #[test]
     fn test_recorder_records_results() {
@@ -756,11 +765,11 @@ mod tests {
         record.fail = 1;
         record.err_msg = Some("Failure message");
 
-        let json = record.json();
+        let json = format!("{}", record.json());
         assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure message"}"#);
 
         record.err_msg = None;
-        let json = record.json();
+        let json = format!("{}", record.json());
         assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":null}"#);
     }
 
@@ -781,10 +790,50 @@ mod tests {
         recorder.update_record(tr2);
 
         // Cannot guarantee order of records, so we will just check that the JSON string contains both records in the correct format.
-        let json = recorder.json();
+        let json = format!("{}", recorder.json());
         assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure 1"}"#));
         assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"err_msg":"Failure 2"}"#));
         assert!(json.starts_with('[') && json.ends_with(']'));
         assert!(json.contains(','));
+    }
+
+    #[test]
+    fn test_recorder_json_formats_into_fixed_buffer() {
+        use core::fmt::Write;
+
+        struct FixedBuffer {
+            bytes: [u8; 512],
+            len: usize,
+        }
+
+        impl Write for FixedBuffer {
+            fn write_str(&mut self, value: &str) -> core::fmt::Result {
+                let end = self.len + value.len();
+                let destination = self.bytes.get_mut(self.len..end).ok_or(core::fmt::Error)?;
+                destination.copy_from_slice(value.as_bytes());
+                self.len = end;
+                Ok(())
+            }
+        }
+
+        let recorder = Recorder::default();
+        let mut buffer = FixedBuffer { bytes: [0; 512], len: 0 };
+        write!(buffer, "{}", recorder.json()).unwrap();
+        assert_eq!(&buffer.bytes[..buffer.len], b"[]");
+
+        let mut record = TestRecord::new(false, &TEST_CASE2, None);
+        record.pass = 2;
+        recorder.update_record(record);
+        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        record.fail = 1;
+        record.err_msg = Some("Failure");
+        recorder.update_record(record);
+
+        buffer.len = 0;
+        write!(buffer, r#"{{"patina_on_system_unit_test_results":{}}}"#, recorder.json()).unwrap();
+        assert_eq!(
+            core::str::from_utf8(&buffer.bytes[..buffer.len]).unwrap(),
+            r#"{"patina_on_system_unit_test_results":[{"name":"test","pass":2,"fail":0,"err_msg":null},{"name":"test_that_fails","pass":0,"fail":1,"err_msg":"Failure"}]}"#
+        );
     }
 }

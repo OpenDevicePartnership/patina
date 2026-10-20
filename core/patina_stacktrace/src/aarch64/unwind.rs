@@ -288,7 +288,7 @@ impl<'a> UnwindInfo<'a> {
     /// dereferences while decoding the caller state.
     pub fn get_previous_stack_frame(&self, stack_frame: &StackFrame) -> StResult<StackFrame> {
         log::debug!("    > {self}"); // debug
-        match self {
+        let previous = match self {
             UnwindInfo::PackedUnwindInfo { image_name, frame_size, cr, reg_f, reg_i, h, .. } => {
                 UnwindCode::get_previous_stack_frame_packed(*frame_size, *cr, *reg_i, *reg_f, *h, stack_frame)
                     .map_err(|err| err.with_module(*image_name))
@@ -297,7 +297,11 @@ impl<'a> UnwindInfo<'a> {
                 UnwindCode::get_previous_stack_frame_unpacked(unwind_codes, stack_frame)
                     .map_err(|err| err.with_module(*image_name))
             }
+        }?;
+        if !crate::aarch64::is_valid_address(previous.pc) || previous.pc & 3 != 0 {
+            return Err(Error::InvalidReturnAddress { pc: previous.pc });
         }
+        Ok(previous)
     }
 }
 
@@ -1144,6 +1148,31 @@ mod tests {
     }
 
     #[test]
+    fn previous_frame_validates_saved_return_address() {
+        for pc in [0, 0x1000, 0xffff_0000_0000_1000, 0x5050_4120_544f_4f42, 0x1001] {
+            let stack = [0u64, 0, 0, 0, pc, 0];
+            let frame = StackFrame { pc: 0x2000, sp: stack.as_ptr() as u64, fp: 0x1000 };
+            let info = UnwindInfo::PackedUnwindInfo {
+                image_name: None,
+                func_start_rva: 0,
+                flag: 1,
+                function_length: 4,
+                reg_f: 0,
+                reg_i: 0,
+                h: 0,
+                cr: FrameChainMode::Unchained,
+                frame_size: 32,
+            };
+            let result = info.get_previous_stack_frame(&frame);
+            if pc == 0x5050_4120_544f_4f42 || pc == 0x1001 {
+                assert!(matches!(result, Err(Error::InvalidReturnAddress { pc: invalid }) if invalid == pc));
+            } else {
+                assert_eq!(result.unwrap().pc, pc);
+            }
+        }
+    }
+
+    #[test]
     fn get_previous_stack_frame_packed_cr_two_errors() {
         let stack = [0u64; 1];
         let frame = StackFrame { sp: stack.as_ptr() as u64, pc: 0x1234, fp: 0 };
@@ -1218,7 +1247,7 @@ mod tests {
     #[test]
     fn unwind_info_packed_get_previous_stack_frame_reads_saved_lr() {
         let mut stack_words = Box::new([0u64; 8]);
-        let return_address = 0xFEED_FACE_CAFE_F00Du64;
+        let return_address = 0x0000_FACE_CAFE_F00Cu64;
         stack_words[4] = return_address;
         let stack_base = stack_words.as_ptr() as u64;
 
@@ -1247,7 +1276,7 @@ mod tests {
     fn unwind_info_unpacked_get_previous_stack_frame_reads_saved_fp_and_lr() {
         let mut stack_words = Box::new([0u64; 2]);
         let saved_fp = 0x1111_2222_3333_4444u64;
-        let return_address = 0x5555_6666_7777_8888u64;
+        let return_address = 0x0000_6666_7777_8888u64;
         stack_words[0] = saved_fp;
         stack_words[1] = return_address;
         let stack_base = stack_words.as_ptr() as u64;

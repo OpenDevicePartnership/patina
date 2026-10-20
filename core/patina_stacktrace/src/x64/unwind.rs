@@ -98,13 +98,21 @@ impl<'a> UnwindInfo<'a> {
     pub fn get_previous_stack_frame(&self, stack_frame: &StackFrame) -> StResult<StackFrame> {
         let rsp = stack_frame.sp;
         let rsp_offset = self.get_stack_pointer_offset()?;
-        let mut prev_rsp = rsp + rsp_offset as u64;
-        // SAFETY: `prev_rsp` references the caller's stack frame and the unwind
+        let return_slot = rsp
+            .checked_add(rsp_offset as u64)
+            .ok_or(Error::Malformed { module: self.image_name, reason: "Return-address slot overflow" })?;
+        let prev_rsp = return_slot
+            .checked_add(8)
+            .ok_or(Error::Malformed { module: self.image_name, reason: "Previous stack pointer overflow" })?;
+        // SAFETY: `return_slot` references the caller's stack frame and the unwind
         // metadata guarantees the return address resides at the top of that
         // frame. The pointer is 8-byte aligned, so loading a `u64` return address
         // via `read_pointer64` is well-defined.
-        let prev_rip = unsafe { read_pointer64(prev_rsp)? };
-        prev_rsp += 8; // pop the return address
+        let prev_rip = unsafe { read_pointer64(return_slot)? };
+
+        if !super::is_valid_address(prev_rip) {
+            return Err(Error::InvalidReturnAddress { pc: prev_rip });
+        }
 
         Ok(StackFrame { sp: prev_rsp, pc: prev_rip, ..*stack_frame })
     }
@@ -261,6 +269,36 @@ impl UnwindCode {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn previous_frame_rejects_noncanonical_return_address() {
+        let stack = [0x5050_4120_544f_4f42u64];
+        let info = UnwindInfo::parse(&[1, 0, 0, 0], None).unwrap();
+        let frame = StackFrame { pc: 0x1000, sp: stack.as_ptr() as u64, fp: 0 };
+        assert!(matches!(
+            info.get_previous_stack_frame(&frame),
+            Err(Error::InvalidReturnAddress { pc: 0x5050_4120_544f_4f42 })
+        ));
+    }
+
+    #[test]
+    fn previous_frame_accepts_terminal_and_canonical_return_addresses() {
+        for pc in [0, 0x1000, 0x0000_7fff_ffff_ffff, 0xffff_8000_0000_0000, u64::MAX] {
+            let stack = [pc];
+            let info = UnwindInfo::parse(&[1, 0, 0, 0], None).unwrap();
+            let frame = StackFrame { pc: 0x2000, sp: stack.as_ptr() as u64, fp: 0 };
+            assert_eq!(info.get_previous_stack_frame(&frame).unwrap().pc, pc);
+        }
+    }
+
+    #[test]
+    fn previous_frame_rejects_stack_pointer_overflow() {
+        let info = UnwindInfo::parse(&[1, 1, 1, 0, 1, 0], None).unwrap();
+        for sp in [u64::MAX, u64::MAX - 8] {
+            let frame = StackFrame { pc: 0x1000, sp, fp: 0 };
+            assert!(matches!(info.get_previous_stack_frame(&frame), Err(Error::Malformed { .. })));
+        }
+    }
 
     // Helper to build unwind-info bytes.
     fn build_unwind_bytes(
@@ -428,7 +466,7 @@ mod tests {
         assert_eq!(offset, 16);
 
         let mut stack_words = Box::new([0u64; 4]);
-        let return_address = 0x1122_3344_5566_7788u64;
+        let return_address = 0x0000_3344_5566_7788u64;
         stack_words[2] = return_address;
         let stack_base = stack_words.as_ptr() as u64;
 

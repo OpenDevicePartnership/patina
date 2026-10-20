@@ -169,9 +169,10 @@ assert_is_empty = "allow"
 redundant_field_names = "allow"
 
 [workspace.lints.rust]
-# Set by cargo-llvm-cov during coverage runs. Declared here so gating
+# `coverage` is set by cargo-llvm-cov during coverage runs. Declared here so gating
 # `coverage_attribute` behind it does not trigger unexpected_cfgs warnings.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+# `fuzzing` is set by cargo-fuzz (see the fuzz/ directory) and exposes internals to the fuzz targets.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)', 'cfg(fuzzing)'] }
 
 # Profile used to build workspace dependencies for `mdbook test`. Inherits from `dev`
 # but disables LTO so that the resulting rlibs contain machine code and can be linked

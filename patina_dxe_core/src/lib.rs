@@ -86,6 +86,8 @@ mod dxe_services;
 mod event_db;
 mod events;
 mod filesystems;
+#[cfg(fuzzing)]
+pub mod fuzz;
 mod gcd;
 mod memory_attributes_protocol;
 mod memory_bin;

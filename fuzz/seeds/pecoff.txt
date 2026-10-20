@@ -1,0 +1,6 @@
+# Seed inputs for the pecoff_* fuzz targets, used by `cargo make fuzz`.
+#
+# One directory per line, relative to the fuzz directory. libFuzzer reads every file in them as a starting input
+# and never writes to them. Starting from valid images gets the fuzzer past the signature and offset checks that
+# random bytes almost never satisfy. Files that are not PE/COFF images are rejected by the parser straight away.
+../patina_dxe_core/resources/test

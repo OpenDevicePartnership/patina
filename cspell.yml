@@ -129,6 +129,7 @@ words:
   - jhpratt
   - joshlf
   - keccak
+  - libfuzzer
   - libyaml
   - linkme
   - longjmp
@@ -183,6 +184,7 @@ words:
   - pyserial
   - pywin
   - qword
+  - rdata
   - rdmsr
   - rdram
   - rdtsc

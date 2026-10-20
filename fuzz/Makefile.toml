@@ -1,0 +1,209 @@
+# Tasks for the cargo-fuzz targets in this directory.
+#
+# The fuzz targets are a separate Cargo workspace (see Cargo.toml), so the tasks live here instead of in the
+# repository's Makefile.toml, which is synchronized from Patina DevOps. Run the tasks from this directory:
+#
+#   cargo make install-tools      # once, from the repository root: installs cargo-fuzz
+#   cd fuzz
+#   cargo make fuzz pecoff_parse  # fuzz one target for FUZZ_SECONDS
+#
+# libFuzzer needs Linux (use WSL on Windows); the tasks fail on any other operating system. See docs/src/dev/testing/fuzzing.md.
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+[config]
+default_to_workspace = false
+# cargo-make's built-in tasks (such as `build` and `test`) are not wanted here, and would clash with the task names.
+skip_core_tasks = true
+
+[env]
+# cargo-fuzz builds with -Zbuild-std and -Zsanitizer, which need a nightly compiler. RUSTC_BOOTSTRAP lets the
+# toolchain pinned in rust-toolchain.toml act as one, as the repository's .cargo/config.toml already does for the
+# workspace, so the fuzz targets are built with the same compiler as Patina.
+RUSTC_BOOTSTRAP = "1"
+
+# The repository's release profile uses fat LTO, which cannot link the sanitizer coverage instrumentation
+# (undefined `__sancov_gen_*` symbols).
+CARGO_PROFILE_RELEASE_LTO = "false"
+
+# Seconds to fuzz one target. Each `fuzz` stops after this long if it does not find a crash first.
+FUZZ_SECONDS = { value = "60", condition = { env_not_set = ["FUZZ_SECONDS"] } }
+
+# The longest input, in bytes. libFuzzer's own default (4096) is too small for a PE/COFF image, so this is larger. Raise
+# it for a target whose inputs are bigger.
+FUZZ_MAX_LEN = { value = "262144", condition = { env_not_set = ["FUZZ_MAX_LEN"] } }
+
+# Which Patina build configuration to fuzz:
+#   test     Overflow checks enabled and debug assertions disabled, like Patina's `test` profile.
+#   release  Both disabled, like Patina's `release` profile.
+# Overflow checks turn an arithmetic wrap into a panic, which a release build can hide. Debug assertions can fire on
+# input that a release build rejects with an error, so they are left off.
+FUZZ_MODE = { value = "test", condition = { env_not_set = ["FUZZ_MODE"] } }
+
+[tasks.require-linux]
+description = "Fails with an explanation unless running on Linux (use WSL on Windows). Every fuzz task depends on it."
+private = true
+script_runner = "@duckscript"
+script = '''
+target_os = get_env CARGO_MAKE_RUST_TARGET_OS
+if not eq ${target_os} linux
+    assert_fail "The fuzz tasks only run on Linux, not ${target_os}. libFuzzer is not supported here. On Windows, run them from WSL."
+end
+'''
+
+[tasks.build]
+description = """Builds the fuzz targets without running them. Arguments are forwarded to `cargo fuzz build`.
+Honors FUZZ_MODE.
+
+Example:
+    `cargo make build pecoff_parse`
+"""
+dependencies = ["require-linux"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+
+IFS=';' read -r -a args <<< "${CARGO_MAKE_TASK_ARGS:-}"
+
+mode_flag=()
+case "${FUZZ_MODE}" in
+    test) mode_flag=(-O); export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true ;;
+    release) mode_flag=(-O) ;;
+    *) echo "error: FUZZ_MODE must be 'test' or 'release', not '${FUZZ_MODE}'" >&2; exit 1 ;;
+esac
+
+# Build for the host. The prebuilt cargo-fuzz that CI installs defaults to a musl target, which cannot use sanitizers.
+target_flag=(--target "$(rustc -vV | sed -n 's/^host: //p')")
+
+cargo fuzz build ${target_flag[@]+"${target_flag[@]}"} ${mode_flag[@]+"${mode_flag[@]}"} ${args[@]+"${args[@]}"}
+'''
+
+[tasks.fuzz]
+description = """Fuzzes one target for FUZZ_SECONDS. The first argument is the target; any further arguments are passed to
+libFuzzer. A crash is saved to artifacts/<target>/ and fails the task.
+
+A target named <area>_<name> optionally uses dictionaries/<area>.dict, and the seed directories listed in
+seeds/<area>.txt (one per line, relative to this directory) as read-only starting inputs.
+
+Environment:
+    FUZZ_SECONDS  Seconds to fuzz (default 60).
+    FUZZ_MODE     `test` (default) or `release`. See above.
+    FUZZ_MAX_LEN  The longest input in bytes.
+
+Example:
+    `cargo make fuzz pecoff_load`
+    `FUZZ_SECONDS=600 FUZZ_MODE=release cargo make fuzz pecoff_parse`
+"""
+dependencies = ["require-linux"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+
+IFS=';' read -r -a args <<< "${CARGO_MAKE_TASK_ARGS:-}"
+target="${args[0]:-}"
+if [ -z "${target}" ]; then
+    echo "usage: cargo make fuzz <target> [libFuzzer arguments...]" >&2
+    echo "targets: $(cargo fuzz list | tr '\n' ' ')" >&2
+    exit 1
+fi
+area="${target%%_*}"
+
+mode_flag=()
+case "${FUZZ_MODE}" in
+    test) mode_flag=(-O); export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true ;;
+    release) mode_flag=(-O) ;;
+    *) echo "error: FUZZ_MODE must be 'test' or 'release', not '${FUZZ_MODE}'" >&2; exit 1 ;;
+esac
+
+dictionary_flag=()
+if [ -f "dictionaries/${area}.dict" ]; then
+    dictionary_flag=("-dict=dictionaries/${area}.dict")
+fi
+
+# libFuzzer writes the inputs it finds to the first corpus directory and only reads the others.
+corpus="corpus/${target}"
+mkdir -p "${corpus}"
+seed_dirs=()
+if [ -f "seeds/${area}.txt" ]; then
+    while IFS= read -r line || [ -n "${line}" ]; do
+        line="${line%$'\r'}"
+        case "${line}" in ''|'#'*) continue ;; esac
+        seed_dirs+=("${line}")
+    done < "seeds/${area}.txt"
+fi
+
+echo "Fuzzing ${target} for ${FUZZ_SECONDS} seconds (${FUZZ_MODE} build)"
+# Build for the host. The prebuilt cargo-fuzz that CI installs defaults to a musl target, which cannot use sanitizers.
+target_flag=(--target "$(rustc -vV | sed -n 's/^host: //p')")
+
+cargo fuzz run ${target_flag[@]+"${target_flag[@]}"} ${mode_flag[@]+"${mode_flag[@]}"} "${target}" "${corpus}" ${seed_dirs[@]+"${seed_dirs[@]}"} -- \
+    "-max_total_time=${FUZZ_SECONDS}" \
+    "-max_len=${FUZZ_MAX_LEN}" \
+    "-timeout=30" \
+    "-rss_limit_mb=2048" \
+    ${dictionary_flag[@]+"${dictionary_flag[@]}"} \
+    ${args[@]:1}
+'''
+
+[tasks.reproduce]
+description = """Runs one target on one saved input, such as a crash from artifacts/. Honors FUZZ_MODE: use the mode the
+crash was found in.
+
+Example:
+    `cargo make reproduce pecoff_load artifacts/pecoff_load/crash-<hash>`
+"""
+dependencies = ["require-linux"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+
+IFS=';' read -r -a args <<< "${CARGO_MAKE_TASK_ARGS:-}"
+if [ "${#args[@]}" -ne 2 ]; then
+    echo "usage: cargo make reproduce <target> <input file>" >&2
+    exit 1
+fi
+
+mode_flag=()
+case "${FUZZ_MODE}" in
+    test) mode_flag=(-O); export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true ;;
+    release) mode_flag=(-O) ;;
+    *) echo "error: FUZZ_MODE must be 'test' or 'release', not '${FUZZ_MODE}'" >&2; exit 1 ;;
+esac
+
+# RUST_BACKTRACE gives the panic's stack trace, which the sanitizer cannot symbolize for Rust panics.
+# Build for the host. The prebuilt cargo-fuzz that CI installs defaults to a musl target, which cannot use sanitizers.
+target_flag=(--target "$(rustc -vV | sed -n 's/^host: //p')")
+
+RUST_BACKTRACE=1 cargo fuzz run ${target_flag[@]+"${target_flag[@]}"} ${mode_flag[@]+"${mode_flag[@]}"} "${args[0]}" "${args[1]}"
+'''
+
+[tasks.minimize]
+description = """Minimizes the corpus of one target by removing inputs that do not add coverage. Honors FUZZ_MODE.
+
+Example:
+    `cargo make minimize pecoff_load`
+"""
+dependencies = ["require-linux"]
+script_runner = "bash"
+script = '''
+set -euo pipefail
+
+IFS=';' read -r -a args <<< "${CARGO_MAKE_TASK_ARGS:-}"
+if [ "${#args[@]}" -ne 1 ]; then
+    echo "usage: cargo make minimize <target>" >&2
+    exit 1
+fi
+
+mode_flag=()
+case "${FUZZ_MODE}" in
+    test) mode_flag=(-O); export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true ;;
+    release) mode_flag=(-O) ;;
+    *) echo "error: FUZZ_MODE must be 'test' or 'release', not '${FUZZ_MODE}'" >&2; exit 1 ;;
+esac
+
+# Build for the host. The prebuilt cargo-fuzz that CI installs defaults to a musl target, which cannot use sanitizers.
+target_flag=(--target "$(rustc -vV | sed -n 's/^host: //p')")
+
+cargo fuzz cmin ${target_flag[@]+"${target_flag[@]}"} ${mode_flag[@]+"${mode_flag[@]}"} "${args[0]}"
+'''

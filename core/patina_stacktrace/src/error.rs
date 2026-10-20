@@ -10,6 +10,11 @@ use core::fmt;
 /// The error type for stacktrace operations.
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    /// The recovered return address cannot be an instruction address on this architecture.
+    InvalidReturnAddress {
+        /// Address recovered from the stack.
+        pc: u64,
+    },
     /// Attempted to read past the end of a backing buffer while decoding structured data.
     OutOfBoundsRead {
         /// Optional module name associated with the buffer.
@@ -77,6 +82,7 @@ impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let no_module_str = "<no module>";
         match self {
+            Error::InvalidReturnAddress { pc } => write!(fmt, "Invalid return address: {pc:#018X}"),
             Error::OutOfBoundsRead { index, .. } => {
                 write!(fmt, "Attempted to read past buffer bounds at index {index}")
             }
@@ -148,7 +154,7 @@ impl Error {
             Error::UnwindCodeOutOfBounds { module, requested, available } => {
                 Error::UnwindCodeOutOfBounds { module: module.or(fallback), requested, available }
             }
-            other @ Error::ImageNotFound { .. } => other,
+            other @ (Error::ImageNotFound { .. } | Error::InvalidReturnAddress { .. }) => other,
         }
     }
 }
@@ -173,6 +179,12 @@ mod tests {
     #[test]
     fn malformed_display() {
         assert_display(Error::Malformed { module: Some("image"), reason: "bad" }, "Malformed entity: bad");
+    }
+
+    #[test]
+    fn invalid_return_address_display() {
+        let error = Error::InvalidReturnAddress { pc: 0x5050_4120_544f_4f42 }.with_module(Some("image"));
+        assert_display(error, "Invalid return address: 0x50504120544F4F42");
     }
 
     #[test]
