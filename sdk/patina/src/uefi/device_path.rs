@@ -77,11 +77,11 @@ use core::{
     ptr, slice,
 };
 
-use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
+use scroll::{Pread, Pwrite};
 
 use crate::uefi::device_path::node::{
-    DevicePathNode, EndEntire, EndInstance, FilePath, GenericDevicePathNode, HardDrive, Header, Iter, Uri, UsbClass,
-    UsbWwid,
+    DevicePathNode, EncodableNode, EndEntire, EndInstance, FilePath, GenericDevicePathNode, HardDrive, Header, Iter,
+    Uri, UsbClass, UsbWwid,
 };
 
 /// `DevicePathBuf` is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
@@ -115,10 +115,7 @@ impl DevicePathBuf {
     /// is too large for a 16-bit length, the header length differs from
     /// [`measure_size`](DevicePathNode::measure_size), allocation fails, or the payload
     /// cannot be encoded. The device path is unchanged on failure.
-    pub fn append<T>(&mut self, node: T) -> Result<(), String>
-    where
-        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
-    {
+    pub fn append(&mut self, node: impl EncodableNode) -> Result<(), String> {
         node.validate()?;
 
         let header = node.header();

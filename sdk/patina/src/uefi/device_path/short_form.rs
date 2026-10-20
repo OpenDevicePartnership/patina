@@ -362,16 +362,12 @@ mod tests {
     use super::*;
     use crate::uefi::{
         boot_services::{MockBootServices, boxed::BootServicesBox},
-        device_path::node::{Acpi, DevicePathNode, Pci, PiwgFirmwareVolume, Usb},
+        device_path::node::{Acpi, EncodableNode, Pci, PiwgFirmwareVolume, Usb},
     };
     use alloc::boxed::Box;
     use core::ffi::c_void;
-    use scroll::ctx::TryIntoCtx;
 
-    fn path<T>(nodes: impl IntoIterator<Item = T>) -> DevicePathBuf
-    where
-        T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>,
-    {
+    fn path(nodes: impl IntoIterator<Item = impl EncodableNode>) -> DevicePathBuf {
         nodes.into_iter().try_fold(DevicePathBuf::new(), |mut path, node| path.append(node).map(|()| path)).unwrap()
     }
 

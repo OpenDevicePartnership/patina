@@ -132,6 +132,17 @@ pub trait DevicePathNode: Debug + Display {
     }
 }
 
+/// A device path node that can be written with scroll, as [`DevicePathBuf::append`] needs.
+///
+/// Every type that implements [`DevicePathNode`] and scroll's `TryIntoCtx` implements it. It is a
+/// separate trait because `TryIntoCtx` requires `Sized`, which would keep `DevicePathNode` from
+/// being used as a trait object.
+///
+/// [`DevicePathBuf::append`]: super::DevicePathBuf::append
+pub trait EncodableNode: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error> {}
+
+impl<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>> EncodableNode for T {}
+
 /// Header common to every device path node (UEFI 2.10 Table 10.1).
 ///
 /// The type, the sub-type whose meaning depends on the type, and the node length.
@@ -1057,9 +1068,7 @@ pub(crate) mod tests {
     use core::{fmt, mem};
     use scroll::{Pread, Pwrite, ctx::TryIntoCtx};
 
-    pub(crate) fn encode_node<T: DevicePathNode + TryIntoCtx<scroll::Endian, Error = scroll::Error>>(
-        node: T,
-    ) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode_node<T: EncodableNode>(node: T) -> Result<Vec<u8>, String> {
         // Append the node to an empty device path, then drop the end node that follows it. An
         // end-entire node is not appended, so the path is that node alone.
         let header = node.header();
