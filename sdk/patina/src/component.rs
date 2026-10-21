@@ -333,7 +333,6 @@ mod tests {
         component6.initialize(&mut storage);
         assert!(component6.run(&mut storage).is_ok_and(|res| !res));
 
-        storage.register_hob::<TestHob>();
         assert!(storage.get_hob::<TestHob>().is_none());
 
         // Two parsers should be registered for this HOB GUID since the HOBs are two unique types

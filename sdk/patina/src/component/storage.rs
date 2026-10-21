@@ -10,6 +10,7 @@ use crate::{
     component::{
         metadata::MetaData,
         params::Param,
+        query::Query,
         tables::{Fields, Tables},
     },
     uefi::runtime_services::StandardRuntimeServices,
@@ -32,8 +33,6 @@ use super::{
 };
 
 use super::tables::{Entity, EntityError};
-
-type HobParsers = BTreeMap<BinaryGuid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
 
 /// A vector whose elements are sparsely populated.
 #[derive(Debug)]
@@ -137,6 +136,16 @@ impl DerefMut for ConfigRaw {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.1.as_mut()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HobId(pub(crate) TypeId);
+
+pub(crate) struct HobValue(pub(crate) Box<dyn Any>);
+
+pub(crate) struct HobParser {
+    guid: BinaryGuid,
+    parser: fn(&[u8], &mut Storage),
 }
 
 /// A container for deferred commands that will be executed later.
@@ -246,12 +255,6 @@ pub struct Storage {
     services: SparseVec<&'static dyn Any>,
     /// A map to convert a Service type to a concrete service index.
     service_indices: BTreeMap<TypeId, usize>,
-    /// HOB parsers for converting guided HOBs into `Hob<T>` datums.
-    hob_parsers: HobParsers,
-    /// A container for all [Hob](super::hob::Hob) datums.
-    hobs: SparseVec<Vec<Box<dyn Any>>>,
-    /// a map to convert from `TypeId` to a hob index.
-    hob_indices: BTreeMap<TypeId, usize>,
     /// Type-erased, column-oriented data used by component infrastructure.
     tables: Tables,
     // Standard Runtime Services.
@@ -276,9 +279,6 @@ impl Storage {
             config_indices: BTreeMap::new(),
             services: SparseVec::new(),
             service_indices: BTreeMap::new(),
-            hob_parsers: BTreeMap::new(),
-            hobs: SparseVec::new(),
-            hob_indices: BTreeMap::new(),
             tables: Tables::new(),
             runtime_services: StandardRuntimeServices::new_uninit(),
             image_handle: None,
@@ -444,51 +444,40 @@ impl Storage {
     }
 
     pub(crate) fn add_hob_parser<T: FromHob>(&mut self) {
-        self.hob_parsers.entry(T::HOB_GUID).or_default().insert(TypeId::of::<T>(), T::register);
-    }
-
-    /// Registers a HOB with the storage and returns its global id.
-    pub(crate) fn register_hob<T: FromHob>(&mut self) -> usize {
-        self.get_or_register_hob(TypeId::of::<T>())
-    }
-
-    /// Gets the global id of a HOB, registering it if it does not exist.
-    pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {
-        let idx = self.hob_indices.len();
-        let idx = self.hob_indices.entry(id).or_insert(idx);
-        if self.hobs.get(*idx).is_none() {
-            self.hobs.insert(*idx, Vec::new());
+        let guid = T::HOB_GUID;
+        let id = TypeId::of::<T>();
+        if Query::<(&HobId, &HobParser)>::new()
+            .query(self)
+            .any(|(hob_id, parser)| hob_id.0 == id && parser.guid == guid)
+        {
+            return;
         }
-        *idx
+        self.tables.insert_new((HobId(id), HobParser { guid, parser: T::register }));
     }
 
-    /// Adds a HOB datum to the storage, overwriting an existing value if it exists.
+    /// Adds a HOB datum to the storage.
     pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {
-        let id = self.register_hob::<H>(); // This creates the index if it does not exist.
-        self.hobs.get_mut(id).expect("Hob Index should always exist.").push(Box::new(hob));
+        self.add_hob_erased(TypeId::of::<H>(), Box::new(hob));
     }
 
-    /// Retrieves the underlying HOB datum from the storage.
-    pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {
-        self.hobs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{id}] it should always exist."))
+    fn add_hob_erased(&mut self, id: TypeId, hob: Box<dyn Any>) {
+        self.tables.insert_new((HobId(id), HobValue(hob)));
     }
 
     /// Attempts to retrieve a HOB datum from the storage.
     pub fn get_hob<T: FromHob>(&self) -> Option<Hob<'_, T>> {
-        let id = self.hob_indices.get(&TypeId::of::<T>())?;
-        self.hobs.get(*id).and_then(|hob| {
-            if hob.is_empty() {
-                return None;
-            }
-            Some(Hob::from(hob.as_slice()))
-        })
+        let id = TypeId::of::<T>();
+        let hob: Hob<'_, T> = Hob::from((self, id, Query::<(&'static HobId, &'static HobValue)>::new()));
+        hob.iter().next()?;
+        Some(hob)
     }
 
     /// Attempts to retrieve a HOB parser from the storage.
     pub fn get_hob_parsers(&self, guid: &BinaryGuid) -> Vec<fn(&[u8], &mut Storage)> {
-        self.hob_parsers.get(guid).map(|type_map| type_map.values().copied().collect()).unwrap_or_default()
+        Query::<&HobParser>::new()
+            .query(self)
+            .filter_map(|parser| (parser.guid == *guid).then_some(parser.parser))
+            .collect()
     }
 }
 
@@ -749,7 +738,6 @@ mod tests {
 
         let mut storage = Storage::new();
 
-        storage.register_hob::<MyStruct>();
         assert!(storage.get_hob::<MyStruct>().is_none());
         assert!(storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
 
@@ -759,6 +747,19 @@ mod tests {
 
         storage.add_hob(MyStruct);
         assert_eq!(storage.get_hob::<MyStruct>().unwrap().iter().count(), 2);
+        let entities = Query::<(Entity, &HobId, &HobValue)>::new()
+            .query_mut(&mut storage)
+            .filter_map(|(entity, id, value)| {
+                if id.0 == TypeId::of::<MyStruct>() {
+                    assert!(value.0.downcast_ref::<MyStruct>().is_some());
+                    Some(entity)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entities.len(), 2);
+        assert_ne!(entities[0], entities[1]);
 
         storage.add_hob_parser::<MyStruct>();
         assert!(!storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
