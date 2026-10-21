@@ -17,7 +17,7 @@ use alloc::{
 };
 use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
 use patina::standard::efi;
-use patina::{error::EfiError, hash::Xorshift64starHasher};
+use patina::{driver, error::EfiError, hash::Xorshift64starHasher};
 
 use crate::tpl_mutex;
 
@@ -69,9 +69,8 @@ impl OpenProtocolInformation {
         controller_handle: Option<efi::Handle>,
         attributes: u32,
     ) -> Result<Self, EfiError> {
-        const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
         match attributes {
-            efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER => {
+            driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER => {
                 if agent_handle.is_none()
                     || controller_handle.is_none()
                     || handle == controller_handle.ok_or(EfiError::InvalidParameter)?
@@ -79,19 +78,17 @@ impl OpenProtocolInformation {
                     return Err(EfiError::InvalidParameter);
                 }
             }
-            efi::OPEN_PROTOCOL_BY_DRIVER | BY_DRIVER_EXCLUSIVE => {
+            driver::OPEN_PROTOCOL_BY_DRIVER | driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE => {
                 if agent_handle.is_none() || controller_handle.is_none() {
                     return Err(EfiError::InvalidParameter);
                 }
             }
-            efi::OPEN_PROTOCOL_EXCLUSIVE => {
+            driver::OPEN_PROTOCOL_EXCLUSIVE => {
                 if agent_handle.is_none() {
                     return Err(EfiError::InvalidParameter);
                 }
             }
-            efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
-            | efi::OPEN_PROTOCOL_GET_PROTOCOL
-            | efi::OPEN_PROTOCOL_TEST_PROTOCOL => (),
+            driver::OPEN_PROTOCOL_BY_HANDLE | driver::OPEN_PROTOCOL_GET | driver::OPEN_PROTOCOL_TEST => (),
             _ => return Err(EfiError::InvalidParameter),
         }
         Ok(OpenProtocolInformation { agent_handle, controller_handle, attributes, open_count: 1 })
@@ -302,7 +299,7 @@ impl ProtocolDb {
         }
 
         //Spec requires that an attempt to uninstall an installed protocol interface that is open with an attribute of
-        //efi::OPEN_PROTOCOL_BY_DRIVER should force a call to "Disconnect Controller" to attempt to release the interface
+        //driver::OPEN_PROTOCOL_BY_DRIVER should force a call to "Disconnect Controller" to attempt to release the interface
         //before uninstalling. As such, this routine simply returns ACCESS_DENIED if any agents are found active on the
         //protocol instance.
         if !instance.usage.is_empty() {
@@ -406,11 +403,12 @@ impl ProtocolDb {
             return Ok(());
         }
 
-        const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
         match attributes {
-            efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE | BY_DRIVER_EXCLUSIVE => {
-                //Note: Per UEFI spec, a request to open with efi::OPEN_PROTOCOL_EXCLUSIVE set should result in a disconnect
-                //of existing controllers that have the driver efi::OPEN_PROTOCOL_BY_DRIVER. This needs to be done in the
+            driver::OPEN_PROTOCOL_BY_DRIVER
+            | driver::OPEN_PROTOCOL_EXCLUSIVE
+            | driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE => {
+                //Note: Per UEFI spec, a request to open with OPEN_PROTOCOL_EXCLUSIVE set should result in a disconnect
+                //of existing controllers that have the driver OPEN_PROTOCOL_BY_DRIVER. This needs to be done in the
                 //caller, since this library doesn't have access to DisconnectController, and is also executing under
                 //the SpinLockedProtocolDb lock (which would cause deadlock if DisconnectController attempted to use
                 //any of the protocol services). Instead, return ACCESS_DENIED.
@@ -418,10 +416,10 @@ impl ProtocolDb {
                     return Err(EfiError::AccessDenied);
                 }
             }
-            efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER
-            | efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
-            | efi::OPEN_PROTOCOL_GET_PROTOCOL
-            | efi::OPEN_PROTOCOL_TEST_PROTOCOL => (),
+            driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER
+            | driver::OPEN_PROTOCOL_BY_HANDLE
+            | driver::OPEN_PROTOCOL_GET
+            | driver::OPEN_PROTOCOL_TEST => (),
             _ => panic!("Unsupported attributes: {attributes:#x?}"), //this should have been dealt with in ProtocolUsingAgent::new().
         }
 
@@ -429,10 +427,10 @@ impl ProtocolDb {
             return Ok(()); //don't add the new using_agent if no agent is actually specified.
         }
 
-        if (new_using_agent.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+        if (new_using_agent.attributes & driver::OPEN_PROTOCOL_BY_DRIVER) != 0 {
             instance.opened_by_driver = true;
         }
-        if (new_using_agent.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
+        if (new_using_agent.attributes & driver::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
             instance.opened_by_exclusive = true;
         }
         instance.usage.push(new_using_agent);
@@ -463,12 +461,12 @@ impl ProtocolDb {
             let usage = instance.usage.remove(idx);
             //if we are removing the usage that had this instance open by driver (there should be only one)
             //then clear the flag that the instance was opened by driver.
-            if (usage.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+            if (usage.attributes & driver::OPEN_PROTOCOL_BY_DRIVER) != 0 {
                 instance.opened_by_driver = false;
             }
             //if we are removing the usage that had this instance open exclusive (there should be only one)
             //then clear the flag that the instance was opened exclusive.
-            if (usage.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
+            if (usage.attributes & driver::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
                 instance.opened_by_exclusive = false;
             }
             status = Ok(());
@@ -571,7 +569,7 @@ impl ProtocolDb {
                 instance.usage.iter().filter_map(|open_info| {
                     //and select the ones that opened a protocol instance on the parent_handle BY_CHILD_CONTROLLER
                     //and return the controller_handles that did so (these are the child handles we're looking for).
-                    if (open_info.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0 {
+                    if (open_info.attributes & driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0 {
                         Some(
                             open_info
                                 .controller_handle
@@ -763,11 +761,11 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found.
-    /// Returns [`ALREADY_STARTED`](efi::Status::ALREADY_STARTED) if attributes is `BY_DRIVER` and there is an
+    /// Returns [`ALREADY_STARTED`](efi::Status::ALREADY_STARTED) if attributes is `driver::BY_DRIVER` and there is an
     ///     existing usage by the agent handle.
-    /// Returns [`ACCESS_DENIED`](efi::Status::ACCESS_DENIED) if attributes is `efi::OPEN_PROTOCOL_BY_DRIVER` |
-    ///     `efi::OPEN_PROTOCOL_EXCLUSIVE` | `BY_DRIVER_EXCLUSIVE` and there is an existing usage that conflicts with those
-    ///     attributes.
+    /// Returns [`ACCESS_DENIED`](efi::Status::ACCESS_DENIED) if attributes is `driver::OPEN_PROTOCOL_BY_DRIVER` |
+    ///     `driver::OPEN_PROTOCOL_EXCLUSIVE` | `driver::BY_DRIVER_EXCLUSIVE` and there is an existing usage that
+    ///     conflicts with those attributes.
     /// Returns [`UNSUPPORTED`](efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
     pub fn add_protocol_usage(
         &self,
@@ -965,14 +963,14 @@ mod tests {
             let key = handle as usize;
 
             // fish out the created instance, and add a fake ProtocolUsingAgent to simulate the
-            // protocol being "efi::OPEN_PROTOCOL_BY_DRIVER"
+            // protocol being "driver::OPEN_PROTOCOL_BY_DRIVER"
             let mut instance =
                 SPIN_LOCKED_PROTOCOL_DB.lock().handles.get_mut(&key).unwrap().remove(&OrdGuid(guid1)).unwrap();
 
             instance.usage.push(OpenProtocolInformation {
                 agent_handle: None,
                 controller_handle: None,
-                attributes: efi::OPEN_PROTOCOL_BY_DRIVER,
+                attributes: driver::OPEN_PROTOCOL_BY_DRIVER,
                 open_count: 1,
             });
 
@@ -1125,7 +1123,7 @@ mod tests {
 
             //Adding a usage
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), efi::OPEN_PROTOCOL_GET_PROTOCOL)
+                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), driver::OPEN_PROTOCOL_GET)
                 .unwrap();
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1136,7 +1134,7 @@ mod tests {
 
             //Adding the exact same usage should not create a new usage; it should update open_count
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), efi::OPEN_PROTOCOL_GET_PROTOCOL)
+                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), driver::OPEN_PROTOCOL_GET)
                 .unwrap();
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1167,7 +1165,7 @@ mod tests {
                     guid1,
                     Some(handle2),
                     Some(handle3),
-                    efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                 )
                 .unwrap();
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1183,7 +1181,7 @@ mod tests {
                 guid1,
                 None,
                 None,
-                efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
             );
             assert_eq!(result, Err(EfiError::InvalidParameter));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1199,7 +1197,7 @@ mod tests {
                 guid1,
                 Some(handle2),
                 Some(handle1),
-                efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
             );
             assert_eq!(result, Err(EfiError::InvalidParameter));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1211,14 +1209,14 @@ mod tests {
 
             //Adding a protocol BY_CHILD_CONTROLLER should succeed even if another agent has protocol open on handle with "exclusive".
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle4, guid1, Some(handle2), Some(handle1), efi::OPEN_PROTOCOL_EXCLUSIVE)
+                .add_protocol_usage(handle4, guid1, Some(handle2), Some(handle1), driver::OPEN_PROTOCOL_EXCLUSIVE)
                 .unwrap();
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle4 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
             assert_eq!(1, protocol_user_list.len());
             assert_eq!(1, protocol_user_list[0].open_count);
-            assert_eq!(efi::OPEN_PROTOCOL_EXCLUSIVE, protocol_user_list[0].attributes);
+            assert_eq!(driver::OPEN_PROTOCOL_EXCLUSIVE, protocol_user_list[0].attributes);
             drop(protocol_db);
 
             SPIN_LOCKED_PROTOCOL_DB
@@ -1227,7 +1225,7 @@ mod tests {
                     guid1,
                     Some(handle2),
                     Some(handle3),
-                    efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                 )
                 .unwrap();
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1236,8 +1234,8 @@ mod tests {
             assert_eq!(2, protocol_user_list.len());
             assert_eq!(1, protocol_user_list[0].open_count);
             assert_eq!(1, protocol_user_list[1].open_count);
-            assert_eq!(efi::OPEN_PROTOCOL_EXCLUSIVE, protocol_user_list[0].attributes);
-            assert_eq!(efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER, protocol_user_list[1].attributes);
+            assert_eq!(driver::OPEN_PROTOCOL_EXCLUSIVE, protocol_user_list[0].attributes);
+            assert_eq!(driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER, protocol_user_list[1].attributes);
             drop(protocol_db);
         });
     }
@@ -1268,7 +1266,7 @@ mod tests {
         drop(protocol_db);
 
         //Adding the same usage with same attributes again should result in ALREADY_STARTED if it was opened BY_DRIVER.
-        if (test_attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+        if (test_attributes & driver::OPEN_PROTOCOL_BY_DRIVER) != 0 {
             let result = SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(
                 handle1,
                 guid1,
@@ -1292,7 +1290,7 @@ mod tests {
             guid1,
             Some(handle4),
             Some(handle3),
-            efi::OPEN_PROTOCOL_BY_DRIVER,
+            driver::OPEN_PROTOCOL_BY_DRIVER,
         );
         assert_eq!(result, Err(EfiError::AccessDenied));
         let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1309,7 +1307,7 @@ mod tests {
             guid1,
             Some(handle4),
             Some(handle3),
-            efi::OPEN_PROTOCOL_EXCLUSIVE,
+            driver::OPEN_PROTOCOL_EXCLUSIVE,
         );
         assert_eq!(result, Err(EfiError::AccessDenied));
         let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1322,7 +1320,7 @@ mod tests {
 
         //Adding a usage BY_CHILD_CONTROLLER should result in a new usage record.
         SPIN_LOCKED_PROTOCOL_DB
-            .add_protocol_usage(handle1, guid1, Some(handle4), Some(handle3), efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER)
+            .add_protocol_usage(handle1, guid1, Some(handle4), Some(handle3), driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER)
             .unwrap();
         let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
         let protocol_user_list =
@@ -1330,7 +1328,7 @@ mod tests {
         assert_eq!(2, protocol_user_list.len());
         assert_eq!(test_attributes, protocol_user_list[0].attributes);
         assert_eq!(1, protocol_user_list[0].open_count);
-        assert_eq!(efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER, protocol_user_list[1].attributes);
+        assert_eq!(driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER, protocol_user_list[1].attributes);
         assert_eq!(1, protocol_user_list[1].open_count);
         drop(protocol_db);
     }
@@ -1342,9 +1340,9 @@ mod tests {
             //for the contents of the attributes field in the usage record). See note in [`add_protocol_usage()`] above for
             //further discussion.
             for test_attributes in [
-                efi::OPEN_PROTOCOL_BY_DRIVER,
-                efi::OPEN_PROTOCOL_EXCLUSIVE,
-                efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_BY_DRIVER,
+                driver::OPEN_PROTOCOL_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
             ] {
                 test_driver_and_exclusive_protocol_usage(test_attributes);
             }
@@ -1410,13 +1408,7 @@ mod tests {
 
         //Add a BY_DRIVER_EXCLUSIVE usage for testing.
         SPIN_LOCKED_PROTOCOL_DB
-            .add_protocol_usage(
-                handle4,
-                guid1,
-                Some(handle2),
-                Some(handle3),
-                efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE,
-            )
+            .add_protocol_usage(handle4, guid1, Some(handle2), Some(handle3), driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE)
             .unwrap();
 
         //Adding a usage should succeed even though the handle is already open BY_DRIVER_EXCLUSIVE
@@ -1433,11 +1425,9 @@ mod tests {
     #[test]
     fn add_protocol_usage_by_handle_get_or_test() {
         with_locked_state(|| {
-            for test_attributes in [
-                efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL,
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-                efi::OPEN_PROTOCOL_TEST_PROTOCOL,
-            ] {
+            for test_attributes in
+                [driver::OPEN_PROTOCOL_BY_HANDLE, driver::OPEN_PROTOCOL_GET, driver::OPEN_PROTOCOL_TEST]
+            {
                 test_handle_get_or_test_protocol_usage(test_attributes);
             }
         });
@@ -1456,13 +1446,13 @@ mod tests {
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             for attributes in [
-                efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
-                efi::OPEN_PROTOCOL_BY_DRIVER,
-                efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL,
-                efi::OPEN_PROTOCOL_EXCLUSIVE,
-                efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE,
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-                efi::OPEN_PROTOCOL_TEST_PROTOCOL,
+                driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                driver::OPEN_PROTOCOL_BY_DRIVER,
+                driver::OPEN_PROTOCOL_BY_HANDLE,
+                driver::OPEN_PROTOCOL_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_GET,
+                driver::OPEN_PROTOCOL_TEST,
             ] {
                 let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
                 SPIN_LOCKED_PROTOCOL_DB
@@ -1496,14 +1486,14 @@ mod tests {
 
             // Add two usages with different attributes
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle, guid, Some(agent1), Some(controller), efi::OPEN_PROTOCOL_GET_PROTOCOL)
+                .add_protocol_usage(handle, guid, Some(agent1), Some(controller), driver::OPEN_PROTOCOL_GET)
                 .unwrap();
             let result = SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(
                 handle,
                 guid,
                 Some(agent2),
                 Some(controller),
-                efi::OPEN_PROTOCOL_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_EXCLUSIVE,
             );
             assert_eq!(result, Ok(()));
 
@@ -1513,31 +1503,31 @@ mod tests {
                 guid,
                 Some(agent1),
                 Some(controller),
-                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+                Some(driver::OPEN_PROTOCOL_BY_DRIVER),
             );
             assert_eq!(result, Err(EfiError::NotFound));
 
             // Remove the GET_PROTOCOL usage
             SPIN_LOCKED_PROTOCOL_DB
-                .remove_protocol_usage(
-                    handle,
-                    guid,
-                    Some(agent1),
-                    Some(controller),
-                    Some(efi::OPEN_PROTOCOL_GET_PROTOCOL),
-                )
+                .remove_protocol_usage(handle, guid, Some(agent1), Some(controller), Some(driver::OPEN_PROTOCOL_GET))
                 .unwrap();
 
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let usage_list = &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid)).unwrap().usage;
             assert_eq!(usage_list.len(), 1);
             assert_eq!(usage_list[0].agent_handle, Some(agent2));
-            assert_eq!(usage_list[0].attributes, efi::OPEN_PROTOCOL_EXCLUSIVE);
+            assert_eq!(usage_list[0].attributes, driver::OPEN_PROTOCOL_EXCLUSIVE);
 
             // Remove the remaining EXCLUSIVE usage
             drop(protocol_db);
             SPIN_LOCKED_PROTOCOL_DB
-                .remove_protocol_usage(handle, guid, Some(agent2), Some(controller), Some(efi::OPEN_PROTOCOL_EXCLUSIVE))
+                .remove_protocol_usage(
+                    handle,
+                    guid,
+                    Some(agent2),
+                    Some(controller),
+                    Some(driver::OPEN_PROTOCOL_EXCLUSIVE),
+                )
                 .unwrap();
 
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
@@ -1560,7 +1550,7 @@ mod tests {
             let (handle3, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             let result =
@@ -1612,7 +1602,7 @@ mod tests {
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle, guid, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle, guid, Some(agent), Some(controller), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(agent, guid, interface).unwrap();
@@ -1622,7 +1612,7 @@ mod tests {
                 guid,
                 Some(agent),
                 Some(controller),
-                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+                Some(driver::OPEN_PROTOCOL_BY_DRIVER),
             );
             assert_eq!(result, Ok(()));
 
@@ -1647,7 +1637,7 @@ mod tests {
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle, guid, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle, guid, Some(agent), Some(controller), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(controller, guid, interface).unwrap();
@@ -1657,7 +1647,7 @@ mod tests {
                 guid,
                 Some(agent),
                 Some(controller),
-                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+                Some(driver::OPEN_PROTOCOL_BY_DRIVER),
             );
             assert_eq!(result, Ok(()));
 
@@ -1683,7 +1673,7 @@ mod tests {
             let (handle4, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             //adding it agin with different agent handle should fail with access denied.
@@ -1693,13 +1683,19 @@ mod tests {
                     guid1,
                     Some(handle4),
                     Some(handle3),
-                    efi::OPEN_PROTOCOL_BY_DRIVER
+                    driver::OPEN_PROTOCOL_BY_DRIVER
                 ),
                 Err(EfiError::AccessDenied)
             );
 
             SPIN_LOCKED_PROTOCOL_DB
-                .remove_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), Some(efi::OPEN_PROTOCOL_BY_DRIVER))
+                .remove_protocol_usage(
+                    handle1,
+                    guid1,
+                    Some(handle2),
+                    Some(handle3),
+                    Some(driver::OPEN_PROTOCOL_BY_DRIVER),
+                )
                 .unwrap();
 
             //adding it agin with different agent handle should succeed.
@@ -1709,7 +1705,7 @@ mod tests {
                     guid1,
                     Some(handle4),
                     Some(handle3),
-                    efi::OPEN_PROTOCOL_BY_DRIVER
+                    driver::OPEN_PROTOCOL_BY_DRIVER
                 ),
                 Ok(())
             );
@@ -1726,11 +1722,11 @@ mod tests {
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let attributes_list = [
-                efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE,
-                efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
-                efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL,
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-                efi::OPEN_PROTOCOL_TEST_PROTOCOL,
+                driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                driver::OPEN_PROTOCOL_BY_HANDLE,
+                driver::OPEN_PROTOCOL_GET,
+                driver::OPEN_PROTOCOL_TEST,
             ];
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1777,7 +1773,7 @@ mod tests {
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle, guid1, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle, guid1, Some(agent), Some(controller), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             let result = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, guid2);
@@ -1802,7 +1798,7 @@ mod tests {
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             SPIN_LOCKED_PROTOCOL_DB
-                .add_protocol_usage(handle, guid1, Some(agent), Some(controller), efi::OPEN_PROTOCOL_BY_DRIVER)
+                .add_protocol_usage(handle, guid1, Some(agent), Some(controller), driver::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
             for info in SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, guid1).unwrap() {
@@ -1825,11 +1821,11 @@ mod tests {
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let attributes_list = [
-                efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE,
-                efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
-                efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL,
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-                efi::OPEN_PROTOCOL_TEST_PROTOCOL,
+                driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE,
+                driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                driver::OPEN_PROTOCOL_BY_HANDLE,
+                driver::OPEN_PROTOCOL_GET,
+                driver::OPEN_PROTOCOL_TEST,
             ];
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -2111,7 +2107,7 @@ mod tests {
                         guid1,
                         Some(driver),
                         Some(child),
-                        efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                        driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                     )
                     .unwrap();
             }

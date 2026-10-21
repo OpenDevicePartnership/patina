@@ -13,6 +13,7 @@ use crate::standard::efi;
 
 pub mod c_ptr;
 pub mod crc32;
+pub mod driver;
 pub mod error;
 pub mod guid;
 pub mod hash;

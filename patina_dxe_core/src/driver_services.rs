@@ -12,6 +12,7 @@ use alloc::{
 };
 use core::ptr::NonNull;
 use patina::{
+    driver,
     error::EfiError,
     uefi::device_path::{DevicePath, DevicePathBuf},
 };
@@ -460,7 +461,7 @@ pub unsafe fn core_disconnect_controller(
                 .iter()
                 .flat_map(|(_guid, open_info)| {
                     open_info.iter().filter_map(|x| {
-                        if (x.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+                        if (x.attributes & driver::OPEN_PROTOCOL_BY_DRIVER) != 0 {
                             Some(x.agent_handle.expect("BY_DRIVER usage must have an agent handle"))
                         } else {
                             None
@@ -496,10 +497,10 @@ pub unsafe fn core_disconnect_controller(
         for (_guid, open_info) in &controller_info {
             for info in open_info {
                 if info.agent_handle == Some(driver_handle) {
-                    if (info.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+                    if (info.attributes & driver::OPEN_PROTOCOL_BY_DRIVER) != 0 {
                         driver_valid = true;
                     }
-                    if (info.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0
+                    if (info.attributes & driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0
                         && let Some(handle) = info.controller_handle
                     {
                         child_handles.push(handle);
@@ -863,7 +864,7 @@ mod tests {
                 protocol,
                 Some(driver_handle),
                 Some(controller_handle),
-                efi::OPEN_PROTOCOL_BY_DRIVER,
+                driver::OPEN_PROTOCOL_BY_DRIVER,
             )
             .unwrap();
 
@@ -875,7 +876,7 @@ mod tests {
                     protocol,
                     Some(driver_handle),
                     Some(*child),
-                    efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                 )
                 .unwrap();
         }
@@ -1456,7 +1457,7 @@ mod tests {
                     efi::protocols::device_path::PROTOCOL_GUID,
                     Some(driver_handle),
                     Some(child_handle),
-                    efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                 )
                 .unwrap();
 
@@ -1640,7 +1641,7 @@ mod tests {
                         efi::protocols::device_path::PROTOCOL_GUID,
                         Some(driver_handle),
                         Some(handle1),
-                        efi::OPEN_PROTOCOL_BY_DRIVER,
+                        driver::OPEN_PROTOCOL_BY_DRIVER,
                     )
                     .unwrap();
 
@@ -1731,7 +1732,7 @@ mod tests {
                     efi::protocols::device_path::PROTOCOL_GUID,
                     Some(driver_handle),
                     Some(handle1),
-                    efi::OPEN_PROTOCOL_BY_DRIVER,
+                    driver::OPEN_PROTOCOL_BY_DRIVER,
                 )
                 .unwrap();
 
@@ -1742,7 +1743,7 @@ mod tests {
                     efi::protocols::device_path::PROTOCOL_GUID,
                     Some(driver_handle),
                     Some(child_handle), // child handle for BY_CHILD_CONTROLLER
-                    efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
                 )
                 .unwrap();
 
