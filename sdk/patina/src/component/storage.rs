@@ -17,7 +17,7 @@ use crate::{
 };
 
 use crate::BinaryGuid;
-use alloc::{borrow::Cow, boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use core::{
     any::{Any, TypeId},
     cell::{Ref, RefCell, RefMut, UnsafeCell},
@@ -33,65 +33,6 @@ use super::{
 };
 
 use super::tables::{Entity, EntityError};
-
-/// A vector whose elements are sparsely populated.
-#[derive(Debug)]
-pub(crate) struct SparseVec<V> {
-    values: Vec<Option<V>>,
-}
-
-impl<V> SparseVec<V> {
-    /// Creates a new empty [`SparseVec`].
-    pub const fn new() -> Self {
-        Self { values: Vec::new() }
-    }
-
-    #[inline]
-    /// Returns true if the [`SparseVec`] contains a value at the given index.
-    pub fn contains(&self, index: usize) -> bool {
-        self.values.get(index).is_some_and(core::option::Option::is_some)
-    }
-
-    #[inline]
-    /// Returns the value at the given index, if it exists.
-    pub fn get(&self, index: usize) -> Option<&V> {
-        self.values.get(index).map(|v| v.as_ref())?
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut V> {
-        self.values.get_mut(index).map(|v| v.as_mut())?
-    }
-
-    #[inline]
-    /// Inserts a value at the given index.
-    pub fn insert(&mut self, index: usize, value: V) {
-        if index >= self.values.len() {
-            self.values.resize_with(index + 1, || None);
-        }
-
-        let slot = self.values.get_mut(index).expect("inserted value should be in bounds");
-        *slot = Some(value);
-    }
-}
-
-impl<'a, V> IntoIterator for &'a SparseVec<V> {
-    type Item = &'a Option<V>;
-    type IntoIter = core::slice::Iter<'a, Option<V>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.iter()
-    }
-}
-
-impl<'a, V> IntoIterator for &'a mut SparseVec<V> {
-    type Item = &'a mut Option<V>;
-    type IntoIter = core::slice::IterMut<'a, Option<V>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.iter_mut()
-    }
-}
 
 /// A container for an untyped config datum.
 pub struct ConfigRaw(bool, Box<dyn Any>);
@@ -151,6 +92,12 @@ pub(crate) struct HobValue(pub(crate) Box<dyn Any>);
 pub(crate) struct HobParser {
     guid: BinaryGuid,
     parser: fn(&[u8], &mut Storage),
+}
+
+/// One registered service interface, stored on its own entity.
+pub(crate) struct StoredService {
+    id: TypeId,
+    value: &'static dyn Any,
 }
 
 /// A container for deferred commands that will be executed later.
@@ -249,11 +196,6 @@ pub struct Storage {
     /// A container for all deferred commands that components can register. This is used to delay the execution of
     /// commands that can result in structural changes to the storage.
     deferred: Option<Deferred>,
-    /// A container for all service datums. This resource can only be accessed immutably, but one service datum can
-    /// represent multiple services. Services must have internal mutability if they need to be modified.
-    services: SparseVec<&'static dyn Any>,
-    /// A map to convert a Service type to a concrete service index.
-    service_indices: BTreeMap<TypeId, usize>,
     /// Type-erased, column-oriented data used by component infrastructure.
     tables: Tables,
     // Standard Runtime Services.
@@ -274,8 +216,6 @@ impl Storage {
     pub const fn new() -> Self {
         Self {
             deferred: None,
-            services: SparseVec::new(),
-            service_indices: BTreeMap::new(),
             tables: Tables::new(),
             runtime_services: StandardRuntimeServices::new_uninit(),
             image_handle: None,
@@ -428,20 +368,21 @@ impl Storage {
         Query::<&StoredConfig>::new().query(self).for_each(|config| config.value.borrow_mut().lock());
     }
 
-    /// Registers a service type with the storage and returns its global id.
-    pub(crate) fn register_service<C: ?Sized + 'static>(&mut self) -> usize {
-        self.get_or_register_service(TypeId::of::<C>())
-    }
-
-    /// Gets the global id of a service, registering it if it does not exist.
-    pub(crate) fn get_or_register_service(&mut self, id: TypeId) -> usize {
-        let idx = self.service_indices.len();
-        *self.service_indices.entry(id).or_insert(idx)
-    }
-
     /// Inserts a service into the storage.
-    pub(crate) fn insert_service(&mut self, id: usize, service: &'static dyn Any) {
-        self.services.insert(id, service);
+    pub(crate) fn insert_service<S: ?Sized + 'static>(&mut self, service: &'static dyn Any) {
+        self.insert_service_erased(TypeId::of::<S>(), service);
+    }
+
+    fn insert_service_erased(&mut self, id: TypeId, service: &'static dyn Any) {
+        if self.find_service(id).is_some() {
+            return;
+        }
+
+        self.tables.insert_new((StoredService { id, value: service },));
+    }
+
+    fn find_service(&self, id: TypeId) -> Option<&'static dyn Any> {
+        Query::<&StoredService>::new().query(self).find_map(|service| (service.id == id).then_some(service.value))
     }
 
     /// Adds a new service to the storage.
@@ -449,16 +390,9 @@ impl Storage {
         service.register(self);
     }
 
-    /// Retrieves a service from the underlying storage in its untyped form.
-    pub(crate) fn get_raw_service(&self, id: usize) -> Option<&'static dyn Any> {
-        // Copy the reference, not the underlying value
-        self.services.get(id).copied()
-    }
-
     /// Attempts to retrieve a service from the storage.
     pub fn get_service<S: ?Sized + 'static>(&self) -> Option<Service<S>> {
-        let idx = *self.service_indices.get(&TypeId::of::<S>())?;
-        Some(Service::from(self.get_raw_service(idx)?))
+        Some(Service::from(self.find_service(TypeId::of::<S>())?))
     }
 
     pub(crate) fn add_hob_parser<T: FromHob>(&mut self) {
@@ -679,6 +613,7 @@ unsafe impl Param for &Storage {
 mod tests {
     use super::*;
     use crate::component::Query;
+    use alloc::vec;
 
     #[derive(Debug, PartialEq, Eq)]
     struct QueryA(u32);
@@ -715,35 +650,6 @@ mod tests {
             Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).get(&entity),
             Some((&QueryA(1), &QueryB(3)))
         );
-    }
-
-    #[test]
-    fn validate_iter_works() {
-        let mut v: SparseVec<u32> = SparseVec::new();
-
-        v.insert(4, 100);
-        v.insert(9, 200);
-        v.insert(75, 300);
-
-        assert_eq!(v.into_iter().filter(|o| o.is_some()).count(), 3);
-
-        // Check that interior mutability sticks
-        for v in &mut v {
-            if let Some(v) = v.as_mut() {
-                *v += 1;
-            }
-        }
-
-        assert_eq!(v.get(4), Some(&101));
-        assert_eq!(v.get(9), Some(&201));
-        assert_eq!(v.get(75), Some(&301));
-
-        // Check that exterior mutability sticks
-        for v in &mut v {
-            *v = None;
-        }
-
-        assert_eq!(v.into_iter().filter(|o| o.is_some()).count(), 0);
     }
 
     #[test]
@@ -826,6 +732,8 @@ mod tests {
         let service = storage.get_service::<dyn TestService>().unwrap();
 
         assert_eq!(service.test(), 42);
+        storage.add_service(TestServiceImpl { id: 7 });
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().test(), 42);
 
         // Mimic all of storage's service storage being reallocated (due to possible vec reallocations when inserting)
         // by dropping the entire storage.
@@ -872,6 +780,74 @@ mod tests {
         assert!(storage.get_service::<dyn TestService>().is_some());
         let service = storage.get_service::<dyn TestService>().unwrap();
         assert_eq!(service.test(), 42);
+    }
+
+    #[test]
+    fn test_service_interfaces_have_separate_entities() {
+        use crate as patina;
+
+        trait TestService {
+            fn value(&self) -> u32;
+        }
+        trait OtherService {
+            fn value(&self) -> u32;
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn TestService, dyn OtherService)]
+        struct TestServiceImpl(u32);
+
+        impl TestService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                self.0
+            }
+        }
+        impl OtherService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                self.0
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(TestServiceImpl(42));
+        storage.add_service(TestServiceImpl(99));
+
+        let interfaces = Query::<(Entity, &StoredService)>::new().query(&storage).collect::<Vec<_>>();
+        assert_eq!(interfaces.len(), 2);
+        assert_ne!(interfaces[0].0, interfaces[1].0);
+        assert!(interfaces.iter().any(|(_, service)| service.id == TypeId::of::<dyn TestService>()));
+        assert!(interfaces.iter().any(|(_, service)| service.id == TypeId::of::<dyn OtherService>()));
+        assert_eq!(storage.get_tables().len(), 2);
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().value(), 42);
+        assert_eq!(storage.get_service::<dyn OtherService>().unwrap().value(), 42);
+    }
+
+    #[test]
+    fn test_service_manual_registration_preserves_public_trait() {
+        trait TestService {
+            fn value(&self) -> u32;
+        }
+
+        struct TestServiceImpl;
+
+        impl TestService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                42
+            }
+        }
+
+        impl IntoService for TestServiceImpl {
+            fn register(self, storage: &mut Storage) {
+                let service: &'static dyn TestService = Box::leak(Box::new(self));
+                let erased: &'static dyn Any = Box::leak(Box::new(service));
+                Self::register_service::<dyn TestService>(storage, erased);
+            }
+        }
+
+        let mut storage = Storage::new();
+        TestServiceImpl.register(&mut storage);
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().value(), 42);
+        assert_eq!(storage.get_tables().len(), 1);
     }
 
     #[test]
