@@ -103,7 +103,7 @@ pub(crate) fn core_stall(microseconds: usize) -> Result<(), EfiError> {
     // SAFETY: metronome_ptr is guaranteed to be a valid pointer to the metronome protocol if it is Some.
     let metronome = unsafe { metronome_ptr.as_mut().expect("Metronome pointer should not be null.") };
     let ticks_100ns: u128 = (microseconds as u128) * 10;
-    let mut ticks = ticks_100ns / u128::from(metronome.tick_period);
+    let mut ticks = ticks_100ns.div_ceil(u128::from(metronome.tick_period));
     while ticks > u128::from(u32::MAX) {
         let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
         if status.is_error() {
@@ -338,7 +338,11 @@ mod tests {
         systemtables::{self, EfiSystemTable},
         test_support,
     };
-    use core::{ffi::c_void, ptr};
+    use core::{
+        ffi::c_void,
+        ptr,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use patina::char16;
     use patina::pi::protocol::watchdog;
     use patina::standard::efi;
@@ -567,14 +571,13 @@ mod tests {
             }
 
             //Mock a metronome protocol
-            static WAIT_FOR_TICK_CALLED: Once<()> = Once::new();
+            static TICKS: AtomicUsize = AtomicUsize::new(0);
             extern "efiapi" fn wait_for_tick(
                 _this: *const patina::pi::protocol::metronome::MetronomeProtocol,
-                _tick: u32,
+                tick: u32,
             ) -> efi::Status {
-                WAIT_FOR_TICK_CALLED.call_once(|| {
-                    log::debug!("Mock wait_for_tick called.");
-                });
+                TICKS.fetch_add(tick as _, Ordering::SeqCst);
+                log::debug!("Mock wait_for_tick called.");
                 efi::Status::SUCCESS
             }
 
@@ -589,10 +592,26 @@ mod tests {
             // Test case 4: Normal stall duration - should return SUCCESS (metronome protocol available)
             // SAFETY: The unsafe block is required because r-efi declares stall as an
             // unsafe extern "efiapi" function pointer. The Patina implementation is fully safe.
-            let status = unsafe { (st.boot_services().get().stall)(10000) };
+            let status = unsafe { (st.boot_services().get().stall)(5000) };
             if status == efi::Status::SUCCESS {
                 log::debug!("Stall function correctly returned SUCCESS (metronome protocol available)");
-                assert!(WAIT_FOR_TICK_CALLED.is_completed(), "wait_for_tick was not called during stall.");
+                assert_eq!(
+                    TICKS.load(Ordering::SeqCst),
+                    5,
+                    "wait_for_tick was not called the expected number of times during stall."
+                );
+            } else {
+                log::warn!("Stall function returned unexpected status: {status}");
+            }
+
+            TICKS.store(0, Ordering::SeqCst);
+            // Test case 5: minimum stall duration - tick should be called at least once.
+            // SAFETY: The unsafe block is required because r-efi declares stall as an
+            // unsafe extern "efiapi" function pointer. The Patina implementation is fully safe.
+            let status = unsafe { (st.boot_services().get().stall)(1) };
+            if status == efi::Status::SUCCESS {
+                log::debug!("Stall function correctly returned SUCCESS (metronome protocol available)");
+                assert_eq!(TICKS.load(Ordering::SeqCst), 1, "wait_for_tick was not called during stall.");
             } else {
                 log::warn!("Stall function returned unexpected status: {status}");
             }
