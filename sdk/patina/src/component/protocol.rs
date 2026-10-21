@@ -319,8 +319,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut meta = MetaData::new::<i32>();
 
-        let id = <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
-        assert!(!<Protocol<FakeProtocol> as Param>::validate(&id, (&storage).into()));
+        <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
+        assert!(!<Protocol<FakeProtocol> as Param>::validate(&(), (&storage).into()));
     }
 
     #[test]
@@ -328,10 +328,10 @@ mod tests {
         let mut storage = Storage::default();
         let mut meta = MetaData::new::<i32>();
 
-        let id = <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
+        <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
         storage.add_service(FakeProtocolServices { guid: FakeProtocol::PROTOCOL_GUID, installed: false });
 
-        assert!(!<Protocol<FakeProtocol> as Param>::validate(&id, (&storage).into()));
+        assert!(!<Protocol<FakeProtocol> as Param>::validate(&(), (&storage).into()));
     }
 
     #[test]
@@ -339,12 +339,12 @@ mod tests {
         let mut storage = Storage::default();
         let mut meta = MetaData::new::<i32>();
 
-        let id = <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
+        <Protocol<FakeProtocol> as Param>::init_state(&mut storage, &mut meta).unwrap();
         storage.add_service(FakeProtocolServices { guid: FakeProtocol::PROTOCOL_GUID, installed: true });
 
-        assert!(<Protocol<FakeProtocol> as Param>::validate(&id, (&storage).into()));
+        assert!(<Protocol<FakeProtocol> as Param>::validate(&(), (&storage).into()));
         // SAFETY: Test code - Protocol<FakeProtocol> was just validated above.
-        let protocol = unsafe { <Protocol<FakeProtocol> as Param>::get_param(&id, (&storage).into()) };
+        let protocol = unsafe { <Protocol<FakeProtocol> as Param>::get_param(&(), (&storage).into()) };
         assert_eq!(protocol.value, 42);
     }
 
@@ -353,9 +353,9 @@ mod tests {
         let mut storage = Storage::default();
         let mut meta = MetaData::new::<i32>();
 
-        let id = <Option<Protocol<FakeProtocol>> as Param>::init_state(&mut storage, &mut meta).unwrap();
+        <Option<Protocol<FakeProtocol>> as Param>::init_state(&mut storage, &mut meta).unwrap();
         // SAFETY: Option<P> validate() is always true. get_param() re-checks P internally.
-        let protocol = unsafe { <Option<Protocol<FakeProtocol>> as Param>::get_param(&id, (&storage).into()) };
+        let protocol = unsafe { <Option<Protocol<FakeProtocol>> as Param>::get_param(&(), (&storage).into()) };
         assert!(protocol.is_none());
     }
 }
