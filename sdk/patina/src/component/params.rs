@@ -104,14 +104,13 @@ use alloc::{borrow::Cow, boxed::Box};
 
 use crate::{
     component::{
+        Entity,
         metadata::MetaData,
         service::IntoService,
-        storage::{Deferred, Storage, UnsafeStorageCell},
+        storage::{ConfigRaw, Deferred, Storage, UnsafeStorageCell},
     },
     uefi::runtime_services::StandardRuntimeServices,
 };
-
-use super::storage::ConfigRaw;
 
 type ParamItem<'w, 'state, P> = <P as Param>::Item<'w, 'state>;
 
@@ -378,7 +377,7 @@ impl<T: Default + 'static> Config<'_, T> {
     /// ```
     #[allow(clippy::test_attr_in_doctest)]
     pub fn mock(value: T) -> Self {
-        let refcell: RefCell<ConfigRaw> = RefCell::new(ConfigRaw::new(true, Box::new(value)));
+        let refcell = RefCell::new(ConfigRaw::new(true, Box::new(value)));
         let leaked = Box::leak(Box::new(refcell));
         Config { value: leaked.borrow(), _marker: PhantomData }
     }
@@ -401,29 +400,28 @@ impl<'c, T: Default + 'static> From<Ref<'c, ConfigRaw>> for Config<'c, T> {
 }
 
 // SAFETY: Config<T> parameter provides immutable access to locked configuration values.
-// State tracks the config ID. Validates that config is locked before allowing access.
+// State identifies the config entity. Validates that config is locked before allowing access.
 unsafe impl<T: Default + 'static> Param for Config<'_, T> {
-    /// The id of the Config, so we can request it directly without converting T->id.
-    type State = usize;
+    type State = Entity;
     type Item<'storage, 'state> = Config<'storage, T>;
 
     unsafe fn get_param<'storage, 'state>(
-        lookup_id: &'state Self::State,
+        entity: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // SAFETY: lookup_id is the config ID validated by init_state and validate.
-        // UnsafeStorageCell provides exclusive access to storage under Param protocol.
-        Config::from(unsafe { storage.storage().get_raw_config(*lookup_id) })
+        // SAFETY: The entity was created by init_state and validated immediately before retrieval.
+        Config::from(unsafe { storage.storage().get_raw_config(*entity) })
     }
 
     // `Config` is only available if the underlying datum is locked.
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
         // SAFETY: accesses are correctly registered with storage, no conflicts
-        unsafe { storage.storage() }.get_raw_config(*state).is_locked()
+        unsafe { storage.storage() }.config_is_locked(*state)
     }
 
     fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
-        let id = storage.add_config_default_if_not_present::<T>();
+        let entity = storage.add_config_default_if_not_present::<T>();
+        let id = entity.index();
 
         if meta.access().has_writes_all_configs() {
             return Err(Cow::from(alloc::format!(
@@ -440,7 +438,7 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         }
 
         meta.access_mut().add_config_read(id);
-        Ok(id)
+        Ok(entity)
     }
 }
 
@@ -474,7 +472,7 @@ impl<T: Default + 'static> ConfigMut<'_, T> {
     /// ```
     #[allow(clippy::test_attr_in_doctest)]
     pub fn mock(value: T) -> Self {
-        let refcell: RefCell<ConfigRaw> = RefCell::new(ConfigRaw::new(false, Box::new(value)));
+        let refcell = RefCell::new(ConfigRaw::new(false, Box::new(value)));
         let leaked = Box::leak(Box::new(refcell));
         ConfigMut { value: leaked.borrow_mut(), _marker: PhantomData }
     }
@@ -510,32 +508,31 @@ impl<'c, T: Default + 'static> From<RefMut<'c, ConfigRaw>> for ConfigMut<'c, T> 
 }
 
 // SAFETY: ConfigMut<T> parameter provides mutable access to unlocked configuration values.
-// State tracks the config ID. Validates that config is unlocked before allowing mutable access.
+// State identifies the config entity. Validates that config is unlocked before allowing mutable access.
 unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
-    /// The id of the Config, so we can request it directly without converting T->id.
-    type State = usize;
+    type State = Entity;
     type Item<'storage, 'state> = ConfigMut<'storage, T>;
 
     unsafe fn get_param<'storage, 'state>(
-        lookup_id: &'state Self::State,
+        entity: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // SAFETY: lookup_id is the config ID validated by init_state and validate.
-        // UnsafeStorageCell provides exclusive mutable access to storage under Param protocol.
-        ConfigMut::from(unsafe { storage.storage().get_raw_config_mut(*lookup_id) })
+        // SAFETY: The entity was created by init_state and validated immediately before retrieval.
+        ConfigMut::from(unsafe { storage.storage().get_raw_config_mut(*entity) })
     }
 
     // `ConfigMut` is only available if the underlying datum is not locked.
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
         // SAFETY: accesses are correctly registered with storage, no conflicts
-        !unsafe { storage.storage() }.get_raw_config(*state).is_locked()
+        !unsafe { storage.storage() }.config_is_locked(*state)
     }
 
     fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
-        let id = storage.add_config_default_if_not_present::<T>();
+        let entity = storage.add_config_default_if_not_present::<T>();
+        let id = entity.index();
         // All config is locked by default. We only unlock it (like below) when a component is detected that needs
         // it to be mutable.
-        storage.unlock_config(id);
+        storage.unlock_config(entity);
 
         if meta.access().has_writes_all_configs() {
             return Err(Cow::from(alloc::format!(
@@ -566,7 +563,7 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         }
 
         meta.access_mut().add_config_write(id);
-        Ok(id)
+        Ok(entity)
     }
 }
 
@@ -829,7 +826,7 @@ mod tests {
             *cfg += 1;
         }
 
-        let inner_data: RefCell<ConfigRaw> = RefCell::new(ConfigRaw::new(false, Box::new(42)));
+        let inner_data = RefCell::new(ConfigRaw::new(false, Box::new(42)));
         let config = ConfigMut::from(inner_data.borrow_mut());
         my_fn(config);
 
@@ -1050,11 +1047,12 @@ mod tests {
     fn test_try_validate_on_tuple_returns_underlying_param_type_not_full_tuple_name() {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
-        <(StandardRuntimeServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
-        assert!(!<(StandardRuntimeServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
+        let state =
+            <(StandardRuntimeServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
+        assert!(!<(StandardRuntimeServices, Config<i32>) as Param>::validate(&state, (&storage).into()));
         assert_eq!(
             Err(Cow::from("patina::uefi::runtime_services::StandardRuntimeServices not available.")),
-            <(StandardRuntimeServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
+            <(StandardRuntimeServices, Config<i32>) as Param>::try_validate(&state, (&storage).into())
         );
     }
 
