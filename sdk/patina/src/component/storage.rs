@@ -138,6 +138,11 @@ impl DerefMut for ConfigRaw {
     }
 }
 
+pub(crate) struct StoredConfig {
+    id: TypeId,
+    value: RefCell<ConfigRaw>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HobId(pub(crate) TypeId);
 
@@ -244,12 +249,6 @@ pub struct Storage {
     /// A container for all deferred commands that components can register. This is used to delay the execution of
     /// commands that can result in structural changes to the storage.
     deferred: Option<Deferred>,
-    /// A container for all [Config](super::params::Config) and [`ConfigMut`](super::params::ConfigMut) datums. This
-    /// resource can be accessed both immutably and mutably, so it must be tracked by
-    /// [Access](super::metadata::Access).
-    configs: SparseVec<RefCell<ConfigRaw>>,
-    /// A map to convert from a `TypeId` to a config index.
-    config_indices: BTreeMap<TypeId, usize>,
     /// A container for all service datums. This resource can only be accessed immutably, but one service datum can
     /// represent multiple services. Services must have internal mutability if they need to be modified.
     services: SparseVec<&'static dyn Any>,
@@ -275,8 +274,6 @@ impl Storage {
     pub const fn new() -> Self {
         Self {
             deferred: None,
-            configs: SparseVec::new(),
-            config_indices: BTreeMap::new(),
             services: SparseVec::new(),
             service_indices: BTreeMap::new(),
             tables: Tables::new(),
@@ -347,67 +344,88 @@ impl Storage {
         self.image_handle
     }
 
-    /// Registers a config type with the storage and returns its global id.
-    pub(crate) fn register_config<C: Default + 'static>(&mut self) -> usize {
-        let idx = self.config_indices.len();
-        *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx)
-    }
-
     /// Adds a default valued config datum to the storage if it does not exist.
-    pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> usize {
-        let idx = self.register_config::<C>();
-        if !self.configs.contains(idx) {
-            self.configs.insert(idx, RefCell::new(ConfigRaw::new(true, Box::<C>::default())));
+    pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> Entity {
+        let id = TypeId::of::<C>();
+        if let Some(entity) = self.config_entity(id) {
+            return entity;
         }
-        idx
+
+        self.insert_config(id, Box::<C>::default())
     }
 
     /// Adds a config datum to the storage, overwriting an existing value if it exists.
     pub fn add_config<C: Default + 'static>(&mut self, config: C) {
-        let id = self.register_config::<C>();
-        self.configs.insert(id, RefCell::new(ConfigRaw::new(true, Box::new(config))));
+        self.add_config_erased(TypeId::of::<C>(), Box::new(config));
+    }
+
+    fn add_config_erased(&mut self, id: TypeId, config: Box<dyn Any>) {
+        if let Some(entity) = self.config_entity(id) {
+            Query::<&StoredConfig>::new()
+                .query(self)
+                .get(&entity)
+                .expect("config entity must contain its config")
+                .value
+                .replace(ConfigRaw::new(true, config));
+        } else {
+            self.insert_config(id, config);
+        }
+    }
+
+    fn insert_config(&mut self, id: TypeId, config: Box<dyn Any>) -> Entity {
+        self.tables.insert_new((StoredConfig { id, value: RefCell::new(ConfigRaw::new(true, config)) },))
     }
 
     /// Attempts to retrieve a config datum from the storage.
     pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<'_, C>> {
-        let id = self.config_indices.get(&TypeId::of::<C>())?;
-        let untyped = self.get_raw_config(*id);
-        Some(crate::component::params::Config::from(untyped))
+        let entity = self.config_entity(TypeId::of::<C>())?;
+        Some(crate::component::params::Config::from(self.get_raw_config(entity)))
     }
 
     /// Attempts to retrieve a mutable config datum from the storage.
     pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<'_, C>> {
-        let id = self.config_indices.get(&TypeId::of::<C>())?;
-        let untyped = self.get_raw_config_mut(*id);
-        Some(crate::component::params::ConfigMut::from(untyped))
+        let entity = self.config_entity(TypeId::of::<C>())?;
+        Some(crate::component::params::ConfigMut::from(self.get_raw_config_mut(entity)))
     }
 
-    /// Retrieves a config from the storage.
-    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<'_, ConfigRaw> {
-        self.configs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
+    fn config_entity(&self, id: TypeId) -> Option<Entity> {
+        Query::<(Entity, &StoredConfig)>::new()
+            .query(self)
+            .find_map(|(entity, config)| (config.id == id).then_some(entity))
+    }
+
+    pub(crate) fn get_raw_config(&self, entity: Entity) -> Ref<'_, ConfigRaw> {
+        Query::<&StoredConfig>::new()
+            .query(self)
+            .get(&entity)
+            .expect("config entity must contain its config")
+            .value
             .borrow()
     }
 
-    /// Retrieves a mutable config from the storage.
-    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<'_, ConfigRaw> {
-        self.configs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
+    pub(crate) fn get_raw_config_mut(&self, entity: Entity) -> RefMut<'_, ConfigRaw> {
+        Query::<&StoredConfig>::new()
+            .query(self)
+            .get(&entity)
+            .expect("config entity must contain its config")
+            .value
             .borrow_mut()
     }
 
+    pub(crate) fn config_is_locked(&self, entity: Entity) -> bool {
+        self.get_raw_config(entity).is_locked()
+    }
+
     /// Unlocks a config in the storage.
-    pub(crate) fn unlock_config(&self, id: usize) {
-        if let Some(config) = self.configs.get(id) {
-            config.borrow_mut().unlock();
+    pub(crate) fn unlock_config(&self, entity: Entity) {
+        if let Some(config) = Query::<&StoredConfig>::new().query(self).get(&entity) {
+            config.value.borrow_mut().unlock();
         }
     }
 
     /// Marks all configs present in the storage as locked (immutable).
     pub fn lock_configs(&self) {
-        (&self.configs).into_iter().flatten().for_each(|config| config.borrow_mut().lock());
+        Query::<&StoredConfig>::new().query(self).for_each(|config| config.value.borrow_mut().lock());
     }
 
     /// Registers a service type with the storage and returns its global id.
@@ -726,6 +744,24 @@ mod tests {
         }
 
         assert_eq!(v.into_iter().filter(|o| o.is_some()).count(), 0);
+    }
+
+    #[test]
+    fn test_configs_use_separate_entities_and_overwrite_in_place() {
+        #[derive(Default)]
+        struct ConfigA(u32);
+        #[derive(Default)]
+        struct ConfigB;
+
+        let mut storage = Storage::new();
+        let a = storage.add_config_default_if_not_present::<ConfigA>();
+        let b = storage.add_config_default_if_not_present::<ConfigB>();
+        assert_ne!(a, b);
+
+        storage.add_config(ConfigA(42));
+        assert_eq!(storage.add_config_default_if_not_present::<ConfigA>(), a);
+        assert_eq!(storage.get_config::<ConfigA>().unwrap().0, 42);
+        assert_eq!(Query::<&StoredConfig>::new().query_mut(&mut storage).count(), 2);
     }
 
     #[test]
