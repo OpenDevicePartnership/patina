@@ -34,6 +34,24 @@ use patina::{
     writelncrlf,
 };
 
+struct DisplayFn<F>(F);
+
+impl<F> Display for DisplayFn<F>
+where
+    F: Fn(&mut core::fmt::Formatter<'_>) -> core::fmt::Result,
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (self.0)(formatter)
+    }
+}
+
+fn display_fn<F>(format: F) -> DisplayFn<F>
+where
+    F: Fn(&mut core::fmt::Formatter<'_>) -> core::fmt::Result,
+{
+    DisplayFn(format)
+}
+
 /// A structure containing all necessary data to execute a test at any time.
 #[derive(Clone)]
 pub(crate) struct TestRecord {
@@ -169,7 +187,7 @@ impl TestRecord {
     /// Formats the test record as JSON for logging or reporting purposes. This must not allocate because it may be
     /// called during `ExitBootServices`.
     fn json(&self) -> impl Display + '_ {
-        core::fmt::from_fn(move |formatter| {
+        display_fn(move |formatter| {
             write!(
                 formatter,
                 r#"{{"name":"{}","pass":{},"fail":{},"err_msg":"#,
@@ -263,7 +281,7 @@ impl Recorder {
 
     /// Formats all test records as JSON. This must not allocate because it can be called during `ExitBootServices`.
     fn json(&self) -> impl Display + '_ {
-        core::fmt::from_fn(move |formatter| {
+        display_fn(move |formatter| {
             self.with_mut(|records| {
                 formatter.write_str("[")?;
                 for (index, record) in records.values().enumerate() {
