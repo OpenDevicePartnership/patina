@@ -11,7 +11,6 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
-#[cfg(feature = "unstable-device-path")]
 use core::ptr::NonNull;
 
 use patina::BinaryGuid;
@@ -23,11 +22,9 @@ use patina::component::service::{
 };
 use patina::error::EfiError;
 use patina::standard::efi;
-#[cfg(feature = "unstable-device-path")]
-use patina::uefi::device_path::paths::{DevicePath, DevicePathBuf};
+use patina::uefi::device_path::{DevicePath, DevicePathBuf};
 
 use crate::events::EVENT_DB;
-#[cfg(feature = "unstable-device-path")]
 use crate::protocols::core_locate_device_path;
 use crate::protocols::{PROTOCOL_DB, core_install_protocol_interface, core_uninstall_protocol_interface};
 
@@ -123,7 +120,6 @@ impl ProtocolServices for CoreProtocolServices {
         }
     }
 
-    #[cfg(feature = "unstable-device-path")]
     fn locate_device_path(
         &self,
         protocol: BinaryGuid,
@@ -407,7 +403,6 @@ mod tests {
         });
     }
 
-    #[cfg(feature = "unstable-device-path")]
     #[test]
     fn test_protocol_services_locate_device_path_returns_handle_and_remaining_path() {
         with_locked_state(|| {
@@ -439,7 +434,6 @@ mod tests {
         });
     }
 
-    #[cfg(feature = "unstable-device-path")]
     #[test]
     fn test_protocol_services_locate_device_path_not_found() {
         with_locked_state(|| {

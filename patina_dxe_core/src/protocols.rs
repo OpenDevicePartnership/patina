@@ -13,7 +13,7 @@ use patina::standard::efi::{self, protocols::device_path::Protocol};
 use patina::{
     OwnedGuid, driver,
     error::EfiError,
-    uefi::device_path::walker::{is_device_path_end, remaining_device_path},
+    uefi::device_path::{DevicePath, node::EndEntire},
 };
 use tpl_mutex::TplMutex;
 
@@ -643,8 +643,11 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
                 core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path)
             && PROTOCOL_DB.validate_handle(handle).is_ok()
             && {
-                // SAFETY: remaining_path is returned from core_locate_device_path and is a valid device path pointer.
-                unsafe { is_device_path_end(remaining_path.as_ptr()) }
+                // SAFETY: remaining_path is returned from core_locate_device_path and points into the
+                // device path being installed, which the caller guarantees is valid.
+                unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) }.is_ok_and(|remaining| {
+                    remaining.iter().next().is_some_and(|node| node.header.is_type::<EndEntire>())
+                })
             }
         {
             return efi::Status::ALREADY_STARTED;
@@ -895,8 +898,12 @@ pub fn core_locate_device_path(
 ) -> Result<(NonNull<Protocol>, efi::Handle), EfiError> {
     let device_path_protocol_guid = core::ptr::from_ref(&efi::protocols::device_path::PROTOCOL_GUID).cast_mut();
 
+    // SAFETY: The caller guarantees that `device_path` points to a valid device path.
+    let search_path = unsafe { DevicePath::try_from_ptr(device_path.as_ptr().cast::<u8>()) }
+        .map_err(|_| EfiError::InvalidParameter)?;
+
     let mut best_device: efi::Handle = core::ptr::null_mut();
-    let mut best_match: isize = -1;
+    let mut best_match: Option<usize> = None;
     let mut best_remaining_path: Option<NonNull<Protocol>> = None;
 
     let handles = PROTOCOL_DB.locate_handles(Some(protocol))?;
@@ -920,19 +927,20 @@ pub fn core_locate_device_path(
             None => continue,
         };
 
-        let (remaining_path, matching_nodes) = match
-            // SAFETY: temp_device_path and device_path are valid device path pointers per the
-            // non-null guarantee and the caller's contract on `device_path`.
-            unsafe { remaining_device_path(temp_device_path, device_path) }
-        {
-            Some((remaining_path, matching_nodes)) => (remaining_path, matching_nodes.cast_signed()),
-            None => continue,
+        // SAFETY: The device path protocol installed on the handle points to a valid device path.
+        let Ok(handle_path) = (unsafe { DevicePath::try_from_ptr(temp_device_path.as_ptr().cast::<u8>()) }) else {
+            continue;
         };
+        let Some(remaining_path) = search_path.strip_prefix(handle_path) else {
+            continue;
+        };
+        // The nodes of the search path before the remaining path all matched.
+        let matching_nodes = search_path.node_count() - remaining_path.node_count();
 
-        if matching_nodes > best_match {
-            best_match = matching_nodes;
+        if best_match.is_none_or(|best_match| matching_nodes > best_match) {
+            best_match = Some(matching_nodes);
             best_device = handle;
-            best_remaining_path = Some(remaining_path);
+            best_remaining_path = NonNull::new(remaining_path.as_bytes().as_ptr().cast::<Protocol>().cast_mut());
         }
     }
 

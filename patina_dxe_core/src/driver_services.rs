@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 use patina::{
     driver,
     error::EfiError,
-    uefi::device_path::walker::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice},
+    uefi::device_path::{DevicePath, DevicePathBuf},
 };
 
 use patina::standard::efi::{self, protocols::device_path::Protocol};
@@ -172,16 +172,26 @@ fn authenticate_connect(
             PROTOCOL_DB.locate_protocol(patina::pi::protocol::security2::PROTOCOL_GUID.into_inner())
         {
             let file_path = {
+                // SAFETY: The device path protocol installed on the controller handle points to a valid device path.
+                let device_path = unsafe { DevicePath::try_from_ptr(device_path.cast::<u8>()) };
                 if recursive {
-                    copy_device_path_to_boxed_slice(device_path)
+                    device_path.map(DevicePathBuf::from)
                 } else if let Some(remaining_path) = remaining_device_path {
-                    concat_device_path_to_boxed_slice(device_path, remaining_path.as_ptr())
+                    // SAFETY: The caller guarantees that remaining_device_path points to a valid device path.
+                    let remaining_path = unsafe { DevicePath::try_from_ptr(remaining_path.as_ptr().cast::<u8>()) };
+                    device_path.and_then(|device_path| {
+                        let mut file_path = DevicePathBuf::from(device_path);
+                        file_path
+                            .append_device_path(remaining_path?)
+                            .map_err(|_| "Cannot append the remaining device path.")?;
+                        Ok(file_path)
+                    })
                 } else {
-                    copy_device_path_to_boxed_slice(device_path)
+                    device_path.map(DevicePathBuf::from)
                 }
             };
 
-            if let Ok(mut file_path) = file_path {
+            if let Ok(file_path) = file_path {
                 // SAFETY: Pointer is validated using .expect(), will panic if .as_ref() returns a NULL pointer
                 let security2 = unsafe {
                     security2_ptr
@@ -191,7 +201,8 @@ fn authenticate_connect(
                 };
                 let security_status = (security2.file_authentication)(
                     security2_ptr.cast(),
-                    file_path.as_mut_ptr().cast(),
+                    // FileAuthentication takes the device path as `CONST`, so it does not write through it.
+                    file_path.as_bytes().as_ptr().cast_mut().cast(),
                     core::ptr::null_mut(),
                     0,
                     false,

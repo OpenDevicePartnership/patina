@@ -49,8 +49,7 @@ The SDK is organized into the following root-level modules.
 | `serde` | Enable serialization support for configuration and PI data structures. |
 | `std` | Link the standard library. For example, when building host utilities. |
 | `std` | Link the standard library. For example, when building host utilities. |
-| `unstable-device-path` | Activate the current device-path parsing and construction prototypes. |
-| `unstable` | Opt into experimental APIs gated behind `unstable-*` flags, including device path helpers. |
+| `unstable` | Opt into experimental APIs gated behind `unstable-*` flags. |
 
 ## Conventions
 

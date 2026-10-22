@@ -44,6 +44,10 @@ required-features = ["alloc"]
 name = "compile_fail_tests"
 required-features = ["alloc"]
 
+[[test]]
+name = "devpath"
+required-features = ["alloc"]
+
 [dependencies]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true, optional = true }
@@ -90,7 +94,6 @@ mockall = ["dep:mockall", "std"]
 global_allocator = []
 serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 
-unstable = ["unstable-device-path"]
-unstable-device-path = []
+unstable = []
 # All non-std features to test in CI
-ci_features = ["core", "alloc", "global_allocator", "unstable", "unstable-device-path"]
+ci_features = ["core", "alloc", "global_allocator", "unstable"]

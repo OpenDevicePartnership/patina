@@ -16,8 +16,8 @@ use patina::{
         hob,
     },
     uefi::device_path::{
-        fv_types::{FvMemMapDevicePath, FvPiWgDevicePath},
-        walker::concat_device_path_to_boxed_slice,
+        DevicePath, DevicePathBuf,
+        node::{MemoryMapped, PiwgFirmwareFile, PiwgFirmwareVolume},
     },
 };
 
@@ -424,17 +424,17 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must ensure that base_address is valid.
         let fv = unsafe { VolumeRef::new_from_address(base_address) }?;
 
-        let device_path_ptr = if let Some(fv_name) = fv.fv_name() {
-            // Construct FvPiWgDevicePath
-            let device_path = FvPiWgDevicePath::new_fv(fv_name.into_inner());
-            Box::into_raw(Box::new(device_path)).cast::<c_void>()
+        let mut device_path = DevicePathBuf::new();
+        let appended = if let Some(fv_name) = fv.fv_name() {
+            device_path.append(PiwgFirmwareVolume { fv_name })
         } else {
-            // Construct FvMemMapDevicePath
-            let device_path =
-                FvMemMapDevicePath::new(MEMORY_MAPPED_IO, base_address, base_address.saturating_add(fv.size()));
-
-            Box::into_raw(Box::new(device_path)).cast::<c_void>()
+            // The ending address is the last byte of the firmware volume.
+            let end_address = base_address.saturating_add(fv.size()).saturating_sub(1).max(base_address);
+            device_path.append(MemoryMapped { memory_type: MEMORY_MAPPED_IO, start_address: base_address, end_address })
         };
+        appended.map_err(|_| EfiError::OutOfResources)?;
+        // The device path protocol owns the device path for the lifetime of the handle.
+        let device_path_ptr = Box::into_raw(Box::<DevicePath>::from(device_path)).cast::<c_void>();
 
         // install the protocol and return status
         core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
@@ -898,13 +898,18 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 }
 
-pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<Box<[u8]>, efi::Status> {
+/// Return the device path of a file in a firmware volume: the device path of the firmware volume
+/// handle followed by a firmware file node.
+pub fn device_path_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<DevicePathBuf, efi::Status> {
     let fv_device_path = PROTOCOL_DB.get_interface_for_handle(fv_handle, efi::protocols::device_path::PROTOCOL_GUID)?;
-    let file_node = &FvPiWgDevicePath::new_file(file_name);
-    concat_device_path_to_boxed_slice(
-        fv_device_path.cast::<efi::protocols::device_path::Protocol>().cast_const(),
-        core::ptr::from_ref(file_node).cast::<efi::protocols::device_path::Protocol>(),
-    )
+    // SAFETY: The device path protocol installed on the firmware volume handle points to a valid device path.
+    let fv_device_path =
+        unsafe { DevicePath::try_from_ptr(fv_device_path as *const u8) }.map_err(|_| efi::Status::INVALID_PARAMETER)?;
+    let mut device_path = DevicePathBuf::from(fv_device_path);
+    device_path
+        .append(PiwgFirmwareFile { fv_file_name: file_name.into() })
+        .map_err(|_| efi::Status::OUT_OF_RESOURCES)?;
+    Ok(device_path)
 }
 
 #[cfg(test)]

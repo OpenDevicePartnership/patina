@@ -77,21 +77,22 @@ fn test_devpath_public_macro_encodes_vendor_media_schema() {
     assert_eq!(CUSTOM_VENDOR_MEDIA_PATH, devpath!("VenMedia(00112233-4455-6677-8899-aabbccddeeff,033412)"));
 }
 
-#[cfg(feature = "unstable-device-path")]
 mod runtime_cross_checks {
     use patina::{
         devpath,
         uefi::device_path::{
-            node_defs::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
-            paths::DevicePathBuf,
+            DevicePathBuf,
+            node::{Controller, FilePath, HardDrive, NvmExpress, PcCard, Pci, Sata},
         },
     };
 
     fn runtime_path<T>(node: T) -> DevicePathBuf
     where
-        T: patina::uefi::device_path::parse_node::DevicePathNode,
+        T: patina::uefi::device_path::node::EncodableNode,
     {
-        DevicePathBuf::from_device_path_node_iter(core::iter::once(node))
+        let mut path = DevicePathBuf::new();
+        path.append(node).unwrap();
+        path
     }
 
     #[test]
@@ -131,7 +132,7 @@ mod runtime_cross_checks {
     fn test_devpath_matches_runtime_composed_path() {
         let mut runtime = runtime_path(Pci { function: 0, device: 0x11 });
         let controller = runtime_path(Controller { number: 7 });
-        runtime.append_device_path(&controller);
+        runtime.append_device_path(&controller).unwrap();
 
         assert_eq!(devpath!("Pci(0x11,0)/Ctrl(7)"), runtime.as_bytes());
     }

@@ -16,10 +16,8 @@ use patina::component::service::{
     uefi_services::image::{Handle, ImageError, ImageServices},
 };
 use patina::standard::efi;
-#[cfg(feature = "unstable-device-path")]
-use patina::uefi::device_path::paths::DevicePath;
+use patina::uefi::device_path::DevicePath;
 
-#[cfg(feature = "unstable-device-path")]
 use core::ptr::NonNull;
 
 use crate::PlatformInfo;
@@ -35,7 +33,6 @@ pub(crate) struct CoreImageServices {
     load: fn(efi::Handle, &[u8]) -> Result<efi::Handle, ImageError>,
     start: fn(efi::Handle) -> Result<(), ImageError>,
     unload: fn(efi::Handle) -> Result<(), ImageError>,
-    #[cfg(feature = "unstable-device-path")]
     load_from_device_path:
         fn(efi::Handle, NonNull<efi::protocols::device_path::Protocol>, bool) -> Result<efi::Handle, ImageError>,
 }
@@ -47,7 +44,6 @@ impl CoreImageServices {
             load: PiDispatcher::<P>::service_load_image,
             start: PiDispatcher::<P>::service_start_image,
             unload: PiDispatcher::<P>::service_unload_image,
-            #[cfg(feature = "unstable-device-path")]
             load_from_device_path: PiDispatcher::<P>::service_load_image_from_device_path,
         }
     }
@@ -67,7 +63,6 @@ impl ImageServices for CoreImageServices {
         (self.unload)(image.as_raw())
     }
 
-    #[cfg(feature = "unstable-device-path")]
     fn load_image_from_device_path(
         &self,
         parent: Handle,

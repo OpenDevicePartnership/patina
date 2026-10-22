@@ -8,7 +8,6 @@
 //!
 use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use core::{
-    convert::TryInto,
     ffi::c_void,
     mem::transmute,
     ptr::{NonNull, null_mut},
@@ -27,7 +26,10 @@ use patina::{
         fw_fs::FfsSectionRawType::PE32,
         hob::{Hob, HobList},
     },
-    uefi::device_path::walker::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count},
+    uefi::device_path::{
+        DevicePath, DevicePathBuf,
+        node::{FilePath, PiwgFirmwareFile},
+    },
     uefi::memory::EfiMemoryType,
     uefi_size_to_pages, {DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
 };
@@ -81,7 +83,7 @@ struct PrivateImageData {
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<ExitData>,
-    image_device_path: Option<Box<[u8]>>,
+    image_device_path: Option<DevicePathBuf>,
     pe_info: UefiPeInfo,
     relocation_data: Vec<RelocationBlock>,
 }
@@ -328,40 +330,37 @@ impl PrivateImageData {
     ///
     /// The file path is the full device path for this image and is what is set for the `loaded_image_device_path` protocol.
     fn set_file_path(&mut self, file_path: NonNull<Protocol>) -> Result<(), EfiError> {
-        let mut fp = file_path.as_ptr();
+        // SAFETY: The caller guarantees that file_path points to a valid device path.
+        let full_path = unsafe { DevicePath::try_from_ptr(file_path.as_ptr().cast::<u8>()) }
+            .map_err(|_| EfiError::InvalidParameter)?;
 
-        // If the device handle is valid, and the handle has a device path protocol, we need to adjust our file path
+        // If the device handle has a valid device path, the file path is the rest of the full path after it.
+        let mut relative_path = full_path;
         if let Ok(device_path) = PROTOCOL_DB
             .get_interface_for_handle(self.image_info.device_handle, efi::protocols::device_path::PROTOCOL_GUID)
+            // SAFETY: The device path protocol installed on the device handle points to a valid device path.
+            && let Ok(device_path) = unsafe { DevicePath::try_from_ptr(device_path.cast::<u8>().cast_const()) }
+            && let Some(rest) = full_path.strip_prefix(device_path)
         {
-            let (_, device_path_size) =
-                device_path_node_count(device_path.cast::<efi::protocols::device_path::Protocol>())?;
-
-            // Adjust the split index to exclude the END node of the device path, so the true file path does not start with END.
-            let split_idx =
-                device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
-
-            // SAFETY: `device_path_node_count` is always less than or equal to the size of the device path, so adding `split_idx` to
-            //  `file_path` will always produce a valid pointer within the bounds of the original device path.
-            fp = unsafe {
-                file_path.cast::<u8>().add(split_idx).cast::<efi::protocols::device_path::Protocol>().as_ptr()
-            };
+            relative_path = rest;
         }
 
         // The `file_path` field in the loaded image protocol is really just the filename (more specifically the remaining portion
         // of the device path in relation to the parent's device path)
-        self.image_info.file_path =
-            Box::into_raw(copy_device_path_to_boxed_slice(fp)?).cast::<efi::protocols::device_path::Protocol>();
+        self.image_info.file_path = Box::into_raw(Box::<DevicePath>::from(DevicePathBuf::from(relative_path)))
+            .cast::<efi::protocols::device_path::Protocol>();
 
         // The `image_device_path` field is the `loaded_image_device_path` protocol, which is the full device path.
-        self.image_device_path = Some(copy_device_path_to_boxed_slice(file_path.as_ptr())?);
+        self.image_device_path = Some(DevicePathBuf::from(full_path));
 
         Ok(())
     }
 
     /// Returns the pointer to the full device path for this image, or null if none is set.
     fn get_file_path(&self) -> *mut c_void {
-        self.image_device_path.as_ref().map_or(core::ptr::null_mut(), |dp| dp.as_ptr() as *mut c_void)
+        self.image_device_path
+            .as_ref()
+            .map_or(core::ptr::null_mut(), |dp| dp.as_bytes().as_ptr().cast_mut().cast::<c_void>())
     }
 
     /// Attempts to activate compatability mode for this image, if allowed by the platform.
@@ -962,7 +961,6 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Loads an image located by a device path for the [`ImageServices`] component service.
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
-    #[cfg(feature = "unstable-device-path")]
     pub(crate) fn service_load_image_from_device_path(
         parent: efi::Handle,
         file_path: NonNull<Protocol>,
@@ -1466,14 +1464,10 @@ fn core_load_pe_image(
 
 fn get_file_guid_from_device_path(path: *mut efi::protocols::device_path::Protocol) -> Result<Guid, EfiError> {
     // SAFETY: path is validated by the caller and must point to a valid device path structure.
-    let mut walker = unsafe { DevicePathWalker::new(path) };
-    let file_path_node = walker.next().ok_or(EfiError::InvalidParameter)?;
-    if file_path_node.header().r#type != efi::protocols::device_path::TYPE_MEDIA
-        || file_path_node.header().sub_type != efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
-    {
-        return Err(EfiError::InvalidParameter);
-    }
-    Ok(Guid::from_bytes(file_path_node.data().try_into().map_err(|_| EfiError::BadBufferSize)?))
+    let path = unsafe { DevicePath::try_from_ptr(path as *const u8) }.map_err(|_| EfiError::InvalidParameter)?;
+    let file_node = path.iter().next().ok_or(EfiError::InvalidParameter)?;
+    let file_node = PiwgFirmwareFile::try_from(file_node).map_err(|_| EfiError::InvalidParameter)?;
+    Ok(file_node.fv_file_name.into_inner())
 }
 
 fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi::Handle), EfiError> {
@@ -1525,16 +1519,15 @@ fn get_file_buffer_from_sfs(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, ef
     let mut file = SimpleFile::open_volume(handle)?;
 
     // SAFETY: remaining_file_path is returned by core_locate_device_path and is a valid device path.
-    for node in unsafe { DevicePathWalker::new(remaining_file_path.as_ptr()) } {
-        match node.header().r#type {
-            efi::protocols::device_path::TYPE_MEDIA
-                if node.header().sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
-            efi::protocols::device_path::TYPE_END => break,
-            _ => Err(EfiError::Unsupported)?,
+    let remaining_file_path = unsafe { DevicePath::try_from_ptr(remaining_file_path.as_ptr().cast::<u8>()) }
+        .map_err(|_| EfiError::InvalidParameter)?;
+    for node in remaining_file_path.iter() {
+        if node.header.r#type == efi::protocols::device_path::TYPE_END {
+            break;
         }
-        // For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to u16 code units for
-        // the call to open, since the raw device path bytes are not guaranteed to be aligned.
-        let filename: Vec<u16> = node.data().as_chunks::<2>().0.iter().map(|x| u16::from_le_bytes(*x)).collect();
+        // Every remaining node must be a file path node, which names a directory or the file to open.
+        let file_path_node = FilePath::try_from(node).map_err(|_| EfiError::Unsupported)?;
+        let filename: Vec<u16> = file_path_node.path.encode_utf16().chain(core::iter::once(0)).collect();
         let filename = Char16Str::from_units_until_nul(&filename)?;
 
         file = file.open(filename, efi::protocols::file::MODE_READ, 0)?;
@@ -2482,6 +2475,7 @@ mod tests {
                 0x00, //'A' (as CHAR16)
                 0x00,
                 0x00, //NULL (as CHAR16)
+                efi::protocols::device_path::TYPE_MEDIA,
                 efi::protocols::device_path::Media::SUBTYPE_FILE_PATH,
                 0x8, //length[0]
                 0x0, //length[1]
@@ -2489,6 +2483,7 @@ mod tests {
                 0x00, //'B' (as CHAR16)
                 0x00,
                 0x00, //NULL (as CHAR16)
+                efi::protocols::device_path::TYPE_MEDIA,
                 efi::protocols::device_path::Media::SUBTYPE_FILE_PATH,
                 0x8, //length[0]
                 0x0, //length[1]
@@ -3523,19 +3518,18 @@ mod tests {
         image[machine_offset..machine_offset + 2].copy_from_slice(&machine.to_le_bytes());
     }
 
-    /// Converts a string file path into a FILEPATH device path node.
+    /// Converts a string file path into a FILEPATH device path node, whose path is a
+    /// null-terminated UCS-2 string.
     fn filepath_node_from_str(path: &str) -> Vec<u8> {
-        let path_bytes = path.as_bytes();
-        let path_len = path_bytes.len() + 2 + 4; // +2 for null terminator + 4 for header
+        let path_bytes: Vec<u8> = path.encode_utf16().chain(core::iter::once(0)).flat_map(u16::to_le_bytes).collect();
+        let path_len = path_bytes.len() + 4; // + 4 for header
         let mut node = vec![
             TYPE_MEDIA,
             Media::SUBTYPE_FILE_PATH,
             (path_len & 0xFF) as u8,        // length[0]
             ((path_len >> 8) & 0xFF) as u8, // length[1]
         ];
-        node.extend_from_slice(path_bytes);
-        node.push(0); // null terminator
-        node.push(0); // null terminator for unicode
+        node.extend_from_slice(&path_bytes);
         node
     }
 
@@ -3582,7 +3576,7 @@ mod tests {
             // manipulate global state (GCD, protocol DB, system table)
 
             let child_device_path =
-                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+                device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
 
             // SAFETY: Test-only initialization of global tables happens under the global lock.
             unsafe {
@@ -3613,17 +3607,15 @@ mod tests {
             assert!(!private_info.image_info.file_path.is_null());
 
             // Validate the file path was set correctly
-            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
-            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+            // SAFETY: file_path was set by set_file_path to a valid device path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.image_info.file_path as *const u8) }.unwrap().as_bytes();
             assert_eq!(bytes, child_device_path.as_ref());
 
             // validate the entire device path is correct
-            let (_, len) =
-                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
-                    .unwrap();
-            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+            // SAFETY: get_file_path returns the full device path set by set_file_path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.get_file_path() as *const u8) }.unwrap().as_bytes();
             assert_eq!(bytes, child_device_path.as_ref());
         })
         .unwrap();
@@ -3635,9 +3627,9 @@ mod tests {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
 
-            let parent_device_path = device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/END"));
+            let parent_device_path = device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/END"));
             let child_device_path =
-                device_path_from_string(String::from("PCI(0,1C)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
+                device_path_from_string(String::from("PCI(1C,0)/PCI(0,0)/EFI/BOOT/BOOT_X64.EFI/END"));
             let child_filename = device_path_from_string(String::from("EFI/BOOT/BOOT_X64.EFI/END"));
 
             // SAFETY: Test-only initialization of global tables happens under the global lock.
@@ -3678,19 +3670,17 @@ mod tests {
             assert!(!private_info.image_info.file_path.is_null());
 
             // Validate the file path was set correctly
-            let (_, len) = device_path_node_count(private_info.image_info.file_path).unwrap();
-            // SAFETY: file_path points to a valid device path buffer of length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.image_info.file_path as *const u8, len) };
+            // SAFETY: file_path was set by set_file_path to a valid device path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.image_info.file_path as *const u8) }.unwrap().as_bytes();
 
             // IMPORTANT: This is validating that we cut off the parent device path correctly.
             assert_eq!(bytes, child_filename.as_ref());
 
             // validate the entire device path is correct
-            let (_, len) =
-                device_path_node_count(private_info.get_file_path().cast::<efi::protocols::device_path::Protocol>())
-                    .unwrap();
-            // SAFETY: get_file_path returns a valid device path pointer with length `len` per device_path_node_count.
-            let bytes = unsafe { core::slice::from_raw_parts(private_info.get_file_path() as *const u8, len) };
+            // SAFETY: get_file_path returns the full device path set by set_file_path.
+            let bytes =
+                unsafe { DevicePath::try_from_ptr(private_info.get_file_path() as *const u8) }.unwrap().as_bytes();
 
             // IMPORTANT: This should always contain the full path.
             assert_eq!(bytes, child_device_path.as_ref());

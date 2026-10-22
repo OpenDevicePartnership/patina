@@ -32,7 +32,7 @@ use patina::{
         hob::{Hob, HobList},
         protocol::firmware_volume_block,
     },
-    uefi::device_path::walker::concat_device_path_to_boxed_slice,
+    uefi::device_path::{DevicePath, DevicePathBuf, node::PiwgFirmwareFile},
 };
 use patina_ffs::{
     section::{Section, SectionExtractor},
@@ -49,7 +49,7 @@ use crate::{
     config_tables::core_install_configuration_table,
     events::EVENT_DB,
     performance::{self, CorePerformance},
-    pi_dispatcher::fv::device_path_bytes_for_fv_file,
+    pi_dispatcher::fv::device_path_for_fv_file,
     protocol_db::DXE_CORE_HANDLE,
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
@@ -595,8 +595,7 @@ impl PendingFirmwareVolumeImage {
                 Err(_) => return Ok(()),
             }
         };
-        let file_path = device_path_bytes_for_fv_file(self.parent_fv_handle, self.file_name)
-            .map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
+        let file_path = device_path_for_fv_file(self.parent_fv_handle, self.file_name).map_err(EfiError::from)?;
 
         //Important Note: the present section extraction implementation does not support section extraction-based
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
@@ -604,7 +603,7 @@ impl PendingFirmwareVolumeImage {
         let status = (security_protocol.file_authentication_state)(
             core::ptr::from_ref(security_protocol).cast_mut(),
             0,
-            file_path.as_ptr().cast::<efi::protocols::device_path::Protocol>().cast_mut(),
+            file_path.as_bytes().as_ptr().cast_mut().cast::<efi::protocols::device_path::Protocol>(),
         );
         EfiError::status_to_result(status)
     }
@@ -757,55 +756,20 @@ impl DispatcherContext {
                         if let Some(pe32_section) =
                             sections.into_iter().find(|x| x.section_type() == Some(ffs::section::Type::Pe32))
                         {
-                            // In this case, this is sizeof(guid) + sizeof(protocol) = 20, so it should always fit an u8
-                            const FILENAME_NODE_SIZE: usize =
-                                core::mem::size_of::<efi::protocols::device_path::Protocol>()
-                                    + core::mem::size_of::<efi::Guid>();
-                            // In this case, this is sizeof(protocol) = 4, so it should always fit an u8
-                            const END_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>();
-
-                            let filename_node = efi::protocols::device_path::Protocol {
-                                r#type: efi::protocols::device_path::TYPE_MEDIA,
-                                sub_type: efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
-                                length: [FILENAME_NODE_SIZE as u8, 0x00],
-                            };
-                            let filename_end_node = efi::protocols::device_path::Protocol {
-                                r#type: efi::protocols::device_path::TYPE_END,
-                                sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
-                                length: [END_NODE_SIZE as u8, 0x00],
-                            };
-
-                            let mut filename_nodes_buf = Vec::<u8>::with_capacity(FILENAME_NODE_SIZE + END_NODE_SIZE); // 20 bytes (filename_node + GUID) + 4 bytes (end node)
-                            // SAFETY: filename_node is a local value. Its byte representation is valid for the size
-                            // of the struct
-                            filename_nodes_buf.extend_from_slice(unsafe {
-                                core::slice::from_raw_parts(
-                                    (&raw const filename_node).cast::<u8>(),
-                                    core::mem::size_of::<efi::protocols::device_path::Protocol>(),
+                            // The device path of the driver is the firmware volume path followed by a firmware
+                            // file node. Without a valid firmware volume path, the driver keeps that path.
+                            let full_device_path_for_file = || -> Option<*mut efi::protocols::device_path::Protocol> {
+                                // SAFETY: fv_device_path is null or the device path protocol installed on the
+                                // firmware volume handle.
+                                let fv_path = unsafe { DevicePath::try_from_ptr(fv_device_path as *const u8) }.ok()?;
+                                let mut full_path = DevicePathBuf::from(fv_path);
+                                full_path.append(PiwgFirmwareFile { fv_file_name: file_name.into() }).ok()?;
+                                Some(
+                                    Box::into_raw(Box::<DevicePath>::from(full_path))
+                                        .cast::<efi::protocols::device_path::Protocol>(),
                                 )
-                            });
-                            // Copy the GUID into the buffer
-                            filename_nodes_buf.extend_from_slice(file_name.as_bytes());
-
-                            // Copy filename_end_node into the buffer
-                            // SAFETY: filename_end_node is a local value. Its byte representation is valid for the
-                            // size of the struct
-                            filename_nodes_buf.extend_from_slice(unsafe {
-                                core::slice::from_raw_parts(
-                                    (&raw const filename_end_node).cast::<u8>(),
-                                    core::mem::size_of::<efi::protocols::device_path::Protocol>(),
-                                )
-                            });
-
-                            let boxed_device_path = filename_nodes_buf.into_boxed_slice();
-                            let filename_device_path =
-                                boxed_device_path.as_ptr().cast::<efi::protocols::device_path::Protocol>();
-
-                            let full_path_bytes =
-                                concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
-                            let full_device_path_for_file = full_path_bytes.map_or(fv_device_path, |full_path| {
-                                Box::into_raw(full_path).cast::<efi::protocols::device_path::Protocol>()
-                            });
+                            };
+                            let full_device_path_for_file = full_device_path_for_file().unwrap_or(fv_device_path);
 
                             self.pending_drivers.push(PendingDriver {
                                 file_name,
@@ -902,7 +866,7 @@ mod tests {
     use std::{fs::File, io::Read, vec};
 
     use log::{Level, LevelFilter, Metadata, Record};
-    use patina::{pi, uefi::device_path::walker::DevicePathWalker};
+    use patina::pi;
     use patina_ffs_extractors::NullSectionExtractor;
     use uuid::uuid;
 
@@ -1396,27 +1360,23 @@ mod tests {
                 assert_eq!(authentication_status, 0);
 
                 // SAFETY: `file` is a valid device path pointer provided by the dispatcher for this callback.
-                unsafe {
-                    let mut node_walker = DevicePathWalker::new(file);
-                    //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
-                    let fv_node = node_walker.next().unwrap();
-                    assert_eq!(fv_node.header().r#type, efi::protocols::device_path::TYPE_HARDWARE);
-                    assert_eq!(fv_node.header().sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
+                let path = unsafe { DevicePath::try_from_ptr(file as *const u8) }.unwrap();
+                let mut nodes = path.iter();
+                //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
+                let fv_node = nodes.next().unwrap();
+                assert_eq!(fv_node.header.r#type, efi::protocols::device_path::TYPE_HARDWARE);
+                assert_eq!(fv_node.header.sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
 
-                    //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
-                    let file_node = node_walker.next().unwrap();
-                    assert_eq!(file_node.header().r#type, efi::protocols::device_path::TYPE_MEDIA);
-                    assert_eq!(
-                        file_node.header().sub_type,
-                        efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
-                    );
-                    assert_eq!(file_node.data(), uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
+                //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
+                let file_node = nodes.next().unwrap();
+                assert_eq!(file_node.header.r#type, efi::protocols::device_path::TYPE_MEDIA);
+                assert_eq!(file_node.header.sub_type, efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE);
+                assert_eq!(&file_node.data, uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
 
-                    //device path end node
-                    let end_node = node_walker.next().unwrap();
-                    assert_eq!(end_node.header().r#type, efi::protocols::device_path::TYPE_END);
-                    assert_eq!(end_node.header().sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
-                }
+                //device path end node
+                let end_node = nodes.next().unwrap();
+                assert_eq!(end_node.header.r#type, efi::protocols::device_path::TYPE_END);
+                assert_eq!(end_node.header.sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
 
                 SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
 
