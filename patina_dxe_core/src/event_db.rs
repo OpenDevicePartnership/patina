@@ -21,6 +21,7 @@ use core::{
     ffi::c_void,
     fmt,
     ops::{Deref, DerefMut},
+    sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
 };
 use patina::standard::efi;
 use patina::{error::EfiError, log_debug_assert};
@@ -649,6 +650,8 @@ impl Drop for EventGuard<'_> {
 pub struct SpinLockedEventDb {
     inner: tpl_mutex::TplMutex<EventDb>,
     pending_signals: tpl_mutex::TplMutex<Vec<PendingSignals>>,
+    memory_map_change_pending: AtomicBool,
+    cache_attribute_change_pending: AtomicBool,
 }
 
 impl Default for SpinLockedEventDb {
@@ -663,6 +666,8 @@ impl SpinLockedEventDb {
         SpinLockedEventDb {
             inner: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock"),
             pending_signals: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, Vec::new(), "pendingSignalsLock"),
+            memory_map_change_pending: AtomicBool::new(false),
+            cache_attribute_change_pending: AtomicBool::new(false),
         }
     }
 
@@ -735,7 +740,21 @@ impl SpinLockedEventDb {
     /// This routine signals all events in the given event group. There isn't an equivalent UEFI spec API for this; the
     /// equivalent would need to be accomplished by creating a dummy event that is a member of the group and signalling
     /// that event.
+    ///
+    /// Memory map and cache attribute change groups only set pending flags and will get triggered on the next TPL
+    /// restore because they are signaled by the memory management code and cannot allocate.
     pub fn signal_group(&self, group: efi::Guid) {
+        let deferred = if group == efi::EVENT_GROUP_MEMORY_MAP_CHANGE {
+            Some(&self.memory_map_change_pending)
+        } else if group == patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner() {
+            Some(&self.cache_attribute_change_pending)
+        } else {
+            None
+        };
+        if let Some(pending) = deferred {
+            pending.store(true, AtomicOrdering::Release);
+            return;
+        }
         if let Some(mut guard) = self.try_lock() {
             guard.signal_group(group);
         } else {
@@ -744,6 +763,26 @@ impl SpinLockedEventDb {
                 pending_signals.push(PendingSignals::Group(group));
             } else {
                 log::warn!("Could not acquire pending signals lock to queue group signal.");
+            }
+        }
+    }
+
+    /// Queues deferred memory map and cache attribute changes during TPL restoration.
+    ///
+    /// Leaves the signal pending if the database is locked. The caller must prevent
+    /// recursive flushing while releasing the database lock.
+    pub(crate) fn flush_deferred_group_signals(&self) {
+        if !(self.memory_map_change_pending.load(AtomicOrdering::Acquire)
+            || self.cache_attribute_change_pending.load(AtomicOrdering::Acquire))
+        {
+            return;
+        }
+        if let Some(mut guard) = self.try_lock() {
+            if self.cache_attribute_change_pending.swap(false, AtomicOrdering::AcqRel) {
+                guard.signal_group(patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner());
+            }
+            if self.memory_map_change_pending.swap(false, AtomicOrdering::AcqRel) {
+                guard.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE);
             }
         }
     }
@@ -906,6 +945,174 @@ mod tests {
     }
 
     extern "efiapi" fn test_notify_function(_: efi::Event, _: *mut core::ffi::c_void) {}
+
+    #[test]
+    fn test_event_allocator_groups_deferred_at_low_tpl() {
+        with_locked_state(|| {
+            for group in [
+                efi::EVENT_GROUP_MEMORY_MAP_CHANGE,
+                patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner(),
+            ] {
+                let db = SpinLockedEventDb::new();
+                let event = db
+                    .create_event(
+                        efi::EVT_NOTIFY_SIGNAL,
+                        efi::TPL_NOTIFY,
+                        Some(test_notify_function),
+                        None,
+                        Some(group),
+                    )
+                    .unwrap();
+                let old_tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+                crate::events::restore_tpl(old_tpl);
+                assert_eq!(old_tpl, efi::TPL_APPLICATION);
+                db.signal_group(group);
+                db.signal_group(group);
+                {
+                    let guard = db.lock();
+                    assert!(guard.pending_notifies.is_empty());
+                    assert_eq!(guard.notify_tags, 0);
+                    assert!(!guard.events.get(&(event as usize)).unwrap().signaled);
+                    assert_eq!(db.pending_signals.lock().capacity(), 0);
+                }
+                db.flush_deferred_group_signals();
+                let mut guard = db.lock();
+                assert_eq!(guard.pending_notifies.len(), 1);
+                assert_eq!(guard.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event, event);
+                assert!(guard.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+                assert!(!db.memory_map_change_pending.load(AtomicOrdering::Acquire));
+                assert!(!db.cache_attribute_change_pending.load(AtomicOrdering::Acquire));
+            }
+        });
+    }
+
+    #[test]
+    fn test_event_allocator_groups_deferred_without_queueing() {
+        with_locked_state(|| {
+            for group in [
+                efi::EVENT_GROUP_MEMORY_MAP_CHANGE,
+                patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner(),
+            ] {
+                let db = SpinLockedEventDb::new();
+                let event = db
+                    .create_event(
+                        efi::EVT_NOTIFY_SIGNAL,
+                        efi::TPL_NOTIFY,
+                        Some(test_notify_function),
+                        None,
+                        Some(group),
+                    )
+                    .unwrap();
+                let old_tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+                for _ in 0..3 {
+                    db.signal_group(group);
+                }
+                {
+                    let guard = db.lock();
+                    assert!(guard.pending_notifies.is_empty());
+                    assert_eq!(guard.notify_tags, 0);
+                    assert!(!guard.events.get(&(event as usize)).unwrap().signaled);
+                    db.signal_group(group);
+                    let pending = db.pending_signals.lock();
+                    assert!(pending.is_empty());
+                    assert_eq!(pending.capacity(), 0);
+                }
+                crate::events::restore_tpl(old_tpl);
+                db.flush_deferred_group_signals();
+                db.flush_deferred_group_signals();
+                let mut guard = db.lock();
+                assert_eq!(guard.pending_notifies.len(), 1);
+                assert_eq!(guard.notify_tags, 1);
+                assert_eq!(guard.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event, event);
+                assert!(guard.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+                assert!(!db.memory_map_change_pending.load(AtomicOrdering::Acquire));
+                assert!(!db.cache_attribute_change_pending.load(AtomicOrdering::Acquire));
+            }
+        });
+    }
+
+    #[test]
+    fn test_event_allocator_groups_flush_while_db_held() {
+        with_locked_state(|| {
+            for group in [
+                efi::EVENT_GROUP_MEMORY_MAP_CHANGE,
+                patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner(),
+            ] {
+                let db = SpinLockedEventDb::new();
+                let old_tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+                db.signal_group(group);
+                crate::events::restore_tpl(old_tpl);
+                let guard = db.lock();
+                crate::events::restore_tpl(old_tpl);
+                db.flush_deferred_group_signals();
+                db.signal_group(group);
+                assert!(
+                    db.memory_map_change_pending.load(AtomicOrdering::Acquire)
+                        || db.cache_attribute_change_pending.load(AtomicOrdering::Acquire)
+                );
+                assert!(guard.pending_notifies.is_empty());
+                assert_eq!(db.pending_signals.lock().capacity(), 0);
+                crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+                drop(guard);
+                db.flush_deferred_group_signals();
+                assert!(!db.memory_map_change_pending.load(AtomicOrdering::Acquire));
+                assert!(!db.cache_attribute_change_pending.load(AtomicOrdering::Acquire));
+            }
+        });
+    }
+
+    #[test]
+    fn test_event_allocator_groups_flush_independently() {
+        with_locked_state(|| {
+            let db = SpinLockedEventDb::new();
+            let groups = [
+                efi::EVENT_GROUP_MEMORY_MAP_CHANGE,
+                patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner(),
+            ];
+            let events = groups.map(|group| {
+                db.create_event(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_CALLBACK,
+                    Some(test_notify_function),
+                    None,
+                    Some(group),
+                )
+                .unwrap()
+            });
+            let old_tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+            for group in groups {
+                db.signal_group(group);
+                db.signal_group(group);
+            }
+            assert!(db.lock().pending_notifies.is_empty());
+            assert_eq!(db.pending_signals.lock().capacity(), 0);
+            crate::events::restore_tpl(old_tpl);
+            db.flush_deferred_group_signals();
+            let mut guard = db.lock();
+            assert_eq!(guard.pending_notifies.len(), 2);
+            let first = guard.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event;
+            let second = guard.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event;
+            assert!(events.contains(&first));
+            assert!(events.contains(&second));
+            assert_ne!(first, second);
+            assert!(guard.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+        });
+    }
+
+    #[test]
+    fn test_event_ordinary_group_still_queues_at_high_tpl() {
+        with_locked_state(|| {
+            let db = SpinLockedEventDb::new();
+            let group = efi::EVENT_GROUP_EXIT_BOOT_SERVICES;
+            db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify_function), None, Some(group))
+                .unwrap();
+            let old_tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+            db.signal_group(group);
+            assert_eq!(db.lock().pending_notifies.len(), 1);
+            assert!(!db.memory_map_change_pending.load(AtomicOrdering::Acquire));
+            crate::events::restore_tpl(old_tpl);
+        });
+    }
 
     #[test]
     fn create_event_should_create_event() {

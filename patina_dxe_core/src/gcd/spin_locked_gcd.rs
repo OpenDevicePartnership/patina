@@ -31,7 +31,6 @@ use patina::{
         dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
         guid as pi_guids, hob,
     },
-    uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID,
     uefi_pages_to_size, uefi_size_to_pages, writelncrlf,
     {SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
 };
@@ -41,7 +40,6 @@ use crate::{
     GCD,
     allocator::{DEFAULT_ALLOCATION_STRATEGY, memory_type_for_handle},
     ensure, error,
-    events::EVENT_DB,
     gcd::MemoryProtectionPolicy,
     protocol_db,
     protocol_db::INVALID_HANDLE,
@@ -634,7 +632,7 @@ impl GCD {
             }
             ensure!(addr + len <= max_address, EfiError::NotFound);
 
-            if mb.as_ref().memory_type != memory_type {
+            if mb.as_ref().memory_type != memory_type || !mb.can_allocate(image_handle, true) {
                 current = memory_blocks.next_idx(idx);
                 continue;
             }
@@ -723,7 +721,7 @@ impl GCD {
                 continue;
             }
 
-            if mb.as_ref().memory_type != memory_type {
+            if mb.as_ref().memory_type != memory_type || !mb.can_allocate(image_handle, true) {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }

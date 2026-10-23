@@ -351,8 +351,10 @@ mod tests {
                 let mat = &*(mat_ptr.as_ptr() as *const efi::MemoryAttributesTable);
 
                 assert_eq!(mat.version, efi::MEMORY_ATTRIBUTES_TABLE_VERSION);
-                // we have one extra entry here because init_system_table allocates runtime pages
-                assert_eq!(mat.number_of_entries, entry_count as u32 + 1);
+                // init_system_table contributes at least one entry. Runtime-pool retirement can split allocator-owned
+                // ranges into additional descriptors, so validate the requested allocations below instead of requiring
+                // an exact descriptor count.
+                assert!(mat.number_of_entries > entry_count as u32);
                 assert_eq!(mat.descriptor_size, size_of::<efi::MemoryDescriptor>() as u32);
 
                 let entry_slice = slice::from_raw_parts(mat.entry.as_ptr(), mat.number_of_entries as usize);

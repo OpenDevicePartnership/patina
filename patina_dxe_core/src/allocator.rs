@@ -110,6 +110,9 @@ pub struct AllocationStatistics {
     /// The number of calls to `alloc()`.
     pub pool_allocation_calls: usize,
 
+    /// The number of pool allocations routed directly to the GCD because they exceed the largest fixed block.
+    pub large_pool_allocation_calls: usize,
+
     /// The number of calls to `dealloc()`.
     pub pool_free_calls: usize,
 
@@ -139,6 +142,7 @@ impl AllocationStatistics {
     const fn new() -> Self {
         Self {
             pool_allocation_calls: 0,
+            large_pool_allocation_calls: 0,
             pool_free_calls: 0,
             page_allocation_calls: 0,
             page_free_calls: 0,
@@ -176,9 +180,6 @@ pub trait PageAllocator {
 
     /// Returns an iterator over the memory ranges managed by this allocator.
     fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>>;
-
-    /// Indicates whether the given pointer falls within a memory region managed by this allocator.
-    fn contains(&self, ptr: NonNull<u8>) -> bool;
 
     /// Returns the allocator handle associated with this allocator.
     fn handle(&self) -> efi::Handle;
@@ -2334,8 +2335,9 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }
@@ -2351,12 +2353,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }
@@ -2372,12 +2375,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }

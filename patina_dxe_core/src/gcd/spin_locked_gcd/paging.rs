@@ -9,11 +9,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use super::{
-    AllocateType, Box, CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID, CacheAttributeSource, DEFAULT_ALLOCATION_STRATEGY,
-    EVENT_DB, EfiError, GCD, GcdMemoryType, Hob, HobList, MemoryAttributes, MemoryProtectionPolicy, PageAllocator,
-    PatinaPageTable, PtError, SIZE_4GB, SpinLockedGcd, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, UefiPeInfo,
-    Vec, align_up, base_guids, dxe_services, efi, hob, pi_guids, protocol_db, uefi_pages_to_size,
+    AllocateType, Box, CacheAttributeSource, DEFAULT_ALLOCATION_STRATEGY, EfiError, GCD, GcdMemoryType, Hob, HobList,
+    MemoryAttributes, MemoryProtectionPolicy, PageAllocator, PatinaPageTable, PtError, SIZE_4GB, SpinLockedGcd,
+    UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, UefiPeInfo, Vec, align_up, base_guids, dxe_services, efi, hob,
+    pi_guids, protocol_db, uefi_pages_to_size,
 };
+use crate::events::EVENT_DB;
+use patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 use patina_internal_cpu::paging::PagingError;
 
 const PAGE_POOL_CAPACITY: usize = 512;
@@ -135,10 +137,6 @@ impl SpinLockedGcd {
 
             let cache_attribute_source = page_table.cache_attribute_source();
 
-            // The cache attribute change event only needs to be sent if the platform needs to communicate
-            // processor state external to the page table to APs.
-            let should_signal_event = cache_attribute_source == CacheAttributeSource::Processor;
-
             // As long as cache attributes are supported, let arch specific actions occur on update
             let should_handle_cache_attributes = cache_attribute_source != CacheAttributeSource::Unsupported;
 
@@ -214,43 +212,28 @@ impl SpinLockedGcd {
                     let old_cache_attributes =
                         region_attributes.map(|attrs| attrs & MemoryAttributes::CacheAttributesMask);
 
-                    // if the cache attributes changed, we need to publish an event, as some architectures
-                    // (such as x86) need to populate APs with the caching information
-                    if new_cache_attributes != MemoryAttributes::empty() {
-                        if let Some(old_cache_attrs) = old_cache_attributes
-                            && old_cache_attrs != new_cache_attributes
-                        {
-                            if should_handle_cache_attributes {
-                                // Some cache maintenance may be required after all attributes have been applied to clean
-                                // up any stale cache entries before the memory is accessed. This is done after the attributes
-                                // were applied to ensure no new unexpected cache lines are created.
-                                page_table.handle_cacheability_change(
-                                    base_address as u64,
-                                    len as u64,
-                                    old_cache_attrs,
-                                    new_cache_attributes,
-                                );
-                            }
+                    if new_cache_attributes != MemoryAttributes::empty()
+                        && let Some(old_cache_attrs) = old_cache_attributes
+                        && old_cache_attrs != new_cache_attributes
+                        && should_handle_cache_attributes
+                    {
+                        // Some cache maintenance may be required after all attributes have been applied to clean
+                        // up any stale cache entries before the memory is accessed. This is done after the attributes
+                        // were applied to ensure no new unexpected cache lines are created.
+                        page_table.handle_cacheability_change(
+                            base_address as u64,
+                            len as u64,
+                            old_cache_attrs,
+                            new_cache_attributes,
+                        );
+                    }
 
-                            if should_signal_event {
-                                // in this case, we had caching attributes for this region and they do not match the newly
-                                // set attributes
-                                log::trace!(
-                                    target: "paging",
-                                    "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from {old_cache_attrs:#x?}, sending cache attributes changed event",
-                                );
-
-                                EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner());
-                            }
-                        } else if unmapped && old_cache_attributes.is_none() && should_signal_event {
-                            // in this case the region was unmapped and we had no caching attributes set up
-                            log::trace!(
-                                target: "paging",
-                                "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from an unmapped state, sending cache attributes changed event",
-                            );
-
-                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner());
-                        }
+                    if new_cache_attributes != MemoryAttributes::empty()
+                        && cache_attribute_source == CacheAttributeSource::Processor
+                        && (old_cache_attributes.is_some_and(|old| old != new_cache_attributes)
+                            || (unmapped && old_cache_attributes.is_none()))
+                    {
+                        EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner());
                     }
 
                     log::trace!(
