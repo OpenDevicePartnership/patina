@@ -53,6 +53,9 @@ impl InterruptsX64 {
         self.register_exception_handler(14, HandlerType::UefiRoutine(page_fault_handler))
             .expect("Failed to install default exception handler!");
 
+        #[cfg(target_os = "uefi")]
+        super::apic::initialize_virtual_wire_mode()?;
+
         Ok(())
     }
 }
