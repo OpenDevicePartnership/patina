@@ -765,6 +765,46 @@ fn test_allocate_memory_space_with_all_memory_type() {
 }
 
 #[test]
+fn test_gcd_directional_allocation_skips_ineligible_candidates() {
+    with_locked_state(|| {
+        for top_down in [false, true] {
+            let (mut gcd, _) = create_gcd();
+            // SAFETY: The initialized test GCD tracks this controlled address range without dereferencing it.
+            unsafe { gcd.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x5000, 0) }.unwrap();
+            for address in [0x1000, 0x2000, 0x4000, 0x5000] {
+                gcd.allocate_memory_space(
+                    AllocateType::Address(address),
+                    GcdMemoryType::SystemMemory,
+                    12,
+                    0x1000,
+                    1 as _,
+                    None,
+                )
+                .unwrap();
+            }
+            for address in [0x2000, 0x4000] {
+                gcd.free_memory_space(address, 0x1000, MemoryStateTransition::FreePreservingOwnership).unwrap();
+            }
+            let strategy = if top_down { AllocateType::TopDown(None) } else { AllocateType::BottomUp(None) };
+            assert_eq!(
+                gcd.allocate_memory_space(strategy, GcdMemoryType::SystemMemory, 12, 0x1000, 2 as _, None),
+                Ok(0x3000),
+            );
+            let snapshot = copy_memory_block(&gcd);
+            assert_eq!(
+                gcd.allocate_memory_space(strategy, GcdMemoryType::SystemMemory, 12, 0x1000, 2 as _, None),
+                Err(EfiError::OutOfResources),
+            );
+            assert_eq!(snapshot, copy_memory_block(&gcd));
+            assert_eq!(
+                gcd.allocate_memory_space(strategy, GcdMemoryType::SystemMemory, 12, 0x1000, 1 as _, None),
+                Ok(if top_down { 0x4000 } else { 0x2000 }),
+            );
+        }
+    });
+}
+
+#[test]
 fn test_allocate_memory_space_with_no_memory_space_available() {
     with_locked_state(|| {
         let (mut gcd, _) = create_gcd();
@@ -2794,6 +2834,139 @@ fn test_set_paging_attributes_no_page_table() {
         let result = GCD.set_paging_attributes(base_address, length, attributes);
         assert_eq!(result.unwrap_err(), EfiError::NotReady);
     });
+}
+
+fn assert_paging_cache_change_notification(
+    source: CacheAttributeSource,
+    old_attributes: Option<MemoryAttributes>,
+    new_attributes: MemoryAttributes,
+    expected_notifications: usize,
+) {
+    use crate::events::{self, EVENT_DB};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+    static NOTIFICATIONS: AtomicUsize = AtomicUsize::new(0);
+    static CALLBACK_AFTER_UNLOCK: AtomicBool = AtomicBool::new(false);
+
+    extern "efiapi" fn notify(_: efi::Event, _: *mut core::ffi::c_void) {
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        CALLBACK_AFTER_UNLOCK
+            .store(old_tpl == efi::TPL_NOTIFY && GCD.page_table.try_lock().is_some(), Ordering::SeqCst);
+        NOTIFICATIONS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    with_locked_state(|| {
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        assert_eq!(old_tpl, efi::TPL_APPLICATION);
+        NOTIFICATIONS.store(0, Ordering::SeqCst);
+        CALLBACK_AFTER_UNLOCK.store(false, Ordering::SeqCst);
+
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        mock_table.borrow_mut().set_cache_attribute_source(source);
+        if let Some(attributes) = old_attributes {
+            mock_table.borrow_mut().map_memory_region(0x1000, 0x1000, attributes).unwrap();
+        }
+        *GCD.page_table.lock() = Some(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+        let _page_table_cleanup = test_support::StateGuard::new(|| {
+            *GCD.page_table.lock() = None;
+        });
+
+        let event = EVENT_DB
+            .create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                Some(notify),
+                None,
+                Some(patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner()),
+            )
+            .unwrap();
+        let _event_cleanup = test_support::StateGuard::new(|| {
+            EVENT_DB.close_event(event).unwrap();
+        });
+
+        let high_lock = tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, (), "cache_change_test");
+        let high_guard = high_lock.lock();
+        assert_eq!(GCD.set_paging_attributes(0x1000, 0x1000, new_attributes.bits()), Ok(()));
+        assert_eq!(events::raise_tpl(efi::TPL_HIGH_LEVEL), efi::TPL_HIGH_LEVEL);
+        assert_eq!(NOTIFICATIONS.load(Ordering::SeqCst), 0);
+        drop(high_guard);
+
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        assert_eq!(old_tpl, efi::TPL_APPLICATION);
+        assert_eq!(NOTIFICATIONS.load(Ordering::SeqCst), expected_notifications);
+        assert_eq!(CALLBACK_AFTER_UNLOCK.load(Ordering::SeqCst), expected_notifications != 0);
+        assert_eq!(
+            mock_table.borrow().get_mapped_regions().len(),
+            usize::from(old_attributes.is_some()) + usize::from(old_attributes != Some(new_attributes)),
+        );
+    });
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_processor_changed() {
+    assert_paging_cache_change_notification(
+        CacheAttributeSource::Processor,
+        Some(MemoryAttributes::Uncached),
+        MemoryAttributes::Writeback,
+        1,
+    );
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_processor_unmapped() {
+    assert_paging_cache_change_notification(CacheAttributeSource::Processor, None, MemoryAttributes::Writeback, 1);
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_unchanged() {
+    for attributes in [MemoryAttributes::Writeback, MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect] {
+        assert_paging_cache_change_notification(
+            CacheAttributeSource::Processor,
+            Some(MemoryAttributes::Writeback),
+            attributes,
+            0,
+        );
+    }
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_page_table() {
+    for old_attributes in [None, Some(MemoryAttributes::Uncached)] {
+        assert_paging_cache_change_notification(
+            CacheAttributeSource::PageTable,
+            old_attributes,
+            MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect,
+            0,
+        );
+    }
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_unsupported() {
+    for old_attributes in [None, Some(MemoryAttributes::Uncached)] {
+        assert_paging_cache_change_notification(
+            CacheAttributeSource::Unsupported,
+            old_attributes,
+            MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect,
+            0,
+        );
+    }
+}
+
+#[test]
+fn test_set_paging_attributes_cache_event_empty_cache_attributes() {
+    for old_attributes in [None, Some(MemoryAttributes::Writeback)] {
+        assert_paging_cache_change_notification(
+            CacheAttributeSource::Processor,
+            old_attributes,
+            MemoryAttributes::ExecuteProtect,
+            0,
+        );
+    }
 }
 
 #[test]
