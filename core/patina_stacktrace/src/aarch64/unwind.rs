@@ -476,6 +476,7 @@ impl UnwindCode {
     ) -> StResult<StackFrame> {
         let mut prev_sp = stack_frame.sp;
         let mut prev_pc = stack_frame.pc;
+        let mut prev_fp = stack_frame.fp;
 
         let mut integer_save_size = reg_i;
         if cr == FrameChainMode::UnchainedSavedLr {
@@ -581,6 +582,9 @@ impl UnwindCode {
 
                 log::debug!("    > set_fp");
                 // fp_set = true;
+                // SAFETY: Packed chained unwind metadata places the saved FP/LR
+                // pair at the base of the frame's local area, at the current SP.
+                (prev_fp, prev_pc) = unsafe { (read_pointer64(prev_sp)?, read_pointer64(prev_sp + 8)?) };
             } else {
                 // +0028 add  sp,sp,#20           ; Actual=add   sp,sp,#0x20
                 // +002C ldr  lr,[sp,#0x0]        ; Actual=ldr   lr,[sp],#0x10
@@ -595,7 +599,7 @@ impl UnwindCode {
 
         prev_sp += u64::from(frame_size);
 
-        let prev_stack_frame = StackFrame { sp: prev_sp, pc: prev_pc, ..*stack_frame };
+        let prev_stack_frame = StackFrame { sp: prev_sp, pc: prev_pc, fp: prev_fp };
         log::debug!("    > OUT(packed): {prev_stack_frame}"); // debug
         Ok(prev_stack_frame)
     }
@@ -1469,18 +1473,23 @@ mod tests {
 
     #[test]
     fn get_previous_stack_frame_packed_chain_with_fp_store() {
-        let frame_size = 96; // 0x60
-        let mut stack = vec![0u64; 64];
-        let base_ptr = stack.as_mut_ptr() as u64;
-        stack[6] = 0x1111_2222_3333_4444;
-        stack[7] = 0x9999_AAAA_BBBB_CCCC;
+        for frame_size in [16u16, 96, 512, 528] {
+            let mut stack = vec![0u64; usize::from(frame_size) / 8];
+            let base_ptr = stack.as_mut_ptr() as u64;
+            let saved_fp = 0x4000;
+            let saved_lr = 0x5000;
+            stack[0] = saved_fp;
+            stack[1] = saved_lr;
 
-        let frame = StackFrame { sp: base_ptr, pc: 0x1010_2020_3030_4040, fp: 0 };
-        let prev = UnwindCode::get_previous_stack_frame_packed(frame_size, FrameChainMode::Chained, 0, 0, 0, &frame)
-            .expect("packed unwind should succeed");
+            let frame = StackFrame { sp: base_ptr, pc: 0x6000, fp: base_ptr };
+            let prev =
+                UnwindCode::get_previous_stack_frame_packed(frame_size, FrameChainMode::Chained, 0, 0, 0, &frame)
+                    .expect("packed unwind should succeed");
 
-        assert_eq!(prev.pc, frame.pc);
-        assert_eq!(prev.sp, frame.sp + u64::from(frame_size));
+            assert_eq!(prev.pc, saved_lr);
+            assert_eq!(prev.fp, saved_fp);
+            assert_eq!(prev.sp, frame.sp + u64::from(frame_size));
+        }
     }
 
     #[test]
