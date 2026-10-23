@@ -426,6 +426,49 @@ if eq ${target} "aarch64-pc-windows-msvc"
 end
 ''']
 
+[tasks.check-no-alloc-x64]
+description = """Checks each package with `package.metadata.patina.no_alloc = true` in its Cargo.toml for
+x64 target with only `core` available, so any `alloc` use in it or its dependencies fails.
+
+Example:
+    `cargo make check-no-alloc-x64`
+"""
+clear = true
+script_runner = "@duckscript"
+condition_script = ['''
+target = get_env CARGO_MAKE_RUST_TARGET_TRIPLE
+if eq ${target} "aarch64-pc-windows-msvc"
+    echo "Cross-compiling for x86_64-unknown-uefi from aarch64-pc-windows-msvc is skipped to save build time on Windows ARM64 hosts."
+    exit 1
+end
+''']
+script = '''
+out = exec --fail-on-error cargo metadata --no-deps --format-version 1
+metadata = json_parse ${out.stdout}
+saved_rustflags = get_env RUSTFLAGS
+# The config rustflags minus `-Z allow-features`, which breaks `-Zbuild-std`.
+set_env RUSTFLAGS "-C link-arg=/subsystem:efi_boot_service_driver -C force-frame-pointers -C force-unwind-tables"
+set_env RUSTC_BOOTSTRAP 1
+
+# One check per package so their dependency features are not unified.
+indexes = range 0 ${metadata.packages.length}
+for i in ${indexes}
+    no_alloc = get_by_name metadata.packages[${i}].metadata.patina.no_alloc
+    if eq "${no_alloc}" true
+        name = get_by_name metadata.packages[${i}].name
+        exec --fail-on-error cargo check -p ${name} --target x86_64-unknown-uefi -Zbuild-std=core
+    end
+end
+
+# Restore the environment for later tasks in the same run.
+unset_env RUSTC_BOOTSTRAP
+if is_empty ${saved_rustflags}
+    unset_env RUSTFLAGS
+else
+    set_env RUSTFLAGS ${saved_rustflags}
+end
+'''
+
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Arguments are forwarded to `cargo doc`. Example `cargo make doc` or `cargo make doc -p patina`"
 clear = true
@@ -594,6 +637,7 @@ run_task = { name = [
         "all-preflight",
         "clippy",
         "check-no-default-features",
+        "check-no-alloc-x64",
         "build",
         "build-x64",
         "build-aarch64",
