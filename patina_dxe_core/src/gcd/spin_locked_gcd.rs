@@ -631,7 +631,7 @@ impl GCD {
             }
             ensure!(addr + len <= max_address, EfiError::NotFound);
 
-            if mb.as_ref().memory_type != memory_type {
+            if mb.as_ref().memory_type != memory_type || !mb.can_allocate(image_handle, true) {
                 current = memory_blocks.next_idx(idx);
                 continue;
             }
@@ -720,7 +720,7 @@ impl GCD {
                 continue;
             }
 
-            if mb.as_ref().memory_type != memory_type {
+            if mb.as_ref().memory_type != memory_type || !mb.can_allocate(image_handle, true) {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }
