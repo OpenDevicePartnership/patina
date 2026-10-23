@@ -110,6 +110,9 @@ pub struct AllocationStatistics {
     /// The number of calls to `alloc()`.
     pub pool_allocation_calls: usize,
 
+    /// The number of pool allocations routed directly to the GCD because they exceed the largest fixed block.
+    pub large_pool_allocation_calls: usize,
+
     /// The number of calls to `dealloc()`.
     pub pool_free_calls: usize,
 
@@ -139,6 +142,7 @@ impl AllocationStatistics {
     const fn new() -> Self {
         Self {
             pool_allocation_calls: 0,
+            large_pool_allocation_calls: 0,
             pool_free_calls: 0,
             page_allocation_calls: 0,
             page_free_calls: 0,
@@ -176,9 +180,6 @@ pub trait PageAllocator {
 
     /// Returns an iterator over the memory ranges managed by this allocator.
     fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>>;
-
-    /// Indicates whether the given pointer falls within a memory region managed by this allocator.
-    fn contains(&self, ptr: NonNull<u8>) -> bool;
 
     /// Returns the allocator handle associated with this allocator.
     fn handle(&self) -> efi::Handle;
@@ -2236,28 +2237,6 @@ mod tests {
         });
     }
 
-    // This test uses an allocation request size of 0x2b2fa0 to test a specific edge case.
-    //
-    // When core_allocate_pool attempts to allocate 0x2b2fa0 bytes (aligned to 0x2b2fb8 bytes), the allocation
-    // will initially fail and trigger a fallback to fallback_alloc, which requests 0x2b2ff8 bytes of additional
-    // memory. The GCD then allocates memory with a page-aligned size of 0x2b3000 bytes. Following this, the system
-    // calls expand() to add the newly allocated heap, which ends up being 0x2b2fc0 bytes in size. However, the
-    // difference between the heap size (0x2b2fc0) and the expected memory size (0x2b2fb8) is only 8 bytes. This
-    // small gap is insufficient to accommodate the metadata required by HoleList::new() from the
-    // linked_list_allocator crate, which expects extra space for internal bookkeeping structures.
-    //
-    // This test ensures that the linked list hole list structure is accounted for correctly and that the allocation
-    // succeeds without panicking due to insufficient space. For this particular test, the failing additional memory
-    // size returned was 0x2b3000 bytes (panic) whereas now 0x2b3010 bytes is returned to account for the HoleList
-    // metadata.
-    #[test]
-    fn linked_list_hole_list_struct_should_be_accounted_for() {
-        with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
-            let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 0x2B2FA0).unwrap();
-            assert!(!ptr.is_null());
-        });
-    }
-
     #[test]
     fn allocate_pool_should_allocate_pool() {
         with_locked_state(GcdInit::WithSize(0x1000000), |_physical_hob_list| {
@@ -2334,8 +2313,9 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }
@@ -2351,12 +2331,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }
@@ -2372,12 +2353,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().next().is_none());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
+                assert!(allocator.get_memory_ranges().next().is_none());
             }
         });
     }
