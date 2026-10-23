@@ -204,9 +204,6 @@ pub struct FixedSizeBlockAllocator {
     /// blocks or if the required fixed-size block list is empty.
     allocators: Option<*mut AllocatorListNode>,
 
-    /// Most recently used allocator node for per-page accounting.
-    page_accounting_node: Option<NonNull<AllocatorListNode>>,
-
     /// Allocator node and page index where the next retired-page search begins. This is maintained to reclaim pages
     /// in FIFO order, maximizing the time between a page being freed and it being reclaimed.
     retired_page_cursor: Option<(NonNull<AllocatorListNode>, usize)>,
@@ -233,7 +230,6 @@ impl FixedSizeBlockAllocator {
             list_heads: [EMPTY; BLOCK_SIZES.len()],
             list_tails: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
-            page_accounting_node: None,
             retired_page_cursor: None,
             reserved_range: None,
             stats: AllocationStatistics::new(),
@@ -249,7 +245,6 @@ impl FixedSizeBlockAllocator {
         self.list_heads = [EMPTY; BLOCK_SIZES.len()];
         self.list_tails = [EMPTY; BLOCK_SIZES.len()];
         self.allocators = None;
-        self.page_accounting_node = None;
         self.retired_page_cursor = None;
         self.reserved_range = None;
         self.stats = AllocationStatistics::new();
@@ -313,7 +308,6 @@ impl FixedSizeBlockAllocator {
         }
 
         self.allocators = Some(alloc_node_ptr);
-        self.page_accounting_node = NonNull::new(alloc_node_ptr);
         if self.retired_page_cursor.is_none() {
             self.retired_page_cursor = NonNull::new(alloc_node_ptr).map(|node| (node, 0));
         }
@@ -513,22 +507,13 @@ impl FixedSizeBlockAllocator {
     }
 
     /// Returns the region node that tracks the page containing `address`, if any.
-    fn node_for_address(&mut self, address: usize) -> Option<NonNull<AllocatorListNode>> {
-        if let Some(node) = self.page_accounting_node {
-            // SAFETY: allocator nodes remain valid for the lifetime of the allocator.
-            if unsafe { (*node.as_ptr()).page_index(address).is_some() } {
-                return Some(node);
-            }
-        }
-
-        let node = AllocatorIterator::new(self.allocators)
+    fn node_for_address(&self, address: usize) -> Option<NonNull<AllocatorListNode>> {
+        AllocatorIterator::new(self.allocators)
             .find(|&node| {
                 // SAFETY: node is produced by AllocatorIterator and points to a valid AllocatorListNode.
                 unsafe { (*node).page_index(address).is_some() }
             })
-            .and_then(NonNull::new);
-        self.page_accounting_node = node;
-        node
+            .and_then(NonNull::new)
     }
 
     /// Records that a fixed-size block was taken off of the free lists.
