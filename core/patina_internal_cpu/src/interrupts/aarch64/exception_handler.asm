@@ -283,6 +283,10 @@ SErrorA32:
 
 common_exception_routine:
 
+  # Follow AAPCS: push frame record
+  stp      x29, x30, [sp, #-0x10]!
+  mov      x29, sp
+
   # Check EL
   mrs      x1, CurrentEL
   cmp      x1, #0x8
@@ -335,11 +339,14 @@ set_fp:
   stp      q30, q31, [x28, #0x1e0]
 
   # x0 still holds the exception type.
-  # Set x1 to point to the top of our struct on the Stack
-  mov      x1, sp
+  # Set x1 to point to the top of our struct on the Stack, skipping the frame record.
+  add      x1, sp, #0x10
 
   # Call into rust routine.
   bl       exception_handler
+
+  # Pop the frame record and restore SP to the saved register context
+  add      sp, sp, #0x10
 
   # Pop as many GP regs as we can before entering the critical section below
   ldp      x2,  x3,  [sp, #0x10]
