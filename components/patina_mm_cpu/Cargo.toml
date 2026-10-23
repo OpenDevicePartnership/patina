@@ -1,0 +1,23 @@
+[package]
+name = "patina_mm_cpu"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "MM CPU component producing the EFI_MM_CPU_PROTOCOL (save-state access) in the MM User Core."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+
+patina = { workspace = true, features = ["alloc"] }
+
+[features]
+std = []
+# All non-std features to test in CI
+ci_features = []
