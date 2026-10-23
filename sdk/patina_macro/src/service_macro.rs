@@ -182,7 +182,10 @@ pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStre
         extern crate alloc as #alloc_name;
         impl #lhs patina::component::service::IntoService for #name #rhs #where_clause {
 
-            fn register(self, storage: &mut patina::component::Storage) {
+            fn register(
+                self,
+                storage: &mut patina::component::Storage
+            ) {
                 let leaked: &'static Self = #alloc_name::boxed::Box::leak(#alloc_name::boxed::Box::new(self));
                 #service_register
             }
@@ -190,7 +193,10 @@ pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStre
 
         impl #lhs patina::component::service::IntoService for &'static #name #rhs #where_clause {
 
-            fn register(self, storage: &mut patina::component::Storage) {
+            fn register(
+                self,
+                storage: &mut patina::component::Storage
+            ) {
                 let leaked: Self = self;
                 #service_register
             }

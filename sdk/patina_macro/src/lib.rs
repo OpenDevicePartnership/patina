@@ -181,6 +181,8 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `#[should_fail = "message"]`: Indicates that the test is expected to fail with the given message. If the test
 ///   passes or fails with a different message, the test runner will log an error.
 /// - `#[skip]`: Indicates that the test should be skipped.
+/// - `#[requires(component = ComponentType)]`: Runs the test only when an instance of the component type is registered
+///   with the platform's Patina DXE Core and the component has executed.
 /// - `#[on(timer = N)]`: Indicates that the test should be triggered periodically every N units of 100 nanoseconds.
 /// - `#[on(event = GUID)]`: Indicates that the test should be triggered by the specified event.
 ///
@@ -211,6 +213,12 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// #[patina_test]
 /// #[skip]
 /// fn skipped_test_case() -> Result {
+///    todo!()
+/// }
+///
+/// #[patina_test]
+/// #[requires(component = MyComponent)]
+/// fn component_test_case() -> Result {
 ///    todo!()
 /// }
 ///

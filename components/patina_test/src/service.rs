@@ -14,7 +14,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    __private_api::{TestCase, TestTrigger},
+    __private_api::{DispatchInfo, TestCase, TestTrigger},
     alloc::{boxed::Box, collections::BTreeMap, fmt::Display, vec::Vec},
 };
 
@@ -22,7 +22,7 @@ use core::{ptr::NonNull, time::Duration};
 
 use patina::{
     component::{
-        Storage,
+        Query, Storage,
         service::{
             IntoService, Service,
             uefi_services::{
@@ -59,6 +59,8 @@ pub(crate) struct TestRecord {
     debug_mode: bool,
     /// The test case to execute.
     test_case: &'static TestCase,
+    /// Query to check the owning component's dispatch status.
+    component_query: Query<&'static DispatchInfo>,
     /// Callback functions to be called on test failure.
     callback: Vec<fn(&'static str, &'static str)>,
     /// The number of times this test has executed and passed.
@@ -76,9 +78,10 @@ impl TestRecord {
         debug_mode: bool,
         test_case: &'static TestCase,
         callback: Option<fn(&'static str, &'static str)>,
+        component_query: Query<&'static DispatchInfo>,
     ) -> Self {
         let callback = callback.into_iter().collect();
-        Self { debug_mode, test_case, callback, pass: 0, fail: 0, err_msg: None }
+        Self { debug_mode, test_case, component_query, callback, pass: 0, fail: 0, err_msg: None }
     }
 
     pub fn name(&self) -> &'static str {
@@ -97,10 +100,23 @@ impl TestRecord {
         }
     }
 
+    /// Returns whether the test has no component dependency or its owning component dispatched successfully.
+    fn component_ready(&self, storage: &Storage) -> bool {
+        self.test_case.component_id.is_none_or(|component_id| {
+            self.component_query.query(storage).any(|dispatch_info| {
+                dispatch_info.component_type_id() == component_id() && dispatch_info.is_succeeded()
+            })
+        })
+    }
+
     /// Runs the test case case.
     ///
     /// Calls the test failure callbacks if the test fails.
     fn run(&mut self, storage: &mut Storage) {
+        if !self.component_ready(storage) {
+            return;
+        }
+
         let result = self.test_case.run(storage, self.debug_mode);
 
         match result {
@@ -340,6 +356,7 @@ impl Display for Recorder {
 mod tests {
     extern crate std;
 
+    use core::any::TypeId;
     use std::boxed::Box;
 
     use super::*;
@@ -348,23 +365,29 @@ mod tests {
         component::tests::*,
     };
 
+    struct OwningComponent;
+
+    fn owning_component_type_id() -> TypeId {
+        TypeId::of::<OwningComponent>()
+    }
+
     #[test]
     fn test_recorder_records_results() {
         let recorder = Recorder::default();
 
-        let mut tr1 = TestRecord::new(false, &TEST_CASE2, None);
+        let mut tr1 = TestRecord::new(false, &TEST_CASE2, None, Query::new());
         tr1.pass = 2;
         tr1.fail = 1;
         tr1.err_msg = Some("Failure 1");
         recorder.update_record(tr1);
 
-        let mut tr2 = TestRecord::new(false, &TEST_CASE3, None);
+        let mut tr2 = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         tr2.pass = 0;
         tr2.fail = 2;
         tr2.err_msg = Some("Failure 2");
         recorder.update_record(tr2);
 
-        let mut tr3 = TestRecord::new(false, &TEST_CASE4, None);
+        let mut tr3 = TestRecord::new(false, &TEST_CASE4, None, Query::new());
         tr3.pass = 1;
         recorder.update_record(tr3);
 
@@ -381,7 +404,7 @@ mod tests {
         let recorder = Recorder::default();
 
         let test_case = &TEST_CASE1;
-        let mut test_data = TestRecord::new(false, test_case, None);
+        let mut test_data = TestRecord::new(false, test_case, None, Query::new());
 
         test_data.run(&mut storage);
 
@@ -394,11 +417,11 @@ mod tests {
 
     #[test]
     fn test_update_record_with_existing_record() {
-        let mut record1 = TestRecord::new(false, &TEST_CASE1, Some(|_, _| ()));
+        let mut record1 = TestRecord::new(false, &TEST_CASE1, Some(|_, _| ()), Query::new());
         record1.pass = 1;
         record1.fail = 0;
 
-        let mut record2 = TestRecord::new(true, &TEST_CASE1, Some(|_, _| ()));
+        let mut record2 = TestRecord::new(true, &TEST_CASE1, Some(|_, _| ()), Query::new());
         record2.pass = 0;
         record2.fail = 2;
         record2.err_msg = Some("Failure");
@@ -415,6 +438,50 @@ mod tests {
         assert_eq!(record.err_msg, Some("Failure"));
         assert!(record.debug_mode);
         assert_eq!(record.callback.len(), 2);
+    }
+
+    #[test]
+    fn test_record_waits_for_owning_component_success() {
+        let test_case = Box::leak(Box::new(TestCase {
+            name: "owned_test",
+            component_id: Some(owning_component_type_id),
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        }));
+        let component_query = Query::new();
+        let mut record = TestRecord::new(false, test_case, None, component_query);
+        let mut other_record = TestRecord::new(false, test_case, None, component_query);
+        let mut storage = Storage::new();
+        record.run(&mut storage);
+        assert_eq!(record.pass, 0);
+        assert_eq!(record.fail, 0);
+        let entity = storage
+            .create_entity()
+            .add_fields((crate::__private_api::DispatchInfo::new(owning_component_type_id()),))
+            .unwrap()
+            .id();
+
+        record.run(&mut storage);
+        assert_eq!(record.pass, 0);
+        assert_eq!(record.fail, 0);
+
+        patina::component::Query::<&mut crate::__private_api::DispatchInfo>::new()
+            .query_mut(&mut storage)
+            .get(&entity)
+            .unwrap()
+            .set_succeeded();
+        record.run(&mut storage);
+        assert_eq!(record.pass, 1);
+        assert_eq!(record.fail, 0);
+        other_record.run(&mut storage);
+        assert_eq!(other_record.pass, 1);
+        assert_eq!(other_record.fail, 0);
+        record.run(&mut storage);
+        assert_eq!(record.pass, 2);
+        assert_eq!(record.fail, 0);
     }
 
     #[test]
@@ -443,7 +510,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        let record = TestRecord::new(false, &TEST_CASE4, None);
+        let record = TestRecord::new(false, &TEST_CASE4, None, Query::new());
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
@@ -469,6 +536,7 @@ mod tests {
             Box::leak(Box::new([TestTrigger::Timer(1_000_000), TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))]));
         let test_case = Box::leak(Box::new(TestCase {
             name: "timer_creation_failure",
+            component_id: None,
             triggers,
             skip: false,
             should_fail: false,
@@ -488,7 +556,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        let record = TestRecord::new(false, test_case, None);
+        let record = TestRecord::new(false, test_case, None, Query::new());
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
@@ -520,7 +588,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let record = TestRecord::new(false, &TEST_CASE5, None, Query::new());
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
@@ -560,7 +628,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let record = TestRecord::new(false, &TEST_CASE5, None, Query::new());
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
@@ -616,7 +684,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        let record = TestRecord::new(false, &TEST_CASE5, None);
+        let record = TestRecord::new(false, &TEST_CASE5, None, Query::new());
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
@@ -677,7 +745,7 @@ mod tests {
         storage.add_config(1_i32);
 
         let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-        recorder.update_record(TestRecord::new(false, &TEST_CASE1, None));
+        recorder.update_record(TestRecord::new(false, &TEST_CASE1, None, Query::new()));
 
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         recorder.initialize(events, &mut storage).expect("recorder initialization should succeed");
@@ -708,7 +776,7 @@ mod tests {
     #[test]
     fn test_recorder_formats_failure_without_error_message() {
         let recorder = Recorder::default();
-        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        let mut record = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         record.fail = 1;
         recorder.update_record(record);
 
@@ -727,7 +795,7 @@ mod tests {
         }
 
         let recorder = Recorder::default();
-        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        let mut record = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         record.fail = 1;
         recorder.update_record(record);
 
@@ -759,7 +827,7 @@ mod tests {
 
         let mut storage = Storage::new();
         let recorder = Recorder::default();
-        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        let mut record = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         record.fail = 1;
         record.err_msg = Some("Failure");
         recorder.update_record(record);
@@ -778,7 +846,7 @@ mod tests {
     #[test]
     fn test_record_json_string() {
         let test_case = &TEST_CASE1;
-        let mut record = TestRecord::new(false, test_case, None);
+        let mut record = TestRecord::new(false, test_case, None, Query::new());
         record.pass = 2;
         record.fail = 1;
         record.err_msg = Some("Failure message");
@@ -795,13 +863,13 @@ mod tests {
     fn test_recorder_json_string() {
         let recorder = Recorder::default();
 
-        let mut tr1 = TestRecord::new(false, &TEST_CASE2, None);
+        let mut tr1 = TestRecord::new(false, &TEST_CASE2, None, Query::new());
         tr1.pass = 2;
         tr1.fail = 1;
         tr1.err_msg = Some("Failure 1");
         recorder.update_record(tr1);
 
-        let mut tr2 = TestRecord::new(false, &TEST_CASE3, None);
+        let mut tr2 = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         tr2.pass = 0;
         tr2.fail = 2;
         tr2.err_msg = Some("Failure 2");
@@ -839,10 +907,10 @@ mod tests {
         write!(buffer, "{}", recorder.json()).unwrap();
         assert_eq!(&buffer.bytes[..buffer.len], b"[]");
 
-        let mut record = TestRecord::new(false, &TEST_CASE2, None);
+        let mut record = TestRecord::new(false, &TEST_CASE2, None, Query::new());
         record.pass = 2;
         recorder.update_record(record);
-        let mut record = TestRecord::new(false, &TEST_CASE3, None);
+        let mut record = TestRecord::new(false, &TEST_CASE3, None, Query::new());
         record.fail = 1;
         record.err_msg = Some("Failure");
         recorder.update_record(record);

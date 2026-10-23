@@ -7,12 +7,17 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    component::{metadata::MetaData, params::Param},
+    component::{
+        metadata::MetaData,
+        params::Param,
+        query::Query,
+        tables::{Fields, Tables},
+    },
     uefi::runtime_services::StandardRuntimeServices,
 };
 
 use crate::BinaryGuid;
-use alloc::{borrow::Cow, boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use core::{
     any::{Any, TypeId},
     cell::{Ref, RefCell, RefMut, UnsafeCell},
@@ -27,66 +32,7 @@ use super::{
     service::{IntoService, Service},
 };
 
-type HobParsers = BTreeMap<BinaryGuid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
-
-/// A vector whose elements are sparsely populated.
-#[derive(Debug)]
-pub(crate) struct SparseVec<V> {
-    values: Vec<Option<V>>,
-}
-
-impl<V> SparseVec<V> {
-    /// Creates a new empty [`SparseVec`].
-    pub const fn new() -> Self {
-        Self { values: Vec::new() }
-    }
-
-    #[inline]
-    /// Returns true if the [`SparseVec`] contains a value at the given index.
-    pub fn contains(&self, index: usize) -> bool {
-        self.values.get(index).is_some_and(core::option::Option::is_some)
-    }
-
-    #[inline]
-    /// Returns the value at the given index, if it exists.
-    pub fn get(&self, index: usize) -> Option<&V> {
-        self.values.get(index).map(|v| v.as_ref())?
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut V> {
-        self.values.get_mut(index).map(|v| v.as_mut())?
-    }
-
-    #[inline]
-    /// Inserts a value at the given index.
-    pub fn insert(&mut self, index: usize, value: V) {
-        if index >= self.values.len() {
-            self.values.resize_with(index + 1, || None);
-        }
-
-        let slot = self.values.get_mut(index).expect("inserted value should be in bounds");
-        *slot = Some(value);
-    }
-}
-
-impl<'a, V> IntoIterator for &'a SparseVec<V> {
-    type Item = &'a Option<V>;
-    type IntoIter = core::slice::Iter<'a, Option<V>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.iter()
-    }
-}
-
-impl<'a, V> IntoIterator for &'a mut SparseVec<V> {
-    type Item = &'a mut Option<V>;
-    type IntoIter = core::slice::IterMut<'a, Option<V>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.iter_mut()
-    }
-}
+use super::tables::{Entity, EntityError};
 
 /// A container for an untyped config datum.
 pub struct ConfigRaw(bool, Box<dyn Any>);
@@ -133,6 +79,27 @@ impl DerefMut for ConfigRaw {
     }
 }
 
+pub(crate) struct StoredConfig {
+    id: TypeId,
+    value: RefCell<ConfigRaw>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HobId(pub(crate) TypeId);
+
+pub(crate) struct HobValue(pub(crate) Box<dyn Any>);
+
+pub(crate) struct HobParser {
+    guid: BinaryGuid,
+    parser: fn(&[u8], &mut Storage),
+}
+
+/// One registered service interface, stored on its own entity.
+pub(crate) struct StoredService {
+    id: TypeId,
+    value: &'static dyn Any,
+}
+
 /// A container for deferred commands that will be executed later.
 #[derive(Default)]
 #[allow(clippy::type_complexity)]
@@ -166,6 +133,42 @@ impl Debug for Deferred {
     }
 }
 
+/// Immediate structural access to one [`Entity`].
+pub struct EntityMut<'storage> {
+    entity: Entity,
+    tables: &'storage mut Tables,
+}
+
+#[allow(private_bounds)]
+impl EntityMut<'_> {
+    /// Returns this entry's entity identity.
+    pub fn id(&self) -> Entity {
+        self.entity
+    }
+
+    /// Adds fields to this entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::FieldAlreadyExists`] if the entity already contains any field in `fields`.
+    pub fn add_fields<F: Fields>(&mut self, fields: F) -> Result<&mut Self, EntityError> {
+        self.tables.add_fields(self.entity, fields)?;
+        Ok(self)
+    }
+
+    /// Removes and returns one field from this entity.
+    ///
+    /// Returns `None` if the entity no longer exists or does not contain `T`.
+    pub fn take_field<T: 'static>(&mut self) -> Option<T> {
+        self.tables.take_field::<T>(self.entity)
+    }
+
+    /// Removes this entity and drops all of its fields.
+    pub fn remove(self) {
+        self.tables.remove(self.entity).expect("EntityMut must reference a live entity");
+    }
+}
+
 /// Storage container for all datums that can be consumed by a Component.
 ///
 /// The [Component](crate::component::Component) trait provides the interface that a component must implement to be
@@ -193,23 +196,8 @@ pub struct Storage {
     /// A container for all deferred commands that components can register. This is used to delay the execution of
     /// commands that can result in structural changes to the storage.
     deferred: Option<Deferred>,
-    /// A container for all [Config](super::params::Config) and [`ConfigMut`](super::params::ConfigMut) datums. This
-    /// resource can be accessed both immutably and mutably, so it must be tracked by
-    /// [Access](super::metadata::Access).
-    configs: SparseVec<RefCell<ConfigRaw>>,
-    /// A map to convert from a `TypeId` to a config index.
-    config_indices: BTreeMap<TypeId, usize>,
-    /// A container for all service datums. This resource can only be accessed immutably, but one service datum can
-    /// represent multiple services. Services must have internal mutability if they need to be modified.
-    services: SparseVec<&'static dyn Any>,
-    /// A map to convert a Service type to a concrete service index.
-    service_indices: BTreeMap<TypeId, usize>,
-    /// HOB parsers for converting guided HOBs into `Hob<T>` datums.
-    hob_parsers: HobParsers,
-    /// A container for all [Hob](super::hob::Hob) datums.
-    hobs: SparseVec<Vec<Box<dyn Any>>>,
-    /// a map to convert from `TypeId` to a hob index.
-    hob_indices: BTreeMap<TypeId, usize>,
+    /// Type-erased, column-oriented data used by component infrastructure.
+    tables: Tables,
     // Standard Runtime Services.
     runtime_services: StandardRuntimeServices,
     // Image handle for the DXE Core (used as parent for LoadImage calls).
@@ -222,21 +210,37 @@ impl Default for Storage {
     }
 }
 
+#[allow(private_bounds)]
 impl Storage {
     /// Creates a new [Storage] object with empty containers for all datums.
     pub const fn new() -> Self {
         Self {
             deferred: None,
-            configs: SparseVec::new(),
-            config_indices: BTreeMap::new(),
-            services: SparseVec::new(),
-            service_indices: BTreeMap::new(),
-            hob_parsers: BTreeMap::new(),
-            hobs: SparseVec::new(),
-            hob_indices: BTreeMap::new(),
+            tables: Tables::new(),
             runtime_services: StandardRuntimeServices::new_uninit(),
             image_handle: None,
         }
+    }
+
+    pub(crate) const fn get_tables_mut(&mut self) -> &mut Tables {
+        &mut self.tables
+    }
+
+    pub(crate) const fn get_tables(&self) -> &Tables {
+        &self.tables
+    }
+
+    /// Returns immediate structural access to `entity`.
+    ///
+    /// Returns `None` if the entity no longer exists.
+    pub fn entity_mut(&mut self, entity: Entity) -> Option<EntityMut<'_>> {
+        self.tables.contains(entity).then_some(EntityMut { entity, tables: &mut self.tables })
+    }
+
+    /// Creates an entity with no fields.
+    pub fn create_entity(&mut self) -> EntityMut<'_> {
+        let entity = self.tables.insert_new(());
+        EntityMut { entity, tables: &mut self.tables }
     }
 
     /// Applies all deferred actions to the storage. Used in a multi-threaded context
@@ -280,83 +284,105 @@ impl Storage {
         self.image_handle
     }
 
-    /// Registers a config type with the storage and returns its global id.
-    pub(crate) fn register_config<C: Default + 'static>(&mut self) -> usize {
-        let idx = self.config_indices.len();
-        *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx)
-    }
-
     /// Adds a default valued config datum to the storage if it does not exist.
-    pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> usize {
-        let idx = self.register_config::<C>();
-        if !self.configs.contains(idx) {
-            self.configs.insert(idx, RefCell::new(ConfigRaw::new(true, Box::<C>::default())));
+    pub(crate) fn add_config_default_if_not_present<C: Default + 'static>(&mut self) -> Entity {
+        let id = TypeId::of::<C>();
+        if let Some(entity) = self.config_entity(id) {
+            return entity;
         }
-        idx
+
+        self.insert_config(id, Box::<C>::default())
     }
 
     /// Adds a config datum to the storage, overwriting an existing value if it exists.
     pub fn add_config<C: Default + 'static>(&mut self, config: C) {
-        let id = self.register_config::<C>();
-        self.configs.insert(id, RefCell::new(ConfigRaw::new(true, Box::new(config))));
+        self.add_config_erased(TypeId::of::<C>(), Box::new(config));
+    }
+
+    fn add_config_erased(&mut self, id: TypeId, config: Box<dyn Any>) {
+        if let Some(entity) = self.config_entity(id) {
+            Query::<&StoredConfig>::new()
+                .query(self)
+                .get(&entity)
+                .expect("config entity must contain its config")
+                .value
+                .replace(ConfigRaw::new(true, config));
+        } else {
+            self.insert_config(id, config);
+        }
+    }
+
+    fn insert_config(&mut self, id: TypeId, config: Box<dyn Any>) -> Entity {
+        self.tables.insert_new((StoredConfig { id, value: RefCell::new(ConfigRaw::new(true, config)) },))
     }
 
     /// Attempts to retrieve a config datum from the storage.
     pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<'_, C>> {
-        let id = self.config_indices.get(&TypeId::of::<C>())?;
-        let untyped = self.get_raw_config(*id);
-        Some(crate::component::params::Config::from(untyped))
+        let entity = self.config_entity(TypeId::of::<C>())?;
+        Some(crate::component::params::Config::from(self.get_raw_config(entity)))
     }
 
     /// Attempts to retrieve a mutable config datum from the storage.
     pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<'_, C>> {
-        let id = self.config_indices.get(&TypeId::of::<C>())?;
-        let untyped = self.get_raw_config_mut(*id);
-        Some(crate::component::params::ConfigMut::from(untyped))
+        let entity = self.config_entity(TypeId::of::<C>())?;
+        Some(crate::component::params::ConfigMut::from(self.get_raw_config_mut(entity)))
     }
 
-    /// Retrieves a config from the storage.
-    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<'_, ConfigRaw> {
-        self.configs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
+    fn config_entity(&self, id: TypeId) -> Option<Entity> {
+        Query::<(Entity, &StoredConfig)>::new()
+            .query(self)
+            .find_map(|(entity, config)| (config.id == id).then_some(entity))
+    }
+
+    pub(crate) fn get_raw_config(&self, entity: Entity) -> Ref<'_, ConfigRaw> {
+        Query::<&StoredConfig>::new()
+            .query(self)
+            .get(&entity)
+            .expect("config entity must contain its config")
+            .value
             .borrow()
     }
 
-    /// Retrieves a mutable config from the storage.
-    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<'_, ConfigRaw> {
-        self.configs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
+    pub(crate) fn get_raw_config_mut(&self, entity: Entity) -> RefMut<'_, ConfigRaw> {
+        Query::<&StoredConfig>::new()
+            .query(self)
+            .get(&entity)
+            .expect("config entity must contain its config")
+            .value
             .borrow_mut()
     }
 
+    pub(crate) fn config_is_locked(&self, entity: Entity) -> bool {
+        self.get_raw_config(entity).is_locked()
+    }
+
     /// Unlocks a config in the storage.
-    pub(crate) fn unlock_config(&self, id: usize) {
-        if let Some(config) = self.configs.get(id) {
-            config.borrow_mut().unlock();
+    pub(crate) fn unlock_config(&self, entity: Entity) {
+        if let Some(config) = Query::<&StoredConfig>::new().query(self).get(&entity) {
+            config.value.borrow_mut().unlock();
         }
     }
 
     /// Marks all configs present in the storage as locked (immutable).
     pub fn lock_configs(&self) {
-        (&self.configs).into_iter().flatten().for_each(|config| config.borrow_mut().lock());
-    }
-
-    /// Registers a service type with the storage and returns its global id.
-    pub(crate) fn register_service<C: ?Sized + 'static>(&mut self) -> usize {
-        self.get_or_register_service(TypeId::of::<C>())
-    }
-
-    /// Gets the global id of a service, registering it if it does not exist.
-    pub(crate) fn get_or_register_service(&mut self, id: TypeId) -> usize {
-        let idx = self.service_indices.len();
-        *self.service_indices.entry(id).or_insert(idx)
+        Query::<&StoredConfig>::new().query(self).for_each(|config| config.value.borrow_mut().lock());
     }
 
     /// Inserts a service into the storage.
-    pub(crate) fn insert_service(&mut self, id: usize, service: &'static dyn Any) {
-        self.services.insert(id, service);
+    pub(crate) fn insert_service<S: ?Sized + 'static>(&mut self, service: &'static dyn Any) {
+        self.insert_service_erased(TypeId::of::<S>(), service);
+    }
+
+    fn insert_service_erased(&mut self, id: TypeId, service: &'static dyn Any) {
+        if self.find_service(id).is_some() {
+            return;
+        }
+
+        self.tables.insert_new((StoredService { id, value: service },));
+    }
+
+    fn find_service(&self, id: TypeId) -> Option<&'static dyn Any> {
+        Query::<&StoredService>::new().query(self).find_map(|service| (service.id == id).then_some(service.value))
     }
 
     /// Adds a new service to the storage.
@@ -364,64 +390,46 @@ impl Storage {
         service.register(self);
     }
 
-    /// Retrieves a service from the underlying storage in its untyped form.
-    pub(crate) fn get_raw_service(&self, id: usize) -> Option<&'static dyn Any> {
-        // Copy the reference, not the underlying value
-        self.services.get(id).copied()
-    }
-
     /// Attempts to retrieve a service from the storage.
     pub fn get_service<S: ?Sized + 'static>(&self) -> Option<Service<S>> {
-        let idx = *self.service_indices.get(&TypeId::of::<S>())?;
-        Some(Service::from(self.get_raw_service(idx)?))
+        Some(Service::from(self.find_service(TypeId::of::<S>())?))
     }
 
     pub(crate) fn add_hob_parser<T: FromHob>(&mut self) {
-        self.hob_parsers.entry(T::HOB_GUID).or_default().insert(TypeId::of::<T>(), T::register);
-    }
-
-    /// Registers a HOB with the storage and returns its global id.
-    pub(crate) fn register_hob<T: FromHob>(&mut self) -> usize {
-        self.get_or_register_hob(TypeId::of::<T>())
-    }
-
-    /// Gets the global id of a HOB, registering it if it does not exist.
-    pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {
-        let idx = self.hob_indices.len();
-        let idx = self.hob_indices.entry(id).or_insert(idx);
-        if self.hobs.get(*idx).is_none() {
-            self.hobs.insert(*idx, Vec::new());
+        let guid = T::HOB_GUID;
+        let id = TypeId::of::<T>();
+        if Query::<(&HobId, &HobParser)>::new()
+            .query(self)
+            .any(|(hob_id, parser)| hob_id.0 == id && parser.guid == guid)
+        {
+            return;
         }
-        *idx
+        self.tables.insert_new((HobId(id), HobParser { guid, parser: T::register }));
     }
 
-    /// Adds a HOB datum to the storage, overwriting an existing value if it exists.
+    /// Adds a HOB datum to the storage.
     pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {
-        let id = self.register_hob::<H>(); // This creates the index if it does not exist.
-        self.hobs.get_mut(id).expect("Hob Index should always exist.").push(Box::new(hob));
+        self.add_hob_erased(TypeId::of::<H>(), Box::new(hob));
     }
 
-    /// Retrieves the underlying HOB datum from the storage.
-    pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {
-        self.hobs
-            .get(id)
-            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{id}] it should always exist."))
+    fn add_hob_erased(&mut self, id: TypeId, hob: Box<dyn Any>) {
+        self.tables.insert_new((HobId(id), HobValue(hob)));
     }
 
     /// Attempts to retrieve a HOB datum from the storage.
     pub fn get_hob<T: FromHob>(&self) -> Option<Hob<'_, T>> {
-        let id = self.hob_indices.get(&TypeId::of::<T>())?;
-        self.hobs.get(*id).and_then(|hob| {
-            if hob.is_empty() {
-                return None;
-            }
-            Some(Hob::from(hob.as_slice()))
-        })
+        let id = TypeId::of::<T>();
+        let hob: Hob<'_, T> = Hob::from((self, id, Query::<(&'static HobId, &'static HobValue)>::new()));
+        hob.iter().next()?;
+        Some(hob)
     }
 
     /// Attempts to retrieve a HOB parser from the storage.
     pub fn get_hob_parsers(&self, guid: &BinaryGuid) -> Vec<fn(&[u8], &mut Storage)> {
-        self.hob_parsers.get(guid).map(|type_map| type_map.values().copied().collect()).unwrap_or_default()
+        Query::<&HobParser>::new()
+            .query(self)
+            .filter_map(|parser| (parser.guid == *guid).then_some(parser.parser))
+            .collect()
     }
 }
 
@@ -558,7 +566,6 @@ unsafe impl Param for &mut Storage {
         if meta.access().has_any_config_read() {
             return Err(Cow::from("&mut Storage conflicts with a previous Config<T> access."));
         }
-
         meta.access_mut().writes_all_configs();
         Ok(())
     }
@@ -596,7 +603,6 @@ unsafe impl Param for &Storage {
         if meta.access().has_any_config_write() {
             return Err(Cow::from("&Storage conflicts with a previous ConfigMut<T> access."));
         }
-
         meta.access_mut().reads_all_configs();
         Ok(())
     }
@@ -606,34 +612,62 @@ unsafe impl Param for &Storage {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::component::Query;
+    use alloc::vec;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct QueryA(u32);
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct QueryB(u32);
 
     #[test]
-    fn validate_iter_works() {
-        let mut v: SparseVec<u32> = SparseVec::new();
+    fn test_entity_adds_fields_before_querying() {
+        let mut storage = Storage::new();
+        let mut entity_mut = storage.create_entity();
+        let entity = entity_mut.id();
+        assert_eq!(entity_mut.id(), entity);
+        entity_mut.add_fields((QueryA(1), QueryB(2))).unwrap();
 
-        v.insert(4, 100);
-        v.insert(9, 200);
-        v.insert(75, 300);
+        let rows =
+            Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).map(|(a, b)| (a.0, b.0)).collect::<Vec<_>>();
+        assert_eq!(rows, vec![(1, 2)]);
+    }
 
-        assert_eq!(v.into_iter().filter(|o| o.is_some()).count(), 3);
+    #[test]
+    fn test_entity_takes_and_restores_fields_one_at_a_time() {
+        let mut storage = Storage::new();
+        let entity = storage.create_entity().add_fields((QueryA(1), QueryB(2))).unwrap().id();
 
-        // Check that interior mutability sticks
-        for v in &mut v {
-            if let Some(v) = v.as_mut() {
-                *v += 1;
-            }
+        {
+            let mut entity_mut = storage.entity_mut(entity).unwrap();
+            assert_eq!(entity_mut.take_field::<QueryA>(), Some(QueryA(1)));
+            assert_eq!(entity_mut.take_field::<QueryB>(), Some(QueryB(2)));
         }
+        assert!(Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).get(&entity).is_none());
+        storage.entity_mut(entity).unwrap().add_fields((QueryA(1), QueryB(3))).unwrap();
+        assert_eq!(
+            Query::<(&QueryA, &QueryB)>::new().query_mut(&mut storage).get(&entity),
+            Some((&QueryA(1), &QueryB(3)))
+        );
+    }
 
-        assert_eq!(v.get(4), Some(&101));
-        assert_eq!(v.get(9), Some(&201));
-        assert_eq!(v.get(75), Some(&301));
+    #[test]
+    fn test_configs_use_separate_entities_and_overwrite_in_place() {
+        #[derive(Default)]
+        struct ConfigA(u32);
+        #[derive(Default)]
+        struct ConfigB;
 
-        // Check that exterior mutability sticks
-        for v in &mut v {
-            *v = None;
-        }
+        let mut storage = Storage::new();
+        let a = storage.add_config_default_if_not_present::<ConfigA>();
+        let b = storage.add_config_default_if_not_present::<ConfigB>();
+        assert_ne!(a, b);
 
-        assert_eq!(v.into_iter().filter(|o| o.is_some()).count(), 0);
+        storage.add_config(ConfigA(42));
+        assert_eq!(storage.add_config_default_if_not_present::<ConfigA>(), a);
+        assert_eq!(storage.get_config::<ConfigA>().unwrap().0, 42);
+        assert_eq!(Query::<&StoredConfig>::new().query_mut(&mut storage).count(), 2);
     }
 
     #[test]
@@ -646,7 +680,6 @@ mod tests {
 
         let mut storage = Storage::new();
 
-        storage.register_hob::<MyStruct>();
         assert!(storage.get_hob::<MyStruct>().is_none());
         assert!(storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
 
@@ -656,6 +689,19 @@ mod tests {
 
         storage.add_hob(MyStruct);
         assert_eq!(storage.get_hob::<MyStruct>().unwrap().iter().count(), 2);
+        let entities = Query::<(Entity, &HobId, &HobValue)>::new()
+            .query_mut(&mut storage)
+            .filter_map(|(entity, id, value)| {
+                if id.0 == TypeId::of::<MyStruct>() {
+                    assert!(value.0.downcast_ref::<MyStruct>().is_some());
+                    Some(entity)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(entities.len(), 2);
+        assert_ne!(entities[0], entities[1]);
 
         storage.add_hob_parser::<MyStruct>();
         assert!(!storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
@@ -686,6 +732,8 @@ mod tests {
         let service = storage.get_service::<dyn TestService>().unwrap();
 
         assert_eq!(service.test(), 42);
+        storage.add_service(TestServiceImpl { id: 7 });
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().test(), 42);
 
         // Mimic all of storage's service storage being reallocated (due to possible vec reallocations when inserting)
         // by dropping the entire storage.
@@ -732,6 +780,74 @@ mod tests {
         assert!(storage.get_service::<dyn TestService>().is_some());
         let service = storage.get_service::<dyn TestService>().unwrap();
         assert_eq!(service.test(), 42);
+    }
+
+    #[test]
+    fn test_service_interfaces_have_separate_entities() {
+        use crate as patina;
+
+        trait TestService {
+            fn value(&self) -> u32;
+        }
+        trait OtherService {
+            fn value(&self) -> u32;
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn TestService, dyn OtherService)]
+        struct TestServiceImpl(u32);
+
+        impl TestService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                self.0
+            }
+        }
+        impl OtherService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                self.0
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(TestServiceImpl(42));
+        storage.add_service(TestServiceImpl(99));
+
+        let interfaces = Query::<(Entity, &StoredService)>::new().query(&storage).collect::<Vec<_>>();
+        assert_eq!(interfaces.len(), 2);
+        assert_ne!(interfaces[0].0, interfaces[1].0);
+        assert!(interfaces.iter().any(|(_, service)| service.id == TypeId::of::<dyn TestService>()));
+        assert!(interfaces.iter().any(|(_, service)| service.id == TypeId::of::<dyn OtherService>()));
+        assert_eq!(storage.get_tables().len(), 2);
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().value(), 42);
+        assert_eq!(storage.get_service::<dyn OtherService>().unwrap().value(), 42);
+    }
+
+    #[test]
+    fn test_service_manual_registration_preserves_public_trait() {
+        trait TestService {
+            fn value(&self) -> u32;
+        }
+
+        struct TestServiceImpl;
+
+        impl TestService for TestServiceImpl {
+            fn value(&self) -> u32 {
+                42
+            }
+        }
+
+        impl IntoService for TestServiceImpl {
+            fn register(self, storage: &mut Storage) {
+                let service: &'static dyn TestService = Box::leak(Box::new(self));
+                let erased: &'static dyn Any = Box::leak(Box::new(service));
+                Self::register_service::<dyn TestService>(storage, erased);
+            }
+        }
+
+        let mut storage = Storage::new();
+        TestServiceImpl.register(&mut storage);
+        assert_eq!(storage.get_service::<dyn TestService>().unwrap().value(), 42);
+        assert_eq!(storage.get_tables().len(), 1);
     }
 
     #[test]

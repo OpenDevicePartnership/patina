@@ -12,14 +12,14 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    __private_api,
+    __private_api::{self, DispatchInfo},
     alloc::vec::Vec,
     service::{Recorder, TestRecord},
 };
 
 use alloc::boxed::Box;
 use patina::component::{
-    Storage, component,
+    Query, Storage, component,
     service::{
         Service,
         uefi_services::{event::EventServices, timer_event::TimerEventServices},
@@ -139,10 +139,13 @@ impl TestRunner {
         recorder: &'static Recorder,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
+        let component_query = Query::<&DispatchInfo>::new();
+        let component_ids = component_query.query(storage).map(DispatchInfo::component_type_id).collect::<Vec<_>>();
+
         let records = test_list
             .iter()
-            .filter(|&test_case| test_case.should_run(self.filters.as_slice()))
-            .map(|test_case| TestRecord::new(self.debug_mode, test_case, self.fail_callback));
+            .filter(|test_case| test_case.should_run(self.filters.as_slice(), component_ids.as_slice()))
+            .map(|test_case| TestRecord::new(self.debug_mode, test_case, self.fail_callback, component_query));
 
         for record in records {
             // Only schedule a run if we have not already scheduled for this test.
@@ -161,6 +164,8 @@ impl TestRunner {
 #[cfg_attr(coverage, coverage(off))]
 pub(crate) mod tests {
     extern crate std;
+
+    use core::any::TypeId;
 
     use super::*;
 
@@ -184,6 +189,12 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    struct OwningComponent;
+
+    fn owning_component_type_id() -> TypeId {
+        TypeId::of::<OwningComponent>()
+    }
+
     // This is mirroring the logic in __private_api.rs to ensure we do properly register test cases.
     #[linkme::distributed_slice]
     pub static TEST_TESTS: [super::__private_api::TestCase];
@@ -191,6 +202,7 @@ pub(crate) mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     pub static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: false,
         should_fail: false,
@@ -201,6 +213,7 @@ pub(crate) mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     pub static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: true,
         should_fail: false,
@@ -210,6 +223,7 @@ pub(crate) mod tests {
 
     pub static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test_that_fails",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: false,
         should_fail: false,
@@ -219,6 +233,7 @@ pub(crate) mod tests {
 
     pub static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "event_triggered_test",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
@@ -228,6 +243,7 @@ pub(crate) mod tests {
 
     pub static TEST_CASE5: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "timer_triggered_test",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Timer(1_000_000)],
         skip: false,
         should_fail: false,
@@ -237,6 +253,7 @@ pub(crate) mod tests {
 
     pub static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "invalid_test",
+        component_id: None,
         triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
@@ -247,6 +264,38 @@ pub(crate) mod tests {
     #[test]
     fn test_func_implements_into_component() {
         let _ = TestRunner::default().into_component();
+    }
+
+    #[test]
+    fn test_runner_omits_tests_for_unregistered_components() {
+        use patina::component::service::uefi_services::{
+            event::MockEventServices, timer_event::MockTimerEventServices,
+        };
+
+        let test_case = Box::leak(Box::new(super::__private_api::TestCase {
+            name: "owned_test",
+            component_id: Some(owning_component_type_id),
+            triggers: &[super::__private_api::TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        }));
+        let tests = Box::leak(Box::new([*test_case]));
+        let recorder = Box::leak(Box::new(Recorder::default()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+        let mut storage = Storage::new();
+
+        TestRunner::default().register_tests(tests, events, timer, recorder, &mut storage).unwrap();
+        assert!(!recorder.test_registered("owned_test"));
+
+        storage
+            .create_entity()
+            .add_fields((super::__private_api::DispatchInfo::new(owning_component_type_id()),))
+            .unwrap();
+        TestRunner::default().register_tests(tests, events, timer, recorder, &mut storage).unwrap();
+        assert!(recorder.test_registered("owned_test"));
     }
 
     #[test]
