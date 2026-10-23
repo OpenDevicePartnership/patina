@@ -246,23 +246,25 @@ impl MemoryBlock {
         }
     }
 
+    /// Returns whether this block can be allocated by the image, optionally respecting its existing owner.
+    pub fn can_allocate(&self, image_handle: efi::Handle, respect_ownership: bool) -> bool {
+        matches!(self, Self::Unallocated(descriptor)
+            if !matches!(descriptor.memory_type,
+                dxe_services::GcdMemoryType::NonExistent | dxe_services::GcdMemoryType::Unaccepted)
+                && (!respect_ownership || descriptor.image_handle.is_null() || descriptor.image_handle == image_handle))
+    }
+
     pub fn allocate_transition(
         &mut self,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         respect_ownership: bool,
     ) -> Result<(), Error> {
+        if !self.can_allocate(image_handle, respect_ownership) {
+            return Err(Error::InvalidStateTransition);
+        }
         match self {
-            Self::Unallocated(md)
-                if !matches!(
-                    md.memory_type,
-                    dxe_services::GcdMemoryType::NonExistent | dxe_services::GcdMemoryType::Unaccepted
-                ) =>
-            {
-                if respect_ownership && !(md.image_handle == 0 as efi::Handle || md.image_handle == image_handle) {
-                    //block has an owner that isn't the requester.
-                    Err(Error::InvalidStateTransition)?;
-                }
+            Self::Unallocated(md) => {
                 md.image_handle = image_handle;
                 if let Some(device_handle) = device_handle {
                     md.device_handle = device_handle;
@@ -271,7 +273,7 @@ impl MemoryBlock {
                 *self = Self::Allocated(*md);
                 Ok(())
             }
-            _ => Err(Error::InvalidStateTransition),
+            Self::Allocated(_) => Err(Error::InvalidStateTransition),
         }
     }
 
@@ -389,6 +391,53 @@ impl AsMut<dxe_services::MemorySpaceDescriptor> for MemoryBlock {
 mod memory_block_tests {
     use super::*;
     use dxe_services::{GcdMemoryType, MemorySpaceDescriptor};
+
+    #[test]
+    fn test_gcd_allocation_eligibility_matches_transition() {
+        for memory_type in [
+            GcdMemoryType::NonExistent,
+            GcdMemoryType::Unaccepted,
+            GcdMemoryType::SystemMemory,
+            GcdMemoryType::Reserved,
+            GcdMemoryType::MemoryMappedIo,
+        ] {
+            for allocated in [false, true] {
+                for owner in [0, 1, 2] {
+                    for respect_ownership in [false, true] {
+                        let descriptor = MemorySpaceDescriptor {
+                            base_address: 0x1000,
+                            length: 0x1000,
+                            memory_type,
+                            attributes: 0,
+                            capabilities: 0,
+                            device_handle: 3 as efi::Handle,
+                            image_handle: owner as efi::Handle,
+                        };
+                        let block = if allocated {
+                            MemoryBlock::Allocated(descriptor)
+                        } else {
+                            MemoryBlock::Unallocated(descriptor)
+                        };
+                        let expected = !allocated
+                            && !matches!(memory_type, GcdMemoryType::NonExistent | GcdMemoryType::Unaccepted)
+                            && (!respect_ownership || owner == 0 || owner == 1);
+                        assert_eq!(block.can_allocate(1 as efi::Handle, respect_ownership), expected);
+                        let mut transitioned = block;
+                        let result = transitioned.allocate_transition(1 as efi::Handle, None, respect_ownership);
+                        if expected {
+                            assert_eq!(result, Ok(()));
+                            assert!(matches!(transitioned, MemoryBlock::Allocated(_)));
+                            assert_eq!(transitioned.as_ref().image_handle, 1 as efi::Handle);
+                            assert_eq!(transitioned.as_ref().device_handle, descriptor.device_handle);
+                        } else {
+                            assert_eq!(result, Err(Error::InvalidStateTransition));
+                            assert_eq!(transitioned, block);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_transition_types() {
