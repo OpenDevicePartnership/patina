@@ -42,7 +42,7 @@ impl InterruptsX64 {
     /// for interrupts and exceptions to be taken. This routine may install some
     /// architecture specific default handlers for exceptions.
     ///
-    /// Supplied platform handlers are installed after generic handlers
+    /// Supplied platform handlers are installed before virtual-wire mode is programmed on non-TDX guests.
     pub fn initialize(
         &mut self,
         exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
@@ -64,8 +64,21 @@ impl InterruptsX64 {
                 self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
             }
         }
+        #[cfg(target_os = "uefi")]
+        self.initialize_virtual_wire_mode()?;
 
         Ok(())
+    }
+
+    /// Programs virtual-wire mode on non-CC guests after platform exception handlers are installed. CC guests do not
+    /// require this and may fail if it is attempted. If this function is called from a CC guest it will simply return
+    /// `Ok()`.
+    #[cfg(target_os = "uefi")]
+    fn initialize_virtual_wire_mode(&mut self) -> Result<(), EfiError> {
+        if patina::arch::is_cc_guest() {
+            return Ok(());
+        }
+        super::apic::initialize_virtual_wire_mode()
     }
 }
 
