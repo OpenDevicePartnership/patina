@@ -16,7 +16,6 @@ workspace = true
 bitfield-struct = { workspace = true }
 cfg-if = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
-linked_list_allocator = { workspace = true }
 log = { workspace = true }
 patina_paging = { workspace = true }
 rustversion = { workspace = true }

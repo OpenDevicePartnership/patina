@@ -57,14 +57,6 @@ where
         self.allocator.reset();
     }
 
-    /// Indicates whether the given pointer falls within a memory region managed by this allocator.
-    ///
-    /// See [`SpinLockedFixedSizeBlockAllocator::contains`]
-    #[allow(dead_code)]
-    pub fn contains(&self, ptr: NonNull<u8>) -> bool {
-        self.allocator.contains(ptr)
-    }
-
     /// Returns the UEFI memory type associated with this allocator.
     pub fn memory_type(&self) -> efi::MemoryType {
         self.memory_type
@@ -598,30 +590,6 @@ mod tests {
     }
 
     #[test]
-    fn test_contains() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            init_gcd(&GCD, 0x400000);
-
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(
-                &GCD,
-                1 as _,
-                efi::BOOT_SERVICES_DATA,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-                HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
-            );
-            let ua = UefiAllocator::new(fsb, efi::BOOT_SERVICES_DATA);
-
-            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = ua.allocate(layout).unwrap().cast::<u8>();
-            assert!(ua.contains(allocation));
-        });
-    }
-
-    #[test]
     fn test_uefi_allocator_fn_conformance() {
         with_locked_state(|| {
             // Create a static GCD
@@ -650,6 +618,7 @@ mod tests {
                     "Bucket Range: None\r\n",
                     "Allocation Stats:\r\n",
                     "  pool_allocation_calls: 0\r\n",
+                    "  large_pool_allocation_calls: 0\r\n",
                     "  pool_free_calls: 0\r\n",
                     "  page_allocation_calls: 0\r\n",
                     "  page_free_calls: 0\r\n",

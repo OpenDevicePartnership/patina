@@ -53,16 +53,16 @@ on the [Fixed-Size Block Allocator](https://os.phil-opp.com/allocator-designs/#f
 presented as part of the [Writing an OS in Rust](https://os.phil-opp.com/) blog series.
 
 Each allocator tracks "free" blocks of fixed sizes that are used to satisfy allocation requests. These lists are backed
-up by a linked list allocator to satisfy allocations in the event that a fixed-sized block list doesn't exist (in the
-case of very large allocations) or does not have a free block.
+by the GCD.
 
 This allows for a very efficient allocation procedure:
 
 1. Round up requested allocation size to next block size.
 2. Remove the first block from the corresponding "free-list" and return it.
 
-If there are free blocks of the required size available this operation is constant-time. This should be the expected
-normal case after the allocators have run for a while and have built up a set of free blocks.
+If there are free blocks of the required size available this operation is constant-time (though tracking the lifecycle
+requires list maintenance). This should be the expected normal case after the allocators have run for a while and have
+built up a set of free blocks.
 
 Freeing a block (except for very large blocks) is also constant-time, since the procedure is the reverse of the above:
 
@@ -76,29 +76,29 @@ reused, which increases the chance that a use-after-free accesses memory that ha
 When every pool segmented from a page has been returned to the free lists, the page is retired and unmapped. This
 catches as many use-after-free cases as we can in the pool allocator. Retired pages are re-mapped and returned to the
 backing allocator when the allocator would otherwise have to claim more memory from the GCD. Retired pages are also
-reclaimed in FIFO order to maximize the time between address reuse.
+reclaimed roughly in FIFO order.
 
 Memory claimed from the GCD starts in the retired state, so an allocator never has memory mapped that it has not
-handed out.
+handed out, excluding the pages that contain metadata.
 
 ```mermaid
-stateDiagram-v2
-  direction TB
+flowchart TB
+  GCD["GCD system memory"]
+  FSBFree["FSB available pages<br/>(unmapped; metadata stays mapped)"]
+  FixedBlocks["Fixed-size blocks<br/>(mapped)"]
+  Retired["Retired pages<br/>(unmapped)"]
+  Large["Direct large allocation<br/>(mapped)"]
+  Small["Small pool allocation<br/>(mapped)"]
 
-  state "GCD-owned system memory" as GCD
-  state "Fallback allocator free memory<br/>(mapped)" as Fallback
-  state "Fixed-size blocks<br/>(mapped)" as FixedBlocks
-  state "FSB retired page<br/>(unmapped)" as Retired
-  state "Direct fallback allocation<br/>(mapped)" as DirectAllocation
+  GCD -->|Expand| FSBFree
+  FSBFree -->|Carve into blocks| FixedBlocks
+  FixedBlocks -->|Allocate| Small
+  Small -->|Free| FixedBlocks
+  FixedBlocks -->|Last block freed| Retired
+  Retired -->|Reclaim| FixedBlocks
 
-  GCD --> Fallback: FSB claims an expansion
-  Fallback --> FixedBlocks: Carve page into fixed-size blocks
-  FixedBlocks --> FixedBlocks: Allocate and free blocks
-  FixedBlocks --> Retired: Entire page becomes free and is retired
-  Retired --> Fallback: Reclaim and map page
-
-  Fallback --> DirectAllocation: Large allocation bypasses fixed-size blocks
-  DirectAllocation --> Fallback: Free allocation
+  GCD -->|Allocate| Large
+  Large -->|Free| GCD
 ```
 
 The FSB retains ownership of retired pages even while they are unmapped. New expansion pages not needed immediately may
@@ -106,16 +106,13 @@ enter the retired state directly. The metadata page remains mapped, and direct f
 fixed-size block lifecycle.
 
 If the fixed-block size list corresponding to the requested block size is empty or if the requested size is larger than
-any fixed-block size, then the allocation falls back to a linked-list based allocator. This is also typically constant-
-time, since the first block in the linked-list backing allocator is larger than all the free-list block sizes (because
-blocks are only freed back to the fallback allocator if they are larger than the all free-list block sizes). This means
-that allocation typically consists of simply splitting the required block off the front of the first free block in the
-list.
+any fixed-block size, then the allocation falls back to page allocations from the GCD because the largest fixed size
+block is one page, so we are already dealing with an allocation that would typically allocate pages anyway.
 
-If the fallback linked-list allocator is _also_ not able to satisfy the request, then a new large block is fetched from
-the GCD and inserted into the fallback linked-list allocator. This is a slower operation and its performance is a
-function of how fragmented the GCD has become - on a typical boot this can extend to a search through hundreds of nodes.
-This is a relatively rare event and the impact on overall allocator performance is negligible.
+If the fixed sized blocks are not able to satisfy a request that fits into a fixed size block and we do not have any
+pages that can be reclaimed, then a new large block is fetched from the GCD. The metadata is created at the beginning of
+this region. The first whole page after the metadata is eagerly broken into fixed size blocks of equal size, matching
+the allocation request, and the remaining pages are retired.
 
 ### Allocation "Buckets"
 
