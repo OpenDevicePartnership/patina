@@ -66,6 +66,7 @@
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
   - [Confidential Compute Integration](integrate/confidential_compute.md)
+- [Platform Integration and Crate Patching](integrate/platform_integration_and_patching.md)
 
 # Patina DXE Core Subsystems
 

@@ -832,6 +832,9 @@ In Patina, we use [Traits](https://blog.rust-lang.org/2015/05/11/traits.html) fo
 [Crates](https://doc.rust-lang.org/book/ch07-01-packages-and-crates.html) for code reuse. To learn how to use these,
 review the [Abstractions](../dev/principles/abstractions.md) and [Code reuse](../dev/principles/reuse.md) sections.
 
+For more details on how to manage dependency selection, local library overrides, and maintaining internal releases, see
+[Platform Integration and Crate Patching](./platform_integration_and_patching.md).
+
 ## Why Isn't Patina Built as Part of the EDK II Build?
 
 First and foremost, Patina is a Rust project. It is a pivot to not only Rust but modern software engineering practices
