@@ -256,7 +256,7 @@ impl MpSupport {
     }
 
     fn is_monitor_supported() -> bool {
-        (cpu_state::cpuid(1, 0).ecx & bit!(3)) != 0
+        (patina::arch::x64::cpuid(1, 0).ecx & bit!(3)) != 0
     }
 
     fn ap_run_dispatch_loop(ctx: &'static ApContext, apic: &apic::Apic) {
@@ -268,7 +268,7 @@ impl MpSupport {
         ap_setup::increment_started_count();
 
         let idle = if Self::is_monitor_supported() { monitor_wait } else { spin_wait };
-        ap.run_dispatch_loop(cpu_state::flush_tlb, idle);
+        ap.run_dispatch_loop(patina::arch::flush_tlb, idle);
     }
 
     fn fail_ap(reason: u32, detail: u64) -> ! {
@@ -599,30 +599,11 @@ fn spin_wait(_state: &core::sync::atomic::AtomicU8) {
 /// Sleeps in `MWAIT` until the BSP writes this processor's lifecycle state.
 #[cfg_attr(coverage, coverage(off))]
 fn monitor_wait(state: &core::sync::atomic::AtomicU8) {
-    // SAFETY: MONITOR arms address monitoring on the lifecycle state, a live
-    // writable atomic in write-back memory.
-    unsafe {
-        core::arch::asm!(
-            "monitor",
-            in("rax") state.as_ptr(),
-            in("rcx") 0,
-            in("rdx") 0,
-            options(nostack, preserves_flags),
-        );
-    }
+    patina::arch::x64::monitor(state);
     // Re-check after arming; sleep only while the state remains idle so work or
     // an exit request cannot be missed.
     if control::should_wait(state) {
-        // SAFETY: MWAIT idles until a store to the monitored line (or another break
-        // event); no side effects beyond resuming execution.
-        unsafe {
-            core::arch::asm!(
-                "mwait",
-                in("rax") 0,
-                in("rcx") 0,
-                options(nostack, preserves_flags),
-            );
-        }
+        patina::arch::x64::mwait();
     }
 }
 

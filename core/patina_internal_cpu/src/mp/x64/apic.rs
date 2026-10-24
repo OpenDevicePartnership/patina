@@ -21,7 +21,7 @@ use patina::{
     },
 };
 
-use super::cpu_state::cpuid;
+use patina::arch::x64::cpuid;
 
 pub(super) struct XApic {
     base: Option<NonZeroUsize>,
@@ -64,7 +64,7 @@ impl ApicBackend for XApic {
     }
 
     fn current_apic_id(&self) -> u32 {
-        cpuid(1, 0).ebx >> 24
+        patina::arch::x64::current_apic_id()
     }
 
     fn send_icr(&self, apic_id: u32, command: u32) {

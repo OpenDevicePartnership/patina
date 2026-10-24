@@ -68,57 +68,13 @@ pub(super) struct CpuControl {
 
 impl CpuControl {
     pub(super) fn capture() -> Self {
-        let cr0: u64;
-        let cr3: u64;
-        let cr4: u64;
-        // SAFETY: Reading control registers has no side effects.
-        #[cfg(not(test))]
-        unsafe {
-            core::arch::asm!(
-                "mov {0}, cr0",
-                "mov {1}, cr3",
-                "mov {2}, cr4",
-                out(reg) cr0,
-                out(reg) cr3,
-                out(reg) cr4,
-                options(nomem, nostack, preserves_flags),
-            );
-        }
-        #[cfg(test)]
-        {
-            cr0 = 0;
-            cr3 = 0;
-            cr4 = 0;
-        }
         // SAFETY: IA32_EFER is available on x86_64 processors and has no read side effects.
         let efer = unsafe { patina::arch::x64::read_msr(IA32_EFER) };
-        Self { cr0, cr3, cr4, efer }
-    }
-}
-
-pub(super) fn cpuid(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult {
-    // SAFETY: `cpuid` has no memory-safety preconditions. The block is needed on Rust 1.90.0 but not on later versions.
-    #[cfg(not(test))]
-    #[allow(unused_unsafe)]
-    let result = unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) };
-    #[cfg(test)]
-    let result = {
-        let _ = (leaf, subleaf);
-        core::arch::x86_64::CpuidResult { eax: 0, ebx: 0, ecx: 0, edx: 0 }
-    };
-    result
-}
-
-pub(super) fn flush_tlb() {
-    // SAFETY: Writing the active CR3 value back preserves the page tables while
-    // invalidating non-global translations on the current processor.
-    #[cfg(not(test))]
-    unsafe {
-        core::arch::asm!(
-            "mov {cr3}, cr3",
-            "mov cr3, {cr3}",
-            cr3 = out(reg) _,
-            options(nostack, preserves_flags),
-        );
+        Self {
+            cr0: patina::arch::x64::read_cr0(),
+            cr3: patina::arch::x64::read_cr3(),
+            cr4: patina::arch::x64::read_cr4(),
+            efer,
+        }
     }
 }

@@ -119,7 +119,7 @@ pub fn initialize_idt() {
 
     assert!((IDT.0.get() as usize) < SIZE_4GB, "IDT above 4GB, MP services will fail");
     let idtr = idt.descriptor();
-    // SAFETY: Loading our fully initialized IDT.
-    unsafe { core::arch::asm!("lidt [{}]", in(reg) core::ptr::addr_of!(idtr), options(nostack)) };
+    // SAFETY: Loading our fully initialized IDT, which is a static and so stays in memory.
+    unsafe { patina::arch::x64::load_idtr(&idtr) };
     log::info!("Loaded IDT");
 }

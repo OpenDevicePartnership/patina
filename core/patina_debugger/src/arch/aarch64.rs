@@ -1,11 +1,11 @@
 use core::{
-    arch::asm,
     num::NonZeroUsize,
     ops::Shr,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use gdbstub::arch::{RegId, Registers};
+use patina::arch::aarch64::{PROBE_READ_INSTRUCTION_LEN, probe_read};
 use patina::{read_sysreg, write_sysreg};
 use patina_internal_cpu::{interrupts::ExceptionContext, paging::PatinaPageTable};
 
@@ -58,11 +58,7 @@ impl DebuggerArch for Aarch64Arch {
 
     #[inline(always)]
     fn breakpoint() {
-        // SAFETY: Executing breakpoint instruction will cause an exception, this has
-        // no direct impact on safety invariants.
-        unsafe {
-            asm!("brk 0", options(nostack));
-        }
+        patina::arch::breakpoint();
     }
 
     fn process_entry(_exception_type: u64, context: &mut ExceptionContext) -> ExceptionInfo {
@@ -106,10 +102,7 @@ impl DebuggerArch for Aarch64Arch {
             }
 
             // Always clear the ICache since the debugger may have altered instructions.
-            // SAFETY: This is an architecturally defined mechanism to clear the ICache.
-            unsafe {
-                asm!("ic iallu", "isb sy");
-            }
+            patina::arch::aarch64::invalidate_instruction_cache();
         }
     }
 
@@ -205,12 +198,12 @@ impl DebuggerArch for Aarch64Arch {
     }
 
     fn reboot() {
-        // reboot through PSCI SYSTEM_RESET
-        // SAFETY: This directly loads a value into x0, but this is safe here because we are rebooting anyway
-        // so this doesn't matter if we clobber x0.
-        unsafe {
-            asm!("ldr x0, =0x84000009", "smc 0");
-        }
+        /// PSCI `SYSTEM_RESET` function ID (SMC32).
+        const PSCI_SYSTEM_RESET: u32 = 0x8400_0009;
+
+        // SAFETY: SYSTEM_RESET takes no arguments and does not return on success. If the firmware does not support
+        // it, the call returns and the debugger continues.
+        unsafe { patina::arch::aarch64::smc(PSCI_SYSTEM_RESET, [0; 3]) };
     }
 
     fn get_page_table() -> Result<impl PatinaPageTable, ()> {
@@ -242,12 +235,7 @@ impl DebuggerArch for Aarch64Arch {
                 print_sysreg!(daif, out);
                 print_sysreg!(hcr_el2, out);
             }
-            Some("flush_tlb") => {
-                // SAFETY: This is the architecturally defined way to flush the TLB
-                unsafe {
-                    asm!("tlbi alle2", "dsb sy", "isb sy", options(nostack, nomem));
-                }
-            }
+            Some("flush_tlb") => patina::arch::flush_tlb(),
             _ => {
                 let _ = out.write_str("Unknown AArch64 monitor command. Supported commands: regs, flush_tlb");
             }
@@ -258,10 +246,9 @@ impl DebuggerArch for Aarch64Arch {
     fn memory_poke_test(address: u64) -> Result<(), ()> {
         POKE_TEST_MARKER.store(true, Ordering::SeqCst);
 
-        // SAFETY: The safety of this is dubious and may cause a page fault, but
-        // the exception handler will catch it and resolve it by stepping beyond
-        // the exception.
-        unsafe { asm!("ldr {}, [{}]", out(reg) _, in(reg) address, options(nostack)) };
+        // SAFETY: A data abort on this read is caught by check_memory_poke_test, which
+        // advances ELR by PROBE_READ_INSTRUCTION_LEN.
+        unsafe { probe_read(address) };
 
         // Check if the marker was cleared, indicating a page fault. Reset either way.
         if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
@@ -271,7 +258,7 @@ impl DebuggerArch for Aarch64Arch {
         let poke_test = POKE_TEST_MARKER.swap(false, Ordering::SeqCst);
         if poke_test {
             // We need to increment the instruction pointer to step past the load
-            context.elr += 4;
+            context.elr += PROBE_READ_INSTRUCTION_LEN;
         }
 
         poke_test

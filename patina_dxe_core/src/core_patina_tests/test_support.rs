@@ -11,7 +11,6 @@
 
 use alloc::slice;
 use bitfield_struct::bitfield;
-use core::arch::asm;
 use patina::{SIZE_1GB, SIZE_2MB, SIZE_4KB, UEFI_PAGE_SHIFT};
 use patina_paging::MemoryAttributes;
 
@@ -73,35 +72,6 @@ pub(in super) struct PageTableEntryAArch64 {
     #[bits(2)]
     pub(in super) ap_table: u8,              // 2 bits -  Hierarchical permissions.
     pub(in super) ns_table: bool,            // 1 bit  -  Secure state, only for accessing in Secure IPA or PA space.
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(super) fn flush_tlb() {
-    // SAFETY: We are reading CR3 and writing it back exactly as is
-    unsafe {
-        let cr3: usize;
-        asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack, preserves_flags));
-        asm!("mov cr3, {}", in(reg) cr3, options(nomem, nostack, preserves_flags));
-    }
-}
-
-#[cfg(target_arch = "aarch64")]
-pub(super) fn flush_tlb() {
-    let current_el = patina::read_sysreg!(CurrentEL);
-
-    match current_el {
-        0x8 =>
-        // SAFETY: We are simply invalidating the TLB, which is a safe operation
-        unsafe {
-            asm!("tlbi alle2", "dsb nsh", "isb sy", options(nostack));
-        },
-        0x4 =>
-        // SAFETY: We are simply invalidating the TLB, which is a safe operation
-        unsafe {
-            asm!("tlbi vmalle1", "dsb nsh", "isb sy", options(nostack));
-        },
-        _ => panic!("Unsupported Exception Level for TLB flush"),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

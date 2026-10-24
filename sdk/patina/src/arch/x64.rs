@@ -1,5 +1,18 @@
 //! x64-specific architectural helpers for Patina.
 //!
+//! - Port I/O
+//! - Model-specific registers
+//! - Processor identification
+//! - Control registers
+//! - Descriptor tables
+//! - Debug registers
+//! - SMAP
+//! - Debugger
+//! - Halt and wait
+//! - Interrupts
+//! - Cache management (including TLB)
+//! - Timer
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -8,32 +21,21 @@
 //!
 
 use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
-use core::arch::asm;
+use core::arch::{
+    asm,
+    x86_64::{__cpuid_count, CpuidResult},
+};
 use core::num::NonZeroU64;
 
-pub(crate) struct X64;
+//
+// Port I/O
+//
 
-impl super::ArchSupport for X64 {}
-
-/// Cache writeback granule for `x86_64`, using 4 bytes following precedence set by Tianocore.
-const CACHE_WRITEBACK_GRANULE: u32 = 4;
-
-/// Returns the active virtual address width selected by `CR4.LA57`.
-pub fn virtual_address_bits() -> u32 {
-    let cr4: u64;
-    // SAFETY: Reading CR4 has no unsafe side effects
-    unsafe {
-        asm!("mov {}, cr4", out(reg) cr4, options(nostack, nomem, preserves_flags));
-    }
-    if cr4 & (1 << 12) != 0 { 57 } else { 48 }
-}
-
-/// Writes a byte to an x64 I/O port.
+/// Writes a byte to I/O port `port` (`OUT`).
 ///
 /// # Safety
 ///
-/// The caller must ensure `port` is valid for byte writes on this platform and
-/// that the side effects are safe in the current execution context.
+/// `port` must be safe to write on this platform in the current context.
 pub unsafe fn io_out8(port: u16, value: u8) {
     // SAFETY: Guaranteed by caller.
     unsafe {
@@ -46,21 +48,15 @@ pub unsafe fn io_out8(port: u16, value: u8) {
     }
 }
 
-/// Reads the time-stamp counter.
-pub fn rdtsc() -> u64 {
-    let lo: u32;
-    let hi: u32;
-    // SAFETY: `rdtsc` reads a CPU counter and does not violate memory safety.
-    unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nostack, nomem)) };
-    (u64::from(hi) << 32) | u64::from(lo)
-}
+//
+// Model-specific registers
+//
 
-/// Reads a 64-bit Model-Specific Register (MSR).
+/// Reads model-specific register `msr` (`RDMSR`).
 ///
 /// # Safety
 ///
-/// The caller must ensure `msr` is a valid, readable MSR on this processor and
-/// in this execution context. Reading some MSRs has side effects.
+/// `msr` must be a valid, readable MSR on this processor. Some reads have side effects.
 pub unsafe fn read_msr(msr: u32) -> u64 {
     let low: u32;
     let high: u32;
@@ -77,12 +73,11 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
     (u64::from(high) << 32) | u64::from(low)
 }
 
-/// Writes a 64-bit Model-Specific Register (MSR).
+/// Writes `value` to model-specific register `msr` (`WRMSR`).
 ///
 /// # Safety
 ///
-/// The caller must ensure `msr` and `value` are valid for this processor and
-/// in this execution context. Writing MSRs can have wide-ranging side effects.
+/// `msr` and `value` must be valid for this processor. Writes can change any processor state.
 pub unsafe fn write_msr(msr: u32, value: u64) {
     let low = value as u32;
     let high = (value >> 32) as u32;
@@ -98,6 +93,316 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
     }
 }
 
+//
+// Processor identification
+//
+
+/// CPUID leaf 0x1: version information.
+pub const CPUID_VERSION_INFO: u32 = 0x01;
+
+/// MSR index for `IA32_APIC_BASE`.
+const IA32_APIC_BASE_MSR_INDEX: u32 = 0x1B;
+
+/// BSP flag bit in the `IA32_APIC_BASE` MSR (bit 8).
+const IA32_APIC_BASE_BSP: u64 = 1 << 8;
+
+/// Executes `CPUID` for `leaf` and `subleaf`. Leaves above the supported maximum return
+/// processor-specific data.
+pub fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
+    // `#[allow(unused_unsafe)]` supports toolchains that consider `__cpuid_count` unsafe as well
+    // as those that consider it safe.
+    #[allow(unused_unsafe)]
+    // SAFETY: CPUID has no memory safety implications.
+    unsafe {
+        __cpuid_count(leaf, subleaf)
+    }
+}
+
+/// Returns CPUID leaf 0x1 ([`CPUID_VERSION_INFO`]) for the executing processor.
+pub fn cpuid_version_info() -> CpuidResult {
+    cpuid(CPUID_VERSION_INFO, 0)
+}
+
+/// Returns the initial APIC ID of the executing processor (`CPUID.01H:EBX[31:24]`).
+pub fn current_apic_id() -> u32 {
+    (cpuid_version_info().ebx >> 24) & 0xff
+}
+
+/// Returns whether the executing processor is the BSP, from the `IA32_APIC_BASE` BSP flag. Must
+/// execute at CPL 0.
+pub fn is_bsp() -> bool {
+    // SAFETY: IA32_APIC_BASE is an architectural MSR that is always readable at CPL 0 and has no
+    // read side effects.
+    let apic_base = unsafe { read_msr(IA32_APIC_BASE_MSR_INDEX) };
+    (apic_base & IA32_APIC_BASE_BSP) != 0
+}
+
+//
+// Control registers
+//
+
+/// Reads CR0 (operating mode and state flags). Must execute at CPL 0.
+pub fn read_cr0() -> u64 {
+    let value: u64;
+    // SAFETY: Reading CR0 has no side effects and does not access memory. `preserves_flags` is
+    // omitted because the SDM leaves status flags undefined after MOV from a control register.
+    unsafe {
+        asm!("mov {}, cr0", out(reg) value, options(nostack, nomem));
+    }
+    value
+}
+
+/// Reads CR3 (page table root and flags). Must execute at CPL 0.
+pub fn read_cr3() -> u64 {
+    let value: u64;
+    // SAFETY: Reading CR3 has no side effects and does not access memory. `preserves_flags` is
+    // omitted because the SDM leaves status flags undefined after MOV from a control register.
+    unsafe {
+        asm!("mov {}, cr3", out(reg) value, options(nostack, nomem));
+    }
+    value
+}
+
+/// Reads CR4 (feature enable flags). Must execute at CPL 0.
+pub fn read_cr4() -> u64 {
+    let value: u64;
+    // SAFETY: Reading CR4 has no side effects and does not access memory. `preserves_flags` is
+    // omitted because the SDM leaves status flags undefined after MOV from a control register.
+    unsafe {
+        asm!("mov {}, cr4", out(reg) value, options(nostack, nomem));
+    }
+    value
+}
+
+/// Returns the virtual address width in bits (57 or 48), selected by `CR4.LA57`.
+pub fn virtual_address_bits() -> u32 {
+    let cr4: u64;
+    // SAFETY: Reading CR4 has no unsafe side effects
+    unsafe {
+        asm!("mov {}, cr4", out(reg) cr4, options(nostack, nomem, preserves_flags));
+    }
+    if cr4 & (1 << 12) != 0 { 57 } else { 48 }
+}
+
+//
+// Descriptor tables
+//
+
+/// Pseudo-descriptor used by `SGDT`/`LGDT` and `SIDT`/`LIDT`.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct DescriptorTablePointer {
+    /// Size of the descriptor table in bytes, minus 1.
+    pub limit: u16,
+    /// Linear address of the descriptor table.
+    pub base: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<DescriptorTablePointer>() == 10);
+
+/// Reads the GDT register (`SGDT`).
+pub fn read_gdtr() -> DescriptorTablePointer {
+    let mut descriptor = DescriptorTablePointer { limit: 0, base: 0 };
+    // SAFETY: SGDT stores the 10-byte GDTR pseudo-descriptor into `descriptor`, which is a
+    // valid, writable local of exactly that size.
+    unsafe {
+        asm!("sgdt [{}]", in(reg) &raw mut descriptor, options(nostack, preserves_flags));
+    }
+    descriptor
+}
+
+/// Reads the IDT register (`SIDT`).
+pub fn read_idtr() -> DescriptorTablePointer {
+    let mut descriptor = DescriptorTablePointer { limit: 0, base: 0 };
+    // SAFETY: SIDT stores the 10-byte IDTR pseudo-descriptor into `descriptor`, which is a
+    // valid, writable local of exactly that size.
+    unsafe {
+        asm!("sidt [{}]", in(reg) &raw mut descriptor, options(nostack, preserves_flags));
+    }
+    descriptor
+}
+
+/// Loads the GDT register from `descriptor` (`LGDT`). Must execute at CPL 0, and does not reload
+/// segment registers.
+///
+/// # Safety
+///
+/// `descriptor` must describe a valid GDT that stays in memory while loaded. Every loaded selector
+/// must stay valid in the new table until it is reloaded.
+pub unsafe fn load_gdtr(descriptor: &DescriptorTablePointer) {
+    // SAFETY: Guaranteed by caller. LGDT reads the 10-byte pseudo-descriptor and affects no flags.
+    unsafe {
+        asm!("lgdt [{}]", in(reg) descriptor, options(nostack, preserves_flags));
+    }
+}
+
+/// Loads the IDT register from `descriptor` (`LIDT`). Must execute at CPL 0.
+///
+/// # Safety
+///
+/// `descriptor` must describe a valid IDT that stays in memory, unmodified except through valid
+/// gate updates, while loaded.
+pub unsafe fn load_idtr(descriptor: &DescriptorTablePointer) {
+    // SAFETY: Guaranteed by caller. LIDT reads the 10-byte pseudo-descriptor and affects no flags.
+    unsafe {
+        asm!("lidt [{}]", in(reg) descriptor, options(nostack, preserves_flags));
+    }
+}
+
+//
+// Debug registers
+//
+
+/// Reads debug register `index` (DR0 to DR3, DR6 or DR7), or returns `None` for any other index.
+/// Must execute at CPL 0.
+pub fn read_debug_register(index: usize) -> Option<u64> {
+    let value: u64;
+    // SAFETY: Reading a debug register has no memory safety implications. `preserves_flags` is
+    // omitted because the SDM leaves status flags undefined after MOV from a debug register.
+    unsafe {
+        match index {
+            0 => asm!("mov {}, dr0", out(reg) value, options(nostack, nomem)),
+            1 => asm!("mov {}, dr1", out(reg) value, options(nostack, nomem)),
+            2 => asm!("mov {}, dr2", out(reg) value, options(nostack, nomem)),
+            3 => asm!("mov {}, dr3", out(reg) value, options(nostack, nomem)),
+            6 => asm!("mov {}, dr6", out(reg) value, options(nostack, nomem)),
+            7 => asm!("mov {}, dr7", out(reg) value, options(nostack, nomem)),
+            _ => return None,
+        }
+    }
+    Some(value)
+}
+
+/// Writes `value` to debug register `index` (DR0 to DR3, DR6 or DR7), or returns `false` for any
+/// other index. Must execute at CPL 0.
+///
+/// # Safety
+///
+/// For DR6 and DR7, bits 63:32 of `value` must be zero. A `#DB` handler must be installed before
+/// DR7 enables a breakpoint.
+pub unsafe fn write_debug_register(index: usize, value: u64) -> bool {
+    // SAFETY: Guaranteed by caller. `nomem` is omitted so that memory accesses are not moved
+    // across a change to the active watchpoints.
+    unsafe {
+        match index {
+            0 => asm!("mov dr0, {}", in(reg) value, options(nostack)),
+            1 => asm!("mov dr1, {}", in(reg) value, options(nostack)),
+            2 => asm!("mov dr2, {}", in(reg) value, options(nostack)),
+            3 => asm!("mov dr3, {}", in(reg) value, options(nostack)),
+            6 => asm!("mov dr6, {}", in(reg) value, options(nostack)),
+            7 => asm!("mov dr7, {}", in(reg) value, options(nostack)),
+            _ => return false,
+        }
+    }
+    true
+}
+
+//
+// SMAP
+//
+
+/// Disables Supervisor Mode Access Prevention (`STAC`), so CPL 0 code can access user pages.
+///
+/// # Safety
+///
+/// The caller must call [`enable_smap`] once the user memory access completes. Must execute at
+/// CPL 0 on a processor that supports SMAP.
+pub unsafe fn disable_smap() {
+    // SAFETY: Guaranteed by caller; `stac` only sets EFLAGS.AC and does not access memory.
+    unsafe {
+        asm!("stac", options(nostack, nomem, preserves_flags));
+    }
+}
+
+/// Re-enables Supervisor Mode Access Prevention (`CLAC`).
+///
+/// # Safety
+///
+/// Must close a region opened by [`disable_smap`]. Must execute at CPL 0 on a processor that
+/// supports SMAP.
+pub unsafe fn enable_smap() {
+    // SAFETY: Guaranteed by caller; `clac` only clears EFLAGS.AC and does not access memory.
+    unsafe {
+        asm!("clac", options(nostack, nomem, preserves_flags));
+    }
+}
+
+//
+// Debugger
+//
+
+/// Raises a breakpoint exception (`INT3`). Inlined so the exception is reported at the caller.
+#[inline(always)]
+pub fn breakpoint() {
+    // SAFETY: This is the architecturally defined breakpoint instruction.
+    unsafe { asm!("int 3") };
+}
+
+/// Length in bytes of the load that [`probe_read`] executes (`mov rax, [rcx]`).
+pub const PROBE_READ_INSTRUCTION_LEN: u64 = 3;
+
+/// Reads 8 bytes at `address` and discards them, to test whether the address is readable.
+///
+/// # Safety
+///
+/// If the read faults, the caller's exception handler must resume execution
+/// [`PROBE_READ_INSTRUCTION_LEN`] bytes past the faulting instruction. Reading `address` must have no side effects.
+pub unsafe fn probe_read(address: u64) {
+    // SAFETY: Guaranteed by caller. The registers are fixed so the encoding is always
+    // `48 8B 01`, which matches `PROBE_READ_INSTRUCTION_LEN`. The value read is discarded.
+    unsafe { asm!("mov rax, [rcx]", in("rcx") address, out("rax") _, options(nostack)) };
+}
+
+//
+// Halt and wait
+//
+
+/// Halts the executing CPU until the next interrupt, NMI, SMI or reset (`HLT`). Must execute at
+/// CPL 0.
+pub fn hlt() {
+    // SAFETY: HLT only pauses execution. `nomem` is omitted so that memory accesses are not moved
+    // across the halt.
+    unsafe {
+        asm!("hlt", options(nostack, preserves_flags));
+    }
+}
+
+/// Arms address monitoring on the range containing `addr` for [`mwait`] (`MONITOR`). Check the
+/// waited-on condition again before calling [`mwait`].
+///
+/// Must execute at CPL 0 on a processor that reports MONITOR/MWAIT (`CPUID.01H:ECX[3]`).
+pub fn monitor<T>(addr: &T) {
+    // SAFETY: `addr` is a reference, so the address is mapped and canonical and cannot fault.
+    // ECX (extensions) is 0, the only defined value. `nomem` is omitted so that the caller's
+    // re-check load is not moved above the arm.
+    unsafe {
+        asm!(
+            "monitor",
+            in("rax") core::ptr::from_ref(addr),
+            in("rcx") 0,
+            in("rdx") 0,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
+/// Waits until a store to the range armed by [`monitor`] or another break event such as an
+/// interrupt (`MWAIT`).
+///
+/// Must execute at CPL 0 on a processor that reports MONITOR/MWAIT (`CPUID.01H:ECX[3]`).
+pub fn mwait() {
+    // SAFETY: MWAIT only pauses execution. EAX (hints) and ECX (extensions) are 0, which every
+    // implementation supports. `nomem` is omitted so that memory accesses are not moved across
+    // the wait.
+    unsafe {
+        asm!("mwait", in("rax") 0, in("rcx") 0, options(nostack, preserves_flags));
+    }
+}
+
+//
+// Interrupts
+//
+
 /// Returns the Current Privilege Level (CPL) from the CS selector.
 fn current_privilege_level() -> u16 {
     let cs: u16;
@@ -108,124 +413,162 @@ fn current_privilege_level() -> u16 {
     cs & 0b11
 }
 
-impl super::Interrupts for X64 {
-    fn enable_interrupts() {
-        // `sti` is privileged and only valid at CPL 0.
-        if current_privilege_level() != 0 {
-            return;
-        }
-        // SAFETY: Enabling interrupts via `sti` does not violate memory safety; the caller is
-        // responsible for ensuring the system is ready to service interrupts. This operation
-        // preserves flags even though it sets the IF flag, because preserves_flags is only about
-        // status flags, not control flags.
-        unsafe {
-            asm!("sti", options(nostack, nomem, preserves_flags));
-        }
+/// Enables interrupts (`STI`), or does nothing outside CPL 0. Components should use TPLs.
+pub fn enable_interrupts() {
+    if current_privilege_level() != 0 {
+        return;
     }
-
-    fn disable_interrupts() {
-        // `cli` is privileged and only valid at CPL 0.
-        if current_privilege_level() != 0 {
-            return;
-        }
-        // SAFETY: Disabling interrupts via `cli` does not violate memory safety.
-        unsafe {
-            asm!("cli", options(nostack, nomem, preserves_flags));
-        }
-    }
-
-    fn interrupts_enabled() -> bool {
-        let eflags: u64;
-        const IF: u64 = 0x200;
-        // SAFETY: Reading RFLAGS via a push and pop has no side effects.
-        unsafe {
-            asm!("pushfq; pop {}", out(reg) eflags);
-        }
-        eflags & IF != 0
-    }
-
-    fn enable_interrupts_and_sleep() {
-        // SAFETY: This halts the CPU until the next interrupt, which has no memory safety implications. This operation
-        // preserves flags even though it sets the IF flag, because preserves_flags is only about status flags, not
-        // control flags.
-        unsafe {
-            asm!("sti; hlt", options(nostack, nomem, preserves_flags));
-        }
+    // SAFETY: Enabling interrupts does not violate memory safety. `preserves_flags` only covers
+    // status flags, not the IF control flag.
+    unsafe {
+        asm!("sti", options(nostack, nomem, preserves_flags));
     }
 }
 
-impl super::CacheMgmt for X64 {
-    fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
-        match flush_type {
-            CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => {
-                asm_wbinvd();
-                Ok(())
-            }
-            CpuFlushType::EfiCpuFlushTypeInvalidate => {
-                asm_invd();
-                Ok(())
-            }
-            CpuFlushType::EfiCpuFlushTypeWriteBack => Err(EfiError::Unsupported),
-        }
+/// Disables interrupts (`CLI`), or does nothing outside CPL 0. Components should use TPLs.
+pub fn disable_interrupts() {
+    if current_privilege_level() != 0 {
+        return;
     }
-
-    fn cache_writeback_granule() -> u32 {
-        CACHE_WRITEBACK_GRANULE
+    // SAFETY: Disabling interrupts via `cli` does not violate memory safety.
+    unsafe {
+        asm!("cli", options(nostack, nomem, preserves_flags));
     }
 }
 
-impl super::Timer for X64 {
-    fn get_timer_value() -> u64 {
-        rdtsc()
+/// Returns whether interrupts are enabled (`RFLAGS.IF`).
+pub fn interrupts_enabled() -> bool {
+    let eflags: u64;
+    const IF: u64 = 0x200;
+    // SAFETY: Reading RFLAGS via a push and pop has no side effects.
+    unsafe {
+        asm!("pushfq; pop {}", out(reg) eflags);
     }
+    eflags & IF != 0
+}
 
-    fn get_timer_frequency() -> Option<NonZeroU64> {
-        // The maximum supported standard CPUID leaf is reported in EAX of leaf 0. A leaf must not
-        // be queried unless it falls within this supported range.
-        //
-        // `#[allow(unused_unsafe)]` is used here to simultaneously support Rust <= 1.93 toolchains
-        // that consider __cpuid unsafe and Rust >= 1.94 (or >= nightly-2025-12-27) toolchains that
-        // consider __cpuid safe.
-        #[allow(unused_unsafe)]
-        // SAFETY: Calling cpuid does not violate memory safety
-        let max_leaf = unsafe { core::arch::x86_64::__cpuid(0) }.eax;
-
-        // CPUID 0x15 gives TSC_frequency = (ECX * EBX) / EAX. Most modern x86 platforms support it.
-        if max_leaf >= 0x15 {
-            #[allow(unused_unsafe)]
-            // SAFETY: Calling cpuid does not violate memory safety
-            let core::arch::x86_64::CpuidResult { eax, ebx, ecx, .. } = unsafe { core::arch::x86_64::__cpuid(0x15) };
-            if eax != 0 && ebx != 0 && ecx != 0 {
-                return NonZeroU64::new((u64::from(ecx) * u64::from(ebx)) / u64::from(eax));
-            }
-        }
-
-        // CPUID 0x16 gives base frequency in MHz in EAX. This is supported on some older x86
-        // platforms. It is a nominal frequency and is less accurate for reflecting actual operating
-        // conditions.
-        if max_leaf >= 0x16 {
-            #[allow(unused_unsafe)]
-            // SAFETY: Calling cpuid does not violate memory safety
-            let core::arch::x86_64::CpuidResult { eax, .. } = unsafe { core::arch::x86_64::__cpuid(0x16) };
-            if eax != 0 {
-                return NonZeroU64::new(u64::from(eax * 1_000_000));
-            }
-        }
-
-        None
+/// Enables interrupts and halts until the next one (`STI; HLT`).
+pub fn enable_interrupts_and_sleep() {
+    // SAFETY: Halting until the next interrupt does not violate memory safety. `preserves_flags`
+    // only covers status flags, not the IF control flag.
+    unsafe {
+        asm!("sti; hlt", options(nostack, nomem, preserves_flags));
     }
 }
 
-fn asm_wbinvd() {
+/// Runs `f` with interrupts disabled, then restores their previous state. Components should use
+/// TPLs instead.
+pub(crate) fn with_interrupts_disabled<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    if !interrupts_enabled() {
+        return f();
+    }
+    disable_interrupts();
+    let result = f();
+    enable_interrupts();
+    result
+}
+
+//
+// Cache management
+//
+
+/// Cache writeback granule in bytes, following the value used by Tianocore.
+const CACHE_WRITEBACK_GRANULE: u32 = 4;
+
+/// Flushes the whole data cache of the executing CPU. x64 has no ranged flush, so the range is
+/// ignored.
+///
+/// ## Errors
+///
+/// Returns [`EfiError::Unsupported`] for [`CpuFlushType::EfiCpuFlushTypeWriteBack`].
+pub fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
+    match flush_type {
+        CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => {
+            wbinvd();
+            Ok(())
+        }
+        CpuFlushType::EfiCpuFlushTypeInvalidate => {
+            invd();
+            Ok(())
+        }
+        CpuFlushType::EfiCpuFlushTypeWriteBack => Err(EfiError::Unsupported),
+    }
+}
+
+/// Returns the cache writeback granule in bytes, used as the CPU Arch Protocol DMA buffer
+/// alignment.
+pub fn cache_writeback_granule() -> u32 {
+    CACHE_WRITEBACK_GRANULE
+}
+
+/// Writes back and invalidates all caches of the executing CPU (`WBINVD`). Very expensive, and
+/// must execute at CPL 0.
+pub fn wbinvd() {
     // SAFETY: Writing back and invalidating the cache has no memory safety implications.
     unsafe {
         asm!("wbinvd");
     }
 }
 
-fn asm_invd() {
+/// Invalidates all caches of the executing CPU without writing them back (`INVD`).
+fn invd() {
     // SAFETY: Invalidating the cache has no memory safety implications.
     unsafe {
         asm!("invd");
     }
+}
+
+/// Invalidates the executing CPU's non-global TLB entries by reloading CR3. Must execute at CPL 0.
+pub fn flush_tlb() {
+    // SAFETY: CR3 is written back with its current value, so the active translation is
+    // unchanged. `nomem` is omitted so prior page table writes are ordered before the reload.
+    unsafe {
+        asm!("mov {cr3}, cr3", "mov cr3, {cr3}", cr3 = out(reg) _, options(nostack));
+    }
+}
+
+//
+// Timer
+//
+
+/// Reads the time stamp counter (`RDTSC`).
+pub fn rdtsc() -> u64 {
+    let lo: u32;
+    let hi: u32;
+    // SAFETY: `rdtsc` reads a CPU counter and does not violate memory safety.
+    unsafe { core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nostack, nomem)) };
+    (u64::from(hi) << 32) | u64::from(lo)
+}
+
+/// Returns the current value of the time stamp counter, in ticks.
+pub fn get_timer_value() -> u64 {
+    rdtsc()
+}
+
+/// Returns the time stamp counter frequency in Hz from CPUID leaf 0x15 or 0x16, or `None` if
+/// neither reports it.
+pub fn get_timer_frequency() -> Option<NonZeroU64> {
+    // A leaf must not be queried above the maximum supported leaf, which leaf 0 reports in EAX.
+    let max_leaf = cpuid(0, 0).eax;
+
+    // CPUID 0x15 gives TSC_frequency = (ECX * EBX) / EAX. Most modern x86 platforms support it.
+    if max_leaf >= 0x15 {
+        let CpuidResult { eax, ebx, ecx, .. } = cpuid(0x15, 0);
+        if eax != 0 && ebx != 0 && ecx != 0 {
+            return NonZeroU64::new((u64::from(ecx) * u64::from(ebx)) / u64::from(eax));
+        }
+    }
+
+    // CPUID 0x16 gives the nominal base frequency in MHz in EAX, on some older platforms.
+    if max_leaf >= 0x16 {
+        let CpuidResult { eax, .. } = cpuid(0x16, 0);
+        if eax != 0 {
+            return NonZeroU64::new(u64::from(eax * 1_000_000));
+        }
+    }
+
+    None
 }

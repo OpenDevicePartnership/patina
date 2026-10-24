@@ -1,5 +1,4 @@
 use core::{
-    arch::asm,
     num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -8,6 +7,7 @@ use gdbstub::{
     arch::{RegId, Registers},
     target::ext::breakpoints::WatchKind,
 };
+use patina::arch::x64::{PROBE_READ_INSTRUCTION_LEN, probe_read, read_debug_register, write_debug_register};
 use patina_internal_cpu::{interrupts::ExceptionContext, paging::PatinaPageTable};
 use patina_mtrr::{Mtrr, error::MtrrError};
 
@@ -37,8 +37,7 @@ impl DebuggerArch for X64Arch {
 
     #[inline(always)]
     fn breakpoint() {
-        // SAFETY: This is the architecturally defined breakpoint instruction.
-        unsafe { asm!("int 3") };
+        patina::arch::breakpoint();
     }
 
     fn process_entry(exception_type: u64, context: &mut ExceptionContext) -> ExceptionInfo {
@@ -74,11 +73,7 @@ impl DebuggerArch for X64Arch {
 
         // Always clear the instruction cache since the debugger may have altered instructions. This has the side effect
         // of also clearing the data cache because on x64 this cannot be done separately.
-        // SAFETY: This is an architecturally defined operation to flush the caches and wbinvd is a serializing
-        // instruction.
-        unsafe {
-            asm!("wbinvd");
-        }
+        patina::arch::x64::wbinvd();
     }
 
     fn set_single_step(exception_info: &mut ExceptionInfo) {
@@ -128,19 +123,19 @@ impl DebuggerArch for X64Arch {
     }
 
     fn reboot() {
-        // Reset the system through the Reset Control Register.
-        // SAFETY: This is a well known instruction sequence to reset the system.
-        // If we fail, we simply halt, which acceptable under the debugger.
-        unsafe {
-            asm!("cli",
-                 "out dx, al",
-                 in("dx") 0xCF9,
-                 in("al") 0x06_u8);
+        /// Intel chipset Reset Control Register I/O port.
+        const RESET_CONTROL_PORT: u16 = 0xCF9;
+        /// Reset Control Register value requesting a hard reset (`SYS_RST` | `RST_CPU`).
+        const HARD_RESET: u8 = 0x06;
 
-            // this is kept in a separate loop because we don't anticipate returning from this
-            loop {
-                asm!("hlt");
-            }
+        patina::arch::disable_interrupts();
+        // SAFETY: Writing the Reset Control Register resets the system. If the platform does not decode this port,
+        // the write has no effect and the CPU halts below, which is acceptable under the debugger.
+        unsafe { patina::arch::x64::io_out8(RESET_CONTROL_PORT, HARD_RESET) };
+
+        // Interrupts stay disabled, so only an NMI, SMI, or reset wakes the CPU, and it halts again.
+        loop {
+            patina::arch::x64::hlt();
         }
     }
 
@@ -156,24 +151,11 @@ impl DebuggerArch for X64Arch {
     fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         match tokens.next() {
             Some("regs") => {
-                let mut gdtr: u64 = 0;
-                // SAFETY: This is simply reading the GDTR register, which is safe.
-                unsafe {
-                    asm!(
-                        "sgdt [{}]",
-                        in(reg) &raw mut gdtr,
-                        options(nostack, preserves_flags)
-                    );
-                }
-                let _ = write!(out, "GDT: {gdtr:#x?}");
+                let gdtr = patina::arch::x64::read_gdtr();
+                let (base, limit) = (gdtr.base, gdtr.limit);
+                let _ = write!(out, "GDT: base {base:#x}, limit {limit:#x}");
             }
-            Some("flush_tlb") => {
-                // SAFETY: We are simply reading and writing back the same CR3. This has the side effect of flushing
-                // the TLB.
-                unsafe {
-                    asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _, options(nostack, nomem));
-                }
-            }
+            Some("flush_tlb") => patina::arch::flush_tlb(),
             Some("mtrr") => {
                 if let Some(val) = tokens.next() {
                     let mtrr = patina_mtrr::create_mtrr_lib(0);
@@ -209,10 +191,9 @@ impl DebuggerArch for X64Arch {
     fn memory_poke_test(address: u64) -> Result<(), ()> {
         POKE_TEST_MARKER.store(true, Ordering::SeqCst);
 
-        // SAFETY: The safety of this is dubious and may cause a page fault, but
-        // the exception handler will catch it and resolve it by stepping beyond
-        // the exception.
-        unsafe { asm!("mov {}, [{}]", out(reg) _, in(reg) address, options(nostack)) };
+        // SAFETY: A page fault on this read is caught by check_memory_poke_test, which
+        // advances RIP by PROBE_READ_INSTRUCTION_LEN.
+        unsafe { probe_read(address) };
 
         // Check if the marker was cleared, indicating a page fault. Reset either way.
         if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
@@ -222,7 +203,7 @@ impl DebuggerArch for X64Arch {
         let poke_test = POKE_TEST_MARKER.swap(false, Ordering::SeqCst);
         if poke_test {
             // We need to increment the instruction pointer to step past the load
-            context.rip += 3;
+            context.rip += PROBE_READ_INSTRUCTION_LEN;
         }
 
         poke_test
@@ -587,16 +568,18 @@ impl X64HardwareBreakpoints {
     /// Each LEN value is 4 bits appart.
     const DR7_LEN_STRIDE: usize = 4;
 
+    /// Debug register index of DR7.
+    const DR7_INDEX: usize = 7;
+
     pub fn read() -> Self {
-        let dr7: u64;
-        // SAFETY: This is simply reading the DR7 register, which is safe.
-        unsafe { asm!("mov {}, dr7", out(reg) dr7) };
+        let dr7 = read_debug_register(Self::DR7_INDEX).expect("DR7 is a valid debug register index");
         X64HardwareBreakpoints { dr7 }
     }
 
     pub fn flush(&mut self) {
-        // SAFETY: This is simply writing the DR7 register, which is safe in this debugger context.
-        unsafe { asm!("mov dr7, {}", in(reg) self.dr7) };
+        // SAFETY: `dr7` was read from hardware, so its reserved upper bits are zero. The debugger owns the debug
+        // exception handler, so enabled breakpoints are handled.
+        unsafe { write_debug_register(Self::DR7_INDEX, self.dr7) };
     }
 
     pub fn clear_all(&mut self) {
@@ -640,30 +623,21 @@ impl X64HardwareBreakpoints {
     }
 
     pub fn get_address(&self, index: usize) -> u64 {
-        let mut addr = 0;
-        // SAFETY: This is simply reading the debug address registers, which is safe.
-        unsafe {
-            match index {
-                0 => asm!("mov {}, dr0", out(reg) addr),
-                1 => asm!("mov {}, dr1", out(reg) addr),
-                2 => asm!("mov {}, dr2", out(reg) addr),
-                3 => asm!("mov {}, dr3", out(reg) addr),
-                _ => debug_assert!(false, "Invalid x64 hardware breakpoint index."),
-            }
+        // Only DR0 to DR3 hold breakpoint addresses; DR6 and DR7 share the same index space.
+        if index > 3 {
+            debug_assert!(false, "Invalid x64 hardware breakpoint index.");
+            return 0;
         }
-        addr
+        read_debug_register(index).unwrap_or(0)
     }
 
     pub fn set_address(&mut self, index: usize, addr: u64) {
-        // SAFETY: This is simply writing the debug address registers, which is safe from the debugger context.
-        unsafe {
-            match index {
-                0 => asm!("mov dr0, {}", in(reg) addr),
-                1 => asm!("mov dr1, {}", in(reg) addr),
-                2 => asm!("mov dr2, {}", in(reg) addr),
-                3 => asm!("mov dr3, {}", in(reg) addr),
-                _ => debug_assert!(false, "Invalid x64 hardware breakpoint index."),
-            }
+        if index > 3 {
+            debug_assert!(false, "Invalid x64 hardware breakpoint index.");
+            return;
         }
+        // SAFETY: Address registers accept any value. The debugger owns the debug exception handler, so an enabled
+        // breakpoint at this address is handled.
+        unsafe { write_debug_register(index, addr) };
     }
 }

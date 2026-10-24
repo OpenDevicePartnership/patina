@@ -83,7 +83,6 @@ toml = { workspace = true }
 trybuild = { version = "1.0", features = ["diff"] }
 
 [features]
-core = []
 std = ['alloc']
 alloc = ["dep:goblin", "dep:fixedbitset"]
 mockall = ["dep:mockall", "std"]
@@ -93,4 +92,4 @@ serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 unstable = ["unstable-device-path"]
 unstable-device-path = []
 # All non-std features to test in CI
-ci_features = ["core", "alloc", "global_allocator", "unstable", "unstable-device-path"]
+ci_features = ["alloc", "global_allocator", "unstable", "unstable-device-path"]

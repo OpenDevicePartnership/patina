@@ -117,28 +117,24 @@ impl NotifyRegistration {
     /// Wraps the raw pieces of a registration produced by the service implementation.
     ///
     /// This is intended for use by service implementations, not component authors.
-    #[cfg(any(test, feature = "core"))]
     #[doc(hidden)]
     pub fn from_raw(event: *mut c_void, registration: *mut c_void, context: *mut c_void) -> Self {
         Self { event: event as usize, registration: registration as usize, context: context as usize }
     }
 
     /// Returns the raw notification event handle.
-    #[cfg(any(test, feature = "core"))]
     #[doc(hidden)]
     pub fn event(&self) -> *mut c_void {
         self.event as *mut c_void
     }
 
     /// Returns the raw registration key.
-    #[cfg(any(test, feature = "core"))]
     #[doc(hidden)]
     pub fn registration(&self) -> *mut c_void {
         self.registration as *mut c_void
     }
 
     /// Returns the raw notification context pointer.
-    #[cfg(any(test, feature = "core"))]
     #[doc(hidden)]
     pub fn context(&self) -> *mut c_void {
         self.context as *mut c_void

@@ -11,6 +11,9 @@
 use core::ptr::{addr_of, addr_of_mut};
 use patina::SIZE_4GB;
 
+/// Operand layout for the `lgdt` and `lidt` instructions.
+pub(crate) use patina::arch::x64::DescriptorTablePointer;
+
 // The AP GDT only exists for the `mp` module, which needs `alloc`.
 #[cfg(any(feature = "alloc", test))]
 pub(crate) mod ap;
@@ -219,13 +222,6 @@ static GDT: spin::LazyLock<[u64; GDT_ENTRY_COUNT]> = spin::LazyLock::new(|| {
     ]
 });
 
-/// Operand layout for the `lgdt` and `lidt` instructions.
-#[repr(C, packed)]
-pub(crate) struct DescriptorTablePointer {
-    pub(crate) limit: u16,
-    pub(crate) base: u64,
-}
-
 /// Descriptor-table pointer for the GDT this module owns, for callers that need to
 /// load it on another processor.
 pub(crate) fn descriptor() -> DescriptorTablePointer {
@@ -245,7 +241,7 @@ pub fn init() {
 
     // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
     unsafe {
-        core::arch::asm!("lgdt [{}]", in(reg) &raw const gdtr, options(nostack, preserves_flags));
+        patina::arch::x64::load_gdtr(&gdtr);
 
         // Reload CS via a far return
         core::arch::asm!(
