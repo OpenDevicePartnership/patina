@@ -31,6 +31,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request'
     outputs:
+      base_ref: ${{ steps.pr-info.outputs.base_ref }}
       pr_number: ${{ steps.pr-info.outputs.pr_number }}
       skip: ${{ steps.pr-info.outputs.skip }}
       skip_reason: ${{ steps.pr-info.outputs.skip_reason }}
@@ -102,6 +103,7 @@ jobs:
           echo "  - Source:    $HEAD_REPO"
           echo "::endgroup::"
 
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
           echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
 
   upload-skip-metadata:
@@ -134,6 +136,7 @@ jobs:
     if: needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true'
     uses: OpenDevicePartnership/patina-devops/.github/workflows/PatinaQemuPrValidation.yml@main
     with:
+      base-ref: ${{ needs.prepare.outputs.base_ref }}
       head-sha: ${{ github.event.workflow_run.head_sha }}
       patina-ref: ${{ github.event.workflow_run.head_sha }}
       pr-number: ${{ fromJSON(needs.prepare.outputs.pr_number) }}
