@@ -871,7 +871,6 @@ where
     }
 
     #[cfg(feature = "alloc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[allow(dead_code)]
     /// Performs a depth-first search on the tree, returning the ordered values.
     pub fn dfs(&self) -> alloc::vec::Vec<D> {
@@ -881,7 +880,6 @@ where
     }
 
     #[cfg(feature = "alloc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[allow(dead_code)]
     fn _dfs(node: Option<&Node<D>>, values: &mut alloc::vec::Vec<D>) {
         if let Some(node) = node {

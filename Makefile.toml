@@ -430,13 +430,15 @@ end
 description = "Builds all rust documentation in the workspace. Arguments are forwarded to `cargo doc`. Example `cargo make doc` or `cargo make doc -p patina`"
 clear = true
 command = "cargo"
-args = ["doc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--no-deps"]
+# `alloc` is not a default feature of `patina`. Enable it so the docs match docs.rs.
+args = ["doc", "--features", "patina/alloc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--no-deps"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Arguments are forwarded to `cargo doc`. Example `cargo make doc-open` or `cargo make doc-open -p patina`"
 clear = true
 command = "cargo"
-args = ["doc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--open"]
+# `alloc` is not a default feature of `patina`. Enable it so the docs match docs.rs.
+args = ["doc", "--features", "patina/alloc", "@@split(CARGO_MAKE_TASK_ARGS,;)", "--open"]
 
 [tasks.clippy]
 description = "Run cargo clippy for the host target and both UEFI cross-compilation targets. Arguments are forwarded to `cargo clippy`."

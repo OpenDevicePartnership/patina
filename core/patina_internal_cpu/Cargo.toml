@@ -13,7 +13,7 @@ categories.workspace = true
 workspace = true
 
 [package.metadata.docs.rs]
-features = ["std"]
+features = ["std", "alloc"]
 
 [dependencies]
 log = { workspace = true }

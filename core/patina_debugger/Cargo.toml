@@ -12,6 +12,9 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.docs.rs]
+features = ["alloc"]
+
 [dependencies]
 cfg-if = { workspace = true }
 gdbstub = { workspace = true }
