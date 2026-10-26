@@ -139,14 +139,16 @@ impl TestRunner {
         recorder: &'static Recorder,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
-        let records = test_list
-            .iter()
-            .filter(|&test_case| test_case.should_run(self.filters.as_slice()))
-            .map(|test_case| TestRecord::new(self.debug_mode, test_case, self.fail_callback));
+        for test_case in test_list {
+            // Tests that are skipped or filtered out are still recorded, so they are reported as skipped.
+            if !test_case.should_run(self.filters.as_slice()) {
+                recorder.update_record(TestRecord::skipped(test_case));
+                continue;
+            }
 
-        for record in records {
+            let record = TestRecord::new(self.debug_mode, test_case, self.fail_callback);
             // Only schedule a run if we have not already scheduled for this test.
-            if !recorder.test_registered(record.name()) {
+            if !recorder.is_test_scheduled(record.name()) {
                 record.schedule_run(events, timer, recorder, storage)?;
             }
 
@@ -353,10 +355,83 @@ pub(crate) mod tests {
 
         let output = format!("{recorder}");
 
-        // This test is filtered out, so it should not even show up in the results.
-        assert!(!output.contains("test_that_fails"));
-        // This test is not filtered out, but never run, so should log as such.
-        std::println!("{output}");
+        // This test is filtered out, so it is never run and is reported as skipped.
+        assert!(output.contains("test_that_fails ... skipped"));
+        // This test is not filtered out, but never triggered, so it is reported as not triggered.
         assert!(output.contains("event_triggered_test ... not triggered"));
+        assert!(output.contains("totals: 0 passes, 0 fails"));
+    }
+
+    #[test]
+    fn test_skipped_and_filtered_tests_are_reported_as_skipped_and_never_run() {
+        use patina::component::service::uefi_services::{
+            event::MockEventServices, timer_event::MockTimerEventServices,
+        };
+
+        let mut storage = Storage::new();
+        storage.add_config(1i32);
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        // Both tests are manual, so they would run if scheduled, but neither matches the include filter.
+        TestRunner::default()
+            .with_filter(Filter::include("event"))
+            .register_tests(Box::leak(Box::new([TEST_CASE1, TEST_CASE3])), events, timer, recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(!recorder.is_test_scheduled("test"));
+        assert!(!recorder.is_test_scheduled("test_that_fails"));
+        recorder.run_manual_tests(&mut storage);
+
+        let output = format!("{recorder}");
+        assert!(output.contains("  test ... skipped"));
+        assert!(output.contains("test_that_fails ... skipped"));
+        assert!(output.contains("totals: 0 passes, 0 fails"));
+
+        // A later runner that does not filter the test out still schedules and runs it.
+        TestRunner::default()
+            .register_tests(Box::leak(Box::new([TEST_CASE1])), events, timer, recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(recorder.is_test_scheduled("test"));
+        recorder.run_manual_tests(&mut storage);
+        let output = format!("{recorder}");
+        assert!(output.contains("  test ... ok (1 passes)"));
+        assert!(output.contains("test_that_fails ... skipped"));
+
+        // A test marked `#[skip]` is skipped even without filters.
+        let skip_recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        TestRunner::default()
+            .register_tests(Box::leak(Box::new([TEST_CASE2])), events, timer, skip_recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(!skip_recorder.is_test_scheduled("test"));
+        skip_recorder.run_manual_tests(&mut storage);
+        assert!(format!("{skip_recorder}").contains("  test ... skipped"));
+    }
+
+    #[test]
+    fn test_filtered_test_still_runs_if_scheduled_by_an_earlier_runner() {
+        use patina::component::service::uefi_services::{
+            event::MockEventServices, timer_event::MockTimerEventServices,
+        };
+
+        let mut storage = Storage::new();
+        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        TestRunner::default()
+            .register_tests(Box::leak(Box::new([TEST_CASE3])), events, timer, recorder, &mut storage)
+            .expect("test registration should succeed");
+        // A later runner filtering the test out must not unschedule it.
+        TestRunner::default()
+            .with_filter(Filter::exclude("test_that_fails"))
+            .register_tests(Box::leak(Box::new([TEST_CASE3])), events, timer, recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(recorder.is_test_scheduled("test_that_fails"));
+
+        recorder.run_manual_tests(&mut storage);
+        let output = format!("{recorder}");
+        assert!(output.contains("test_that_fails ... fail (1 fails, 0 passes)"), "{output}");
+        assert!(output.contains("totals: 0 passes, 1 fails"), "{output}");
     }
 }

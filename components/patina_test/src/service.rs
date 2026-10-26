@@ -67,6 +67,9 @@ pub(crate) struct TestRecord {
     fail: u32,
     /// The error message from the most recent failure, if any.
     err_msg: Option<&'static str>,
+    /// Whether the test is skipped, i.e. it is marked `#[skip]` or filtered out by every runner that registered it.
+    /// Skipped tests are recorded so they can be reported, but are never scheduled to run.
+    skipped: bool,
 }
 
 #[allow(unused)]
@@ -78,7 +81,12 @@ impl TestRecord {
         callback: Option<fn(&'static str, &'static str)>,
     ) -> Self {
         let callback = callback.into_iter().collect();
-        Self { debug_mode, test_case, callback, pass: 0, fail: 0, err_msg: None }
+        Self { debug_mode, test_case, callback, pass: 0, fail: 0, err_msg: None, skipped: false }
+    }
+
+    /// Creates a record for a skipped test, i.e. one that is marked `#[skip]` or filtered out.
+    pub fn skipped(test_case: &'static TestCase) -> Self {
+        Self { skipped: true, ..Self::new(false, test_case, None) }
     }
 
     pub fn name(&self) -> &'static str {
@@ -91,6 +99,8 @@ impl TestRecord {
         self.debug_mode |= other.debug_mode;
         self.pass += other.pass;
         self.fail += other.fail;
+        // A test is only skipped if every runner skipped it.
+        self.skipped &= other.skipped;
         self.callback.extend(other.callback.clone());
         if self.err_msg.is_none() && other.err_msg.is_some() {
             self.err_msg = other.err_msg;
@@ -184,14 +194,19 @@ impl TestRecord {
         Ok(())
     }
 
+    /// Returns true if the test was scheduled to run, but has not run yet, i.e. it has neither passed nor failed.
+    fn is_not_triggered(&self) -> bool {
+        !self.skipped && self.pass == 0 && self.fail == 0
+    }
+
     /// Formats the test record as JSON for logging or reporting purposes. This must not allocate because it may be
     /// called during `ExitBootServices`.
     fn json(&self) -> impl Display + '_ {
         display_fn(move |formatter| {
             write!(
                 formatter,
-                r#"{{"name":"{}","pass":{},"fail":{},"err_msg":"#,
-                self.test_case.name, self.pass, self.fail
+                r#"{{"name":"{}","pass":{},"fail":{},"skipped":{},"err_msg":"#,
+                self.test_case.name, self.pass, self.fail, self.skipped
             )?;
             match self.err_msg {
                 Some(message) => write!(formatter, "\"{message}\""),
@@ -250,9 +265,9 @@ impl Recorder {
         Ok(())
     }
 
-    /// Returns true if a test with the given name is already registered, false otherwise.
-    pub fn test_registered(&self, test_name: &str) -> bool {
-        self.with_mut(|data| data.contains_key(test_name))
+    /// Returns true if a test with the given name is already scheduled to run, i.e. it is recorded and not skipped.
+    pub fn is_test_scheduled(&self, test_name: &str) -> bool {
+        self.with_mut(|data| data.get(test_name).is_some_and(|record| !record.skipped))
     }
 
     // Updates an existing record or inserts a new record if it does not exist.
@@ -272,9 +287,7 @@ impl Recorder {
     pub(crate) fn run_manual_tests(&self, storage: &mut Storage) {
         self.with_mut(|data| {
             data.values_mut()
-                .filter(|record| {
-                    record.test_case.triggers.contains(&TestTrigger::Manual) && record.pass == 0 && record.fail == 0
-                })
+                .filter(|record| record.test_case.triggers.contains(&TestTrigger::Manual) && record.is_not_triggered())
                 .for_each(|record| record.run(storage));
         });
     }
@@ -312,7 +325,11 @@ impl Display for Recorder {
             for (name, record) in records.iter() {
                 total_passes += record.pass;
                 total_fails += record.fail;
-                if record.fail == 0 && record.pass == 0 {
+                if record.skipped {
+                    writelncrlf!(f, "  {name} ... skipped")?;
+                    continue;
+                }
+                if record.is_not_triggered() {
                     writelncrlf!(f, "  {name} ... not triggered")?;
                     continue;
                 }
@@ -372,6 +389,29 @@ mod tests {
         assert!(output.contains("test ... fail (1 fails, 2 passes): Failure 1"));
         assert!(output.contains("test_that_fails ... fail (2 fails, 0 passes): Failure 2"));
         assert!(output.contains("event_triggered_test ... ok (1 passes)"));
+        assert!(output.contains("totals: 3 passes, 3 fails"));
+    }
+
+    #[test]
+    fn test_recorder_distinguishes_skipped_and_not_triggered_tests() {
+        let recorder = Recorder::default();
+        recorder.update_record(TestRecord::new(false, &TEST_CASE4, None));
+        recorder.update_record(TestRecord::skipped(&TEST_CASE5));
+
+        let mut ran = TestRecord::new(false, &TEST_CASE2, None);
+        ran.pass = 1;
+        recorder.update_record(ran);
+
+        let output = format!("{recorder}");
+        assert!(output.contains("event_triggered_test ... not triggered"));
+        assert!(output.contains("timer_triggered_test ... skipped"));
+        assert!(output.contains("test ... ok (1 passes)"));
+        assert!(output.contains("totals: 1 passes, 0 fails"));
+
+        let json = format!("{}", recorder.json());
+        assert!(json.contains(r#"{"name":"event_triggered_test","pass":0,"fail":0,"skipped":false,"err_msg":null}"#));
+        assert!(json.contains(r#"{"name":"timer_triggered_test","pass":0,"fail":0,"skipped":true,"err_msg":null}"#));
+        assert!(json.contains(r#"{"name":"test","pass":1,"fail":0,"skipped":false,"err_msg":null}"#));
     }
 
     #[test]
@@ -784,11 +824,11 @@ mod tests {
         record.err_msg = Some("Failure message");
 
         let json = format!("{}", record.json());
-        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure message"}"#);
+        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"skipped":false,"err_msg":"Failure message"}"#);
 
         record.err_msg = None;
         let json = format!("{}", record.json());
-        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"err_msg":null}"#);
+        assert_eq!(json, r#"{"name":"test","pass":2,"fail":1,"skipped":false,"err_msg":null}"#);
     }
 
     #[test]
@@ -809,8 +849,8 @@ mod tests {
 
         // Cannot guarantee order of records, so we will just check that the JSON string contains both records in the correct format.
         let json = format!("{}", recorder.json());
-        assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"err_msg":"Failure 1"}"#));
-        assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"err_msg":"Failure 2"}"#));
+        assert!(json.contains(r#"{"name":"test","pass":2,"fail":1,"skipped":false,"err_msg":"Failure 1"}"#));
+        assert!(json.contains(r#"{"name":"test_that_fails","pass":0,"fail":2,"skipped":false,"err_msg":"Failure 2"}"#));
         assert!(json.starts_with('[') && json.ends_with(']'));
         assert!(json.contains(','));
     }
@@ -851,7 +891,7 @@ mod tests {
         write!(buffer, r#"{{"patina_on_system_unit_test_results":{}}}"#, recorder.json()).unwrap();
         assert_eq!(
             core::str::from_utf8(&buffer.bytes[..buffer.len]).unwrap(),
-            r#"{"patina_on_system_unit_test_results":[{"name":"test","pass":2,"fail":0,"err_msg":null},{"name":"test_that_fails","pass":0,"fail":1,"err_msg":"Failure"}]}"#
+            r#"{"patina_on_system_unit_test_results":[{"name":"test","pass":2,"fail":0,"skipped":false,"err_msg":null},{"name":"test_that_fails","pass":0,"fail":1,"skipped":false,"err_msg":"Failure"}]}"#
         );
     }
 }
