@@ -9,7 +9,7 @@
 
 use patina::{error::EfiError, pi::protocol::cpu_arch::EfiSystemContext};
 
-use crate::interrupts::InterruptManager;
+use crate::interrupts::{ExceptionType, HandlerType, InterruptHandler, InterruptManager};
 
 /// Null implementation of the `EfiSystemContextFactory` and `EfiExceptionInfoDump` traits.
 #[derive(Debug)]
@@ -38,8 +38,16 @@ impl InterruptsStub {
         Self {}
     }
 
-    /// A do-nothing initialization function for the null implementation.
-    pub fn initialize(&mut self) -> Result<(), EfiError> {
+    /// Registers supplied platform handlers without initializing hardware.
+    pub fn initialize(
+        &mut self,
+        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+    ) -> Result<(), EfiError> {
+        if let Some(exception_handlers) = exception_handlers {
+            for &(exception_type, handler) in exception_handlers {
+                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+            }
+        }
         Ok(())
     }
 }

@@ -18,7 +18,9 @@ use patina_mtrr::{Mtrr, error::MtrrError};
 use patina_paging::PageTable;
 use patina_stacktrace::{StackFrame, StackTrace};
 
-use crate::interrupts::{EfiExceptionInfoDump, HandlerType, InterruptManager, x64::ExceptionContextX64};
+use crate::interrupts::{
+    EfiExceptionInfoDump, ExceptionType, HandlerType, InterruptHandler, InterruptManager, x64::ExceptionContextX64,
+};
 
 /// X64 Implementation of the `InterruptManager`.
 ///
@@ -40,7 +42,11 @@ impl InterruptsX64 {
     /// for interrupts and exceptions to be taken. This routine may install some
     /// architecture specific default handlers for exceptions.
     ///
-    pub fn initialize(&mut self) -> Result<(), EfiError> {
+    /// Supplied platform handlers are installed after generic handlers
+    pub fn initialize(
+        &mut self,
+        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+    ) -> Result<(), EfiError> {
         // Initialize the IDT.
         #[cfg(target_os = "uefi")]
         crate::interrupts::x64::idt::initialize_idt();
@@ -52,6 +58,12 @@ impl InterruptsX64 {
             .expect("Failed to install default exception handler!");
         self.register_exception_handler(14, HandlerType::UefiRoutine(page_fault_handler))
             .expect("Failed to install default exception handler!");
+
+        if let Some(exception_handlers) = exception_handlers {
+            for &(exception_type, handler) in exception_handlers {
+                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+            }
+        }
 
         Ok(())
     }
@@ -262,8 +274,32 @@ mod test {
     #[serial(exception_handlers)]
     fn test_interrupts_x64() {
         let mut interrupts = InterruptsX64::new();
-        assert!(interrupts.initialize().is_ok());
+        assert!(interrupts.initialize(None).is_ok());
+        assert!(interrupts.unregister_exception_handler(8).is_ok());
         assert!(interrupts.unregister_exception_handler(13).is_ok());
         assert!(interrupts.unregister_exception_handler(14).is_ok());
+    }
+
+    #[test]
+    #[serial(exception_handlers)]
+    fn test_interrupts_x64_platform_handlers() {
+        struct PlatformHandler;
+
+        impl InterruptHandler for PlatformHandler {
+            fn handle_interrupt(
+                &'static self,
+                _exception_type: ExceptionType,
+                _context: &mut crate::interrupts::ExceptionContext,
+            ) {
+            }
+        }
+
+        static HANDLER: PlatformHandler = PlatformHandler;
+        let mut interrupts = InterruptsX64::new();
+        assert!(interrupts.initialize(Some(&[(20, &HANDLER)])).is_ok());
+        assert!(interrupts.unregister_exception_handler(20).is_ok());
+        for exception_type in [8, 13, 14] {
+            assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
+        }
     }
 }

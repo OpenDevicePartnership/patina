@@ -14,7 +14,8 @@ use patina::{
 use patina_paging::PageTable;
 
 use crate::interrupts::{
-    EfiExceptionInfoDump, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
+    EfiExceptionInfoDump, EfiSystemContext, ExceptionType, HandlerType, InterruptHandler, InterruptManager,
+    aarch64::ExceptionContextAArch64,
 };
 
 cfg_if::cfg_if! {
@@ -48,12 +49,22 @@ impl InterruptsAarch64 {
     /// for interrupts and exceptions to be taken. This routine may install some
     /// architecture specific default handlers for exceptions.
     ///
-    pub fn initialize(&mut self) -> Result<(), EfiError> {
+    /// Supplied platform handlers are installed after the default exception handler.
+    pub fn initialize(
+        &mut self,
+        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+    ) -> Result<(), EfiError> {
         // Initialize exception entrypoint
         initialize_exception()?;
 
         self.register_exception_handler(0, HandlerType::UefiRoutine(synchronous_exception_handler))
             .expect("Failed to install default exception handler!");
+
+        if let Some(exception_handlers) = exception_handlers {
+            for &(exception_type, handler) in exception_handlers {
+                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+            }
+        }
 
         Ok(())
     }

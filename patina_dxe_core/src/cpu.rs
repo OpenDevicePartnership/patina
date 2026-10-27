@@ -156,13 +156,9 @@ pub fn initialize_cpu_subsystem(
     })?;
 
     let mut interrupt_manager = Interrupts::new();
-    interrupt_manager.initialize().inspect_err(|err| {
+    interrupt_manager.initialize(Some(exception_handlers)).inspect_err(|err| {
         log::error!("Failed to initialize Interrupt Manager: {err}");
     })?;
-
-    for &(exception_type, handler) in exception_handlers {
-        interrupt_manager.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
-    }
 
     // Restore logging
     log::set_max_level(log_level);
