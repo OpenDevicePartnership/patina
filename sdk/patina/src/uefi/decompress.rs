@@ -15,8 +15,6 @@
 // is considered acceptable for now.
 #![allow(clippy::indexing_slicing)]
 
-use bitvec::{field::BitField, order::Msb0, slice::BitSlice, view::BitView};
-
 /// Decompress Error Definitions
 #[derive(Debug)]
 pub enum DecompressError {
@@ -126,7 +124,7 @@ const MAXNP: usize = 31;
 const NPT: usize = [NT, MAXNP][(NT < MAXNP) as usize]; //Note: fancy const replacement for non-const usize::max(NT, MAXNP)
 
 struct CodeIterator<'a> {
-    src: &'a BitSlice<u8, Msb0>,
+    src: &'a [u8],
     src_index: usize,
     is_error: bool,
     remaining_block_size: usize,
@@ -143,7 +141,7 @@ impl<'a> CodeIterator<'a> {
     // initialize a new CodeIterator instance for the given source and algorithm
     fn new(src: &'a [u8], algo: DecompressionAlgorithm) -> Self {
         Self {
-            src: src.view_bits::<Msb0>(),
+            src,
             src_index: 0,
             is_error: false,
             remaining_block_size: 0,
@@ -161,22 +159,32 @@ impl<'a> CodeIterator<'a> {
     }
 
     // advances the source bitstream by `count` bits.
-    fn pop_bits(&mut self, count: usize) -> Result<&BitSlice<u8, Msb0>, DecompressError> {
-        if let Some(bitslice) = self.src.get(self.src_index..self.src_index + count) {
-            self.src_index += count;
-            Ok(bitslice)
-        } else {
-            Err(DecompressError::MalformedSrcData)
-        }
+    fn pop_bits(&mut self, count: usize) -> Result<usize, DecompressError> {
+        let value = self.peek_bits(count)?;
+        self.src_index += count;
+        Ok(value)
     }
 
     // returns the next `count` bits of the source bitstream without advancing it.
-    fn peek_bits(&self, count: usize) -> Result<&BitSlice<u8, Msb0>, DecompressError> {
-        if let Some(bitslice) = self.src.get(self.src_index..self.src_index + count) {
-            Ok(bitslice)
-        } else {
-            Err(DecompressError::MalformedSrcData)
+    fn peek_bits(&self, count: usize) -> Result<usize, DecompressError> {
+        let end = self.src_index.checked_add(count).ok_or(DecompressError::MalformedSrcData)?;
+        if count > usize::BITS as usize {
+            return Err(DecompressError::MalformedSrcData);
         }
+        let bytes = self.src.get(self.src_index / 8..end.div_ceil(8)).ok_or(DecompressError::MalformedSrcData)?;
+        let mut value = 0usize;
+        let mut remaining = count;
+        let mut skip = self.src_index % 8;
+        for &byte in bytes {
+            if remaining == 0 {
+                break;
+            }
+            let take = remaining.min(8 - skip);
+            value = (value << take) | usize::from((byte >> (8 - skip - take)) & (u8::MAX >> (8 - take)));
+            remaining -= take;
+            skip = 0;
+        }
+        Ok(value)
     }
 
     // Reads the code lengths for the Extra Set or Position Set Huffman codes for the current block.
@@ -209,10 +217,10 @@ impl<'a> CodeIterator<'a> {
         assert!(num_symbols <= NPT);
 
         // Read Set Length Array size
-        let count = self.pop_bits(num_bits)?.load_be::<usize>();
+        let count = self.pop_bits(num_bits)?;
         if count == 0 {
             // this represents the only Huffman code used.
-            let char_c = self.pop_bits(num_bits)?.load_be::<u16>();
+            let char_c = u16::try_from(self.pop_bits(num_bits)?).map_err(|_| DecompressError::MalformedSrcData)?;
             self.pt_table.fill(char_c);
             self.pt_len[..num_symbols].fill(0);
             Ok(())
@@ -221,10 +229,10 @@ impl<'a> CodeIterator<'a> {
             while idx < count && idx < NPT {
                 // if a code length is less than 7, it is encoded as 3-bit value. Otherwise it is encoded by a series of
                 // 1s followed by a terminating zero. The number of 1s = code length - 4.
-                let mut code_len = self.pop_bits(3)?.load_be::<u8>();
+                let mut code_len = u8::try_from(self.pop_bits(3)?).map_err(|_| DecompressError::MalformedSrcData)?;
                 if code_len == 7 {
                     loop {
-                        let bit = self.pop_bits(1)?[0];
+                        let bit = self.pop_bits(1)? != 0;
                         if bit {
                             //current bit is one.
                             code_len += 1;
@@ -239,7 +247,7 @@ impl<'a> CodeIterator<'a> {
                 // if 'extra' is set, then after the third length of the code length concatenation, a 2-bit value is
                 // used to indicate the number of consecutive zero lengths immediately after the third length.
                 if extra && idx == 3 {
-                    let zero_count = self.pop_bits(2)?.load_be::<usize>();
+                    let zero_count = self.pop_bits(2)?;
                     self.pt_len[idx..idx + zero_count].fill(0);
                     idx += zero_count;
                 }
@@ -297,11 +305,11 @@ impl<'a> CodeIterator<'a> {
     //
     fn read_c_len(&mut self) -> Result<(), DecompressError> {
         // Read Set Length Array Size
-        let count = self.pop_bits(CBIT)?.load_be::<usize>();
+        let count = self.pop_bits(CBIT)?;
 
         if count == 0 {
             // this represents the only Huffman code used
-            let symbol = self.pop_bits(CBIT)?.load_be::<u16>();
+            let symbol = u16::try_from(self.pop_bits(CBIT)?).map_err(|_| DecompressError::MalformedSrcData)?;
             self.c_len.fill(0);
             self.c_table.fill(symbol);
             Ok(())
@@ -310,7 +318,7 @@ impl<'a> CodeIterator<'a> {
             let mut idx = 0;
             while idx < count {
                 // read the next symbol. First, read the first PTABLE_BITSIZE bits of the symbol.
-                let mut symbol = self.pt_table[self.peek_bits(PTABLE_BITSIZE)?.load_be::<usize>()];
+                let mut symbol = self.pt_table[self.peek_bits(PTABLE_BITSIZE)?];
                 // if the symbol is less than NT, then it can be used as-is
                 if symbol as usize >= NT {
                     // symbol is larger than NT. Read bits from the stream and traverse the left/right tree until a leaf
@@ -318,7 +326,7 @@ impl<'a> CodeIterator<'a> {
                     let mut mask_idx = PTABLE_BITSIZE;
                     loop {
                         let bit_buff = self.peek_bits(mask_idx + 1)?;
-                        if bit_buff[mask_idx] {
+                        if bit_buff & 1 != 0 {
                             symbol = self.right[symbol as usize];
                         } else {
                             symbol = self.left[symbol as usize];
@@ -340,10 +348,11 @@ impl<'a> CodeIterator<'a> {
                         symbol = 1;
                     } else if symbol == 1 {
                         // '1' followed by a 4-bit value of count - 3 zero lengths follow.
-                        symbol = self.pop_bits(4)?.load_be::<u16>() + 3;
+                        symbol = u16::try_from(self.pop_bits(4)?).map_err(|_| DecompressError::MalformedSrcData)? + 3;
                     } else if symbol == 2 {
                         // '2' followed by a 9-bit value of count - 20 zero lengths follow.
-                        symbol = self.pop_bits(CBIT)?.load_be::<u16>() + 20;
+                        symbol =
+                            u16::try_from(self.pop_bits(CBIT)?).map_err(|_| DecompressError::MalformedSrcData)? + 20;
                     }
 
                     //"symbol" now contains the consecutive number of zero-length symbols starting at the current idx.
@@ -397,7 +406,7 @@ impl<'a> CodeIterator<'a> {
     fn decode_position(&mut self) -> Result<usize, DecompressError> {
         //First, read the first PTABLE_BITSIZE bits of the position symbol.
         let bit_buffer = self.peek_bits(PTABLE_BITSIZE)?;
-        let mut val = self.pt_table[bit_buffer.load_be::<usize>()] as usize;
+        let mut val = self.pt_table[bit_buffer] as usize;
 
         // if the symbol is less than NT, then it can be used as-is
         if val >= MAXNP {
@@ -406,7 +415,7 @@ impl<'a> CodeIterator<'a> {
             let mut mask_idx = PTABLE_BITSIZE;
             loop {
                 let bit_buffer = self.peek_bits(mask_idx + 1)?;
-                if bit_buffer[mask_idx] {
+                if bit_buffer & 1 != 0 {
                     val = self.right[val] as usize;
                 } else {
                     val = self.left[val] as usize;
@@ -424,7 +433,7 @@ impl<'a> CodeIterator<'a> {
         // if val is <= 1, then it directly encodes the position
         if val > 1 {
             // otherwise, (val - 1) encodes the bit length of an integer that encodes the position.
-            val = (1 << (val - 1)) + self.pop_bits(val - 1)?.load_be::<usize>();
+            val = (1 << (val - 1)) + self.pop_bits(val - 1)?;
         }
 
         Ok(val)
@@ -634,7 +643,7 @@ impl Iterator for CodeIterator<'_> {
 
             //Read new block size.
             self.remaining_block_size = match self.pop_bits(16) {
-                Ok(bits) => bits.load_be::<u16>() as usize,
+                Ok(bits) => bits,
                 Err(err) => {
                     self.is_error = true;
                     return Some(Err(err));
@@ -669,7 +678,7 @@ impl Iterator for CodeIterator<'_> {
                 return Some(Err(err));
             }
         };
-        let mut decode_idx = self.c_table[bit_buff.load_be::<usize>()] as usize;
+        let mut decode_idx = self.c_table[bit_buff] as usize;
 
         // If the index is larger than NC, then reconstruct the symbol by traversing the secondary decode tree.
         // see read_c_len() for details of how this is done.
@@ -683,7 +692,7 @@ impl Iterator for CodeIterator<'_> {
                         return Some(Err(err));
                     }
                 };
-                if bit_buff[mask_idx] {
+                if bit_buff & 1 != 0 {
                     decode_idx = self.right[decode_idx] as usize;
                 } else {
                     decode_idx = self.left[decode_idx] as usize;
@@ -727,7 +736,46 @@ mod test {
     extern crate std;
     use std::{fs::File, io::Read, iter::zip, println, time, vec, vec::Vec};
 
-    use super::decompress_into_with_algo;
+    use super::{CodeIterator, DecompressError, DecompressionAlgorithm, decompress_into_with_algo};
+
+    #[test]
+    fn test_decompress_bit_reader_matches_reference() {
+        let patterns = [[0u8; 10], [0xFF; 10], [0xA5; 10], core::array::from_fn(|i| (i * 37 + 11) as u8)];
+        for bytes in patterns {
+            let mut reader = CodeIterator::new(&bytes, DecompressionAlgorithm::UefiDecompress);
+            for start in 0..=bytes.len() * 8 {
+                for count in 0..=usize::BITS as usize {
+                    reader.src_index = start;
+                    if start + count <= bytes.len() * 8 {
+                        let expected = (start..start + count).fold(0usize, |value, bit| {
+                            (value << 1) | usize::from((bytes[bit / 8] >> (7 - bit % 8)) & 1)
+                        });
+                        assert_eq!(reader.peek_bits(count).unwrap(), expected, "start={start}, count={count}");
+                        assert_eq!(reader.src_index, start);
+                        assert_eq!(reader.pop_bits(count).unwrap(), expected);
+                        assert_eq!(reader.src_index, start + count);
+                    } else {
+                        assert!(matches!(reader.pop_bits(count), Err(DecompressError::MalformedSrcData)));
+                        assert_eq!(reader.src_index, start);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_decompress_bit_reader_rejects_invalid_ranges() {
+        let mut reader = CodeIterator::new(&[], DecompressionAlgorithm::UefiDecompress);
+        assert_eq!(reader.pop_bits(0).unwrap(), 0);
+        assert!(matches!(reader.pop_bits(1), Err(DecompressError::MalformedSrcData)));
+        let bytes = [0xFF; 16];
+        let mut reader = CodeIterator::new(&bytes, DecompressionAlgorithm::TianoDecompress);
+        assert!(matches!(reader.pop_bits(usize::BITS as usize + 1), Err(DecompressError::MalformedSrcData)));
+        assert_eq!(reader.src_index, 0);
+        reader.src_index = usize::MAX;
+        assert!(matches!(reader.pop_bits(1), Err(DecompressError::MalformedSrcData)));
+        assert_eq!(reader.src_index, usize::MAX);
+    }
 
     macro_rules! test_collateral {
         ($fname:expr) => {

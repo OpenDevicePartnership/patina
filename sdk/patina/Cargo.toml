@@ -27,6 +27,10 @@ harness = false
 name = "bench_guid"
 harness = false
 
+[[bench]]
+name = "bench_decompress"
+harness = false
+
 [[example]]
 name = "basic_guid_usage"
 required-features = ["alloc"]
@@ -51,7 +55,6 @@ required-features = ["alloc"]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true, optional = true }
 
-bitvec = { workspace = true }
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
