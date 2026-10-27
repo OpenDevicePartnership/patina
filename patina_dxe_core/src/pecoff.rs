@@ -13,6 +13,7 @@ use goblin::pe::debug::{
     CODEVIEW_PDB20_MAGIC, CODEVIEW_PDB70_MAGIC, CodeviewPDB20DebugInfo, CodeviewPDB70DebugInfo,
     IMAGE_DEBUG_DIRECTORY_SIZE, IMAGE_DEBUG_TYPE_CODEVIEW, ImageDebugDirectory,
 };
+use goblin::pe::header::{DosHeader, Header};
 use patina::log_debug_assert;
 use scroll::{LE, Pread, Pwrite};
 
@@ -135,7 +136,14 @@ impl UefiPeInfo {
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.
     fn from_pe(bytes: &[u8], opts: &goblin::pe::options::ParseOptions) -> error::Result<Self> {
         let mut pe = UefiPeInfo::default();
-        let parsed_header = goblin::pe::header::Header::parse(bytes)?;
+        let dos_header = DosHeader::parse(bytes)?;
+
+        let mut parsed_header = Header::parse_without_dos(
+            bytes
+                .get(dos_header.pe_pointer as usize..)
+                .ok_or(error::Error::BufferTooShort(dos_header.pe_pointer as usize, "PE header"))?,
+        )?;
+        parsed_header.dos_header = dos_header;
         let optional_header = parsed_header.optional_header.ok_or(error::Error::NoOptionalHeader)?;
 
         let mut section_table_offset = parsed_header.dos_header.pe_pointer as usize
@@ -656,6 +664,44 @@ mod tests {
         assert_eq!(image_info.filename, Some(String::from("DisplayEngine.efi")));
         assert_eq!(image_info.size_of_image, 0x19000);
         assert_eq!(image_info.entry_point_offset, 0x11EC);
+    }
+
+    #[test]
+    fn test_pe_ignores_dos_stub_build_metadata() {
+        let mut image = include_bytes!("../resources/test/pe32/DisplayEngine512BFileAlignment.efi").to_vec();
+        let expected = UefiPeInfo::parse(&image).unwrap();
+        let dos_header = DosHeader::parse(&image).unwrap();
+        let stub = &mut image[goblin::pe::header::DOS_STUB_OFFSET as usize..dos_header.pe_pointer as usize];
+        stub.fill(0xA5);
+        stub.get_mut(..4).unwrap().copy_from_slice(b"Rich");
+        assert_eq!(UefiPeInfo::parse(&image).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_pe_rejects_invalid_pe_header_offsets() {
+        let original = include_bytes!("../resources/test/pe32/test_image.pe32");
+        for pe_pointer in [original.len() as u32 - 3, original.len() as u32 + 1, u32::MAX] {
+            let mut image = original.to_vec();
+            image.pwrite_with(pe_pointer, goblin::pe::header::PE_POINTER_OFFSET as usize, LE).unwrap();
+            assert!(UefiPeInfo::parse(&image).is_err());
+            assert!(UefiPeInfo::parse_mapped(&image).is_err());
+        }
+        assert!(UefiPeInfo::parse(&original[..0x3f]).is_err());
+    }
+
+    #[test]
+    fn test_pe_accepts_pe_header_overlapping_dos_header() {
+        let mut image = include_bytes!("../resources/test/pe32/test_image.pe32").to_vec();
+        let expected = UefiPeInfo::parse(&image).unwrap();
+        let dos_header = DosHeader::parse(&image).unwrap();
+        image.copy_within(dos_header.pe_pointer as usize.., 0x20);
+        // The DOS pointer overlaps SizeOfCode, which is not used to load the image.
+        image.pwrite_with(0x20u32, goblin::pe::header::PE_POINTER_OFFSET as usize, LE).unwrap();
+        for info in [UefiPeInfo::parse(&image).unwrap(), UefiPeInfo::parse_mapped(&image).unwrap()] {
+            assert_eq!(info.entry_point_offset, expected.entry_point_offset);
+            assert_eq!(info.size_of_image, expected.size_of_image);
+            assert_eq!(info.sections, expected.sections);
+        }
     }
 
     #[test]
