@@ -273,9 +273,20 @@ impl ProtocolServices for CoreProtocolServices {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use crate::{events::restore_tpl, test_support};
-    use core::str::FromStr;
-    use patina::component::service::uefi_services::{driver_binding::DriverBinding, protocol::ProtocolServicesExt};
+    use crate::{driver_services::core_connect_controller, events::restore_tpl, test_support};
+    use core::{cell::Cell, str::FromStr};
+    use patina::component::service::{
+        Service,
+        uefi_services::{
+            controller_driver::{
+                ControllerDriver, ControllerDriverRef, DependencyAction, StartContext, SupportedContext,
+                install_controller_driver,
+            },
+            driver_binding::DriverBinding,
+            protocol::ProtocolServicesExt,
+        },
+    };
+    use patina::protocol::ProtocolInterface;
     use patina::uefi::device_path::walker::BorrowedDevicePathWalker;
     use std::{cell::RefCell, rc::Rc};
     use uuid::Uuid;
@@ -885,6 +896,201 @@ mod tests {
                 service.install_driver_binding_on(agent, StopWith { guid, should_stop: true }),
                 Err(ProtocolError::InvalidParameter)
             );
+        });
+    }
+
+    #[repr(C)]
+    struct ParentProtocol {
+        value: u32,
+    }
+
+    // SAFETY: test-only type, only installed with `ParentProtocol` interfaces.
+    unsafe impl ProtocolInterface for ParentProtocol {
+        const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("1f6f1f2e-0b55-4c8e-9a4c-8d7f8c6a1001");
+    }
+
+    #[repr(C)]
+    struct ChildProtocol {
+        value: u32,
+    }
+
+    // SAFETY: test-only type, only installed with `ChildProtocol` interfaces.
+    unsafe impl ProtocolInterface for ChildProtocol {
+        const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("1f6f1f2e-0b55-4c8e-9a4c-8d7f8c6a1002");
+    }
+
+    fn install_leaked<P: ProtocolInterface>(value: P) -> (Handle, ProtocolPtr) {
+        let ptr = ProtocolPtr::from_raw(Box::into_raw(Box::new(value)).cast()).unwrap();
+        (CoreProtocolServices.install_interface(None, P::PROTOCOL_GUID, ptr).unwrap(), ptr)
+    }
+
+    /// A "network-style" driver: it manages a parent controller and can depend on a child's protocol.
+    #[derive(Default)]
+    struct NetDriver {
+        child: Option<(Handle, ProtocolPtr)>,
+        destroy_child_on_stop: bool,
+        release_dependencies: bool,
+        stops: Rc<Cell<u32>>,
+        destroy_result: Rc<Cell<Option<Result<(), ProtocolError>>>>,
+    }
+
+    impl ControllerDriver for NetDriver {
+        type Protocol = ParentProtocol;
+        type State = u32;
+
+        fn supported(&self, _context: &SupportedContext<'_, Self>) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn start(&self, context: &StartContext<'_, Self>) -> Result<u32, ProtocolError> {
+            if let Some((child, _)) = self.child {
+                assert_eq!(context.open_by_driver::<ChildProtocol>(child)?.value, 1);
+            }
+            Ok(context.protocol().value)
+        }
+
+        fn stop(&self, _controller: Handle, _state: &mut u32) -> Result<(), ProtocolError> {
+            self.stops.set(self.stops.get() + 1);
+            if self.destroy_child_on_stop
+                && let Some((child, interface)) = self.child
+            {
+                let result = CoreProtocolServices.uninstall_interface(child, ChildProtocol::PROTOCOL_GUID, interface);
+                self.destroy_result.set(Some(result));
+            }
+            Ok(())
+        }
+
+        fn dependency_lost(&self, _controller: Handle, _handle: Handle, _state: &mut u32) -> DependencyAction {
+            if self.release_dependencies { DependencyAction::Release } else { DependencyAction::Stop }
+        }
+    }
+
+    fn install_net_driver(driver: NetDriver) -> ControllerDriverRef<NetDriver> {
+        install_controller_driver(Service::mock(Box::new(CoreProtocolServices)), driver).unwrap()
+    }
+
+    fn connect(controller: Handle) {
+        // SAFETY: the test driver bindings stay installed for the duration of the call.
+        unsafe { core_connect_controller(controller.as_raw(), Vec::new(), None, false) }.unwrap();
+    }
+
+    #[test]
+    fn test_protocol_services_controller_driver_manages_controller_until_uninstall() {
+        with_locked_state(|| {
+            let (controller, parent) = install_leaked(ParentProtocol { value: 5 });
+            let stops = Rc::new(Cell::new(0));
+            let driver = install_net_driver(NetDriver { stops: Rc::clone(&stops), ..Default::default() });
+
+            connect(controller);
+            assert!(driver.is_managing(controller));
+            assert_eq!(driver.with_controller(controller, |state, protocol| *state + protocol.value), Ok(10));
+
+            // Stop() is refused while the state is in use, so the protocol cannot be uninstalled.
+            let blocked = driver.with_state(controller, |_| {
+                CoreProtocolServices.uninstall_interface(controller, ParentProtocol::PROTOCOL_GUID, parent)
+            });
+            assert_eq!(blocked, Ok(Err(ProtocolError::AccessDenied)));
+            assert!(driver.is_managing(controller));
+            assert_eq!(stops.get(), 0);
+
+            assert_eq!(
+                CoreProtocolServices.uninstall_interface(controller, ParentProtocol::PROTOCOL_GUID, parent),
+                Ok(())
+            );
+            assert!(!driver.is_managing(controller));
+            assert_eq!(stops.get(), 1);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_controller_driver_child_usage_records_controller_and_stops_it() {
+        with_locked_state(|| {
+            let (controller, _) = install_leaked(ParentProtocol { value: 5 });
+            let (child, child_interface) = install_leaked(ChildProtocol { value: 1 });
+            let stops = Rc::new(Cell::new(0));
+            let driver = install_net_driver(NetDriver {
+                child: Some((child, child_interface)),
+                stops: Rc::clone(&stops),
+                ..Default::default()
+            });
+
+            connect(controller);
+            let usages = PROTOCOL_DB
+                .get_open_protocol_information_by_protocol(child.as_raw(), ChildProtocol::PROTOCOL_GUID.into_inner())
+                .unwrap();
+            assert_eq!(usages.len(), 1);
+            assert_eq!(usages[0].agent_handle, Some(driver.agent().as_raw()));
+            assert_eq!(usages[0].controller_handle, Some(controller.as_raw()));
+            assert_eq!(usages[0].attributes, patina::driver::OPEN_PROTOCOL_BY_DRIVER);
+
+            // Losing the child's protocol stops the controller that depends on it.
+            assert_eq!(
+                CoreProtocolServices.uninstall_interface(child, ChildProtocol::PROTOCOL_GUID, child_interface),
+                Ok(())
+            );
+            assert!(!driver.is_managing(controller));
+            assert_eq!(stops.get(), 1);
+            let parent_usages = PROTOCOL_DB
+                .get_open_protocol_information_by_protocol(
+                    controller.as_raw(),
+                    ParentProtocol::PROTOCOL_GUID.into_inner(),
+                )
+                .unwrap();
+            assert!(parent_usages.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_controller_driver_released_dependency_keeps_controller() {
+        with_locked_state(|| {
+            let (controller, _) = install_leaked(ParentProtocol { value: 5 });
+            let (child, child_interface) = install_leaked(ChildProtocol { value: 1 });
+            let stops = Rc::new(Cell::new(0));
+            let driver = install_net_driver(NetDriver {
+                child: Some((child, child_interface)),
+                release_dependencies: true,
+                stops: Rc::clone(&stops),
+                ..Default::default()
+            });
+            connect(controller);
+
+            assert_eq!(
+                CoreProtocolServices.uninstall_interface(child, ChildProtocol::PROTOCOL_GUID, child_interface),
+                Ok(())
+            );
+            assert!(driver.is_managing(controller));
+            assert_eq!(stops.get(), 0);
+            let parent_usages = PROTOCOL_DB
+                .get_open_protocol_information_by_protocol(
+                    controller.as_raw(),
+                    ParentProtocol::PROTOCOL_GUID.into_inner(),
+                )
+                .unwrap();
+            assert_eq!(parent_usages.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_controller_driver_stop_can_destroy_child() {
+        with_locked_state(|| {
+            let (controller, parent) = install_leaked(ParentProtocol { value: 5 });
+            let (child, child_interface) = install_leaked(ChildProtocol { value: 1 });
+            let destroy_result = Rc::new(Cell::new(None));
+            let driver = install_net_driver(NetDriver {
+                child: Some((child, child_interface)),
+                destroy_child_on_stop: true,
+                destroy_result: Rc::clone(&destroy_result),
+                ..Default::default()
+            });
+            connect(controller);
+
+            assert_eq!(
+                CoreProtocolServices.uninstall_interface(controller, ParentProtocol::PROTOCOL_GUID, parent),
+                Ok(())
+            );
+            assert_eq!(destroy_result.get(), Some(Ok(())));
+            assert!(!driver.is_managing(controller));
+            assert!(CoreProtocolServices.interface_on_handle(child, ChildProtocol::PROTOCOL_GUID).is_err());
         });
     }
 

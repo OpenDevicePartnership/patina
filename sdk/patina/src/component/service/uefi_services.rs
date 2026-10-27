@@ -24,6 +24,8 @@
 //! granular dependency on the functionality it needs:
 //!
 //! - [`config_table::ConfigurationTableServices`] - Configuration table installation and lookup.
+//! - [`controller_driver::ControllerDriver`] - A simple way to write a UEFI driver model driver that manages
+//!   controllers.
 //! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
 //! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
 //! - [`event::EventServices`] - Events, using Rust closures for notifications.
@@ -44,6 +46,7 @@
 //!
 
 pub mod config_table;
+pub mod controller_driver;
 pub mod driver;
 pub mod driver_binding;
 pub mod event;

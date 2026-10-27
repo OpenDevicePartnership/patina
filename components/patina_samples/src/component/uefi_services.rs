@@ -7,6 +7,7 @@
 //! - [`overview`] - A quick tour of timer, event, and protocol usage in one component.
 //! - [`configuration_table`] - Installs a vendor configuration table and reads it back.
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
+//! - [`driver_binding_producer`] - Manages controllers through the UEFI Driver Model with a `ControllerDriver`.
 //! - [`end_of_dxe_protocol_consumer`] - Defers protocol consumption to End-of-DXE.
 //! - [`protocol_consumer`] - Shows different ways to consume a protocol.
 //! - [`protocol_dependency`] - Gates component dispatch on a protocol using `Protocol<P>`.
@@ -22,6 +23,7 @@
 //!
 
 pub mod configuration_table;
+pub mod driver_binding_producer;
 pub mod driver_connect;
 pub mod end_of_dxe_protocol_consumer;
 pub mod overview;
