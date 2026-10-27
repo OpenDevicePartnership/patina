@@ -8,7 +8,6 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-#[cfg(any(test, feature = "confidential_compute"))]
 mod aliased_memory_map_protocol;
 mod cpu_arch_protocol;
 mod efi_cpu;
@@ -28,8 +27,8 @@ pub(crate) use perf_timer::PerfTimer;
 pub(crate) struct MpServicesEnabled(pub(crate) bool);
 
 use efi_cpu::EfiCpu;
+use patina_internal_cpu::interrupts::Interrupts;
 pub use patina_internal_cpu::interrupts::{ExceptionContext, ExceptionContextX64, ExceptionType, InterruptHandler};
-use patina_internal_cpu::interrupts::{HandlerType, InterruptManager, Interrupts};
 
 /// A configuration struct containing the GIC bases (`gic_d`, `gic_r`) for AARCH64 systems.
 ///
@@ -146,9 +145,9 @@ pub fn initialize_cpu_subsystem(
     let mut cpu = EfiCpu::default();
     let log_level = log::max_level();
 
-    // Confidential VMs cannot log between GDT install and IDT install because this creates a #VE/#VC exception
-    // which cannot be handled until the IDT is installed. Disable logging globally through this transition.
-    #[cfg(feature = "confidential_compute")]
+    // Confidential VMs cannot log between GDT install and platform exception handler install because this creates
+    // a virtualization exception which cannot be handled until the platform handlers are installed.
+    // Disable logging globally through this transition.
     log::set_max_level(log::LevelFilter::Off);
 
     cpu.initialize().inspect_err(|err| {

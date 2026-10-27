@@ -6,18 +6,46 @@ guest. For the latest updates, view [the tracking item](https://github.com/OpenD
 
 ## Platform Enablement
 
-To enable the features that are specifically for a confidential compute guest in Patina, build patina_dxe_core with
-the `confidential_compute` flag set:
+Patina will attempt to detect whether it is running in a confidential compute guest before executing operations that
+these environments are sensitive to. However, this relies on the platform following the guidance below.
 
-```text
-# Cargo.toml
-patina_dxe_core = { version = "x.x.x", features = ["confidential_compute"] }
+### Virtualization Exceptions
+
+Patina, like EDK II, does not have generic virtualization exception handling because it is platform/hypervisor
+specific. Platforms must provide virtualization exception handlers during Patina initialization that Patina will
+install.
+
+```rust
+# extern crate patina_dxe_core;
+use patina_dxe_core::{CpuInfo, ExceptionContext, ExceptionType, InterruptHandler};
+
+const EXCEPTION_VECTOR_VE: ExceptionType = 20;
+
+struct MyPlatform;
+
+impl InterruptHandler for MyPlatform {
+    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext) {
+      // Handle...
+    }
+}
+
+impl CpuInfo for MyPlatform {
+    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
+        static EXCEPTION_HANDLERS: [(ExceptionType, &'static dyn InterruptHandler); 1] =
+            [(EXCEPTION_VECTOR_VE, &MyPlatform)];
+
+        &EXCEPTION_HANDLERS
+    }
+}
 ```
+
+Patina will install these to the new IDT/VBAR immediately upon creation to ensure the exceptions can be serviced.
 
 ### Shared Memory Regions
 
-In order to map shared regions with the VMM, a C driver can call the `AliasedMemoryMappingProtocol` which has a C
-binding in patina-edk2. This protocol allows arbitrary VA to PA mappings.
+In order to map shared regions with the VMM, a C driver can call the `AliasedMemoryMappingProtocol` which has a
+[C binding](https://github.com/OpenDevicePartnership/patina-edk2/blob/main/PatinaPkg/Include/Protocol/AliasedMemoryMapping.h)
+in patina-edk2. This protocol allows arbitrary VA to PA mappings.
 
 For example, in a TDX VM where a page is being shared, the driver would call:
 
@@ -71,35 +99,3 @@ prior phase page tables and requires platforms to be deterministic about mapping
 
 For x64 virtualization technologies, MTRR access may or may not be allowed. Patina will check if MTRRs are supported
 and if not will continue to gracefully map pages.
-
-### Virtualization Exceptions
-
-Patina, like EDK II, does not have generic virtualization exception handling because this is platform/hypervisor
-specific. Platforms must provide virtualization exception handlers during Patina initialization that Patina will
-install.
-
-```rust
-# extern crate patina_dxe_core;
-use patina_dxe_core::{CpuInfo, ExceptionContext, ExceptionType, InterruptHandler};
-
-const EXCEPTION_VECTOR_VE: ExceptionType = 20;
-
-struct MyPlatform;
-
-impl InterruptHandler for MyPlatform {
-    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext) {
-      // Handle...
-    }
-}
-
-impl CpuInfo for MyPlatform {
-    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
-        static EXCEPTION_HANDLERS: [(ExceptionType, &'static dyn InterruptHandler); 1] =
-            [(EXCEPTION_VECTOR_VE, &MyPlatform)];
-
-        &EXCEPTION_HANDLERS
-    }
-}
-```
-
-Patina will install these to the new IDT/VBAR immediately upon creation to ensure the exceptions can be serviced.

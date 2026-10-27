@@ -16,6 +16,11 @@ pub(super) struct AArch64;
 
 impl super::ArchSupport for AArch64 {}
 
+/// Returns `false` because confidential guest detection is not yet supported on `AArch64`.
+pub fn is_cc_guest() -> bool {
+    false
+}
+
 const DAIF_WR_IRQ_BIT: u64 = 0x2;
 
 /// Reads and returns the value of the given aarch64 system register.

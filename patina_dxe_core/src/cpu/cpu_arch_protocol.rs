@@ -247,7 +247,7 @@ impl EfiCpuArchProtocolImpl {
     }
 }
 
-/// This component installs the cpu arch protocol and optionally the aliased memory mapping protocol.
+/// Installs the CPU arch protocol and, on TDX guests, the aliased memory mapping protocol.
 #[derive(Default)]
 pub(crate) struct CpuArchProtocolInstaller;
 
@@ -266,8 +266,9 @@ impl CpuArchProtocolInstaller {
             .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
         log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
 
-        #[cfg(any(test, feature = "confidential_compute"))]
-        super::aliased_memory_map_protocol::install(&protocols, handle)?;
+        if patina::arch::is_cc_guest() {
+            super::aliased_memory_map_protocol::install(&protocols, handle)?;
+        }
 
         Ok(())
     }

@@ -111,7 +111,6 @@ impl PageAllocator for PagingAllocator<'_> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg(any(test, feature = "confidential_compute"))]
 pub(crate) struct AliasedMapping {
     pub(crate) virtual_address: u64,
     pub(crate) physical_address: u64,
@@ -280,7 +279,6 @@ impl SpinLockedGcd {
         }
     }
 
-    #[cfg(any(test, feature = "confidential_compute"))]
     pub(crate) fn map_aliased_memory_region(
         &self,
         virtual_address: u64,
@@ -312,7 +310,6 @@ impl SpinLockedGcd {
         Ok(())
     }
 
-    #[cfg(any(test, feature = "confidential_compute"))]
     pub(crate) fn unmap_aliased_memory_region(&self, virtual_address: u64, len: u64) -> Result<(), EfiError> {
         if !self
             .aliased_mappings

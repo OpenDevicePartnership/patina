@@ -19,7 +19,6 @@ use core::{fmt::Display, ptr};
 #[cfg(test)]
 use io_gcd::IO_BLOCK_SLICE_LEN;
 use io_gcd::IoGCD;
-#[cfg(any(test, feature = "confidential_compute"))]
 use paging::AliasedMapping;
 pub(crate) use paging::PagingAllocator;
 use patina::{DEFAULT_CACHE_ATTR, crc32, error::EfiError, log_debug_assert};
@@ -1386,7 +1385,6 @@ pub struct SpinLockedGcd {
     io: tpl_mutex::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
     page_table: tpl_mutex::TplMutex<Option<Box<dyn PatinaPageTable>>>,
-    #[cfg(any(test, feature = "confidential_compute"))]
     aliased_mappings: tpl_mutex::TplMutex<Vec<AliasedMapping>>,
     /// Contains the current memory protection policy
     pub(crate) memory_protection_policy: MemoryProtectionPolicy,
@@ -1423,7 +1421,6 @@ impl SpinLockedGcd {
             ),
             memory_change_callback,
             page_table: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
-            #[cfg(any(test, feature = "confidential_compute"))]
             aliased_mappings: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, Vec::new(), "GcdAliasedMappingsLock"),
             memory_protection_policy: MemoryProtectionPolicy::new(),
             last_efi_memory_map_key: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "LastEfiMemoryMapKeyLock"),

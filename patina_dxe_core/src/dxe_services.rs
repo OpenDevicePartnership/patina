@@ -166,7 +166,6 @@ pub fn core_set_memory_space_attributes(
 }
 
 #[cfg_attr(coverage, coverage(off))]
-#[cfg(any(test, feature = "confidential_compute"))]
 pub fn core_map_aliased_memory_region(
     virtual_address: efi::VirtualAddress,
     physical_address: efi::PhysicalAddress,
@@ -177,7 +176,6 @@ pub fn core_map_aliased_memory_region(
 }
 
 #[cfg_attr(coverage, coverage(off))]
-#[cfg(any(test, feature = "confidential_compute"))]
 pub fn core_unmap_aliased_memory_region(virtual_address: efi::VirtualAddress, length: u64) -> Result<(), EfiError> {
     GCD.unmap_aliased_memory_region(virtual_address, length)
 }

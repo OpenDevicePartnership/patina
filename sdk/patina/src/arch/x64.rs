@@ -11,12 +11,23 @@ use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi
 use core::arch::asm;
 use core::num::NonZeroU64;
 
+mod tdx;
+
 pub(crate) struct X64;
 
 impl super::ArchSupport for X64 {}
 
 /// Cache writeback granule for `x86_64`, using 4 bytes following precedence set by Tianocore.
 const CACHE_WRITEBACK_GRANULE: u32 = 4;
+
+pub use tdx::is_td_enabled;
+
+/// Returns whether the current environment is an Intel TDX guest.
+///
+/// Platform exception handlers must be installed before calling this function.
+pub fn is_cc_guest() -> bool {
+    is_td_enabled()
+}
 
 /// Returns the active virtual address width selected by `CR4.LA57`.
 pub fn virtual_address_bits() -> u32 {

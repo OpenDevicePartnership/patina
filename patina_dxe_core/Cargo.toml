@@ -58,7 +58,6 @@ corosensei = { workspace = true }
 
 [features]
 compatibility_mode_allowed = []
-confidential_compute = []
 debugger_reload = []
 default = []
 std = ["patina/std"]
@@ -66,4 +65,4 @@ std = ["patina/std"]
 unstable-device-path = ["patina/unstable-device-path"]
 v1_resource_descriptor_support = []
 # All non-std features to test in CI
-ci_features = ["compatibility_mode_allowed", "confidential_compute", "debugger_reload", "unstable-device-path", "v1_resource_descriptor_support"]
+ci_features = ["compatibility_mode_allowed", "debugger_reload", "unstable-device-path", "v1_resource_descriptor_support"]

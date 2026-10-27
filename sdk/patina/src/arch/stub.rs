@@ -20,6 +20,11 @@ pub(crate) struct StubArch;
 
 impl super::ArchSupport for StubArch {}
 
+/// Returns `false` for host builds.
+pub fn is_cc_guest() -> bool {
+    false
+}
+
 static INTERRUPTS_ENABLED: AtomicBool = AtomicBool::new(true);
 
 impl super::Interrupts for StubArch {

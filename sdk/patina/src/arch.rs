@@ -15,6 +15,7 @@ cfg_if::cfg_if! {
         #[cfg_attr(coverage, coverage(off))]
         pub mod stub;
         type Arch = stub::StubArch;
+        use self::stub as arch_impl;
 
         // Republish the compiled architecture stub module so that `patina::arch::aarch64` /
         // `patina::arch::x64` paths resolve on host builds.
@@ -24,10 +25,12 @@ cfg_if::cfg_if! {
         #[cfg_attr(coverage, coverage(off))] // Architecture code cannot be unit tested.
         pub mod aarch64;
         type Arch = aarch64::AArch64;
+        use self::aarch64 as arch_impl;
     } else if #[cfg(target_arch = "x86_64")] {
         #[cfg_attr(coverage, coverage(off))] // Architecture code cannot be unit tested.
         pub mod x64;
         type Arch = x64::X64;
+        use self::x64 as arch_impl;
     }
 }
 
@@ -35,6 +38,16 @@ cfg_if::cfg_if! {
 /// A trait for architecture-specific functionality. It inherits from subtraits
 /// for code organization.
 trait ArchSupport: Interrupts + CacheMgmt + Timer {}
+
+/// Returns whether the current environment is an enlightened confidential compute guest.
+///
+/// Currently detects Intel TDX on x64 and returns `false` on `AArch64` and host stubs.
+/// Platform exception handlers must be installed before calling this function so that
+/// any virtualization exceptions raised during detection are properly handled.
+#[cfg_attr(coverage, coverage(off))]
+pub fn is_cc_guest() -> bool {
+    arch_impl::is_cc_guest()
+}
 
 //
 // Interrupts support.
