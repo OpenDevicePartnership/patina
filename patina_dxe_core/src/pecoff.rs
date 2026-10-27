@@ -9,6 +9,10 @@
 extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
+use goblin::pe::debug::{
+    CODEVIEW_PDB20_MAGIC, CODEVIEW_PDB70_MAGIC, CodeviewPDB20DebugInfo, CodeviewPDB70DebugInfo,
+    IMAGE_DEBUG_DIRECTORY_SIZE, IMAGE_DEBUG_TYPE_CODEVIEW, ImageDebugDirectory,
+};
 use patina::log_debug_assert;
 use scroll::{LE, Pread, Pwrite};
 
@@ -169,26 +173,64 @@ impl UefiPeInfo {
         // Debug data is optional metadata. Use it when valid, but do not reject an otherwise
         // loadable image when its debug directory cannot be resolved or parsed.
         if let Some(&debug_table) = optional_header.data_directories.get_debug_table() {
-            match goblin::pe::debug::DebugData::parse_with_opts(
+            match Self::read_debug_filename(
                 bytes,
                 debug_table,
                 &pe.sections,
                 optional_header.windows_fields.file_alignment,
                 opts,
             ) {
-                Ok(debug_data) => {
-                    if let Some(codeview_data) = debug_data.codeview_pdb70_debug_info {
-                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-                    } else if let Some(codeview_data) = debug_data.codeview_pdb20_debug_info {
-                        pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-                    }
-                }
+                Ok(filename) => pe.filename = filename,
                 Err(err) => {
                     log::warn!("Failed to parse optional PE/COFF debug metadata: {err:?}");
                 }
             }
         }
         Ok(pe)
+    }
+
+    fn read_debug_filename(
+        bytes: &[u8],
+        directory: goblin::pe::data_directories::DataDirectory,
+        sections: &[goblin::pe::section_table::SectionTable],
+        file_alignment: u32,
+        opts: &goblin::pe::options::ParseOptions,
+    ) -> error::Result<Option<String>> {
+        let offset = goblin::pe::utils::find_offset(directory.virtual_address as usize, sections, file_alignment, opts)
+            .ok_or(error::Error::BufferTooShort(directory.virtual_address as usize, "debug directory RVA"))?;
+        let data = bytes
+            .get(offset..)
+            .and_then(|data| data.get(..directory.size as usize))
+            .ok_or(error::Error::BufferTooShort(directory.size as usize, "debug directory"))?;
+        let (entries, remainder) = data.as_chunks::<IMAGE_DEBUG_DIRECTORY_SIZE>();
+        if !remainder.is_empty() {
+            return Err(error::Error::BufferTooShort(IMAGE_DEBUG_DIRECTORY_SIZE, "debug directory entry"));
+        }
+
+        for entry in entries {
+            let entry = entry.pread_with::<ImageDebugDirectory>(0, LE)?;
+            if entry.data_type != IMAGE_DEBUG_TYPE_CODEVIEW {
+                continue;
+            }
+
+            let offset = if opts.resolve_rva { entry.pointer_to_raw_data } else { entry.address_of_raw_data };
+            let record = bytes
+                .get(offset as usize..)
+                .and_then(|data| data.get(..entry.size_of_data as usize))
+                .ok_or(error::Error::BufferTooShort(entry.size_of_data as usize, "CodeView record"))?;
+            // Dispatch by signature so a short but valid PDB20 record is not rejected by the PDB70 parser.
+            let filename = match record.pread_with::<u32>(0, LE)? {
+                CODEVIEW_PDB70_MAGIC => {
+                    CodeviewPDB70DebugInfo::parse_with_opts(bytes, &entry, opts)?.map(|info| info.filename)
+                }
+                CODEVIEW_PDB20_MAGIC => {
+                    CodeviewPDB20DebugInfo::parse_with_opts(bytes, &entry, opts)?.map(|info| info.filename)
+                }
+                _ => None,
+            };
+            return filename.map(Self::read_filename).transpose().map(Option::flatten);
+        }
+        Ok(None)
     }
 
     /// Parses a bytes buffer containing the filename.
@@ -1168,5 +1210,161 @@ mod tests {
 
         let mut loaded_image = vec![0; image_info.size_of_image as usize];
         load_image(&image_info, image, &mut loaded_image).unwrap();
+    }
+
+    fn debug_filename_fixture(
+        magic: u32,
+        filename: &[u8],
+        mapped: bool,
+    ) -> (
+        Vec<u8>,
+        goblin::pe::data_directories::DataDirectory,
+        [goblin::pe::section_table::SectionTable; 1],
+        goblin::pe::options::ParseOptions,
+    ) {
+        use goblin::pe::debug::*;
+
+        let header_size = if magic == CODEVIEW_PDB20_MAGIC { 16 } else { 24 };
+        let record_size = header_size + filename.len();
+        let mut bytes = vec![0; 0x2000];
+        let directory_offset = if mapped { 0x1000 } else { 0x200 };
+        let record_offset = directory_offset + 0x40;
+        bytes.pwrite_with(magic, record_offset, LE).unwrap();
+        bytes[record_offset + header_size..record_offset + record_size].copy_from_slice(filename);
+        bytes
+            .pwrite_with(
+                goblin::pe::debug::ImageDebugDirectory {
+                    data_type: IMAGE_DEBUG_TYPE_CODEVIEW,
+                    size_of_data: record_size as u32,
+                    address_of_raw_data: 0x1040,
+                    pointer_to_raw_data: 0x240,
+                    ..Default::default()
+                },
+                directory_offset,
+                LE,
+            )
+            .unwrap();
+        let directory = goblin::pe::data_directories::DataDirectory {
+            virtual_address: 0x1000,
+            size: IMAGE_DEBUG_DIRECTORY_SIZE as u32,
+        };
+        let sections = [goblin::pe::section_table::SectionTable {
+            virtual_address: 0x1000,
+            virtual_size: 0x200,
+            pointer_to_raw_data: 0x200,
+            size_of_raw_data: 0x200,
+            ..Default::default()
+        }];
+        let mut opts = goblin::pe::options::ParseOptions::default();
+        opts.resolve_rva = !mapped;
+        (bytes, directory, sections, opts)
+    }
+
+    #[test]
+    fn test_pe_debug_filename_formats_and_address_modes() {
+        use goblin::pe::debug::{CODEVIEW_PDB20_MAGIC, CODEVIEW_PDB70_MAGIC};
+
+        for mapped in [false, true] {
+            for magic in [CODEVIEW_PDB20_MAGIC, CODEVIEW_PDB70_MAGIC] {
+                for (filename, expected) in [
+                    (&b"C:\\build\\Driver.pdb\0"[..], "Driver.efi"),
+                    (&b"/build/Driver.dll"[..], "Driver.efi"),
+                    (&b"x.pdb\0"[..], "x.efi"),
+                ] {
+                    let (bytes, directory, sections, opts) = debug_filename_fixture(magic, filename, mapped);
+                    assert_eq!(
+                        UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).unwrap(),
+                        Some(String::from(expected))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_pe_debug_filename_ignores_unused_record_payloads() {
+        use goblin::pe::debug::*;
+
+        let (mut bytes, mut directory, sections, opts) =
+            debug_filename_fixture(CODEVIEW_PDB70_MAGIC, b"Driver.pdb\0", false);
+        let codeview = bytes.pread_with::<ImageDebugDirectory>(0x200, LE).unwrap();
+        let unused = ImageDebugDirectory {
+            data_type: IMAGE_DEBUG_TYPE_POGO,
+            pointer_to_raw_data: u32::MAX,
+            size_of_data: u32::MAX,
+            ..Default::default()
+        };
+        directory.size *= 2;
+        bytes.pwrite_with(unused, 0x200, LE).unwrap();
+        bytes.pwrite_with(codeview, 0x200 + IMAGE_DEBUG_DIRECTORY_SIZE, LE).unwrap();
+        assert_eq!(
+            UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).unwrap(),
+            Some(String::from("Driver.efi"))
+        );
+
+        directory.size = IMAGE_DEBUG_DIRECTORY_SIZE as u32;
+        assert_eq!(UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).unwrap(), None);
+        directory.size = 0;
+        assert_eq!(UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).unwrap(), None);
+    }
+
+    #[test]
+    fn test_pe_debug_filename_rejects_malformed_records() {
+        use goblin::pe::debug::*;
+
+        let (bytes, directory, sections, opts) = debug_filename_fixture(CODEVIEW_PDB70_MAGIC, b"Driver.pdb\0", false);
+        for (rva, size) in [(0x3000, 28), (0x1000, u32::MAX), (0x1000, 27)] {
+            let bad_directory = goblin::pe::data_directories::DataDirectory { virtual_address: rva, size };
+            assert!(UefiPeInfo::read_debug_filename(&bytes, bad_directory, &sections, 0x200, &opts).is_err());
+        }
+
+        for (offset, size) in [(u32::MAX, 32), (0x240, u32::MAX), (0x240, 3), (0x240, 23)] {
+            let mut bytes = bytes.clone();
+            let mut entry = bytes.pread_with::<ImageDebugDirectory>(0x200, LE).unwrap();
+            entry.pointer_to_raw_data = offset;
+            entry.size_of_data = size;
+            bytes.pwrite_with(entry, 0x200, LE).unwrap();
+            assert!(UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).is_err());
+        }
+    }
+
+    #[test]
+    fn test_pe_debug_filename_unknown_signature() {
+        let (bytes, directory, sections, opts) = debug_filename_fixture(0, b"Driver.pdb\0", false);
+        assert_eq!(UefiPeInfo::read_debug_filename(&bytes, directory, &sections, 0x200, &opts).unwrap(), None);
+    }
+
+    #[test]
+    fn test_pe_image_with_invalid_codeview_loads_without_filename() {
+        use goblin::pe::debug::{IMAGE_DEBUG_TYPE_CODEVIEW, ImageDebugDirectory};
+
+        let mut image = include_bytes!("../resources/test/pe32/test_image.pe32").to_vec();
+        let header = goblin::pe::header::Header::parse(&image).unwrap();
+        let optional = header.optional_header.unwrap();
+        let info = UefiPeInfo::parse(&image).unwrap();
+        let directory = optional.data_directories.get_debug_table().unwrap();
+        let offset = goblin::pe::utils::find_offset(
+            directory.virtual_address as usize,
+            &info.sections,
+            optional.windows_fields.file_alignment,
+            &goblin::pe::options::ParseOptions::default(),
+        )
+        .unwrap();
+        image
+            .pwrite_with(
+                ImageDebugDirectory {
+                    data_type: IMAGE_DEBUG_TYPE_CODEVIEW,
+                    pointer_to_raw_data: u32::MAX,
+                    size_of_data: 32,
+                    ..Default::default()
+                },
+                offset,
+                LE,
+            )
+            .unwrap();
+        let info = UefiPeInfo::parse(&image).unwrap();
+        assert!(info.filename.is_none());
+        let mut loaded = vec![0; info.size_of_image as usize];
+        load_image(&info, &image, &mut loaded).unwrap();
     }
 }
