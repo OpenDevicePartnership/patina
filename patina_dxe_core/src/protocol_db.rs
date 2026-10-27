@@ -211,9 +211,11 @@ impl ProtocolDb {
     }
 
     fn registered_protocols(&self) -> Vec<efi::Guid> {
-        let protocols: BTreeSet<efi::Guid> =
+        let mut protocols: Vec<efi::Guid> =
             self.handles.values().flat_map(|handle| handle.keys().map(|&OrdGuid(guid)| guid)).collect();
-        protocols.into_iter().collect()
+        protocols.sort_unstable();
+        protocols.dedup();
+        protocols
     }
 
     fn install_protocol_interface(
