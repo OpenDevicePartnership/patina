@@ -49,22 +49,19 @@ impl InterruptsAarch64 {
     /// for interrupts and exceptions to be taken. This routine may install some
     /// architecture specific default handlers for exceptions.
     ///
-    /// Supplied platform handlers are installed after the default exception handler.
+    /// Default and platform handlers are registered before activating the exception vector table.
     pub fn initialize(
         &mut self,
-        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
-        // Initialize exception entrypoint
-        initialize_exception()?;
-
         self.register_exception_handler(0, HandlerType::UefiRoutine(synchronous_exception_handler))
             .expect("Failed to install default exception handler!");
 
-        if let Some(exception_handlers) = exception_handlers {
-            for &(exception_type, handler) in exception_handlers {
-                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
-            }
+        for &(exception_type, handler) in exception_handlers {
+            self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
         }
+
+        initialize_exception()?;
 
         Ok(())
     }

@@ -143,24 +143,15 @@ pub fn initialize_cpu_subsystem(
     exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
 ) -> crate::error::Result<Interrupts> {
     let mut cpu = EfiCpu::default();
-    let log_level = log::max_level();
-
-    // Confidential VMs cannot log between GDT install and platform exception handler install because this creates
-    // a virtualization exception which cannot be handled until the platform handlers are installed.
-    // Disable logging globally through this transition.
-    log::set_max_level(log::LevelFilter::Off);
 
     cpu.initialize().inspect_err(|err| {
         log::error!("Failed to initialize CPU subsystem: {err}");
     })?;
 
     let mut interrupt_manager = Interrupts::new();
-    interrupt_manager.initialize(Some(exception_handlers)).inspect_err(|err| {
+    interrupt_manager.initialize(exception_handlers).inspect_err(|err| {
         log::error!("Failed to initialize Interrupt Manager: {err}");
     })?;
-
-    // Restore logging
-    log::set_max_level(log_level);
 
     Ok(interrupt_manager)
 }

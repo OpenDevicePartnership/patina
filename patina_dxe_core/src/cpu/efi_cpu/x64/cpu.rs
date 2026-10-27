@@ -8,7 +8,6 @@
 //!
 #[cfg(target_os = "uefi")]
 use core::arch::asm;
-use patina::arch as interrupts;
 use patina::error::EfiError;
 
 /// Struct to implement X64 Cpu Init.
@@ -24,20 +23,7 @@ impl EfiCpuX64 {
         // Initialize floating point units
         self.initialize_fpu();
 
-        // disable interrupts
-        interrupts::disable_interrupts();
-
-        // Initialize GDT
-        self.initialize_gdt();
-
-        interrupts::enable_interrupts();
-
         Ok(())
-    }
-
-    fn initialize_gdt(&self) {
-        #[cfg(target_os = "uefi")]
-        patina_internal_cpu::gdt::init();
     }
 
     #[cfg_attr(coverage, coverage(off))]

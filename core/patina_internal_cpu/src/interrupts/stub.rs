@@ -41,12 +41,10 @@ impl InterruptsStub {
     /// Registers supplied platform handlers without initializing hardware.
     pub fn initialize(
         &mut self,
-        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
-        if let Some(exception_handlers) = exception_handlers {
-            for &(exception_type, handler) in exception_handlers {
-                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
-            }
+        for &(exception_type, handler) in exception_handlers {
+            self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
         }
         Ok(())
     }

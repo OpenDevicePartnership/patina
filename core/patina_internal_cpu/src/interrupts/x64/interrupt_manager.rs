@@ -42,10 +42,11 @@ impl InterruptsX64 {
     /// for interrupts and exceptions to be taken. This routine may install some
     /// architecture specific default handlers for exceptions.
     ///
-    /// Supplied platform handlers are installed before virtual-wire mode is programmed on non-TDX guests.
+    /// Default and platform handlers are registered before activating the GDT and IDT.
+    /// Virtual-wire mode is then programmed on non-CC guests.
     pub fn initialize(
         &mut self,
-        exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
         // Register some default handlers.
         self.register_exception_handler(8, HandlerType::UefiRoutine(double_fault_handler))
@@ -55,10 +56,8 @@ impl InterruptsX64 {
         self.register_exception_handler(14, HandlerType::UefiRoutine(page_fault_handler))
             .expect("Failed to install default exception handler!");
 
-        if let Some(exception_handlers) = exception_handlers {
-            for &(exception_type, handler) in exception_handlers {
-                self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
-            }
+        for &(exception_type, handler) in exception_handlers {
+            self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
         }
         #[cfg(target_os = "uefi")]
         {
@@ -329,7 +328,7 @@ mod test {
     #[serial(exception_handlers)]
     fn test_interrupts_x64() {
         let mut interrupts = InterruptsX64::new();
-        assert!(interrupts.initialize(None).is_ok());
+        assert!(interrupts.initialize(&[]).is_ok());
         assert!(interrupts.unregister_exception_handler(8).is_ok());
         assert!(interrupts.unregister_exception_handler(13).is_ok());
         assert!(interrupts.unregister_exception_handler(14).is_ok());
@@ -351,7 +350,7 @@ mod test {
 
         static HANDLER: PlatformHandler = PlatformHandler;
         let mut interrupts = InterruptsX64::new();
-        assert!(interrupts.initialize(Some(&[(20, &HANDLER)])).is_ok());
+        assert!(interrupts.initialize(&[(20, &HANDLER)]).is_ok());
         assert!(interrupts.unregister_exception_handler(20).is_ok());
         for exception_type in [8, 13, 14] {
             assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
