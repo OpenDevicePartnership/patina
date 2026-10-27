@@ -342,8 +342,8 @@ impl ProtocolDb {
             return Err(EfiError::NotFound);
         }
 
-        //sort by order of creation.
-        handles.sort_by_key(|a| a.1);
+        // Creation orders are unique, so sort stability does not affect the result.
+        handles.sort_unstable_by_key(|a| a.1);
 
         Ok(handles.iter().map(|(handle, _)| *handle).collect())
     }
@@ -624,7 +624,7 @@ impl ProtocolDb {
                 })
             })
             .collect();
-        child_handles.sort(); //dedup needs a sorted vector
+        child_handles.sort_unstable(); //dedup needs a sorted vector
         child_handles.dedup(); //remove any duplicate handles
         child_handles
     }
@@ -1224,6 +1224,7 @@ mod tests {
 
             let handles = SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid1)).unwrap();
             assert_eq!(handles, created_handles);
+            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.locate_handles(None).unwrap(), created_handles);
         });
     }
 
@@ -2251,7 +2252,7 @@ mod tests {
             let (_notchild1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
             let (_notchild2, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
-            for child in [child1, child2, child3] {
+            for child in [child3, child1, child2] {
                 SPIN_LOCKED_PROTOCOL_DB
                     .add_protocol_usage(
                         controller,
@@ -2263,11 +2264,22 @@ mod tests {
                     .unwrap();
             }
 
-            let child_list = SPIN_LOCKED_PROTOCOL_DB.get_child_handles(controller);
-            assert_eq!(child_list.len(), 3);
-            for child in [child1, child2, child3] {
-                assert!(child_list.contains(&child));
+            let guid2 = efi::Guid::from_bytes(&[0x42; 16]);
+            SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(Some(controller), guid2, interface1).unwrap();
+            for child in [child3, child1] {
+                SPIN_LOCKED_PROTOCOL_DB
+                    .add_protocol_usage(
+                        controller,
+                        guid2,
+                        Some(driver),
+                        Some(child),
+                        driver::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
+                    )
+                    .unwrap();
             }
+
+            let child_list = SPIN_LOCKED_PROTOCOL_DB.get_child_handles(controller);
+            assert_eq!(child_list, vec![child1, child2, child3]);
         });
     }
 }
