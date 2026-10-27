@@ -24,7 +24,6 @@ brotli-decompressor = { version = "5.0.3", default-features = false }
 cfg-if = { version = "1" }
 clap = { version = "4.6.1" }
 compile-time = { version = "0.2" }
-crc32fast = { version = "1.5", default-features = false }
 fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "0.5", default-features = false }
 gdbstub = { version = "0.7.10", default-features = false }
