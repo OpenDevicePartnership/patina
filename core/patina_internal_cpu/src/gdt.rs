@@ -6,10 +6,9 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-#![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(any(test, not(target_os = "uefi")), allow(dead_code))]
 #![cfg_attr(test, allow(unused_imports))]
 use core::ptr::{addr_of, addr_of_mut};
-use patina::SIZE_4GB;
 
 // The AP GDT only exists for the `mp` module, which needs `alloc`.
 #[cfg(any(feature = "alloc", test))]
@@ -233,45 +232,6 @@ pub(crate) fn descriptor() -> DescriptorTablePointer {
         limit: (core::mem::size_of::<[u64; GDT_ENTRY_COUNT]>() - 1) as u16,
         base: GDT.as_ptr() as u64,
     }
-}
-
-#[cfg_attr(coverage, coverage(off))]
-/// Initializes the GDT from a fixed descriptor set and loads it.
-pub fn init() {
-    let gdt_ptr = GDT.as_ptr() as usize;
-    assert!(gdt_ptr < SIZE_4GB, "GDT above 4GB, MP services will fail");
-
-    let gdtr = descriptor();
-
-    // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
-    unsafe {
-        core::arch::asm!("lgdt [{}]", in(reg) &raw const gdtr, options(nostack, preserves_flags));
-
-        // Reload CS via a far return
-        core::arch::asm!(
-            "push {sel}",
-            "lea {tmp}, [rip + 2f]",
-            "push {tmp}",
-            "retfq",
-            "2:",
-            sel = in(reg) u64::from(CODE_SELECTOR),
-            tmp = lateout(reg) _,
-            options(preserves_flags),
-        );
-
-        // These segments need to be valid, but can be all the same. Program them to the same GDT entry,
-        // following what the C codebase does, as these are unused in long mode.
-        core::arch::asm!("mov ss, {0:x}", in(reg) DATA_SELECTOR, options(nostack, preserves_flags));
-        core::arch::asm!("mov ds, {0:x}", in(reg) DATA_SELECTOR, options(nostack, preserves_flags));
-        core::arch::asm!("mov es, {0:x}", in(reg) DATA_SELECTOR, options(nostack, preserves_flags));
-        core::arch::asm!("mov fs, {0:x}", in(reg) DATA_SELECTOR, options(nostack, preserves_flags));
-        core::arch::asm!("mov gs, {0:x}", in(reg) DATA_SELECTOR, options(nostack, preserves_flags));
-
-        // Load TSS
-        core::arch::asm!("ltr {0:x}", in(reg) TSS_SELECTOR, options(nostack, preserves_flags));
-    }
-
-    log::info!("Loaded GDT @ {:p}", GDT.as_ptr());
 }
 
 #[cfg(test)]

@@ -47,10 +47,6 @@ impl InterruptsX64 {
         &mut self,
         exception_handlers: Option<&[(ExceptionType, &'static dyn InterruptHandler)]>,
     ) -> Result<(), EfiError> {
-        // Initialize the IDT.
-        #[cfg(target_os = "uefi")]
-        crate::interrupts::x64::idt::initialize_idt();
-
         // Register some default handlers.
         self.register_exception_handler(8, HandlerType::UefiRoutine(double_fault_handler))
             .expect("Failed to install default exception handler!");
@@ -65,7 +61,12 @@ impl InterruptsX64 {
             }
         }
         #[cfg(target_os = "uefi")]
-        self.initialize_virtual_wire_mode()?;
+        {
+            patina::arch::disable_interrupts();
+            descriptor_table_install();
+            patina::arch::enable_interrupts();
+            self.initialize_virtual_wire_mode()?;
+        }
 
         Ok(())
     }
@@ -83,6 +84,47 @@ impl InterruptsX64 {
 }
 
 impl InterruptManager for InterruptsX64 {}
+
+#[cfg_attr(coverage, coverage(off))]
+#[cfg(target_os = "uefi")]
+/// Prepares both descriptor tables, loads the GDT, reloads segments and the TSS, then loads the IDT.
+fn descriptor_table_install() {
+    let gdtr = crate::gdt::descriptor();
+    let gdt_ptr = gdtr.base as *const u64;
+    assert!((gdt_ptr as usize) < patina::SIZE_4GB, "GDT above 4GB, MP services will fail");
+
+    let idtr = super::idt::prepare_idt();
+
+    // SAFETY: Both descriptors reference fully initialized static tables. The GDT defines
+    // the code, data, and TSS selectors used below and by the IDT. Initialization is exclusive.
+    unsafe {
+        core::arch::asm!(
+            "lgdt [{gdtr}]",
+            "push {sel}",
+            "lea {tmp}, [rip + 2f]",
+            "push {tmp}",
+            "retfq",
+            "2:",
+            "mov ss, {data:x}",
+            "mov ds, {data:x}",
+            "mov es, {data:x}",
+            "mov fs, {data:x}",
+            "mov gs, {data:x}",
+            "ltr {tss:x}",
+            "lidt [{idtr}]",
+            gdtr = in(reg) &raw const gdtr,
+            idtr = in(reg) &raw const idtr,
+            sel = in(reg) u64::from(crate::gdt::CODE_SELECTOR),
+            data = in(reg) crate::gdt::DATA_SELECTOR,
+            tss = in(reg) crate::gdt::TSS_SELECTOR,
+            tmp = out(reg) _,
+            options(preserves_flags),
+        );
+    }
+
+    log::info!("Loaded GDT @ {gdt_ptr:p}");
+    log::info!("Loaded IDT");
+}
 
 #[cfg_attr(coverage, coverage(off))]
 /// Default handler for double faults.
