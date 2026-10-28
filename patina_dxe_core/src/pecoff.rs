@@ -48,6 +48,10 @@ pub const IMAGE_MACHINE_TYPE_X64: u16 = 0x8664;
 #[allow(dead_code)]
 pub const IMAGE_MACHINE_TYPE_AARCH64: u16 = 0xAA64;
 
+pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
+pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
+pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
+
 /// Type containing information about a PE32 image.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct UefiPeInfo {

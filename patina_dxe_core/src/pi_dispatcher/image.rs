@@ -52,10 +52,6 @@ use crate::{
 
 use efi::Guid;
 
-pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
-pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
-pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
-
 /// PE/COFF Specification Machine Types
 #[cfg(target_arch = "x86_64")]
 const EXPECTED_IMAGE_MACHINE: u16 = pecoff::IMAGE_MACHINE_TYPE_X64;
@@ -257,7 +253,7 @@ impl PrivateImageData {
             )?;
         }
 
-        if self.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+        if self.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
             runtime::add_runtime_image(
                 self.image_info.image_base,
                 self.image_info.image_size,
@@ -310,7 +306,7 @@ impl PrivateImageData {
             result = Err(err);
         }
 
-        if self.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
+        if self.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
             && let Err(err) = runtime::remove_runtime_image(handle)
             && err != EfiError::NotFound
         {
@@ -1175,7 +1171,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         let image_type =
             Self::instance().image_data.lock().private_image_data.get(&image_handle).map(|x| x.pe_info.image_type);
 
-        if status.is_err() || image_type == Some(EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
+        if status.is_err() || image_type == Some(pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
             let _result = Self::instance().unload_image(image_handle, true);
         }
 
@@ -1328,7 +1324,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         for image in private_data.private_image_data.values_mut() {
             // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
             let buffer = image.image_buffer.as_ref();
-            if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+            if image.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
                 let cache_attrs =
                     dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
                         .map_or(DEFAULT_CACHE_ATTR, |desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
@@ -1402,9 +1398,9 @@ fn core_load_pe_image(
 
     // based on the image type, determine the correct allocator and code/data types.
     let (code_type, data_type) = match pe_info.image_type {
-        EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION => (efi::LOADER_CODE, efi::LOADER_DATA),
-        EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER => (efi::BOOT_SERVICES_CODE, efi::BOOT_SERVICES_DATA),
-        EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER => (efi::RUNTIME_SERVICES_CODE, efi::RUNTIME_SERVICES_DATA),
+        pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION => (efi::LOADER_CODE, efi::LOADER_DATA),
+        pecoff::EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER => (efi::BOOT_SERVICES_CODE, efi::BOOT_SERVICES_DATA),
+        pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER => (efi::RUNTIME_SERVICES_CODE, efi::RUNTIME_SERVICES_DATA),
         unsupported_type => {
             log::error!("core_load_pe_image failed: {pe_file_name} unsupported image type: {unsupported_type:#x?}");
             return Err(EfiError::Unsupported);
@@ -1453,7 +1449,8 @@ fn core_load_pe_image(
     // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
     // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
-    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat {
+    if private_info.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat
+    {
         private_info.activate_compatibility_mode()?;
     } else {
         // finally, update the GCD attributes for this image so that code sections have RO set and data sections
@@ -3339,7 +3336,7 @@ mod tests {
     fn test_private_image_data_install_cleans_up_when_additional_interfaces_fail() {
         with_locked_state(|| {
             let mut image_data = create_test_private_image_data();
-            image_data.pe_info.image_type = EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER;
+            image_data.pe_info.image_type = pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER;
             image_data.relocation_data.push(RelocationBlock {
                 block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
                 relocations: vec![crate::pecoff::relocation::Relocation { type_and_offset: 0x1 << 12, value: 0 }],
