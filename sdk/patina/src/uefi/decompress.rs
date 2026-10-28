@@ -167,10 +167,10 @@ impl<'a> CodeIterator<'a> {
 
     // returns the next `count` bits of the source bitstream without advancing it.
     fn peek_bits(&self, count: usize) -> Result<usize, DecompressError> {
-        let end = self.src_index.checked_add(count).ok_or(DecompressError::MalformedSrcData)?;
         if count > usize::BITS as usize {
             return Err(DecompressError::MalformedSrcData);
         }
+        let end = self.src_index.checked_add(count).ok_or(DecompressError::MalformedSrcData)?;
         let bytes = self.src.get(self.src_index / 8..end.div_ceil(8)).ok_or(DecompressError::MalformedSrcData)?;
         let mut value = 0usize;
         let mut remaining = count;
