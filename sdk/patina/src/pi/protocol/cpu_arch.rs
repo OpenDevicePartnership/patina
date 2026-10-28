@@ -89,12 +89,12 @@ pub type EfiSystemContext = efi::protocols::debug_support::SystemContext;
 pub type InterruptHandler = extern "efiapi" fn(EfiExceptionType, EfiSystemContext);
 
 /// Registers and enables a handler for a processor interrupt or exception. The handler is called once for each
-/// interrupt or exception. Pass `NULL` to uninstall a handler. Used by the timer architecture and debuggers.
+/// interrupt or exception. Pass `None` (C `NULL`) to uninstall a handler. Used by the timer architecture and debuggers.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.7
 pub type RegisterInterruptHandler =
-    extern "efiapi" fn(*const CpuArchProtocol, EfiExceptionType, InterruptHandler) -> efi::Status;
+    extern "efiapi" fn(*const CpuArchProtocol, EfiExceptionType, Option<InterruptHandler>) -> efi::Status;
 
 /// Returns a timer value from one of the processor's internal timers. Optionally returns the timer period in
 /// femtoseconds for each increment. Returns unsupported if the processor contains no readable timers.

@@ -135,19 +135,18 @@ extern "efiapi" fn init(this: *const CpuArchProtocol, init_type: CpuInitType) ->
 extern "efiapi" fn register_interrupt_handler(
     this: *const CpuArchProtocol,
     interrupt_type: isize,
-    interrupt_handler: InterruptHandler,
+    interrupt_handler: Option<InterruptHandler>,
 ) -> efi::Status {
     let Some(impl_ref) = get_impl_ref(this) else {
         return efi::Status::INVALID_PARAMETER;
     };
     let interrupt_manager = &impl_ref.interrupt_manager;
 
-    let const_fn_ptr = interrupt_handler as *const ();
-    let result = if const_fn_ptr.is_null() {
-        interrupt_manager.unregister_exception_handler(interrupt_type.cast_unsigned())
-    } else {
+    let result = if let Some(interrupt_handler) = interrupt_handler {
         interrupt_manager
             .register_exception_handler(interrupt_type.cast_unsigned(), HandlerType::UefiRoutine(interrupt_handler))
+    } else {
+        interrupt_manager.unregister_exception_handler(interrupt_type.cast_unsigned())
     };
 
     match result {
@@ -347,17 +346,27 @@ mod tests {
             interrupt_manager
                 .expect_register_exception_handler()
                 .with(eq(ExceptionType::from(0_usize)), always())
+                .times(1)
                 .returning(|_, _| Ok(()));
+            interrupt_manager
+                .expect_unregister_exception_handler()
+                .with(eq(ExceptionType::from(0_usize)))
+                .times(1)
+                .returning(|_| Ok(()));
             let im: Service<dyn InterruptManager> = Service::mock(Box::new(interrupt_manager));
 
             let protocol = EfiCpuArchProtocolImpl::new(im);
 
-            let status = register_interrupt_handler(&raw const protocol.protocol, 0, mock_interrupt_handler);
+            let status = register_interrupt_handler(&raw const protocol.protocol, 0, Some(mock_interrupt_handler));
             assert_eq!(status, efi::Status::SUCCESS);
 
             // Verify the case when `this` is null.
-            let status = register_interrupt_handler(core::ptr::null(), 0, mock_interrupt_handler);
+            let status = register_interrupt_handler(core::ptr::null(), 0, Some(mock_interrupt_handler));
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+            // Validate unregister
+            let status = (protocol.protocol.register_interrupt_handler)(&raw const protocol.protocol, 0, None);
+            assert_eq!(status, efi::Status::SUCCESS);
         });
     }
 
