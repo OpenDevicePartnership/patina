@@ -60,17 +60,91 @@ pub struct HidIoProtocol {
         report_buffer: *mut c_void,
     ) -> efi::Status,
     /// Registers a callback for asynchronous input report notifications.
+    /// Providers must reject `None` with `EFI_INVALID_PARAMETER`; the callback is required.
     pub register_report_callback: unsafe extern "efiapi" fn(
         this: *const HidIoProtocol,
-        callback: HidIoReportCallback,
+        callback: Option<HidIoReportCallback>,
         context: *mut c_void,
     ) -> efi::Status,
     /// Unregisters a previously registered input report callback.
+    /// Providers must reject `None` with `EFI_INVALID_PARAMETER`; the callback is required.
     pub unregister_report_callback:
-        unsafe extern "efiapi" fn(this: *const HidIoProtocol, callback: HidIoReportCallback) -> efi::Status,
+        unsafe extern "efiapi" fn(this: *const HidIoProtocol, callback: Option<HidIoReportCallback>) -> efi::Status,
 }
 
 // SAFETY: HidIoProtocol is a C-compatible struct whose layout matches the HidIo GUID interface.
 unsafe impl crate::base::protocol::ProtocolInterface for HidIoProtocol {
     const PROTOCOL_GUID: crate::BinaryGuid = HID_IO_PROTOCOL_GUID;
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    extern "efiapi" fn get_report_descriptor(
+        _this: *const HidIoProtocol,
+        _report_descriptor_size: *mut usize,
+        _report_descriptor_buffer: *mut c_void,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn get_or_set_report(
+        _this: *const HidIoProtocol,
+        _report_id: u8,
+        _report_type: HidReportType,
+        _report_buffer_size: usize,
+        _report_buffer: *mut c_void,
+    ) -> efi::Status {
+        efi::Status::UNSUPPORTED
+    }
+
+    extern "efiapi" fn register_report_callback(
+        _this: *const HidIoProtocol,
+        callback: Option<HidIoReportCallback>,
+        _context: *mut c_void,
+    ) -> efi::Status {
+        if callback.is_some() { efi::Status::SUCCESS } else { efi::Status::INVALID_PARAMETER }
+    }
+
+    extern "efiapi" fn unregister_report_callback(
+        _this: *const HidIoProtocol,
+        callback: Option<HidIoReportCallback>,
+    ) -> efi::Status {
+        if callback.is_some() { efi::Status::SUCCESS } else { efi::Status::INVALID_PARAMETER }
+    }
+
+    extern "efiapi" fn report_callback(_report_buffer_size: u16, _report_buffer: *mut c_void, _context: *mut c_void) {}
+
+    #[test]
+    fn test_hid_io_accepts_nullable_report_callbacks() {
+        let protocol = HidIoProtocol {
+            get_report_descriptor,
+            get_report: get_or_set_report,
+            set_report: get_or_set_report,
+            register_report_callback,
+            unregister_report_callback,
+        };
+
+        // SAFETY: The test stubs do not dereference pointers or invoke the callbacks.
+        unsafe {
+            assert_eq!(
+                (protocol.register_report_callback)(&raw const protocol, None, core::ptr::null_mut()),
+                efi::Status::INVALID_PARAMETER
+            );
+            assert_eq!(
+                (protocol.register_report_callback)(&raw const protocol, Some(report_callback), core::ptr::null_mut()),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(
+                (protocol.unregister_report_callback)(&raw const protocol, None),
+                efi::Status::INVALID_PARAMETER
+            );
+            assert_eq!(
+                (protocol.unregister_report_callback)(&raw const protocol, Some(report_callback)),
+                efi::Status::SUCCESS
+            );
+        }
+    }
 }
