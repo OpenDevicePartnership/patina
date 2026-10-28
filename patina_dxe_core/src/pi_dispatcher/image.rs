@@ -1411,7 +1411,7 @@ fn core_load_pe_image(
     let size = pe_info.size_of_image as usize;
 
     // the section alignment must be at least the size of a page
-    if !alignment.is_multiple_of(UEFI_PAGE_SIZE) {
+    if alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE) {
         log::error!(
             "core_load_pe_image failed: {pe_file_name} section alignment of {alignment:#x?} is not a multiple of page size {UEFI_PAGE_SIZE:#x?}"
         );
@@ -1419,7 +1419,7 @@ fn core_load_pe_image(
     }
 
     // the size of the image must be a multiple of the section alignment per PE/COFF spec
-    if !size.is_multiple_of(alignment) {
+    if size == 0 || !size.is_multiple_of(alignment) {
         log::error!(
             "core_load_pe_image failed: {pe_file_name} size of image is not a multiple of the section alignment"
         );
