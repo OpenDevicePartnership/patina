@@ -18,6 +18,22 @@ feature only supports variadics for `extern "C"`. The UEFI spec has some variadi
 these functions use `extern "C"` for now. [This issue](https://github.com/r-efi/r-efi/issues/95) tracks adding support
 for `extern "efiapi"`.
 
+### Function Pointer Arguments at FFI Boundaries
+
+Extern functions that accept function pointers must use `Option<fn_ptr>` for those arguments, including
+parameters that the interface requires to be non-null. Rust
+[does not allow `extern "abi" fn` to be null](https://doc.rust-lang.org/nomicon/ffi.html#the-nullable-pointer-optimization).
+However, C callers can pass NULL here. This creates undefined behavior; `ptr.is_null()` will return false. The
+idiomatic way to describe possibly null `extern "abi" fn` pointers is by wrapping them in an `Option`.
+
+Rust guarantees that `Option<extern "efiapi" fn(...)>` has the same size, alignment, and function call ABI
+as the underlying function pointer, with `None` represented as null. See the
+[`Option` representation guarantees](https://doc.rust-lang.org/core/option/index.html#representation).
+
+In Patina, all FFIs may be passed `NULL` pointers from C code and so all `extern "abi" fn` pointers must be wrapped
+in `Option` to detect this and act accordingly; this may be returning an error or proceeding down a different
+execution path.
+
 ### va_list
 
 AARCH64 defines the [AAPCS64 ABI](https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst) as the single
