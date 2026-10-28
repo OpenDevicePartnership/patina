@@ -27,6 +27,9 @@ pub enum Error {
     /// The image contains a base relocation type that is not supported by this loader.
     /// Contains the unsupported relocation type value.
     UnsupportedRelocation(u16),
+    /// Invalid section alignment. This is only checked when applying a workaround for Linux images with incorrect
+    /// `SizeOfImage` fields.
+    InvalidAlignment,
 }
 
 impl From<scroll::Error> for Error {

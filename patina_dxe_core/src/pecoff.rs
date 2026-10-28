@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
-use patina::log_debug_assert;
+use patina::{UEFI_PAGE_SIZE, align_up, log_debug_assert};
 use scroll::{LE, Pread, Pwrite};
 
 pub mod error;
@@ -86,10 +86,39 @@ impl UefiPeInfo {
     /// Terse Executable (TE) images are not supported: they do not carry a section alignment, which Patina requires
     /// to be a multiple of 4 KB in order to apply image memory protections.
     pub fn parse(bytes: &[u8]) -> error::Result<Self> {
-        match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
+        let mut res = match scroll::Pread::gread_with::<u16>(bytes, &mut 0, scroll::LE)? {
             PE32_MAGIC => UefiPeInfo::from_pe(bytes, &goblin::pe::options::ParseOptions::default()),
             sig => Err(error::Error::BadSignature(sig)),
+        };
+
+        // Per the PE/COFF spec, SizeOfImage must be a multiple of the section alignment. However, there are released
+        // versions of the compressed Linux kernel, which gets loaded as an EFI_APPLICATION, that have not aligned
+        // the SizeOfImage field. That is fixed here:
+        // https://lore.kernel.org/linux-efi/20261028131318.2456215-2-ardb+git@google.com/. This works around this
+        // for existing binaries by aligning SizeOfImage to the section alignment. This is what the image generation
+        // should have done, adding padding for alignment.
+        if let Ok(ref mut info) = res
+            && info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION
+        {
+            let alignment = info.section_alignment;
+            let size = info.size_of_image;
+            if alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE as u32) {
+                return res;
+            }
+
+            let pe_file_name = info.filename_or("Unknown image");
+
+            // the size of the image must be a multiple of the section alignment per PE/COFF spec
+            if size == 0 || !size.is_multiple_of(alignment) {
+                log::error!(
+                    "parse: {pe_file_name}: size of image is not a multiple of the section alignment. This image needs to be corrected, but will be allowed."
+                );
+                info.size_of_image =
+                    align_up(info.size_of_image, alignment).map_err(|_| error::Error::InvalidAlignment)?;
+            }
         }
+
+        res
     }
 
     /// Parses a PE image that has already been loaded into memory (sections at virtual addresses).
@@ -590,6 +619,41 @@ mod tests {
 
         let result = UefiPeInfo::parse_mapped(image);
         assert!(matches!(result, Err(error::Error::BadSignature(0x5A56))), "unexpected result: {result:?}");
+    }
+
+    #[test]
+    fn test_pe_image_size_is_aligned_only_for_efi_applications() {
+        let original_image = include_bytes!("../resources/test/pe32/test_image.pe32");
+        let header = goblin::pe::header::Header::parse(original_image).unwrap();
+        let optional_header_offset = header.dos_header.pe_pointer as usize + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
+        let windows_fields = header.optional_header.unwrap().windows_fields;
+        let aligned_size = windows_fields.size_of_image;
+        let alignment = windows_fields.section_alignment;
+        assert!(aligned_size.is_multiple_of(alignment));
+        assert!(!(aligned_size - 1).is_multiple_of(alignment));
+
+        for subsystem in [
+            EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION,
+            EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER,
+            EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER,
+        ] {
+            for declared_size in [aligned_size - 1, aligned_size] {
+                let mut image = original_image.to_vec();
+                image.pwrite_with(declared_size, optional_header_offset + 56, LE).unwrap();
+                image.pwrite_with(subsystem, optional_header_offset + 68, LE).unwrap();
+
+                let pe_info = UefiPeInfo::parse(&image).unwrap();
+                let expected_size =
+                    if subsystem == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION { aligned_size } else { declared_size };
+
+                assert_eq!(pe_info.image_type, subsystem);
+                assert_eq!(pe_info.section_alignment, alignment);
+                assert_eq!(
+                    pe_info.size_of_image, expected_size,
+                    "subsystem {subsystem:#x}, declared size {declared_size:#x}"
+                );
+            }
+        }
     }
 
     #[test]
