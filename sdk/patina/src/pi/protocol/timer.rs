@@ -31,7 +31,7 @@ pub type EfiTimerNotify = extern "efiapi" fn(time: u64);
 
 /// This function registers the handler `NotifyFunction` so it is called every time
 /// the timer interrupt fires.  It also passes the amount of time since the last
-/// handler call to the `NotifyFunction`.  If `NotifyFunction` is NULL, then the
+/// handler call to the `NotifyFunction`.  If `NotifyFunction` is `None` (C NULL), then the
 /// handler is unregistered.  If the handler is registered, then `EFI_SUCCESS` is
 /// returned.  If the CPU does not support registering a timer interrupt handler,
 /// then `EFI_UNSUPPORTED` is returned.  If an attempt is made to register a handler
@@ -54,7 +54,7 @@ pub type EfiTimerNotify = extern "efiapi" fn(time: u64);
 ///   previously registered.
 /// * @retval - `EFI_DEVICE_ERROR`: The timer handler could not be registered.
 pub type EfiTimerRegisterHandler =
-    extern "efiapi" fn(this: *mut TimerProtocol, notify_function: EfiTimerNotify) -> efi::Status;
+    extern "efiapi" fn(this: *mut TimerProtocol, notify_function: Option<EfiTimerNotify>) -> efi::Status;
 
 /// This function adjusts the period of timer interrupts to the value specified
 /// by `TimerPeriod`.  If the timer period is updated, then the selected timer
@@ -124,4 +124,22 @@ pub struct TimerProtocol {
 // identifies its layout (EFI_TIMER_ARCH_PROTOCOL).
 unsafe impl ProtocolInterface for TimerProtocol {
     const PROTOCOL_GUID: crate::BinaryGuid = PROTOCOL_GUID;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timer_register_handler_accepts_null_notify() {
+        extern "efiapi" fn register_handler(
+            _this: *mut TimerProtocol,
+            notify_function: Option<EfiTimerNotify>,
+        ) -> efi::Status {
+            if notify_function.is_none() { efi::Status::SUCCESS } else { efi::Status::INVALID_PARAMETER }
+        }
+
+        let register_handler: EfiTimerRegisterHandler = register_handler;
+        assert_eq!(register_handler(core::ptr::null_mut(), None), efi::Status::SUCCESS);
+    }
 }

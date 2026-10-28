@@ -498,7 +498,7 @@ mod tests {
             static SET_PERIOD_CALLED: Once<()> = Once::new();
             extern "efiapi" fn register_handler(
                 _this: *const patina::pi::protocol::watchdog::WatchdogProtocol,
-                _notify: watchdog::WatchdogTimerNotify,
+                _notify: Option<watchdog::WatchdogTimerNotify>,
             ) -> efi::Status {
                 unimplemented!()
             }

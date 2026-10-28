@@ -366,7 +366,7 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             let timer_arch_ptr = timer_arch_ptr.cast::<timer::TimerProtocol>();
             // SAFETY: timer_arch_ptr was successfully returned from locate_protocol.
             let timer_arch = unsafe { &*(timer_arch_ptr) };
-            (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
+            (timer_arch.register_handler)(timer_arch_ptr, Some(timer_tick));
             TIMER_ARCH_READY.store(true, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
                 log::warn!("Could not close event for timer_available_callback due to error {status_err}");

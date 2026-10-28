@@ -26,10 +26,11 @@ pub const PROTOCOL_GUID: crate::BinaryGuid = crate::BinaryGuid::from_string("665
 pub type WatchdogTimerNotify = extern "efiapi" fn(u64);
 
 /// Registers a handler that is to be invoked when the watchdog timer fires.
+/// Pass `None` (C NULL) to unregister the handler.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.14.2
-pub type RegisterHandler = extern "efiapi" fn(*const WatchdogProtocol, WatchdogTimerNotify) -> efi::Status;
+pub type RegisterHandler = extern "efiapi" fn(*const WatchdogProtocol, Option<WatchdogTimerNotify>) -> efi::Status;
 
 /// Sets the amount of time in the future to fire the watchdog timer.
 ///
@@ -55,4 +56,22 @@ pub struct WatchdogProtocol {
     pub set_timer_period: SetTimerPeriod,
     /// Gets the current period of the watchdog timer.
     pub get_timer_period: GetTimerPeriod,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_watchdog_register_handler_accepts_null_notify() {
+        extern "efiapi" fn register_handler(
+            _this: *const WatchdogProtocol,
+            notify_function: Option<WatchdogTimerNotify>,
+        ) -> efi::Status {
+            if notify_function.is_none() { efi::Status::SUCCESS } else { efi::Status::INVALID_PARAMETER }
+        }
+
+        let register_handler: RegisterHandler = register_handler;
+        assert_eq!(register_handler(core::ptr::null(), None), efi::Status::SUCCESS);
+    }
 }
