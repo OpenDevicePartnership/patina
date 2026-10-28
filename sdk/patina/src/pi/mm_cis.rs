@@ -226,6 +226,8 @@ pub type MmiHandlerEntryPoint = unsafe extern "efiapi" fn(
 
 /// Registers a handler entry point for a particular MMI handler type.
 ///
+/// Providers must reject `None` with `EFI_INVALID_PARAMETER`; the handler is required.
+///
 /// This function matches the C typedef `EFI_MM_INTERRUPT_REGISTER`:
 /// ```c
 /// typedef
@@ -237,7 +239,7 @@ pub type MmiHandlerEntryPoint = unsafe extern "efiapi" fn(
 ///   );
 /// ```
 pub type MmiHandlerRegisterFn = unsafe extern "efiapi" fn(
-    handler: MmiHandlerEntryPoint,
+    handler: Option<MmiHandlerEntryPoint>,
     handler_type: *const efi::Guid,
     dispatch_handle: *mut efi::Handle,
 ) -> efi::Status;
@@ -394,4 +396,40 @@ pub struct EfiMmSystemTable {
     pub mmi_handler_register: MmiHandlerRegisterFn,
     /// This function matches the C typedef `EFI_MM_INTERRUPT_UNREGISTER`, which unregisters a handler in MM.
     pub mmi_handler_unregister: MmiHandlerUnregisterFn,
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mm_cis_handler_register_accepts_nullable_handler() {
+        extern "efiapi" fn handler(
+            _dispatch_handle: efi::Handle,
+            _context: *const c_void,
+            _comm_buffer: *mut c_void,
+            _comm_buffer_size: *mut usize,
+        ) -> efi::Status {
+            efi::Status::SUCCESS
+        }
+
+        extern "efiapi" fn register_handler(
+            handler: Option<MmiHandlerEntryPoint>,
+            _handler_type: *const efi::Guid,
+            _dispatch_handle: *mut efi::Handle,
+        ) -> efi::Status {
+            if handler.is_some() { efi::Status::SUCCESS } else { efi::Status::INVALID_PARAMETER }
+        }
+
+        let register_handler: MmiHandlerRegisterFn = register_handler;
+        // SAFETY: The test stub does not dereference its pointer arguments or invoke the handler.
+        unsafe {
+            assert_eq!(
+                register_handler(None, core::ptr::null(), core::ptr::null_mut()),
+                efi::Status::INVALID_PARAMETER
+            );
+            assert_eq!(register_handler(Some(handler), core::ptr::null(), core::ptr::null_mut()), efi::Status::SUCCESS);
+        }
+    }
 }
