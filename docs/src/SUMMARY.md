@@ -67,6 +67,7 @@
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
   - [Confidential Compute Integration](integrate/confidential_compute.md)
 - [Platform Integration and Crate Patching](integrate/platform_integration_and_patching.md)
+  - [Hosting a Custom Crate Registry](integrate/custom_crate_registry.md)
 
 # Patina DXE Core Subsystems
 
