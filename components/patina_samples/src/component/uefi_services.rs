@@ -9,6 +9,7 @@
 //! - [`driver_connect`] - Discovers controllers by protocol and connects drivers to them.
 //! - [`driver_binding_producer`] - Manages controllers through the UEFI Driver Model with a `ControllerDriver`.
 //! - [`end_of_dxe_protocol_consumer`] - Defers protocol consumption to End-of-DXE.
+//! - [`media_watcher`] - Updates per-controller driver state from a timer callback.
 //! - [`protocol_consumer`] - Shows different ways to consume a protocol.
 //! - [`protocol_dependency`] - Gates component dispatch on a protocol using `Protocol<P>`.
 //! - [`protocol_publisher`] - Demonstrates one component publishing a protocol and another consuming it.
@@ -26,6 +27,7 @@ pub mod configuration_table;
 pub mod driver_binding_producer;
 pub mod driver_connect;
 pub mod end_of_dxe_protocol_consumer;
+pub mod media_watcher;
 pub mod overview;
 pub mod protocol_consumer;
 pub mod protocol_dependency;
