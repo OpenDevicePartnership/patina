@@ -130,7 +130,7 @@ use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use patina::{UefiSpecVersion, standard::efi};
 use patina::{
-    component::{IntoComponent, service::performance::PerformanceManager},
+    component::service::performance::PerformanceManager,
     error::{self, Result},
     performance::config::PerformanceConfig,
     pi::{
@@ -644,28 +644,27 @@ impl<P: PlatformInfo> Core<P> {
     #[allow(clippy::default_constructed_unit_structs)]
     fn add_core_components(&self) {
         let mut dispatcher = self.component_dispatcher.lock();
-        dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
-        dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
-        dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
+        dispatcher.insert_component(decompress::DecompressProtocolInstaller::default());
+        dispatcher.insert_component(systemtables::SystemTableChecksumInstaller::default());
+        dispatcher.insert_component(cpu::CpuArchProtocolInstaller::default());
         if P::CpuInfo::ENABLE_MP_SERVICES {
             dispatcher.add_config(cpu::MpServicesEnabled(true));
-            dispatcher.insert_component(0, cpu::MpServicesComponent::default().into_component());
-            dispatcher.insert_component(0, cpu::MpServicesProtocolInstaller::default().into_component());
-            dispatcher.insert_component(0, cpu::MpBistReporter.into_component());
+            dispatcher.insert_component(cpu::MpServicesComponent::default());
+            dispatcher.insert_component(cpu::MpServicesProtocolInstaller::default());
+            dispatcher.insert_component(cpu::MpBistReporter);
         }
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        dispatcher
-            .insert_component(0, cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component());
+        dispatcher.insert_component(cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()));
     }
 
     /// Starts the core, dispatching all drivers.
     fn start_dispatcher(&'static self, physical_hob_list: *mut c_void) -> Result<()> {
-        log::info!("Registering platform components");
-        self.apply_component_info();
-        log::info!("Finished.");
-
         log::info!("Registering default components");
         self.add_core_components();
+        log::info!("Finished.");
+
+        log::info!("Registering platform components");
+        self.apply_component_info();
         log::info!("Finished.");
 
         log::info!("Initializing System Table");

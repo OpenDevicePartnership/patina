@@ -173,8 +173,7 @@ pub trait IntoService {
     ///
     /// ```
     fn register_service<S: ?Sized + 'static>(storage: &mut Storage, service: &'static dyn Any) {
-        let id = storage.register_service::<S>();
-        storage.insert_service(id, service);
+        storage.insert_service::<S>(service);
     }
 }
 
@@ -275,31 +274,28 @@ unsafe impl<T: ?Sized + 'static> Send for Service<T> {}
 unsafe impl<T: ?Sized + 'static> Sync for Service<T> {}
 
 // SAFETY: Service<T> parameter provides access to registered services.
-// State tracks the service ID. Validates service availability before access.
+// Validates service availability before access.
 unsafe impl<T: ?Sized + 'static> Param for Service<T> {
-    type State = usize;
+    type State = ();
     type Item<'storage, 'state> = Service<T>;
 
     unsafe fn get_param<'storage, 'state>(
-        state: &'state Self::State,
+        _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // SAFETY: State was validated by validate() to contain a valid service ID.
-        // UnsafeStorageCell provides exclusive access to storage under Param protocol.
-        Service::from(unsafe {
-            storage.storage().get_raw_service(*state).unwrap_or_else(|| {
-                panic!("Could not find Service value with id [{}] even though it was just validated.", *state)
-            })
-        })
+        // SAFETY: Service availability was validated and access is immutable.
+        unsafe { storage.storage() }
+            .get_service::<T>()
+            .expect("service must remain available after parameter validation")
     }
 
-    fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
+    fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
         // SAFETY: Storage access is controlled by UnsafeStorageCell. Just checking service existence.
-        unsafe { storage.storage() }.get_raw_service(*state).is_some()
+        unsafe { storage.storage() }.get_service::<T>().is_some()
     }
 
-    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
-        Ok(storage.register_service::<T>())
+    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(())
     }
 }
 
@@ -386,13 +382,13 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         storage.add_service(MyServiceImpl);
 
-        assert!(<Service<dyn MyService> as Param>::try_validate(&id, (&storage).into()).is_ok());
+        assert!(<Service<dyn MyService> as Param>::try_validate(&(), (&storage).into()).is_ok());
         // SAFETY: Test code - Service<dyn MyService> has been validated and is available in storage.
-        let service = unsafe { <Service<dyn MyService> as Param>::get_param(&id, (&storage).into()) };
+        let service = unsafe { <Service<dyn MyService> as Param>::get_param(&(), (&storage).into()) };
         assert_eq!(42, service.do_something());
     }
 
@@ -406,8 +402,8 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
-        assert!(<Service<dyn MyService> as Param>::try_validate(&id, (&storage).into()).is_err());
+        <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
+        assert!(<Service<dyn MyService> as Param>::try_validate(&(), (&storage).into()).is_err());
     }
 
     #[test]
@@ -421,7 +417,7 @@ mod tests {
         let storage = Storage::default();
         // SAFETY: Test code - intentionally calling get_param without validation to test panic behavior.
         let _service =
-            unsafe { <Service<dyn MyService> as Param>::get_param(&0, UnsafeStorageCell::new_readonly(&storage)) };
+            unsafe { <Service<dyn MyService> as Param>::get_param(&(), UnsafeStorageCell::new_readonly(&storage)) };
     }
 
     #[test]
