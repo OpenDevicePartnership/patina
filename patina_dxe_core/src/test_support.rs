@@ -118,6 +118,7 @@ pub struct MockPageTable {
     aliased_mapped: RefCell<Vec<(u64, u64, u64, MemoryAttributes)>>,
     unmapped: RefCell<Vec<(u64, u64)>>,
     map_error: Option<PagingError>,
+    map_hook: Option<Box<dyn FnMut()>>,
     map_aliased_error: Option<PagingError>,
     unmap_error: Option<PagingError>,
     installed: RefCell<bool>,
@@ -128,6 +129,9 @@ pub struct MockPageTable {
 
 impl PatinaPageTable for MockPageTable {
     fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PagingError> {
+        if let Some(hook) = self.map_hook.as_mut() {
+            hook();
+        }
         if let Some(error) = self.map_error.take() {
             return Err(error);
         }
@@ -239,6 +243,10 @@ impl Default for MockPageTable {
 }
 
 impl MockPageTable {
+    pub fn set_map_hook(&mut self, hook: impl FnMut() + 'static) {
+        self.map_hook = Some(Box::new(hook));
+    }
+
     pub fn fail_next_map_memory_region(&mut self, error: PagingError) {
         self.map_error = Some(error);
     }
@@ -277,6 +285,7 @@ impl MockPageTable {
             aliased_mapped: RefCell::new(Vec::new()),
             unmapped: RefCell::new(Vec::new()),
             map_error: None,
+            map_hook: None,
             map_aliased_error: None,
             unmap_error: None,
             installed: RefCell::new(false),
