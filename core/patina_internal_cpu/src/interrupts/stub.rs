@@ -48,6 +48,14 @@ impl InterruptsStub {
         }
         Ok(())
     }
+
+    /// Registers supplied platform handlers without loading an IDT.
+    pub fn initialize_idt(
+        &mut self,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
+    ) -> Result<(), EfiError> {
+        self.initialize(exception_handlers)
+    }
 }
 
 impl InterruptManager for InterruptsStub {}

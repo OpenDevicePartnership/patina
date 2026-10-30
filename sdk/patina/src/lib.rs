@@ -21,6 +21,7 @@ extern crate alloc;
 mod base;
 pub use base::*;
 pub use guid::{BinaryGuid, Guid, GuidError, OwnedGuid};
+pub use memory_range::{MemoryRange, MemoryRangeError};
 #[doc(inline)]
 pub use patina_macro::devpath;
 pub use string::{Char8Array, Char8Str, Char16Array, Char16Str, StringError};

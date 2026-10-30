@@ -9,8 +9,6 @@
 
 #[cfg(target_os = "uefi")]
 use core::{arch::global_asm, cell::UnsafeCell};
-#[cfg(target_os = "uefi")]
-use patina::SIZE_4GB;
 
 pub(crate) const IDT_ENTRY_COUNT: usize = 256;
 
@@ -117,6 +115,5 @@ pub(crate) fn prepare_idt() -> crate::gdt::DescriptorTablePointer {
             IdtEntry::interrupt_gate(get_vector_address(vector), cs, ist_index);
     }
 
-    assert!((IDT.0.get() as usize) < SIZE_4GB, "IDT above 4GB, MP services will fail");
     idt.descriptor()
 }

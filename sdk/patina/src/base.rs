@@ -17,6 +17,7 @@ pub mod driver;
 pub mod error;
 pub mod guid;
 pub mod hash;
+pub mod memory_range;
 pub mod protocol;
 pub mod string;
 

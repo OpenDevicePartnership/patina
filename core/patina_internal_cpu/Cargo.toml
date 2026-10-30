@@ -23,6 +23,8 @@ patina_paging = { workspace = true }
 cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
 mockall = { workspace = true, optional = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
 patina_mtrr = { workspace = true }
@@ -43,5 +45,7 @@ patina_mtrr = { workspace = true, features = ["mockall"] }
 std = []
 alloc = ["patina/alloc"]
 mockall = ["dep:mockall", "std"]
+# Read the SMRAM save state with the AMD64 layout. The Intel x64 layout is used otherwise.
+save_state_amd = []
 # All non-std features to test in CI
 ci_features = []

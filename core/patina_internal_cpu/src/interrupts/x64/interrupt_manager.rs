@@ -48,7 +48,57 @@ impl InterruptsX64 {
         &mut self,
         exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
-        // Register some default handlers.
+        self.register_initial_handlers(exception_handlers)?;
+
+        #[cfg(target_os = "uefi")]
+        {
+            patina::arch::disable_interrupts();
+            Self::install_gdt_and_idt();
+            patina::arch::enable_interrupts();
+            Self::initialize_virtual_wire_mode()?;
+        }
+
+        Ok(())
+    }
+
+    /// Registers exception handlers and loads the IDT without touching the GDT, TSS, FPU, or APIC.
+    ///
+    /// Intended for environments such as the MM supervisor that program their own GDT and TSS.
+    /// The default #DF, #GP, and #PF handlers and the supplied platform handlers are registered
+    /// before the IDT is loaded, so no vector is live without a handler. The interrupt-enable state
+    /// on entry is preserved.
+    ///
+    /// Every gate uses `CODE_SELECTOR` (0x38), and the #DF and #PF gates use IST 1. The active GDT
+    /// must define a 64-bit ring-0 code segment at that selector, and the TSS loaded in TR must
+    /// provide a valid IST 1 stack.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error produced while registering a platform handler.
+    pub fn initialize_idt(
+        &mut self,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
+    ) -> Result<(), EfiError> {
+        self.register_initial_handlers(exception_handlers)?;
+
+        #[cfg(target_os = "uefi")]
+        {
+            let interrupts_were_enabled = patina::arch::interrupts_enabled();
+            patina::arch::disable_interrupts();
+            Self::install_idt();
+            if interrupts_were_enabled {
+                patina::arch::enable_interrupts();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Registers the default #DF, #GP, and #PF handlers followed by the supplied platform handlers.
+    fn register_initial_handlers(
+        &mut self,
+        exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
+    ) -> Result<(), EfiError> {
         self.register_exception_handler(8, HandlerType::UefiRoutine(double_fault_handler))
             .expect("Failed to install default exception handler!");
         self.register_exception_handler(13, HandlerType::UefiRoutine(general_protection_fault_handler))
@@ -59,13 +109,6 @@ impl InterruptsX64 {
         for &(exception_type, handler) in exception_handlers {
             self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
         }
-        #[cfg(target_os = "uefi")]
-        {
-            patina::arch::disable_interrupts();
-            descriptor_table_install();
-            patina::arch::enable_interrupts();
-            self.initialize_virtual_wire_mode()?;
-        }
 
         Ok(())
     }
@@ -74,56 +117,74 @@ impl InterruptsX64 {
     /// require this and may fail if it is attempted. If this function is called from a CC guest it will simply return
     /// `Ok()`.
     #[cfg(target_os = "uefi")]
-    fn initialize_virtual_wire_mode(&mut self) -> Result<(), EfiError> {
+    fn initialize_virtual_wire_mode() -> Result<(), EfiError> {
         if patina::arch::is_cc_guest() {
             return Ok(());
         }
         super::apic::initialize_virtual_wire_mode()
     }
+
+    #[cfg_attr(coverage, coverage(off))]
+    #[cfg(target_os = "uefi")]
+    /// Prepares both descriptor tables, loads the GDT, reloads segments and the TSS, then loads the IDT.
+    fn install_gdt_and_idt() {
+        let gdtr = crate::gdt::descriptor();
+        let gdt_ptr = gdtr.base as *const u64;
+        assert!((gdt_ptr as usize) < patina::SIZE_4GB, "GDT above 4GB, MP services will fail");
+
+        let idtr = super::idt::prepare_idt();
+        let idt_ptr = idtr.base as *const u64;
+        assert!((idt_ptr as usize) < patina::SIZE_4GB, "IDT above 4GB, MP services will fail");
+
+        // SAFETY: Both descriptors reference fully initialized static tables. The GDT defines
+        // the code, data, and TSS selectors used below and by the IDT. Initialization is exclusive.
+        unsafe {
+            core::arch::asm!(
+                "lgdt [{gdtr}]",
+                "push {sel}",
+                "lea {tmp}, [rip + 2f]",
+                "push {tmp}",
+                "retfq",
+                "2:",
+                "mov ss, {data:x}",
+                "mov ds, {data:x}",
+                "mov es, {data:x}",
+                "mov fs, {data:x}",
+                "mov gs, {data:x}",
+                "ltr {tss:x}",
+                "lidt [{idtr}]",
+                gdtr = in(reg) &raw const gdtr,
+                idtr = in(reg) &raw const idtr,
+                sel = in(reg) u64::from(crate::gdt::CODE_SELECTOR),
+                data = in(reg) crate::gdt::DATA_SELECTOR,
+                tss = in(reg) crate::gdt::TSS_SELECTOR,
+                tmp = out(reg) _,
+                options(preserves_flags),
+            );
+        }
+
+        log::info!("Loaded GDT @ {gdt_ptr:p}");
+        log::info!("Loaded IDT @ {idt_ptr:p}");
+    }
+
+    #[cfg_attr(coverage, coverage(off))]
+    #[cfg(target_os = "uefi")]
+    /// Prepares and loads only the IDT. The active GDT and TSS must define the selector and IST it uses.
+    fn install_idt() {
+        let idtr = super::idt::prepare_idt();
+
+        // SAFETY: `idtr` describes the fully initialized static IDT. The active GDT must define a 64-bit
+        // code segment at `CODE_SELECTOR`, and the TSS in TR must provide a valid IST 1 stack.
+        unsafe {
+            core::arch::asm!("lidt [{idtr}]", idtr = in(reg) &raw const idtr, options(readonly, nostack, preserves_flags));
+        }
+
+        let idt_ptr = idtr.base as *const u64;
+        log::info!("Loaded IDT @ {idt_ptr:p}");
+    }
 }
 
 impl InterruptManager for InterruptsX64 {}
-
-#[cfg_attr(coverage, coverage(off))]
-#[cfg(target_os = "uefi")]
-/// Prepares both descriptor tables, loads the GDT, reloads segments and the TSS, then loads the IDT.
-fn descriptor_table_install() {
-    let gdtr = crate::gdt::descriptor();
-    let gdt_ptr = gdtr.base as *const u64;
-    assert!((gdt_ptr as usize) < patina::SIZE_4GB, "GDT above 4GB, MP services will fail");
-
-    let idtr = super::idt::prepare_idt();
-
-    // SAFETY: Both descriptors reference fully initialized static tables. The GDT defines
-    // the code, data, and TSS selectors used below and by the IDT. Initialization is exclusive.
-    unsafe {
-        core::arch::asm!(
-            "lgdt [{gdtr}]",
-            "push {sel}",
-            "lea {tmp}, [rip + 2f]",
-            "push {tmp}",
-            "retfq",
-            "2:",
-            "mov ss, {data:x}",
-            "mov ds, {data:x}",
-            "mov es, {data:x}",
-            "mov fs, {data:x}",
-            "mov gs, {data:x}",
-            "ltr {tss:x}",
-            "lidt [{idtr}]",
-            gdtr = in(reg) &raw const gdtr,
-            idtr = in(reg) &raw const idtr,
-            sel = in(reg) u64::from(crate::gdt::CODE_SELECTOR),
-            data = in(reg) crate::gdt::DATA_SELECTOR,
-            tss = in(reg) crate::gdt::TSS_SELECTOR,
-            tmp = out(reg) _,
-            options(preserves_flags),
-        );
-    }
-
-    log::info!("Loaded GDT @ {gdt_ptr:p}");
-    log::info!("Loaded IDT");
-}
 
 #[cfg_attr(coverage, coverage(off))]
 /// Default handler for double faults.
@@ -353,6 +414,50 @@ mod test {
         assert!(interrupts.initialize(&[(20, &HANDLER)]).is_ok());
         assert!(interrupts.unregister_exception_handler(20).is_ok());
         for exception_type in [8, 13, 14] {
+            assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
+        }
+    }
+
+    #[test]
+    #[serial(exception_handlers)]
+    fn test_interrupts_x64_initialize_idt() {
+        struct PlatformHandler;
+
+        impl InterruptHandler for PlatformHandler {
+            fn handle_interrupt(
+                &'static self,
+                _exception_type: ExceptionType,
+                _context: &mut crate::interrupts::ExceptionContext,
+            ) {
+            }
+        }
+
+        static HANDLER: PlatformHandler = PlatformHandler;
+        let mut interrupts = InterruptsX64::new();
+        assert!(interrupts.initialize_idt(&[(20, &HANDLER)]).is_ok());
+        for exception_type in [8, 13, 14, 20] {
+            assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
+        }
+    }
+
+    #[test]
+    #[serial(exception_handlers)]
+    fn test_interrupts_x64_initialize_idt_duplicate_platform_handler() {
+        struct PlatformHandler;
+
+        impl InterruptHandler for PlatformHandler {
+            fn handle_interrupt(
+                &'static self,
+                _exception_type: ExceptionType,
+                _context: &mut crate::interrupts::ExceptionContext,
+            ) {
+            }
+        }
+
+        static HANDLER: PlatformHandler = PlatformHandler;
+        let mut interrupts = InterruptsX64::new();
+        assert!(matches!(interrupts.initialize_idt(&[(20, &HANDLER), (20, &HANDLER)]), Err(EfiError::AlreadyStarted)));
+        for exception_type in [8, 13, 14, 20] {
             assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
         }
     }
