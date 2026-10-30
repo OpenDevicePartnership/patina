@@ -12,10 +12,6 @@
 use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
 use core::num::NonZeroU64;
 
-pub(super) struct AArch64;
-
-impl super::ArchSupport for AArch64 {}
-
 /// Returns `false` because confidential guest detection is not yet supported on `AArch64`.
 pub fn is_cc_guest() -> bool {
     false
@@ -142,25 +138,27 @@ macro_rules! write_sysreg {
     };
 }
 
-impl super::Interrupts for AArch64 {
-    fn enable_interrupts() {
-        write_sysreg!(reg daifclr, imm DAIF_WR_IRQ_BIT, "isb sy");
-    }
+/// Unmasks IRQs by clearing the `DAIF.I` bit.
+pub(crate) fn enable_interrupts() {
+    write_sysreg!(reg daifclr, imm DAIF_WR_IRQ_BIT, "isb sy");
+}
 
-    fn disable_interrupts() {
-        write_sysreg!(reg daifset, imm DAIF_WR_IRQ_BIT, "isb sy");
-    }
+/// Masks IRQs by setting the `DAIF.I` bit.
+pub(crate) fn disable_interrupts() {
+    write_sysreg!(reg daifset, imm DAIF_WR_IRQ_BIT, "isb sy");
+}
 
-    fn interrupts_enabled() -> bool {
-        let daif = read_sysreg!(daif);
-        daif & 0x80 == 0
-    }
+/// Returns whether IRQs are unmasked (`DAIF.I` is clear).
+pub fn interrupts_enabled() -> bool {
+    let daif = read_sysreg!(daif);
+    daif & 0x80 == 0
+}
 
-    fn enable_interrupts_and_sleep() {
-        // SAFETY: Enabling interrupts and then waiting for an interrupt has no memory safety implications.
-        unsafe {
-            core::arch::asm!("msr daifclr, {}; wfi", const DAIF_WR_IRQ_BIT, options(nostack, nomem, preserves_flags));
-        }
+/// Unmasks IRQs and waits for the next interrupt (`wfi`).
+pub fn enable_interrupts_and_sleep() {
+    // SAFETY: Enabling interrupts and then waiting for an interrupt has no memory safety implications.
+    unsafe {
+        core::arch::asm!("msr daifclr, {}; wfi", const DAIF_WR_IRQ_BIT, options(nostack, nomem, preserves_flags));
     }
 }
 
@@ -182,38 +180,41 @@ pub fn get_current_el() -> AArch64El {
     }
 }
 
-impl super::CacheMgmt for AArch64 {
-    fn flush_data_cache(start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
-        flush_data_cache_range(start, length, flush_type);
-        Ok(())
-    }
+/// Performs the requested data cache maintenance over `[start, start + length)`.
+///
+/// ## Errors
+///
+/// Never fails on `AArch64`; all flush types are supported.
+pub fn flush_data_cache(start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
+    flush_data_cache_range(start, length, flush_type);
+    Ok(())
+}
 
-    fn cache_writeback_granule() -> u32 {
-        let ctr_el0 = read_sysreg!(ctr_el0);
+/// Returns the cache writeback granule size in bytes, read from `CTR_EL0.CWG`.
+///
+/// This value is used to populate the `dma_buffer_alignment` field in the `EFI_CPU_ARCH_PROTOCOL`.
+pub fn cache_writeback_granule() -> u32 {
+    let ctr_el0 = read_sysreg!(ctr_el0);
 
-        // CWG (Cache Writeback Granule): CTR_EL0 bits [27:24]
-        let cwg = ((ctr_el0 >> 24) & 0xF) as u32;
+    // CWG (Cache Writeback Granule): CTR_EL0 bits [27:24]
+    let cwg = ((ctr_el0 >> 24) & 0xF) as u32;
 
-        // CWG is Log2 of the max size in words
-        if cwg > 0 {
-            4 << cwg
-        } else {
-            crate::base::SIZE_2KB as u32 // Default to 2K if register contains 0 per Armv8-A spec
-        }
+    // CWG is Log2 of the max size in words
+    if cwg > 0 {
+        4 << cwg
+    } else {
+        crate::base::SIZE_2KB as u32 // Default to 2K if register contains 0 per Armv8-A spec
     }
 }
 
-impl super::Timer for AArch64 {
-    fn get_timer_value() -> u64 {
-        read_sysreg!(CNTPCT_EL0)
-    }
+/// Returns the current value of the physical counter (`CNTPCT_EL0`), in ticks.
+pub fn get_timer_value() -> u64 {
+    read_sysreg!(CNTPCT_EL0)
+}
 
-    fn get_timer_frequency() -> Option<NonZeroU64> {
-        match read_sysreg!(CNTFRQ_EL0) {
-            0 => None,
-            freq => NonZeroU64::new(freq),
-        }
-    }
+/// Returns the counter frequency from `CNTFRQ_EL0`, in Hz, or `None` if it is not programmed.
+pub fn get_timer_frequency() -> Option<NonZeroU64> {
+    NonZeroU64::new(read_sysreg!(CNTFRQ_EL0))
 }
 
 fn clean_data_entry_by_mva(mva: efi::PhysicalAddress) {
