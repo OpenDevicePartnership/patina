@@ -315,6 +315,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
             let event =
                 match EVENT_NOTIFIES_IN_PROGRESS.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed) {
                     Ok(_) => {
+                        EVENT_DB.flush_deferred_group_signals();
                         let result = EVENT_DB.consume_next_event_notify(new_tpl);
                         EVENT_NOTIFIES_IN_PROGRESS.store(false, Ordering::Release);
                         result
@@ -434,6 +435,49 @@ mod tests {
     }
 
     extern "efiapi" fn test_notify(_event: efi::Event, _context: *mut c_void) {}
+
+    #[test]
+    fn test_event_allocator_groups_dispatch_after_unlock() {
+        with_locked_state(|| {
+            static CALLS: AtomicUsize = AtomicUsize::new(0);
+            static OUTER_LOCK: crate::tpl_mutex::TplMutex<()> =
+                crate::tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, (), "event test outer lock");
+
+            extern "efiapi" fn notify(_event: efi::Event, _context: *mut c_void) {
+                assert!(OUTER_LOCK.try_lock().is_some());
+                CALLS.fetch_add(1, Ordering::SeqCst);
+            }
+
+            for group in [
+                efi::EVENT_GROUP_MEMORY_MAP_CHANGE,
+                patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner(),
+            ] {
+                CALLS.store(0, Ordering::SeqCst);
+                let event = EVENT_DB
+                    .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(notify), None, Some(group))
+                    .unwrap();
+                {
+                    let _guard = OUTER_LOCK.lock();
+                    for _ in 0..3 {
+                        EVENT_DB.signal_group(group);
+                    }
+                    restore_tpl(efi::TPL_HIGH_LEVEL);
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                    assert!(!EVENT_DB.is_signaled(event));
+                }
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
+                restore_tpl(old_tpl);
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                {
+                    let _guard = OUTER_LOCK.lock();
+                    EVENT_DB.signal_group(group);
+                }
+                assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+                EVENT_DB.close_event(event).unwrap();
+            }
+        });
+    }
 
     // Track if notification was called
     static NOTIFY_CALLED: AtomicBool = AtomicBool::new(false);

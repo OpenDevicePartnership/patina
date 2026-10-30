@@ -37,6 +37,293 @@ fn page_attributes(address: usize) -> Result<u64, &'static str> {
     .map_err(|_| "No GCD descriptor for pool memory")
 }
 
+#[cfg(target_os = "uefi")]
+mod isolated {
+    use super::{
+        Allocator, GCD, Layout, UEFI_PAGE_SIZE, Vec, efi, is_mapped, page_attributes, patina_test, raise_tpl,
+        restore_tpl, u_assert, u_assert_eq,
+    };
+    use crate::allocator::{DEFAULT_PAGE_ALLOCATION_GRANULARITY, SpinLockedFixedSizeBlockAllocator};
+    use core::ptr::NonNull;
+
+    struct RaisedTpl(efi::Tpl);
+
+    impl RaisedTpl {
+        fn new() -> Self {
+            Self(raise_tpl(efi::TPL_HIGH_LEVEL))
+        }
+    }
+
+    impl Drop for RaisedTpl {
+        fn drop(&mut self) {
+            restore_tpl(self.0);
+        }
+    }
+
+    struct LiveBlock {
+        pointer: NonNull<u8>,
+        layout: Layout,
+        live: bool,
+    }
+
+    struct Fixture<'owner> {
+        allocator: Option<SpinLockedFixedSizeBlockAllocator>,
+        blocks: Vec<LiveBlock>,
+        _owner: &'owner u8,
+    }
+
+    impl<'owner> Fixture<'owner> {
+        fn new(owner: &'owner u8) -> Self {
+            Self {
+                allocator: Some(SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    core::ptr::from_ref(owner).cast_mut().cast(),
+                    efi::BOOT_SERVICES_DATA,
+                    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                    16 * UEFI_PAGE_SIZE,
+                )),
+                blocks: Vec::new(),
+                _owner: owner,
+            }
+        }
+
+        fn allocator(&self) -> &SpinLockedFixedSizeBlockAllocator {
+            self.allocator.as_ref().expect("Fixture allocator exists until cleanup")
+        }
+
+        fn allocate(&mut self, size: usize) -> Result<usize, &'static str> {
+            let layout = Layout::from_size_align(size, size).map_err(|_| "Bad isolated layout")?;
+            self.blocks.try_reserve(1).map_err(|_| "Could not reserve test bookkeeping")?;
+            let pointer = self.allocator().allocate(layout).map_err(|_| "Isolated allocation failed")?.cast::<u8>();
+            let index = self.blocks.len();
+            self.blocks.push(LiveBlock { pointer, layout, live: true });
+            Ok(index)
+        }
+
+        fn page(&self, index: usize) -> usize {
+            self.blocks.get(index).expect("Index belongs to fixture ledger").pointer.addr().get()
+                & !(UEFI_PAGE_SIZE - 1)
+        }
+
+        fn free(&mut self, index: usize) {
+            let block = self.blocks.get(index).expect("Index belongs to fixture ledger");
+            if block.live {
+                // SAFETY: bookkeeping retains the original pointer and layout, and prevents double frees.
+                unsafe { self.allocator().deallocate(block.pointer, block.layout) };
+                self.blocks.get_mut(index).expect("Index belongs to fixture ledger").live = false;
+            }
+        }
+
+        fn check_pages(&self) -> patina_test::error::Result {
+            for region in self.allocator().get_memory_ranges() {
+                let metadata = self
+                    .allocator()
+                    .lock()
+                    .firmware_test_metadata_range(region.start)
+                    .ok_or("Missing isolated region metadata")?;
+                for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
+                    let occupied = metadata.contains(&page)
+                        || self.blocks.iter().any(|block| {
+                            let start = block.pointer.addr().get() & !(UEFI_PAGE_SIZE - 1);
+                            let end =
+                                (block.pointer.addr().get() + block.layout.size()).next_multiple_of(UEFI_PAGE_SIZE);
+                            block.live && (start..end).contains(&page)
+                        });
+                    u_assert_eq!(is_mapped(page as u64), occupied, "Page table does not match live block occupancy");
+                    u_assert_eq!(
+                        (page_attributes(page)? & efi::MEMORY_RP == 0),
+                        occupied,
+                        "GCD does not match live block occupancy"
+                    );
+                }
+            }
+            Ok(())
+        }
+
+        fn check_live_bytes(&self) -> patina_test::error::Result {
+            for block in self.blocks.iter().filter(|block| block.live) {
+                u_assert!(is_mapped(block.pointer.addr().get() as u64), "Live neighbor is unmapped");
+                // SAFETY: the block remains live and writable; its page was checked before access.
+                unsafe {
+                    core::ptr::write_volatile(block.pointer.as_ptr(), 0xA5);
+                    core::ptr::write_volatile(block.pointer.as_ptr().add(block.layout.size() - 1), 0x5A);
+                    u_assert_eq!(core::ptr::read_volatile(block.pointer.as_ptr()), 0xA5);
+                    u_assert_eq!(core::ptr::read_volatile(block.pointer.as_ptr().add(block.layout.size() - 1)), 0x5A);
+                }
+            }
+            Ok(())
+        }
+
+        fn cleanup(&mut self) -> Result<(), &'static str> {
+            if self.allocator.is_none() {
+                return Ok(());
+            }
+            for index in 0..self.blocks.len() {
+                self.free(index);
+            }
+            let regions = self.allocator().get_memory_ranges();
+            self.allocator = None;
+            let mut result = Ok(());
+            for region in regions {
+                if GCD.free_memory_space(region.start, region.end - region.start).is_err() {
+                    result = Err("Failed to release isolated allocator backing region");
+                }
+            }
+            result
+        }
+    }
+
+    impl Drop for Fixture<'_> {
+        fn drop(&mut self) {
+            if let Err(error) = self.cleanup() {
+                log::error!("{error}");
+            }
+        }
+    }
+
+    fn with_fixture(test: impl FnOnce(&mut Fixture<'_>) -> patina_test::error::Result) -> patina_test::error::Result {
+        let _tpl = RaisedTpl::new();
+        let owner = 0u8;
+        let mut fixture = Fixture::new(&owner);
+        let result = test(&mut fixture);
+        fixture.cleanup()?;
+        result
+    }
+
+    /// A partially freed small-block page stays accessible until its last live block is freed.
+    #[patina_test]
+    fn small_block_page_retires_only_after_last_free() -> patina_test::error::Result {
+        with_fixture(|fixture| {
+            let first = loop {
+                let index = fixture.allocate(32)?;
+                let page = fixture.page(index);
+                let metadata_page = fixture.allocator().get_memory_ranges().any(|region| {
+                    region.contains(&page)
+                        && fixture
+                            .allocator()
+                            .lock()
+                            .firmware_test_metadata_range(region.start)
+                            .is_some_and(|metadata| metadata.contains(&page))
+                });
+                if !metadata_page {
+                    break index;
+                }
+            };
+            let page = fixture.page(first);
+            for _ in 1..UEFI_PAGE_SIZE / 32 {
+                let index = fixture.allocate(32)?;
+                u_assert_eq!(fixture.page(index), page, "Small blocks did not fill one page");
+            }
+            let neighbor = fixture.allocate(32)?;
+            u_assert_eq!(fixture.page(neighbor).abs_diff(page), UEFI_PAGE_SIZE, "Expected an adjacent live page");
+            for index in first..neighbor - 1 {
+                fixture.free(index);
+            }
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            fixture.free(neighbor - 1);
+            u_assert!(!is_mapped(page as u64), "Last free did not unmap the small-block page");
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            fixture.free(neighbor);
+            fixture.check_pages()
+        })
+    }
+
+    /// Every nonmetadata page is mapped exactly when independently tracked live blocks occupy it.
+    #[patina_test]
+    fn whole_regions_match_live_block_occupancy() -> patina_test::error::Result {
+        with_fixture(|fixture| {
+            for _ in 0..20 {
+                fixture.allocate(UEFI_PAGE_SIZE)?;
+            }
+            u_assert!(fixture.allocator().get_memory_ranges().count() > 1, "Expected multiple backing regions");
+            fixture.check_pages()?;
+            for index in (0..fixture.blocks.len()).step_by(2) {
+                fixture.free(index);
+            }
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            for index in 0..fixture.blocks.len() {
+                fixture.free(index);
+            }
+            fixture.check_pages()
+        })
+    }
+
+    /// Retired pages can change block class without keeping empty pages mapped or harming live neighbors.
+    #[patina_test]
+    fn mixed_classes_reuse_and_retire_pages() -> patina_test::error::Result {
+        with_fixture(|fixture| {
+            let mut original_pages = Vec::new();
+            for _ in 0..15 {
+                let index = fixture.allocate(UEFI_PAGE_SIZE)?;
+                original_pages.push(fixture.page(index));
+            }
+            let neighbor = fixture.allocate(UEFI_PAGE_SIZE)?;
+            for index in 0..neighbor {
+                fixture.free(index);
+            }
+            fixture.check_pages()?;
+            let mut groups = Vec::new();
+            for size in [16, 32, 64, 128, 256, 512, 1024, 2048] {
+                let first = fixture.blocks.len();
+                let mut reused = false;
+                for _ in 0..UEFI_PAGE_SIZE / size {
+                    let index = fixture.allocate(size)?;
+                    reused |= original_pages.contains(&fixture.page(index));
+                }
+                u_assert!(reused, "Block class did not reuse a retired page from another class");
+                groups.push(first..fixture.blocks.len());
+                fixture.check_pages()?;
+                fixture.check_live_bytes()?;
+            }
+            for group in &groups {
+                for index in group.clone().step_by(2) {
+                    fixture.free(index);
+                }
+            }
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            for group in groups {
+                for index in group {
+                    fixture.free(index);
+                }
+                fixture.check_pages()?;
+                fixture.check_live_bytes()?;
+            }
+            fixture.free(neighbor);
+            fixture.check_pages()
+        })
+    }
+
+    /// Multi-page pool allocations unmap every freed page while adjacent allocations remain accessible.
+    #[patina_test]
+    fn medium_pool_runs_retire_independently() -> patina_test::error::Result {
+        with_fixture(|fixture| {
+            let first = fixture.allocate(2 * UEFI_PAGE_SIZE)?;
+            let second = fixture.allocate(2 * UEFI_PAGE_SIZE)?;
+            let third = fixture.allocate(4 * UEFI_PAGE_SIZE)?;
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            let first_page = fixture.page(first);
+            fixture.free(first);
+            for page in (first_page..first_page + 2 * UEFI_PAGE_SIZE).step_by(UEFI_PAGE_SIZE) {
+                u_assert!(!is_mapped(page as u64), "Freed multi-page allocation is still mapped");
+            }
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            let small = fixture.allocate(32)?;
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            fixture.free(second);
+            fixture.free(third);
+            fixture.free(small);
+            fixture.check_pages()
+        })
+    }
+}
+
 /// Verifies that consecutive pool allocations return distinct addresses. The pool allocators are set up to
 /// always serve new allocations in FIFO order. Interrupts are disabled in this test just to protect against the
 /// rare case where event handling in the middle of the allocation could cause the free list to wrap around.
