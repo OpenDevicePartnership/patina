@@ -123,10 +123,12 @@ mod isolated {
                     .ok_or("Missing isolated region metadata")?;
                 for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
                     let occupied = metadata.contains(&page)
-                        || self
-                            .blocks
-                            .iter()
-                            .any(|block| block.live && (block.pointer.addr().get() & !(UEFI_PAGE_SIZE - 1)) == page);
+                        || self.blocks.iter().any(|block| {
+                            let start = block.pointer.addr().get() & !(UEFI_PAGE_SIZE - 1);
+                            let end =
+                                (block.pointer.addr().get() + block.layout.size()).next_multiple_of(UEFI_PAGE_SIZE);
+                            block.live && (start..end).contains(&page)
+                        });
                     u_assert_eq!(is_mapped(page as u64), occupied, "Page table does not match live block occupancy");
                     u_assert_eq!(
                         (page_attributes(page)? & efi::MEMORY_RP == 0),
@@ -291,6 +293,32 @@ mod isolated {
                 fixture.check_live_bytes()?;
             }
             fixture.free(neighbor);
+            fixture.check_pages()
+        })
+    }
+
+    /// Multi-page pool allocations unmap every freed page while adjacent allocations remain accessible.
+    #[patina_test]
+    fn medium_pool_runs_retire_independently() -> patina_test::error::Result {
+        with_fixture(|fixture| {
+            let first = fixture.allocate(2 * UEFI_PAGE_SIZE)?;
+            let second = fixture.allocate(2 * UEFI_PAGE_SIZE)?;
+            let third = fixture.allocate(4 * UEFI_PAGE_SIZE)?;
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            let first_page = fixture.page(first);
+            fixture.free(first);
+            for page in (first_page..first_page + 2 * UEFI_PAGE_SIZE).step_by(UEFI_PAGE_SIZE) {
+                u_assert!(!is_mapped(page as u64), "Freed multi-page allocation is still mapped");
+            }
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            let small = fixture.allocate(32)?;
+            fixture.check_pages()?;
+            fixture.check_live_bytes()?;
+            fixture.free(second);
+            fixture.free(third);
+            fixture.free(small);
             fixture.check_pages()
         })
     }

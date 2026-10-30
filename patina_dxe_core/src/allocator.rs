@@ -110,7 +110,7 @@ pub struct AllocationStatistics {
     /// The number of calls to `alloc()`.
     pub pool_allocation_calls: usize,
 
-    /// The number of pool allocations routed directly to the GCD because they exceed the largest fixed block.
+    /// The number of pool allocation requests larger than, or more aligned than, the largest fixed block.
     pub large_pool_allocation_calls: usize,
 
     /// The number of calls to `dealloc()`.
@@ -2313,9 +2313,9 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
             }
         });
     }
@@ -2331,13 +2331,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
             }
         });
     }
@@ -2353,13 +2353,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_none());
+                assert!(allocator.get_memory_ranges().next().is_some());
             }
         });
     }
