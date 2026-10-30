@@ -2,35 +2,35 @@
 
 **Overall Unsafe Percentage:** 12.6%
 
-- Total Safe: 39,580
+- Total Safe: 39,604
 - Total Unsafe: 5,720
-- Total Items: 45,300
+- Total Items: 45,324
 
 ## Category Breakdown
 
 | Category | Safe | Unsafe | Total | Unsafe % |
 |----------|------|--------|-------|----------|
-| functions | 541 | 51 | 592 | 8.6% |
-| exprs | 35,827 | 5,408 | 41,235 | 13.1% |
+| functions | 540 | 51 | 591 | 8.6% |
+| exprs | 35,847 | 5,408 | 41,255 | 13.1% |
 | item_impls | 864 | 110 | 974 | 11.3% |
 | item_traits | 68 | 7 | 75 | 9.3% |
-| methods | 2,280 | 144 | 2,424 | 5.9% |
+| methods | 2,285 | 144 | 2,429 | 5.9% |
 
 
 # Unsafe Code Analysis for aarch64-unknown-uefi
 
 **Overall Unsafe Percentage:** 12.6%
 
-- Total Safe: 39,580
+- Total Safe: 39,604
 - Total Unsafe: 5,720
-- Total Items: 45,300
+- Total Items: 45,324
 
 ## Category Breakdown
 
 | Category | Safe | Unsafe | Total | Unsafe % |
 |----------|------|--------|-------|----------|
-| functions | 541 | 51 | 592 | 8.6% |
-| exprs | 35,827 | 5,408 | 41,235 | 13.1% |
+| functions | 540 | 51 | 591 | 8.6% |
+| exprs | 35,847 | 5,408 | 41,255 | 13.1% |
 | item_impls | 864 | 110 | 974 | 11.3% |
 | item_traits | 68 | 7 | 75 | 9.3% |
-| methods | 2,280 | 144 | 2,424 | 5.9% |
+| methods | 2,285 | 144 | 2,429 | 5.9% |
