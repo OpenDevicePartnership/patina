@@ -265,9 +265,7 @@ impl CpuArchProtocolInstaller {
             .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
         log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
 
-        if patina::arch::is_cc_guest() {
-            super::aliased_memory_map_protocol::install(&protocols, handle)?;
-        }
+        super::aliased_memory_map_protocol::install(&protocols, handle)?;
 
         Ok(())
     }

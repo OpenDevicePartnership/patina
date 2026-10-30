@@ -25,7 +25,6 @@ const TDX_SIGNATURE_ECX: u32 = u32::from_le_bytes(*b"    ");
 /// Uses the Intel vendor signature, hypervisor-present bit, and TDX leaf 0x21
 /// signature, following EDK II's `TdIsEnabled` probe. Platform exception handlers
 /// must be installed before calling this function if CPUID can raise #VE.
-#[allow(unused_unsafe)]
 pub fn is_td_enabled() -> bool {
     #[allow(unused_unsafe)]
     // SAFETY: CPUID with EAX=0 is always safe to call on x64.
