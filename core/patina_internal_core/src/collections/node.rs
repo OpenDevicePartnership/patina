@@ -242,18 +242,13 @@ where
             return;
         }
 
-        // Copy the data from the old buffer to the new buffer. Update the pointers to the new buffer
-        for i in 0..self.len() {
-            let old = self.data.get(i).expect("i < self.len() <= self.capacity() <= self.data.len()");
+        // SAFETY: Both slices contain initialized Node values and have disjoint backing allocations. Copying all
+        // slots preserves sparse live nodes without reading uninitialized MaybeUninit payloads in free slots.
+        // D is Copy, so the copied payloads have no ownership that needs to be transferred or dropped.
+        unsafe { core::ptr::copy_nonoverlapping(self.data.as_ptr(), buffer.as_mut_ptr(), self.capacity()) };
 
-            // SAFETY: Nodes at indices 0..self.len() are "in use" and have initialized data.
-            // We copy the initialized data from old to new. This mutable borrow must complete
-            // before we take shared references to buffer elements below.
-            unsafe {
-                let old_data = old.data();
-                let new_node_mut = buffer.get_mut(i).expect("i < self.len() <= self.capacity() <= buffer.len()");
-                new_node_mut.data = MaybeUninit::new(*old_data);
-            }
+        for i in 0..self.capacity() {
+            let old = self.data.get(i).expect("i < self.capacity()");
 
             let new_node = buffer.get(i).expect("i is in bounds");
             new_node.set_color(old.color());
@@ -280,15 +275,22 @@ where
             }
         }
 
-        let idx = if self.available.get().is_null() { self.len() } else { self.idx(self.available.get()) };
-
-        if let Some(tail) = buffer.get(idx..) {
-            Self::build_linked_list(tail);
-            if let Some(first) = buffer.get(idx) {
-                self.available.set(first.as_mut_ptr());
-            }
+        let new_slots = buffer.get(self.capacity()..).expect("expansion cannot shrink storage");
+        Self::build_linked_list(new_slots);
+        let new_head = new_slots.first();
+        if self.available.get().is_null() {
+            self.available.set(new_head.map(NodeTrait::as_mut_ptr).unwrap_or_default());
         } else {
-            self.available.set(core::ptr::null_mut());
+            let head = buffer.get(self.idx(self.available.get())).expect("free-list head is valid");
+            self.available.set(head.as_mut_ptr());
+            let mut tail = head;
+            while let Some(next) = tail.right() {
+                tail = next;
+            }
+            tail.set_right(new_head);
+            if let Some(new_head) = new_head {
+                new_head.set_left(Some(tail));
+            }
         }
 
         self.data = buffer;
@@ -900,6 +902,33 @@ mod tests {
         const SMALLER_SIZE: usize = 5;
         let mut smaller_memory = [0; SMALLER_SIZE * node_size::<usize>()];
         storage.expand(&mut smaller_memory); // Should panic here
+    }
+
+    #[test]
+    fn test_expand_preserves_sparse_live_slots() {
+        let mut memory = [0; 8 * node_size::<usize>()];
+        let mut storage = Storage::<usize>::with_capacity(&mut memory);
+        for value in 0..8 {
+            storage.add(value).unwrap();
+        }
+        for index in [0, 2, 4, 6] {
+            let node = storage.get_mut(index).unwrap().as_mut_ptr();
+            storage.delete(node);
+        }
+
+        let mut expanded = [0; 16 * node_size::<usize>()];
+        storage.expand(&mut expanded);
+
+        for index in [1, 3, 5, 7] {
+            // SAFETY: These initialized slots were never deleted and must remain live after expansion.
+            assert_eq!(unsafe { *storage.get(index).unwrap().data() }, index);
+        }
+        for value in 8..20 {
+            let (index, _) = storage.add(value).unwrap();
+            assert!(![1, 3, 5, 7].contains(&index));
+        }
+        assert_eq!(storage.len(), 16);
+        assert_eq!(storage.add(20).err(), Some(Error::OutOfSpace));
     }
 
     #[test]
