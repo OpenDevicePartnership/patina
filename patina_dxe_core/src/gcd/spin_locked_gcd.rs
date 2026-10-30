@@ -40,7 +40,7 @@ use crate::{
     GCD,
     allocator::{DEFAULT_ALLOCATION_STRATEGY, memory_type_for_handle},
     ensure, error,
-    events::EVENT_DB,
+    events::{EVENT_DB, raise_tpl, restore_tpl},
     gcd::MemoryProtectionPolicy,
     protocol_db,
     protocol_db::INVALID_HANDLE,
@@ -60,6 +60,7 @@ use super::{
 
 const MEMORY_BLOCK_SLICE_LEN: usize = 4096;
 pub const MEMORY_BLOCK_SLICE_SIZE: usize = MEMORY_BLOCK_SLICE_LEN * node_size::<MemoryBlock>();
+const MEMORY_DESCRIPTOR_RESERVE: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InternalError {
@@ -201,25 +202,12 @@ pub fn get_capabilities(gcd_mem_type: GcdMemoryType, attributes: u64) -> u64 {
     capabilities
 }
 
-type GcdAllocateFn = fn(
-    gcd: &mut GCD,
-    allocate_type: AllocateType,
-    memory_type: GcdMemoryType,
-    alignment: usize,
-    len: usize,
-    image_handle: efi::Handle,
-    device_handle: Option<efi::Handle>,
-) -> Result<usize, EfiError>;
-type GcdFreeFn =
-    fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), EfiError>;
-
 #[allow(clippy::upper_case_acronyms)]
 //The Global Coherency Domain (GCD) Services are used to manage the memory resources visible to the boot processor.
 struct GCD {
     maximum_address: usize,
     memory_blocks: Rbt<'static, MemoryBlock>,
-    allocate_memory_space_fn: GcdAllocateFn,
-    free_memory_space_fn: GcdFreeFn,
+    memory_space_locked: bool,
     /// Whether to prioritize 32-bit memory allocations
     prioritize_32_bit_memory: bool,
 }
@@ -231,12 +219,12 @@ impl GCD {
     }
 }
 
-#[allow(clippy::missing_fields_in_debug)] // The function pointers are excluded from debug prints.
 impl core::fmt::Debug for GCD {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GCD")
             .field("maximum_address", &self.maximum_address)
             .field("memory_blocks", &self.memory_blocks)
+            .field("memory_space_locked", &self.memory_space_locked)
             .field("prioritize_32_bit_memory", &self.prioritize_32_bit_memory)
             .finish()
     }
@@ -250,21 +238,18 @@ impl GCD {
         Self {
             memory_blocks: Rbt::new(),
             maximum_address: 1 << processor_address_bits,
-            allocate_memory_space_fn: Self::allocate_memory_space_internal,
-            free_memory_space_fn: Self::free_memory_space,
+            memory_space_locked: false,
             prioritize_32_bit_memory: false,
         }
     }
 
     pub fn lock_memory_space(&mut self) {
-        self.allocate_memory_space_fn = Self::allocate_memory_space_null;
-        self.free_memory_space_fn = Self::free_memory_space_null;
+        self.memory_space_locked = true;
         log::info!("Disallowing alloc/free during ExitBootServices.");
     }
 
     pub fn unlock_memory_space(&mut self) {
-        self.allocate_memory_space_fn = Self::allocate_memory_space_internal;
-        self.free_memory_space_fn = Self::free_memory_space;
+        self.memory_space_locked = false;
     }
 
     pub fn init(&mut self, processor_address_bits: u32) {
@@ -433,7 +418,27 @@ impl GCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, EfiError> {
-        (self.allocate_memory_space_fn)(self, allocate_type, memory_type, alignment, len, image_handle, device_handle)
+        if self.memory_space_locked {
+            Self::allocate_memory_space_null(
+                self,
+                allocate_type,
+                memory_type,
+                alignment,
+                len,
+                image_handle,
+                device_handle,
+            )
+        } else {
+            Self::allocate_memory_space_internal(
+                self,
+                allocate_type,
+                memory_type,
+                alignment,
+                len,
+                image_handle,
+                device_handle,
+            )
+        }
     }
 
     /// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
@@ -555,6 +560,9 @@ impl GCD {
         len: usize,
         transition: MemoryStateTransition,
     ) -> Result<(), EfiError> {
+        if self.memory_space_locked {
+            return Self::free_memory_space_null(self, base_address, len, transition);
+        }
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(len > 0, EfiError::InvalidParameter);
         ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
@@ -1408,8 +1416,7 @@ impl SpinLockedGcd {
                 GCD {
                     maximum_address: 0,
                     memory_blocks: Rbt::new(),
-                    allocate_memory_space_fn: GCD::allocate_memory_space_internal,
-                    free_memory_space_fn: GCD::free_memory_space,
+                    memory_space_locked: false,
                     prioritize_32_bit_memory: false,
                 },
                 "GcdMemLock",
@@ -1458,6 +1465,74 @@ impl SpinLockedGcd {
         self.memory.lock().unlock_memory_space();
     }
 
+    /// Grows descriptor storage if we are running low on available capacity.
+    fn ensure_memory_descriptor_capacity(&self) -> Result<(), EfiError> {
+        let previous_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
+        let result = (|| {
+            let mut memory = self.memory.lock();
+            let capacity = memory.memory_blocks.capacity();
+            if capacity == 0
+                || capacity.saturating_sub(memory.memory_blocks.len()) >= MEMORY_DESCRIPTOR_RESERVE
+                || memory.memory_space_locked
+            {
+                return Ok(());
+            }
+
+            let result = (|| {
+                let size = capacity
+                    .checked_mul(2)
+                    .and_then(|capacity| capacity.checked_mul(node_size::<MemoryBlock>()))
+                    .ok_or(EfiError::OutOfResources)?;
+                let size = align_up(size, UEFI_PAGE_SIZE).map_err(|_| EfiError::OutOfResources)?;
+                let (base, attributes) = {
+                    let base = memory.allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        size,
+                        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                        None,
+                    )?;
+                    let descriptor = memory.get_memory_descriptor_for_address(base as u64, |_, _| true)?;
+                    let attributes = self
+                        .memory_protection_policy
+                        .apply_allocated_memory_protection_policy(descriptor.attributes, GcdMemoryType::SystemMemory);
+                    if let Err(err) = memory.set_memory_space_attributes(base, size, attributes) {
+                        memory.free_memory_space(base, size, MemoryStateTransition::Free)?;
+                        return Err(err);
+                    }
+                    (base, attributes)
+                };
+
+                drop(memory);
+                match self.set_paging_attributes(base, size, attributes) {
+                    Ok(()) | Err(EfiError::NotReady) => {}
+                    Err(err) => {
+                        self.free_memory_space_without_growth(base, size, MemoryStateTransition::Free)?;
+                        return Err(err);
+                    }
+                }
+
+                // SAFETY: GCD exclusively owns this page-aligned, writable allocation. It is never freed, and the
+                // memory lock excludes readers while expand copies nodes and updates their internal pointers.
+                self.memory.lock().memory_blocks.expand(unsafe { slice::from_raw_parts_mut(base as *mut u8, size) });
+                if let Some(callback) = self.memory_change_callback {
+                    callback(MapChangeType::AllocateMemorySpace);
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                let memory = self.memory.lock();
+                if memory.memory_blocks.capacity().saturating_sub(memory.memory_blocks.len()) >= 2 {
+                    return Ok(());
+                }
+            }
+            result
+        })();
+        restore_tpl(previous_tpl);
+        result
+    }
+
     /// Resets the GCD to default state. Intended for test scenarios.
     ///
     /// # Safety
@@ -1468,6 +1543,7 @@ impl SpinLockedGcd {
     #[cfg(test)]
     pub unsafe fn reset(&self) {
         let (mut mem, mut io) = (self.memory.lock(), self.io.lock());
+        mem.memory_space_locked = false;
         mem.maximum_address = 0;
         mem.memory_blocks = Rbt::new();
         io.maximum_address = 0;
@@ -1521,6 +1597,7 @@ impl SpinLockedGcd {
         len: usize,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
         // SAFETY: caller upholds the contract for add_memory_space.
         let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
         if result.is_ok()
@@ -1537,6 +1614,7 @@ impl SpinLockedGcd {
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
     #[cfg_attr(coverage, coverage(off))]
     pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(page_table) = &mut *self.page_table.lock() {
@@ -1571,6 +1649,7 @@ impl SpinLockedGcd {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
         let result = self.memory.lock().allocate_memory_space(
             allocate_type,
             memory_type,
@@ -1633,6 +1712,16 @@ impl SpinLockedGcd {
 
     // Internal worker for freeing memory space with different transition types
     fn free_memory_space_internal(
+        &self,
+        base_address: usize,
+        len: usize,
+        transition: MemoryStateTransition,
+    ) -> Result<(), EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
+        self.free_memory_space_without_growth(base_address, len, transition)
+    }
+
+    fn free_memory_space_without_growth(
         &self,
         base_address: usize,
         len: usize,
@@ -1792,6 +1881,7 @@ impl SpinLockedGcd {
         len: usize,
         attributes: u64,
     ) -> Result<(), EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
         let mut res = Ok(());
         let range = base_address as u64..base_address.checked_add(len).ok_or(EfiError::InvalidParameter)? as u64;
 
@@ -1844,6 +1934,7 @@ impl SpinLockedGcd {
         len: usize,
         capabilities: u64,
     ) -> Result<(), EfiError> {
+        self.ensure_memory_descriptor_capacity()?;
         let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
         if result.is_ok()
             && let Some(callback) = self.memory_change_callback

@@ -2655,6 +2655,47 @@ mod tests {
     }
 
     #[test]
+    fn test_pool_page_retirement_does_not_exhaust_gcd() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            init_gcd(&GCD, 0x4000000);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                DUMMY_HANDLE,
+                efi::BOOT_SERVICES_DATA,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                0x3000000,
+            );
+            let layout = Layout::from_size_align(UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+            let allocations: Vec<_> = (0..5000).map(|_| fsb.allocate(layout).unwrap().cast::<u8>()).collect();
+
+            for (index, allocation) in allocations.iter().enumerate().step_by(2) {
+                // SAFETY: Each block was allocated by fsb with this layout and is freed only once.
+                unsafe { fsb.deallocate(*allocation, layout) };
+                assert_eq!(
+                    page_attributes(&GCD, allocation.addr().get()) & efi::MEMORY_RP,
+                    efi::MEMORY_RP,
+                    "allocation {index}, page {:#x}, GCD descriptors {}, retired {}, reclaimed {}",
+                    allocation.addr().get(),
+                    GCD.memory_descriptor_count(),
+                    fsb.stats().retired_pages,
+                    fsb.stats().reclaimed_pages,
+                );
+            }
+
+            let page = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
+            // SAFETY: page is a live one-page allocation returned by fsb.
+            unsafe { fsb.free_pages(page.addr().get(), 1).unwrap() };
+
+            for allocation in allocations.iter().skip(1).step_by(2) {
+                assert_eq!(page_attributes(&GCD, allocation.addr().get()) & efi::MEMORY_RP, 0);
+                // SAFETY: These are the remaining live blocks allocated by fsb with this layout.
+                unsafe { fsb.deallocate(*allocation, layout) };
+            }
+        });
+    }
+
+    #[test]
     fn test_fully_freed_page_is_retired_and_unmapped() {
         with_locked_state(|| {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);

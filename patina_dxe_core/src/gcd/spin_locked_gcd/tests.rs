@@ -123,6 +123,250 @@ fn test_gcd_initialization() {
     });
 }
 
+fn init_gcd_growth_test(gcd: &SpinLockedGcd) {
+    gcd.init(48, 16);
+    // SAFETY: The leaked test buffer is page aligned, writable, and exclusively owned by this GCD.
+    unsafe {
+        let memory = get_memory(0x1000000);
+        gcd.init_memory_blocks(
+            GcdMemoryType::SystemMemory,
+            memory.as_ptr() as usize,
+            memory.len(),
+            efi::MEMORY_WB,
+            efi::MEMORY_WB,
+        )
+        .unwrap();
+    }
+}
+
+fn fill_gcd_descriptor_reserve(gcd: &SpinLockedGcd) {
+    let mut memory = gcd.memory.lock();
+    let mut address = memory.memory_blocks.len() * 2 * UEFI_PAGE_SIZE;
+    while memory.memory_blocks.capacity() - memory.memory_blocks.len() >= MEMORY_DESCRIPTOR_RESERVE {
+        // SAFETY: These disjoint reserved ranges describe resources only; they are never accessed as memory.
+        unsafe {
+            memory.add_memory_space(GcdMemoryType::Reserved, address, UEFI_PAGE_SIZE, 0).unwrap();
+        }
+        address += 2 * UEFI_PAGE_SIZE;
+    }
+}
+
+#[test]
+fn test_gcd_descriptor_growth_preserves_descriptors_and_maps_storage() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        fill_gcd_descriptor_reserve(&gcd);
+        let snapshot = copy_memory_block(&gcd.memory.lock());
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        gcd.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+
+        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+        for block in snapshot.iter().filter(|block| {
+            matches!(block, MemoryBlock::Allocated(_)) || block.as_ref().memory_type == GcdMemoryType::Reserved
+        }) {
+            let descriptor = block.as_ref();
+            assert_eq!(
+                gcd.get_memory_descriptor_for_address(descriptor.base_address, |_, _| true).unwrap(),
+                *descriptor
+            );
+        }
+        assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+        let mappings = mock_table.borrow();
+        let mappings = mappings.get_current_mappings();
+        assert_eq!(mappings.len(), 1);
+        let (base, length, attributes) = mappings[0];
+        assert!(length as usize >= 2 * MEMORY_BLOCK_SLICE_SIZE);
+        assert!(!attributes.contains(MemoryAttributes::ReadProtect));
+        assert_eq!(
+            gcd.get_memory_descriptor_for_address(base, |_, allocated| allocated).unwrap().image_handle,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE
+        );
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_defers_allocating_events_until_complete() {
+    use crate::events::{self, EVENT_DB};
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+    static CALLBACK_RAN: AtomicBool = AtomicBool::new(false);
+    static CALLBACK_AFTER_GROWTH: AtomicBool = AtomicBool::new(false);
+
+    extern "efiapi" fn notify(_: efi::Event, _: *mut core::ffi::c_void) {
+        let mut memory = GCD.memory.lock();
+        let expanded = memory.memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN;
+        let allocation = memory.allocate_memory_space(
+            DEFAULT_ALLOCATION_STRATEGY,
+            GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            UEFI_PAGE_SIZE,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+            None,
+        );
+        CALLBACK_AFTER_GROWTH.store(expanded && allocation.is_ok(), Ordering::Release);
+        CALLBACK_RAN.store(true, Ordering::Release);
+    }
+
+    with_locked_state(|| {
+        // SAFETY: The global test lock excludes all users of this test GCD.
+        unsafe { GCD.reset() };
+        let _cleanup = test_support::StateGuard::new(|| {
+            // SAFETY: Cleanup runs under the global test lock after all operations have completed.
+            unsafe { GCD.reset() };
+        });
+        CALLBACK_RAN.store(false, Ordering::Release);
+        CALLBACK_AFTER_GROWTH.store(false, Ordering::Release);
+        init_gcd_growth_test(&GCD);
+        fill_gcd_descriptor_reserve(&GCD);
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        mock_table.borrow_mut().set_cache_attribute_source(CacheAttributeSource::Processor);
+        GCD.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+        let event = EVENT_DB
+            .create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                Some(notify),
+                None,
+                Some(patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID.into_inner()),
+            )
+            .unwrap();
+        let _event_cleanup = test_support::StateGuard::new(|| EVENT_DB.close_event(event).unwrap());
+
+        GCD.ensure_memory_descriptor_capacity().unwrap();
+
+        assert!(CALLBACK_RAN.load(Ordering::Acquire));
+        assert!(CALLBACK_AFTER_GROWTH.load(Ordering::Acquire));
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        assert_eq!(old_tpl, efi::TPL_APPLICATION);
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_repeats() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        for _ in 0..2 {
+            fill_gcd_descriptor_reserve(&gcd);
+            let capacity = gcd.memory.lock().memory_blocks.capacity();
+            gcd.ensure_memory_descriptor_capacity().unwrap();
+            assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * capacity);
+            assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+        }
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_failure_does_not_block_free() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        fill_gcd_descriptor_reserve(&gcd);
+        let free = copy_memory_block(&gcd.memory.lock()).into_iter().find(|block| {
+            matches!(block, MemoryBlock::Unallocated(descriptor) if descriptor.memory_type == GcdMemoryType::SystemMemory)
+        }).unwrap();
+        let descriptor = free.as_ref();
+        let address = gcd
+            .memory
+            .lock()
+            .allocate_memory_space(
+                AllocateType::Address(descriptor.base_address as usize),
+                GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                descriptor.length as usize,
+                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                None,
+            )
+            .unwrap();
+
+        gcd.free_memory_space(address, descriptor.length as usize).unwrap();
+
+        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
+        assert!(gcd.get_memory_descriptor_for_address(address as u64, |_, allocated| !allocated).is_ok());
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_mapping_failure_rolls_back_without_recursion() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        fill_gcd_descriptor_reserve(&gcd);
+        let allocated_before: Vec<_> = copy_memory_block(&gcd.memory.lock())
+            .into_iter()
+            .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
+            .collect();
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        mock_table.borrow_mut().fail_next_map_memory_region(PagingError::OutOfResources);
+        gcd.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+
+        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
+        let allocated_after: Vec<_> = copy_memory_block(&gcd.memory.lock())
+            .into_iter()
+            .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
+            .collect();
+        assert_eq!(allocated_after, allocated_before);
+        assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_locked_free_preserves_allocation() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        let base = gcd
+            .allocate_memory_space(
+                DEFAULT_ALLOCATION_STRATEGY,
+                GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                UEFI_PAGE_SIZE,
+                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                None,
+            )
+            .unwrap();
+        gcd.lock_memory_space();
+        let snapshot = copy_memory_block(&gcd.memory.lock());
+
+        gcd.memory.lock().free_memory_space(base, UEFI_PAGE_SIZE, MemoryStateTransition::Free).unwrap();
+
+        assert_eq!(copy_memory_block(&gcd.memory.lock()), snapshot);
+        gcd.unlock_memory_space();
+        gcd.free_memory_space(base, UEFI_PAGE_SIZE).unwrap();
+        assert!(gcd.get_memory_descriptor_for_address(base as u64, |_, allocated| !allocated).is_ok());
+    });
+}
+
+#[test]
+fn test_gcd_descriptor_growth_disabled_while_memory_locked() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        fill_gcd_descriptor_reserve(&gcd);
+        let snapshot = copy_memory_block(&gcd.memory.lock());
+        gcd.lock_memory_space();
+
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+
+        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
+        assert_eq!(copy_memory_block(&gcd.memory.lock()), snapshot);
+        gcd.unlock_memory_space();
+        gcd.ensure_memory_descriptor_capacity().unwrap();
+        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+    });
+}
+
 #[test]
 fn test_add_memory_space_before_memory_blocks_instantiated() {
     with_locked_state(|| {
@@ -1226,8 +1470,7 @@ fn test_set_memory_space_attributes_with_invalid_parameters() {
         let mut gcd = GCD {
             memory_blocks: Rbt::new(),
             maximum_address: 0,
-            allocate_memory_space_fn: GCD::allocate_memory_space_internal,
-            free_memory_space_fn: GCD::free_memory_space,
+            memory_space_locked: false,
             // SAFETY: Test-controlled addresses and sizes are used with the GCD initialized by create_gcd or get_memory.
             prioritize_32_bit_memory: false,
         };
@@ -3239,6 +3482,67 @@ fn test_descriptor_iterator() {
             count += 1;
         }
         assert_eq!(count, 0); // Should yield no descriptors
+    });
+}
+
+#[test]
+fn test_populate_efi_memory_map_coalesces_retired_pool_pages() {
+    with_locked_state(|| {
+        for (handle, memory_type, runtime_attribute) in [
+            (protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, efi::BOOT_SERVICES_DATA, 0),
+            (protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE, efi::RUNTIME_SERVICES_DATA, efi::MEMORY_RUNTIME),
+        ] {
+            let mut gcd = GCD::new(48);
+            // SAFETY: The leaked test buffer is aligned and exclusively backs this descriptor tree.
+            gcd.memory_blocks = Rbt::with_capacity(unsafe { get_memory(8 * node_size::<MemoryBlock>()) });
+            let base = 0x100000;
+            for page_index in [0, 1, 2, 3, 4, 7] {
+                let attributes = efi::MEMORY_WB
+                    | efi::MEMORY_XP
+                    | runtime_attribute
+                    | if page_index % 2 == 1 { efi::MEMORY_RP } else { 0 };
+                gcd.memory_blocks
+                    .add(MemoryBlock::Allocated(MemorySpaceDescriptor {
+                        memory_type: GcdMemoryType::SystemMemory,
+                        base_address: base + page_index * UEFI_PAGE_SIZE as u64,
+                        length: UEFI_PAGE_SIZE as u64,
+                        capabilities: efi::MEMORY_WB | efi::MEMORY_RP | efi::MEMORY_XP,
+                        attributes,
+                        image_handle: handle,
+                        device_handle: ptr::null_mut(),
+                    }))
+                    .unwrap();
+            }
+            let snapshot = copy_memory_block(&gcd);
+            for pair in snapshot.windows(2) {
+                let (mut previous, mut next) = (pair[0], pair[1]);
+                assert!(!previous.merge(&mut next));
+            }
+
+            for active_attributes in [false, true] {
+                let mut descriptors = [efi::MemoryDescriptor {
+                    r#type: 0,
+                    physical_start: 0,
+                    virtual_start: 0,
+                    number_of_pages: 0,
+                    attribute: 0,
+                }; 6];
+                let count = gcd.populate_efi_memory_map(&mut descriptors, active_attributes).unwrap();
+
+                assert_eq!(count, 2);
+                assert_eq!(descriptors[0].physical_start, base);
+                assert_eq!(descriptors[0].number_of_pages, 5);
+                assert_eq!(descriptors[1].physical_start, base + 7 * UEFI_PAGE_SIZE as u64);
+                assert_eq!(descriptors[1].number_of_pages, 1);
+                for descriptor in &descriptors[..count] {
+                    assert_eq!(descriptor.r#type, memory_type);
+                    assert_eq!(descriptor.attribute & efi::MEMORY_RP, 0);
+                    assert_eq!(descriptor.attribute & efi::MEMORY_RUNTIME, runtime_attribute);
+                    assert_eq!(descriptor.virtual_start, 0);
+                }
+                assert_eq!(copy_memory_block(&gcd), snapshot);
+            }
+        }
     });
 }
 
