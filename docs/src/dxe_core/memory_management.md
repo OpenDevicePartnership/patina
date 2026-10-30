@@ -89,6 +89,7 @@ flowchart TB
   Retired["Retired pages<br/>(unmapped)"]
   Large["Direct large allocation<br/>(mapped)"]
   Small["Small pool allocation<br/>(mapped)"]
+  Medium["Medium pool allocation<br/>(mapped page run)"]
 
   GCD -->|Expand| FSBFree
   FSBFree -->|Carve into blocks| FixedBlocks
@@ -96,23 +97,24 @@ flowchart TB
   Small -->|Free| FixedBlocks
   FixedBlocks -->|Last block freed| Retired
   Retired -->|Reclaim| FixedBlocks
+  FSBFree -->|Claim contiguous pages| Medium
+  Retired -->|Reclaim contiguous pages| Medium
+  Medium -->|Free entire run| Retired
 
   GCD -->|Allocate| Large
   Large -->|Free| GCD
 ```
 
-The FSB retains ownership of retired pages even while they are unmapped. New expansion pages not needed immediately may
-enter the retired state directly. The metadata page remains mapped, and direct fallback allocations never enter the
-fixed-size block lifecycle.
+The FSB retains ownership of retired pages even while they are unmapped. New expansion pages not needed immediately
+enter the retired state directly. Metadata pages remain mapped.
 
-If the fixed-block size list corresponding to the requested block size is empty or if the requested size is larger than
-any fixed-block size, then the allocation falls back to page allocations from the GCD because the largest fixed size
-block is one page, so we are already dealing with an allocation that would typically allocate pages anyway.
+Allocations larger than the largest fixed size block (which is 4KB) fall into one of two flows:
 
-If the fixed sized blocks are not able to satisfy a request that fits into a fixed size block and we do not have any
-pages that can be reclaimed, then a new large block is fetched from the GCD. The metadata is created at the beginning of
-this region. The first whole page after the metadata is eagerly broken into fixed size blocks of equal size, matching
-the allocation request, and the remaining pages are retired.
+- Allocations greater than 64KB for this allocator type are directly serviced by the GCD as page allocations
+- Allocations less than 64KB search retired pages for a contiguous run that is long enough for the size requested.
+If one is found, that is mapped as whole pages for this and freed back to the retired pages as such. If one is not
+found, an allocation is made from the GCD to add more retired pages, at the required granularity, and the required
+pages are mapped and handed out. These pages are never freed back to the GCD.
 
 ### Allocation "Buckets"
 

@@ -40,20 +40,34 @@ use patina::{
 pub enum FixedSizeBlockAllocatorError {
     /// Could not satisfy allocation request, and expansion failed.
     ///
-    /// Specifies the requested block size that could not be satisfied.
-    /// The allocator should attempt to expand through [`FixedSizeBlockAllocator::expand()`] in order
-    /// to fulfill the requested allocation.
+    /// Could not satisfy the request from the fixed-size block lists.
+    ///
+    /// Contains the required payload size in bytes: either a fixed-block size or
+    /// a page-rounded medium-allocation size. The caller should attempt to reclaim
+    /// retired pages or expand the allocator to fulfill the request.
     OutOfMemory(usize),
     /// The memory region provided to extend the allocator was invalid.
     InvalidExpansion,
     /// An internal error occurred.
     InternalError,
-    /// The allocation is larger than the largest fixed block size
+    /// The allocation exceeds the retained pool size or alignment limit.
     ExceedsBlockSize,
 }
 
 // List of fixed block sizes supported by the allocator
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+
+// Largest allocation size we will serve from retired pages instead of going directly to the GCD
+const MAX_RETAINED_POOL_SIZE: usize = patina::SIZE_64KB;
+
+// Returns the size we must pull from retired pages to satisfy the given layout, if it is within the
+// retained pool size limit.
+fn retained_pool_size(layout: Layout) -> Option<usize> {
+    if max(layout.size(), layout.align()) > MAX_RETAINED_POOL_SIZE {
+        return None;
+    }
+    align_up(layout.size().max(1), UEFI_PAGE_SIZE).ok()
+}
 
 // Slice::get() is not const on stable Rust
 #[allow(clippy::indexing_slicing)]
@@ -117,6 +131,21 @@ const _: () = assert!(AllocatorListNode::RETIRED_PAGE < AllocatorListNode::RETIR
 const _: () = assert!(UEFI_PAGE_SIZE.is_multiple_of(align_of::<AllocatorListNode>()));
 
 impl AllocatorListNode {
+    // Returns the total allocation size required for a free region of at least `usable_size` bytes, taking into account
+    // the minimum expansion and alignment granularity. This includes the size of the allocator node and page metadata.
+    fn allocation_size(usable_size: usize, min_expansion: usize, granularity: usize) -> Option<usize> {
+        let mut size = align_up(max(usable_size, min_expansion), granularity).ok()?;
+        loop {
+            let metadata_size = align_up(Self::size_for_free_region(size), UEFI_PAGE_SIZE).ok()?;
+            let required_size = max(min_expansion, usable_size.checked_add(metadata_size)?);
+            let next_size = align_up(required_size, granularity).ok()?;
+            if next_size == size {
+                return Some(size);
+            }
+            size = next_size;
+        }
+    }
+
     // This flag is used to indicate that a page has been retired and is no longer in use by the allocator.
     // It represents the free bytes in a page. When the free bytes are equal to the page size, the entire page
     // is free and therefore retired. It contrasts with RETIRING_PAGE, which is greater than the page size and used
@@ -195,10 +224,9 @@ impl Iterator for AllocatorIterator {
 
 /// Fixed Size Block Allocator
 ///
-/// Implements an expandable memory allocator using fixed-sized blocks for speed backed by a linked-list allocator
-/// implementation when an appropriate sized free block is not available. If more memory is required than can be
-/// satisfied by either the block list or the linked-list, more memory is is allocated externally, then passed into
-/// the allocator where a new backing linked-list is created.
+/// Uses fixed-size blocks through one page and contiguous page runs for pool layouts with size and alignment
+/// through 64KB. Free whole pages remain owned by the allocator but are retired and unmapped until needed again.
+/// Larger layouts are allocated directly from the GCD by [`SpinLockedFixedSizeBlockAllocator`].
 ///
 pub struct FixedSizeBlockAllocator {
     /// The memory type this allocator manages.
@@ -212,8 +240,7 @@ pub struct FixedSizeBlockAllocator {
     /// recycled in FIFO order, which maximizes the time between a block being freed and it being handed out again.
     list_tails: [Option<NonNull<BlockListNode>>; BLOCK_SIZES.len()],
 
-    /// The linked-list of allocators that this allocator uses to back allocations that are larger than the fixed-size
-    /// blocks or if the required fixed-size block list is empty.
+    /// The backing regions and permanently mapped metadata used to track pool pages.
     allocators: Option<*mut AllocatorListNode>,
 
     /// Allocator node and page index where the next retired-page search begins. This is maintained to reclaim pages
@@ -386,6 +413,9 @@ impl FixedSizeBlockAllocator {
     /// Returns [`FixedSizeBlockAllocatorError::InternalError`] when an internal error occurs.
     pub fn alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         self.stats.pool_allocation_calls += 1;
+        if list_index(&layout).is_none() {
+            self.stats.large_pool_allocation_calls += 1;
+        }
         self.internal_alloc(layout)
     }
 
@@ -413,8 +443,25 @@ impl FixedSizeBlockAllocator {
                     Err(FixedSizeBlockAllocatorError::OutOfMemory(block_size))
                 }
             }
-            // if the allocation request is larger than our largest fixed block, we'll allocate directly from the GCD
-            None => Err(FixedSizeBlockAllocatorError::ExceedsBlockSize),
+            None => match retained_pool_size(layout) {
+                Some(size) => Err(FixedSizeBlockAllocatorError::OutOfMemory(size)),
+                None => Err(FixedSizeBlockAllocatorError::ExceedsBlockSize),
+            },
+        }
+    }
+
+    fn allocate_from_pages(
+        &mut self,
+        layout: Layout,
+        pages: Range<usize>,
+    ) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
+        if let Some(index) = list_index(&layout) {
+            let block_size = *BLOCK_SIZES.get(index).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+            self.add_page_to_fsb(pages.start, block_size)?;
+            self.internal_alloc(layout)
+        } else {
+            let ptr = NonNull::new(pages.start as *mut u8).ok_or(FixedSizeBlockAllocatorError::InternalError)?;
+            Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
         }
     }
 
@@ -628,6 +675,10 @@ impl FixedSizeBlockAllocator {
     // exist a suitable run, None is returned. This function uses the retired_page_cursor to maintain FIFO order of
     // page reclamation.
     fn find_retired_pages(&mut self, count: usize) -> Option<Range<usize>> {
+        self.find_aligned_retired_pages(count, UEFI_PAGE_SIZE)
+    }
+
+    fn find_aligned_retired_pages(&mut self, count: usize, alignment: usize) -> Option<Range<usize>> {
         if count == 0 {
             return None;
         }
@@ -643,20 +694,26 @@ impl FixedSizeBlockAllocator {
             let current_ref = unsafe { current.as_ref() };
             let begin =
                 if !wrapped && current == start_node { start_index.min(current_ref.page_free_bytes.len()) } else { 0 };
-            let end = if wrapped && current == start_node {
+            let candidate_end = if wrapped && current == start_node {
                 start_index.min(current_ref.page_free_bytes.len())
             } else {
                 current_ref.page_free_bytes.len()
             };
+            let end = current_ref.page_free_bytes.len();
 
             let mut search_index = begin;
             while let Some(relative_first) = current_ref
                 .page_free_bytes
-                .get(search_index..end)?
+                .get(search_index..candidate_end)?
                 .iter()
                 .position(|free_bytes| *free_bytes == AllocatorListNode::RETIRED_PAGE)
             {
-                let first = search_index + relative_first;
+                let first_address = current_ref.region_base() + uefi_pages_to_size!(search_index + relative_first);
+                let aligned_address = align_up(first_address, alignment).ok()?;
+                let first = (aligned_address - current_ref.region_base()) >> UEFI_PAGE_SHIFT;
+                if first >= candidate_end {
+                    break;
+                }
                 let run = current_ref
                     .page_free_bytes
                     .get(first..end)?
@@ -678,17 +735,20 @@ impl FixedSizeBlockAllocator {
                 }
 
                 search_index = first + run;
-                if search_index < end {
+                if search_index >= candidate_end {
+                    break;
+                }
+                if search_index < candidate_end {
                     search_index += 1;
                 }
             }
 
+            if wrapped && current == start_node {
+                break;
+            }
             node = self.next_allocator_node(current);
             if node == Some(start_node) {
                 wrapped = true;
-            }
-            if wrapped && current == start_node {
-                break;
             }
         }
 
@@ -1301,16 +1361,20 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         let allocation = allocator.alloc(layout);
         match allocation {
             Ok(alloc) => Ok(alloc),
-            Err(FixedSizeBlockAllocatorError::OutOfMemory(block_size)) => {
+            Err(FixedSizeBlockAllocatorError::OutOfMemory(required_size)) => {
                 // compile time check that validates the assumption used below to add blocks to the free list.
                 const _: () = assert!(block_sizes_divide_alignment());
 
                 // Map enough pages to satisfy the request.
-                let reclaim_pages = uefi_size_to_pages!(block_size);
+                let required_payload_pages = uefi_size_to_pages!(required_size);
 
                 // Bring a sufficient contiguous retired range back into service before claiming more memory from the
                 // GCD. Shorter fragmented ranges remain retired.
-                let reclaim_range = allocator.find_retired_pages(reclaim_pages);
+                let reclaim_range = if layout.align() > UEFI_PAGE_SIZE {
+                    allocator.find_aligned_retired_pages(required_payload_pages, layout.align())
+                } else {
+                    allocator.find_retired_pages(required_payload_pages)
+                };
                 if let Some(pages) = reclaim_range {
                     let mapped = allocator.update_page_attributes(self.gcd, &pages, false);
                     if let Err(err) = mapped {
@@ -1318,14 +1382,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                         log::error!("Failed to re-map retired pool pages {:#x}: {err:?}", pages.start);
                     } else {
                         allocator.restore_pages(pages.clone());
-                        let start_address = pages.start;
-                        if allocator.add_page_to_fsb(start_address, block_size).is_err() {
-                            // if we failed here, we should still continue and allocate from the GCD
-                            debug_assert!(false, "Failed to add blocks to the fixed-size block allocator.");
-                        }
-
-                        // this should always succeed now that we have added a proper sized block to the list
-                        if let Ok(alloc) = allocator.internal_alloc(layout) {
+                        if let Ok(alloc) = allocator.allocate_from_pages(layout, pages) {
                             return Ok(alloc);
                         }
                         debug_assert!(false, "Failed to allocate from internal allocator after reclaiming pages.");
@@ -1334,40 +1391,18 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
 
                 // As a matter of policy, allocate at least the minimum expansion amount of memory and ensure the
                 // size is aligned to `UEFI_PAGE_SIZE`.
-                let original_allocation_size = max(block_size, self.min_expansion);
                 let required_alignment = allocator.page_allocation_granularity;
-                let mut allocation_size = align_up(original_allocation_size, required_alignment).map_err(|_| {
-                    debug_assert!(false);
-                    AllocError
-                })?;
-
-                loop {
-                    let required_size = original_allocation_size
-                        .checked_add(AllocatorListNode::size_for_free_region(allocation_size))
+                let user_alignment = max(UEFI_PAGE_SIZE, layout.align());
+                let usable_size = max(required_size, UEFI_PAGE_SIZE)
+                    .checked_add(user_alignment - UEFI_PAGE_SIZE)
+                    .ok_or(AllocError)?;
+                let allocation_size =
+                    AllocatorListNode::allocation_size(usable_size, self.min_expansion, required_alignment)
                         .ok_or_else(|| {
                             debug_assert!(false);
                             AllocError
                         })?;
-                    let next_allocation_size = align_up(required_size, required_alignment).map_err(|_| {
-                        debug_assert!(false);
-                        AllocError
-                    })?;
-                    if next_allocation_size == allocation_size {
-                        break;
-                    }
-                    allocation_size = next_allocation_size;
-                }
-
-                // Ensure that the requested number of pages is a multiple of the granularity
-                let required_pages =
-                    align_up(uefi_size_to_pages!(allocation_size), uefi_size_to_pages!(required_alignment)).map_err(
-                        |_| {
-                            debug_assert!(false);
-                            AllocError
-                        },
-                    )?;
-
-                allocation_size = uefi_pages_to_size!(required_pages);
+                let required_pages = uefi_size_to_pages!(allocation_size);
 
                 // Allocate additional memory through the GCD, returning AllocError
                 // if the GCD returns an error
@@ -1400,27 +1435,25 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     return Err(AllocError);
                 };
 
-                let mut pages_to_retire = None;
-                if let Some(new_pages) = new_pages {
-                    let active_end = min(new_pages.end, new_pages.start + uefi_pages_to_size!(reclaim_pages));
-                    allocator.activate_new_pages(new_pages.start..active_end);
-
-                    // Split the whole page into fixed-size blocks
-                    if allocator.add_page_to_fsb(new_pages.start, block_size).is_err() {
-                        debug_assert!(false, "Failed to add blocks to the fixed-size block allocator.");
-                    }
-                    if active_end < new_pages.end {
-                        pages_to_retire = Some(active_end..new_pages.end);
-                    }
+                let new_pages = new_pages.ok_or(AllocError)?;
+                let active_start = align_up(new_pages.start, user_alignment).map_err(|_| AllocError)?;
+                let active_end =
+                    active_start.checked_add(uefi_pages_to_size!(required_payload_pages)).ok_or(AllocError)?;
+                if active_end > new_pages.end {
+                    debug_assert!(false, "Expansion does not contain enough aligned pages.");
+                    return Err(AllocError);
                 }
-
-                // The activated portion of the new region was sized to satisfy this allocation.
-                let allocation = allocator.internal_alloc(layout).map_err(|_| {
+                let active_pages = active_start..active_end;
+                allocator.activate_new_pages(active_pages.clone());
+                let allocation = allocator.allocate_from_pages(layout, active_pages).map_err(|_| {
                     debug_assert!(false);
                     AllocError
                 });
-                if let Some(pages) = pages_to_retire {
-                    allocator.retire_pages(self.gcd, pages);
+                if new_pages.start < active_start {
+                    allocator.retire_pages(self.gcd, new_pages.start..active_start);
+                }
+                if active_end < new_pages.end {
+                    allocator.retire_pages(self.gcd, active_end..new_pages.end);
                 }
                 allocation
             }
@@ -1428,7 +1461,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 // if we get a larger allocation requestion than the largest block size, we will satisfy it with pages
                 // from the GCD directly. The largest block is already a page in size, so we are handling a very large
                 // pool allocation
-                allocator.stats.large_pool_allocation_calls += 1;
                 let alignment = allocator.page_allocation_granularity;
 
                 // Per UEFI spec, user pointers must be at least 8-byte aligned. Making the user alignment at least the
@@ -1489,6 +1521,27 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         let mut allocator = self.lock();
         let Some(index) = list_index(&layout) else {
             allocator.stats.pool_free_calls += 1;
+            if let Some(size) = retained_pool_size(layout) {
+                let pages = ptr.addr().get()..ptr.addr().get() + size;
+                for page_base in pages.clone().step_by(UEFI_PAGE_SIZE) {
+                    let Some(node) = allocator.node_for_address(page_base) else {
+                        debug_assert!(false, "Pool allocation belongs to an untracked page.");
+                        return;
+                    };
+                    // SAFETY: node_for_address returned the live metadata tracking this allocation.
+                    unsafe {
+                        let Some((_, free_bytes)) = (*node.as_ptr()).page_free_bytes_mut(page_base) else {
+                            debug_assert!(false);
+                            return;
+                        };
+                        debug_assert_eq!(*free_bytes, 0);
+                        *free_bytes = AllocatorListNode::RETIRING_PAGE;
+                    }
+                }
+                allocator.stats.retired_pages += uefi_size_to_pages!(size);
+                allocator.retire_pages(self.gcd, pages);
+                return;
+            }
             // if this isn't in the fixed block list, we directly free the memory in the GCD
             // SAFETY: large allocations place a LargeAllocationNode immediately before the returned user pointer.
             let node = unsafe { NonNull::new_unchecked(ptr.cast::<LargeAllocationNode>().as_ptr().sub(1)).as_ref() };
@@ -1629,6 +1682,17 @@ mod tests {
             f();
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_fsb_expansion_size_includes_metadata_in_minimum() {
+        assert_eq!(AllocatorListNode::allocation_size(UEFI_PAGE_SIZE, SIZE_64KB, SIZE_64KB), Some(SIZE_64KB));
+        assert_eq!(AllocatorListNode::allocation_size(SIZE_64KB, SIZE_64KB, SIZE_64KB), Some(2 * SIZE_64KB));
+        assert_eq!(
+            AllocatorListNode::allocation_size(UEFI_PAGE_SIZE, UEFI_PAGE_SIZE, UEFI_PAGE_SIZE),
+            Some(2 * UEFI_PAGE_SIZE)
+        );
+        assert_eq!(AllocatorListNode::allocation_size(usize::MAX, SIZE_64KB, SIZE_64KB), None);
     }
 
     #[test]
@@ -2655,7 +2719,7 @@ mod tests {
         with_granularity_modulation(|granularity| {
             with_locked_state(|| {
                 init_fsb_guard_check(granularity);
-                let layout = Layout::from_size_align(2 * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+                let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, UEFI_PAGE_SIZE).unwrap();
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
                 assert_eq!(LOCK_CHECK_FSB.stats().large_pool_allocation_calls, 1);
@@ -2760,7 +2824,7 @@ mod tests {
                 unsafe { fsb.deallocate(allocation, layout) };
                 assert_eq!(observation.calls, 2);
 
-                let layout = Layout::from_size_align(2 * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+                let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, UEFI_PAGE_SIZE).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 assert_final_state(&observation, 3);
                 assert_eq!(observation.stats.unwrap().large_pool_allocation_calls, 1);
@@ -3168,7 +3232,7 @@ mod tests {
         with_locked_state(|| {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             let fsb = fsb_with_gcd(&GCD);
-            let layout = Layout::from_size_align(2 * UEFI_PAGE_SIZE, 8).unwrap();
+            let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, 8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
             let claimed = fsb.stats().claimed_pages;
             // SAFETY: this live large allocation has a writable header immediately before its user pointer.
@@ -3200,8 +3264,7 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             let fsb = fsb_with_gcd(&GCD);
 
-            // Allocations larger than the largest block size are not tracked for retirement.
-            let large = Layout::from_size_align(UEFI_PAGE_SIZE * 2, UEFI_PAGE_SIZE).unwrap();
+            let large = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, UEFI_PAGE_SIZE).unwrap();
             let allocation = fsb.allocate(large).unwrap().cast::<u8>();
             let page_base = allocation.addr().get();
             let retired = fsb.stats().retired_pages;
@@ -3225,7 +3288,7 @@ mod tests {
             let fsb = fsb_with_gcd(&GCD);
 
             for alignment in [8, UEFI_PAGE_SIZE, SIZE_64KB, SIZE_64KB * 2] {
-                let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, alignment).unwrap();
+                let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, alignment).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
 
                 assert!(allocation.addr().get().is_multiple_of(alignment));
@@ -3236,6 +3299,223 @@ mod tests {
             }
 
             assert_eq!(fsb.stats().large_pool_allocation_calls, 4);
+        });
+    }
+
+    #[test]
+    fn test_fsb_medium_pool_packs_retires_and_reuses_page_runs() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+                init_gcd(&GCD, 0x400000);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    granularity,
+                    SIZE_64KB,
+                );
+                let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
+                let allocations: Vec<_> = (0..5).map(|_| fsb.allocate(layout).unwrap().cast::<u8>()).collect();
+                let region = fsb.get_memory_ranges().next().unwrap();
+                assert_eq!(region.len(), SIZE_64KB);
+                assert_eq!(fsb.get_memory_ranges().count(), 1);
+                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 0);
+                assert_eq!(fsb.stats().claimed_pages, 16);
+                for pair in allocations.windows(2) {
+                    assert_eq!(pair[1].addr().get() - pair[0].addr().get(), 3 * UEFI_PAGE_SIZE);
+                }
+                let retired = fsb.stats().retired_pages;
+                // SAFETY: both allocations are live and were returned for layout.
+                unsafe {
+                    fsb.deallocate(allocations[0], layout);
+                    fsb.deallocate(allocations[1], layout);
+                }
+                assert_eq!(fsb.stats().retired_pages, retired + 6);
+                for page in (allocations[0].addr().get()..allocations[2].addr().get()).step_by(UEFI_PAGE_SIZE) {
+                    assert_eq!(page_attributes(&GCD, page) & efi::MEMORY_RP, efi::MEMORY_RP);
+                }
+                for allocation in &allocations[2..] {
+                    for offset in (0..3 * UEFI_PAGE_SIZE).step_by(UEFI_PAGE_SIZE) {
+                        assert_eq!(page_attributes(&GCD, allocation.addr().get() + offset) & efi::MEMORY_RP, 0);
+                    }
+                }
+                let combined_layout = Layout::from_size_align(6 * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+                let combined = fsb.allocate(combined_layout).unwrap().cast::<u8>();
+                assert_eq!(combined, allocations[0]);
+                assert_eq!(fsb.stats().claimed_pages, 16);
+                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 0);
+                // SAFETY: combined and the remaining allocations are live with their original layouts.
+                unsafe {
+                    fsb.deallocate(combined, combined_layout);
+                    for allocation in &allocations[2..] {
+                        fsb.deallocate(*allocation, layout);
+                    }
+                }
+                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 15);
+                assert_eq!(fsb.lock().pending_retirement(usize::MAX), None);
+                assert!(fsb.lock().list_heads.iter().all(Option::is_none));
+            });
+        });
+    }
+
+    #[test]
+    fn test_fsb_medium_pool_reuses_run_crossing_retired_cursor() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+                init_gcd(&GCD, 0x400000);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    granularity,
+                    SIZE_64KB,
+                );
+                let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
+                let first = fsb.allocate(layout).unwrap().cast::<u8>();
+                let second = fsb.allocate(layout).unwrap().cast::<u8>();
+                let claimed = fsb.stats().claimed_pages;
+                // SAFETY: both allocations are live and were returned for layout.
+                unsafe {
+                    fsb.deallocate(first, layout);
+                    fsb.deallocate(second, layout);
+                }
+                let layout = Layout::from_size_align(15 * UEFI_PAGE_SIZE, 8).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                assert_eq!(allocation, first);
+                assert_eq!(fsb.stats().claimed_pages, claimed);
+                assert_eq!(fsb.get_memory_ranges().count(), 1);
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { fsb.deallocate(allocation, layout) };
+            });
+        });
+    }
+
+    #[test]
+    fn test_fsb_medium_pool_maps_only_requested_pages() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+                init_gcd(&GCD, 0x400000);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    granularity,
+                    SIZE_64KB,
+                );
+                let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, 8).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                let region = fsb.get_memory_ranges().next().unwrap();
+                assert_eq!(region.len(), SIZE_64KB);
+                assert_eq!(fsb.stats().retired_pages, 13);
+                for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
+                    let mapped = page == region.start
+                        || (allocation.addr().get()..allocation.addr().get() + 2 * UEFI_PAGE_SIZE).contains(&page);
+                    assert_eq!(page_attributes(&GCD, page) & efi::MEMORY_RP == 0, mapped);
+                }
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { fsb.deallocate(allocation, layout) };
+                assert_eq!(fsb.stats().retired_pages, 15);
+                assert_eq!(fsb.stats().claimed_pages, 16);
+            });
+        });
+    }
+
+    #[test]
+    fn test_fsb_medium_pool_respects_alignment_on_expansion_and_reclaim() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+                init_gcd(&GCD, 0x400000);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    granularity,
+                    SIZE_64KB,
+                );
+                for alignment in [8, UEFI_PAGE_SIZE, 2 * UEFI_PAGE_SIZE, SIZE_64KB] {
+                    let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, alignment).unwrap();
+                    let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                    assert!(allocation.addr().get().is_multiple_of(alignment));
+                    let claimed = fsb.stats().claimed_pages;
+                    // SAFETY: allocation is live and was returned for layout.
+                    unsafe { fsb.deallocate(allocation, layout) };
+                    let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                    assert!(allocation.addr().get().is_multiple_of(alignment));
+                    assert_eq!(fsb.stats().claimed_pages, claimed);
+                    // SAFETY: allocation is live and was returned for layout.
+                    unsafe { fsb.deallocate(allocation, layout) };
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn test_fsb_retained_pool_size_and_alignment_boundaries() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+                init_gcd(&GCD, 0x400000);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    granularity,
+                    SIZE_64KB,
+                );
+                let layout = Layout::from_size_align(SIZE_64KB, UEFI_PAGE_SIZE).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                let region = fsb.get_memory_ranges().next().unwrap();
+                assert!(region.contains(&allocation.addr().get()));
+                assert_eq!(region.len(), SIZE_64KB + granularity);
+                for offset in (0..SIZE_64KB).step_by(UEFI_PAGE_SIZE) {
+                    assert_eq!(page_attributes(&GCD, allocation.addr().get() + offset) & efi::MEMORY_RP, 0);
+                }
+                let claimed = fsb.stats().claimed_pages;
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { fsb.deallocate(allocation, layout) };
+                for offset in (0..SIZE_64KB).step_by(UEFI_PAGE_SIZE) {
+                    assert_eq!(
+                        page_attributes(&GCD, allocation.addr().get() + offset) & efi::MEMORY_RP,
+                        efi::MEMORY_RP
+                    );
+                }
+                assert_eq!(fsb.stats().claimed_pages, claimed);
+                let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, 2 * SIZE_64KB).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
+                assert!(allocation.addr().get().is_multiple_of(layout.align()));
+                assert!(!region.contains(&allocation.addr().get()));
+                assert!(fsb.stats().claimed_pages > claimed);
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { fsb.deallocate(allocation, layout) };
+                assert_eq!(fsb.stats().claimed_pages, claimed);
+            });
+        });
+    }
+
+    #[test]
+    fn test_fsb_medium_pool_retirement_and_reclaim_hold_guard() {
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                init_fsb_guard_check(granularity);
+                let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
+                let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
+                assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
+                let retired = LOCK_CHECK_FSB.stats().retired_pages;
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
+                assert_fsb_guard_observations(GCD_ATTRIBUTES);
+                assert_eq!(LOCK_CHECK_FSB.stats().retired_pages, retired + 3);
+                let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
+                assert_fsb_guard_observations(GCD_ATTRIBUTES);
+                // SAFETY: allocation is live and was returned for layout.
+                unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
+                assert_fsb_guard_observations(GCD_ATTRIBUTES);
+                CHECK_GCD_LOCK.store(false, Ordering::Relaxed);
+            });
         });
     }
 
