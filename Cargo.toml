@@ -3,7 +3,7 @@ resolver = "3"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "24.1.0"
+version = "24.1.1"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.90"
@@ -32,21 +32,21 @@ linkme = { version = "0.3.36" }
 log = { version = "0.4", default-features = false }
 memoffset = {version = "0.9.1" }
 num-traits = { version = "0.2", default-features = false }
-patina = { version = "24.1.0", path = "sdk/patina" }
-patina_debugger = { version = "24.1.0", path = "core/patina_debugger" }
-patina_ffs = { version = "24.1.0", path = "sdk/patina_ffs" }
-patina_ffs_extractors = { version = "24.1.0", path = "sdk/patina_ffs_extractors" }
-patina_internal_core = { version = "24.1.0", path = "core/patina_internal_core", default-features = false }
-patina_internal_cpu = { version = "24.1.0", path = "core/patina_internal_cpu", default-features = false }
+patina = { version = "24.1.1", path = "sdk/patina" }
+patina_debugger = { version = "24.1.1", path = "core/patina_debugger" }
+patina_ffs = { version = "24.1.1", path = "sdk/patina_ffs" }
+patina_ffs_extractors = { version = "24.1.1", path = "sdk/patina_ffs_extractors" }
+patina_internal_core = { version = "24.1.1", path = "core/patina_internal_core", default-features = false }
+patina_internal_cpu = { version = "24.1.1", path = "core/patina_internal_cpu", default-features = false }
 lzma-rust2 = { version = "0.16", default-features = false }
-patina_macro = { version = "24.1.0", path = "sdk/patina_macro" }
-patina_mm = { version = "24.1.0", path = "components/patina_mm" }
+patina_macro = { version = "24.1.1", path = "sdk/patina_macro" }
+patina_mm = { version = "24.1.1", path = "components/patina_mm" }
 patina_mtrr = { version = "3" }
 patina_paging = { version = "11.1.1" }
-patina_performance = { version = "24.1.0", path = "components/patina_performance" }
-patina_smbios = { version = "24.1.0", path = "components/patina_smbios" }
-patina_stacktrace = { version = "24.1.0", path = "core/patina_stacktrace" }
-patina_test = { version = "24.1.0", path = "components/patina_test" }
+patina_performance = { version = "24.1.1", path = "components/patina_performance" }
+patina_smbios = { version = "24.1.1", path = "components/patina_smbios" }
+patina_stacktrace = { version = "24.1.1", path = "core/patina_stacktrace" }
+patina_test = { version = "24.1.1", path = "components/patina_test" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 rustversion = { version = "1" }
