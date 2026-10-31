@@ -154,25 +154,25 @@ impl InterruptsX64 {
         // the code, data, and TSS selectors used below and by the IDT. Initialization is exclusive.
         unsafe {
             core::arch::asm!(
-                "lgdt [{gdtr}]",
-                "push {sel}",
-                "lea {tmp}, [rip + 2f]",
-                "push {tmp}",
-                "retfq",
+                "lgdt [{gdtr}]",           // Load the GDT Register
+                "push {code}",             // Push the code segment selector. No :x specifies 64-bit register size
+                "lea {label}, [rip + 2f]", // Load the address of label '2' below (f => forward label in Rust's inline assembly)
+                "push {label}",            // Push the address calculated for forward label '2'
+                "retfq",                   // Pop RIP and the new CS selector to continue execution at label '2'
                 "2:",
-                "mov ss, {data:x}",
-                "mov ds, {data:x}",
-                "mov es, {data:x}",
-                "mov fs, {data:x}",
-                "mov gs, {data:x}",
-                "ltr {tss:x}",
-                "lidt [{idtr}]",
+                "mov ss, {data:x}",        // Reload SS Selector, :x specifies 16-bit register size
+                "mov ds, {data:x}",        // Reload DS Selector, :x specifies 16-bit register size
+                "mov es, {data:x}",        // Reload ES Selector, :x specifies 16-bit register size
+                "mov fs, {data:x}",        // Reload FS Selector, :x specifies 16-bit register size
+                "mov gs, {data:x}",        // Reload GS Selector, :x specifies 16-bit register size
+                "ltr {tss:x}",             // Load the TSS Selector, :x specifies 16-bit register size
+                "lidt [{idtr}]",           // Load the IDT Register
                 gdtr = in(reg) &raw const gdtr,
                 idtr = in(reg) &raw const idtr,
-                sel = in(reg) u64::from(crate::gdt::CODE_SELECTOR),
+                code = in(reg) u64::from(crate::gdt::CODE_SELECTOR),
                 data = in(reg) crate::gdt::DATA_SELECTOR,
                 tss = in(reg) crate::gdt::TSS_SELECTOR,
-                tmp = out(reg) _,
+                label = out(reg) _,
                 options(preserves_flags),
             );
         }
