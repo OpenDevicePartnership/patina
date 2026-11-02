@@ -324,6 +324,10 @@ mod tests {
             unimplemented!("not used by Protocol<P>")
         }
 
+        fn image_handle(&self) -> Handle {
+            unimplemented!("not used by Protocol<P>")
+        }
+
         fn register_install_notify(
             &self,
             _protocol: BinaryGuid,

@@ -27,6 +27,7 @@ use patina::standard::efi;
 use patina::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
 use crate::events::EVENT_DB;
+use crate::protocol_db::DXE_CORE_HANDLE;
 #[cfg(feature = "unstable-device-path")]
 use crate::protocols::core_locate_device_path;
 use crate::protocols::{
@@ -191,6 +192,10 @@ impl ProtocolServices for CoreProtocolServices {
 
     fn register_agent(&self) -> Result<Handle, ProtocolError> {
         self.install_marker(None, PRIVATE_AGENT_MARKER_GUID)
+    }
+
+    fn image_handle(&self) -> Handle {
+        Handle::from_raw(DXE_CORE_HANDLE).expect("DXE_CORE_HANDLE is not null")
     }
 
     fn register_install_notify(
@@ -860,7 +865,7 @@ mod tests {
             // address, whose first field is the `Protocol` struct itself.
             let protocol = unsafe { &*protocol };
             assert_eq!(protocol.driver_binding_handle, handle.as_raw());
-            assert_eq!(protocol.image_handle, handle.as_raw());
+            assert_eq!(protocol.image_handle, DXE_CORE_HANDLE);
         });
     }
 

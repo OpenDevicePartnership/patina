@@ -732,6 +732,7 @@ mod tests {
     const AGENT: usize = 0x100;
     const CONTROLLER: usize = 0x200;
     const CHILD: usize = 0x300;
+    const IMAGE: usize = 0x400;
 
     fn h(value: usize) -> Handle {
         Handle::from_raw(value as *mut c_void).unwrap()
@@ -1014,6 +1015,7 @@ mod tests {
     fn test_controller_driver_install_registers_agent_and_driver_binding() {
         let mut mock = MockProtocolServices::new();
         mock.expect_register_agent().times(1).returning(|| Ok(h(AGENT)));
+        mock.expect_image_handle().returning(|| h(IMAGE));
         mock.expect_install_interface().times(1).returning(|handle, _, _| {
             assert_eq!(handle, Some(h(AGENT)));
             Ok(h(AGENT))
