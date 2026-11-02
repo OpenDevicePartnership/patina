@@ -40,7 +40,10 @@ use crate::{
     gcd::MemoryProtectionPolicy,
     memory_manager::CoreMemoryManager,
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
-    pi_dispatcher::debug_image_info_table::{DebugImageInfoData, ImageInfoType},
+    pi_dispatcher::{
+        debug_image_info_table::{DebugImageInfoData, ImageInfoType},
+        fv::device_path_bytes_for_fv_file,
+    },
     protocol_db,
     protocols::{
         PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path, core_uninstall_protocol_interface,
@@ -554,6 +557,23 @@ impl ImageData {
         self.private_image_data.insert(handle, private_image_data);
 
         debug_image_data.add_entry(ImageInfoType::Normal, protocol_ptr, handle);
+    }
+
+    /// Records the firmware volume file the DXE Core was loaded from in the DXE Core's loaded image protocol.
+    ///
+    /// The HOB the DXE Core image is built from only carries the file name GUID, so the location is filled in once
+    /// the containing firmware volume is installed.
+    pub(super) fn set_dxe_core_file(&mut self, fv_handle: efi::Handle, file_name: efi::Guid) -> Result<(), EfiError> {
+        let image = self.private_image_data.get_mut(&protocol_db::DXE_CORE_HANDLE).ok_or(EfiError::NotFound)?;
+        if !image.image_info.file_path.is_null() {
+            return Ok(());
+        }
+
+        let file_path = device_path_bytes_for_fv_file(fv_handle, file_name).map_err(EfiError::from)?;
+
+        // `set_file_path` trims the device handle's device path from the file path, so the handle is set first.
+        image.image_info.device_handle = fv_handle;
+        image.set_file_path(NonNull::from(&*file_path).cast::<Protocol>())
     }
 
     /// Validates that the provided parent handle is valid and has a loaded image protocol.
@@ -3779,6 +3799,86 @@ mod tests {
             PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
 
             assert!(PI_DISPATCHER.image_data.lock().private_image_data.contains_key(&DXE_CORE_HANDLE));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_dxe_core_file_populates_loaded_image_location() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table(patina::UefiSpecVersion::V2_11);
+            }
+
+            static CORE: crate::Core<MockPlatformInfo> =
+                crate::Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            CORE.override_instance();
+            let pi_dispatcher = &CORE.pi_dispatcher;
+
+            pi_dispatcher.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            assert!(
+                pi_dispatcher.image_data.lock().private_image_data[&DXE_CORE_HANDLE].image_info.file_path.is_null()
+            );
+
+            let mut fv_file = File::open(test_collateral!("DXEFV.Fv")).expect("failed to open test FV.");
+            let mut fv: Vec<u8> = Vec::new();
+            fv_file.read_to_end(&mut fv).expect("failed to read test FV");
+            let fv = fv.leak();
+
+            // The DXE core image path is set during firmware volume installation.
+            // SAFETY: `fv` is leaked, so it stays valid for the rest of the test process.
+            let fv_handle = unsafe { pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None) }.unwrap();
+            let file_name = patina::guid::DXE_CORE_ID.into_inner();
+
+            let mut image_data = pi_dispatcher.image_data.lock();
+            let info = &image_data.private_image_data[&DXE_CORE_HANDLE].image_info;
+            assert_eq!(info.device_handle, fv_handle);
+            assert!(!info.file_path.is_null());
+
+            // SAFETY: `file_path` was just set to a copy of a valid device path (an FvFile node and an end node).
+            let (node, guid_bytes) = unsafe {
+                (
+                    &*info.file_path,
+                    core::slice::from_raw_parts(info.file_path.cast::<u8>().add(size_of::<Protocol>()), 16),
+                )
+            };
+            assert_eq!(node.r#type, TYPE_MEDIA);
+            assert_eq!(node.sub_type, Media::SUBTYPE_PIWG_FIRMWARE_FILE);
+            assert_eq!(guid_bytes, file_name.as_bytes());
+
+            // A later call does not replace the location that was already recorded.
+            let recorded = info.file_path;
+            image_data.set_dxe_core_file(fv_handle, file_name).unwrap();
+            assert_eq!(image_data.private_image_data[&DXE_CORE_HANDLE].image_info.file_path, recorded);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_dxe_core_file_without_fv_device_path_fails() {
+        test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table(patina::UefiSpecVersion::V2_11);
+            }
+
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+
+            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+
+            let mut image_data = PI_DISPATCHER.image_data.lock();
+            let file_name = patina::guid::DXE_CORE_ID.into_inner();
+
+            assert!(image_data.set_dxe_core_file(0x9999 as efi::Handle, file_name).is_err());
+            assert!(image_data.private_image_data[&DXE_CORE_HANDLE].image_info.file_path.is_null());
         })
         .unwrap();
     }
