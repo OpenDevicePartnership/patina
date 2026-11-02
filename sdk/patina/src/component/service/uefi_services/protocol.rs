@@ -580,6 +580,12 @@ pub trait ProtocolServices {
     /// Returns an error if a handle could not be created, for example [`ProtocolError::OutOfResources`].
     fn register_agent(&self) -> Result<Handle, ProtocolError>;
 
+    /// Returns the handle of the image that the component installing the driver binding protocol belongs to.
+    /// For example, components that are part of the Patina DXE Core would return the DXE Core's image handle.
+    ///
+    /// It carries the `EFI_LOADED_IMAGE_PROTOCOL` that identifies the image by name and location.
+    fn image_handle(&self) -> Handle;
+
     /// Registers `callback` to run for each handle on which `protocol` is installed.
     ///
     /// The callback runs once for each handle that already has the protocol installed, and again
@@ -999,13 +1005,16 @@ pub trait ProtocolServicesExt: ProtocolServices {
     }
 
     /// Builds and installs a driver binding protocol from `binding`, using a newly generated agent
-    /// handle as both the driver binding's image handle and its own handle.
+    /// handle as the driver binding's handle and [`ProtocolServices::image_handle`] as its image handle.
     ///
     /// This is how a component participates in the UEFI driver model. Once installed, `binding`
     /// receives `Supported()`/`Start()`/`Stop()` calls from `ConnectController()`/`DisconnectController()`,
     /// and an existing [`OpenAttributes::ByDriver`] or [`OpenAttributes::ByDriverExclusive`] usage recorded
     /// under the returned handle can be released or preempted, since there is now a `Stop()` for the core to
     /// call. See [`super::driver_binding`] for details.
+    ///
+    /// The returned handle is the driver binding handle. Pass it, not the image handle, as the `DriverImageHandle`
+    /// of `ConnectController()` and `DisconnectController()`.
     ///
     /// A component that already has an agent handle from [`ProtocolServices::register_agent`] should use
     /// [`Self::install_driver_binding_on`] instead, so its existing usages are served by the same driver binding.
@@ -1022,9 +1031,10 @@ pub trait ProtocolServicesExt: ProtocolServices {
 
     /// Builds and installs a driver binding protocol from `binding` on an existing `agent` handle.
     ///
-    /// `agent` is used as both the driver binding's image handle and its own handle, and is passed to `binding`
-    /// as its agent. It is typically a handle obtained from [`ProtocolServices::register_agent`] that the
-    /// component already uses for [`ProtocolServicesExt::open_protocol`]. See [`Self::install_driver_binding`].
+    /// `agent` is used as the driver binding's own handle, and is passed to `binding` as its agent. The driver
+    /// binding's image handle is [`ProtocolServices::image_handle`]. `agent` is typically a handle obtained from
+    /// [`ProtocolServices::register_agent`] that the component already uses for
+    /// [`ProtocolServicesExt::open_protocol`]. See [`Self::install_driver_binding`].
     ///
     /// # Errors
     ///
@@ -1043,7 +1053,7 @@ pub trait ProtocolServicesExt: ProtocolServices {
             start: driver_binding::start_trampoline::<B>,
             stop: driver_binding::stop_trampoline::<B>,
             driver_binding_handle: agent.as_raw(),
-            image_handle: agent.as_raw(),
+            image_handle: self.image_handle().as_raw(),
         };
         let holder = Box::new(driver_binding::DriverBindingHolder { protocol, binding });
         self.install_protocol::<driver_binding::DriverBindingHolder<B>>(Some(agent), holder).map(|_| ())
@@ -1561,9 +1571,14 @@ mod tests {
 
         let mut mock = MockProtocolServices::new();
         mock.expect_register_agent().times(1).returning(|| Ok(fake_handle()));
-        mock.expect_install_interface().times(1).returning(|handle, guid, _| {
+        mock.expect_image_handle().times(1).returning(fake_controller);
+        mock.expect_install_interface().times(1).returning(|handle, guid, interface| {
             assert_eq!(handle, Some(fake_handle()));
             assert_eq!(guid, super::driver_binding::DriverBindingHolder::<NoOpBinding>::PROTOCOL_GUID);
+            // SAFETY: `install_driver_binding` passes a valid `DriverBindingHolder`, whose first field is the protocol.
+            let protocol = unsafe { &*interface.as_raw().cast::<efi::protocols::driver_binding::Protocol>() };
+            assert_eq!(protocol.driver_binding_handle, fake_handle().as_raw());
+            assert_eq!(protocol.image_handle, fake_controller().as_raw());
             Ok(fake_handle())
         });
 
@@ -1591,9 +1606,14 @@ mod tests {
 
         let mut mock = MockProtocolServices::new();
         mock.expect_register_agent().never();
-        mock.expect_install_interface().times(1).returning(|handle, guid, _| {
+        mock.expect_image_handle().times(1).returning(fake_controller);
+        mock.expect_install_interface().times(1).returning(|handle, guid, interface| {
             assert_eq!(handle, Some(fake_handle()));
             assert_eq!(guid, super::driver_binding::DriverBindingHolder::<NoOpBinding>::PROTOCOL_GUID);
+            // SAFETY: `install_driver_binding_on` passes a valid `DriverBindingHolder`, whose first field is the protocol.
+            let protocol = unsafe { &*interface.as_raw().cast::<efi::protocols::driver_binding::Protocol>() };
+            assert_eq!(protocol.driver_binding_handle, fake_handle().as_raw());
+            assert_eq!(protocol.image_handle, fake_controller().as_raw());
             Ok(fake_handle())
         });
 
