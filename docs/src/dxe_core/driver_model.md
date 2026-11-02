@@ -41,18 +41,51 @@ managing a controller to allow the platform some measure of control over which d
 controller. The precedence rules are used to generate a list of candidate drivers as follows:
 
 1. Drivers in the optional `driver_handles` input parameter to `core_connect_controller` are added to the candidate list
-in order.
+in order. These are handles the driver binding protocol is installed on.
 2. If an instance of the [`EFI_PLATFORM_DRIVER_OVERRIDE`](https://uefi.org/specs/UEFI/2.10_A/11_Protocols_UEFI_Driver_Model.html#efi-platform-driver-override-protocol-protocols-uefi-driver-model)
 protocol is found in the system, then drivers it returns are added to the list in order, skipping any that are already
-in the list.
+in the list. See [Override Handle Resolution](#override-handle-resolution).
 3. The set of driver image handles in the protocol database supporting the [`EFI_DRIVER_FAMILY_OVERRIDE_PROTOCOL`](https://uefi.org/specs/UEFI/2.10_A/11_Protocols_UEFI_Driver_Model.html#efi-driver-family-override-protocol),
 ordered by the version returned by `GetVersion()` API of that protocol are added to the list, skipping any that are
 already in the list.
 4. If an instance of the [`EFI_BUS_SPECIFIC_DRIVER_OVERRIDE'](https://uefi.org/specs/UEFI/2.10_A/11_Protocols_UEFI_Driver_Model.html#efi-bus-specific-driver-override-protocol)
 protocol is found in the system, then drivers it returns are added to the list in order, skipping any that are already
-in the list.
+in the list. See [Override Handle Resolution](#override-handle-resolution).
 5. All remaining drivers in the [Protocol Database](protocol_database.md) not already in the list are added to the end
 of the list.
+
+#### Override Handle Resolution
+
+The `GetDriver()` functions of the platform and bus specific driver override protocols return driver image handles
+per their UEFI Specification definition.
+
+Patina and EDK II expand a returned handle to every driver binding whose `ImageHandle` is that handle. The resolution
+between the two slightly differs:
+
+| Behavior | EDK II | Patina |
+| -------- | ------ | ------ |
+| Driver binding installed on the returned handle | Selected only if its `ImageHandle` is the returned handle | Always selected, and added first |
+| Driver bindings whose `ImageHandle` is the returned handle | Selected, in handle database order | Selected, in handle database order |
+| Status returned by `GetDriver()` | The list continues while the status is not an error, so warning statuses continue it | The list ends on any status other than `SUCCESS` |
+
+The Patina behavior is a bit different because Patina components are not separate images. Every driver binding installed
+with `install_driver_binding` in Patina Protocol Services reports the DXE Core image handle as its `ImageHandle`, and
+its own handle is a separate agent handle that has no loaded image protocol on the handle.
+
+##### Platform Considerations
+
+```admonish warning
+An override that returns the DXE Core image handle selects every driver binding installed with
+`install_driver_binding` (from a Patina component using Patina Protocol Services), not a single Patina component.
+Those bindings are placed at the override's position in the candidate list.
+```
+
+- To select one Patina component, return the driver binding handle that `install_driver_binding` returned for it.
+- A Patina component receives the DXE Core image handle through its `Handle` parameter.
+- An override that returns the binding handle of a C driver whose `ImageHandle` differs from its `DriverBindingHandle`
+  selects that driver in Patina but not in EDK II.
+- An override protocol that returns a warning status from `GetDriver()` ends the list in Patina. Return success for
+  each driver and an error status once there are no more.
 
 ### Starting Drivers
 
