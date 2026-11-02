@@ -364,6 +364,28 @@ mod tests {
         storage.add_service(SomeStruct { x: 1 });
         let s3 = storage.get_service::<SomeStruct>().unwrap();
         assert_eq!(1, s3.x);
+
+        #[derive(IntoService)]
+        #[service(dyn MyService)]
+        enum MyEnumService {
+            Small,
+            Large,
+        }
+
+        impl MyService for MyEnumService {
+            fn do_something(&self) -> u32 {
+                match self {
+                    Self::Small => 1,
+                    Self::Large => 100,
+                }
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(MyEnumService::Large);
+        let s4 = storage.get_service::<dyn MyService>().unwrap();
+        assert_eq!(100, s4.do_something());
+        assert_eq!(1, MyEnumService::Small.do_something());
     }
 
     #[test]

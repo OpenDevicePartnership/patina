@@ -16,9 +16,10 @@ struct AttrConfig {
     pub services: Vec<TokenStream>,
 }
 
-/// A struct containing the parsed struct and its attribute configs.
+/// A struct containing the parsed struct or enum and its attribute configs.
 struct Service {
-    item: ItemStruct,
+    ident: syn::Ident,
+    generics: Generics,
     config: AttrConfig,
 }
 
@@ -67,9 +68,9 @@ impl Service {
         Ok(services)
     }
 
-    /// Returns the name [Ident](syn::Ident) of the struct
+    /// Returns the name [Ident](syn::Ident) of the type
     fn ident(&self) -> &syn::Ident {
-        &self.item.ident
+        &self.ident
     }
 
     /// Returns the parsed attribute configuration.
@@ -97,9 +98,9 @@ impl Service {
         tokens
     }
 
-    /// The generics for the struct
+    /// The generics for the type
     fn generics(&self) -> Generics {
-        self.item.generics.clone()
+        self.generics.clone()
     }
 
     /// The left hand side generics for the struct, which can include trait bounds.
@@ -132,21 +133,21 @@ impl Service {
     }
 }
 
-impl TryFrom<ItemStruct> for Service {
-    type Error = syn::Error;
-
-    fn try_from(mut item: ItemStruct) -> Result<Self, Self::Error> {
-        let config = Self::parse_attr(&mut item.attrs)?;
-        Ok(Service { item, config })
+impl Service {
+    fn from_parts(mut attrs: Vec<Attribute>, ident: syn::Ident, generics: Generics) -> syn::Result<Self> {
+        let config = Self::parse_attr(&mut attrs)?;
+        Ok(Service { ident, generics, config })
     }
 }
 
 impl Parse for Service {
     fn parse(stream: syn::parse::ParseStream) -> syn::Result<Self> {
         if stream.fork().parse::<ItemStruct>().is_ok() {
-            Ok(stream.parse::<ItemStruct>().and_then(Service::try_from)?)
+            let item = stream.parse::<ItemStruct>()?;
+            Service::from_parts(item.attrs, item.ident, item.generics)
         } else if stream.fork().parse::<ItemEnum>().is_ok() {
-            Err(syn::Error::new(stream.span(), "Enum types are not currently supported."))
+            let item = stream.parse::<ItemEnum>()?;
+            Service::from_parts(item.attrs, item.ident, item.generics)
         } else {
             Err(syn::Error::new(stream.span(), "Union types are not currently supported."))
         }
@@ -336,17 +337,34 @@ mod tests {
     }
 
     #[test]
-    fn test_enum_gives_good_error() {
+    fn test_enum_parse() {
         let input = quote! {
             #[service(dyn MyService)]
-            enum MyUnion {
+            enum MyEnum {
                 A,
                 B,
             }
         };
 
         let expected = quote! {
-            :: core :: compile_error ! { "Enum types are not currently supported." }
+            extern crate alloc as __alloc_service_MyEnum;
+            impl patina::component::service::IntoService for MyEnum {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: &'static Self = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl patina::component::service::IntoService for &'static MyEnum {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: Self = self;
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
         };
 
         assert_eq!(expected.to_string(), service2(input).to_string());
