@@ -39,6 +39,31 @@ fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocol
         .collect()
 }
 
+/// Resolves override image handles to driver bindings: the binding on the handle itself, if any, plus every binding
+/// whose `ImageHandle` is that handle.
+fn get_bindings_for_image_handles(
+    image_handles: Vec<efi::Handle>,
+) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
+    let all_bindings = PROTOCOL_DB
+        .locate_handles(Some(efi::protocols::driver_binding::PROTOCOL_GUID))
+        .map(get_bindings_for_handles)
+        .unwrap_or_default();
+
+    let mut bindings = Vec::new();
+    for image_handle in image_handles {
+        let by_image = all_bindings.iter().copied().filter(|&binding| {
+            // SAFETY: `all_bindings` only holds driver binding interfaces returned by the protocol database.
+            unsafe { (*binding).image_handle == image_handle }
+        });
+        for binding in get_bindings_for_handles(Vec::from([image_handle])).into_iter().chain(by_image) {
+            if !bindings.contains(&binding) {
+                bindings.push(binding);
+            }
+        }
+    }
+    bindings
+}
+
 fn get_platform_driver_override_bindings(
     controller_handle: efi::Handle,
 ) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
@@ -71,7 +96,7 @@ fn get_platform_driver_override_bindings(
         driver_overrides.push(driver_image_handle);
     }
 
-    get_bindings_for_handles(driver_overrides)
+    get_bindings_for_image_handles(driver_overrides)
 }
 
 fn get_family_override_bindings() -> Vec<*mut efi::protocols::driver_binding::Protocol> {
@@ -140,7 +165,7 @@ fn get_bus_specific_override_bindings(
         bus_overrides.push(driver_image_handle);
     }
 
-    get_bindings_for_handles(bus_overrides)
+    get_bindings_for_image_handles(bus_overrides)
 }
 
 fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protocol> {
@@ -947,6 +972,42 @@ mod tests {
                 assert_eq!((*bindings[0]).version, 10);
                 assert_eq!((*bindings[1]).version, 20);
             }
+        });
+    }
+
+    #[test]
+    fn test_get_bindings_for_image_handles_expands_by_image_handle() {
+        with_locked_state(|| {
+            let image = new_test_handle(0x1000);
+            let other_image = new_test_handle(0x1100);
+            let install = |handle: efi::Handle, image_handle: efi::Handle| {
+                let binding = Box::into_raw(Box::new(efi::protocols::driver_binding::Protocol {
+                    version: 10,
+                    supported: mock_supported_success,
+                    start: mock_start_success,
+                    stop: mock_stop_success,
+                    driver_binding_handle: handle,
+                    image_handle,
+                }));
+                PROTOCOL_DB
+                    .install_protocol_interface(
+                        Some(handle),
+                        efi::protocols::driver_binding::PROTOCOL_GUID,
+                        binding.cast::<core::ffi::c_void>(),
+                    )
+                    .unwrap();
+                binding
+            };
+            let a_handle = new_test_handle(0x2000);
+            let a = install(a_handle, image);
+            let b = install(new_test_handle(0x2100), image);
+            let c = install(new_test_handle(0x2200), other_image);
+
+            assert_eq!(get_bindings_for_image_handles(vec![image]), vec![a, b]);
+            assert_eq!(get_bindings_for_image_handles(vec![other_image]), vec![c]);
+            // A binding named by its own handle and again through its image handle is returned once.
+            assert_eq!(get_bindings_for_image_handles(vec![a_handle, image]), vec![a, b]);
+            assert!(get_bindings_for_image_handles(vec![0x9999 as efi::Handle]).is_empty());
         });
     }
 
