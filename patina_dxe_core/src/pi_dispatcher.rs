@@ -27,6 +27,7 @@ use patina::{
     component::service::{Service, cell::ServiceCell},
     crc32,
     error::EfiError,
+    guid::DXE_CORE_ID,
     pi::{
         fw_fs::ffs,
         hob::{Hob, HobList},
@@ -536,7 +537,19 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     fn add_fv_handles(&self, new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
-        self.dispatcher_context.lock().add_fv_handles(new_handles, &self.section_extractor)
+        let (result, dxe_core_file) = {
+            let mut context = self.dispatcher_context.lock();
+            let result = context.add_fv_handles(new_handles, &self.section_extractor);
+            (result, context.dxe_core_file.take())
+        };
+
+        if let Some((fv_handle, file_name)) = dxe_core_file
+            && let Err(err) = self.image_data.lock().set_dxe_core_file(fv_handle, file_name)
+        {
+            log::warn!("Failed to record the DXE Core firmware volume file in its loaded image: {err}");
+        }
+
+        result
     }
 
     #[inline(always)]
@@ -635,6 +648,7 @@ struct DispatcherContext {
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
+    dxe_core_file: Option<(efi::Handle, efi::Guid)>,
 }
 
 impl DispatcherContext {
@@ -649,6 +663,7 @@ impl DispatcherContext {
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
+            dxe_core_file: None,
         }
     }
 
@@ -746,6 +761,9 @@ impl DispatcherContext {
 
                 for file in fv.files() {
                     let file = file?;
+                    if file.file_type_raw() == ffs::file::raw::r#type::DXE_CORE && file.name() == DXE_CORE_ID {
+                        self.dxe_core_file.get_or_insert((handle, file.name().into_inner()));
+                    }
                     if file.file_type_raw() == ffs::file::raw::r#type::DRIVER {
                         let file = file.clone();
                         let file_name = file.name().into_inner();
