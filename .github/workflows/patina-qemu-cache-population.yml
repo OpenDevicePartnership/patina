@@ -1,0 +1,29 @@
+# @file patina-qemu-cache-population.yml
+#
+# A workflow that populates the caches restored by the Patina QEMU PR Validation workflow.
+#
+# PR validation runs from a workflow that has read-only access to the cache that is populated
+# by this workflow.
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+name: Patina QEMU Cache Population
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 6 hours. Caches that are not accessed for 7 days are evicted.
+    - cron: '17 */6 * * *'
+
+concurrency:
+  group: patina-qemu-cache-population
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  populate-cache:
+    name: Populate Patina QEMU Caches
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/PatinaQemuCachePopulation.yml@main
