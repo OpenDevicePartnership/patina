@@ -24,7 +24,7 @@ struct Service {
 }
 
 impl Service {
-    /// Parses all attributes of the struct
+    /// Parses all attributes of the type
     fn parse_attr(attrs: &mut Vec<Attribute>) -> syn::Result<AttrConfig> {
         let mut config = AttrConfig { services: vec![] };
         for attr in attrs {
@@ -103,7 +103,7 @@ impl Service {
         self.generics.clone()
     }
 
-    /// The left hand side generics for the struct, which can include trait bounds.
+    /// The left hand side generics for the type, which can include trait bounds.
     /// Default type parameters are stripped since they are not allowed in impl blocks.
     fn lhs_generics(&self) -> Generics {
         let mut generics = self.generics();
@@ -115,7 +115,7 @@ impl Service {
         generics
     }
 
-    /// The right hand side generics for the struct, which do not include trait bounds or defaults.
+    /// The right hand side generics for the type, which do not include trait bounds or defaults.
     ///
     /// valid: `impl<T: Debug> SomeTrait for MyStruct<T> {}`
     /// invalid: `impl SomeTrait for MyStruct<T: Debug> {}`
@@ -358,6 +358,74 @@ mod tests {
             }
 
             impl patina::component::service::IntoService for &'static MyEnum {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: Self = self;
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+        };
+
+        assert_eq!(expected.to_string(), service2(input).to_string());
+    }
+
+    #[test]
+    fn test_enum_with_inline_generic_bound() {
+        let input = quote! {
+            #[service(dyn MyService)]
+            enum MyEnum<T: Debug> {
+                A(T),
+                B,
+            }
+        };
+
+        let expected = quote! {
+            extern crate alloc as __alloc_service_MyEnum;
+            impl<T: Debug> patina::component::service::IntoService for MyEnum<T> {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: &'static Self = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl<T: Debug> patina::component::service::IntoService for &'static MyEnum<T> {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: Self = self;
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+        };
+
+        assert_eq!(expected.to_string(), service2(input).to_string());
+    }
+
+    #[test]
+    fn test_enum_with_generic_where_clause() {
+        let input = quote! {
+            #[service(dyn MyService)]
+            enum MyEnum<T> where T: Clone {
+                A(T),
+                B,
+            }
+        };
+
+        let expected = quote! {
+            extern crate alloc as __alloc_service_MyEnum;
+            impl<T> patina::component::service::IntoService for MyEnum<T> where T: Clone {
+                fn register(self, storage: &mut patina::component::Storage) {
+                    let leaked: &'static Self = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyEnum::boxed::Box::leak(__alloc_service_MyEnum::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl<T> patina::component::service::IntoService for &'static MyEnum<T> where T: Clone {
                 fn register(self, storage: &mut patina::component::Storage) {
                     let leaked: Self = self;
                     let ref_service: &'static dyn MyService = leaked;
