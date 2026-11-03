@@ -1059,39 +1059,21 @@ pub trait ProtocolServicesExt: ProtocolServices {
         self.install_protocol::<driver_binding::DriverBindingHolder<B>>(Some(agent), holder).map(|_| ())
     }
 
-    /// Builds and installs both component name protocols from `names`, on the same handle.
+    /// Builds and installs `EFI_COMPONENT_NAME2_PROTOCOL` from `names`.
     ///
-    /// `EFI_COMPONENT_NAME_PROTOCOL` and `EFI_COMPONENT_NAME2_PROTOCOL` are installed together,
-    /// matching how EDK II drivers publish both for compatibility with callers that only look for
-    /// one or the other. If installing the second protocol fails, the first one is uninstalled so a
-    /// partial publish is not left behind.
+    /// `EFI_COMPONENT_NAME_PROTOCOL` is not installed as it is deprecated in the UEFI Specification.
     ///
     /// # Errors
     ///
     /// Returns [`ProtocolError::Internal`] if a handle could not be created, or
-    /// [`ProtocolError::InvalidParameter`] if either protocol could not be installed.
+    /// [`ProtocolError::InvalidParameter`] if the protocol could not be installed.
     fn install_uefi_driver_model_component_name<C: component_name::UefiDriverModelComponentName + 'static>(
         &self,
         handle: Option<Handle>,
         names: C,
     ) -> Result<Handle, ProtocolError> {
-        let (v1_shim, v2_shim) = component_name::build_shims(names);
-        // Captured before `v1_shim` is moved into `install_protocol`, so it can be used to roll
-        // back the V1 install if the V2 install below fails.
-        let v1_ptr = core::ptr::from_ref(v1_shim.as_ref()).cast_mut().cast::<c_void>();
-
-        let v1_handle = self.install_protocol::<component_name::ComponentNameShim<C>>(handle, v1_shim)?;
-
-        match self.install_protocol::<component_name::ComponentName2Shim<C>>(Some(v1_handle), v2_shim) {
-            Ok(handle) => Ok(handle),
-            Err(err) => {
-                if let Some(ptr) = ProtocolPtr::from_raw(v1_ptr) {
-                    let _ =
-                        self.uninstall_interface(v1_handle, component_name::ComponentNameShim::<C>::PROTOCOL_GUID, ptr);
-                }
-                Err(err)
-            }
-        }
+        let (_v1_shim, v2_shim) = component_name::build_shims(names);
+        self.install_protocol::<component_name::ComponentName2Shim<C>>(handle, v2_shim)
     }
 }
 
@@ -1631,18 +1613,11 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_services_ext_install_uefi_driver_model_component_name_installs_both_protocols() {
+    fn test_protocol_services_ext_install_uefi_driver_model_component_name_installs_only_v2() {
         let mut mock = MockProtocolServices::new();
-        let mut calls = 0;
-        mock.expect_install_interface().times(2).returning(move |handle, guid, _| {
-            calls += 1;
-            if calls == 1 {
-                assert_eq!(handle, None);
-                assert_eq!(guid, component_name::ComponentNameShim::<EmptyNames>::PROTOCOL_GUID);
-            } else {
-                assert_eq!(handle, Some(fake_handle()));
-                assert_eq!(guid, component_name::ComponentName2Shim::<EmptyNames>::PROTOCOL_GUID);
-            }
+        mock.expect_install_interface().times(1).returning(|handle, guid, _| {
+            assert_eq!(handle, None);
+            assert_eq!(guid, component_name::ComponentName2Shim::<EmptyNames>::PROTOCOL_GUID);
             Ok(fake_handle())
         });
 
@@ -1651,18 +1626,9 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_services_ext_install_uefi_driver_model_component_name_rolls_back_on_v2_failure() {
+    fn test_protocol_services_ext_install_uefi_driver_model_component_name_propagates_install_failure() {
         let mut mock = MockProtocolServices::new();
-        let mut calls = 0;
-        mock.expect_install_interface().times(2).returning(move |_, _, _| {
-            calls += 1;
-            if calls == 1 { Ok(fake_handle()) } else { Err(ProtocolError::InvalidParameter) }
-        });
-        mock.expect_uninstall_interface().times(1).returning(|handle, guid, _| {
-            assert_eq!(handle, fake_handle());
-            assert_eq!(guid, component_name::ComponentNameShim::<EmptyNames>::PROTOCOL_GUID);
-            Ok(())
-        });
+        mock.expect_install_interface().times(1).returning(|_, _, _| Err(ProtocolError::InvalidParameter));
 
         assert_eq!(
             mock.install_uefi_driver_model_component_name(None, EmptyNames).unwrap_err(),
