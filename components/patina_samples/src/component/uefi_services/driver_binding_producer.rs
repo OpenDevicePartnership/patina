@@ -80,7 +80,7 @@ impl DriverBindingProducerSample {
     }
 
     fn entry_point(self, protocols: Service<dyn ProtocolServices>, drivers: Service<dyn DriverServices>) -> Result<()> {
-        let driver = install_controller_driver(protocols, SampleDriver)?;
+        let driver = install_controller_driver(protocols.clone(), SampleDriver)?;
 
         for controller in protocols.locate_handles_for::<SampleVendorProtocol>()? {
             if let Err(err) = drivers.connect_controller(controller, false) {
