@@ -3,9 +3,8 @@
 //! A component can implement [`UefiDriverModelComponentName`] and install it with
 //! [`install_uefi_driver_model_component_name`](crate::component::service::uefi_services::protocol::ProtocolServicesExt::install_uefi_driver_model_component_name).
 //!
-//! This produces both `EFI_COMPONENT_NAME_PROTOCOL` and `EFI_COMPONENT_NAME2_PROTOCOL` on the same
-//! handle, computing each protocol's `SupportedLanguages` string from the driver name table
-//! so each component does not have to maintain it separately.
+//! This produces `EFI_COMPONENT_NAME2_PROTOCOL`, computing its `SupportedLanguages` string from the
+//! driver name table so each component does not have to maintain it separately.
 //!
 //! The type name chosen in this file is intentionally verbose because of the overlapping and unrelated
 //! terminology of "Patina components" and the UEFI Driver Model "Component Name" protocols.
@@ -32,7 +31,7 @@ pub use crate::component::service::uefi_services::handle::Handle;
 ///
 /// Implement this trait and pass it to
 /// [`install_uefi_driver_model_component_name`](crate::component::service::uefi_services::protocol::ProtocolServicesExt::install_uefi_driver_model_component_name)
-/// to publish both component name protocols from one implementation.
+/// to publish `EFI_COMPONENT_NAME2_PROTOCOL` from one implementation.
 ///
 /// `controller_name` defaults to returning `None`, which reports that this driver does not
 /// describe any controller by name. Most drivers only need `driver_name`. A bus driver that wants
