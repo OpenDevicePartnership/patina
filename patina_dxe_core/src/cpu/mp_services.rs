@@ -101,9 +101,9 @@ impl MpServicesComponent {
             .inspect_err(|e| log::error!("Failed to set up application processors: {e:?}"))?;
 
         // Build the rust service.
-        storage.add_service(MpServices::new(mp, parsed_hobs.processors, *timer));
-        let services = storage.get_service::<MpServices>().ok_or(EfiError::NotFound)?;
+        let services: &'static MpServices = Box::leak(Box::new(MpServices::new(mp, parsed_hobs.processors, *timer)));
         self.register_events(&events, &timer_events, services)?;
+        storage.add_service(services);
 
         Ok(())
     }
@@ -149,11 +149,11 @@ impl MpServicesComponent {
         Ok(contexts)
     }
 
-    fn register_events<D: MpDispatcher + 'static>(
+    fn register_events<D: MpDispatcher>(
         &self,
         events: &Service<dyn EventServices>,
         timer_events: &Service<dyn TimerEventServices>,
-        services: Service<MpServices<D>>,
+        services: &'static MpServices<D>,
     ) -> Result<(), EfiError> {
         // Create park event for EBS so that APs are parked before the OS takes over.
         if let Err(e) =
@@ -324,8 +324,8 @@ mod tests {
         Service::mock(Box::new(memory))
     }
 
-    fn test_services(mp: MockMpDispatcher) -> Service<MpServices<MockMpDispatcher>> {
-        Service::mock(Box::new(MpServices::new(mp, Vec::new(), &TIMER)))
+    fn test_services(mp: MockMpDispatcher) -> &'static MpServices<MockMpDispatcher> {
+        Box::leak(Box::new(MpServices::new(mp, Vec::new(), &TIMER)))
     }
 
     fn test_event() -> Event {
@@ -512,7 +512,7 @@ mod tests {
         });
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
@@ -526,7 +526,7 @@ mod tests {
         protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
