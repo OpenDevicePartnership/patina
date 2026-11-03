@@ -22,9 +22,11 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                controller_driver::{ControllerDriver, StartContext, SupportedContext, install_controller_driver},
+                controller_driver::{
+                    ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                },
                 driver::DriverServices,
-                protocol::{Handle, ProtocolError, ProtocolServices, ProtocolServicesExt},
+                protocol::{ProtocolError, ProtocolServices, ProtocolServicesExt},
             },
         },
     },
@@ -56,8 +58,12 @@ impl ControllerDriver for SampleDriver {
         Ok(SampleState { last_status, polls: 0 })
     }
 
-    fn stop(&self, controller: Handle, state: &mut SampleState) -> core::result::Result<(), ProtocolError> {
-        log::info!("SampleDriver: releasing {controller:?} after {} polls", state.polls);
+    fn stop(
+        &self,
+        context: &StopContext<'_, Self>,
+        state: &mut SampleState,
+    ) -> core::result::Result<(), ProtocolError> {
+        log::info!("SampleDriver: releasing {:?} after {} polls", context.controller(), state.polls);
         Ok(())
     }
 }
