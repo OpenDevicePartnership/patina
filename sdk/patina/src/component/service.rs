@@ -364,6 +364,74 @@ mod tests {
         storage.add_service(SomeStruct { x: 1 });
         let s3 = storage.get_service::<SomeStruct>().unwrap();
         assert_eq!(1, s3.x);
+
+        #[derive(IntoService)]
+        #[service(dyn MyService)]
+        enum MyEnumService {
+            Small,
+            Large,
+        }
+
+        impl MyService for MyEnumService {
+            fn do_something(&self) -> u32 {
+                match self {
+                    Self::Small => 1,
+                    Self::Large => 100,
+                }
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(MyEnumService::Large);
+        let s4 = storage.get_service::<dyn MyService>().unwrap();
+        assert_eq!(100, s4.do_something());
+        assert_eq!(1, MyEnumService::Small.do_something());
+
+        #[derive(IntoService)]
+        #[service(dyn MyService)]
+        enum InlineGenericEnum<T: Into<u32> + Copy + 'static> {
+            Value(T),
+            Empty,
+        }
+
+        impl<T: Into<u32> + Copy + 'static> MyService for InlineGenericEnum<T> {
+            fn do_something(&self) -> u32 {
+                match self {
+                    Self::Value(value) => (*value).into(),
+                    Self::Empty => 0,
+                }
+            }
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn MyService2)]
+        enum WhereGenericEnum<T>
+        where
+            T: Into<u32> + Copy + 'static,
+        {
+            Value(T),
+            Empty,
+        }
+
+        impl<T> MyService2 for WhereGenericEnum<T>
+        where
+            T: Into<u32> + Copy + 'static,
+        {
+            fn do_something2(&self) -> u32 {
+                match self {
+                    Self::Value(value) => (*value).into(),
+                    Self::Empty => 0,
+                }
+            }
+        }
+
+        let mut storage = Storage::new();
+        storage.add_service(InlineGenericEnum::Value(7_u8));
+        storage.add_service(WhereGenericEnum::Value(9_u16));
+        assert_eq!(7, storage.get_service::<dyn MyService>().unwrap().do_something());
+        assert_eq!(9, storage.get_service::<dyn MyService2>().unwrap().do_something2());
+        assert_eq!(0, InlineGenericEnum::<u8>::Empty.do_something());
+        assert_eq!(0, WhereGenericEnum::<u16>::Empty.do_something2());
     }
 
     #[test]
