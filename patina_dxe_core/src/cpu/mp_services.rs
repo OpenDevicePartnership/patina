@@ -211,7 +211,7 @@ impl MpBistReporter {
             return;
         }
 
-        let deferred_protocols = *protocols;
+        let deferred_protocols = protocols.clone();
         let mut reported = false;
         if let Err(e) = protocols.on_protocol_installed::<StatusCodeProtocol>(Tpl::Callback, move |handle| {
             if reported {

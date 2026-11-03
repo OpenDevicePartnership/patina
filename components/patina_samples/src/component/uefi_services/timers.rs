@@ -68,13 +68,14 @@ impl TimerSample {
         // closure closes its own event (the one it is passed) once it runs. This is the only way
         // to arm a self-managed timer, since creation and arming happen in one call, nothing is
         // returned to the caller, as the closure is the event's sole owner from here on.
+        let callback_events = events.clone();
         timer_events.on_timer_event_self_managed(
             Tpl::Callback,
             TimerType::Relative(Duration::from_millis(5)),
             move |event| {
                 ONE_SHOT_FIRED.store(true, Ordering::Relaxed);
                 log::info!("Logged from the one-shot timer event");
-                if let Err(e) = events.close_event(event) {
+                if let Err(e) = callback_events.close_event(event) {
                     log::error!("Failed to close one-shot timer event: {e:?}");
                 }
             },

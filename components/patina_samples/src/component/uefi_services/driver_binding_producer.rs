@@ -86,7 +86,7 @@ impl DriverBindingProducerSample {
         drivers: Service<dyn DriverServices>,
         tpl: Service<dyn TplServices>,
     ) -> Result<()> {
-        let driver = install_controller_driver(protocols, tpl, SampleDriver)?;
+        let driver = install_controller_driver(protocols.clone(), tpl, SampleDriver)?;
 
         for controller in protocols.locate_handles_for::<SampleVendorProtocol>()? {
             if let Err(err) = drivers.connect_controller(controller, false) {
