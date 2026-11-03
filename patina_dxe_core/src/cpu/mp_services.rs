@@ -48,7 +48,7 @@ mod services;
 use hob::{MpHandOff, MpHandOffConfig, MpInformation2};
 use patina_internal_cpu::mp::{ApContext, MpDispatcher, MpSupport};
 use protocol::MpProtocolWrapper;
-use services::{MpServices, MpServicesInner};
+use services::MpServices;
 
 use crate::cpu::mp_services::hob::MpHobs;
 
@@ -149,11 +149,11 @@ impl MpServicesComponent {
         Ok(contexts)
     }
 
-    fn register_events<M: MpDispatcher>(
+    fn register_events<D: MpDispatcher>(
         &self,
         events: &Service<dyn EventServices>,
         timer_events: &Service<dyn TimerEventServices>,
-        services: &'static MpServicesInner<M>,
+        services: &'static MpServices<D>,
     ) -> Result<(), EfiError> {
         // Create park event for EBS so that APs are parked before the OS takes over.
         if let Err(e) =
@@ -254,12 +254,11 @@ impl MpServicesProtocolInstaller {
         protocols: Service<dyn ProtocolServices>,
         events: Service<dyn EventServices>,
     ) -> Result<(), EfiError> {
-        let services = *services;
         Self::install_protocol(services, protocols, events)
     }
 
-    fn install_protocol<M: MpDispatcher + 'static>(
-        services: &'static MpServicesInner<M>,
+    fn install_protocol<D: MpDispatcher + 'static>(
+        services: Service<MpServices<D>>,
         protocols: Service<dyn ProtocolServices>,
         events: Service<dyn EventServices>,
     ) -> Result<(), EfiError> {
@@ -325,8 +324,8 @@ mod tests {
         Service::mock(Box::new(memory))
     }
 
-    fn test_services(mp: MockMpDispatcher) -> &'static MpServicesInner<MockMpDispatcher> {
-        Box::leak(Box::new(MpServicesInner::new(mp, Vec::new(), &TIMER)))
+    fn test_services(mp: MockMpDispatcher) -> &'static MpServices<MockMpDispatcher> {
+        Box::leak(Box::new(MpServices::new(mp, Vec::new(), &TIMER)))
     }
 
     fn test_event() -> Event {
@@ -513,7 +512,7 @@ mod tests {
         });
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
@@ -527,7 +526,7 @@ mod tests {
         protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            test_services(MockMpDispatcher::new()),
+            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
