@@ -113,9 +113,9 @@ impl StandardAcpiProvider {
             return Err(AcpiError::ConfigTableServicesAlreadyInitialized);
         }
 
-        self.acpi_tables.init(tpl);
-        self.notify_list.init(tpl);
-        self.xsdt_metadata.init(tpl);
+        self.acpi_tables.init(tpl.clone());
+        self.notify_list.init(tpl.clone());
+        self.xsdt_metadata.init(tpl.clone());
         self.rsdp.init(tpl);
 
         if self.config_table.publish(config_table).is_err() {
@@ -1498,11 +1498,14 @@ mod tests {
         let mock_memory_manager: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
 
         // First initialization should succeed
-        assert!(provider.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).is_ok());
+        assert!(
+            provider.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager.clone()).is_ok()
+        );
 
         // Second initialization with configuration table services should fail
-        let err =
-            provider.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).unwrap_err();
+        let err = provider
+            .initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager.clone())
+            .unwrap_err();
         assert_eq!(err, AcpiError::ConfigTableServicesAlreadyInitialized);
 
         // Try initializing again with a new provider, but memory manager already set
@@ -1510,7 +1513,7 @@ mod tests {
         // Set configuration table services first
         assert!(provider2.config_table.publish(mock_config_table_service()).is_ok());
         // Set memory manager first
-        assert!(provider2.memory_manager.publish(mock_memory_manager).is_ok());
+        assert!(provider2.memory_manager.publish(mock_memory_manager.clone()).is_ok());
         // Now initialize should fail for both fields
         let err =
             provider2.initialize(mock_tpl_service(), mock_config_table_service(), mock_memory_manager).unwrap_err();

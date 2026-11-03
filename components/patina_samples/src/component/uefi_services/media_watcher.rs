@@ -157,7 +157,7 @@ impl MediaWatcherSample {
         timers: Service<dyn TimerEventServices>,
         events: Service<dyn EventServices>,
     ) -> Result<()> {
-        install_controller_driver(protocols, MediaWatcher { timers, events })?;
+        install_controller_driver(protocols.clone(), MediaWatcher { timers, events })?;
 
         for controller in protocols.locate_handles_for::<BlockIo>()? {
             if let Err(err) = drivers.connect_controller(controller, false) {

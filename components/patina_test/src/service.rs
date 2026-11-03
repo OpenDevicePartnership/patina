@@ -126,8 +126,8 @@ impl TestRecord {
     /// Schedules the test to be run according to its triggers.
     pub fn schedule_run(
         &self,
-        events: Service<dyn EventServices>,
-        timer: Service<dyn TimerEventServices>,
+        events: &Service<dyn EventServices>,
+        timer: &Service<dyn TimerEventServices>,
         recorder: &'static Recorder,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
@@ -153,13 +153,15 @@ impl TestRecord {
                     })?;
 
                     // Schedule the event to clean up the timer when the RTB event occurs.
+                    let cleanup_timer = timer.clone();
+                    let cleanup_events = events.clone();
                     let cleanup_event = events.create_event_for_group(
                         patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
                         Tpl::Callback,
                         Box::new(move |rtb_event| {
-                            let cancel_result = timer.set_timer(timer_event, TimerType::Cancel);
-                            let timer_close_result = events.close_event(timer_event);
-                            let rtb_close_result = events.close_event(rtb_event);
+                            let cancel_result = cleanup_timer.set_timer(timer_event, TimerType::Cancel);
+                            let timer_close_result = cleanup_events.close_event(timer_event);
+                            let rtb_close_result = cleanup_events.close_event(rtb_event);
                             if let Err(error) = cancel_result.and(timer_close_result).and(rtb_close_result) {
                                 log::error!("Failed to clean up Timer trigger for patina_test {name}: {error:?}");
                             }
@@ -238,29 +240,23 @@ impl Recorder {
     /// Registers UEFI event callbacks to log the test results at specific points in the boot process.
     pub fn initialize(
         &'static self,
-        events: Service<dyn EventServices>,
+        events: &Service<dyn EventServices>,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
         let mut storage = NonNull::from_mut(storage);
 
-        let run_tests_and_close = move |event| {
-            // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
-            let storage = unsafe { storage.as_mut() };
-            self.run_tests_and_report(storage);
-            events.close_event(event);
-        };
-
-        events.on_event_group_self_managed(
+        for group in [
             patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
-            Tpl::Callback,
-            run_tests_and_close,
-        )?;
-
-        events.on_event_group_self_managed(
             patina::uefi::event::EXIT_BOOT_SERVICES_EVENT_GROUP_GUID,
-            Tpl::Callback,
-            run_tests_and_close,
-        )?;
+        ] {
+            let callback_events = events.clone();
+            events.on_event_group_self_managed(group, Tpl::Callback, move |event| {
+                // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
+                let storage = unsafe { storage.as_mut() };
+                self.run_tests_and_report(storage);
+                callback_events.close_event(event);
+            })?;
+        }
 
         Ok(())
     }
@@ -487,7 +483,7 @@ mod tests {
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
-        record.schedule_run(events, timer, recorder, &mut storage).expect("event test scheduling should succeed");
+        record.schedule_run(&events, &timer, recorder, &mut storage).expect("event test scheduling should succeed");
         recorder.update_record(record);
 
         let mut callback = callback.borrow_mut().take().expect("event callback should be registered");
@@ -532,7 +528,7 @@ mod tests {
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
     }
 
     #[test]
@@ -564,7 +560,7 @@ mod tests {
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
     }
 
     #[test]
@@ -604,7 +600,7 @@ mod tests {
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(events, timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
         assert_eq!(closed_events.borrow().as_slice(), &[timer_event, ready_to_boot_event]);
     }
 
@@ -660,7 +656,7 @@ mod tests {
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        record.schedule_run(events, timer, recorder, &mut storage).expect("timer test scheduling should succeed");
+        record.schedule_run(&events, &timer, recorder, &mut storage).expect("timer test scheduling should succeed");
         recorder.update_record(record);
 
         let mut callback = timer_callback.borrow_mut().take().expect("timer callback should be registered");
@@ -720,7 +716,7 @@ mod tests {
         recorder.update_record(TestRecord::new(false, &TEST_CASE1, None));
 
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
-        recorder.initialize(events, &mut storage).expect("recorder initialization should succeed");
+        recorder.initialize(&events, &mut storage).expect("recorder initialization should succeed");
 
         let mut callbacks = callbacks.borrow_mut();
         assert_eq!(callbacks.len(), 2);

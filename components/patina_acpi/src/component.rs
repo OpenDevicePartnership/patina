@@ -89,7 +89,9 @@ impl AcpiComponent {
         let (protocols, tpl, config_table) = services;
 
         // Initialize the ACPI table info singleton (used for the protocol).
-        STANDARD_ACPI_PROVIDER.initialize(tpl, config_table, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
+        STANDARD_ACPI_PROVIDER
+            .initialize(tpl, config_table, memory_manager.clone())
+            .map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Create and set the XSDT with an initial number of entries.
         let xsdt_size = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
