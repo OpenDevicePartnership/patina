@@ -20,7 +20,7 @@ use patina::{
     standard::efi::{self, protocols::mp_services},
 };
 
-use super::services::{DispatchCompletion, MpError, MpServicesInner};
+use super::services::{DispatchCompletion, MpError, MpServices};
 use crate::allocator::core_allocate_pool;
 use patina_internal_cpu::mp::{ApWorkItem, MpDispatcher, MpSupport};
 
@@ -52,12 +52,12 @@ type RawStartupThisAp = unsafe extern "efiapi" fn(
 ) -> efi::Status;
 
 /// Protocol interface wrapper which embeds the [`mp_services::Protocol`] as its first
-/// field so a protocol `this` pointer can be cast back to recover `self_ref`,
-/// letting the `extern "efiapi"` functions reach [`MpServicesInner`] without a global.
+/// field so a protocol `this` pointer can be cast back to recover the wrapper,
+/// letting the `extern "efiapi"` functions reach [`MpServices`] without a global.
 #[repr(C)]
 pub(super) struct MpProtocolWrapper<M: MpDispatcher + 'static = MpSupport> {
     protocol: mp_services::Protocol,
-    service: &'static MpServicesInner<M>,
+    service: Service<MpServices<M>>,
     /// Event services used by the ABI layer to signal the wait event of a non-blocking dispatch.
     events: Service<dyn EventServices>,
 }
@@ -75,7 +75,7 @@ unsafe impl<M: MpDispatcher + 'static> ProtocolInterface for MpProtocolWrapper<M
 // Rust implementation of the protocol wrapper.
 impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
     /// Builds a wrapper around `services` populated with the protocol's function table.
-    pub(super) fn new(services: &'static MpServicesInner<M>, events: Service<dyn EventServices>) -> Self {
+    pub(super) fn new(services: Service<MpServices<M>>, events: Service<dyn EventServices>) -> Self {
         // SAFETY: The raw shims have the firmware ABI and machine-level parameter
         // layout of the protocol callbacks.
         let startup_all_aps =
@@ -110,14 +110,14 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
         unsafe { (this as *const MpProtocolWrapper<M>).as_ref() }
     }
 
-    /// Recovers the backing [`MpServicesInner`] from a protocol `this` pointer.
+    /// Recovers the backing [`MpServices`] from a protocol `this` pointer.
     ///
     /// # Safety
     ///
     /// Same contract as [`Self::wrapper`].
-    unsafe fn services<'a>(this: *mut mp_services::Protocol) -> Option<&'a MpServicesInner<M>> {
+    unsafe fn services<'a>(this: *mut mp_services::Protocol) -> Option<&'a MpServices<M>> {
         // SAFETY: forwarded contract.
-        unsafe { Self::wrapper(this) }.map(|w| w.service)
+        unsafe { Self::wrapper(this) }.map(|w| *w.service)
     }
 
     /// Allocates and writes the `FailedCpuList`. See [`build_failed_cpu_list`] for details.
@@ -403,7 +403,7 @@ mod tests {
     static TIMER: TestTimer = TestTimer;
 
     fn test_wrapper(mp: MockMpDispatcher) -> TestProtocolWrapper {
-        let service = Box::leak(Box::new(MpServicesInner::new(mp, Vec::new(), &TIMER)));
+        let service = Service::mock(Box::new(MpServices::new(mp, Vec::new(), &TIMER)));
         TestProtocolWrapper::new(service, Service::mock(Box::new(MockEventServices::new())))
     }
 

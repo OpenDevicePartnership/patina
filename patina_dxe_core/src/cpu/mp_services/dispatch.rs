@@ -166,6 +166,11 @@ pub(super) fn deadline_for(timer: &dyn ArchTimerFunctionality, timeout_us: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockall::{
+        Sequence,
+        predicate::{always, eq},
+    };
+    use patina_internal_cpu::mp::MockMpDispatcher;
 
     struct TestTimer {
         count: u64,
@@ -213,5 +218,39 @@ mod tests {
         assert_eq!(deadline_for(&stopped, 100), None);
         assert_eq!(deadline_for(&near_max, 0), None);
         assert_eq!(deadline_for(&near_max, 10), Some(u64::MAX));
+    }
+
+    #[test]
+    fn test_mp_dispatch_single_thread_signals_one_ap_at_a_time() {
+        let mut mp = MockMpDispatcher::new();
+        let mut sequence = Sequence::new();
+        mp.expect_signal_ap().with(eq(0), always()).once().in_sequence(&mut sequence).return_const(Some(7));
+        mp.expect_ap_finished().with(eq(0), eq(7)).once().in_sequence(&mut sequence).return_const(true);
+        mp.expect_signal_ap().with(eq(1), always()).once().in_sequence(&mut sequence).return_const(None);
+        let mut dispatch = Dispatch::new(test_work(), true, vec![0, 1], None);
+
+        dispatch.start(&mp);
+        assert!(dispatch.claims(0));
+        assert!(dispatch.claims(1));
+
+        dispatch.advance(&mp, 0);
+        assert!(dispatch.is_resolved(0));
+        assert_eq!(dispatch.finish(&mp), vec![ap_to_processor_index(1)]);
+    }
+
+    #[test]
+    fn test_mp_dispatch_blocking_fences_off_ap_that_misses_deadline() {
+        let mut mp = MockMpDispatcher::new();
+        mp.expect_signal_ap().with(eq(0), always()).once().return_const(Some(3));
+        mp.expect_ap_count().return_const(1_usize);
+        mp.expect_ap_finished().with(eq(0), eq(3)).return_const(false);
+        mp.expect_abort_ap().with(eq(0), eq(3)).once().return_const(false);
+        mp.expect_set_ap_enabled().with(eq(0), eq(false), eq(Some(false))).once().return_const(true);
+        let timer = TestTimer { count: 10, frequency: 1_000_000 };
+        let mut dispatch = Dispatch::new(test_work(), false, vec![0], Some(5));
+
+        dispatch.start(&mp);
+
+        assert_eq!(dispatch.complete_blocking(&mp, &timer), vec![ap_to_processor_index(0)]);
     }
 }

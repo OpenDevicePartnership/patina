@@ -9,10 +9,7 @@
 //!
 
 use alloc::{boxed::Box, vec::Vec};
-use core::{
-    ops::Deref,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use patina::{
     component::service::{IntoService, perf_timer::ArchTimerFunctionality},
@@ -48,46 +45,26 @@ enum Targets {
     One(usize),
 }
 
-/// The concrete MP service published to the component dispatcher.
+/// The MP service published to the component dispatcher.
+///
+/// Generic over the architecture dispatcher so production uses the default
+/// [`MpSupport`] while tests use a mock.
 ///
 /// The definition of this struct is internal to the `mp_services` module and
 /// so this service can only be used internally within the `mp_services` module.
 #[derive(IntoService)]
-#[service(MpServices)]
-pub(super) struct MpServices {
-    inner: MpServicesInner<MpSupport>,
-}
-
-impl MpServices {
-    pub(super) fn new(
-        mp: MpSupport,
-        processors: Vec<mp_services::ProcessorInformation>,
-        timer: &'static dyn ArchTimerFunctionality,
-    ) -> Self {
-        Self { inner: MpServicesInner::new(mp, processors, timer) }
-    }
-}
-
-impl Deref for MpServices {
-    type Target = MpServicesInner<MpSupport>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-/// The generic implementation that tracks and manages MP services.
-pub(super) struct MpServicesInner<M: MpDispatcher> {
-    mp: M,
+#[service(MpServices<D>)]
+pub(super) struct MpServices<D: MpDispatcher + 'static = MpSupport> {
+    mp: D,
     processors: Vec<mp_services::ProcessorInformation>,
     timer: &'static dyn ArchTimerFunctionality,
     notifications: NotificationRegistry,
     ready_to_boot: AtomicBool,
 }
 
-impl<M: MpDispatcher> MpServicesInner<M> {
+impl<D: MpDispatcher + 'static> MpServices<D> {
     pub(super) fn new(
-        mp: M,
+        mp: D,
         processors: Vec<mp_services::ProcessorInformation>,
         timer: &'static dyn ArchTimerFunctionality,
     ) -> Self {
@@ -389,8 +366,8 @@ mod tests {
         ApWorkItem::new(|()| {}, &ARGUMENT)
     }
 
-    fn test_service(mp: MockMpDispatcher) -> MpServicesInner<MockMpDispatcher> {
-        MpServicesInner::new(mp, Vec::new(), &TIMER)
+    fn test_service(mp: MockMpDispatcher) -> MpServices<MockMpDispatcher> {
+        MpServices::new(mp, Vec::new(), &TIMER)
     }
 
     fn with_global_state(test: impl Fn() + std::panic::RefUnwindSafe) {
@@ -479,7 +456,7 @@ mod tests {
         mp.expect_ap_processor_id().with(eq(0)).once().return_const(Some(7));
         mp.expect_ap_availability().with(eq(0)).once().return_const(ProcessorState::Ready);
         mp.expect_ap_healthy().with(eq(0)).once().return_const(true);
-        let service = MpServicesInner::new(mp, vec![known], &TIMER);
+        let service = MpServices::new(mp, vec![known], &TIMER);
 
         let Ok(info) = service.processor_info(1) else { panic!("known AP should have processor information") };
 
