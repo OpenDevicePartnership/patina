@@ -85,6 +85,10 @@ suspicious = { level = "warn", priority = -1 }
 ###########################
 # Individual Lint Overrides
 ###########################
+# Temporarily allow explicit service clones while Service still implements Copy.
+# TODO: Remove both overrides when Arc-backed Service no longer implements Copy.
+clone_on_copy = "allow"
+cloned_instead_of_copied = "allow"
 # cargo::redundant_feature_names violation - Fixes:
 #     `the "_support" suffix in the feature name "v1_resource_descriptor_support" is redundant`
 #   This is allowed until the v1_resource_descriptor_support feature is dropped.
