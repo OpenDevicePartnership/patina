@@ -108,7 +108,7 @@ use crate::uefi::device_path::walker::BorrowedDevicePathWalker;
 
 use super::driver_binding::DriverBinding;
 use super::handle::Handle;
-use super::protocol::{OpenAttributes, ProtocolError, ProtocolServices, ProtocolServicesExt};
+use super::protocol::{OpenAttributes, ProtocolError, ProtocolPtr, ProtocolServices, ProtocolServicesExt};
 
 /// A driver that manages controllers exposing [`Self::Protocol`].
 ///
@@ -153,28 +153,29 @@ pub trait ControllerDriver: Sized + 'static {
         Err(ProtocolError::AlreadyStarted)
     }
 
-    /// Destroys `children` of `controller` while it stays managed.
+    /// Destroys `children` of the controller in `context` while it stays managed.
     ///
     /// Called when `DisconnectController()` stops specific children recorded with [`StartContext::open_for_child`].
     /// On `Ok`, the protocols opened for those children are closed. Returning `Err` refuses the request. A driver
     /// that creates children must override this. The default reports [`ProtocolError::Unsupported`].
     fn stop_children(
         &self,
-        controller: Handle,
+        context: &StopContext<'_, Self>,
         children: &[Handle],
         state: &mut Self::State,
     ) -> Result<(), ProtocolError> {
-        let _ = (controller, children, state);
+        let _ = (context, children, state);
         Err(ProtocolError::Unsupported)
     }
 
-    /// Stops managing `controller`.
+    /// Stops managing the controller in `context`.
     ///
-    /// Returning `Err` refuses the request. The controller stays managed and does not close anything, but it cannot
-    /// undo what `stop` already did, such as destroying children. On `Ok`, the protocols opened for the controller
-    /// are closed and its state is dropped. The default implementation always returns `Ok(())`.
-    fn stop(&self, controller: Handle, state: &mut Self::State) -> Result<(), ProtocolError> {
-        let _ = (controller, state);
+    /// `context` still provides the controller's protocol, for example to halt asynchronous transfers. Returning
+    /// `Err` refuses the request. The controller stays managed and does not close anything, but it cannot undo what
+    /// `stop` already did, such as destroying children. On `Ok`, the protocols opened for the controller are closed
+    /// and its state is dropped. The default implementation always returns `Ok(())`.
+    fn stop(&self, context: &StopContext<'_, Self>, state: &mut Self::State) -> Result<(), ProtocolError> {
+        let _ = (context, state);
         Ok(())
     }
 
@@ -300,6 +301,27 @@ impl<'a, D: ControllerDriver> StartContext<'a, D> {
     /// The reference can be moved into a callback, such as an event notification, that needs the state later.
     pub fn state_ref(&self) -> ControllerStateRef<D> {
         ControllerStateRef { inner: self.inner, controller: self.controller }
+    }
+}
+
+/// Information passed to [`ControllerDriver::stop`] and [`ControllerDriver::stop_children`].
+///
+/// A [`ControllerStateRef`] or [`ControllerDriverRef`] cannot access the controller while it is being stopped, but
+/// the protocol interface is provided through this context.
+pub struct StopContext<'a, D: ControllerDriver> {
+    controller: Handle,
+    protocol: &'a D::Protocol,
+}
+
+impl<'a, D: ControllerDriver> StopContext<'a, D> {
+    /// The controller being stopped.
+    pub fn controller(&self) -> Handle {
+        self.controller
+    }
+
+    /// The controller's [`ControllerDriver::Protocol`] interface.
+    pub fn protocol(&self) -> &'a D::Protocol {
+        self.protocol
     }
 }
 
@@ -483,10 +505,21 @@ struct Usage {
 
 struct Entry<D: ControllerDriver> {
     controller: Handle,
+    protocol: ProtocolPtr,
     usages: RefCell<Vec<Usage>>,
     state: RefCell<D::State>,
     stopping: Cell<bool>,
     stopping_children: Cell<bool>,
+}
+
+impl<D: ControllerDriver> Entry<D> {
+    /// Must only be called before the controller's `BY_DRIVER` usage is closed.
+    fn stop_context(&self) -> StopContext<'_, D> {
+        // SAFETY: `protocol` is the interface installed for `D::Protocol`'s GUID. The `BY_DRIVER` usage keeps it
+        // installed, and it is only closed after `stop` and `stop_children` return.
+        let protocol = unsafe { &*self.protocol.as_raw().cast::<D::Protocol>() };
+        StopContext { controller: self.controller, protocol }
+    }
 }
 
 struct Inner<D: ControllerDriver> {
@@ -529,7 +562,7 @@ impl<D: ControllerDriver> Inner<D> {
         }
 
         entry.stopping.set(true);
-        let result = self.driver.stop(entry.controller, &mut state);
+        let result = self.driver.stop(&entry.stop_context(), &mut state);
         drop(state);
         if let Err(err) = result {
             entry.stopping.set(false);
@@ -546,7 +579,7 @@ impl<D: ControllerDriver> Inner<D> {
     fn stop_children(&self, entry: &Entry<D>, children: &[Handle]) -> Result<(), ProtocolError> {
         let mut state = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
         entry.stopping_children.set(true);
-        let result = self.driver.stop_children(entry.controller, children, &mut state);
+        let result = self.driver.stop_children(&entry.stop_context(), children, &mut state);
         entry.stopping_children.set(false);
         drop(state);
         result?;
@@ -657,6 +690,7 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
             Ok(state) => {
                 let entry = Entry {
                     controller,
+                    protocol: ptr,
                     usages,
                     state: RefCell::new(state),
                     stopping: Cell::new(false),
@@ -701,7 +735,7 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
-    use crate::component::service::uefi_services::protocol::{MockProtocolServices, ProtocolPtr};
+    use crate::component::service::uefi_services::protocol::MockProtocolServices;
     use crate::standard::efi;
     use core::ffi::c_void;
     use std::sync::{Arc, Mutex};
@@ -767,6 +801,7 @@ mod tests {
         fail_stop: bool,
         destroy_child_on_stop: Cell<Option<&'static Inner<TestDriver>>>,
         nested_stop_result: Cell<Option<Result<(), ProtocolError>>>,
+        state_access_in_stop: Cell<Option<Result<(), ControllerError>>>,
         supported_seen: Cell<Option<(Handle, Option<bool>)>>,
         start_seen: Cell<Option<(Handle, Option<bool>)>>,
     }
@@ -794,11 +829,14 @@ mod tests {
             Ok(context.protocol().value)
         }
 
-        fn stop(&self, _controller: Handle, _state: &mut u32) -> Result<(), ProtocolError> {
+        fn stop(&self, context: &StopContext<'_, Self>, _state: &mut u32) -> Result<(), ProtocolError> {
+            assert_eq!(context.protocol().value, 7);
             if self.fail_stop {
                 return Err(ProtocolError::AccessDenied);
             }
             if let Some(inner) = self.destroy_child_on_stop.get() {
+                let access = ControllerDriverRef { inner }.with_state(context.controller(), |_| ());
+                self.state_access_in_stop.set(Some(access));
                 // Simulates the core calling Stop() for the child while this driver destroys it.
                 self.nested_stop_result.set(Some(ManagedDriver(inner).stop(h(AGENT), h(CHILD), &[])));
             }
@@ -996,6 +1034,8 @@ mod tests {
 
         assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Ok(()));
         assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Ok(())));
+        // The controller is not accessible through its state reference while it is being stopped.
+        assert_eq!(binding.0.driver.state_access_in_stop.get(), Some(Err(ControllerError::NotManaged)));
         assert!(!driver.is_managing(h(CONTROLLER)));
         // The child is released by the nested Stop(), then the controller after stop() returns. Nothing twice.
         assert_eq!(*closed.lock().unwrap(), vec![(CHILD, Some(CONTROLLER)), (CONTROLLER, Some(CONTROLLER))]);
@@ -1091,10 +1131,12 @@ mod tests {
 
         fn stop_children(
             &self,
-            _controller: Handle,
+            context: &StopContext<'_, Self>,
             children: &[Handle],
             _state: &mut u32,
         ) -> Result<(), ProtocolError> {
+            assert_eq!(context.controller(), h(CONTROLLER));
+            assert_eq!(context.protocol().value, 7);
             self.stopped_children.borrow_mut().extend_from_slice(children);
             Ok(())
         }

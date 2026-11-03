@@ -29,7 +29,9 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                controller_driver::{ControllerDriver, StartContext, SupportedContext, install_controller_driver},
+                controller_driver::{
+                    ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                },
                 driver::DriverServices,
                 event::{Event, EventError, EventServices},
                 protocol::{Handle, ProtocolError, ProtocolServices, ProtocolServicesExt},
@@ -131,10 +133,10 @@ impl ControllerDriver for MediaWatcher {
         Ok(WatchState { timer, last, changes: 0 })
     }
 
-    fn stop(&self, controller: Handle, state: &mut WatchState) -> core::result::Result<(), ProtocolError> {
+    fn stop(&self, context: &StopContext<'_, Self>, state: &mut WatchState) -> core::result::Result<(), ProtocolError> {
         // Closing the event cancels the timer and drops the closure.
         self.events.close_event(state.timer).map_err(event_error)?;
-        log::info!("MediaWatcher: released {controller:?} after {} media changes", state.changes);
+        log::info!("MediaWatcher: released {:?} after {} media changes", context.controller(), state.changes);
         Ok(())
     }
 }

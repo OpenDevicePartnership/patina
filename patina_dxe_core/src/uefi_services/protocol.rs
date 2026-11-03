@@ -284,7 +284,7 @@ mod tests {
         Service,
         uefi_services::{
             controller_driver::{
-                ControllerDriver, ControllerDriverRef, DependencyAction, StartContext, SupportedContext,
+                ControllerDriver, ControllerDriverRef, DependencyAction, StartContext, StopContext, SupportedContext,
                 install_controller_driver,
             },
             driver_binding::DriverBinding,
@@ -954,7 +954,8 @@ mod tests {
             Ok(context.protocol().value)
         }
 
-        fn stop(&self, _controller: Handle, _state: &mut u32) -> Result<(), ProtocolError> {
+        fn stop(&self, context: &StopContext<'_, Self>, _state: &mut u32) -> Result<(), ProtocolError> {
+            assert_eq!(context.protocol().value, 5);
             self.stops.set(self.stops.get() + 1);
             if self.destroy_child_on_stop
                 && let Some((child, interface)) = self.child
