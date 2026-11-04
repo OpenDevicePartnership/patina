@@ -355,6 +355,16 @@ impl PatinaPageTable for MockPageTableWrapper {
     }
 }
 
+/// Checks a lock failure's debug assertion or its release return value.
+pub(crate) fn assert_checked_lock_failure<T: core::fmt::Debug + PartialEq>(operation: impl FnOnce() -> T, expected: T) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation));
+    if cfg!(debug_assertions) {
+        assert!(result.is_err(), "checked lock failure should panic in debug builds");
+    } else {
+        assert_eq!(result.expect("checked lock failure should not panic in release builds"), expected);
+    }
+}
+
 /// All tests should run from inside this.
 pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
