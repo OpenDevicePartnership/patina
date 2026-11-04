@@ -140,7 +140,9 @@ impl AcpiTableManager {
     /// This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
-    pub fn iter_tables(&self) -> Vec<AcpiTable> {
+    /// # Errors
+    /// Returns an error if the provider's shared state cannot be acquired due to TPL restrictions.
+    pub fn iter_tables(&self) -> Result<Vec<AcpiTable>, AcpiError> {
         self.provider_service.collect_tables()
     }
 }
@@ -162,7 +164,7 @@ pub(crate) trait AcpiProvider {
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
 
     /// Returns all currently installed tables in an iterable format.
-    fn collect_tables(&self) -> Vec<AcpiTable>;
+    fn collect_tables(&self) -> Result<Vec<AcpiTable>, AcpiError>;
 }
 
 #[cfg(test)]

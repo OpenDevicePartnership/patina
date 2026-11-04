@@ -185,15 +185,12 @@ impl TryFrom<BootServicesTpl> for Tpl {
 /// `TplMutex` state does not need a [`BootServices`](crate::uefi::boot_services::BootServices) implementation.
 /// `PreviousTpl` and the boot services `Tpl` both just wrap the raw TPL value, so the conversion is straightforward.
 ///
-/// If both this trait and [`TplServices`] are in scope, call through fully-qualified syntax (for example
-/// `TplController::raise_tpl(&service, tpl)`), since both traits define a method named `raise_tpl`.
 impl TplController for Service<dyn TplServices> {
-    fn raise_tpl(&self, tpl: BootServicesTpl) -> BootServicesTpl {
-        // `Service<T>` derefs to `&'static T`, so a double deref gets to the underlying `dyn TplServices`,
-        // avoiding ambiguity with the `raise_tpl` implemented here on `Service<dyn TplServices>` itself.
+    fn try_raise_tpl(&self, tpl: BootServicesTpl) -> Result<BootServicesTpl, ()> {
         let services: &dyn TplServices = **self;
-        let previous = services.raise_tpl(tpl.try_into().expect("unsupported TPL value"));
-        BootServicesTpl::from(previous.as_raw())
+        let requested = Tpl::try_from(tpl);
+        let previous = services.raise_tpl(requested.map_err(|_| ())?);
+        Ok(BootServicesTpl::from(previous.as_raw()))
     }
 
     fn restore_tpl(&self, tpl: BootServicesTpl) {
@@ -229,14 +226,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unsupported TPL value")]
-    fn test_tpl_controller_bridge_raise_tpl_panics_on_unknown_value() {
+    fn test_tpl_controller_bridge_try_raise_tpl_rejects_unknown_value() {
+        let service: Service<dyn TplServices> = Service::mock(Box::new(MockTplServices::new()));
+        assert_eq!(TplController::try_raise_tpl(&service, BootServicesTpl(usize::MAX)), Err(()));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    #[should_panic(expected = "Cannot raise TPL to a lower or unsupported level")]
+    fn test_tpl_controller_bridge_deprecated_raise_tpl_panics_on_unknown_value() {
         let service: Service<dyn TplServices> = Service::mock(Box::new(MockTplServices::new()));
         let _ = TplController::raise_tpl(&service, BootServicesTpl(usize::MAX));
     }
 
     #[test]
-    fn test_tpl_controller_bridge_raise_tpl_converts_and_delegates() {
+    fn test_tpl_controller_bridge_try_raise_tpl_converts_and_delegates() {
         let mut mock = MockTplServices::new();
         mock.expect_raise_tpl().times(1).returning(|tpl| {
             assert_eq!(tpl, Tpl::Notify);
@@ -244,9 +248,9 @@ mod tests {
         });
         let service: Service<dyn TplServices> = Service::mock(Box::new(mock));
 
-        let previous = TplController::raise_tpl(&service, BootServicesTpl::NOTIFY);
+        let previous = TplController::try_raise_tpl(&service, BootServicesTpl::NOTIFY);
 
-        assert_eq!(previous, BootServicesTpl::APPLICATION);
+        assert_eq!(previous, Ok(BootServicesTpl::APPLICATION));
     }
 
     #[test]

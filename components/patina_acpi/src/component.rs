@@ -134,7 +134,9 @@ impl AcpiComponent {
             max_capacity: MAX_INITIAL_ENTRIES,
             slice: xsdt_allocated_bytes.into_boxed_slice(),
         };
-        STANDARD_ACPI_PROVIDER.set_xsdt(xsdt_metadata);
+        STANDARD_ACPI_PROVIDER
+            .set_xsdt(xsdt_metadata)
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         // Set up initial values for the RSDP, including XSDT address.
         // Fields preceded with an underscore are for unsupported ACPI version 1.0.
@@ -176,10 +178,14 @@ impl AcpiComponent {
         // and it will live for the 'static lifetime as ACPI memory.
         let rsdp_allocated = unsafe { &mut *rsdp_ptr };
 
-        STANDARD_ACPI_PROVIDER.set_rsdp(rsdp_allocated);
+        STANDARD_ACPI_PROVIDER
+            .set_rsdp(rsdp_allocated)
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         // Checksum the root tables after setting up.
-        STANDARD_ACPI_PROVIDER.checksum_common_tables();
+        STANDARD_ACPI_PROVIDER
+            .checksum_common_tables()
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         if let Some(acpi_guid_hob) = acpi_hob {
             let _ = STANDARD_ACPI_PROVIDER.install_tables_from_hob(acpi_guid_hob);

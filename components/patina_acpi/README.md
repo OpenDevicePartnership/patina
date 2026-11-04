@@ -132,7 +132,11 @@ Consumers of the service **should not** attempt to directly mutate tables retrie
 Some platforms require certain callbacks to be triggered upon installation of an ACPI table. Use `register_notify` and
 `unregister_notify` to construct an `AcpiNotifyFn` to be called when an ACPI table is installed.
 
-`collect_tables` provides all the currently installed tables in a iterable format.
+`collect_tables` provides all the currently installed tables in an iterable format.
+The public `iter_tables` method returns `Result<Vec<AcpiTable>, AcpiError>`;
+`AcpiError::StateUnavailable` reports contention or an uninitialized TPL controller
+instead of returning an empty list. Other provider operations use the same error,
+mapped to UEFI `NOT_READY`, when shared state cannot be acquired.
 
 ### ACPI Table Format and Safety
 

@@ -22,8 +22,12 @@ the [UEFI Specification Section 7.1](https://uefi.org/specs/UEFI/2.11/07_Service
 `TplMutex` implements mutual exclusion for the Patina DXE Core using semantics
 very similar to the Rust [sync::Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html).
 Each `TplMutex` has a type parameter which represents the data that it is
-protecting. The data can only be accessed through the `TplGuard` objects
-returned from `lock()` and `try_lock()` methods on the TplMutex.
+protecting. The data can only be accessed through the guards returned by
+`try_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in the DXE Core adapter.
+The DXE Core adapter exposes only `try_lock()`. The SDK retains a deprecated
+`lock()` method for compatibility, but it panics on acquisition failure. Callers
+should use `try_lock()` and explicitly handle failure, normally by returning an
+appropriate domain error.
 
 There are two mutual exclusion mechanisms that protect the data guarded by
 `TplMutex`:
