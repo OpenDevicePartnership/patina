@@ -40,7 +40,7 @@ struct MockLargeTable {
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Result {
-    let original_length = table_manager.iter_tables().len();
+    let original_length = table_manager.iter_tables().expect("Should collect installed tables.").len();
 
     // Install a dummy ACPI table.
     let mock_table1 = MockSmallTable {
@@ -74,7 +74,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Re
     u_assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
 
     // Verify only valid tables are in the iterator.
-    let tables = table_manager.iter_tables();
+    let tables = table_manager.iter_tables().expect("Should collect installed tables.");
     u_assert!(tables.len() == original_length + 2, "Should have two more tables than original.");
     u_assert!(tables.iter().any(|t| t.signature() == 0x12341234));
     u_assert!(tables.iter().any(|t| t.signature() == 0x43214321));

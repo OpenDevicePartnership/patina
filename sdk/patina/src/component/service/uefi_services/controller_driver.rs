@@ -442,7 +442,7 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
 
     /// The controllers the driver currently manages.
     pub fn controllers(&self) -> Vec<Handle> {
-        let records = self.inner.records.lock();
+        let records = self.inner.records.checked_lock().expect("controller records must be available for enumeration");
         records.iter().filter(|r| r.phase != Phase::Stopping).map(|r| r.entry.controller).collect()
     }
 
@@ -687,20 +687,20 @@ impl<D: ControllerDriver> Inner<D> {
 
     /// The entry for `controller`, unless it is not managed or is being stopped.
     fn managed(&self, controller: Handle) -> Option<Arc<Entry<D>>> {
-        let records = self.records.lock();
+        let records = self.records.checked_lock().expect("controller records must be available for lookup");
         let record = records.iter().find(|r| r.entry.controller == controller && r.phase != Phase::Stopping)?;
         Some(Arc::clone(&record.entry))
     }
 
     /// Runs `f` on `entry`'s record, which exists while its state is `Some`.
     fn with_record<R>(&self, entry: &Arc<Entry<D>>, f: impl FnOnce(&mut Record<D>) -> R) -> Option<R> {
-        let mut records = self.records.lock();
+        let mut records = self.records.checked_lock().expect("controller records must be available for update");
         records.iter_mut().find(|r| Arc::ptr_eq(&r.entry, entry)).map(f)
     }
 
     /// Removes `entry`'s record and returns its usages.
     fn remove(&self, entry: &Arc<Entry<D>>) -> Vec<Usage> {
-        let mut records = self.records.lock();
+        let mut records = self.records.checked_lock().expect("controller records must be available for cleanup");
         match records.iter().position(|r| Arc::ptr_eq(&r.entry, entry)) {
             Some(index) => records.remove(index).usages,
             None => Vec::new(),
@@ -713,7 +713,7 @@ impl<D: ControllerDriver> Inner<D> {
         let mut result = Ok(());
         let mut closing = Vec::new();
         let mut releasing = Vec::new();
-        let mut records = self.records.lock();
+        let mut records = self.records.checked_lock().map_err(|_| ProtocolError::AccessDenied)?;
         for record in records.iter_mut() {
             let controller = record.entry.controller;
             if controller != handle && !record.usages.iter().any(|u| u.handle == handle) {
@@ -779,7 +779,7 @@ impl<D: ControllerDriver> Inner<D> {
     /// Destroys `children` of `controller` through the driver, then closes what was opened for them.
     fn stop_children(&self, controller: Handle, children: &[Handle]) -> Result<(), ProtocolError> {
         let entry = {
-            let records = self.records.lock();
+            let records = self.records.checked_lock().map_err(|_| ProtocolError::AccessDenied)?;
             let record = records.iter().find(|r| r.entry.controller == controller).ok_or(ProtocolError::NotFound)?;
             if record.phase == Phase::Stopping {
                 // The outer stop may still fail and keep managing the controller.
@@ -890,7 +890,11 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
         match result {
             Ok(state) => {
                 let entry = Arc::new(Entry { controller, protocol: ptr, state: AtomicRefCell::new(Some(state)) });
-                inner.records.lock().push(Record { entry, usages, phase: Phase::Running });
+                let Ok(mut records) = inner.records.checked_lock() else {
+                    inner.close_all(&usages);
+                    return Err(ProtocolError::AccessDenied);
+                };
+                records.push(Record { entry, usages, phase: Phase::Running });
                 Ok(())
             }
             Err(err) => {
@@ -1106,6 +1110,58 @@ mod tests {
         binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
         let nested = driver.with_state(h(CONTROLLER), |_| driver.with_state(h(CONTROLLER), |_| ())).unwrap();
         assert_eq!(nested, Err(ControllerError::Busy));
+    }
+
+    #[test]
+    fn test_controller_driver_start_closes_usages_when_records_are_locked() {
+        let closed = Closed::default();
+        let (binding, driver) = setup(TestDriver { open_child: true, ..Default::default() }, &closed);
+        let records = binding.0.records.checked_lock().expect("test records should be available");
+
+        #[cfg(debug_assertions)]
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { binding.start(h(AGENT), h(CONTROLLER), None) }))
+                .is_err()
+        );
+        #[cfg(not(debug_assertions))]
+        assert_eq!(binding.start(h(AGENT), h(CONTROLLER), None), Err(ProtocolError::AccessDenied));
+        assert!(records.is_empty());
+        #[cfg(not(debug_assertions))]
+        assert_eq!(*closed.lock().unwrap(), vec![(CHILD, Some(CONTROLLER)), (CONTROLLER, Some(CONTROLLER))]);
+
+        drop(records);
+        assert!(driver.controllers().is_empty());
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        assert!(driver.is_managing(h(CONTROLLER)));
+    }
+
+    #[test]
+    fn test_controller_driver_stop_refused_when_records_are_locked() {
+        let closed = Closed::default();
+        let (binding, driver) = setup(TestDriver { open_child: true, ..Default::default() }, &closed);
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        let records = binding.0.records.checked_lock().expect("test records should be available");
+
+        #[cfg(debug_assertions)]
+        for children in [&[][..], &[h(CHILD)][..]] {
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    binding.stop(h(AGENT), h(CONTROLLER), children)
+                }))
+                .is_err()
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Err(ProtocolError::AccessDenied));
+        #[cfg(not(debug_assertions))]
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Err(ProtocolError::AccessDenied));
+        assert_eq!(binding.0.driver.stops.get(), 0);
+        assert!(closed.lock().unwrap().is_empty());
+
+        drop(records);
+        assert!(driver.is_managing(h(CONTROLLER)));
+        binding.stop(h(AGENT), h(CONTROLLER), &[]).unwrap();
+        assert!(!driver.is_managing(h(CONTROLLER)));
     }
 
     #[test]

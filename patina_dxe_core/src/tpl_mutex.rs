@@ -24,8 +24,8 @@ use crate::events::{raise_tpl, restore_tpl};
 pub(crate) struct CoreTplController;
 
 impl TplController for CoreTplController {
-    fn raise_tpl(&self, tpl: Tpl) -> Tpl {
-        raise_tpl(tpl.into()).into()
+    fn checked_tpl_raise(&self, tpl: Tpl) -> Result<Tpl, ()> {
+        Ok(raise_tpl(tpl.into()).into())
     }
 
     fn restore_tpl(&self, tpl: Tpl) {
@@ -71,7 +71,7 @@ impl<T: ?Sized> TplMutex<T> {
     /// Attempting to acquire the lock while running at a TPL level higher than the lock's TPL level will panic due to
     /// TPL inversion.
     pub fn try_lock(&self) -> Option<TplGuard<'_, T>> {
-        self.inner.try_lock().ok()
+        self.inner.checked_lock().ok()
     }
 }
 
