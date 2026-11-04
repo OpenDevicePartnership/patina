@@ -125,9 +125,16 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Displays drivers that were discovered but not dispatched.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     pub fn display_discovered_not_dispatched(&self) {
+        let Ok(context) = self.dispatcher_context.checked_lock() else {
+            log::warn!("Cannot report drivers that were not dispatched: dispatcher context is busy");
+            return;
+        };
         // Summary report
-        for driver in &self.dispatcher_context.lock().pending_drivers {
+        for driver in &context.pending_drivers {
             log::warn!(
                 "Driver {} ({:?}) found but not dispatched.",
                 driver.name.as_deref().unwrap_or("Unnamed"),
@@ -136,12 +143,18 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         // Detail report
+        drop(context);
         self.detail_report();
     }
 
+    /// Reports driver dependencies. The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     fn detail_report(&self) {
+        let Ok(context) = self.dispatcher_context.checked_lock() else {
+            log::debug!("Cannot report driver dependencies: dispatcher context is busy");
+            return;
+        };
         log::debug!("Begin Report of Drivers Not Dispatched:");
-        for driver in &self.dispatcher_context.lock().pending_drivers {
+        for driver in &context.pending_drivers {
             log::debug!(
                 "Driver {} ({:?}) found but not dispatched. Protocols present:",
                 driver.name.as_deref().unwrap_or("Unnamed"),
@@ -162,11 +175,19 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the image, dispatcher-context and protocol-database locks.
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
-        self.image_data.lock().set_system_table(system_table.as_mut_ptr().cast());
-        self.image_data.lock().install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
+        {
+            let mut image_data = self.image_data.checked_lock().expect(
+                "Cannot initialize DXE image services: image state is already in use before boot services are installed",
+            );
+            image_data.set_system_table(system_table.as_mut_ptr().cast());
+            image_data.install_dxe_core_image(hob_list, system_table, &mut self.debug_image_data.write());
+        }
 
         let mut bs = system_table.boot_services().get();
         bs.load_image = Self::load_image_efiapi;
@@ -187,7 +208,10 @@ impl<P: PlatformInfo> PiDispatcher<P> {
             .expect("Failed to create callback for runtime image memory protection fixups.");
 
         // Get the FV2/3 HOBs before we register for FV protocol installation callbacks
-        self.dispatcher_context.lock().cache_pre_extracted_fv_hobs(hob_list);
+        self.dispatcher_context
+            .checked_lock()
+            .expect("Cannot initialize firmware discovery: dispatcher state is already in use before FV notification registration")
+            .cache_pre_extracted_fv_hobs(hob_list);
 
         //set up call back for FV protocol installation.
         let event = EVENT_DB
@@ -263,34 +287,41 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Installs any firmware volumes from FV HOBs in the hob list
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume and protocol-database locks.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn install_firmware_volumes_from_hoblist(
         &self,
         hob_list: &patina::pi::hob::HobList,
     ) -> Result<(), efi::Status> {
-        self.fv_data.lock().install_firmware_volumes_from_hoblist(hob_list)
+        self.fv_data.checked_lock().map_err(|_| efi::Status::NOT_READY)?.install_firmware_volumes_from_hoblist(hob_list)
     }
 
     /// Performs a single dispatch iteration.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION` because dispatch starts images. The dispatcher-context,
+    /// image, firmware-volume and protocol-database locks have a `TPL_NOTIFY` ceiling.
+    /// The UEFI specification requires `LoadImage()` and `StartImage()` to be called at `TPL == TPL_APPLICATION`.
     pub fn dispatch(&'static self) -> Result<bool, EfiError> {
-        if self.dispatcher_context.lock().executing {
-            return Err(EfiError::AlreadyStarted);
-        }
-
         let scheduled: Vec<PendingDriver>;
         {
-            let mut dispatcher = self.dispatcher_context.lock();
+            let mut dispatcher = self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?;
+            if dispatcher.executing {
+                return Err(EfiError::AlreadyStarted);
+            }
+            let registered_protocols = PROTOCOL_DB.registered_protocols()?;
             if !dispatcher.arch_protocols_available {
-                dispatcher.arch_protocols_available =
-                    Depex::from(ALL_ARCH_DEPEX).eval(&PROTOCOL_DB.registered_protocols());
+                dispatcher.arch_protocols_available = Depex::from(ALL_ARCH_DEPEX).eval(&registered_protocols);
             }
             let driver_candidates: Vec<_> = core::mem::take(&mut dispatcher.pending_drivers);
             let mut scheduled_driver_candidates = Vec::new();
             for mut candidate in driver_candidates {
                 log::debug!(target: "depex", "Evaluating depex for candidate: {} ({:?})", candidate.name.as_deref().unwrap_or("Unnamed"), OwnedGuid::from(candidate.file_name));
                 let depex_satisfied = match candidate.depex {
-                    Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
+                    Some(ref mut depex) => depex.eval(&registered_protocols),
                     None => dispatcher.arch_protocols_available,
                 };
 
@@ -325,7 +356,8 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
 
         let mut dispatch_attempted = false;
-        for mut driver in scheduled {
+        let mut scheduled = scheduled.into_iter();
+        while let Some(mut driver) = scheduled.next() {
             if driver.image_handle.is_none() {
                 log::info!("Loading file: {:?}", OwnedGuid::from(driver.file_name));
                 let data = driver.pe32.try_content_as_slice()?;
@@ -348,6 +380,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         driver.image_handle = None;
                         driver.security_status = efi::Status::ACCESS_DENIED;
                     }
+                    Err(ImageStatus::LoadError(EfiError::NotReady)) => {
+                        let mut dispatcher = self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?;
+                        dispatcher.pending_drivers.push(driver);
+                        dispatcher.pending_drivers.extend(scheduled);
+                        return Err(EfiError::NotReady);
+                    }
                     Err(ImageStatus::LoadError(err)) => log::error!("Failed to load: load_image returned {err:x?}"),
                 }
             }
@@ -358,7 +396,13 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         dispatch_attempted = true;
                         // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
                         // cases, and a debug output for that is already implemented in core_start_image.
-                        let _status = self.start_image(image_handle);
+                        if self.start_image(image_handle) == Err(efi::Status::NOT_READY) {
+                            let mut dispatcher =
+                                self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?;
+                            dispatcher.pending_drivers.push(driver);
+                            dispatcher.pending_drivers.extend(scheduled);
+                            return Err(EfiError::NotReady);
+                        }
                     }
                     efi::Status::SECURITY_VIOLATION => {
                         log::info!(
@@ -367,7 +411,11 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                             OwnedGuid::from(driver.file_name),
                             efi::Status::SECURITY_VIOLATION
                         );
-                        self.dispatcher_context.lock().pending_drivers.push(driver);
+                        self.dispatcher_context
+                            .checked_lock()
+                            .map_err(|_| EfiError::NotReady)?
+                            .pending_drivers
+                            .push(driver);
                     }
                     unexpected_status => {
                         log::info!(
@@ -382,17 +430,20 @@ impl<P: PlatformInfo> PiDispatcher<P> {
         }
 
         {
-            let mut dispatcher = self.dispatcher_context.lock();
-            let fv_image_candidates: Vec<_> = core::mem::take(&mut dispatcher.pending_firmware_volume_images);
+            let mut dispatcher = self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?;
+            let registered_protocols = PROTOCOL_DB.registered_protocols()?;
+            let fv_image_candidates = core::mem::take(&mut dispatcher.pending_firmware_volume_images);
+            let mut fv_image_candidates = fv_image_candidates.into_iter();
 
-            for mut candidate in fv_image_candidates {
+            while let Some(mut candidate) = fv_image_candidates.next() {
                 let depex_satisfied = match candidate.depex {
-                    Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
+                    Some(ref mut depex) => depex.eval(&registered_protocols),
                     None => true,
                 };
 
                 if depex_satisfied && candidate.evaluate_auth().is_ok() {
-                    for section in candidate.fv_sections {
+                    let mut sections = core::mem::take(&mut candidate.fv_sections).into_iter();
+                    while let Some(section) = sections.next() {
                         let fv_data: Box<[u8]> = Box::from(section.try_content_as_slice()?);
 
                         // Check if this FV is already installed (using the FV name GUID)
@@ -423,6 +474,12 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                             continue;
                         }
 
+                        let Ok(mut fv_state) = self.fv_data.checked_lock() else {
+                            candidate.fv_sections = core::iter::once(section).chain(sections).collect();
+                            dispatcher.pending_firmware_volume_images.push(candidate);
+                            dispatcher.pending_firmware_volume_images.extend(fv_image_candidates);
+                            return Err(EfiError::NotReady);
+                        };
                         dispatcher.fv_section_data.push(fv_data);
                         let data_ptr =
                             dispatcher.fv_section_data.last().expect("freshly pushed fv section data must be valid");
@@ -430,9 +487,7 @@ impl<P: PlatformInfo> PiDispatcher<P> {
                         let volume_address: u64 = data_ptr.as_ptr() as u64;
                         // SAFETY: FV section data is stored in the dispatcher and is valid until end of UEFI (nothing drops it).
                         let res = unsafe {
-                            self.fv_data
-                                .lock()
-                                .install_firmware_volume(volume_address, Some(candidate.parent_fv_handle))
+                            fv_state.install_firmware_volume(volume_address, Some(candidate.parent_fv_handle))
                         };
 
                         if res.is_ok() {
@@ -455,8 +510,11 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Performs a full dispatch until no more drivers can be dispatched.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION`, as required by [`Self::dispatch`].
     pub fn dispatcher(&'static self) -> Result<(), EfiError> {
-        if self.dispatcher_context.lock().executing {
+        if self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?.executing {
             return Err(EfiError::AlreadyStarted);
         }
 
@@ -523,30 +581,42 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Schedules a driver for execution.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn schedule(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        self.dispatcher_context.lock().schedule(handle, file)
+        self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?.schedule(handle, file)
     }
 
     /// Marks a driver as trusted for execution.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn trust(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
-        self.dispatcher_context.lock().trust(handle, file)
+        self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?.trust(handle, file)
     }
 
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
+    /// Discovers firmware volumes. The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context,
+    /// image and protocol-database locks.
     fn add_fv_handles(&self, new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
         let (result, dxe_core_file) = {
-            let mut context = self.dispatcher_context.lock();
+            let mut context = self.dispatcher_context.checked_lock().map_err(|_| EfiError::NotReady)?;
             let result = context.add_fv_handles(new_handles, &self.section_extractor);
             (result, context.dxe_core_file.take())
         };
 
         if let Some((fv_handle, file_name)) = dxe_core_file
-            && let Err(err) = self.image_data.lock().set_dxe_core_file(fv_handle, file_name)
+            && let Err(err) = self
+                .image_data
+                .checked_lock()
+                .map_err(|_| EfiError::NotReady)
+                .and_then(|mut image_data| image_data.set_dxe_core_file(fv_handle, file_name))
         {
             log::warn!("Failed to record the DXE Core firmware volume file in its loaded image: {err}");
         }
@@ -557,22 +627,38 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     /// Caller must ensure that the base address is a valid firmware volume.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume and protocol-database locks.
     pub unsafe fn install_firmware_volume(
         &self,
         base_address: u64,
         parent_handle: Option<efi::Handle>,
     ) -> Result<efi::Handle, EfiError> {
         // SAFETY: Caller must uphold the safety contract of this function.
-        unsafe { self.fv_data.lock().install_firmware_volume(base_address, parent_handle) }
+        unsafe {
+            self.fv_data
+                .checked_lock()
+                .map_err(|_| EfiError::NotReady)?
+                .install_firmware_volume(base_address, parent_handle)
+        }
     }
 
     /// EFIAPI event callback to add the FV handles when FVB protocol is installed.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database and dispatcher locks.
+    /// The event invokes this callback at `TPL_CALLBACK`.
     extern "efiapi" fn fw_vol_event_protocol_notify_efiapi(_event: efi::Event, _context: *mut c_void) {
         let pd = &crate::Core::<P>::instance().pi_dispatcher;
         //Note: runs at TPL_CALLBACK
         match PROTOCOL_DB.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID.into_inner())) {
-            Ok(fv_handles) => pd.add_fv_handles(fv_handles).expect("Error adding FV handles"),
-            Err(e) => panic!("could not locate handles in protocol call back: {e:?}"),
+            Ok(fv_handles) => {
+                if let Err(err) = pd.add_fv_handles(fv_handles) {
+                    log::error!("Failed to discover firmware volumes in protocol callback: {err}");
+                }
+            }
+            Err(err) => log::error!("Could not locate firmware volume handles in protocol callback: {err:?}"),
         }
     }
 }
@@ -1011,6 +1097,35 @@ mod tests {
     }
 
     #[test]
+    fn test_pi_dispatcher_contention_returns_not_ready() {
+        with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            let dispatcher = &CORE.pi_dispatcher;
+            let file = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+            let guard =
+                dispatcher.dispatcher_context.checked_lock().expect("test dispatcher state should be available");
+            test_support::assert_checked_lock_failure(
+                || dispatcher.schedule(DXE_CORE_HANDLE, &file),
+                Err(EfiError::NotReady),
+            );
+            test_support::assert_checked_lock_failure(
+                || dispatcher.trust(DXE_CORE_HANDLE, &file),
+                Err(EfiError::NotReady),
+            );
+            test_support::assert_checked_lock_failure(|| dispatcher.dispatch(), Err(EfiError::NotReady));
+            test_support::assert_checked_lock_failure(|| dispatcher.dispatcher(), Err(EfiError::NotReady));
+            test_support::assert_checked_lock_failure(
+                || dispatcher.add_fv_handles(Vec::new()),
+                Err(EfiError::NotReady),
+            );
+            test_support::assert_checked_lock_failure(|| dispatcher.display_discovered_not_dispatched(), ());
+            drop(guard);
+            assert_eq!(dispatcher.schedule(DXE_CORE_HANDLE, &file), Err(EfiError::NotFound));
+            assert_eq!(dispatcher.dispatch(), Ok(false));
+        });
+    }
+
+    #[test]
     fn test_guid_ordering() {
         let g1 = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
         let g2 = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
@@ -1075,7 +1190,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1083,7 +1199,15 @@ mod tests {
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             const DRIVERS_IN_DXEFV: usize = 131;
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                DRIVERS_IN_DXEFV
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1123,7 +1247,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1137,7 +1262,15 @@ mod tests {
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                0
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1161,7 +1294,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1175,7 +1309,15 @@ mod tests {
             unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                0
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1198,8 +1340,14 @@ mod tests {
             // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let fv_phys_addr = fv_raw.expose_provenance() as u64;
             // SAFETY: fv_raw is leaked for the duration of this test scope.
-            let handle =
-                unsafe { CORE.pi_dispatcher.fv_data.lock().install_firmware_volume(fv_phys_addr, None).unwrap() };
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .checked_lock()
+                    .expect("test FV state should be available")
+                    .install_firmware_volume(fv_phys_addr, None)
+                    .unwrap()
+            };
 
             // Monkey Patch get_physical_address to set to a slightly invalid address.
             let protocol = PROTOCOL_DB
@@ -1215,7 +1363,15 @@ mod tests {
             // SAFETY: Reset the test-only mutable static under the global lock.
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = 0 };
 
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                0
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1239,13 +1395,22 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             // 1 child FV should be pending contained in NESTEDFV.Fv
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(), 1);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .len(),
+                1
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1269,7 +1434,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1300,7 +1466,8 @@ mod tests {
             let _ = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1310,7 +1477,15 @@ mod tests {
             );
 
             const DRIVERS_IN_DXEFV: usize = 131;
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                DRIVERS_IN_DXEFV
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
@@ -1324,7 +1499,11 @@ mod tests {
             static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
             CORE.override_instance();
 
-            CORE.pi_dispatcher.dispatcher_context.lock().executing = true;
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .executing = true;
             let result = CORE.pi_dispatcher.dispatcher();
             assert_eq!(result, Err(EfiError::AlreadyStarted));
         });
@@ -1359,7 +1538,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1391,7 +1571,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1399,10 +1580,15 @@ mod tests {
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // No SOR drivers to schedule in DXEFV, but we can test all the way to detecting that it does not have a SOR depex.
-            let result = CORE.pi_dispatcher.dispatcher_context.lock().schedule(
-                handle,
-                &efi::Guid::from_bytes(uuid::Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes()),
-            );
+            let result = CORE
+                .pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .schedule(
+                    handle,
+                    &efi::Guid::from_bytes(uuid::Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes()),
+                );
             assert_eq!(result, Err(EfiError::NotFound));
         });
 
@@ -1471,8 +1657,14 @@ mod tests {
                 )
                 .unwrap();
             // SAFETY: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle =
-                unsafe { CORE.pi_dispatcher.fv_data.lock().install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .checked_lock()
+                    .expect("test FV state should be available")
+                    .install_firmware_volume(fv.as_ptr() as u64, None)
+                    .unwrap()
+            };
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             CORE.pi_dispatcher.dispatcher().unwrap();
@@ -1600,7 +1792,12 @@ mod tests {
 
             // Verify that there is a pending FV image file (the compressed child)
             assert_eq!(
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .len(),
                 1,
                 "Should have one pending FV image file"
             );
@@ -1609,7 +1806,8 @@ mod tests {
             let child_fv_sections = CORE
                 .pi_dispatcher
                 .dispatcher_context
-                .lock()
+                .checked_lock()
+                .expect("test dispatcher state should be available")
                 .pending_firmware_volume_images
                 .first()
                 .map(|img| img.fv_sections.clone())
@@ -1646,7 +1844,12 @@ mod tests {
 
                     // The pending child FV should be removed now
                     assert_eq!(
-                        CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                        CORE.pi_dispatcher
+                            .dispatcher_context
+                            .checked_lock()
+                            .expect("test dispatcher state should be available")
+                            .pending_firmware_volume_images
+                            .len(),
                         0,
                         "Pending FV images should be empty after dispatch skipped duplicate"
                     );
@@ -1780,7 +1983,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1818,7 +2022,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -1836,7 +2041,15 @@ mod tests {
             unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 0);
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                0
+            );
 
             assert_eq!(Ok(false), PROTOCOL_DB.is_protocol_non_removable(handle, fvb_guid));
             assert_eq!(Ok(false), PROTOCOL_DB.is_protocol_non_removable(handle, dp_guid));
@@ -1990,39 +2203,71 @@ mod tests {
                 efi::Guid::from_fields(0xAABBCCDD, 0x1122, 0x3344, 0x55, 0x66, &[0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC]);
 
             // Driver with a UI name.
-            CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.push(PendingDriver {
-                firmware_volume_handle: std::ptr::null_mut(),
-                device_path: std::ptr::null_mut(),
-                file_name: test_guid,
-                name: Some(String::from("TestDriver")),
-                depex: None,
-                pe32: pe32_section,
-                image_handle: None,
-                security_status: efi::Status::NOT_READY,
-            });
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_drivers
+                .push(PendingDriver {
+                    firmware_volume_handle: std::ptr::null_mut(),
+                    device_path: std::ptr::null_mut(),
+                    file_name: test_guid,
+                    name: Some(String::from("TestDriver")),
+                    depex: None,
+                    pe32: pe32_section,
+                    image_handle: None,
+                    security_status: efi::Status::NOT_READY,
+                });
 
             // Build another PE32 section for the unnamed driver.
             let pe32_header2 = SectionHeader::Standard(ffs::section::raw_type::PE32, 4);
             let pe32_section2 = Section::new_from_header_with_data(pe32_header2, vec![0u8; 4]).expect("PE32 section");
 
             // Driver without a UI name.
-            CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.push(PendingDriver {
-                firmware_volume_handle: std::ptr::null_mut(),
-                device_path: std::ptr::null_mut(),
-                file_name: test_guid,
-                name: None,
-                depex: None,
-                pe32: pe32_section2,
-                image_handle: None,
-                security_status: efi::Status::NOT_READY,
-            });
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_drivers
+                .push(PendingDriver {
+                    firmware_volume_handle: std::ptr::null_mut(),
+                    device_path: std::ptr::null_mut(),
+                    file_name: test_guid,
+                    name: None,
+                    depex: None,
+                    pe32: pe32_section2,
+                    image_handle: None,
+                    security_status: efi::Status::NOT_READY,
+                });
 
-            assert_eq!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.len(), 2);
             assert_eq!(
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers[0].name.as_deref(),
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers
+                    .len(),
+                2
+            );
+            assert_eq!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers[0]
+                    .name
+                    .as_deref(),
                 Some("TestDriver")
             );
-            assert!(CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers[1].name.is_none());
+            assert!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_drivers[1]
+                    .name
+                    .is_none()
+            );
 
             // Verify display doesn't panic for both named and unnamed drivers.
             CORE.pi_dispatcher.display_discovered_not_dispatched();
@@ -2045,15 +2290,22 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
-            let has_named =
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.iter().any(|d| d.name.is_some());
+            let has_named = CORE
+                .pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_drivers
+                .iter()
+                .any(|d| d.name.is_some());
             // At least one driver in the test FV should have a UI name section.
             assert!(has_named, "Expected at least one driver with a parsed UI name");
 
@@ -2100,7 +2352,12 @@ mod tests {
             CORE.override_instance();
 
             // Add the pending FV to the dispatcher
-            CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.push(pending_fv);
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_firmware_volume_images
+                .push(pending_fv);
 
             // Dispatch should log a warning and continue
             let result = CORE.pi_dispatcher.dispatch();
@@ -2112,7 +2369,12 @@ mod tests {
 
             // The corrupted FV should have been removed from pending FV images
             assert_eq!(
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .len(),
                 0,
                 "A corrupted FV should be removed after a dispatch attempt"
             );
@@ -2138,7 +2400,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -2163,12 +2426,21 @@ mod tests {
             let mut hob_list = HobList::new();
             hob_list.push(Hob::FirmwareVolume2(&fv2_hob));
 
-            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .cache_pre_extracted_fv_hobs(&hob_list);
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // The child FV should have been skipped because the FV2 HOB matches it.
             assert_eq!(
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .len(),
                 0,
                 "Child FV should be skipped when a matching FV2 HOB exists"
             );
@@ -2197,7 +2469,8 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
@@ -2222,12 +2495,21 @@ mod tests {
             let mut hob_list = HobList::new();
             hob_list.push(Hob::FirmwareVolume3(&fv3_hob));
 
-            CORE.pi_dispatcher.dispatcher_context.lock().cache_pre_extracted_fv_hobs(&hob_list);
+            CORE.pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .cache_pre_extracted_fv_hobs(&hob_list);
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // The child FV should have been skipped because the extracted FV3 HOB matches it.
             assert_eq!(
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.len(),
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .len(),
                 0,
                 "Child FV should be skipped when a matching extracted FV3 HOB exists"
             );

@@ -13,7 +13,7 @@ use super::test_support::is_mapped;
 use crate::{
     GCD,
     allocator::{EFI_BOOT_SERVICES_DATA_ALLOCATOR, STATIC_ALLOCATORS},
-    events::{raise_tpl, restore_tpl},
+    events::{checked_tpl_raise, restore_tpl},
 };
 use alloc::vec::Vec;
 use core::{
@@ -40,7 +40,7 @@ fn page_attributes(address: usize) -> Result<u64, &'static str> {
 #[cfg(target_os = "uefi")]
 mod isolated {
     use super::{
-        Allocator, GCD, Layout, UEFI_PAGE_SIZE, Vec, efi, is_mapped, page_attributes, patina_test, raise_tpl,
+        Allocator, GCD, Layout, UEFI_PAGE_SIZE, Vec, checked_tpl_raise, efi, is_mapped, page_attributes, patina_test,
         restore_tpl, u_assert, u_assert_eq,
     };
     use crate::allocator::{DEFAULT_PAGE_ALLOCATION_GRANULARITY, SpinLockedFixedSizeBlockAllocator};
@@ -49,8 +49,8 @@ mod isolated {
     struct RaisedTpl(efi::Tpl);
 
     impl RaisedTpl {
-        fn new() -> Self {
-            Self(raise_tpl(efi::TPL_HIGH_LEVEL))
+        fn new() -> Result<Self, &'static str> {
+            checked_tpl_raise(efi::TPL_HIGH_LEVEL).map(Self).ok_or("Could not raise allocator test TPL")
         }
     }
 
@@ -115,10 +115,11 @@ mod isolated {
         }
 
         fn check_pages(&self) -> patina_test::error::Result {
-            for region in self.allocator().get_memory_ranges() {
+            for region in self.allocator().get_memory_ranges().expect("Allocator ranges available") {
                 let metadata = self
                     .allocator()
-                    .lock()
+                    .checked_lock()
+                    .expect("Allocator lock available")
                     .firmware_test_metadata_range(region.start)
                     .ok_or("Missing isolated region metadata")?;
                 for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
@@ -161,7 +162,7 @@ mod isolated {
             for index in 0..self.blocks.len() {
                 self.free(index);
             }
-            let regions = self.allocator().get_memory_ranges();
+            let regions = self.allocator().get_memory_ranges().expect("Allocator ranges available");
             self.allocator = None;
             let mut result = Ok(());
             for region in regions {
@@ -182,7 +183,7 @@ mod isolated {
     }
 
     fn with_fixture(test: impl FnOnce(&mut Fixture<'_>) -> patina_test::error::Result) -> patina_test::error::Result {
-        let _tpl = RaisedTpl::new();
+        let _tpl = RaisedTpl::new()?;
         let owner = 0u8;
         let mut fixture = Fixture::new(&owner);
         let result = test(&mut fixture);
@@ -197,14 +198,16 @@ mod isolated {
             let first = loop {
                 let index = fixture.allocate(32)?;
                 let page = fixture.page(index);
-                let metadata_page = fixture.allocator().get_memory_ranges().any(|region| {
-                    region.contains(&page)
-                        && fixture
-                            .allocator()
-                            .lock()
-                            .firmware_test_metadata_range(region.start)
-                            .is_some_and(|metadata| metadata.contains(&page))
-                });
+                let metadata_page =
+                    fixture.allocator().get_memory_ranges().expect("Allocator ranges available").any(|region| {
+                        region.contains(&page)
+                            && fixture
+                                .allocator()
+                                .checked_lock()
+                                .expect("Allocator lock available")
+                                .firmware_test_metadata_range(region.start)
+                                .is_some_and(|metadata| metadata.contains(&page))
+                    });
                 if !metadata_page {
                     break index;
                 }
@@ -237,7 +240,10 @@ mod isolated {
             for _ in 0..20 {
                 fixture.allocate(UEFI_PAGE_SIZE)?;
             }
-            u_assert!(fixture.allocator().get_memory_ranges().count() > 1, "Expected multiple backing regions");
+            u_assert!(
+                fixture.allocator().get_memory_ranges().expect("Allocator ranges available").count() > 1,
+                "Expected multiple backing regions"
+            );
             fixture.check_pages()?;
             for index in (0..fixture.blocks.len()).step_by(2) {
                 fixture.free(index);
@@ -378,12 +384,15 @@ fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
         // SAFETY: the allocation is a full page of memory owned by this test.
         unsafe { core::ptr::write_volatile(page as *mut u8, 0xA5) };
 
-        let retired = allocator.stats().retired_pages;
+        let retired = allocator.stats().expect("Allocator statistics available").retired_pages;
 
         // SAFETY: the allocation was returned by this allocator for this layout.
         unsafe { allocator.deallocate(allocation, layout) };
 
-        u_assert!(allocator.stats().retired_pages > retired, "Freed pool page was not retired");
+        u_assert!(
+            allocator.stats().expect("Allocator statistics available").retired_pages > retired,
+            "Freed pool page was not retired"
+        );
         u_assert_eq!(page_attributes(page)? & efi::MEMORY_RP, efi::MEMORY_RP, "Freed pool page is not marked RP");
         u_assert!(!is_mapped(page as u64), "Freed pool page is still mapped");
     }
@@ -396,10 +405,13 @@ fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
 #[patina_test]
 #[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
 fn unused_pool_memory_is_unmapped() -> patina_test::error::Result {
-    let ranges: Vec<_> = STATIC_ALLOCATORS.iter().flat_map(|(allocator, _)| allocator.get_memory_ranges()).collect();
+    let ranges: Vec<_> = STATIC_ALLOCATORS
+        .iter()
+        .flat_map(|(allocator, _)| allocator.get_memory_ranges().expect("Allocator ranges available"))
+        .collect();
 
     // Raised so that nothing can map pool memory in while the page table is being compared against the GCD.
-    let tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
+    let tpl = checked_tpl_raise(efi::TPL_HIGH_LEVEL).ok_or("Could not raise allocator test TPL")?;
     let result = check_pool_pages(&ranges);
     restore_tpl(tpl);
 

@@ -326,6 +326,7 @@ fn core_connect_single_controller(
 
 /// Connects a controller to drivers
 ///
+///
 /// This function matches the behavior of `EFI_BOOT_SERVICES.ConnectController()` API in the UEFI spec 2.10 section
 /// 7.3.12. Refer to the UEFI spec description for details on input parameters, behavior, and error return codes.
 ///
@@ -345,6 +346,10 @@ fn core_connect_single_controller(
 /// let result = core_connect_controller(controller_handle, Vec::new(), None, false);
 /// ```
 ///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock,
+/// including when recursively locating child controllers.
+/// The UEFI specification also requires `ConnectController()` to be called at or below `TPL_NOTIFY`.
 pub unsafe fn core_connect_controller(
     handle: efi::Handle,
     driver_handles: Vec<efi::Handle>,
@@ -356,7 +361,7 @@ pub unsafe fn core_connect_controller(
     let return_status = core_connect_single_controller(handle, driver_handles, remaining_device_path);
 
     if recursive {
-        for child in PROTOCOL_DB.get_child_handles(handle) {
+        for child in PROTOCOL_DB.get_child_handles(handle)? {
             // ignore the return value to match behavior of edk2 reference.
             // SAFETY: We do not remove any of these handles during this call, though it is
             // possible for a different entity at another TPL to do so.
@@ -369,6 +374,7 @@ pub unsafe fn core_connect_controller(
 
 /// Raw UEFI `ConnectController()` entry point installed into the boot services
 /// table.
+///
 ///
 ///  NOTE: This routine cannot hold the protocol db lock while executing
 ///  `DriverBinding->Supported()/Start()` since they need to access protocol db
@@ -396,6 +402,10 @@ pub unsafe fn core_connect_controller(
 ///   wrapped inside Rust types. Passing an invalid value does not by itself
 ///   cause undefined behavior; the firmware is expected to reject it by
 ///   returning an error status.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_connect_controller`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn connect_controller(
     handle: efi::Handle,
     driver_image_handle: *mut efi::Handle,
@@ -453,6 +463,9 @@ unsafe extern "efiapi" fn connect_controller(
 /// let result = core_disconnect_controller(controller_handle, None, None);
 /// ```
 ///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires `DisconnectController()` to be called at or below `TPL_NOTIFY`.
 pub unsafe fn core_disconnect_controller(
     controller_handle: efi::Handle,
     driver_image_handle: Option<efi::Handle>,
@@ -621,6 +634,10 @@ pub unsafe fn core_disconnect_controller(
 /// duration of the call. The handle parameters are validated internally and
 /// passing invalid handles does not by itself cause undefined behavior; the
 /// firmware will reject them by returning an error status.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_disconnect_controller`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn disconnect_controller(
     controller_handle: efi::Handle,
     driver_image_handle: efi::Handle,

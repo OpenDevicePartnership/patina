@@ -86,6 +86,10 @@ impl CorePerformance {
     }
 
     /// Initializes the core performance service.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` when installing enabled HOB records.
     pub(crate) fn init(
         &self,
         frequency: u64,
@@ -105,8 +109,13 @@ impl CorePerformance {
 
         self.perf_measurement_mask.store(config.enabled_measurements, Ordering::Relaxed);
         if let Some((load_image_count, perf_records)) = hob_records {
+            let Ok(mut table) = self.performance_table.checked_lock() else {
+                self.enabled.store(false, Ordering::Relaxed);
+                log::error!("Performance initialization failed: table is locked");
+                return;
+            };
             self.loaded_image_count.store(load_image_count, Ordering::Relaxed);
-            self.performance_table.lock().set_perf_records(perf_records);
+            table.set_perf_records(perf_records);
         }
     }
 
@@ -337,16 +346,16 @@ impl PerformanceManager for CorePerformance {
     }
 
     fn published_table_size(&self) -> Result<usize, Error> {
-        match self.performance_table.try_lock() {
-            Some(table) => Ok(table.published_table_size()),
-            None => Err(EfiError::AccessDenied.into()),
+        match self.performance_table.checked_lock() {
+            Ok(table) => Ok(table.published_table_size()),
+            Err(_) => Err(EfiError::AccessDenied.into()),
         }
     }
 
     fn publish_table(&self, buffer: &'static mut [u8]) -> Result<(), Error> {
-        match self.performance_table.try_lock() {
-            Some(mut table) => table.publish_table(buffer).map(|_| ()),
-            None => Err(EfiError::AccessDenied.into()),
+        match self.performance_table.checked_lock() {
+            Ok(mut table) => table.publish_table(buffer).map(|_| ()),
+            Err(_) => Err(EfiError::AccessDenied.into()),
         }
     }
 }
@@ -361,10 +370,10 @@ impl CorePerformance {
     /// [`EfiError::AccessDenied`] so the caller can observe that the record was not added. This is similar
     /// in behavior and return status to the edk2 implementation of [`create_performance_measurement`].
     fn add_fbpt_record<T: PerformanceRecord>(&self, record: T) -> Result<(), Error> {
-        match self.performance_table.try_lock() {
-            Some(mut table) => table.add_record(record),
+        match self.performance_table.checked_lock() {
+            Ok(mut table) => table.add_record(record),
             // Re-entrant measurement: See function docs.
-            None => Err(EfiError::AccessDenied.into()),
+            Err(_) => Err(EfiError::AccessDenied.into()),
         }
     }
 
@@ -695,7 +704,10 @@ mod tests {
             measure!(CallerIdentifier::Guid(caller_guid), None, Some("measurement_str"), PerfCrossModuleEnd);
             measure!(CallerIdentifier::Guid(caller_guid), None, Some("measurement_str"), PerfEvent);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), EXPECTED_NUMBER_OF_RECORD);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                EXPECTED_NUMBER_OF_RECORD
+            );
         })
         .unwrap();
     }
@@ -768,7 +780,7 @@ mod tests {
                 .unwrap();
             }
 
-            let table = perf.performance_table.lock();
+            let table = perf.performance_table.checked_lock().expect("test performance lock");
             let mut record_count = 0;
             for record in table.perf_records().iter() {
                 // `DynamicStringEventRecordData` is progress_id(2) + apic_id(4) + timestamp(8) before the GUID.
@@ -801,7 +813,10 @@ mod tests {
             );
 
             assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -888,7 +903,10 @@ mod tests {
             assert!(perf.enabled());
             assert_eq!(perf.timer.perf_frequency(), FREQ);
             assert_eq!(perf.loaded_image_count.load(Ordering::Relaxed), LOAD_IMAGE_COUNT);
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -967,7 +985,10 @@ mod tests {
             perf.perf_driver_binding_stop_begin(module, controller);
             perf.perf_driver_binding_stop_end(module, controller);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 10);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                10
+            );
         })
         .unwrap();
     }
@@ -991,7 +1012,10 @@ mod tests {
             perf.perf_driver_binding_stop_begin(module, controller);
             perf.perf_driver_binding_stop_end(module, controller);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -1026,7 +1050,10 @@ mod tests {
             let record = GenericPerformanceRecord::ref_from_bytes(&bytes).unwrap();
             perf.add_generic_record(record).unwrap();
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 2);
+            assert_eq!(
+                perf.performance_table.checked_lock().expect("test performance lock").perf_records().iter().count(),
+                2
+            );
 
             // published_table_size reports a non-zero size, and publish_table writes into a large-enough buffer.
             let size = perf.published_table_size().unwrap();
@@ -1041,12 +1068,18 @@ mod tests {
     fn test_core_performance_manager_locked_table_returns_error() {
         with_global_lock(|| {
             let perf = test_core_performance();
-            let _guard = perf.performance_table.lock();
+            let _guard = perf.performance_table.checked_lock().expect("test performance lock");
 
-            assert_eq!(perf.published_table_size().unwrap_err(), Error::Efi(EfiError::AccessDenied));
+            crate::test_support::assert_checked_lock_failure(
+                || perf.published_table_size().unwrap_err(),
+                Error::Efi(EfiError::AccessDenied),
+            );
 
             let buffer: &'static mut [u8] = alloc::boxed::Box::leak(alloc::vec![0u8; 64].into_boxed_slice());
-            assert_eq!(perf.publish_table(buffer).unwrap_err(), Error::Efi(EfiError::AccessDenied));
+            crate::test_support::assert_checked_lock_failure(
+                || perf.publish_table(buffer).unwrap_err(),
+                Error::Efi(EfiError::AccessDenied),
+            );
 
             // A re-entrant record add cannot acquire the held table lock and drops the record.
             let data = [0u8; 4];
@@ -1057,7 +1090,10 @@ mod tests {
             bytes.push(0);
             bytes.extend_from_slice(&data);
             let record = GenericPerformanceRecord::ref_from_bytes(&bytes).unwrap();
-            assert_eq!(perf.add_generic_record(record).unwrap_err(), Error::Efi(EfiError::AccessDenied));
+            crate::test_support::assert_checked_lock_failure(
+                || perf.add_generic_record(record).unwrap_err(),
+                Error::Efi(EfiError::AccessDenied),
+            );
         })
         .unwrap();
     }

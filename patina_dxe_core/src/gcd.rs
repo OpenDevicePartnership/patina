@@ -382,8 +382,8 @@ impl MemoryProtectionPolicy {
 
             // if the allocator doesn't have any memory, then when it is used next it will allocate from the GCD
             // and the GCD will be in compatibility mode, so we don't care here
-            let mut loader_mem_ranges = crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
-            loader_mem_ranges.extend(crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA));
+            let mut loader_mem_ranges = crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE)?;
+            loader_mem_ranges.extend(crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA)?);
             for range in &loader_mem_ranges {
                 let mut addr = range.start;
                 while addr < range.end {
@@ -816,7 +816,8 @@ mod tests {
         init_gcd(physical_hob_list);
         assert!(free_memory_start >= mem_base && free_memory_start < mem_base + MEM_SIZE);
         assert!(free_memory_size <= 0x100000);
-        let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+        let mut descriptors: Vec<MemorySpaceDescriptor> =
+            Vec::with_capacity(GCD.memory_descriptor_count().expect("GCD descriptor count available") + 10);
         GCD.get_memory_descriptors(&mut descriptors, |_, _| true).expect("get_memory_descriptors failed.");
         assert!(
             descriptors
@@ -827,7 +828,8 @@ mod tests {
 
     fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {
         add_hob_resource_descriptors_to_gcd(hob_list);
-        let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+        let mut descriptors: Vec<MemorySpaceDescriptor> =
+            Vec::with_capacity(GCD.memory_descriptor_count().expect("GCD descriptor count available") + 10);
         GCD.get_memory_descriptors(&mut descriptors, |_, _| true).expect("get_memory_descriptors failed.");
         descriptors
             .iter()
@@ -846,7 +848,8 @@ mod tests {
         assert_eq!(mmio_3_4.length, 0x2000000);
         descriptors.iter().find(|x| x.base_address == 0x12000000 && x.memory_type == GcdMemoryType::Reserved).unwrap();
 
-        let mut descriptors: Vec<IoSpaceDescriptor> = Vec::with_capacity(GCD.io_descriptor_count() + 10);
+        let mut descriptors: Vec<IoSpaceDescriptor> =
+            Vec::with_capacity(GCD.io_descriptor_count().expect("GCD descriptor count available") + 10);
         GCD.get_io_descriptors(&mut descriptors).expect("get_io_descriptors failed.");
         descriptors.iter().find(|x| x.base_address == 0x0000 && x.io_type == GcdIoType::Reserved).unwrap();
         descriptors.iter().find(|x| x.base_address == 0x1000 && x.io_type == GcdIoType::Io).unwrap();
@@ -1100,8 +1103,8 @@ mod tests {
             allocator::core_allocate_pool(efi::LOADER_DATA, 2 * UEFI_PAGE_SIZE).unwrap();
             allocator::core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, 4, 0, None).unwrap();
 
-            let mut loader_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
-            loader_ranges.extend(allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA));
+            let mut loader_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE).unwrap();
+            loader_ranges.extend(allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA).unwrap());
             let loader_range = &loader_ranges[0];
             let image = loader_range.start;
             GCD.set_memory_space_attributes(
@@ -1117,7 +1120,7 @@ mod tests {
             )
             .unwrap();
 
-            let mut descriptors = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+            let mut descriptors = Vec::with_capacity(GCD.memory_descriptor_count().unwrap() + 10);
             GCD.get_memory_descriptors(&mut descriptors, |descriptor, _| {
                 descriptor.memory_type == GcdMemoryType::SystemMemory
             })
@@ -1190,8 +1193,8 @@ mod tests {
                 allocator::core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_CODE, 2, 0, None).unwrap();
             let second_image =
                 allocator::core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, 2, 0, None).unwrap();
-            let mut loader_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
-            loader_ranges.extend(allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA));
+            let mut loader_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE).unwrap();
+            loader_ranges.extend(allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA).unwrap());
             assert!(!loader_ranges.is_empty());
 
             MemoryProtectionPolicy::activate_compatibility_mode(&GCD, first_image as usize, 2, "first.efi").unwrap();
@@ -1215,7 +1218,7 @@ mod tests {
             )
             .unwrap();
 
-            let mut descriptors = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+            let mut descriptors = Vec::with_capacity(GCD.memory_descriptor_count().unwrap() + 10);
             GCD.get_memory_descriptors(&mut descriptors, |descriptor, _| {
                 descriptor.memory_type == GcdMemoryType::SystemMemory
             })
@@ -1309,8 +1312,10 @@ mod tests {
                     .expect("Failed to allocate loader data memory");
 
             // loader code/data should be XP by default
-            let loader_code_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
-            let loader_data_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA);
+            let loader_code_ranges =
+                allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE).expect("Loader code ranges available");
+            let loader_data_ranges =
+                allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA).expect("Loader data ranges available");
 
             for range in loader_code_ranges.iter().chain(loader_data_ranges.iter()) {
                 let mut addr = range.start;
@@ -1371,8 +1376,10 @@ mod tests {
             }
 
             // 6. All loader code/data memory should have XP cleared (RWX)
-            let loader_code_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
-            let loader_data_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA);
+            let loader_code_ranges =
+                allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE).expect("Loader code ranges available");
+            let loader_data_ranges =
+                allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA).expect("Loader data ranges available");
 
             for range in loader_code_ranges.iter().chain(loader_data_ranges.iter()) {
                 let mut addr = range.start;

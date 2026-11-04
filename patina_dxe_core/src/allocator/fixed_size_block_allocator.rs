@@ -867,10 +867,10 @@ impl FixedSizeBlockAllocator {
         }
 
         // The global allocator can run while the bin lock is held, so check the type before locking.
-        if MemoryBinManager::is_special_type(self.memory_type) {
-            super::MEMORY_BIN_MANAGER
-                .lock()
-                .record_allocation(self.memory_type, uefi_size_to_pages!(allocation.len()) as u64);
+        if MemoryBinManager::is_special_type(self.memory_type)
+            && let Ok(mut bin_manager) = super::MEMORY_BIN_MANAGER.checked_lock()
+        {
+            bin_manager.record_allocation(self.memory_type, uefi_size_to_pages!(allocation.len()) as u64);
         }
     }
 
@@ -882,8 +882,10 @@ impl FixedSizeBlockAllocator {
             self.stats.claimed_pages = self.stats.claimed_pages.saturating_sub(pages);
         }
 
-        if MemoryBinManager::is_special_type(self.memory_type) {
-            super::MEMORY_BIN_MANAGER.lock().record_free(self.memory_type, pages as u64);
+        if MemoryBinManager::is_special_type(self.memory_type)
+            && let Ok(mut bin_manager) = super::MEMORY_BIN_MANAGER.checked_lock()
+        {
+            bin_manager.record_free(self.memory_type, pages as u64);
         }
     }
 
@@ -1011,7 +1013,7 @@ impl FixedSizeBlockAllocator {
                 d.memory_type != GcdMemoryType::NonExistent
             })
             .map_err(|err| match err {
-                EfiError::NotFound => err,
+                EfiError::NotFound | EfiError::AccessDenied => err,
                 _ => EfiError::InvalidParameter,
             })?;
 
@@ -1022,13 +1024,13 @@ impl FixedSizeBlockAllocator {
         if self.in_reserved_range(address as efi::PhysicalAddress) {
             gcd.free_memory_space_preserving_ownership(address, uefi_pages_to_size!(pages)).map_err(
                 |err| match err {
-                    EfiError::NotFound => err,
+                    EfiError::NotFound | EfiError::AccessDenied => err,
                     _ => EfiError::InvalidParameter,
                 },
             )?;
         } else {
             gcd.free_memory_space(address, uefi_pages_to_size!(pages)).map_err(|err| match err {
-                EfiError::NotFound => err,
+                EfiError::NotFound | EfiError::AccessDenied => err,
                 _ => EfiError::InvalidParameter,
             })?;
         }
@@ -1186,14 +1188,18 @@ impl SpinLockedFixedSizeBlockAllocator {
     // Note: this does not reset the GCD nor change the page_change_callback.
     #[cfg(test)]
     pub fn reset(&self) {
-        self.lock().reset();
+        self.checked_lock().expect("test allocator must be unlocked during reset").reset();
     }
 
-    /// Locks the allocator
+    /// Locks the allocator, checking that its locking invariants hold.
     ///
     /// This can be used to do several actions on the allocator atomically.
-    pub fn lock(&self) -> tpl_mutex::TplGuard<'_, FixedSizeBlockAllocator> {
-        self.inner.lock()
+    /// Returns an error identifying the acquisition failure in non-debug builds.
+    ///
+    /// # Panics
+    /// Panics in debug builds if acquisition fails.
+    pub fn checked_lock(&self) -> Result<tpl_mutex::TplGuard<'_, FixedSizeBlockAllocator>, tpl_mutex::TplMutexError> {
+        self.inner.checked_lock()
     }
 
     /// Attempts to allocate the given number of pages according to the given allocation strategy.
@@ -1214,7 +1220,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         alignment: usize,
     ) -> Result<NonNull<[u8]>, EfiError> {
         // Record this call in the FSB's stats
-        let mut allocator = self.lock();
+        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
         allocator.stats.page_allocation_calls += 1;
         let granularity = allocator.page_allocation_granularity;
 
@@ -1248,7 +1254,7 @@ impl SpinLockedFixedSizeBlockAllocator {
                 uefi_pages_to_size!(required_pages),
             )
             .map_err(|err| match err {
-                EfiError::InvalidParameter | EfiError::NotFound => err,
+                EfiError::InvalidParameter | EfiError::NotFound | EfiError::AccessDenied => err,
                 _ => EfiError::OutOfResources,
             })?;
 
@@ -1267,7 +1273,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [`Self::allocate_pages`]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
-        let mut allocator = self.lock();
+        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
         allocator.stats.page_free_calls += 1;
         let granularity = allocator.page_allocation_granularity;
 
@@ -1290,25 +1296,25 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     /// Returns [`EfiError::AlreadyStarted`] if a reserved range has already been set.
     pub fn set_reserved_range(&self, range: Range<efi::PhysicalAddress>) -> Result<(), EfiError> {
-        self.lock().set_reserved_range(range)
+        self.checked_lock().map_err(|_| EfiError::AccessDenied)?.set_reserved_range(range)
     }
 
     /// Returns an iterator of the ranges of memory owned by this allocator
     /// Returns an empty iterator if the allocator does not own any memory.
-    pub fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>> {
+    pub fn get_memory_ranges(&self) -> Result<alloc::vec::IntoIter<Range<usize>>, EfiError> {
         let mut ranges = Vec::new();
 
         // The vector is grown with the lock released, since this allocator may be the one backing the global
         // allocator, in which case allocating while holding its lock would be a re-entrant lock.
         loop {
-            let count = self.lock().get_memory_ranges().count();
+            let count = self.checked_lock().map_err(|_| EfiError::AccessDenied)?.get_memory_ranges().count();
             if count < ranges.capacity() {
                 break;
             }
             ranges = Vec::with_capacity(count + 1);
         }
 
-        let allocator = self.lock();
+        let allocator = self.checked_lock().map_err(|_| EfiError::AccessDenied)?;
         let range_iter = allocator.get_memory_ranges().take(ranges.capacity());
 
         // Bounded by the reserved capacity so that pushing cannot reallocate while the lock is held.
@@ -1317,7 +1323,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         }
         drop(allocator);
 
-        ranges.into_iter()
+        Ok(ranges.into_iter())
     }
 
     /// Returns the allocator handle associated with this allocator.
@@ -1327,21 +1333,21 @@ impl SpinLockedFixedSizeBlockAllocator {
 
     /// Returns the reserved memory range, if any.
     #[cfg_attr(coverage, coverage(off))]
-    pub fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
-        self.inner.lock().reserved_range.clone()
+    pub fn reserved_range(&self) -> Result<Option<Range<efi::PhysicalAddress>>, EfiError> {
+        Ok(self.checked_lock().map_err(|_| EfiError::AccessDenied)?.reserved_range.clone())
     }
 
     /// Returns the memory type for this allocator.
     #[allow(dead_code)]
     #[cfg_attr(coverage, coverage(off))]
-    pub fn memory_type(&self) -> efi::MemoryType {
-        self.inner.lock().memory_type()
+    pub fn memory_type(&self) -> Result<efi::MemoryType, EfiError> {
+        Ok(self.checked_lock().map_err(|_| EfiError::AccessDenied)?.memory_type())
     }
 
     /// Returns allocation statistics for this allocator.
     #[allow(dead_code)]
-    pub fn stats(&self) -> AllocationStatistics {
-        *self.inner.lock().stats()
+    pub fn stats(&self) -> Result<AllocationStatistics, EfiError> {
+        Ok(*self.checked_lock().map_err(|_| EfiError::AccessDenied)?.stats())
     }
 }
 
@@ -1364,7 +1370,7 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
 // SAFETY: SpinLockedFixedSizeBlockAllocator serializes access and delegates to the inner allocator.
 unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
     fn allocate(&self, layout: Layout) -> core::result::Result<NonNull<[u8]>, AllocError> {
-        let mut allocator = self.lock();
+        let mut allocator = self.inner.checked_lock().map_err(|_| AllocError)?;
         let allocation = allocator.alloc(layout);
         match allocation {
             Ok(alloc) => Ok(alloc),
@@ -1524,8 +1530,29 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
             }
         }
     }
+    /// Contention intentionally retains the allocation: this infallible interface cannot
+    /// retry safely or report failure. Logging here could recursively enter the allocator.
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        let mut allocator = self.lock();
+        // SAFETY: the caller guarantees a live allocation with this pointer and layout.
+        match unsafe { self.deallocate_pool(ptr, layout, || {}) } {
+            Ok(()) | Err(EfiError::AccessDenied) => {}
+            Err(e) => {
+                log::error!("Failed to free pages: {e:?}");
+                debug_assert!(false, "Failed to free pages for large allocation");
+            }
+        }
+    }
+}
+
+impl SpinLockedFixedSizeBlockAllocator {
+    unsafe fn deallocate_pool(
+        &self,
+        ptr: NonNull<u8>,
+        layout: Layout,
+        invalidate: impl FnOnce(),
+    ) -> Result<(), EfiError> {
+        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        invalidate();
         let Some(index) = list_index(&layout) else {
             allocator.stats.pool_free_calls += 1;
             if let Some(size) = retained_pool_size(layout) {
@@ -1533,13 +1560,13 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 for page_base in pages.clone().step_by(UEFI_PAGE_SIZE) {
                     let Some(node) = allocator.node_for_address(page_base) else {
                         debug_assert!(false, "Pool allocation belongs to an untracked page.");
-                        return;
+                        return Err(EfiError::InvalidParameter);
                     };
                     // SAFETY: node_for_address returned the live metadata tracking this allocation.
                     unsafe {
                         let Some((_, free_bytes)) = (*node.as_ptr()).page_free_bytes_mut(page_base) else {
                             debug_assert!(false);
-                            return;
+                            return Err(EfiError::InvalidParameter);
                         };
                         debug_assert_eq!(*free_bytes, 0);
                         *free_bytes = AllocatorListNode::RETIRING_PAGE;
@@ -1547,43 +1574,43 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 }
                 allocator.stats.retired_pages += uefi_size_to_pages!(size);
                 allocator.retire_pages(self.gcd, pages);
-                return;
+                return Ok(());
             }
             // if this isn't in the fixed block list, we directly free the memory in the GCD
             // SAFETY: large allocations place a LargeAllocationNode immediately before the returned user pointer.
             let node = unsafe { NonNull::new_unchecked(ptr.cast::<LargeAllocationNode>().as_ptr().sub(1)).as_ref() };
             if node.signature != LARGE_ALLOCATION_NODE_SIGNATURE {
                 debug_assert!(false, "Invalid large allocation node signature");
-                return;
+                return Err(EfiError::InvalidParameter);
             }
             if LargeAllocationNode::allocation_size(layout, allocator.page_allocation_granularity) != Some(node.size) {
                 debug_assert!(false, "Large allocation size does not match layout");
-                return;
+                return Err(EfiError::InvalidParameter);
             }
             let Some(base) = NonZeroUsize::new(node.base) else {
                 debug_assert!(false, "We shouldn't be deallocating page 0");
-                return;
+                return Err(EfiError::InvalidParameter);
             };
             let pages = uefi_size_to_pages!(node.size);
 
-            if let Err(e) = allocator.free_pages_internal(self.gcd, self.handle, base.get(), pages) {
-                log::error!("Failed to free pages: {e:?}");
-                debug_assert!(false, "Failed to free pages for large allocation");
-            } else {
-                allocator.notify_pages_freed(base.get() as efi::PhysicalAddress, pages);
-            }
-            return;
+            allocator.free_pages_internal(self.gcd, self.handle, base.get(), pages)?;
+            allocator.notify_pages_freed(base.get() as efi::PhysicalAddress, pages);
+            return Ok(());
         };
         // SAFETY: the caller guarantees ptr was allocated with this layout, whose list index was resolved above.
         if let Some(page_base) = unsafe { allocator.dealloc(ptr, index) } {
             allocator.retire_pages(self.gcd, page_base..page_base + UEFI_PAGE_SIZE);
         }
+        Ok(())
     }
 }
 
 impl Display for SpinLockedFixedSizeBlockAllocator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.lock().fmt(f)
+        match self.checked_lock() {
+            Ok(allocator) => allocator.fmt(f),
+            Err(_) => f.write_str("Allocator locked"),
+        }
     }
 }
 
@@ -1593,6 +1620,16 @@ unsafe impl Sync for SpinLockedFixedSizeBlockAllocator {}
 unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 
 impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
+    unsafe fn deallocate_pool(
+        &self,
+        pointer: NonNull<u8>,
+        layout: Layout,
+        invalidate: impl FnOnce(),
+    ) -> Result<(), EfiError> {
+        // SAFETY: the caller guarantees a live allocation with this pointer and layout.
+        unsafe { Self::deallocate_pool(self, pointer, layout, invalidate) }
+    }
+
     fn allocate_pages(
         &self,
         allocation_strategy: AllocationStrategy,
@@ -1618,7 +1655,7 @@ impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
         Self::set_reserved_range(self, range)
     }
 
-    fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>> {
+    fn get_memory_ranges(&self) -> Result<alloc::vec::IntoIter<Range<usize>>, EfiError> {
         Self::get_memory_ranges(self)
     }
 
@@ -1626,11 +1663,11 @@ impl PageAllocator for SpinLockedFixedSizeBlockAllocator {
         Self::handle(self)
     }
 
-    fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
+    fn reserved_range(&self) -> Result<Option<Range<efi::PhysicalAddress>>, EfiError> {
         Self::reserved_range(self)
     }
 
-    fn stats(&self) -> AllocationStatistics {
+    fn stats(&self) -> Result<AllocationStatistics, EfiError> {
         Self::stats(self)
     }
 
@@ -1659,6 +1696,70 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn test_fsb_contention_is_fallible_and_global_alloc_returns_null() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                DUMMY_HANDLE,
+                efi::BOOT_SERVICES_DATA,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
+            );
+            let layout = Layout::from_size_align(32, 8).expect("test layout valid");
+            let _guard = fsb.checked_lock().expect("test FSB unlocked");
+            test_support::assert_checked_lock_failure(|| fsb.allocate(layout).is_err(), true);
+            // SAFETY: the layout is valid; contention must return null without allocating.
+            test_support::assert_checked_lock_failure(|| unsafe { GlobalAlloc::alloc(&fsb, layout) }.is_null(), true);
+            test_support::assert_checked_lock_failure(
+                || fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE),
+                Err(EfiError::AccessDenied),
+            );
+            test_support::assert_checked_lock_failure(
+                || fsb.set_reserved_range(0x1000..0x2000),
+                Err(EfiError::AccessDenied),
+            );
+            test_support::assert_checked_lock_failure(|| matches!(fsb.stats(), Err(EfiError::AccessDenied)), true);
+            test_support::assert_checked_lock_failure(
+                || matches!(fsb.get_memory_ranges(), Err(EfiError::AccessDenied)),
+                true,
+            );
+            test_support::assert_checked_lock_failure(
+                || std::format!("{fsb}"),
+                std::string::String::from("Allocator locked"),
+            );
+        });
+    }
+
+    #[test]
+    fn test_fsb_global_dealloc_contention_explicitly_retains_allocation() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            init_gcd(&GCD, 0x400000);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                DUMMY_HANDLE,
+                efi::BOOT_SERVICES_DATA,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
+            );
+            let layout = Layout::from_size_align(32, 8).unwrap();
+            let pointer = fsb.allocate(layout).unwrap().cast::<u8>();
+            let guard = fsb.checked_lock().unwrap();
+            let free_calls = guard.stats.pool_free_calls;
+            // SAFETY: pointer is a live allocation with this layout; contention must retain it.
+            test_support::assert_checked_lock_failure(
+                || unsafe { GlobalAlloc::dealloc(&fsb, pointer.as_ptr(), layout) },
+                (),
+            );
+            assert_eq!(guard.stats.pool_free_calls, free_calls);
+            drop(guard);
+            // SAFETY: The failed deallocation retained ownership and did not publish the block for reuse.
+            unsafe { fsb.deallocate_pool(pointer, layout, || {}) }.unwrap();
+        });
+    }
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         // SAFETY: Resetting the test GCD is safe in a test.
@@ -1989,7 +2090,7 @@ mod tests {
                 let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
                 // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
-                assert!(fsb.lock().allocators.is_some());
+                assert!(fsb.checked_lock().expect("test FSB unlocked").allocators.is_some());
                 assert!((allocation as u64) > base);
                 assert!((allocation as u64) < base + 0x400000);
             });
@@ -2016,7 +2117,7 @@ mod tests {
 
                 let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().as_ptr().cast::<u8>();
-                assert!(fsb.lock().allocators.is_some());
+                assert!(fsb.checked_lock().expect("test FSB unlocked").allocators.is_some());
                 assert!((allocation as u64) > base);
                 assert!((allocation as u64) < base + 0x400000);
             });
@@ -2045,21 +2146,21 @@ mod tests {
                 // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
                 assert!(!allocation.is_null());
-                let free_calls = fsb.stats().pool_free_calls;
+                let free_calls = fsb.stats().expect("test stats available").pool_free_calls;
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
-                assert_eq!(fsb.stats().pool_free_calls, free_calls + 1);
+                assert_eq!(fsb.stats().expect("test stats available").pool_free_calls, free_calls + 1);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
                 // SAFETY: fsb is initialized and used with a valid layout in tests.
                 let allocation = unsafe { fsb.alloc(layout) };
                 assert!(!allocation.is_null());
-                let free_calls = fsb.stats().pool_free_calls;
+                let free_calls = fsb.stats().expect("test stats available").pool_free_calls;
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.dealloc(allocation, layout) };
-                assert_eq!(fsb.stats().pool_free_calls, free_calls + 1);
+                assert_eq!(fsb.stats().expect("test stats available").pool_free_calls, free_calls + 1);
             });
         });
     }
@@ -2084,19 +2185,19 @@ mod tests {
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
-                let free_calls = fsb.stats().pool_free_calls;
+                let free_calls = fsb.stats().expect("test stats available").pool_free_calls;
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                assert_eq!(fsb.stats().pool_free_calls, free_calls + 1);
+                assert_eq!(fsb.stats().expect("test stats available").pool_free_calls, free_calls + 1);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
-                let free_calls = fsb.stats().pool_free_calls;
+                let free_calls = fsb.stats().expect("test stats available").pool_free_calls;
 
                 // SAFETY: Allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                assert_eq!(fsb.stats().pool_free_calls, free_calls + 1);
+                assert_eq!(fsb.stats().expect("test stats available").pool_free_calls, free_calls + 1);
             });
         });
     }
@@ -2331,7 +2432,7 @@ mod tests {
             let _ = fsb.allocate(layout); // Triggers expansion + allocation
 
             // Call format on the inner FixedSizeBlockAllocator
-            let _ = std::format!("{}", fsb.lock());
+            let _ = std::format!("{}", fsb.checked_lock().expect("test FSB unlocked"));
         });
     }
 
@@ -2355,7 +2456,7 @@ mod tests {
                 HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
             );
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 0);
             assert_eq!(stats.large_pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 0);
@@ -2371,7 +2472,7 @@ mod tests {
             // SAFETY: fsb is initialized and fixed_layout is valid.
             let ptr = unsafe { fsb.alloc(fixed_layout) };
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.large_pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 0);
@@ -2386,7 +2487,7 @@ mod tests {
                 fsb.dealloc(ptr, fixed_layout);
             }
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.large_pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 1);
@@ -2406,7 +2507,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.large_pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 1);
@@ -2426,7 +2527,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.large_pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 2);
@@ -2446,7 +2547,7 @@ mod tests {
             //1MB-16k free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -2466,7 +2567,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -2485,7 +2586,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
             //104 pages (1MB+16K) page as a result of allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 2);
@@ -2505,7 +2606,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
             //104 pages (1MB+16K) page as a result of allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 3);
@@ -2529,7 +2630,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.stats();
+            let stats = fsb.stats().expect("test stats available");
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 3);
@@ -2669,7 +2770,7 @@ mod tests {
             _ => return,
         };
         GCD_LOCK_OBSERVATIONS.fetch_or(observation, Ordering::Relaxed);
-        if LOCK_CHECK_FSB.inner.try_lock().is_some() {
+        if LOCK_CHECK_FSB.inner.checked_lock().is_ok() {
             GCD_OBSERVED_UNLOCKED.store(true, Ordering::Relaxed);
         }
     }
@@ -2677,7 +2778,7 @@ mod tests {
     fn init_fsb_guard_check(granularity: usize) {
         CHECK_GCD_LOCK.store(false, Ordering::Relaxed);
         LOCK_CHECK_FSB.reset();
-        LOCK_CHECK_FSB.lock().page_allocation_granularity = granularity;
+        LOCK_CHECK_FSB.checked_lock().expect("test FSB unlocked").page_allocation_granularity = granularity;
         init_gcd(&LOCK_CHECK_GCD, 0x400000);
         GCD_LOCK_OBSERVATIONS.store(0, Ordering::Relaxed);
         GCD_OBSERVED_UNLOCKED.store(false, Ordering::Relaxed);
@@ -2697,21 +2798,24 @@ mod tests {
                 let layout = Layout::from_size_align(UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().pool_allocation_calls, 1);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").pool_allocation_calls, 1);
                 assert_eq!(page_attributes(&LOCK_CHECK_GCD, allocation.addr().get()) & efi::MEMORY_RP, 0);
-                let retired = LOCK_CHECK_FSB.stats().retired_pages;
+                let retired = LOCK_CHECK_FSB.stats().expect("test stats available").retired_pages;
 
                 // SAFETY: allocation is live and was returned by this allocator for layout.
                 unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
                 assert_fsb_guard_observations(GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().retired_pages, retired + 1);
-                assert_eq!(LOCK_CHECK_FSB.lock().pending_retirement(usize::MAX), None);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").retired_pages, retired + 1);
+                assert_eq!(
+                    LOCK_CHECK_FSB.checked_lock().expect("test FSB unlocked").pending_retirement(usize::MAX),
+                    None
+                );
                 assert_eq!(page_attributes(&LOCK_CHECK_GCD, allocation.addr().get()) & efi::MEMORY_RP, efi::MEMORY_RP);
 
-                let reclaimed = LOCK_CHECK_FSB.stats().reclaimed_pages;
+                let reclaimed = LOCK_CHECK_FSB.stats().expect("test stats available").reclaimed_pages;
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().reclaimed_pages, reclaimed + 1);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").reclaimed_pages, reclaimed + 1);
                 assert_eq!(page_attributes(&LOCK_CHECK_GCD, allocation.addr().get()) & efi::MEMORY_RP, 0);
                 // SAFETY: allocation is live and was returned by this allocator for layout.
                 unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
@@ -2729,19 +2833,22 @@ mod tests {
                 let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, UEFI_PAGE_SIZE).unwrap();
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().large_pool_allocation_calls, 1);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").large_pool_allocation_calls, 1);
                 // SAFETY: allocation is live and was returned by this allocator for layout.
                 unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
                 assert_fsb_guard_observations(GCD_FREE);
-                assert_eq!(LOCK_CHECK_FSB.stats().claimed_pages, 0);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").claimed_pages, 0);
 
                 let allocation = LOCK_CHECK_FSB.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
                 assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().claimed_pages, uefi_size_to_pages!(granularity));
+                assert_eq!(
+                    LOCK_CHECK_FSB.stats().expect("test stats available").claimed_pages,
+                    uefi_size_to_pages!(granularity)
+                );
                 // SAFETY: the live page allocation was returned by this allocator for one page.
                 unsafe { LOCK_CHECK_FSB.free_pages(allocation.addr().get(), 1).unwrap() };
                 assert_fsb_guard_observations(GCD_FREE);
-                assert_eq!(LOCK_CHECK_FSB.stats().claimed_pages, 0);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").claimed_pages, 0);
                 CHECK_GCD_LOCK.store(false, Ordering::Relaxed);
             });
         });
@@ -2765,9 +2872,10 @@ mod tests {
             // SAFETY: the registered context points to a live Observation until the event is closed.
             let observation = unsafe { &mut *context.cast::<Observation<'_>>() };
             observation.calls += 1;
-            observation.tpl = crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
+            observation.tpl =
+                crate::events::checked_tpl_raise(efi::TPL_HIGH_LEVEL).expect("test TPL raise should succeed");
             crate::events::restore_tpl(observation.tpl);
-            if let Some(allocator) = observation.fsb.inner.try_lock() {
+            if let Ok(allocator) = observation.fsb.inner.checked_lock() {
                 observation.stats = Some(*allocator.stats());
                 observation.range = allocator.get_memory_ranges().next();
                 observation.pending_retirement = allocator.pending_retirement(usize::MAX).is_some();
@@ -2781,8 +2889,14 @@ mod tests {
             assert!(!observation.observed_locked);
             assert!(!observation.pending_retirement);
             assert_eq!(observation.tpl, efi::TPL_CALLBACK);
-            assert_eq!(std::format!("{:?}", observation.stats.unwrap()), std::format!("{:?}", observation.fsb.stats()));
-            assert_eq!(observation.range, observation.fsb.lock().get_memory_ranges().next());
+            assert_eq!(
+                std::format!("{:?}", observation.stats.unwrap()),
+                std::format!("{:?}", observation.fsb.stats().expect("test stats available"))
+            );
+            assert_eq!(
+                observation.range,
+                observation.fsb.checked_lock().expect("test FSB unlocked").get_memory_ranges().next()
+            );
         }
 
         with_granularity_modulation(|granularity| {
@@ -2815,7 +2929,7 @@ mod tests {
                     )
                     .unwrap();
 
-                let allocator = fsb.lock();
+                let allocator = fsb.checked_lock().expect("test FSB unlocked");
                 crate::events::gcd_map_change(gcd::MapChangeType::AllocateMemorySpace);
                 assert_eq!(observation.calls, 0);
                 drop(allocator);
@@ -2894,7 +3008,7 @@ mod tests {
                 let layout = Layout::from_size_align(2048, 2048).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 let (region, whole_pages) = {
-                    let allocator = fsb.lock();
+                    let allocator = fsb.checked_lock().expect("test FSB unlocked");
                     let node = allocator.allocators.unwrap();
                     // SAFETY: the lock keeps this allocator's permanently mapped region metadata accessible.
                     let node = unsafe { &*node };
@@ -2904,7 +3018,7 @@ mod tests {
                     assert!(allocation.addr().get().is_multiple_of(layout.align()));
                     (region, whole_pages)
                 };
-                let before = fsb.stats();
+                let before = fsb.stats().expect("test stats available");
                 assert_eq!(before.pool_allocation_calls, 1);
                 assert_eq!(before.reclaimed_pages, 0);
                 assert_eq!(before.retired_pages, whole_pages.len() / UEFI_PAGE_SIZE - 1);
@@ -2918,9 +3032,9 @@ mod tests {
                 let reclaimed = fsb.allocate(page_layout).unwrap().cast::<u8>();
                 assert!(whole_pages.contains(&reclaimed.addr().get()));
                 assert_eq!(page_attributes(&GCD, reclaimed.addr().get()) & efi::MEMORY_RP, 0);
-                assert_eq!(fsb.stats().claimed_pages, before.claimed_pages);
-                assert_eq!(fsb.stats().reclaimed_pages, 1);
-                assert_eq!(fsb.get_memory_ranges().count(), 1);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, before.claimed_pages);
+                assert_eq!(fsb.stats().expect("test stats available").reclaimed_pages, 1);
+                assert_eq!(fsb.get_memory_ranges().expect("test ranges available").count(), 1);
                 // SAFETY: both pointers are live and were returned by this allocator for their respective layouts.
                 unsafe {
                     fsb.deallocate(reclaimed, page_layout);
@@ -2937,7 +3051,7 @@ mod tests {
     #[test]
     fn test_fsb_live_occupancy_matches_page_retirement_across_regions() {
         fn assert_page_occupancy(fsb: &SpinLockedFixedSizeBlockAllocator, live: &[(NonNull<u8>, Layout)]) {
-            let allocator = fsb.lock();
+            let allocator = fsb.checked_lock().expect("test FSB unlocked");
             let regions: Vec<_> = allocator.get_memory_ranges().collect();
 
             for (allocation, layout) in live {
@@ -3050,7 +3164,7 @@ mod tests {
                         allocate_live(&fsb, &mut live, *layout);
                     }
                 }
-                let regions: Vec<_> = fsb.get_memory_ranges().collect();
+                let regions: Vec<_> = fsb.get_memory_ranges().expect("test ranges available").collect();
                 assert!(regions.len() >= 3, "workload must force multiple expansions");
                 assert!(regions.iter().all(|region| live.iter().any(|(ptr, _)| region.contains(&ptr.addr().get()))));
 
@@ -3067,13 +3181,13 @@ mod tests {
                     free_live(&fsb, &mut live, index);
                 }
 
-                let reclaimed_before = fsb.stats().reclaimed_pages;
+                let reclaimed_before = fsb.stats().expect("test stats available").reclaimed_pages;
                 for _ in 0..24 {
                     for layout in layouts.iter().rev() {
                         allocate_live(&fsb, &mut live, *layout);
                     }
                 }
-                assert!(fsb.stats().reclaimed_pages > reclaimed_before);
+                assert!(fsb.stats().expect("test stats available").reclaimed_pages > reclaimed_before);
                 assert!(live.iter().any(|(ptr, _)| previously_used.contains(&(ptr.addr().get() & !UEFI_PAGE_MASK))));
                 while !live.is_empty() {
                     free_live(&fsb, &mut live, 0);
@@ -3095,12 +3209,12 @@ mod tests {
             for (index, allocation) in allocations.iter().enumerate() {
                 assert_eq!(allocation.addr().get(), page_base + index * 8);
             }
-            let retired = fsb.stats().retired_pages;
+            let retired = fsb.stats().expect("test stats available").retired_pages;
             for allocation in allocations {
                 // SAFETY: each allocation is live and was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
             }
-            assert_eq!(fsb.stats().retired_pages, retired + 1);
+            assert_eq!(fsb.stats().expect("test stats available").retired_pages, retired + 1);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, efi::MEMORY_RP);
             let reclaimed = fsb.allocate(layout).unwrap().cast::<u8>();
             assert_eq!(reclaimed.addr().get(), page_base);
@@ -3132,9 +3246,9 @@ mod tests {
                     efi::MEMORY_RP,
                     "allocation {index}, page {:#x}, GCD descriptors {}, retired {}, reclaimed {}",
                     allocation.addr().get(),
-                    GCD.memory_descriptor_count(),
-                    fsb.stats().retired_pages,
-                    fsb.stats().reclaimed_pages,
+                    GCD.memory_descriptor_count().expect("test memory GCD must be unlocked"),
+                    fsb.stats().expect("test stats available").retired_pages,
+                    fsb.stats().expect("test stats available").reclaimed_pages,
                 );
             }
 
@@ -3163,12 +3277,12 @@ mod tests {
             assert!(page_base.is_multiple_of(UEFI_PAGE_SIZE));
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, 0);
 
-            let retired = fsb.stats().retired_pages;
+            let retired = fsb.stats().expect("test stats available").retired_pages;
 
             // SAFETY: allocation was returned by fsb for this layout.
             unsafe { fsb.deallocate(allocation, layout) };
 
-            assert_eq!(fsb.stats().retired_pages, retired + 1);
+            assert_eq!(fsb.stats().expect("test stats available").retired_pages, retired + 1);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, efi::MEMORY_RP);
         });
     }
@@ -3184,12 +3298,12 @@ mod tests {
             let second = fsb.allocate(small).unwrap().cast::<u8>();
             let page_base = first.addr().get() & !UEFI_PAGE_MASK;
             assert_eq!(second.addr().get() & !UEFI_PAGE_MASK, page_base);
-            let retired = fsb.stats().retired_pages;
+            let retired = fsb.stats().expect("test stats available").retired_pages;
 
             // SAFETY: first was returned by fsb for this layout.
             unsafe { fsb.deallocate(first, small) };
 
-            assert_eq!(fsb.stats().retired_pages, retired);
+            assert_eq!(fsb.stats().expect("test stats available").retired_pages, retired);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, 0);
 
             // SAFETY: second was returned by fsb for this layout.
@@ -3215,7 +3329,10 @@ mod tests {
                 Err(EfiError::NotReady)
             );
 
-            fsb.lock().update_page_attributes(&GCD, &(first_page..second_page + UEFI_PAGE_SIZE), true).unwrap();
+            fsb.checked_lock()
+                .expect("test FSB unlocked")
+                .update_page_attributes(&GCD, &(first_page..second_page + UEFI_PAGE_SIZE), true)
+                .unwrap();
 
             assert_eq!(page_attributes(&GCD, first_page), efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RP);
             assert_eq!(page_attributes(&GCD, second_page), efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RP);
@@ -3250,7 +3367,7 @@ mod tests {
                 GCD.memory_protection_policy.apply_allocated_memory_protection_policy(0, GcdMemoryType::SystemMemory);
             assert_eq!(page_attributes(&GCD, allocation), allocated_attributes);
 
-            let result = fsb.lock().update_page_attributes(
+            let result = fsb.checked_lock().expect("test FSB unlocked").update_page_attributes(
                 &GCD,
                 &(allocation..allocation + uefi_pages_to_size!(pages + 1)),
                 true,
@@ -3282,7 +3399,7 @@ mod tests {
             let fsb = fsb_with_gcd(&GCD);
             let layout = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, 8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
-            let claimed = fsb.stats().claimed_pages;
+            let claimed = fsb.stats().expect("test stats available").claimed_pages;
             // SAFETY: this live large allocation has a writable header immediately before its user pointer.
             let node = unsafe { allocation.cast::<LargeAllocationNode>().as_ptr().sub(1) };
             // SAFETY: node points to the live header, and the allocator is not accessed concurrently.
@@ -3296,13 +3413,13 @@ mod tests {
                 unsafe { fsb.deallocate(allocation, layout) };
             }));
             assert_eq!(result.is_err(), cfg!(debug_assertions));
-            assert_eq!(fsb.stats().claimed_pages, claimed);
+            assert_eq!(fsb.stats().expect("test stats available").claimed_pages, claimed);
             // SAFETY: rejected deallocation left the allocation and its header live.
             unsafe {
                 (*node).size = original_size;
                 fsb.deallocate(allocation, layout);
             }
-            assert_eq!(fsb.stats().claimed_pages, 0);
+            assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 0);
         });
     }
 
@@ -3315,16 +3432,16 @@ mod tests {
             let large = Layout::from_size_align(MAX_RETAINED_POOL_SIZE + 1, UEFI_PAGE_SIZE).unwrap();
             let allocation = fsb.allocate(large).unwrap().cast::<u8>();
             let page_base = allocation.addr().get();
-            let retired = fsb.stats().retired_pages;
-            assert_eq!(fsb.stats().large_pool_allocation_calls, 1);
-            assert!(fsb.stats().claimed_pages > 0);
+            let retired = fsb.stats().expect("test stats available").retired_pages;
+            assert_eq!(fsb.stats().expect("test stats available").large_pool_allocation_calls, 1);
+            assert!(fsb.stats().expect("test stats available").claimed_pages > 0);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, 0);
 
             // SAFETY: allocation was returned by fsb for this layout.
             unsafe { fsb.deallocate(allocation, large) };
 
-            assert_eq!(fsb.stats().retired_pages, retired);
-            assert_eq!(fsb.stats().claimed_pages, 0);
+            assert_eq!(fsb.stats().expect("test stats available").retired_pages, retired);
+            assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 0);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, efi::MEMORY_RP);
         });
     }
@@ -3343,10 +3460,10 @@ mod tests {
 
                 // SAFETY: allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                assert_eq!(fsb.stats().claimed_pages, 0);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 0);
             }
 
-            assert_eq!(fsb.stats().large_pool_allocation_calls, 4);
+            assert_eq!(fsb.stats().expect("test stats available").large_pool_allocation_calls, 4);
         });
     }
 
@@ -3365,21 +3482,25 @@ mod tests {
                 );
                 let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
                 let allocations: Vec<_> = (0..5).map(|_| fsb.allocate(layout).unwrap().cast::<u8>()).collect();
-                let region = fsb.get_memory_ranges().next().unwrap();
+                let region = fsb.get_memory_ranges().expect("test ranges available").next().unwrap();
                 assert_eq!(region.len(), SIZE_64KB);
-                assert_eq!(fsb.get_memory_ranges().count(), 1);
-                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 0);
-                assert_eq!(fsb.stats().claimed_pages, 16);
+                assert_eq!(fsb.get_memory_ranges().expect("test ranges available").count(), 1);
+                assert_eq!(
+                    fsb.stats().expect("test stats available").retired_pages
+                        - fsb.stats().expect("test stats available").reclaimed_pages,
+                    0
+                );
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 16);
                 for pair in allocations.windows(2) {
                     assert_eq!(pair[1].addr().get() - pair[0].addr().get(), 3 * UEFI_PAGE_SIZE);
                 }
-                let retired = fsb.stats().retired_pages;
+                let retired = fsb.stats().expect("test stats available").retired_pages;
                 // SAFETY: both allocations are live and were returned for layout.
                 unsafe {
                     fsb.deallocate(allocations[0], layout);
                     fsb.deallocate(allocations[1], layout);
                 }
-                assert_eq!(fsb.stats().retired_pages, retired + 6);
+                assert_eq!(fsb.stats().expect("test stats available").retired_pages, retired + 6);
                 for page in (allocations[0].addr().get()..allocations[2].addr().get()).step_by(UEFI_PAGE_SIZE) {
                     assert_eq!(page_attributes(&GCD, page) & efi::MEMORY_RP, efi::MEMORY_RP);
                 }
@@ -3391,8 +3512,12 @@ mod tests {
                 let combined_layout = Layout::from_size_align(6 * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
                 let combined = fsb.allocate(combined_layout).unwrap().cast::<u8>();
                 assert_eq!(combined, allocations[0]);
-                assert_eq!(fsb.stats().claimed_pages, 16);
-                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 0);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 16);
+                assert_eq!(
+                    fsb.stats().expect("test stats available").retired_pages
+                        - fsb.stats().expect("test stats available").reclaimed_pages,
+                    0
+                );
                 // SAFETY: combined and the remaining allocations are live with their original layouts.
                 unsafe {
                     fsb.deallocate(combined, combined_layout);
@@ -3400,9 +3525,13 @@ mod tests {
                         fsb.deallocate(*allocation, layout);
                     }
                 }
-                assert_eq!(fsb.stats().retired_pages - fsb.stats().reclaimed_pages, 15);
-                assert_eq!(fsb.lock().pending_retirement(usize::MAX), None);
-                assert!(fsb.lock().list_heads.iter().all(Option::is_none));
+                assert_eq!(
+                    fsb.stats().expect("test stats available").retired_pages
+                        - fsb.stats().expect("test stats available").reclaimed_pages,
+                    15
+                );
+                assert_eq!(fsb.checked_lock().expect("test FSB unlocked").pending_retirement(usize::MAX), None);
+                assert!(fsb.checked_lock().expect("test FSB unlocked").list_heads.iter().all(Option::is_none));
             });
         });
     }
@@ -3423,7 +3552,7 @@ mod tests {
                 let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
                 let first = fsb.allocate(layout).unwrap().cast::<u8>();
                 let second = fsb.allocate(layout).unwrap().cast::<u8>();
-                let claimed = fsb.stats().claimed_pages;
+                let claimed = fsb.stats().expect("test stats available").claimed_pages;
                 // SAFETY: both allocations are live and were returned for layout.
                 unsafe {
                     fsb.deallocate(first, layout);
@@ -3432,8 +3561,8 @@ mod tests {
                 let layout = Layout::from_size_align(15 * UEFI_PAGE_SIZE, 8).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 assert_eq!(allocation, first);
-                assert_eq!(fsb.stats().claimed_pages, claimed);
-                assert_eq!(fsb.get_memory_ranges().count(), 1);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, claimed);
+                assert_eq!(fsb.get_memory_ranges().expect("test ranges available").count(), 1);
                 // SAFETY: allocation is live and was returned for layout.
                 unsafe { fsb.deallocate(allocation, layout) };
             });
@@ -3455,9 +3584,9 @@ mod tests {
                 );
                 let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, 8).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
-                let region = fsb.get_memory_ranges().next().unwrap();
+                let region = fsb.get_memory_ranges().expect("test ranges available").next().unwrap();
                 assert_eq!(region.len(), SIZE_64KB);
-                assert_eq!(fsb.stats().retired_pages, 13);
+                assert_eq!(fsb.stats().expect("test stats available").retired_pages, 13);
                 for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
                     let mapped = page == region.start
                         || (allocation.addr().get()..allocation.addr().get() + 2 * UEFI_PAGE_SIZE).contains(&page);
@@ -3465,8 +3594,8 @@ mod tests {
                 }
                 // SAFETY: allocation is live and was returned for layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                assert_eq!(fsb.stats().retired_pages, 15);
-                assert_eq!(fsb.stats().claimed_pages, 16);
+                assert_eq!(fsb.stats().expect("test stats available").retired_pages, 15);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, 16);
             });
         });
     }
@@ -3488,12 +3617,12 @@ mod tests {
                     let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, alignment).unwrap();
                     let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                     assert!(allocation.addr().get().is_multiple_of(alignment));
-                    let claimed = fsb.stats().claimed_pages;
+                    let claimed = fsb.stats().expect("test stats available").claimed_pages;
                     // SAFETY: allocation is live and was returned for layout.
                     unsafe { fsb.deallocate(allocation, layout) };
                     let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                     assert!(allocation.addr().get().is_multiple_of(alignment));
-                    assert_eq!(fsb.stats().claimed_pages, claimed);
+                    assert_eq!(fsb.stats().expect("test stats available").claimed_pages, claimed);
                     // SAFETY: allocation is live and was returned for layout.
                     unsafe { fsb.deallocate(allocation, layout) };
                 }
@@ -3516,13 +3645,13 @@ mod tests {
                 );
                 let layout = Layout::from_size_align(SIZE_64KB, UEFI_PAGE_SIZE).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
-                let region = fsb.get_memory_ranges().next().unwrap();
+                let region = fsb.get_memory_ranges().expect("test ranges available").next().unwrap();
                 assert!(region.contains(&allocation.addr().get()));
                 assert_eq!(region.len(), SIZE_64KB + granularity);
                 for offset in (0..SIZE_64KB).step_by(UEFI_PAGE_SIZE) {
                     assert_eq!(page_attributes(&GCD, allocation.addr().get() + offset) & efi::MEMORY_RP, 0);
                 }
-                let claimed = fsb.stats().claimed_pages;
+                let claimed = fsb.stats().expect("test stats available").claimed_pages;
                 // SAFETY: allocation is live and was returned for layout.
                 unsafe { fsb.deallocate(allocation, layout) };
                 for offset in (0..SIZE_64KB).step_by(UEFI_PAGE_SIZE) {
@@ -3531,15 +3660,15 @@ mod tests {
                         efi::MEMORY_RP
                     );
                 }
-                assert_eq!(fsb.stats().claimed_pages, claimed);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, claimed);
                 let layout = Layout::from_size_align(UEFI_PAGE_SIZE + 1, 2 * SIZE_64KB).unwrap();
                 let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 assert!(allocation.addr().get().is_multiple_of(layout.align()));
                 assert!(!region.contains(&allocation.addr().get()));
-                assert!(fsb.stats().claimed_pages > claimed);
+                assert!(fsb.stats().expect("test stats available").claimed_pages > claimed);
                 // SAFETY: allocation is live and was returned for layout.
                 unsafe { fsb.deallocate(allocation, layout) };
-                assert_eq!(fsb.stats().claimed_pages, claimed);
+                assert_eq!(fsb.stats().expect("test stats available").claimed_pages, claimed);
             });
         });
     }
@@ -3552,11 +3681,11 @@ mod tests {
                 let layout = Layout::from_size_align(9 * 1024, 8).unwrap();
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ALLOCATE | GCD_ATTRIBUTES);
-                let retired = LOCK_CHECK_FSB.stats().retired_pages;
+                let retired = LOCK_CHECK_FSB.stats().expect("test stats available").retired_pages;
                 // SAFETY: allocation is live and was returned for layout.
                 unsafe { LOCK_CHECK_FSB.deallocate(allocation, layout) };
                 assert_fsb_guard_observations(GCD_ATTRIBUTES);
-                assert_eq!(LOCK_CHECK_FSB.stats().retired_pages, retired + 3);
+                assert_eq!(LOCK_CHECK_FSB.stats().expect("test stats available").retired_pages, retired + 3);
                 let allocation = LOCK_CHECK_FSB.allocate(layout).unwrap().cast::<u8>();
                 assert_fsb_guard_observations(GCD_ATTRIBUTES);
                 // SAFETY: allocation is live and was returned for layout.
@@ -3577,14 +3706,14 @@ mod tests {
             const BLOCK_COUNT: usize = 1024;
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocations: Vec<_> = (0..BLOCK_COUNT).map(|_| fsb.allocate(layout).unwrap().cast::<u8>()).collect();
-            let retired = fsb.stats().retired_pages;
+            let retired = fsb.stats().expect("test stats available").retired_pages;
 
             for allocation in &allocations {
                 // SAFETY: each allocation was returned by fsb for this layout.
                 unsafe { fsb.deallocate(*allocation, layout) };
             }
 
-            assert!(fsb.stats().retired_pages > retired);
+            assert!(fsb.stats().expect("test stats available").retired_pages > retired);
 
             // The free lists are still consistent and never hand out memory that has been unmapped.
             for _ in 0..BLOCK_COUNT / 2 {
@@ -3609,9 +3738,9 @@ mod tests {
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, efi::MEMORY_RP);
 
             // The freed page is the lowest retired page, so the next allocation brings it back into service.
-            let reclaimed = fsb.stats().reclaimed_pages;
+            let reclaimed = fsb.stats().expect("test stats available").reclaimed_pages;
             let next = fsb.allocate(layout).unwrap().cast::<u8>();
-            assert_eq!(fsb.stats().reclaimed_pages, reclaimed + 1);
+            assert_eq!(fsb.stats().expect("test stats available").reclaimed_pages, reclaimed + 1);
             assert_eq!(page_attributes(&GCD, page_base) & efi::MEMORY_RP, 0);
             assert_eq!(next.addr().get(), page_base);
         });
@@ -3628,7 +3757,7 @@ mod tests {
 
             // Only the pages needed to satisfy the allocation are mapped; the rest of the region the allocator
             // claimed from the GCD stays unmapped until it is needed.
-            let region = fsb.get_memory_ranges().next().unwrap();
+            let region = fsb.get_memory_ranges().expect("test ranges available").next().unwrap();
             let mapped = (region.start..region.end)
                 .step_by(UEFI_PAGE_SIZE)
                 .filter(|page| page_attributes(&GCD, *page) & efi::MEMORY_RP == 0)
