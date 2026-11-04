@@ -25,4 +25,4 @@ mdbook-linkcheck = "0.7.7"
 mdbook-mermaid = "0.16.2"
 
 [msrv]
-channel = "1.90.0"
+channel = "1.95.0"
