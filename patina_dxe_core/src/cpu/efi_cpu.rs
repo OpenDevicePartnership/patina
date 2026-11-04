@@ -17,14 +17,16 @@ mod stub;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x64;
 
-cfg_if::cfg_if! {
-    if #[cfg(not(target_os = "uefi"))] {
+cfg_select! {
+    not(target_os = "uefi") => {
         /// A stand in implementation of the CPU struct. This will be architecture structure defined by the platform
         /// compilation.
         pub type EfiCpu = stub::EfiCpuStub;
-    } else if #[cfg(target_arch = "x86_64")] {
+    }
+    target_arch = "x86_64" => {
         pub type EfiCpu = x64::EfiCpuX64;
-    } else if #[cfg(target_arch = "aarch64")] {
+    }
+    target_arch = "aarch64" => {
         pub type EfiCpu = aarch64::EfiCpuAarch64;
     }
 }

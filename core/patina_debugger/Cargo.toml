@@ -16,7 +16,6 @@ workspace = true
 features = ["alloc"]
 
 [dependencies]
-cfg-if = { workspace = true }
 gdbstub = { workspace = true }
 patina = { workspace = true, features = ["alloc"] }
 patina_internal_cpu = { workspace = true, features = ["alloc"] }

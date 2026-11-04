@@ -34,14 +34,16 @@ pub(crate) mod x64;
 pub use aarch64::gic_manager;
 
 // For std builds, publish the stub version of the interrupt functions.
-cfg_if::cfg_if! {
-    if #[cfg(not(target_os = "uefi"))] {
+cfg_select! {
+    not(target_os = "uefi") => {
         /// A stand in implementation of the Interrupts struct. This will be architecture structure defined by the platform
         /// compilation.
         pub type Interrupts = stub::InterruptsStub;
-    } else if #[cfg(target_arch = "x86_64")] {
+    }
+    target_arch = "x86_64" => {
         pub type Interrupts = x64::InterruptsX64;
-    } else if #[cfg(target_arch = "aarch64")] {
+    }
+    target_arch = "aarch64" => {
         pub type Interrupts = aarch64::InterruptsAarch64;
     }
 }
@@ -51,14 +53,16 @@ pub type ExceptionContextX64 = standard::efi::protocols::debug_support::SystemCo
 /// Republished structure for `AArch64` exception context as defined by the UEFI specification.
 pub type ExceptionContextAArch64 = standard::efi::protocols::debug_support::SystemContextAArch64;
 
-cfg_if::cfg_if! {
-    if #[cfg(any(test, doc))] {
+cfg_select! {
+    any(test, doc) => {
         /// The wrapped architecture specific exception context structure. This will be the appropriate structure based on the
         /// target architecture. See [`ExceptionContextX64`] and [`ExceptionContextAArch64`] for the specific structures.
         pub type ExceptionContextArch = stub::ExceptionContextStub;
-    } else if #[cfg(target_arch = "x86_64")] {
+    }
+    target_arch = "x86_64" => {
         pub type ExceptionContextArch = ExceptionContextX64;
-    } else if #[cfg(target_arch = "aarch64")] {
+    }
+    target_arch = "aarch64" => {
         pub type ExceptionContextArch = ExceptionContextAArch64;
     }
 }
