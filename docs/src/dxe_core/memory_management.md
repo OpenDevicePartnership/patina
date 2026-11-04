@@ -133,24 +133,24 @@ hibernate) where the OS assumes a stable boot-to-boot memory map.
 
 The UefiAllocator supports the following operations:
 
-* Creating a new allocator for arbitrary memory types. A subset of well-known allocators are provided by the core to
+- Creating a new allocator for arbitrary memory types. A subset of well-known allocators are provided by the core to
 support UEFI spec standard memory types, but the spec also allows for arbitrary OEM-defined memory types. If a caller
 makes an allocation request to a previously unused OEM-defined memory type, a new allocator instance is dynamically
 instantiated to track memory for the new memory type.
-* Retrieving the `EfiMemoryType` associated with the allocator. All allocations done with this allocator instance will
+- Retrieving the `EfiMemoryType` associated with the allocator. All allocations done with this allocator instance will
 be of this type.
-* Reserving pages for the allocator. This is used to seed the allocator with an initial [bucket](memory_management.md#allocation-buckets)
+- Reserving pages for the allocator. This is used to seed the allocator with an initial [bucket](memory_management.md#allocation-buckets)
 of memory.
-* APIs for allocate and free operations of arbitrary sizes, including `impl` for [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
+- APIs for allocate and free operations of arbitrary sizes, including `impl` for [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
 and [`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
 traits. See [Rust `Allocator` and `GlobalAlloc` Implementations](memory_management.md#rust-allocator-and-globalalloc-implementations)
 below.
-* APIs for allocating and freeing pages (as distinct from arbitrary sizes). These are pass-throughs to the
+- APIs for allocating and freeing pages (as distinct from arbitrary sizes). These are pass-throughs to the
 underlying [GCD operations](memory_management.md#gcd-operations) with some logic to handle preserving ownership for
 allocation buckets.
-* Expanding the allocator by making a call to the GCD to acquire more memory if the allocator does not have enough
+- Expanding the allocator by making a call to the GCD to acquire more memory if the allocator does not have enough
 memory to satisfy a request.
-* Locking the allocator to support exclusive access for allocation (see [Concurrency](memory_management.md#concurrency)).
+- Locking the allocator to support exclusive access for allocation (see [Concurrency](memory_management.md#concurrency)).
 
 ## Global Coherency Domain (GCD)
 
@@ -192,17 +192,17 @@ SystemMem  0000000080003000-0000000081805fff 800000000002700f 0000000000002008 0
 
 The GCD supports the following operations:
 
-* Adding, Removing, and Allocating and Freeing regions within the address space. The semantics for these operations
+- Adding, Removing, and Allocating and Freeing regions within the address space. The semantics for these operations
 largely follow the Platform Initialization spec [APIs](https://uefi.org/specs/PI/1.9/V2_Services_DXE_Services.html#gcd-memory-resources)
 for manipulating address spaces.
-* Configuring the capabilities and attributes of the memory space. The GCD uses CPU memory management hardware to
+- Configuring the capabilities and attributes of the memory space. The GCD uses CPU memory management hardware to
 enforce these attributes where supported. See [Paging](cpu.md#paging-implementation) for details on how this hardware is
 configured.
-* Retrieving the current address space map as a list of descriptors containing details about each memory region.
-* Locking the memory space to disallow modifications to the GCD. This allows the GCD to be protected in certain
+- Retrieving the current address space map as a list of descriptors containing details about each memory region.
+- Locking the memory space to disallow modifications to the GCD. This allows the GCD to be protected in certain
 sensitive scenarios (such as during [Exit Boot Services](memory_management.md#exit-boot-services-handlers)) where
 modifications to the GCD are not permitted.
-* Obtaining a locked instance of the GCD instance to allow for concurrency-safe modification of the memory map. (see
+- Obtaining a locked instance of the GCD instance to allow for concurrency-safe modification of the memory map. (see
 [Concurrency](memory_management.md#concurrency)).
 
 The internal GCD implementation will ensure that a consistent map is maintained as various operations are performed to
@@ -423,15 +423,15 @@ what bootloaders are) that does not have the NX_COMPAT DLL Characteristic set in
 
 Entering Compatibility Mode causes the following to occur:
 
-* Map all memory in the legacy BIOS write back range (0x0 - 0xA000) as RWX if it is part of system memory. This is done
+- Map all memory in the legacy BIOS write back range (0x0 - 0xA000) as RWX if it is part of system memory. This is done
   as Linux both can have null pointer dereferences and attempts to access structures in that range.
-* Map all newly allocated pages as RWX. This is done as non-NX_COMPAT bootloaders will attempt to allocate pages and
+- Map all newly allocated pages as RWX. This is done as non-NX_COMPAT bootloaders will attempt to allocate pages and
   execute from them without updating attributes.
-* Map the current image that triggered Compatibility Mode as RWX. This is done as Linux will try to execute out of data
+- Map the current image that triggered Compatibility Mode as RWX. This is done as Linux will try to execute out of data
   regions.
-* Map all memory owned by the `EFI_LOADER_CODE` and `EFI_LOADER_DATA` `UefiAllocators` as RWX. This supports Linux
+- Map all memory owned by the `EFI_LOADER_CODE` and `EFI_LOADER_DATA` `UefiAllocators` as RWX. This supports Linux
   allocating pool memory and attempting to execute from it.
-* The `EFI_MEMORY_ATTRIBUTE_PROTOCOL` is uninstalled. This is done because versions of Linux bootloaders in the wild
+- The `EFI_MEMORY_ATTRIBUTE_PROTOCOL` is uninstalled. This is done because versions of Linux bootloaders in the wild
   will use the protocol to map their entire image as non-executable, then attempt to map each section as executable, but
   the subsequent calls aren't page aligned, causing the protocol to return an error, which is unchecked. The bootloader
   then attempts to execute out of non-executable memory and crashes.
