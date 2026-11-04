@@ -25,10 +25,11 @@ use patina::{
 };
 pub use work::ApWorkItem;
 
-cfg_if::cfg_if! {
-    if #[cfg(target_arch = "x86_64")] {
+cfg_select! {
+    target_arch = "x86_64" => {
         pub use x64::{ApContext, MpSupport};
-    } else {
+    }
+    _ => {
         mod stub;
         pub use stub::{ApContext, MpSupport};
     }

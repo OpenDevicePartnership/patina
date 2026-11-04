@@ -174,13 +174,15 @@ pub mod error;
 mod pe;
 mod stacktrace;
 
-cfg_if::cfg_if! {
-    if #[cfg(test)] {
+cfg_select! {
+    test => {
         mod aarch64;
         mod x64;
-    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
+    }
+    all(target_os = "uefi", target_arch = "aarch64") => {
         mod aarch64;
-    } else {
+    }
+    _ => {
         mod x64;
     }
 }

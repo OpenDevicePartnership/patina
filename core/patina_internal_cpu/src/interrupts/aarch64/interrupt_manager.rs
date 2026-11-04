@@ -18,8 +18,8 @@ use crate::interrupts::{
     aarch64::ExceptionContextAArch64,
 };
 
-cfg_if::cfg_if! {
-    if #[cfg(target_os = "uefi")] {
+cfg_select! {
+    target_os = "uefi" => {
         use core::arch::global_asm;
         use patina::{read_sysreg, write_sysreg, arch::aarch64::{AArch64El, get_current_el}};
 
@@ -31,6 +31,7 @@ cfg_if::cfg_if! {
             static sp_el0_end: u64;
         }
     }
+    _ => {}
 }
 /// AARCH64 Implementation of the `InterruptManager`.
 #[derive(Default, Copy, Clone)]
@@ -71,10 +72,11 @@ impl InterruptManager for InterruptsAarch64 {}
 
 #[cfg_attr(coverage, coverage(off))]
 fn enable_fiq() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "uefi")]  {
+    cfg_select! {
+        target_os = "uefi" => {
             write_sysreg!(reg daifclr, imm 0x01, "isb sy");
-        } else {
+        }
+        _ => {
             unimplemented!()
         }
     }
@@ -82,10 +84,11 @@ fn enable_fiq() {
 
 #[cfg_attr(coverage, coverage(off))]
 fn disable_fiq() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "uefi")]  {
+    cfg_select! {
+        target_os = "uefi" => {
             write_sysreg!(reg daifset, imm 0x01, "isb sy");
-        } else {
+        }
+        _ => {
             unimplemented!()
         }
     }
@@ -93,11 +96,12 @@ fn disable_fiq() {
 
 #[cfg_attr(coverage, coverage(off))]
 fn get_fiq_state() -> Result<bool, EfiError> {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "uefi")]  {
+    cfg_select! {
+        target_os = "uefi" => {
             let daif = read_sysreg!(daif);
             Ok(daif & 0x40 == 0)
-        } else {
+        }
+        _ => {
             Err(EfiError::Unsupported)
         }
     }
@@ -105,10 +109,11 @@ fn get_fiq_state() -> Result<bool, EfiError> {
 
 #[cfg_attr(coverage, coverage(off))]
 fn enable_async_abort() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "uefi")]  {
+    cfg_select! {
+        target_os = "uefi" => {
             write_sysreg!(reg daifclr, imm 0x04, "isb sy");
-        } else {
+        }
+        _ => {
             unimplemented!()
         }
     }

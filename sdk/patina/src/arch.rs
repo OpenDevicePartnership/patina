@@ -10,8 +10,8 @@
 use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
 use core::num::NonZeroU64;
 
-cfg_if::cfg_if! {
-    if #[cfg(not(target_os = "uefi"))] {
+cfg_select! {
+    not(target_os = "uefi") => {
         #[cfg_attr(coverage, coverage(off))]
         pub mod stub;
         type Arch = stub::StubArch;
@@ -21,12 +21,14 @@ cfg_if::cfg_if! {
         // `patina::arch::x64` paths resolve on host builds.
         #[doc(hidden)]
         pub use stub::*;
-    } else if #[cfg(target_arch = "aarch64")] {
+    }
+    target_arch = "aarch64" => {
         #[cfg_attr(coverage, coverage(off))] // Architecture code cannot be unit tested.
         pub mod aarch64;
         type Arch = aarch64::AArch64;
         use self::aarch64 as arch_impl;
-    } else if #[cfg(target_arch = "x86_64")] {
+    }
+    target_arch = "x86_64" => {
         #[cfg_attr(coverage, coverage(off))] // Architecture code cannot be unit tested.
         pub mod x64;
         type Arch = x64::X64;

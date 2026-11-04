@@ -14,7 +14,6 @@ workspace = true
 
 [dependencies]
 bitfield-struct = { workspace = true }
-cfg-if = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 log = { workspace = true }
 patina_paging = { workspace = true }

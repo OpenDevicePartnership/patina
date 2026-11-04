@@ -20,7 +20,6 @@ arm-gic = { version = "0.8.1" }
 safe-mmio = { version = "0.3.0" }
 bitfield-struct = { version = "0.13" }
 brotli-decompressor = { version = "5.0.3", default-features = false }
-cfg-if = { version = "1" }
 clap = { version = "4.6.1" }
 compile-time = { version = "0.2" }
 fallible-streaming-iterator = { version = "0.1.9" }

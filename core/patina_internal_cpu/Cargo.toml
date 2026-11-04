@@ -20,7 +20,6 @@ log = { workspace = true }
 patina = { workspace = true, features = ["core"] }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
-cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
 mockall = { workspace = true, optional = true }
 

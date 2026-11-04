@@ -55,7 +55,6 @@ required-features = ["alloc"]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true, optional = true }
 
-cfg-if = { workspace = true }
 compile-time = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
 log = { workspace = true }

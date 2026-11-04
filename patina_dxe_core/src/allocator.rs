@@ -97,10 +97,11 @@ pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 // Per the UEFI spec, AARCH64 runtime pages need to be allocated on 64KB boundaries in units of 64KB to accommodate
 // OSes that use 16KB or 64KB page sizes. Other architectures use 4KB pages, so we don't have any additional
 // granularity requirements for them.
-cfg_if::cfg_if! {
-    if #[cfg(target_arch = "aarch64")] {
+cfg_select! {
+    target_arch = "aarch64" => {
         pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina::SIZE_64KB;
-    } else {
+    }
+    _ => {
         pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = DEFAULT_PAGE_ALLOCATION_GRANULARITY;
     }
 }

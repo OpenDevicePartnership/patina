@@ -13,10 +13,11 @@ mod alloc;
 #[cfg(any(not(feature = "alloc"), test))]
 mod no_alloc;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "alloc")] {
+cfg_select! {
+    feature = "alloc" => {
         pub(crate) use self::alloc::SystemState;
-    } else {
+    }
+    _ => {
         pub(crate) use no_alloc::SystemState;
     }
 }

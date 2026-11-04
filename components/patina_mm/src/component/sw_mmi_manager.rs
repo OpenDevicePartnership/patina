@@ -109,8 +109,8 @@ unsafe impl SwMmiTrigger for SwMmiManager {
         match self.inner_config.cmd_port {
             MmiPort::Smi(port) => {
                 log::trace!(target: "sw_mmi", "Using SMI command port: 0x{port:04X}");
-                cfg_if::cfg_if! {
-                    if #[cfg(all(target_arch = "x86_64", target_os = "uefi"))] {
+                cfg_select! {
+                    all(target_arch = "x86_64", target_os = "uefi") => {
                         log::trace!(target: "sw_mmi", "Writing SMI command port: {port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.cmd_port)
@@ -120,7 +120,8 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         // 4. Writing to the SMI command port is the defined mechanism for triggering software MMIs
                         unsafe { patina::arch::x64::io_out8(port, cmd_port_value) };
                         log::trace!(target: "sw_mmi", "SMI command port write completed");
-                    } else {
+                    }
+                    _ => {
                         log::trace!(target: "sw_mmi", "SMI command port write skipped (not on target platform)");
                     }
                 }
@@ -135,8 +136,8 @@ unsafe impl SwMmiTrigger for SwMmiManager {
         match self.inner_config.data_port {
             MmiPort::Smi(port) => {
                 log::trace!(target: "sw_mmi", "Using SMI data port: 0x{port:04X}");
-                cfg_if::cfg_if! {
-                    if #[cfg(all(target_arch = "x86_64", target_os = "uefi"))] {
+                cfg_select! {
+                    all(target_arch = "x86_64", target_os = "uefi") => {
                         log::trace!(target: "sw_mmi", "Writing SMI data port: {port:#X}");
                         // SAFETY: This I/O port write is considered safe to use because:
                         // 1. The port address comes from platform configuration (self.inner_config.data_port)
@@ -146,7 +147,8 @@ unsafe impl SwMmiTrigger for SwMmiManager {
                         // 4. Writing to the SMI data port is the defined mechanism for passing data to MMI handlers
                         unsafe { patina::arch::x64::io_out8(port, data_port_value) };
                         log::trace!(target: "sw_mmi", "SMI data port write completed");
-                    } else {
+                    }
+                    _ => {
                         log::trace!(target: "sw_mmi", "SMI data port write skipped (not on target platform)");
                     }
                 }

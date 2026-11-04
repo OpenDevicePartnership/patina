@@ -44,8 +44,8 @@ const GDB_BUFF_LEN: usize = 0x2000;
 const GDB_STOP_PACKET: &[u8] = b"$T05thread:01;#07";
 const GDB_NACK_PACKET: &[u8] = b"-";
 
-cfg_if::cfg_if! {
-    if #[cfg(not(feature = "alloc"))] {
+cfg_select! {
+    not(feature = "alloc") => {
         /// Static buffer for GDB communication when the `alloc` feature is not enabled.
         static GDB_BUFFER: StaticGdbBuffer = StaticGdbBuffer(core::cell::UnsafeCell::new([0; GDB_BUFF_LEN]));
 
@@ -55,6 +55,7 @@ cfg_if::cfg_if! {
         /// Safety: The buffer is just memory, the use of which is controlled by the debugger internal state lock.
         unsafe impl Sync for StaticGdbBuffer {}
     }
+    _ => {}
 }
 
 // SAFETY: The exception info is not actually stored globally, but this is needed to satisfy
@@ -361,13 +362,13 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         // Initialize the communication buffer.
         {
             let mut internal = self.internal.lock();
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "alloc")] {
+            cfg_select! {
+                feature = "alloc" => {
                     if internal.gdb_buffer.is_none() {
                         internal.gdb_buffer = Some(NonNull::new(Box::leak(Box::new([0u8; GDB_BUFF_LEN]))).unwrap());
                     }
                 }
-                else {
+                _ => {
                     internal.gdb_buffer = Some(NonNull::new(GDB_BUFFER.0.get()).unwrap());
                 }
             }
