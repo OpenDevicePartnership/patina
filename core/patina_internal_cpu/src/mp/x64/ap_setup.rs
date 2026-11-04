@@ -191,11 +191,8 @@ pub(super) fn ap_entry_addr() -> usize {
     ap_entry_64 as *const () as usize
 }
 
-// `try_update` requires Rust 1.95, newer than the current MSRV.
-// This can be updated to `try_update` once the MSRV is bumped to 1.95 or newer.
-#[allow(deprecated)]
 pub(super) fn decrement_started_count() -> bool {
-    AP_SETUP.started_count.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_sub(1)).is_ok()
+    AP_SETUP.started_count.try_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_sub(1)).is_ok()
 }
 
 pub(super) fn check_for_failures() {
