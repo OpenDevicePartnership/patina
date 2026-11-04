@@ -647,6 +647,9 @@ impl Drop for EventGuard<'_> {
 /// The event database is intended to be used as a global singleton, so access
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
+///
+/// Fallible operations return [`EfiError::NotReady`] if the database is locked,
+/// except for signals that can be queued for processing when the guard drops.
 pub struct SpinLockedEventDb {
     inner: tpl_mutex::TplMutex<EventDb>,
     pending_signals: tpl_mutex::TplMutex<Vec<PendingSignals>>,
@@ -671,8 +674,9 @@ impl SpinLockedEventDb {
         }
     }
 
+    #[cfg(test)]
     fn lock(&self) -> EventGuard<'_> {
-        EventGuard { event_db: self.inner.lock(), pending_signals: &self.pending_signals }
+        self.try_lock().expect("test event database must be unlocked")
     }
 
     fn try_lock(&self) -> Option<EventGuard<'_>> {
@@ -697,7 +701,13 @@ impl SpinLockedEventDb {
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
     ) -> Result<efi::Event, EfiError> {
-        self.lock().create_event(event_type, notify_tpl, notify_function, notify_context, event_group)
+        self.try_lock().ok_or(EfiError::NotReady)?.create_event(
+            event_type,
+            notify_tpl,
+            notify_function,
+            notify_context,
+            event_group,
+        )
     }
 
     /// Closes (deletes) an event from the event database
@@ -709,7 +719,7 @@ impl SpinLockedEventDb {
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn close_event(&self, event: efi::Event) -> Result<(), EfiError> {
-        self.lock().close_event(event)
+        self.try_lock().ok_or(EfiError::NotReady)?.close_event(event)
     }
 
     /// Marks an event as signaled, and queues it for dispatch if it is of type `NotifySignalEvent`
@@ -729,8 +739,7 @@ impl SpinLockedEventDb {
                 pending_signals.push(PendingSignals::Event(event));
                 Ok(())
             } else {
-                log_debug_assert!("Could not acquire pending signals lock to queue signal.");
-                Ok(())
+                Err(EfiError::NotReady)
             }
         }
     }
@@ -793,13 +802,13 @@ impl SpinLockedEventDb {
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect event is given.
     pub fn get_event_type(&self, event: efi::Event) -> Result<EventType, EfiError> {
-        self.lock().get_event_type(event)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_event_type(event)
     }
 
     /// Indicates whether the given event is in the signaled state
     #[allow(dead_code)]
-    pub fn is_signaled(&self, event: efi::Event) -> bool {
-        self.lock().is_signaled(event)
+    pub fn is_signaled(&self, event: efi::Event) -> Result<bool, EfiError> {
+        Ok(self.try_lock().ok_or(EfiError::NotReady)?.is_signaled(event))
     }
 
     /// Clears the signaled state for the given event.
@@ -809,7 +818,7 @@ impl SpinLockedEventDb {
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     #[allow(dead_code)]
     pub fn clear_signal(&self, event: efi::Event) -> Result<(), EfiError> {
-        self.lock().clear_signal(event)
+        self.try_lock().ok_or(EfiError::NotReady)?.clear_signal(event)
     }
 
     /// Atomically reads and clears the signaled state.
@@ -818,7 +827,7 @@ impl SpinLockedEventDb {
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, EfiError> {
-        let mut event_db = self.lock();
+        let mut event_db = self.try_lock().ok_or(EfiError::NotReady)?;
         let signaled = event_db.is_signaled(event);
         if signaled {
             event_db.clear_signal(event)?;
@@ -834,7 +843,7 @@ impl SpinLockedEventDb {
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     pub fn queue_event_notify(&self, event: efi::Event) -> Result<(), EfiError> {
-        self.lock().queue_event_notify(event)
+        self.try_lock().ok_or(EfiError::NotReady)?.queue_event_notify(event)
     }
 
     /// Returns the notification data associated with the event.
@@ -844,7 +853,7 @@ impl SpinLockedEventDb {
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
     #[allow(dead_code)]
     pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, EfiError> {
-        self.lock().get_notification_data(event)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_notification_data(event)
     }
 
     /// Sets a timer on the specified event
@@ -862,7 +871,7 @@ impl SpinLockedEventDb {
         trigger_time: Option<u64>,
         period: Option<u64>,
     ) -> Result<(), EfiError> {
-        self.lock().set_timer(event, timer_type, trigger_time, period)
+        self.try_lock().ok_or(EfiError::NotReady)?.set_timer(event, timer_type, trigger_time, period)
     }
 
     /// called to advance the system time and process any timer events that fire
@@ -877,7 +886,9 @@ impl SpinLockedEventDb {
     /// signaled events with notifications are queued and can be retrieved via
     /// [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     pub fn timer_tick(&self, current_time: u64) {
-        self.lock().timer_tick(current_time);
+        self.try_lock()
+            .expect("Self runs at TPL_HIGH_LEVEL. It should not be interrupted by a timer tick")
+            .timer_tick(current_time);
     }
 
     /// Returns the next pending event notification (if any) that should be dispatched at or above the given TPL level.
@@ -887,13 +898,17 @@ impl SpinLockedEventDb {
     /// [`set_timer`](SpinLockedEventDb::set_timer) followed by a [`timer_tick`](SpinLockedEventDb::timer_tick) that
     /// causes the timer to expire.
     ///
+    /// Returns `None` if the database is locked, leaving notifications queued
+    /// for the next TPL restoration.
     pub fn consume_next_event_notify(&self, tpl_level: efi::Tpl) -> Option<EventNotification> {
-        self.lock().consume_next_event_notify(tpl_level)
+        self.try_lock()?.consume_next_event_notify(tpl_level)
     }
 
     /// Indicates whether a given event is valid.
-    pub fn is_valid(&self, event: efi::Event) -> bool {
-        self.lock().is_valid(event)
+    ///
+    /// Returns [`EfiError::NotReady`] if the database is locked.
+    pub fn is_valid(&self, event: efi::Event) -> Result<bool, EfiError> {
+        Ok(self.try_lock().ok_or(EfiError::NotReady)?.is_valid(event))
     }
 }
 
@@ -947,6 +962,81 @@ mod tests {
     extern "efiapi" fn test_notify_function(_: efi::Event, _: *mut core::ffi::c_void) {}
 
     #[test]
+    fn test_event_db_contention_returns_not_ready_without_mutation() {
+        with_locked_state(|| {
+            let db = SpinLockedEventDb::new();
+            let event = db.create_event(efi::EVT_TIMER, efi::TPL_APPLICATION, None, None, None).unwrap();
+            let guard = db.try_lock().expect("test database must be unlocked");
+
+            assert_eq!(db.create_event(0, efi::TPL_APPLICATION, None, None, None), Err(EfiError::NotReady));
+            assert_eq!(db.close_event(event), Err(EfiError::NotReady));
+            assert_eq!(db.get_event_type(event), Err(EfiError::NotReady));
+            assert_eq!(db.is_signaled(event), Err(EfiError::NotReady));
+            assert_eq!(db.clear_signal(event), Err(EfiError::NotReady));
+            assert_eq!(db.read_and_clear_signaled(event), Err(EfiError::NotReady));
+            assert_eq!(db.queue_event_notify(event), Err(EfiError::NotReady));
+            assert_eq!(db.get_notification_data(event).err(), Some(EfiError::NotReady));
+            assert_eq!(db.set_timer(event, TimerDelay::Relative, Some(10), None), Err(EfiError::NotReady));
+            assert_eq!(db.is_valid(event), Err(EfiError::NotReady));
+
+            let pending = db.pending_signals.try_lock().expect("test pending signals must be unlocked");
+            assert_eq!(db.signal_event(event), Err(EfiError::NotReady));
+            assert!(pending.is_empty());
+            drop(pending);
+            assert_eq!(guard.events.len(), 1);
+            drop(guard);
+            assert_eq!(db.is_valid(event), Ok(true));
+            assert_eq!(db.is_signaled(event), Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_event_db_timer_contention_panics_and_preserves_notifications() {
+        with_locked_state(|| {
+            let db = SpinLockedEventDb::new();
+            let event = db
+                .create_event(
+                    efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_NOTIFY,
+                    Some(test_notify_function),
+                    None,
+                    None,
+                )
+                .unwrap();
+            db.set_timer(event, TimerDelay::Relative, Some(10), None).unwrap();
+            let guard = db.try_lock().expect("test database must be unlocked");
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| db.timer_tick(10))).is_err());
+            assert!(db.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+            assert!(guard.pending_notifies.is_empty());
+            drop(guard);
+
+            db.timer_tick(20);
+            let guard = db.try_lock().expect("test database must be unlocked");
+            assert!(db.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+            assert_eq!(guard.pending_notifies.len(), 1);
+            drop(guard);
+            assert_eq!(db.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event, event);
+            assert!(db.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+        });
+    }
+
+    #[test]
+    fn test_event_db_contention_propagates_through_boot_services() {
+        with_locked_state(|| {
+            let db = &crate::events::EVENT_DB;
+            let guard = db.try_lock().expect("global test event database must be unlocked");
+            let event = core::ptr::null_mut();
+            assert_eq!(crate::events::close_event(event), efi::Status::NOT_READY);
+            assert_eq!(crate::events::check_event(event), efi::Status::NOT_READY);
+            assert_eq!(crate::events::set_timer(event, efi::TIMER_CANCEL, 0), efi::Status::NOT_READY);
+            let pending = db.pending_signals.try_lock().expect("test pending signals must be unlocked");
+            assert_eq!(crate::events::signal_event(event), efi::Status::NOT_READY);
+            drop(pending);
+            drop(guard);
+        });
+    }
+
+    #[test]
     fn test_event_allocator_groups_deferred_at_low_tpl() {
         with_locked_state(|| {
             for group in [
@@ -973,7 +1063,10 @@ mod tests {
                     assert!(guard.pending_notifies.is_empty());
                     assert_eq!(guard.notify_tags, 0);
                     assert!(!guard.events.get(&(event as usize)).unwrap().signaled);
-                    assert_eq!(db.pending_signals.lock().capacity(), 0);
+                    assert_eq!(
+                        db.pending_signals.try_lock().expect("test pending signals must be unlocked").capacity(),
+                        0
+                    );
                 }
                 db.flush_deferred_group_signals();
                 let mut guard = db.lock();
@@ -1013,7 +1106,7 @@ mod tests {
                     assert_eq!(guard.notify_tags, 0);
                     assert!(!guard.events.get(&(event as usize)).unwrap().signaled);
                     db.signal_group(group);
-                    let pending = db.pending_signals.lock();
+                    let pending = db.pending_signals.try_lock().expect("test pending signals must be unlocked");
                     assert!(pending.is_empty());
                     assert_eq!(pending.capacity(), 0);
                 }
@@ -1051,7 +1144,7 @@ mod tests {
                         || db.cache_attribute_change_pending.load(AtomicOrdering::Acquire)
                 );
                 assert!(guard.pending_notifies.is_empty());
-                assert_eq!(db.pending_signals.lock().capacity(), 0);
+                assert_eq!(db.pending_signals.try_lock().expect("test pending signals must be unlocked").capacity(), 0);
                 crate::events::raise_tpl(efi::TPL_HIGH_LEVEL);
                 drop(guard);
                 db.flush_deferred_group_signals();
@@ -1085,7 +1178,7 @@ mod tests {
                 db.signal_group(group);
             }
             assert!(db.lock().pending_notifies.is_empty());
-            assert_eq!(db.pending_signals.lock().capacity(), 0);
+            assert_eq!(db.pending_signals.try_lock().expect("test pending signals must be unlocked").capacity(), 0);
             crate::events::restore_tpl(old_tpl);
             db.flush_deferred_group_signals();
             let mut guard = db.lock();
@@ -1254,11 +1347,11 @@ mod tests {
             }
             for consumed in 1..11 {
                 let event = events.pop().unwrap();
-                assert!(SPIN_LOCKED_EVENT_DB.is_valid(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_valid(event).unwrap());
                 let result = SPIN_LOCKED_EVENT_DB.close_event(event);
                 assert!(result.is_ok());
                 assert_eq!(SPIN_LOCKED_EVENT_DB.lock().events.len(), 10 - consumed);
-                assert!(!SPIN_LOCKED_EVENT_DB.is_valid(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_valid(event).unwrap());
             }
         });
     }
@@ -1285,7 +1378,7 @@ mod tests {
             for event in events {
                 let result: Result<(), EfiError> = SPIN_LOCKED_EVENT_DB.signal_event(event);
                 assert!(result.is_ok());
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
         });
     }
@@ -1401,15 +1494,15 @@ mod tests {
 
             //all other events should remain un-signaled
             for event in group1_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             for event in group2_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             for event in ungrouped_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //signal an event in a group
@@ -1417,17 +1510,17 @@ mod tests {
 
             //events in the same group should be signaled.
             for event in group1_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //events in another group should not be signaled.
             for event in group2_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //ungrouped events should not be signaled.
             for event in ungrouped_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //signal an event in a different group
@@ -1435,39 +1528,39 @@ mod tests {
 
             //first event group should remain signaled.
             for event in group1_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //second event group should now be signaled.
             for event in group2_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //third event group should not be signaled.
             for event in group3_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //signal events in third group using signal_group
             SPIN_LOCKED_EVENT_DB.signal_group(group3);
             //first event group should remain signaled.
             for event in group1_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //second event group should remain signaled.
             for event in group2_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //third event group should now be signaled.
             for event in group3_events.clone() {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
 
             //ungrouped events should not be signaled.
             for event in ungrouped_events.clone() {
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             }
         });
     }
@@ -1517,10 +1610,10 @@ mod tests {
                 )
                 .unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(event).unwrap();
-            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             let result = SPIN_LOCKED_EVENT_DB.clear_signal(event);
             assert!(result.is_ok());
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
         });
     }
 
@@ -1538,10 +1631,10 @@ mod tests {
                 )
                 .unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(event).unwrap();
-            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
             SPIN_LOCKED_EVENT_DB.close_event(event).unwrap();
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(0x1234 as *mut c_void));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event).unwrap());
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(0x1234 as *mut c_void).unwrap());
         });
     }
 
@@ -1696,7 +1789,7 @@ mod tests {
             let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_NOTIFY));
             for (event_notification, expected_event) in event_iter.zip(vec![high_evt1, high_evt2]) {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event).unwrap());
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
@@ -1709,7 +1802,7 @@ mod tests {
                 event_iter.zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event).unwrap());
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
@@ -1724,7 +1817,7 @@ mod tests {
                 event_iter.zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event).unwrap());
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
@@ -1744,7 +1837,7 @@ mod tests {
             let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
             for (event_notification, expected_event) in event_iter.zip(vec![high_evt2, notify_evt2, callback_evt2]) {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event).unwrap());
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
         });
@@ -1877,7 +1970,10 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.signal_group(group1);
 
             // check ordering of pending_signals and ensure none are marked signaled.
-            for (event, pending_signal) in events.iter().zip(guard.pending_signals.lock().iter()) {
+            for (event, pending_signal) in events
+                .iter()
+                .zip(guard.pending_signals.try_lock().expect("test pending signals must be unlocked").iter())
+            {
                 if let PendingSignals::Event(pending_event) = pending_signal {
                     assert_eq!(event, pending_event);
                     assert!(!guard.is_signaled(*event));
@@ -1887,14 +1983,19 @@ mod tests {
             }
 
             // last element should be a group signal.
-            if let Some(PendingSignals::Group(pending_group)) = guard.pending_signals.lock().last() {
+            if let Some(PendingSignals::Group(pending_group)) =
+                guard.pending_signals.try_lock().expect("test pending signals must be unlocked").last()
+            {
                 assert_eq!(group1, *pending_group);
             } else {
                 panic!("group not in guard.pending_signals");
             }
 
             // size should be the number of ungrouped events plus one group signal.
-            assert_eq!(guard.pending_signals.lock().len(), events.len() + 1);
+            assert_eq!(
+                guard.pending_signals.try_lock().expect("test pending signals must be unlocked").len(),
+                events.len() + 1
+            );
 
             // none of the group signals should be signaled.
             for event in &grouped_events {
@@ -1909,10 +2010,10 @@ mod tests {
 
             // now all events should be signaled.
             for event in &events {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event).unwrap());
             }
             for event in &grouped_events {
-                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event).unwrap());
             }
 
             // check the notify queue ordering. note: grouped events are expected to be notified in reverse creation order.

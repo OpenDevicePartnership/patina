@@ -112,9 +112,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, Self::new(), "FvData")
     }
 
-    /// Returns a locked instance of the global [`FvProtocolData`].
-    fn instance<'a>() -> tpl_mutex::TplGuard<'a, Self> {
-        Core::<P>::instance().pi_dispatcher.fv_data.lock()
+    /// Attempts to lock the global [`FvProtocolData`].
+    fn instance<'a>() -> Option<tpl_mutex::TplGuard<'a, Self>> {
+        Core::<P>::instance().pi_dispatcher.fv_data.try_lock()
     }
 
     /// Rust implementation of the FVB protocol's `get_attributes` method.
@@ -458,7 +458,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        match Self::instance().fvb_get_attributes(protocol) {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        match instance.fvb_get_attributes(protocol) {
             Err(err) => return err.into(),
             // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
             Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
@@ -488,7 +489,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        match Self::instance().fvb_get_physical_address(protocol) {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        match instance.fvb_get_physical_address(protocol) {
             Err(err) => return err.into(),
             // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
             Ok(physical_address) => unsafe { address.write_unaligned(physical_address) },
@@ -512,7 +514,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        let (size, remaining_blocks) = match Self::instance().fvb_get_block_size(protocol, lba) {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        let (size, remaining_blocks) = match instance.fvb_get_block_size(protocol, lba) {
             Err(err) => return err.into(),
             Ok((size, remaining_blocks)) => (size, remaining_blocks),
         };
@@ -545,7 +548,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // SAFETY: caller must provide valid pointers for num_bytes and buffer. They are null-checked above.
         let bytes_to_read = unsafe { num_bytes.read_unaligned() };
 
-        let data = match Self::instance().fvb_read(protocol, lba, offset, bytes_to_read) {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        let data = match instance.fvb_read(protocol, lba, offset, bytes_to_read) {
             Err(err) => return err.into(),
             Ok(data) => data,
         };
@@ -600,7 +604,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::INVALID_PARAMETER;
         };
 
-        let fv_attributes_data = match Self::instance().fv_get_volume_attributes(protocol) {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        let fv_attributes_data = match instance.fv_get_volume_attributes(protocol) {
             Err(err) => return err.into(),
             Ok(attrs) => attrs,
         };
@@ -649,7 +654,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         // that it points to a valid GUID (as per the C interface).
         let name = unsafe { name_guid.read_unaligned() };
 
-        let this = Self::instance();
+        let Some(this) = Self::instance() else { return efi::Status::NOT_READY };
         let file = match this.fv_read_file(protocol, name) {
             Err(err) => return err.into(),
             Ok(file) => file,
@@ -744,8 +749,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         let name = unsafe { name_guid.read_unaligned() };
 
         let extractor = &Core::<P>::instance().pi_dispatcher.section_extractor;
-        let section = match Self::instance().fv_read_section(protocol, name, section_type, section_instance, extractor)
-        {
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
+        let section = match instance.fv_read_section(protocol, name, section_type, section_instance, extractor) {
             Err(err) => return err.into(),
             Ok(section) => section,
         };
@@ -855,8 +860,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             return efi::Status::NOT_FOUND;
         }
 
+        let Some(instance) = Self::instance() else { return efi::Status::NOT_READY };
         let (file_name, fv_attributes, file_size, found_file_type) =
-            match Self::instance().fv_get_next_file(protocol, local_file_type, local_key) {
+            match instance.fv_get_next_file(protocol, local_file_type, local_key) {
                 Err(err) => return err.into(),
                 Ok((name, attrs, size, file_type)) => (name, attrs, size, file_type),
             };
@@ -955,6 +961,31 @@ mod tests {
     type MockProtocolData = FvProtocolData<MockPlatformInfo>;
 
     #[test]
+    fn test_fv_contention_returns_not_ready() {
+        test_support::with_clean_global_lock(|| {
+            static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
+            CORE.override_instance();
+            let guard = CORE.pi_dispatcher.fv_data.try_lock().expect("test FV state should be available");
+            let protocol = NonNull::<pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol>::dangling();
+            let mut attributes = 0;
+            assert_eq!(
+                MockProtocolData::fvb_get_attributes_efiapi(protocol.as_ptr(), &raw mut attributes),
+                efi::Status::NOT_READY
+            );
+            assert_eq!(
+                CORE.pi_dispatcher.install_firmware_volumes_from_hoblist(&HobList::new()),
+                Err(efi::Status::NOT_READY)
+            );
+            drop(guard);
+            assert_eq!(
+                MockProtocolData::fvb_get_attributes_efiapi(protocol.as_ptr(), &raw mut attributes),
+                efi::Status::NOT_FOUND
+            );
+        })
+        .expect("FV contention should return a status without panicking");
+    }
+
+    #[test]
     fn test_fv_init_core() {
         test_support::with_global_lock(|| {
             // SAFETY: global lock ensures exclusive access to the private data.
@@ -1048,16 +1079,28 @@ mod tests {
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
             // SAFETY: fv was leaked above to ensure that the buffer is valid and immutable for the rest of the test.
-            let _handle =
-                unsafe { CORE.pi_dispatcher.fv_data.lock().install_fv_device_path_protocol(None, base_address) };
+            let _handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .try_lock()
+                    .expect("test FV state should be available")
+                    .install_fv_device_path_protocol(None, base_address)
+            };
 
             /* Start with Clearing Private Global Data, Please note that this is to be done only once
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
             // SAFETY: global lock ensures exclusive access to the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.clear();
-            assert!(CORE.pi_dispatcher.fv_data.lock().fv_metadata.is_empty());
+            CORE.pi_dispatcher.fv_data.try_lock().expect("test FV state should be available").fv_metadata.clear();
+            assert!(
+                CORE.pi_dispatcher
+                    .fv_data
+                    .try_lock()
+                    .expect("test FV state should be available")
+                    .fv_metadata
+                    .is_empty()
+            );
 
             /* Create Firmware Interface, this will be used by the whole test module */
             let fv_interface = MockProtocolData::new_fv_protocol(parent_handle);
@@ -1066,7 +1109,12 @@ mod tests {
 
             let metadata = Metadata::new_fv(fv_interface, base_address);
             // save the protocol structure we're about to install in the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr.addr(), metadata);
 
             let fv_ptr1 = fv_ptr.cast::<pi::protocol::firmware_volume::FirmwareVolumeProtocol>().as_ptr();
 
@@ -1080,7 +1128,12 @@ mod tests {
             /* Build Private Data */
             let metadata = Metadata::new_fvb(fvb_interface, base_address);
             // save the protocol structure we're about to install in the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fvb_ptr.addr(), metadata);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fvb_ptr.addr(), metadata);
 
             //let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
 
@@ -1095,7 +1148,12 @@ mod tests {
             let base_no2: u64 = bad_fv_buf.as_ptr() as u64;
             let metadata2 = Metadata::new_fv(fv_interface3, base_no2);
             //save the protocol structure we're about to install in the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr3.addr(), metadata2);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr3.addr(), metadata2);
 
             /* Create an interface with No physical address and no private data - cover Error Conditions */
             let fv_interface_no_data = MockProtocolData::new_fv_protocol(None);
@@ -1114,7 +1172,12 @@ mod tests {
 
             let private_data4 = Metadata::new_fvb(fvb_intf_invalid, base_no);
             // save the protocol structure we're about to install in the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fvb_intf_invalid_void.addr(), private_data4);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fvb_intf_invalid_void.addr(), private_data4);
 
             /* Create a Firmware Volume Block Interface without Physical address populated  */
             let mut fvb_intf_data_n = Box::from(pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol {
@@ -1630,7 +1693,12 @@ mod tests {
 
             let private_data = Metadata::new_fv(fv_interface, base_address);
             // save the protocol structure we're about to install in the private data.
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), private_data);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr.addr(), private_data);
             let fv_ptr1: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol = fv_ptr.as_ptr();
 
             // SAFETY: the following test code must uphold the safety expectations of the unsafe
@@ -1703,7 +1771,12 @@ mod tests {
             let fv_ptr = NonNull::from(&*fv_interface);
 
             let metadata = Metadata::new_fv(fv_interface, base_address);
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr.addr(), metadata);
 
             let fv_ptr1: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol = fv_ptr.as_ptr();
 
@@ -1833,7 +1906,12 @@ mod tests {
             let fv_ptr = NonNull::from(&*fv_interface);
 
             let metadata = Metadata::new_fv(fv_interface, base_address);
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr.addr(), metadata);
 
             let fv_ptr1 = fv_ptr.as_ptr();
 
@@ -1987,7 +2065,12 @@ mod tests {
             let fv_interface = MockProtocolData::new_fv_protocol(None);
             let fv_ptr = NonNull::from(&*fv_interface);
             let metadata = Metadata::new_fv(fv_interface, base_address);
-            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+            CORE.pi_dispatcher
+                .fv_data
+                .try_lock()
+                .expect("test FV state should be available")
+                .fv_metadata
+                .insert(fv_ptr.addr(), metadata);
 
             let fv_ptr_raw = fv_ptr.as_ptr();
             let name_guid = file_guid.into_inner();

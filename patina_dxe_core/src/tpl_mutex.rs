@@ -18,14 +18,14 @@ use patina::{
     },
 };
 
-use crate::events::{raise_tpl, restore_tpl};
+use crate::events::{restore_tpl, try_raise_tpl};
 
 #[derive(Clone, Copy)]
 pub(crate) struct CoreTplController;
 
 impl TplController for CoreTplController {
-    fn raise_tpl(&self, tpl: Tpl) -> Tpl {
-        raise_tpl(tpl.into()).into()
+    fn try_raise_tpl(&self, tpl: Tpl) -> Result<Tpl, ()> {
+        try_raise_tpl(tpl.into()).map(Into::into).ok_or(())
     }
 
     fn restore_tpl(&self, tpl: Tpl) {
@@ -36,7 +36,6 @@ impl TplController for CoreTplController {
 /// Used to guard data with a locked MUTEX and TPL level.
 pub struct TplMutex<T: ?Sized> {
     tpl_lock_level: efi::Tpl,
-    name: &'static str,
     inner: SharedTplMutex<T, CoreTplController>,
 }
 
@@ -45,31 +44,15 @@ pub type TplGuard<'a, T> = TplMutexGuard<'a, T, CoreTplController>;
 
 impl<T> TplMutex<T> {
     /// Instantiates a new `TplMutex` with the given TPL level, data object, and name string.
-    pub const fn new(tpl_lock_level: efi::Tpl, data: T, name: &'static str) -> Self {
-        Self { tpl_lock_level, name, inner: SharedTplMutex::new(CoreTplController, Tpl(tpl_lock_level), data) }
+    pub const fn new(tpl_lock_level: efi::Tpl, data: T, _name: &'static str) -> Self {
+        Self { tpl_lock_level, inner: SharedTplMutex::new(CoreTplController, Tpl(tpl_lock_level), data) }
     }
 }
 
 impl<T: ?Sized> TplMutex<T> {
-    /// Lock the `TplMutex` and return a `TplGuard` object used to access the data. This will raise the system TPL level
-    /// to the level specified at `TplMutex` creation.
-    ///
-    /// # Panics
-    ///
-    /// Lock re-entrance is not supported; attempt to re-lock something already locked will panic.
-    ///
-    /// Attempting to acquire the lock while running at a TPL level higher than the lock's TPL level will panic due to
-    /// TPL inversion.
-    pub fn lock(&self) -> TplGuard<'_, T> {
-        self.try_lock().unwrap_or_else(|| panic!("Re-entrant locks for {:?} not permitted.", self.name))
-    }
-
     /// Attempts to lock the `TplMutex`, and if successful, returns a guard object that can be used to access the data.
     ///
-    /// # Panics
-    ///
-    /// Attempting to acquire the lock while running at a TPL level higher than the lock's TPL level will panic due to
-    /// TPL inversion.
+    /// Returns `None` if the mutex is locked or the requested TPL transition is invalid.
     pub fn try_lock(&self) -> Option<TplGuard<'_, T>> {
         self.inner.try_lock().ok()
     }
@@ -140,12 +123,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Re-entrant locks for \"test_lock\" not permitted.")]
-    fn test_tpl_mutex_reentrant_lock_displays_name() {
+    fn test_tpl_mutex_reentrant_lock_returns_none() {
         with_reset_state(|| {
             let lock = TplMutex::new(efi::TPL_NOTIFY, 42, "test_lock");
-            let _guard1 = lock.lock();
-            let _guard2 = lock.lock(); // This should panic
+            let _guard = lock.try_lock().expect("test mutex should be available");
+            assert!(lock.try_lock().is_none());
+        });
+    }
+
+    #[test]
+    fn test_tpl_mutex_tpl_inversion_rejected() {
+        with_reset_state(|| {
+            let lock = TplMutex::new(efi::TPL_CALLBACK, 42, "test_lock");
+            raise_tpl(efi::TPL_NOTIFY);
+            #[cfg(debug_assertions)]
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lock.try_lock())).is_err());
+            #[cfg(not(debug_assertions))]
+            assert!(lock.try_lock().is_none());
+            assert_eq!(raise_tpl(efi::TPL_HIGH_LEVEL), efi::TPL_NOTIFY);
+            restore_tpl(efi::TPL_APPLICATION);
+            assert!(lock.try_lock().is_some());
         });
     }
 
@@ -155,7 +152,7 @@ mod tests {
             let lock = TplMutex::new(efi::TPL_NOTIFY, 42, "test_lock");
             let debug_str = format!("{lock:?}");
             assert_eq!(debug_str, "TplMutex { lock_tpl: 10, release_tpl: 4, data: 42 }");
-            let _guard = lock.lock();
+            let _guard = lock.try_lock().expect("test mutex should be available");
             let debug_str_locked = format!("{lock:?}");
             assert_eq!(debug_str_locked, "TplMutex { lock_tpl: 10, data: <locked> }");
         });

@@ -115,10 +115,11 @@ mod isolated {
         }
 
         fn check_pages(&self) -> patina_test::error::Result {
-            for region in self.allocator().get_memory_ranges() {
+            for region in self.allocator().get_memory_ranges().expect("Allocator ranges available") {
                 let metadata = self
                     .allocator()
-                    .lock()
+                    .try_lock()
+                    .expect("Allocator lock available")
                     .firmware_test_metadata_range(region.start)
                     .ok_or("Missing isolated region metadata")?;
                 for page in (region.start..region.end).step_by(UEFI_PAGE_SIZE) {
@@ -161,7 +162,7 @@ mod isolated {
             for index in 0..self.blocks.len() {
                 self.free(index);
             }
-            let regions = self.allocator().get_memory_ranges();
+            let regions = self.allocator().get_memory_ranges().expect("Allocator ranges available");
             self.allocator = None;
             let mut result = Ok(());
             for region in regions {
@@ -197,14 +198,16 @@ mod isolated {
             let first = loop {
                 let index = fixture.allocate(32)?;
                 let page = fixture.page(index);
-                let metadata_page = fixture.allocator().get_memory_ranges().any(|region| {
-                    region.contains(&page)
-                        && fixture
-                            .allocator()
-                            .lock()
-                            .firmware_test_metadata_range(region.start)
-                            .is_some_and(|metadata| metadata.contains(&page))
-                });
+                let metadata_page =
+                    fixture.allocator().get_memory_ranges().expect("Allocator ranges available").any(|region| {
+                        region.contains(&page)
+                            && fixture
+                                .allocator()
+                                .try_lock()
+                                .expect("Allocator lock available")
+                                .firmware_test_metadata_range(region.start)
+                                .is_some_and(|metadata| metadata.contains(&page))
+                    });
                 if !metadata_page {
                     break index;
                 }
@@ -237,7 +240,10 @@ mod isolated {
             for _ in 0..20 {
                 fixture.allocate(UEFI_PAGE_SIZE)?;
             }
-            u_assert!(fixture.allocator().get_memory_ranges().count() > 1, "Expected multiple backing regions");
+            u_assert!(
+                fixture.allocator().get_memory_ranges().expect("Allocator ranges available").count() > 1,
+                "Expected multiple backing regions"
+            );
             fixture.check_pages()?;
             for index in (0..fixture.blocks.len()).step_by(2) {
                 fixture.free(index);
@@ -378,12 +384,15 @@ fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
         // SAFETY: the allocation is a full page of memory owned by this test.
         unsafe { core::ptr::write_volatile(page as *mut u8, 0xA5) };
 
-        let retired = allocator.stats().retired_pages;
+        let retired = allocator.stats().expect("Allocator statistics available").retired_pages;
 
         // SAFETY: the allocation was returned by this allocator for this layout.
         unsafe { allocator.deallocate(allocation, layout) };
 
-        u_assert!(allocator.stats().retired_pages > retired, "Freed pool page was not retired");
+        u_assert!(
+            allocator.stats().expect("Allocator statistics available").retired_pages > retired,
+            "Freed pool page was not retired"
+        );
         u_assert_eq!(page_attributes(page)? & efi::MEMORY_RP, efi::MEMORY_RP, "Freed pool page is not marked RP");
         u_assert!(!is_mapped(page as u64), "Freed pool page is still mapped");
     }
@@ -396,7 +405,10 @@ fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
 #[patina_test]
 #[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
 fn unused_pool_memory_is_unmapped() -> patina_test::error::Result {
-    let ranges: Vec<_> = STATIC_ALLOCATORS.iter().flat_map(|(allocator, _)| allocator.get_memory_ranges()).collect();
+    let ranges: Vec<_> = STATIC_ALLOCATORS
+        .iter()
+        .flat_map(|(allocator, _)| allocator.get_memory_ranges().expect("Allocator ranges available"))
+        .collect();
 
     // Raised so that nothing can map pool memory in while the page table is being compared against the GCD.
     let tpl = raise_tpl(efi::TPL_HIGH_LEVEL);

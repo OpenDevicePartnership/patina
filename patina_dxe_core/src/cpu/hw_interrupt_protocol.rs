@@ -109,9 +109,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
-        if let Err(err) =
-            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
-        {
+        let Some(mut controller) = hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.enable_interrupt_source(interrupt_source) {
             err.into()
         } else {
             efi::Status::SUCCESS
@@ -129,9 +130,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
-        if let Err(err) =
-            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
-        {
+        let Some(mut controller) = hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.disable_interrupt_source(interrupt_source) {
             err.into()
         } else {
             efi::Status::SUCCESS
@@ -150,8 +152,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
-        let enable =
-            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        let Some(mut controller) = hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        let enable = controller.get_interrupt_source_state(interrupt_source);
         match enable {
             Ok(enable) => {
                 // SAFETY: caller must ensure that state is a valid pointer. It is null-checked above.
@@ -173,13 +177,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
         let hw_interrupt_protocol = unsafe { &mut *this };
 
-        if let Err(err) =
-            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
-        {
-            err.into()
-        } else {
-            efi::Status::SUCCESS
-        }
+        let Some(controller) = hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.end_of_interrupt(interrupt_source) { err.into() } else { efi::Status::SUCCESS }
     }
 }
 
@@ -259,9 +260,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        if let Err(err) =
-            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
-        {
+        let Some(mut controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.enable_interrupt_source(interrupt_source) {
             err.into()
         } else {
             efi::Status::SUCCESS
@@ -278,9 +280,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        if let Err(err) =
-            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
-        {
+        let Some(mut controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.disable_interrupt_source(interrupt_source) {
             err.into()
         } else {
             efi::Status::SUCCESS
@@ -298,8 +301,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        let enable =
-            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        let Some(mut controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        let enable = controller.get_interrupt_source_state(interrupt_source);
         match enable {
             Ok(enable) => {
                 // SAFETY: `state` is checked to be non-null above. Note that caller-supplied pointer
@@ -320,13 +325,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
         }
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        if let Err(err) =
-            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
-        {
-            err.into()
-        } else {
-            efi::Status::SUCCESS
-        }
+        let Some(controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.end_of_interrupt(interrupt_source) { err.into() } else { efi::Status::SUCCESS }
     }
 
     unsafe extern "efiapi" fn get_trigger_type(
@@ -340,7 +342,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        let level = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
+        let Some(mut controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        let level = controller.get_trigger_type(interrupt_source);
         match level {
             Ok(level) => {
                 // SAFETY: `trigger_type` is a caller-supplied out-pointer
@@ -363,12 +368,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
 
         // SAFETY: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
         let hw_interrupt2_protocol = unsafe { &mut *this };
-        if let Err(err) = hw_interrupt2_protocol
-            .hw_interrupt_handler
-            .aarch64_int
-            .lock()
-            .set_trigger_type(interrupt_source, trigger_type.into())
-        {
+        let Some(mut controller) = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+        if let Err(err) = controller.set_trigger_type(interrupt_source, trigger_type.into()) {
             err.into()
         } else {
             efi::Status::SUCCESS
@@ -461,6 +464,10 @@ impl HwInterruptProtocolHandler {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        let Some(mut controller) = self.aarch64_int.try_lock() else {
+            return efi::Status::ACCESS_DENIED;
+        };
+
         if let Some(rw_handler) = self.handlers.get(interrupt_source).expect("bounds checked above").try_read() {
             // Use read access to test the state of the handler
             if handler.is_none() && (*rw_handler).is_none() {
@@ -474,7 +481,7 @@ impl HwInterruptProtocolHandler {
 
         if handler.is_none() {
             // If the operation is to unregister the interrupt handler, we first disable the interrupt
-            if let Err(err) = self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64) {
+            if let Err(err) = controller.disable_interrupt_source(interrupt_source as u64) {
                 return err.into();
             }
 
@@ -495,7 +502,7 @@ impl HwInterruptProtocolHandler {
             }
 
             // Interrupt handler registered, now enable the interrupt
-            if let Err(err) = self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64) {
+            if let Err(err) = controller.enable_interrupt_source(interrupt_source as u64) {
                 return err.into();
             }
         }

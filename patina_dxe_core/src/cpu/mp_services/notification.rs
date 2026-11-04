@@ -14,7 +14,10 @@ use patina_internal_cpu::mp::MpDispatcher;
 
 use crate::tpl_mutex::TplMutex;
 
-use super::{dispatch::Dispatch, services::DispatchCompletion};
+use super::{
+    dispatch::Dispatch,
+    services::{DispatchCompletion, MpError},
+};
 
 /// A non-blocking dispatch awaiting completion, resolved by the periodic poll.
 pub(super) struct PendingDispatch {
@@ -66,29 +69,38 @@ impl NotificationRegistry {
     /// periodic poll also needs, so no processor can be selected, signaled or taken
     /// while a dispatch is being set up. `dispatch` receives the pending list so it
     /// can both see which processors are already claimed and register itself.
-    pub(super) fn with_dispatch_lock<R>(&self, dispatch: impl FnOnce(&mut Vec<PendingDispatch>) -> R) -> R {
-        dispatch(&mut self.pending.lock())
+    pub(super) fn with_dispatch_lock<R>(
+        &self,
+        dispatch: impl FnOnce(&mut Vec<PendingDispatch>) -> Result<R, MpError>,
+    ) -> Result<R, MpError> {
+        let mut pending = self.pending.try_lock().ok_or(MpError::Busy)?;
+        dispatch(&mut pending)
     }
 
     /// Waits for every outstanding notification to complete or reach its deadline.
-    pub(super) fn finish_pending(&self, mp: &impl MpDispatcher, timer: &dyn ArchTimerFunctionality) {
-        while !self.process(mp, timer) {
+    pub(super) fn finish_pending(
+        &self,
+        mp: &impl MpDispatcher,
+        timer: &dyn ArchTimerFunctionality,
+    ) -> Result<(), MpError> {
+        while !self.process(mp, timer)? {
             core::hint::spin_loop();
         }
+        Ok(())
     }
 
     /// Advances every pending dispatch and resolves those that have completed or timed out.
     pub(super) fn poll(&self, mp: &impl MpDispatcher, timer: &dyn ArchTimerFunctionality) {
-        self.process(mp, timer);
+        let _ = self.process(mp, timer);
     }
 
     /// Processes pending dispatches once, returning whether the registry is empty.
-    fn process(&self, mp: &impl MpDispatcher, timer: &dyn ArchTimerFunctionality) -> bool {
+    fn process(&self, mp: &impl MpDispatcher, timer: &dyn ArchTimerFunctionality) -> Result<bool, MpError> {
         let now = timer.cpu_count();
         let mut resolved: Vec<PendingDispatch> = Vec::new();
 
         let empty = {
-            let mut pending = self.pending.lock();
+            let mut pending = self.pending.try_lock().ok_or(MpError::Busy)?;
             for dispatch in pending.iter_mut() {
                 dispatch.dispatch.advance(mp, now);
             }
@@ -102,7 +114,7 @@ impl NotificationRegistry {
         for dispatch in resolved {
             dispatch.resolve(mp);
         }
-        empty
+        Ok(empty)
     }
 }
 
@@ -131,6 +143,28 @@ mod tests {
     }
 
     #[test]
+    fn test_mp_notification_contention_returns_busy_without_dispatch() {
+        let result = crate::test_support::with_global_lock(|| {
+            let registry = NotificationRegistry::new();
+            let mp = MockMpDispatcher::new();
+            let timer = TestTimer(0);
+            let guard = registry.pending.try_lock().expect("test dispatch lock");
+            assert!(matches!(
+                registry.with_dispatch_lock::<()>(|_| panic!("must not dispatch while locked")),
+                Err(MpError::Busy)
+            ));
+            assert!(matches!(registry.finish_pending(&mp, &timer), Err(MpError::Busy)));
+            registry.poll(&mp, &timer);
+            assert!(guard.is_empty());
+            drop(guard);
+            assert!(registry.finish_pending(&mp, &timer).is_ok());
+        });
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    #[test]
     fn test_mp_notification_poll_resolves_completed_dispatch() {
         let result = crate::test_support::with_global_lock(|| {
             let mut mp = MockMpDispatcher::new();
@@ -142,17 +176,25 @@ mod tests {
             let mut dispatch = Dispatch::new(test_work(), false, vec![0], None);
             dispatch.start(&mp);
             let registry = NotificationRegistry::new();
-            registry.with_dispatch_lock(|pending| {
-                pending.push(PendingDispatch::new(
-                    dispatch,
-                    Box::new(move |failed| *completion_result.lock().unwrap() = Some(failed.to_vec())),
-                ));
-            });
+            registry
+                .with_dispatch_lock(|pending| {
+                    pending.push(PendingDispatch::new(
+                        dispatch,
+                        Box::new(move |failed| *completion_result.lock().unwrap() = Some(failed.to_vec())),
+                    ));
+                    Ok(())
+                })
+                .expect("test dispatch lock");
 
             registry.poll(&mp, &timer);
 
             assert_eq!(*completed.lock().unwrap(), Some(Vec::new()));
-            registry.with_dispatch_lock(|pending| assert!(pending.is_empty()));
+            registry
+                .with_dispatch_lock(|pending| {
+                    assert!(pending.is_empty());
+                    Ok(())
+                })
+                .expect("test dispatch lock");
         });
 
         if let Err(payload) = result {
@@ -174,14 +216,17 @@ mod tests {
             let mut dispatch = Dispatch::new(test_work(), false, vec![0], Some(10));
             dispatch.start(&mp);
             let registry = NotificationRegistry::new();
-            registry.with_dispatch_lock(|pending| {
-                pending.push(PendingDispatch::new(
-                    dispatch,
-                    Box::new(move |failed| *completion_result.lock().unwrap() = Some(failed.to_vec())),
-                ));
-            });
+            registry
+                .with_dispatch_lock(|pending| {
+                    pending.push(PendingDispatch::new(
+                        dispatch,
+                        Box::new(move |failed| *completion_result.lock().unwrap() = Some(failed.to_vec())),
+                    ));
+                    Ok(())
+                })
+                .expect("test dispatch lock");
 
-            registry.finish_pending(&mp, &timer);
+            registry.finish_pending(&mp, &timer).expect("test pending dispatches finish");
 
             assert_eq!(*completed.lock().unwrap(), Some(vec![1]));
         });

@@ -72,10 +72,11 @@ where
     }
     /// Returns an iterator over the memory ranges managed by this allocator.
     /// Returns an empty iterator if the allocator has no memory ranges.
-    pub(crate) fn get_memory_ranges(&self) -> impl Iterator<Item = Range<efi::PhysicalAddress>> {
-        self.allocator
-            .get_memory_ranges()
-            .map(|range| range.start as efi::PhysicalAddress..range.end as efi::PhysicalAddress)
+    pub(crate) fn get_memory_ranges(&self) -> Result<impl Iterator<Item = Range<efi::PhysicalAddress>>, EfiError> {
+        Ok(self
+            .allocator
+            .get_memory_ranges()?
+            .map(|range| range.start as efi::PhysicalAddress..range.end as efi::PhysicalAddress))
     }
 
     /// Allocates a buffer to satisfy `size` and returns in `buffer`.
@@ -155,9 +156,11 @@ where
         allocation_info.signature = 0;
 
         // SAFETY: Caller must follow safety contract defined by this function.
-        unsafe { self.allocator.deallocate(ptr.cast::<u8>(), allocation_info.layout) };
-
-        Ok(())
+        let result = unsafe { self.allocator.deallocate_pool(ptr.cast::<u8>(), allocation_info.layout, || {}) };
+        if result == Err(EfiError::AccessDenied) {
+            allocation_info.signature = POOL_SIG;
+        }
+        result
     }
 
     /// Attempts to allocate the given number of pages according to the given allocation strategy.
@@ -197,13 +200,13 @@ where
 
     /// Returns the reserved memory range, if any.
     #[allow(dead_code)]
-    pub fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
+    pub fn reserved_range(&self) -> Result<Option<Range<efi::PhysicalAddress>>, EfiError> {
         self.allocator.reserved_range()
     }
 
     /// Returns the allocator stats
     #[allow(dead_code)]
-    pub fn stats(&self) -> AllocationStatistics {
+    pub fn stats(&self) -> Result<AllocationStatistics, EfiError> {
         self.allocator.stats()
     }
 }
@@ -285,6 +288,33 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn test_uefi_allocator_pool_free_contention_is_retryable() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            init_gcd(&GCD, 0x400000);
+            let allocator = UefiAllocator::new(
+                SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::BOOT_SERVICES_DATA,
+                    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+                    HIGH_TRAFFIC_ALLOC_MIN_EXPANSION,
+                ),
+                efi::BOOT_SERVICES_DATA,
+            );
+            let mut buffer = core::ptr::null_mut();
+            // SAFETY: buffer is a writable allocation output pointer.
+            unsafe { allocator.allocate_pool(32, &raw mut buffer) }.expect("test pool allocation succeeds");
+            let guard = allocator.allocator.try_lock().expect("test FSB unlocked");
+            // SAFETY: buffer is a live allocation from this allocator.
+            assert_eq!(unsafe { allocator.free_pool(buffer) }, Err(EfiError::AccessDenied));
+            drop(guard);
+            // SAFETY: failed lock acquisition left the allocation and its signature intact.
+            unsafe { allocator.free_pool(buffer) }.expect("pool free succeeds after contention ends");
+        });
+    }
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         // SAFETY: Resetting the test GCD is safe for testing purposes.
@@ -686,13 +716,13 @@ mod tests {
                 let unreserved_allocator = UefiAllocator::new(unreserved_fsb, efi::LOADER_DATA);
 
                 //check that the ranges are set up.
-                let allocator = reserved_allocator.allocator.lock();
+                let allocator = reserved_allocator.allocator.try_lock().expect("test FSB unlocked");
                 let reserved_range = allocator.reserved_range.clone().unwrap();
                 assert!(gcd_range.contains(&reserved_range.start));
                 assert!(gcd_range.contains(&(reserved_range.end - 1)));
                 drop(allocator);
 
-                let allocator = unreserved_allocator.allocator.lock();
+                let allocator = unreserved_allocator.allocator.try_lock().expect("test FSB unlocked");
                 assert!(allocator.reserved_range.is_none());
                 drop(allocator);
 

@@ -100,7 +100,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         if ap_index >= self.mp.ap_count() {
             return Err(MpError::NotFound);
         }
-        if self.notifications.with_dispatch_lock(|_| self.mp.set_ap_enabled(ap_index, enable, healthy)) {
+        if self.notifications.with_dispatch_lock(|_| Ok(self.mp.set_ap_enabled(ap_index, enable, healthy)))? {
             Ok(())
         } else {
             Err(MpError::NotSupported)
@@ -124,18 +124,23 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// Prevents new non-blocking requests and waits for existing requests to
     /// complete or reach their deadlines while allocation and event signaling
     /// are still available.
-    pub(super) fn mark_ready_to_boot(&self) {
+    pub(super) fn mark_ready_to_boot(&self) -> Result<(), MpError> {
         self.ready_to_boot.store(true, Ordering::Release);
-        self.notifications.finish_pending(&self.mp, self.timer);
+        self.notifications.finish_pending(&self.mp, self.timer)
     }
 
     /// Replicates the BSP's dynamic state (MTRRs for x64) to every enabled AP.
     pub(super) fn synchronize(&self) {
-        self.notifications.finish_pending(&self.mp, self.timer);
-        let synchronized = self.notifications.with_dispatch_lock(|pending| {
-            debug_assert!(pending.is_empty());
-            self.mp.sync_aps()
-        });
+        self.notifications
+            .finish_pending(&self.mp, self.timer)
+            .expect("Cache attribute synchronization requires exclusive access to outstanding AP work");
+        let synchronized = self
+            .notifications
+            .with_dispatch_lock(|pending| {
+                debug_assert!(pending.is_empty());
+                Ok(self.mp.sync_aps())
+            })
+            .expect("Boot cannot continue with inconsistent BSP and AP cache attributes");
         assert!(synchronized, "failed to synchronize BSP MTRRs to every enabled AP");
     }
 
@@ -314,6 +319,7 @@ fn topology_unknown(processor_id: u32) -> mp_services::ProcessorInformation {
 }
 
 /// Errors from the MP Services operations, mapped to `efi::Status` by the wrappers.
+#[derive(Debug)]
 pub(super) enum MpError {
     NotBsp,
     Busy,
@@ -580,7 +586,7 @@ mod tests {
             mp.expect_who_am_i().once().return_const(Some(Processor::Bsp));
             let service = test_service(mp);
 
-            service.mark_ready_to_boot();
+            service.mark_ready_to_boot().expect("test ready to boot completes");
             assert!(matches!(
                 service.startup_all_aps(test_work(), false, 0, Some(Box::new(|_| {}))),
                 Err(MpError::NotSupported)

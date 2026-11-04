@@ -140,7 +140,7 @@ fn init_gcd_growth_test(gcd: &SpinLockedGcd) {
 }
 
 fn fill_gcd_descriptor_reserve(gcd: &SpinLockedGcd) {
-    let mut memory = gcd.memory.lock();
+    let mut memory = gcd.memory.try_lock().expect("test memory GCD must be unlocked");
     let mut address = memory.memory_blocks.len() * 2 * UEFI_PAGE_SIZE;
     while memory.memory_blocks.capacity() - memory.memory_blocks.len() >= MEMORY_DESCRIPTOR_RESERVE {
         // SAFETY: These disjoint reserved ranges describe resources only; they are never accessed as memory.
@@ -152,13 +152,35 @@ fn fill_gcd_descriptor_reserve(gcd: &SpinLockedGcd) {
 }
 
 #[test]
+fn test_gcd_descriptor_growth_lock_contention_restores_tpl() {
+    use crate::events;
+
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        init_gcd_growth_test(&gcd);
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        assert_eq!(old_tpl, efi::TPL_APPLICATION);
+
+        let memory = gcd.memory.try_lock().expect("test memory GCD must be unlocked");
+        assert_eq!(gcd.ensure_memory_descriptor_capacity(), Err(EfiError::AccessDenied));
+        assert_eq!(events::raise_tpl(efi::TPL_HIGH_LEVEL), efi::TPL_HIGH_LEVEL);
+        drop(memory);
+
+        let old_tpl = events::raise_tpl(efi::TPL_HIGH_LEVEL);
+        events::restore_tpl(old_tpl);
+        assert_eq!(old_tpl, efi::TPL_APPLICATION);
+    });
+}
+
+#[test]
 fn test_gcd_descriptor_growth_worst_case_stays_within_reserve() {
     with_locked_state(|| {
         for fail_mapping in [false, true] {
             let gcd = Box::leak(Box::new(SpinLockedGcd::new(None)));
             init_gcd_growth_test(gcd);
             {
-                let mut memory = gcd.memory.lock();
+                let mut memory = gcd.memory.try_lock().expect("test memory GCD must be unlocked");
                 let free = copy_memory_block(&memory).into_iter().find(|block| {
                     matches!(block, MemoryBlock::Unallocated(desc) if desc.memory_type == GcdMemoryType::SystemMemory)
                 }).unwrap();
@@ -184,14 +206,14 @@ fn test_gcd_descriptor_growth_worst_case_stays_within_reserve() {
             }
             fill_gcd_descriptor_reserve(gcd);
             {
-                let mut memory = gcd.memory.lock();
+                let mut memory = gcd.memory.try_lock().expect("test memory GCD must be unlocked");
                 if memory.memory_blocks.capacity() - memory.memory_blocks.len() == MEMORY_DESCRIPTOR_RESERVE - 1 {
                     // SAFETY: This reserved test range is disjoint from the other resources and never accessed.
                     unsafe { memory.add_memory_space(GcdMemoryType::Reserved, 0, UEFI_PAGE_SIZE, 0).unwrap() };
                 }
             }
-            let initial_count = gcd.memory.lock().memory_blocks.len();
-            let capacity = gcd.memory.lock().memory_blocks.capacity();
+            let initial_count = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.len();
+            let capacity = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity();
             let available = capacity - initial_count;
             assert_eq!(available, MEMORY_DESCRIPTOR_RESERVE - 2);
             let peak_count = Rc::new(core::cell::Cell::new(initial_count));
@@ -199,15 +221,15 @@ fn test_gcd_descriptor_growth_worst_case_stays_within_reserve() {
             let gcd: &'static SpinLockedGcd = gcd;
             let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
             mock_table.borrow_mut().set_map_hook(move || {
-                let count = gcd.memory.lock().memory_blocks.len();
+                let count = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.len();
                 assert_eq!(count - initial_count, 2, "buffer allocation must split both ends");
                 hook_peak.set(count);
                 let mut allocator = PagingAllocator::new(gcd);
                 for is_root in [true, false] {
-                    let before = gcd.memory.lock().memory_blocks.len();
+                    let before = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.len();
                     hook_peak.set(hook_peak.get().max(before + if is_root { 4 } else { 2 }));
                     let page = allocator.allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, is_root).unwrap();
-                    let after = gcd.memory.lock().memory_blocks.len();
+                    let after = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.len();
                     let descriptor = gcd.get_memory_descriptor_for_address(page, |_, allocated| allocated).unwrap();
                     if !is_root {
                         assert!(
@@ -217,7 +239,10 @@ fn test_gcd_descriptor_growth_worst_case_stays_within_reserve() {
                     }
                     assert!(after <= before + 4, "allocation and attributes each split at most twice");
                     hook_peak.set(hook_peak.get().max(after));
-                    assert_eq!(gcd.memory.lock().memory_blocks.capacity(), capacity);
+                    assert_eq!(
+                        gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity(),
+                        capacity
+                    );
                     assert!(
                         hook_peak.get() - initial_count + 2 <= available,
                         "paging plus transient split slots must fit before migration"
@@ -231,14 +256,14 @@ fn test_gcd_descriptor_growth_worst_case_stays_within_reserve() {
 
             gcd.ensure_memory_descriptor_capacity().unwrap();
 
-            let memory = gcd.memory.lock();
+            let memory = gcd.memory.try_lock().expect("test memory GCD must be unlocked");
             let used = peak_count.get().max(memory.memory_blocks.len()) - initial_count;
             assert!(used + 2 <= available);
             assert!(used + 2 < MEMORY_DESCRIPTOR_RESERVE);
             assert_eq!(memory.memory_blocks.capacity(), if fail_mapping { capacity } else { capacity * 2 });
             assert!(is_gcd_memory_slice_valid(&memory));
             drop(memory);
-            *gcd.page_table.lock() = None;
+            *gcd.page_table.try_lock().expect("test page table must be unlocked") = None;
         }
     });
 }
@@ -249,13 +274,16 @@ fn test_gcd_descriptor_growth_preserves_descriptors_and_maps_storage() {
         let gcd = SpinLockedGcd::new(None);
         init_gcd_growth_test(&gcd);
         fill_gcd_descriptor_reserve(&gcd);
-        let snapshot = copy_memory_block(&gcd.memory.lock());
+        let snapshot = copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked"));
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         gcd.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
 
         gcd.ensure_memory_descriptor_capacity().unwrap();
 
-        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+        assert!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity()
+                >= 2 * MEMORY_BLOCK_SLICE_LEN
+        );
         for block in snapshot.iter().filter(|block| {
             matches!(block, MemoryBlock::Allocated(_)) || block.as_ref().memory_type == GcdMemoryType::Reserved
         }) {
@@ -265,7 +293,7 @@ fn test_gcd_descriptor_growth_preserves_descriptors_and_maps_storage() {
                 *descriptor
             );
         }
-        assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+        assert!(is_gcd_memory_slice_valid(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")));
         let mappings = mock_table.borrow();
         let mappings = mappings.get_current_mappings();
         assert_eq!(mappings.len(), 1);
@@ -289,7 +317,7 @@ fn test_gcd_descriptor_growth_defers_allocating_events_until_complete() {
     static CALLBACK_AFTER_GROWTH: AtomicBool = AtomicBool::new(false);
 
     extern "efiapi" fn notify(_: efi::Event, _: *mut core::ffi::c_void) {
-        let mut memory = GCD.memory.lock();
+        let mut memory = GCD.memory.try_lock().expect("test memory GCD must be unlocked");
         let expanded = memory.memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN;
         let allocation = memory.allocate_memory_space(
             DEFAULT_ALLOCATION_STRATEGY,
@@ -345,10 +373,13 @@ fn test_gcd_descriptor_growth_repeats() {
         init_gcd_growth_test(&gcd);
         for _ in 0..2 {
             fill_gcd_descriptor_reserve(&gcd);
-            let capacity = gcd.memory.lock().memory_blocks.capacity();
+            let capacity = gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity();
             gcd.ensure_memory_descriptor_capacity().unwrap();
-            assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * capacity);
-            assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+            assert!(
+                gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity()
+                    >= 2 * capacity
+            );
+            assert!(is_gcd_memory_slice_valid(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")));
         }
     });
 }
@@ -359,13 +390,14 @@ fn test_gcd_descriptor_growth_failure_does_not_block_free() {
         let gcd = SpinLockedGcd::new(None);
         init_gcd_growth_test(&gcd);
         fill_gcd_descriptor_reserve(&gcd);
-        let free = copy_memory_block(&gcd.memory.lock()).into_iter().find(|block| {
+        let free = copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")).into_iter().find(|block| {
             matches!(block, MemoryBlock::Unallocated(descriptor) if descriptor.memory_type == GcdMemoryType::SystemMemory)
         }).unwrap();
         let descriptor = free.as_ref();
         let address = gcd
             .memory
-            .lock()
+            .try_lock()
+            .expect("test memory GCD must be unlocked")
             .allocate_memory_space(
                 AllocateType::Address(descriptor.base_address as usize),
                 GcdMemoryType::SystemMemory,
@@ -378,10 +410,16 @@ fn test_gcd_descriptor_growth_failure_does_not_block_free() {
 
         gcd.free_memory_space(address, descriptor.length as usize).unwrap();
 
-        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
+        assert_eq!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity(),
+            MEMORY_BLOCK_SLICE_LEN
+        );
         assert!(gcd.get_memory_descriptor_for_address(address as u64, |_, allocated| !allocated).is_ok());
         gcd.ensure_memory_descriptor_capacity().unwrap();
-        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+        assert!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity()
+                >= 2 * MEMORY_BLOCK_SLICE_LEN
+        );
     });
 }
 
@@ -391,25 +429,33 @@ fn test_gcd_descriptor_growth_mapping_failure_rolls_back_without_recursion() {
         let gcd = SpinLockedGcd::new(None);
         init_gcd_growth_test(&gcd);
         fill_gcd_descriptor_reserve(&gcd);
-        let allocated_before: Vec<_> = copy_memory_block(&gcd.memory.lock())
-            .into_iter()
-            .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
-            .collect();
+        let allocated_before: Vec<_> =
+            copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked"))
+                .into_iter()
+                .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
+                .collect();
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         mock_table.borrow_mut().fail_next_map_memory_region(PagingError::OutOfResources);
         gcd.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
 
         gcd.ensure_memory_descriptor_capacity().unwrap();
 
-        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
-        let allocated_after: Vec<_> = copy_memory_block(&gcd.memory.lock())
-            .into_iter()
-            .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
-            .collect();
+        assert_eq!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity(),
+            MEMORY_BLOCK_SLICE_LEN
+        );
+        let allocated_after: Vec<_> =
+            copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked"))
+                .into_iter()
+                .filter(|block| matches!(block, MemoryBlock::Allocated(_)))
+                .collect();
         assert_eq!(allocated_after, allocated_before);
-        assert!(is_gcd_memory_slice_valid(&gcd.memory.lock()));
+        assert!(is_gcd_memory_slice_valid(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")));
         gcd.ensure_memory_descriptor_capacity().unwrap();
-        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+        assert!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity()
+                >= 2 * MEMORY_BLOCK_SLICE_LEN
+        );
     });
 }
 
@@ -428,12 +474,16 @@ fn test_gcd_descriptor_growth_locked_free_preserves_allocation() {
                 None,
             )
             .unwrap();
-        gcd.lock_memory_space();
-        let snapshot = copy_memory_block(&gcd.memory.lock());
+        gcd.lock_memory_space().expect("test memory space must be available");
+        let snapshot = copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked"));
 
-        gcd.memory.lock().free_memory_space(base, UEFI_PAGE_SIZE, MemoryStateTransition::Free).unwrap();
+        gcd.memory
+            .try_lock()
+            .expect("test memory GCD must be unlocked")
+            .free_memory_space(base, UEFI_PAGE_SIZE, MemoryStateTransition::Free)
+            .unwrap();
 
-        assert_eq!(copy_memory_block(&gcd.memory.lock()), snapshot);
+        assert_eq!(copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")), snapshot);
         gcd.unlock_memory_space();
         gcd.free_memory_space(base, UEFI_PAGE_SIZE).unwrap();
         assert!(gcd.get_memory_descriptor_for_address(base as u64, |_, allocated| !allocated).is_ok());
@@ -446,16 +496,22 @@ fn test_gcd_descriptor_growth_disabled_while_memory_locked() {
         let gcd = SpinLockedGcd::new(None);
         init_gcd_growth_test(&gcd);
         fill_gcd_descriptor_reserve(&gcd);
-        let snapshot = copy_memory_block(&gcd.memory.lock());
-        gcd.lock_memory_space();
+        let snapshot = copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked"));
+        gcd.lock_memory_space().expect("test memory space must be available");
 
         gcd.ensure_memory_descriptor_capacity().unwrap();
 
-        assert_eq!(gcd.memory.lock().memory_blocks.capacity(), MEMORY_BLOCK_SLICE_LEN);
-        assert_eq!(copy_memory_block(&gcd.memory.lock()), snapshot);
+        assert_eq!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity(),
+            MEMORY_BLOCK_SLICE_LEN
+        );
+        assert_eq!(copy_memory_block(&gcd.memory.try_lock().expect("test memory GCD must be unlocked")), snapshot);
         gcd.unlock_memory_space();
         gcd.ensure_memory_descriptor_capacity().unwrap();
-        assert!(gcd.memory.lock().memory_blocks.capacity() >= 2 * MEMORY_BLOCK_SLICE_LEN);
+        assert!(
+            gcd.memory.try_lock().expect("test memory GCD must be unlocked").memory_blocks.capacity()
+                >= 2 * MEMORY_BLOCK_SLICE_LEN
+        );
     });
 }
 
@@ -2055,7 +2111,7 @@ fn spin_locked_allocator_should_error_if_not_initialized() {
     with_locked_state(|| {
         static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+        assert_eq!(GCD.memory.try_lock().expect("test memory GCD unlocked").maximum_address, 0);
 
         // SAFETY: The GCD is intentionally uninitialized to validate error handling paths.
         let add_result = unsafe { GCD.add_memory_space(GcdMemoryType::SystemMemory, 0, 100, 0) };
@@ -2074,11 +2130,111 @@ fn spin_locked_allocator_should_error_if_not_initialized() {
 }
 
 #[test]
+fn test_gcd_contention_returns_errors_and_terminates_iteration() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        gcd.init(48, 16);
+        let guard = gcd.memory.try_lock().expect("test memory GCD unlocked");
+        assert_eq!(gcd.memory_descriptor_count(), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.lock_memory_space(), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.free_memory_space(0x1000, 0x1000), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.get_memory_descriptor_for_address(0x1000, |_, _| true), Err(EfiError::AccessDenied));
+        let mut descriptors = gcd.iter(0x1000, 0x1000);
+        assert!(matches!(descriptors.next(), Some(Err(EfiError::AccessDenied))));
+        assert!(descriptors.next().is_none());
+        drop(guard);
+        assert!(gcd.memory_descriptor_count().is_ok());
+
+        let guard = gcd.io.try_lock().expect("test I/O GCD unlocked");
+        assert_eq!(gcd.io_descriptor_count(), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.remove_io_space(0x1000, 0x1000), Err(EfiError::AccessDenied));
+        drop(guard);
+        assert!(gcd.io_descriptor_count().is_ok());
+    });
+}
+
+#[test]
+fn test_gcd_paging_contention_preserves_attributes_and_aliases() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        gcd.init(48, 16);
+        // SAFETY: this test owns the backing buffer throughout the GCD's lifetime.
+        let memory = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
+        let address = memory.as_ptr() as usize;
+        // SAFETY: the test-owned buffer is valid, page-aligned RAM not used elsewhere.
+        unsafe {
+            gcd.init_memory_blocks(
+                GcdMemoryType::SystemMemory,
+                address,
+                MEMORY_BLOCK_SLICE_SIZE * 2,
+                efi::MEMORY_WB,
+                efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+            )
+            .expect("test GCD initialization succeeds");
+        }
+        let original = gcd
+            .get_memory_descriptor_for_address(address as u64, |_, _| true)
+            .expect("test descriptor exists")
+            .attributes;
+        let guard = gcd.page_table.try_lock().expect("test page table unlocked");
+        assert_eq!(
+            gcd.set_memory_space_attributes(address, UEFI_PAGE_SIZE, efi::MEMORY_WB | efi::MEMORY_XP),
+            Err(EfiError::AccessDenied)
+        );
+        assert_eq!(
+            gcd.get_memory_descriptor_for_address(address as u64, |_, _| true)
+                .expect("test descriptor still exists")
+                .attributes,
+            original
+        );
+        assert_eq!(gcd.map_aliased_memory_region(0x1000, 0x2000, 0x1000, efi::MEMORY_WB), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.unmap_aliased_memory_region(0x1000, 0x1000), Err(EfiError::NotFound));
+        drop(guard);
+        assert!(gcd.get_aliased_mappings().is_empty());
+        let guard = gcd.aliased_mappings.try_lock().expect("test aliases unlocked");
+        assert_eq!(gcd.map_aliased_memory_region(0x1000, 0x2000, 0x1000, efi::MEMORY_WB), Err(EfiError::AccessDenied));
+        drop(guard);
+        assert!(gcd.get_aliased_mappings().is_empty());
+    });
+}
+
+#[test]
+fn test_gcd_paging_allocator_contention_is_fallible() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        let mut allocator = paging::PagingAllocator::new(&gcd);
+        let _guard = gcd.memory.try_lock().expect("test memory GCD unlocked");
+        assert_eq!(
+            allocator.allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, false),
+            Err(PtError::OutOfResources)
+        );
+        assert_eq!(
+            allocator.allocate_page(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, true),
+            Err(PtError::OutOfResources)
+        );
+    });
+}
+
+#[test]
+fn test_gcd_memory_map_key_contention_preserves_committed_key() {
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        let key = gcd.set_last_efi_memory_map_key(b"original").expect("test key publication succeeds");
+        let guard = gcd.last_efi_memory_map_key.try_lock().expect("test key unlocked");
+        assert_eq!(gcd.set_last_efi_memory_map_key(b"replacement"), Err(EfiError::AccessDenied));
+        assert_eq!(gcd.get_last_efi_memory_map_key(), Err(EfiError::AccessDenied));
+        assert_eq!(*guard, Some(key));
+        drop(guard);
+        assert_eq!(gcd.get_last_efi_memory_map_key(), Ok(Some(key)));
+    });
+}
+
+#[test]
 fn spin_locked_allocator_init_should_initialize() {
     with_locked_state(|| {
         static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+        assert_eq!(GCD.memory.try_lock().expect("test memory GCD unlocked").maximum_address, 0);
 
         // SAFETY: get_memory returns a test-owned buffer of the requested size.
         let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
@@ -2113,7 +2269,7 @@ fn callback_should_fire_when_map_changes() {
         }
         static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+        assert_eq!(GCD.memory.try_lock().expect("test memory GCD unlocked").maximum_address, 0);
 
         // SAFETY: get_memory returns a test-owned buffer of the requested size.
         let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
@@ -2152,7 +2308,7 @@ fn test_spin_locked_set_attributes_capabilities() {
 
         static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+        assert_eq!(GCD.memory.try_lock().expect("test memory GCD unlocked").maximum_address, 0);
 
         // SAFETY: get_memory returns a test-owned buffer sized for the requested range.
         let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
@@ -2981,7 +3137,7 @@ fn test_set_paging_attributes_with_page_table() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         // Test mapping within the allocated memory region
         let base_address = address;
@@ -2992,7 +3148,7 @@ fn test_set_paging_attributes_with_page_table() {
         assert!(result.is_ok());
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();
@@ -3047,7 +3203,7 @@ fn test_map_aliased_memory_region() {
             vec![AliasedMapping { virtual_address, physical_address, length, attributes }]
         );
 
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
         assert_eq!(
             mock_table.borrow().get_aliased_mapped_regions(),
             vec![(
@@ -3117,7 +3273,7 @@ fn test_set_paging_attributes_cache_attributes() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         // Test different cache attributes
         let base_address = address;
@@ -3136,7 +3292,7 @@ fn test_set_paging_attributes_cache_attributes() {
         assert!(result.is_ok());
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();
@@ -3204,9 +3360,10 @@ fn assert_paging_cache_change_notification(
         if let Some(attributes) = old_attributes {
             mock_table.borrow_mut().map_memory_region(0x1000, 0x1000, attributes).unwrap();
         }
-        *GCD.page_table.lock() = Some(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+        *GCD.page_table.try_lock().expect("test page table unlocked") =
+            Some(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
         let _page_table_cleanup = test_support::StateGuard::new(|| {
-            *GCD.page_table.lock() = None;
+            *GCD.page_table.try_lock().expect("test page table unlocked") = None;
         });
 
         let event = EVENT_DB
@@ -3223,7 +3380,7 @@ fn assert_paging_cache_change_notification(
         });
 
         let high_lock = tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, (), "cache_change_test");
-        let high_guard = high_lock.lock();
+        let high_guard = high_lock.try_lock().expect("test high-TPL lock available");
         assert_eq!(GCD.set_paging_attributes(0x1000, 0x1000, new_attributes.bits()), Ok(()));
         assert_eq!(events::raise_tpl(efi::TPL_HIGH_LEVEL), efi::TPL_HIGH_LEVEL);
         assert_eq!(NOTIFICATIONS.load(Ordering::SeqCst), 0);
@@ -3327,7 +3484,7 @@ fn test_set_memory_space_attributes_preserves_requested_cache_attributes() {
 
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         for source in [CacheAttributeSource::Processor, CacheAttributeSource::PageTable] {
             mock_table.borrow_mut().set_cache_attribute_source(source);
@@ -3337,7 +3494,7 @@ fn test_set_memory_space_attributes_preserves_requested_cache_attributes() {
             assert_eq!(desc.attributes & efi::CACHE_ATTRIBUTE_MASK, efi::MEMORY_WB);
         }
 
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
     });
 }
 
@@ -3350,14 +3507,14 @@ fn test_set_paging_attributes_skips_remap_when_cache_attributes_unsupported() {
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         mock_table.borrow_mut().set_cache_attribute_source(CacheAttributeSource::Unsupported);
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         // The requested cache attributes cannot be applied, so they must not be compared against the page table.
         let attributes = (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits();
         GCD.set_paging_attributes(0x1000, 0x1000, attributes).unwrap();
         GCD.set_paging_attributes(0x1000, 0x1000, attributes).unwrap();
 
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         assert_eq!(mock_table.borrow().get_mapped_regions().len(), 1);
     });
@@ -3371,7 +3528,7 @@ fn test_set_paging_attributes_map_failure() {
 
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         let attributes = MemoryAttributes::Writeback.bits();
         for (error, expected) in [
@@ -3383,7 +3540,7 @@ fn test_set_paging_attributes_map_failure() {
             assert_eq!(GCD.set_paging_attributes(0x1000, 0x1000, attributes), Err(expected));
         }
 
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
     });
 }
 
@@ -3396,7 +3553,7 @@ fn test_set_paging_attributes_unmap_with_read_protect() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         let base_address = 0x1000;
         let length = 0x1000;
@@ -3412,7 +3569,7 @@ fn test_set_paging_attributes_unmap_with_read_protect() {
         assert!(result.is_ok());
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();
@@ -3442,7 +3599,7 @@ fn test_set_paging_attributes_already_mapped_same_attributes() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         let base_address = 0x1000;
         let length = 0x1000;
@@ -3457,7 +3614,7 @@ fn test_set_paging_attributes_already_mapped_same_attributes() {
         assert!(result.is_ok());
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();
@@ -3487,7 +3644,7 @@ fn test_set_paging_attributes_multiple_regions() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         // Map multiple non-overlapping regions
         let regions = [
@@ -3502,7 +3659,7 @@ fn test_set_paging_attributes_multiple_regions() {
         }
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();
@@ -3532,7 +3689,7 @@ fn test_set_paging_attributes_overlapping_regions() {
         // Initialize page table with local MockPageTable
         let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
         let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
-        *GCD.page_table.lock() = Some(mock_page_table);
+        *GCD.page_table.try_lock().expect("test page table unlocked") = Some(mock_page_table);
 
         let base_address = 0x1000;
         let length = 0x2000;
@@ -3548,7 +3705,7 @@ fn test_set_paging_attributes_overlapping_regions() {
         assert!(result.is_ok());
 
         // Manually drop the page table to release the reference
-        *GCD.page_table.lock() = None;
+        *GCD.page_table.try_lock().expect("test page table unlocked") = None;
 
         // Verify the page table state
         let mock_ref = mock_table.borrow();

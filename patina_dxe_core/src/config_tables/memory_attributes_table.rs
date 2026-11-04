@@ -105,6 +105,7 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
     }
 }
 
+/// Publishes the memory attributes table for runtime memory regions.
 pub fn core_install_memory_attributes_table() {
     if !POST_RTB.is_completed() {
         if get_configuration_table(&efi::MEMORY_ATTRIBUTES_TABLE_GUID).is_none() {
@@ -123,13 +124,19 @@ pub fn core_install_memory_attributes_table() {
                             flags: 0,
                             entry: [],
                         };
-                        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-                        let st = st_guard.as_mut().expect("System table support not initialized");
-
-                        if let Err(status) =
-                            core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
-                        {
+                        let result = systemtables::SYSTEM_TABLE
+                            .try_lock()
+                            .ok_or(patina::error::EfiError::AccessDenied)
+                            .and_then(|mut guard| {
+                                let st = guard.as_mut().ok_or(patina::error::EfiError::NotReady)?;
+                                core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
+                            });
+                        if let Err(status) = result {
                             log::error!("Failed to create a null MAT table with status {status}, cannot create MAT");
+                            // SAFETY: empty_ptr is the unpublished pool allocation obtained above.
+                            if let Err(err) = unsafe { core_free_pool(empty_ptr) } {
+                                log::error!("Error freeing empty MAT pointer: {err}");
+                            }
                             return;
                         }
                     }
@@ -146,7 +153,13 @@ pub fn core_install_memory_attributes_table() {
     }
 
     // Reserve a buffer for the memory map descriptors
-    let descriptor_count = GCD.memory_descriptor_count();
+    let descriptor_count = match GCD.memory_descriptor_count() {
+        Ok(count) => count,
+        Err(err) => {
+            log::error!("Failed to count memory map descriptors: {err}");
+            return;
+        }
+    };
     let mut desc_buffer = Vec::with_capacity(descriptor_count);
     desc_buffer.resize(
         descriptor_count,
@@ -221,10 +234,14 @@ pub fn core_install_memory_attributes_table() {
                     mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
                 );
 
-                let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-                let st = st_guard.as_mut().expect("System table support not initialized");
-
-                match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
+                let result = systemtables::SYSTEM_TABLE
+                    .try_lock()
+                    .ok_or(patina::error::EfiError::AccessDenied)
+                    .and_then(|mut guard| {
+                        let st = guard.as_mut().ok_or(patina::error::EfiError::NotReady)?;
+                        core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st)
+                    });
+                match result {
                     Err(status) => {
                         log::error!("Failed to install MAT table! Status {status}");
                         if let Err(err) = core_free_pool(void_ptr) {

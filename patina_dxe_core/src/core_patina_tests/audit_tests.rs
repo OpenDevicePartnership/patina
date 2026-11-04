@@ -25,7 +25,7 @@ use patina::standard::efi;
 #[on(event = BinaryGuid(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES))]
 fn gcd_free_memory_merged_test() -> patina_test::error::Result {
     let mut last_desc: Option<patina::pi::dxe_services::MemorySpaceDescriptor> = None;
-    let mut descs = Vec::with_capacity(GCD.memory_descriptor_count() * 2);
+    let mut descs = Vec::with_capacity(GCD.memory_descriptor_count().expect("GCD descriptor count available") * 2);
     GCD.get_memory_descriptors(&mut descs, |d, allocated| {
         !allocated && d.memory_type == patina::pi::dxe_services::GcdMemoryType::SystemMemory
     })

@@ -881,6 +881,7 @@ impl EfiSystemTable {
     }
 }
 
+/// Initializes and publishes the global system table.
 pub fn init_system_table(uefi_spec_version: UefiSpecVersion) {
     let revision = u32::from(uefi_spec_version);
     let mut table = EfiSystemTable::allocate_new_table();
@@ -897,7 +898,8 @@ pub fn init_system_table(uefi_spec_version: UefiSpecVersion) {
     system_table.hdr.revision = revision;
     table.set(system_table);
 
-    *SYSTEM_TABLE.lock() = Some(table);
+    *SYSTEM_TABLE.try_lock().expect("Boot cannot proceed without exclusive access to initialize the system table") =
+        Some(table);
 }
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
@@ -934,7 +936,15 @@ impl SystemTableChecksumInstaller {
                 *guid,
                 Tpl::Callback,
                 Box::new(|_handle| {
-                    SYSTEM_TABLE.lock().as_mut().expect("System Table is initialized").checksum_all();
+                    let Some(mut guard) = SYSTEM_TABLE.try_lock() else {
+                        log::error!("Cannot update system table checksums: system table is locked");
+                        return;
+                    };
+                    if let Some(table) = guard.as_mut() {
+                        table.checksum_all();
+                    } else {
+                        log::error!("Cannot update system table checksums: system table is uninitialized");
+                    }
                 }),
             )?;
         }
@@ -1021,7 +1031,7 @@ mod tests {
             let expected_revision = u32::from(UefiSpecVersion::V2_11);
             init_system_table(UefiSpecVersion::V2_11);
 
-            let table_guard = SYSTEM_TABLE.lock();
+            let table_guard = SYSTEM_TABLE.try_lock().expect("test system table lock");
             let table = table_guard.as_ref().expect("System Table should be initialized");
 
             assert_eq!(table.get().hdr.revision, expected_revision);

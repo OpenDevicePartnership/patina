@@ -30,6 +30,7 @@ pub static PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
 /// Installs a protocol interface on a handle.
 ///
+///
 /// This function is safe because `interface` is an opaque pointer that is stored but never
 /// dereferenced. All other parameters are value types.
 pub fn core_install_protocol_interface(
@@ -49,12 +50,17 @@ pub fn core_install_protocol_interface(
         }
     }
 
-    PROTOCOL_DB.unregister_protocol_notify_events(closed_events);
+    if !closed_events.is_empty()
+        && let Err(err) = PROTOCOL_DB.unregister_protocol_notify_events(closed_events)
+    {
+        log::warn!("Could not remove closed protocol notifications: {err}");
+    }
 
     Ok(handle)
 }
 
 /// Installs a protocol interface on a handle.
+///
 ///
 /// # Safety
 ///
@@ -93,6 +99,7 @@ unsafe extern "efiapi" fn install_protocol_interface(
 }
 
 /// Uninstalls a protocol interface on a handle.
+///
 ///
 /// This function is safe because `interface` is an opaque pointer used for
 /// comparison but never dereferenced. All other parameters are value types.
@@ -196,6 +203,7 @@ pub fn core_uninstall_protocol_interface(
 
 /// Uninstalls a protocol interface from a handle.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. It is null checked, but validity of the
@@ -232,6 +240,7 @@ fn uninstall_dummy_interface(handle: efi::Handle) -> Result<(), EfiError> {
 }
 
 /// Reinstalls a protocol interface on a handle.
+///
 ///
 /// # Safety
 ///
@@ -295,6 +304,7 @@ unsafe extern "efiapi" fn reinstall_protocol_interface(
 
 /// Registers for notification when a protocol interface is installed.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. `registration` must be a valid pointer
@@ -305,8 +315,13 @@ unsafe extern "efiapi" fn register_protocol_notify(
     event: efi::Event,
     registration: *mut *mut c_void,
 ) -> efi::Status {
-    if protocol.is_null() || registration.is_null() || !EVENT_DB.is_valid(event) {
+    if protocol.is_null() || registration.is_null() {
         return efi::Status::INVALID_PARAMETER;
+    }
+    match EVENT_DB.is_valid(event) {
+        Ok(true) => (),
+        Ok(false) => return efi::Status::INVALID_PARAMETER,
+        Err(err) => return err.into(),
     }
     let protocol_guid = {
         // SAFETY: Caller must ensure that protocol is a valid pointer. It is checked for null above.
@@ -323,6 +338,7 @@ unsafe extern "efiapi" fn register_protocol_notify(
 }
 
 /// Locates handles that support a specified protocol.
+///
 ///
 /// # Safety
 ///
@@ -344,10 +360,10 @@ unsafe extern "efiapi" fn locate_handle(
             if search_key.is_null() {
                 return efi::Status::INVALID_PARAMETER;
             }
-            if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(search_key) {
-                Ok(vec![handle])
-            } else {
-                Err(EfiError::NotFound)
+            match PROTOCOL_DB.next_handle_for_registration(search_key) {
+                Ok(Some(handle)) => Ok(vec![handle]),
+                Ok(None) => Err(EfiError::NotFound),
+                Err(err) => Err(err),
             }
         }
         efi::BY_PROTOCOL => {
@@ -400,6 +416,7 @@ unsafe extern "efiapi" fn locate_handle(
 
 /// Retrieves a protocol interface from a handle.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. `interface` must be a valid pointer to
@@ -426,6 +443,7 @@ pub unsafe extern "efiapi" fn handle_protocol(
 }
 
 /// Opens a protocol interface on a handle, recording the usage in the protocol database.
+///
 ///
 /// Returns the interface pointer.
 ///
@@ -510,6 +528,7 @@ pub fn core_close_protocol(
 
 /// Opens a protocol interface on a handle with usage tracking.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. `interface` must be a valid pointer to
@@ -535,10 +554,17 @@ unsafe extern "efiapi" fn open_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let agent_handle = PROTOCOL_DB.validate_handle(agent_handle).map_or_else(|_err| None, |_ok| Some(agent_handle));
+    let agent_handle = match PROTOCOL_DB.validate_handle(agent_handle) {
+        Ok(()) => Some(agent_handle),
+        Err(EfiError::InvalidParameter) => None,
+        Err(err) => return err.into(),
+    };
 
-    let controller_handle =
-        PROTOCOL_DB.validate_handle(controller_handle).map_or_else(|_err| None, |_ok| Some(controller_handle));
+    let controller_handle = match PROTOCOL_DB.validate_handle(controller_handle) {
+        Ok(()) => Some(controller_handle),
+        Err(EfiError::InvalidParameter) => None,
+        Err(err) => return err.into(),
+    };
 
     // SAFETY: handles are validated above. The implicit UEFI spec assumption that driver bindings
     // remain valid for the duration of the call cannot be verified here. See
@@ -575,6 +601,7 @@ unsafe extern "efiapi" fn open_protocol(
 
 /// Closes a protocol on a handle that was previously opened.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. It is null checked, but validity of the
@@ -589,15 +616,15 @@ unsafe extern "efiapi" fn close_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if PROTOCOL_DB.validate_handle(agent_handle).is_err() {
-        return efi::Status::INVALID_PARAMETER;
+    if let Err(err) = PROTOCOL_DB.validate_handle(agent_handle) {
+        return err.into();
     }
 
     let controller_handle = match controller_handle {
         _ if controller_handle.is_null() => None,
         _ => {
-            if PROTOCOL_DB.validate_handle(controller_handle).is_err() {
-                return efi::Status::INVALID_PARAMETER;
+            if let Err(err) = PROTOCOL_DB.validate_handle(controller_handle) {
+                return err.into();
             }
             Some(controller_handle)
         }
@@ -614,6 +641,7 @@ unsafe extern "efiapi" fn close_protocol(
 }
 
 /// Retrieves the list of agents that currently have a protocol interface opened.
+///
 ///
 /// # Safety
 ///
@@ -677,6 +705,8 @@ macro_rules! va_arg {
     };
 }
 
+/// Installs multiple protocol interfaces.
+///
 /// # Safety
 ///
 /// `handle` must be a valid pointer to an `efi::Handle` (may point to a null handle for new
@@ -690,7 +720,9 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
     // callbacks until after all protocols are installed. This code matches those semantics by using a TPL guard here
     // to ensure the logic of this function is conducted at TPL_NOTIFY.
     let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "atomic_protocol_install");
-    let _tpl_guard = tpl_mutex.lock();
+    let Some(_tpl_guard) = tpl_mutex.try_lock() else {
+        return efi::Status::NOT_READY;
+    };
 
     if handle.is_null() {
         return efi::Status::INVALID_PARAMETER;
@@ -753,6 +785,7 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
 
 /// Uninstalls multiple protocol interfaces from a handle.
 ///
+///
 /// # Safety
 ///
 /// `args` must consist of paired `(*mut efi::Guid, *mut c_void)` entries terminated by a null
@@ -780,14 +813,14 @@ unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle,
         // `handle` is validated for null above. `interface` is passed through from the caller.
         match unsafe { uninstall_protocol_interface(handle, protocol, interface) } {
             efi::Status::SUCCESS => interfaces_to_reinstall_on_error.push((protocol, interface)),
-            _err => {
+            err => {
                 //on error, attempt to re-install all the previously uninstall interfaces. best-effort, errors are ignored.
                 for (protocol, interface) in interfaces_to_reinstall_on_error {
                     // SAFETY: protocol was checked for null when building interfaces_to_uninstall.
                     let protocol = unsafe { protocol.read_unaligned() };
                     let _ = core_install_protocol_interface(Some(handle), protocol, interface);
                 }
-                return efi::Status::INVALID_PARAMETER;
+                return if err == efi::Status::NOT_READY { err } else { efi::Status::INVALID_PARAMETER };
             }
         }
     }
@@ -795,6 +828,8 @@ unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle,
     efi::Status::SUCCESS
 }
 
+/// Returns the protocols installed on a handle.
+///
 /// # Safety
 ///
 /// `protocol_buffer` must be a valid pointer to receive an allocated array of GUID pointers.
@@ -808,8 +843,8 @@ unsafe extern "efiapi" fn protocols_per_handle(
     if protocol_buffer.is_null() || protocol_buffer_count.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
-    if PROTOCOL_DB.validate_handle(handle).is_err() {
-        return efi::Status::INVALID_PARAMETER;
+    if let Err(err) = PROTOCOL_DB.validate_handle(handle) {
+        return err.into();
     }
 
     let mut protocol_list = match PROTOCOL_DB.get_protocols_on_handle(handle) {
@@ -846,6 +881,8 @@ unsafe extern "efiapi" fn protocols_per_handle(
     }
 }
 
+/// Locates handles and allocates a buffer for the results.
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid` when `search_type` is `BY_PROTOCOL`.
@@ -878,10 +915,10 @@ unsafe extern "efiapi" fn locate_handle_buffer(
             if search_key.is_null() {
                 return efi::Status::INVALID_PARAMETER;
             }
-            if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(search_key) {
-                Ok(vec![handle])
-            } else {
-                Err(EfiError::NotFound)
+            match PROTOCOL_DB.next_handle_for_registration(search_key) {
+                Ok(Some(handle)) => Ok(vec![handle]),
+                Ok(None) => Err(EfiError::NotFound),
+                Err(err) => Err(err),
             }
         }
         efi::BY_PROTOCOL => {
@@ -918,6 +955,7 @@ unsafe extern "efiapi" fn locate_handle_buffer(
 
 /// Locates the first protocol instance matching a protocol GUID.
 ///
+///
 /// # Safety
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. `interface` must be a valid pointer to
@@ -947,18 +985,22 @@ unsafe extern "efiapi" fn locate_protocol(
             // SAFETY: Caller must ensure that interface is a valid pointer. It is checked for null above.
             Ok(i_face) => unsafe { interface.write_unaligned(i_face) },
         }
-    } else if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(registration) {
+    } else {
+        let handle = match PROTOCOL_DB.next_handle_for_registration(registration) {
+            Ok(Some(handle)) => handle,
+            Ok(None) => return efi::Status::NOT_FOUND,
+            Err(err) => return err.into(),
+        };
         let protocol_guid = {
             // SAFETY: Caller must ensure that protocol is a valid pointer. It is checked for null above.
             unsafe { protocol.read_unaligned() }
         };
-        let i_face = PROTOCOL_DB
-            .get_interface_for_handle(handle, protocol_guid)
-            .expect("Protocol should exist on handle if it is returned for registration key.");
+        let i_face = match PROTOCOL_DB.get_interface_for_handle(handle, protocol_guid) {
+            Ok(interface) => interface,
+            Err(err) => return err.into(),
+        };
         // SAFETY: Caller must ensure that interface is a valid pointer. It is checked for null above.
         unsafe { interface.write_unaligned(i_face) };
-    } else {
-        return efi::Status::NOT_FOUND;
     }
     efi::Status::SUCCESS
 }

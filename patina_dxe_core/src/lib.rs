@@ -428,11 +428,13 @@ impl<P: PlatformInfo> Core<P> {
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     ///
+    ///
     /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
     fn init_memory(&'static self, physical_hob_list: *const c_void) -> *mut c_void {
         log::info!("DXE Core Crate v{DXE_CORE_VERSION}");
 
-        GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
+        GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory())
+            .expect("Cannot initialize memory without setting the allocation policy");
 
         let mut interrupt_manager = cpu::initialize_cpu_subsystem(P::CpuInfo::exception_handlers())
             .expect("Failed to initialize CPU subsystem!");
@@ -494,7 +496,9 @@ impl<P: PlatformInfo> Core<P> {
 
         log::info!("GCD - After memory init:\n{GCD}");
 
-        let mut component_dispatcher = self.component_dispatcher.lock();
+        let mut component_dispatcher = self.component_dispatcher.try_lock().expect(
+            "Cannot initialize core services: component dispatcher is already in use before core memory initialization completes",
+        );
         component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
         component_dispatcher.add_service(CoreMemoryManager);
         component_dispatcher.add_service(CoreCompatMemoryManager);
@@ -545,26 +549,31 @@ impl<P: PlatformInfo> Core<P> {
 
     /// Registers the `TimingServices` component service once the Metronome and Watchdog Timer Architectural
     /// Protocols are both available.
-    fn try_register_timing_service(&self) {
+    fn try_register_timing_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && misc_boot_services::timing_arch_protocols_ready() {
+            let mut dispatcher = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?;
             REGISTERED.call_once(|| {
-                self.component_dispatcher.lock().add_service(uefi_services::CoreTimingServices);
+                dispatcher.add_service(uefi_services::CoreTimingServices);
             });
         }
+        Ok(())
     }
 
     /// Registers the `TimerEventServices` component service once the Timer Architectural Protocol is available.
-    fn try_register_timer_event_service(&self) {
+    fn try_register_timer_event_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && events::timer_arch_protocol_ready() {
+            let mut dispatcher = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?;
             REGISTERED.call_once(|| {
-                self.component_dispatcher.lock().add_service(uefi_services::CoreTimerEventServices);
+                dispatcher.add_service(uefi_services::CoreTimerEventServices);
             });
         }
+        Ok(())
     }
 
     /// Performs a combined dispatch of Patina components and UEFI drivers.
+    ///
     ///
     /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
     /// iteration. The dispatching process involves a loop of two distinct dispatch phases:
@@ -573,11 +582,11 @@ impl<P: PlatformInfo> Core<P> {
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&'static self) -> Result<()> {
         loop {
-            self.try_register_timing_service();
-            self.try_register_timer_event_service();
+            self.try_register_timing_service()?;
+            self.try_register_timer_event_service()?;
 
             // Patina component dispatch
-            let dispatched = self.component_dispatcher.lock().dispatch();
+            let dispatched = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?.dispatch();
 
             // UEFI driver dispatch
             let dispatched = dispatched
@@ -591,11 +600,12 @@ impl<P: PlatformInfo> Core<P> {
         Ok(())
     }
 
+    /// Initializes system tables and component state.
     fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
         systemtables::init_system_table(P::UEFI_SPEC_VERSION);
 
-        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let mut st_guard = systemtables::SYSTEM_TABLE.try_lock().ok_or(error::EfiError::NotReady)?;
         let st = st_guard.as_mut().expect("System Table not initialized!");
 
         allocator::install_memory_services(st);
@@ -632,22 +642,27 @@ impl<P: PlatformInfo> Core<P> {
         let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
         drop(st_guard);
 
-        self.component_dispatcher.lock().set_runtime_services(runtime_services);
-        self.component_dispatcher.lock().set_image_handle(protocol_db::DXE_CORE_HANDLE);
+        let mut dispatcher = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?;
+        dispatcher.set_runtime_services(runtime_services);
+        dispatcher.set_image_handle(protocol_db::DXE_CORE_HANDLE);
 
         Ok(())
     }
 
     /// Registers platform provided components, configurations, and services.
     #[inline(always)]
-    fn apply_component_info(&self) {
-        self.component_dispatcher.lock().apply_component_info::<P::ComponentInfo>();
+    fn apply_component_info(&self) -> Result<()> {
+        self.component_dispatcher
+            .try_lock()
+            .ok_or(error::EfiError::NotReady)?
+            .apply_component_info::<P::ComponentInfo>();
+        Ok(())
     }
 
     /// Registers core provided components
     #[allow(clippy::default_constructed_unit_structs)]
-    fn add_core_components(&self) {
-        let mut dispatcher = self.component_dispatcher.lock();
+    fn add_core_components(&self) -> Result<()> {
+        let mut dispatcher = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?;
         dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
         dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
         dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
@@ -660,16 +675,17 @@ impl<P: PlatformInfo> Core<P> {
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
         dispatcher
             .insert_component(0, cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component());
+        Ok(())
     }
 
     /// Starts the core, dispatching all drivers.
     fn start_dispatcher(&'static self, physical_hob_list: *mut c_void) -> Result<()> {
         log::info!("Registering platform components");
-        self.apply_component_info();
+        self.apply_component_info()?;
         log::info!("Finished.");
 
         log::info!("Registering default components");
-        self.add_core_components();
+        self.add_core_components()?;
         log::info!("Finished.");
 
         log::info!("Initializing System Table");
@@ -677,7 +693,7 @@ impl<P: PlatformInfo> Core<P> {
         log::info!("Finished.");
 
         log::info!("Parsing HOB list for Guided HOBs.");
-        self.component_dispatcher.lock().insert_hobs(self.hob_list());
+        self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?.insert_hobs(self.hob_list());
         log::info!("Finished.");
 
         log::info!("Installing Firmware Volumes from HOB list.");
@@ -686,11 +702,15 @@ impl<P: PlatformInfo> Core<P> {
 
         log::info!("Dispatching Drivers");
         self.core_dispatcher()?;
-        self.component_dispatcher.lock().lock_configs();
+        self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?.lock_configs();
         self.core_dispatcher()?;
         log::info!("Finished Dispatching Drivers");
 
-        self.component_dispatcher.lock().display_not_dispatched();
+        if let Some(dispatcher) = self.component_dispatcher.try_lock() {
+            dispatcher.display_not_dispatched();
+        } else {
+            log::warn!("Cannot report components that were not dispatched: component dispatcher is busy");
+        }
 
         core_display_missing_arch_protocols();
 

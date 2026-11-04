@@ -265,13 +265,33 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
     }
 }
 
+/// Attempts to raise the TPL without changing state if the transition is invalid.
+///
+/// # Panics
+/// Panics in debug builds if the requested TPL is lower than the current TPL.
+pub(crate) fn try_raise_tpl(new_tpl: efi::Tpl) -> Option<efi::Tpl> {
+    if new_tpl > efi::TPL_HIGH_LEVEL {
+        return None;
+    }
+    let prev_tpl = CURRENT_TPL
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            debug_assert!(new_tpl >= current, "Cannot raise TPL to a lower or unsupported level");
+            (new_tpl >= current).then_some(new_tpl)
+        })
+        .ok()?;
+    if new_tpl == efi::TPL_HIGH_LEVEL && prev_tpl < efi::TPL_HIGH_LEVEL {
+        arch::disable_interrupts();
+    }
+    Some(prev_tpl)
+}
+
 /// Raises the task priority level (TPL) to the specified value.
 ///
 /// This function is safe to call with any `new_tpl` value. It validates that
 /// the requested TPL does not exceed `TPL_HIGH_LEVEL` and is not lower than the
 /// current TPL, panicking on violation. No incoming parameters are dereferenced,
 /// so this is not marked `unsafe`.
-pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
+pub(crate) extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     assert!(new_tpl <= efi::TPL_HIGH_LEVEL, "Invalid attempt to raise TPL above TPL_HIGH_LEVEL: {new_tpl:#x?}");
 
     let prev_tpl = CURRENT_TPL.fetch_max(new_tpl, Ordering::SeqCst);
@@ -457,20 +477,20 @@ mod tests {
                     .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(notify), None, Some(group))
                     .unwrap();
                 {
-                    let _guard = OUTER_LOCK.lock();
+                    let _guard = OUTER_LOCK.try_lock().expect("test outer lock must be available");
                     for _ in 0..3 {
                         EVENT_DB.signal_group(group);
                     }
                     restore_tpl(efi::TPL_HIGH_LEVEL);
                     assert_eq!(CALLS.load(Ordering::SeqCst), 0);
-                    assert!(!EVENT_DB.is_signaled(event));
+                    assert!(!EVENT_DB.is_signaled(event).unwrap());
                 }
                 assert_eq!(CALLS.load(Ordering::SeqCst), 1);
                 let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
                 restore_tpl(old_tpl);
                 assert_eq!(CALLS.load(Ordering::SeqCst), 1);
                 {
-                    let _guard = OUTER_LOCK.lock();
+                    let _guard = OUTER_LOCK.try_lock().expect("test outer lock must be available");
                     EVENT_DB.signal_group(group);
                 }
                 assert_eq!(CALLS.load(Ordering::SeqCst), 2);
@@ -670,7 +690,7 @@ mod tests {
             let result = EVENT_DB.close_event(event);
 
             assert!(result.is_ok());
-            assert!(!EVENT_DB.is_valid(event));
+            assert!(!EVENT_DB.is_valid(event).unwrap());
         });
     }
 
@@ -1049,6 +1069,21 @@ mod tests {
     }
 
     // Tests for TPL functions
+    #[test]
+    fn test_try_raise_tpl_invalid_transition_preserves_state() {
+        with_locked_state(|| {
+            let original_tpl = raise_tpl(efi::TPL_NOTIFY);
+            #[cfg(debug_assertions)]
+            assert!(std::panic::catch_unwind(|| try_raise_tpl(efi::TPL_CALLBACK)).is_err());
+            #[cfg(not(debug_assertions))]
+            assert_eq!(try_raise_tpl(efi::TPL_CALLBACK), None);
+            assert_eq!(CURRENT_TPL.load(Ordering::SeqCst), efi::TPL_NOTIFY);
+            assert_eq!(try_raise_tpl(efi::TPL_HIGH_LEVEL + 1), None);
+            assert_eq!(CURRENT_TPL.load(Ordering::SeqCst), efi::TPL_NOTIFY);
+            restore_tpl(original_tpl);
+        });
+    }
+
     #[test]
     fn test_raise_tpl_sequence() {
         with_locked_state(|| {

@@ -12,7 +12,7 @@ use patina::component::service::{
     uefi_services::tpl::{PreviousTpl, Tpl, TplServices},
 };
 
-use crate::events::{raise_tpl, restore_tpl};
+use crate::events::{restore_tpl, try_raise_tpl};
 use crate::uefi_services::event::tpl_to_efi;
 /// Core implementation of [`TplServices`], delegating to the core TPL primitives.
 #[derive(IntoService)]
@@ -21,7 +21,7 @@ pub(crate) struct CoreTplServices;
 
 impl TplServices for CoreTplServices {
     fn raise_tpl(&self, tpl: Tpl) -> PreviousTpl {
-        PreviousTpl::from_raw(raise_tpl(tpl_to_efi(tpl)))
+        PreviousTpl::from_raw(try_raise_tpl(tpl_to_efi(tpl)).expect("Cannot raise TPL to a lower or unsupported level"))
     }
 
     fn restore_tpl(&self, previous: PreviousTpl) {

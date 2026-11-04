@@ -326,6 +326,7 @@ fn core_connect_single_controller(
 
 /// Connects a controller to drivers
 ///
+///
 /// This function matches the behavior of `EFI_BOOT_SERVICES.ConnectController()` API in the UEFI spec 2.10 section
 /// 7.3.12. Refer to the UEFI spec description for details on input parameters, behavior, and error return codes.
 ///
@@ -356,7 +357,7 @@ pub unsafe fn core_connect_controller(
     let return_status = core_connect_single_controller(handle, driver_handles, remaining_device_path);
 
     if recursive {
-        for child in PROTOCOL_DB.get_child_handles(handle) {
+        for child in PROTOCOL_DB.get_child_handles(handle)? {
             // ignore the return value to match behavior of edk2 reference.
             // SAFETY: We do not remove any of these handles during this call, though it is
             // possible for a different entity at another TPL to do so.
@@ -369,6 +370,7 @@ pub unsafe fn core_connect_controller(
 
 /// Raw UEFI `ConnectController()` entry point installed into the boot services
 /// table.
+///
 ///
 ///  NOTE: This routine cannot hold the protocol db lock while executing
 ///  `DriverBinding->Supported()/Start()` since they need to access protocol db
