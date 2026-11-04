@@ -26,20 +26,14 @@ const TDX_SIGNATURE_ECX: u32 = u32::from_le_bytes(*b"    ");
 /// signature, following EDK II's `TdIsEnabled` probe. Platform exception handlers
 /// must be installed before calling this function if CPUID can raise #VE.
 pub fn is_td_enabled() -> bool {
-    #[allow(unused_unsafe)]
-    // SAFETY: CPUID with EAX=0 is always safe to call on x64.
-    let vendor = unsafe { __cpuid_count(CPUID_SIGNATURE, 0) };
+    let vendor = __cpuid_count(CPUID_SIGNATURE, 0);
     if vendor.ebx != INTEL_VENDOR_EBX || vendor.edx != INTEL_VENDOR_EDX || vendor.ecx != INTEL_VENDOR_ECX {
         return false;
     }
-    #[allow(unused_unsafe)]
-    // SAFETY: CPUID with EAX=1 is always safe to call on x64.
-    let version = unsafe { __cpuid_count(CPUID_VERSION_INFO, 0) };
+    let version = __cpuid_count(CPUID_VERSION_INFO, 0);
     if version.ecx & CPUID_HYPERVISOR_PRESENT == 0 || vendor.eax < CPUID_GUEST_TD_RUNTIME_ENVIRONMENT {
         return false;
     }
-    #[allow(unused_unsafe)]
-    // SAFETY: CPUID with EAX=0x21 is always safe to call on x64.
-    let tdx = unsafe { __cpuid_count(CPUID_GUEST_TD_RUNTIME_ENVIRONMENT, 0) };
+    let tdx = __cpuid_count(CPUID_GUEST_TD_RUNTIME_ENVIRONMENT, 0);
     tdx.ebx == TDX_SIGNATURE_EBX && tdx.edx == TDX_SIGNATURE_EDX && tdx.ecx == TDX_SIGNATURE_ECX
 }

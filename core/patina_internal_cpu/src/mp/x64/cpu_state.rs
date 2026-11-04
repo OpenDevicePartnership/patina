@@ -97,10 +97,8 @@ impl CpuControl {
 }
 
 pub(super) fn cpuid(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult {
-    // SAFETY: `cpuid` has no memory-safety preconditions. The block is needed on Rust 1.90.0 but not on later versions.
     #[cfg(not(test))]
-    #[allow(unused_unsafe)]
-    let result = unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) };
+    let result = core::arch::x86_64::__cpuid_count(leaf, subleaf);
     #[cfg(test)]
     let result = {
         let _ = (leaf, subleaf);
