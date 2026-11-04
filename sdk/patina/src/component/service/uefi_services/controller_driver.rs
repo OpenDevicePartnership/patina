@@ -75,6 +75,21 @@
 //! driver's usage of a child's protocols when the core asks, so the child can be destroyed from within
 //! [`ControllerDriver::stop`].
 //!
+//! ## Sharing state between callbacks
+//!
+//! [`ControllerDriverRef::with_state`] borrows the state mutably, so a callback (including a shared state callback)
+//! that preempts another one using it will get [`ControllerError::Busy`]. To share state across borrows, such as in
+//! different callbacks, use [`ControllerDriverRef::with_shared_state`] with interior mutability as needed.
+//!
+//! Note that while a shared borrow is held, a request to stop the controller is refused.
+//!
+//! A general rule of thumb is:
+//!
+//! - If mutable access is needed only within a single context (callback), use [`ControllerDriverRef::with_state`]
+//!   if that makes the code simpler as it doesn't require interior mutability.
+//! - If mutable access is needed across multiple contexts (callbacks), use [`ControllerDriverRef::with_shared_state`]
+//!   with interior mutability.
+//!
 //! ## Bus drivers
 //!
 //! A bus driver records each child it creates with [`StartContext::open_for_child`], which opens
@@ -426,6 +441,49 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
         Ok(f(&mut state, protocol))
     }
 
+    /// Runs `f` with shared access to `controller`'s state.
+    ///
+    /// Keep in mind that any number of shared accesses can be active at once. Shared state that is accessed mutably
+    /// between callbacks must use interior mutability. A request to stop `controller` is refused while `f` runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControllerError::NotManaged`] if the driver is not managing `controller`, or
+    /// [`ControllerError::Busy`] if the state is mutably borrowed further up the call stack, for example by
+    /// [`Self::with_state`].
+    pub fn with_shared_state<R>(
+        &self,
+        controller: Handle,
+        f: impl FnOnce(&D::State) -> R,
+    ) -> Result<R, ControllerError> {
+        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
+        let state = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
+        Ok(f(&state))
+    }
+
+    /// Runs `f` with shared access to `controller`'s state and its [`ControllerDriver::Protocol`] interface.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::with_shared_state`].
+    pub fn with_shared_controller<R>(
+        &self,
+        controller: Handle,
+        f: impl FnOnce(&D::State, &D::Protocol) -> R,
+    ) -> Result<R, ControllerError> {
+        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
+        let state = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
+        let ptr = self
+            .inner
+            .services
+            .interface_on_handle(controller, D::Protocol::PROTOCOL_GUID)
+            .map_err(|_| ControllerError::NotManaged)?;
+        // SAFETY: `ptr` is the interface installed for `D::Protocol`'s GUID. This driver holds it `BY_DRIVER`, and
+        // uninstalling it requires this driver's `Stop()`, which is refused while `state` is borrowed.
+        let protocol = unsafe { &*ptr.as_raw().cast::<D::Protocol>() };
+        Ok(f(&state, protocol))
+    }
+
     /// Returns a reference to `controller`'s state that can be stored and used later.
     pub fn state_ref(&self, controller: Handle) -> ControllerStateRef<D> {
         ControllerStateRef { inner: self.inner, controller }
@@ -471,6 +529,25 @@ impl<D: ControllerDriver> ControllerStateRef<D> {
     /// Same as [`ControllerDriverRef::with_state`].
     pub fn with_protocol<R>(&self, f: impl FnOnce(&mut D::State, &D::Protocol) -> R) -> Result<R, ControllerError> {
         ControllerDriverRef { inner: self.inner }.with_controller(self.controller, f)
+    }
+
+    /// Runs `f` with shared access to the controller's state. See [`ControllerDriverRef::with_shared_state`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`ControllerDriverRef::with_shared_state`].
+    pub fn with_shared<R>(&self, f: impl FnOnce(&D::State) -> R) -> Result<R, ControllerError> {
+        ControllerDriverRef { inner: self.inner }.with_shared_state(self.controller, f)
+    }
+
+    /// Runs `f` with shared access to the controller's state and protocol. See
+    /// [`ControllerDriverRef::with_shared_controller`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`ControllerDriverRef::with_shared_state`].
+    pub fn with_shared_protocol<R>(&self, f: impl FnOnce(&D::State, &D::Protocol) -> R) -> Result<R, ControllerError> {
+        ControllerDriverRef { inner: self.inner }.with_shared_controller(self.controller, f)
     }
 }
 
@@ -914,6 +991,60 @@ mod tests {
         binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
         let nested = driver.with_state(h(CONTROLLER), |_| driver.with_state(h(CONTROLLER), |_| ())).unwrap();
         assert_eq!(nested, Err(ControllerError::Busy));
+    }
+
+    #[test]
+    fn test_controller_driver_shared_state_allows_concurrent_shared_access() {
+        let closed = Closed::default();
+        let (binding, driver) = setup(TestDriver::default(), &closed);
+
+        assert_eq!(driver.with_shared_state(h(CONTROLLER), |_| ()), Err(ControllerError::NotManaged));
+        assert_eq!(driver.with_shared_controller(h(CONTROLLER), |_, _| ()), Err(ControllerError::NotManaged));
+
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        let nested = driver
+            .with_shared_state(h(CONTROLLER), |outer| {
+                driver.state_ref(h(CONTROLLER)).with_shared(|inner| *outer + *inner)
+            })
+            .unwrap();
+        assert_eq!(nested, Ok(14));
+        assert_eq!(driver.with_shared_controller(h(CONTROLLER), |state, protocol| *state + protocol.value), Ok(14));
+        assert_eq!(
+            driver.state_ref(h(CONTROLLER)).with_shared_protocol(|state, protocol| *state * protocol.value),
+            Ok(49)
+        );
+    }
+
+    #[test]
+    fn test_controller_driver_shared_state_conflicts_with_mutable_access() {
+        let closed = Closed::default();
+        let (binding, driver) = setup(TestDriver::default(), &closed);
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+
+        let shared_in_mut =
+            driver.with_state(h(CONTROLLER), |_| driver.with_shared_state(h(CONTROLLER), |_| ())).unwrap();
+        assert_eq!(shared_in_mut, Err(ControllerError::Busy));
+        let controller_in_mut =
+            driver.with_state(h(CONTROLLER), |_| driver.with_shared_controller(h(CONTROLLER), |_, _| ())).unwrap();
+        assert_eq!(controller_in_mut, Err(ControllerError::Busy));
+
+        let mut_in_shared =
+            driver.with_shared_state(h(CONTROLLER), |_| driver.with_state(h(CONTROLLER), |_| ())).unwrap();
+        assert_eq!(mut_in_shared, Err(ControllerError::Busy));
+    }
+
+    #[test]
+    fn test_controller_driver_stop_refused_while_shared_state_in_use() {
+        let closed = Closed::default();
+        let (binding, driver) = setup(TestDriver::default(), &closed);
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+
+        let result = driver.with_shared_state(h(CONTROLLER), |_| binding.stop(h(AGENT), h(CONTROLLER), &[])).unwrap();
+        assert_eq!(result, Err(ProtocolError::AccessDenied));
+        assert!(driver.is_managing(h(CONTROLLER)));
+        assert!(closed.lock().unwrap().is_empty());
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Ok(()));
     }
 
     #[test]
