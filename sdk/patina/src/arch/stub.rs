@@ -15,11 +15,6 @@ use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi
 use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// Stub architecture used for host/unit-test builds.
-pub(crate) struct StubArch;
-
-impl super::ArchSupport for StubArch {}
-
 /// Returns `false` for host builds.
 pub fn is_cc_guest() -> bool {
     false
@@ -27,42 +22,48 @@ pub fn is_cc_guest() -> bool {
 
 static INTERRUPTS_ENABLED: AtomicBool = AtomicBool::new(true);
 
-impl super::Interrupts for StubArch {
-    fn enable_interrupts() {
-        INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
-    }
-
-    fn disable_interrupts() {
-        INTERRUPTS_ENABLED.store(false, Ordering::SeqCst);
-    }
-
-    fn interrupts_enabled() -> bool {
-        INTERRUPTS_ENABLED.load(Ordering::SeqCst)
-    }
-
-    fn enable_interrupts_and_sleep() {
-        INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
-    }
+/// Marks the simulated interrupt state as enabled.
+pub(crate) fn enable_interrupts() {
+    INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
 }
 
-impl super::CacheMgmt for StubArch {
-    fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, _flush_type: CpuFlushType) -> Result<(), EfiError> {
-        Ok(())
-    }
-
-    fn cache_writeback_granule() -> u32 {
-        64
-    }
+/// Marks the simulated interrupt state as disabled.
+pub(crate) fn disable_interrupts() {
+    INTERRUPTS_ENABLED.store(false, Ordering::SeqCst);
 }
 
-impl super::Timer for StubArch {
-    fn get_timer_value() -> u64 {
-        0
-    }
+/// Returns the simulated interrupt state.
+pub fn interrupts_enabled() -> bool {
+    INTERRUPTS_ENABLED.load(Ordering::SeqCst)
+}
 
-    fn get_timer_frequency() -> Option<NonZeroU64> {
-        None
-    }
+/// Marks the simulated interrupt state as enabled and returns immediately.
+pub fn enable_interrupts_and_sleep() {
+    INTERRUPTS_ENABLED.store(true, Ordering::SeqCst);
+}
+
+/// No-op data cache flush for host builds.
+///
+/// ## Errors
+///
+/// Never fails.
+pub fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, _flush_type: CpuFlushType) -> Result<(), EfiError> {
+    Ok(())
+}
+
+/// Returns a fixed 64 byte cache writeback granule for host builds.
+pub fn cache_writeback_granule() -> u32 {
+    64
+}
+
+/// Returns `0` for host builds.
+pub fn get_timer_value() -> u64 {
+    0
+}
+
+/// Returns `None` for host builds.
+pub fn get_timer_frequency() -> Option<NonZeroU64> {
+    None
 }
 
 //
