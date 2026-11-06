@@ -60,13 +60,22 @@
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use crate::BinaryGuid;
-use core::{any::Any, fmt, ops::Deref};
+use core::{any::TypeId, fmt, ops::Deref};
 
 use super::{
     metadata::MetaData,
     params::Param,
-    storage::{Storage, UnsafeStorageCell},
+    query::{Query, QueryIter},
+    storage::{HobId, HobValue, Storage, UnsafeStorageCell},
 };
+
+type HobQueryData = (&'static HobId, &'static HobValue);
+type HobQuery = Query<HobQueryData>;
+
+/// Validated query state used by the [`Hob`] parameter.
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct HobState(HobQuery);
 
 /// An error produced when a guided HOB payload cannot be parsed into its target type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +199,9 @@ pub use patina_macro::FromHob;
 /// }
 /// ```
 pub struct Hob<'h, T: FromHob + 'static> {
-    value: &'h [Box<dyn Any>],
+    storage: &'h Storage,
+    type_id: TypeId,
+    query: HobQuery,
     _marker: core::marker::PhantomData<T>,
 }
 
@@ -228,21 +239,23 @@ impl<'h, T: FromHob + 'static> Hob<'h, T> {
     /// ```
     #[allow(clippy::test_attr_in_doctest)]
     pub fn mock(value: Vec<T>) -> Self {
-        let value = value.into_iter().map(|v| Box::new(v) as Box<dyn Any>).collect::<Vec<_>>();
-        let static_value = Box::leak(value.into_boxed_slice());
+        let storage = Box::leak(Box::new(Storage::new()));
+        for value in value {
+            storage.add_hob(value);
+        }
 
-        Self { value: static_value, _marker: core::marker::PhantomData }
+        Self { storage, type_id: TypeId::of::<T>(), query: HobQuery::new(), _marker: core::marker::PhantomData }
     }
 
     /// Returns an iterator over the values of the Hob.
     pub fn iter(&self) -> HobIter<'h, T> {
-        HobIter { inner: self.value.iter(), _marker: core::marker::PhantomData }
+        HobIter { inner: self.query.query(self.storage), type_id: self.type_id, _marker: core::marker::PhantomData }
     }
 }
 
-impl<'h, T: FromHob + 'static> From<&'h [Box<dyn Any>]> for Hob<'h, T> {
-    fn from(value: &'h [Box<dyn Any>]) -> Self {
-        Self { value, _marker: core::marker::PhantomData }
+impl<'h, T: FromHob + 'static> From<(&'h Storage, TypeId, HobQuery)> for Hob<'h, T> {
+    fn from((storage, type_id, query): (&'h Storage, TypeId, HobQuery)) -> Self {
+        Self { storage, type_id, query, _marker: core::marker::PhantomData }
     }
 }
 
@@ -250,11 +263,7 @@ impl<T: FromHob + 'static> Deref for Hob<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.value
-            .first()
-            .expect("Hob must have at least one value")
-            .downcast_ref::<T>()
-            .expect("Failed to downcast Hob value")
+        self.iter().next().expect("Hob must have at least one value")
     }
 }
 
@@ -262,26 +271,25 @@ impl<T: FromHob + 'static> Deref for Hob<'_, T> {
 // The FromHob trait ensures T can be safely constructed from HOB data.
 // UnsafeStorageCell provides controlled access to storage under Param protocol.
 unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
-    type State = usize;
+    type State = HobState;
     type Item<'storage, 'state> = Hob<'storage, T>;
 
     unsafe fn get_param<'storage, 'state>(
-        lookup_id: &'state Self::State,
+        state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        // SAFETY: lookup_id was validated to be a valid HOB index by validate().
-        // UnsafeStorageCell provides exclusive access to storage under Param protocol.
-        Hob::from(unsafe { storage.storage().get_raw_hob(*lookup_id) })
+        // SAFETY: HOB availability was validated and access is immutable.
+        Hob::from((unsafe { storage.storage() }, TypeId::of::<T>(), state.0))
     }
 
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
         // SAFETY: accesses are correctly regsitered with storage, no conflicts
-        !unsafe { storage.storage() }.get_raw_hob(*state).is_empty()
+        Hob::<T>::from((unsafe { storage.storage() }, TypeId::of::<T>(), state.0)).iter().next().is_some()
     }
 
     fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         storage.add_hob_parser::<T>();
-        Ok(storage.register_hob::<T>())
+        Ok(HobState(HobQuery::new()))
     }
 }
 
@@ -304,8 +312,9 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
 ///   // Do something with the value
 /// }
 /// ```
-pub struct HobIter<'h, T> {
-    inner: core::slice::Iter<'h, Box<dyn Any>>,
+pub struct HobIter<'h, T: 'static> {
+    inner: QueryIter<'h, HobQueryData>,
+    type_id: TypeId,
     _marker: core::marker::PhantomData<T>,
 }
 
@@ -313,14 +322,15 @@ impl<'h, T: FromHob + 'static> Iterator for HobIter<'h, T> {
     type Item = &'h T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(any_box) = self.inner.next() {
-            return Some(
-                any_box
+        let type_id = self.type_id;
+        self.inner.find_map(|(id, value)| {
+            (id.0 == type_id).then(|| {
+                value
+                    .0
                     .downcast_ref::<T>()
-                    .unwrap_or_else(|| panic!("Hob should be of type {}", super::type_name::normalized::<T>())),
-            );
-        }
-        None
+                    .unwrap_or_else(|| panic!("Hob should be of type {}", super::type_name::normalized::<T>()))
+            })
+        })
     }
 }
 
@@ -362,10 +372,9 @@ mod tests {
     fn test_single_hob() {
         let mut storage = Storage::new();
 
-        let id = storage.register_hob::<MyStruct>();
         storage.add_hob(MyStruct { unused: 5 });
 
-        let hob: Hob<MyStruct> = Hob::from(storage.get_raw_hob(id));
+        let hob = storage.get_hob::<MyStruct>().unwrap();
         assert_eq!(hob.unused, 5);
     }
 
@@ -373,12 +382,10 @@ mod tests {
     fn test_multiple_hobs() {
         let mut storage = Storage::new();
 
-        let id1 = storage.register_hob::<MyStruct>();
-
         storage.add_hob(MyStruct { unused: 5 });
         storage.add_hob(MyStruct { unused: 10 });
 
-        let hobs: Hob<MyStruct> = Hob::from(storage.get_raw_hob(id1));
+        let hobs = storage.get_hob::<MyStruct>().unwrap();
 
         {
             let mut iter = hobs.iter();
@@ -423,13 +430,15 @@ mod tests {
 
         let mut comp = MyComponent.into_component();
         comp.initialize(&mut storage);
+        let state = Hob::<MyStruct>::init_state(&mut storage, &mut MetaData::new::<MyComponent>())
+            .expect("state must initialize");
 
-        assert!(!Hob::<MyStruct>::validate(&0, UnsafeStorageCell::from(&storage)));
+        assert!(!Hob::<MyStruct>::validate(&state, UnsafeStorageCell::from(&storage)));
         MyStruct::register(&[0], &mut storage);
-        assert!(Hob::<MyStruct>::validate(&0, UnsafeStorageCell::from(&storage)));
+        assert!(Hob::<MyStruct>::validate(&state, UnsafeStorageCell::from(&storage)));
 
         // SAFETY: Test code - the Hob parameter is available in storage.
-        let x = unsafe { Hob::<MyStruct>::get_param(&0, UnsafeStorageCell::from(&storage)) };
+        let x = unsafe { Hob::<MyStruct>::get_param(&state, UnsafeStorageCell::from(&storage)) };
 
         assert!(MyComponent::entry_point(MyComponent, x).is_err_and(|e| e == EfiError::NotReady));
 
@@ -454,14 +463,15 @@ mod tests {
     fn test_register_skips_hob_that_fails_to_parse() {
         let mut storage = Storage::new();
         storage.add_hob_parser::<FailingHob>();
-        let id = storage.register_hob::<FailingHob>();
+        let state = Hob::<FailingHob>::init_state(&mut storage, &mut MetaData::new::<FailingHob>())
+            .expect("state must initialize");
 
         for parser in storage.get_hob_parsers(&FailingHob::HOB_GUID) {
             parser(&[0], &mut storage);
         }
 
-        assert!(storage.get_raw_hob(id).is_empty());
-        assert!(!Hob::<FailingHob>::validate(&id, UnsafeStorageCell::from(&storage)));
+        assert!(storage.get_hob::<FailingHob>().is_none());
+        assert!(!Hob::<FailingHob>::validate(&state, UnsafeStorageCell::from(&storage)));
     }
 
     #[derive(FromHob, zerocopy::FromBytes)]
