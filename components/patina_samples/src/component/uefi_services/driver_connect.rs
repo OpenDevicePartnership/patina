@@ -40,10 +40,11 @@ impl DriverConnectSample {
 
     fn entry_point(self, protocols: Service<dyn ProtocolServices>, drivers: Service<dyn DriverServices>) -> Result<()> {
         // Runs for every handle that already exposes Block I/O and for every future install.
+        let callback_protocols = protocols.clone();
         protocols.on_protocol_installed::<BlockIo>(Tpl::Callback, move |controller| {
             log::info!("Block I/O controller installed: {controller:?}");
 
-            if let Ok(controllers) = protocols.locate_handles_for::<BlockIo>() {
+            if let Ok(controllers) = callback_protocols.locate_handles_for::<BlockIo>() {
                 log::info!("There are currently {} Block I/O controllers installed", controllers.len());
             }
 
