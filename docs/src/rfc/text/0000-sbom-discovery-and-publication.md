@@ -17,26 +17,27 @@ entry format. Patina and EDK II may use different internal integration points to
 ## Change Log
 
 - 2026-10-12: Initial RFC created.
+- 2026-11-06: Define the HOB handoff and publish once at ReadyToBoot through
+  `EFI_ACPI_TABLE_PROTOCOL`.
 
 ## Motivation
 
 A platform may expose multiple standalone SBOMs originating from different layers of the firmware
 build and boot process. The implementation proposed in this RFC collects and publishes those
 standalone SBOMs together as an N-entry list in one ACPI SBOM table. It does not build a single SBOM
-from the various SBOM sources. The planned discovery mechanisms are:
+from the various SBOM sources. The discovery mechanisms are:
 
 1. An SBOM entry embedded in a PE/COFF image's `.sbom` section.
-2. An SBOM Firmware File System (FFS) file in a firmware volume.
-3. SBOM entries passed through a GUIDed Hand-Off Block (HOB).
+2. SBOM entries passed through a GUIDed Hand-Off Block (HOB).
 
 The RFC also defines a common publication interface through which platform code can expose SBOM
 entries obtained by a platform-defined mechanism. The RFC does not prescribe how the platform
 discovers those entries.
 
-PE/COFF images and firmware volumes are already parsed by a DXE Core. Discovering their SBOM data in
-the core avoids reparsing the same data elsewhere and allows metadata to remain associated with the
-object from which it came. Both Patina and EDK II must be able to implement these two discovery paths
-without depending on a Patina-specific component model or an EDK II-specific library interface.
+PE/COFF images are already parsed by a DXE Core. Discovering their SBOM data in the core avoids
+reparsing the same data elsewhere and allows metadata to remain associated with the loaded image.
+Both Patina and EDK II must be able to implement this discovery path without depending on a
+Patina-specific component model or an EDK II-specific library interface.
 
 GUIDed HOB discovery and the platform publication interface do not require DXE Core changes. A
 component or driver that consumes GUIDed HOBs may also own ACPI table publication and contribute
@@ -65,8 +66,7 @@ It recommends embedding component metadata in the firmware artifact so the metad
 with the exact binary that it describes.
 
 For PE/COFF components, the specification identifies `.sbom` as the section used for embedded SBOM
-metadata. It also describes volume-level metadata for components that do not have a natural PE/COFF
-container. This RFC defines how already-encoded SBOM entries are discovered and transported at
+metadata. This RFC defines how already-encoded SBOM entries are discovered and transported at
 runtime. It does not define how an SBOM payload is generated.
 
 ### UEFI Protocol Discovery
@@ -78,30 +78,27 @@ source object.
 
 This model is usually used for device or service interfaces. The protocol proposed by this RFC
 instead represents one complete serialized SBOM table entry per protocol instance. It has no
-function table and creates no call-time dependency between a producer and the aggregator. Whether
-the interface points directly to the serialized entry or contains a pointer and explicit length is
-an unresolved design question.
+function table and creates no call-time dependency between a producer and the aggregator. Its
+interface is a fixed-size descriptor containing a pointer to the serialized entry and its byte length.
 
 ### ACPI Publication
 
-In Patina, the aggregator can publish the completed table using the `AcpiProvider` service proposed
-by [RFC 0005](0005-acpi.md). An EDK II implementation can use `EFI_ACPI_TABLE_PROTOCOL`. The producer
-protocol and serialized entry format are common to both implementations; only the final ACPI
-publication integration is implementation-specific.
+Both Patina and EDK II aggregators publish the completed table through
+`EFI_ACPI_TABLE_PROTOCOL.InstallAcpiTable`. The ACPI implementation allocates and owns a copy of the
+table in `EfiACPIReclaimMemory`; the aggregator may release its temporary construction buffer after
+installation.
 
 ## Goals
 
 1. Ensure every SBOM discovery method can be implemented by both Patina and EDK II and produces the
    same serialized entry format.
-2. Allow the Patina and EDK II DXE Cores to discover SBOM entries while loading PE/COFF images and
-   discovering firmware volumes.
+2. Allow the Patina and EDK II DXE Cores to discover SBOM entries while loading PE/COFF images.
 3. Allow a GUIDed HOB consumer either to contribute entries directly when it owns ACPI table
    publication or to use the common publication interface when those responsibilities are
    separated.
 4. Publish all available, structurally well-formed SBOMs as independent entries in one ACPI SBOM
    table.
-5. Ensure SBOM-specific failures never prevent an otherwise valid image or firmware volume from
-   loading.
+5. Ensure SBOM-specific failures never prevent an otherwise valid image from loading.
 6. Keep the discovery path independent of payload format and compression.
 
 ## Requirements
@@ -122,14 +119,13 @@ publication integration is implementation-specific.
 6. A producer must own the complete serialized entry for as long as the protocol remains installed.
 7. Protocol data must be immutable after installation.
 8. Missing, unreadable, malformed, unsupported-revision, or oversized SBOM entries must be
-   reported and ignored without failing the image or firmware volume load that discovered them.
+   reported and ignored without failing the image load that discovered them.
 9. Allocation failures and SBOM protocol installation failures must also be reported and ignored
-   without failing the image or firmware volume load.
+   without failing the image load.
 10. The PE/COFF discovery path must install a structurally well-formed `.sbom` entry on the loaded
     image handle.
-11. The firmware volume discovery path must support at most one SBOM FFS file per firmware volume.
-    It must install the discovered SBOM entry protocol on the existing handle supporting
-    `EFI_FIRMWARE_VOLUME2_PROTOCOL` for the containing firmware volume.
+11. Each SBOM GUIDed HOB must contain exactly one serialized entry, without an ACPI description
+    header. Only the HOB's expected eight-byte alignment padding may follow the entry.
 12. A component or driver that consumes GUIDed HOB instances may also act as the ACPI SBOM table
     collector and publisher. In that combined design, it must add every structurally well-formed
     HOB-derived entry directly to its collection and may skip installing SBOM entry protocols for
@@ -144,28 +140,19 @@ publication integration is implementation-specific.
     contain owned copies of every entry and must not borrow producer-owned protocol memory.
 16. The ACPI table must represent an N-entry list of standalone SBOMs. The aggregator must not merge
     or otherwise combine the raw SBOM payloads into a single SBOM document.
-17. ACPI SBOM table publication must occur at one lifecycle event defined by this RFC. The
-    publication event must be consistent across implementations and must not be platform-selected.
+17. ACPI SBOM table publication must be attempted once at ReadyToBoot, while allocation services
+    remain available. Repeated signals must not trigger another attempt, even after a
+    failure. When no entries are available, no table is installed.
 
 ## Unresolved Questions
 
 The following details are expected to be resolved through this RFC process or follow-up work:
 
-1. Which single lifecycle event should this RFC define as the end of collection and trigger for
-   ACPI publication: End of DXE or Ready to Boot?
-2. Should an SBOM entry discovered from an image that is later unloaded remain eligible for
+1. Should an SBOM entry discovered from an image that is later unloaded remain eligible for
    inclusion in the ACPI SBOM table, or should the table contain entries only from images that
    remain loaded at publication time?
-3. Should the ACPI table producer be responsible for de-duplicating SBOM entries, or should it
+2. Should the ACPI table producer be responsible for de-duplicating SBOM entries, or should it
    publish every structurally well-formed entry provided by the discovery mechanisms?
-4. Should the SBOM entry protocol point directly to the serialized `EFI_ACPI_SBOM_TABLE_ENTRY` and
-   rely on its embedded length fields, or should it be a fixed-size descriptor containing an entry
-   pointer and explicit byte length so consumers can bound structural validation independently?
-5. What GUID, FFS file type, section type, and payload layout identify an SBOM FFS file?
-6. What GUID and payload layout identify a GUIDed HOB containing SBOM data?
-
-The exact FFS and GUIDed HOB encodings are not defined in this RFC. They can be defined after
-the common producer-to-aggregator contract is accepted.
 
 The following work is out of scope:
 
@@ -182,7 +169,7 @@ There is no existing PI architectural protocol that collects firmware SBOM entri
 The [Firmware Embedded SBOM Specification](https://github.com/open-source-firmware/sbom) provides
 the closest prior art for embedding metadata. Its
 [embedding guidance](https://github.com/open-source-firmware/sbom/blob/main/source/embedding.rst)
-describes `.sbom` PE/COFF sections and volume-level metadata, but it does not define the DXE
+describes `.sbom` PE/COFF sections, but it does not define the DXE
 producer-to-aggregator interface proposed here.
 
 That guidance describes a `.sbom` section containing the CoSWID payload directly. This RFC instead
@@ -192,12 +179,9 @@ interpreting the opaque payload and allows the aggregator to copy the entry dire
 table. The operating system can later use the header to select the payload decompressor and parser.
 Tooling that produces or extracts `.sbom` sections must distinguish these encodings.
 
-[RFC 0014](0014-firmware-filesystem-support.md) describes Patina's firmware volume, file, and section
-parsing APIs. Those APIs can be used by the Patina DXE Core to discover the future SBOM FFS format.
-
 [RFC 0001](0001-guided-hob-to-hob-param.md) describes Patina's typed GUIDed HOB parsing model. A
-component can use that model to parse the future SBOM HOB format. The component may also publish the
-ACPI table and contribute the entries directly, or it may install one protocol instance on a
+component uses that model to parse the SBOM HOB format defined below. The component may also publish
+the ACPI table and contribute the entries directly, or it may install one protocol instance on a
 distinct handle for each structurally well-formed HOB entry.
 
 EDK II's
@@ -221,8 +205,8 @@ This design has useful properties:
 - The collector can deduplicate entries and enforce limits as entries arrive.
 - Protocol enumeration is unnecessary.
 
-However, PE/COFF and FFS discovery occur in the DXE Core. The collector protocol would need to be
-available before the core performs the first relevant image load or firmware volume discovery. A
+However, PE/COFF discovery occurs in the DXE Core. The collector protocol would need to be
+available before the core performs the first relevant image load. A
 normal DXE driver cannot satisfy that ordering for images the core loads before dispatching the
 driver, including the collector driver itself.
 
@@ -235,7 +219,7 @@ The ordering problem could be avoided by:
 
 - Building and initializing the collector inside each DXE Core.
 - Having each core buffer entries until an external collector appears.
-- Deferring all discovery to a later driver that reparses images and firmware volumes.
+- Deferring all image discovery to a later driver that reparses loaded images.
 
 The first two options add a larger core-specific API and state machine than the per-entry protocol.
 The third duplicates parsing and can miss transient sources. The callable collector is therefore
@@ -249,8 +233,8 @@ type could be defined, and consumers could query that type from handles supporti
 
 This reuses a standard protocol but has several disadvantages:
 
-- The protocol is defined for information about an adapter. Loaded images, firmware volumes, and
-  GUIDed HOBs are not naturally adapters.
+- The protocol is defined for information about an adapter. Loaded images and GUIDed HOBs are not
+  naturally adapters.
 - Every producer would need to implement a callable function table, allocation behavior, supported
   type enumeration, and error handling for immutable data.
 - A source handle may already have an Adapter Information Protocol produced by another driver. A
@@ -258,8 +242,8 @@ This reuses a standard protocol but has several disadvantages:
   would need to coordinate and merge supported information types.
 - The aggregator would still need to enumerate all Adapter Information Protocol handles and then
   query each handle for SBOM support.
-- The generic interface obscures the simple lifetime rule that one protocol interface is one
-  serialized ACPI entry.
+- The generic interface obscures the simple lifetime rule that one protocol instance references
+  one serialized ACPI entry.
 
 The Adapter Information Protocol remains useful prior art, especially for GUID-typed information,
 but it is not selected for SBOM discovery.
@@ -333,7 +317,10 @@ Structural entry validation checks that:
 - `Revision` is supported.
 - `HeaderLength` describes the expected entry header.
 - `HeaderLength + PayloadLength` can be calculated without integer overflow.
-- The calculated entry length exactly matches the available serialized entry bytes.
+- The calculated entry length exactly matches the serialized entry bytes retained by the producer.
+  A `.sbom` section may have zero-filled trailing PE padding. A GUIDed HOB may have only the
+  padding needed to reach its next eight-byte boundary; those padding bytes need not be zero.
+  Padding is discarded before collection or protocol installation.
 
 Boot firmware does not:
 
@@ -347,39 +334,47 @@ The firmware preserves the header and opaque payload. An operating system consum
 
 ### SBOM Entry Protocol
 
-The current prototype uses the serialized entry itself as the protocol interface rather than a
-descriptor containing a second pointer and length:
+The protocol interface is a fixed-size descriptor referencing one serialized entry:
 
 ```c
 #define EFI_SBOM_ENTRY_PROTOCOL_GUID \
   { 0x6F84698B, 0xC4E9, 0x4BD0, \
     { 0x9C, 0x8F, 0x5E, 0xB6, 0xC6, 0xF4, 0x68, 0x71 } }
 
-typedef EFI_ACPI_SBOM_TABLE_ENTRY EFI_SBOM_ENTRY_PROTOCOL;
+typedef struct {
+  CONST EFI_ACPI_SBOM_TABLE_ENTRY *Entry;
+  UINTN                          EntrySize;
+} EFI_SBOM_ENTRY_PROTOCOL;
 ```
 
-The current Patina prototype associates the protocol GUID directly with the unsized raw entry:
+Patina's proposed interface lives in `patina::vendor_protocols::sbom`, using the wire type from
+`patina::uefi::acpi_table::sbom`:
 
 ```rust
-unsafe impl ProtocolInterface for EfiSbomTableEntry {
+#[repr(C)]
+pub struct SbomProtocol {
+    pub entry: *const u8,
+    pub entry_size: usize,
+}
+
+// SAFETY: This is the EFI_SBOM_ENTRY_PROTOCOL C layout for this GUID.
+unsafe impl ProtocolInterface for SbomProtocol {
     const PROTOCOL_GUID: BinaryGuid =
         BinaryGuid::from_string("6F84698B-C4E9-4BD0-9C8F-5EB6C6F46871");
 }
 ```
 
-UEFI stores the interface as a thin `VOID *` to the entry's first byte. A consumer first reads the
-fixed header, calculates `HeaderLength + PayloadLength` with checked arithmetic, forms a slice of
-that exact length, and structurally parses it as an `SbomTableEntry`.
+UEFI stores a pointer to the descriptor. `EntrySize` is the complete serialized entry length in
+bytes, including its header and payload. A consumer checks that `Entry` is non-null and that
+`EntrySize` is representable as a slice, then parses the entry within that supplied boundary.
+The entry's embedded lengths must match `EntrySize`.
 
-The protocol pointer does not carry an independently verifiable allocation size. Reading the fixed
-header and the declared payload is therefore an unsafe operation whose memory-validity precondition
-is guaranteed by the producer contract. Structural parsing remains fallible and checks the entry
-revision and lengths, but it cannot prove that an arbitrary firmware-provided pointer addresses its
-declared allocation. It also does not establish that the opaque payload is a valid SBOM document.
-Whether the final protocol retains this representation or uses a fixed-size pointer-and-length
-descriptor is an unresolved question.
+The producer guarantees that the descriptor and referenced bytes remain readable throughout their
+installed lifetime. Constructing the borrowed slice requires that memory-validity contract;
+structural validation uses the explicit size to bound parsing. The fixed-size protocol can be
+located through Patina's sized protocol helpers.
 
-A pointer-and-length descriptor would follow an established UEFI pattern. For example,
+This pointer-and-length descriptor follows an established UEFI pattern. For example,
 `EFI_LOADED_IMAGE_PROTOCOL` exposes the loaded image through its `ImageBase` and `ImageSize` fields.
 
 ### Producer Contract
@@ -390,13 +385,13 @@ A producer follows this sequence:
 2. Structurally validate the entry header and exact byte boundary without parsing the payload.
 3. Copy the exact serialized bytes into producer-owned storage when the source storage does not
    already have a suitable lifetime.
-4. Install the SBOM entry protocol using the representation selected by this RFC. In the current
-   prototype, the first byte of the owned entry is the interface pointer.
-5. Keep the bytes at a stable address and do not mutate them while installed.
-6. Uninstall the exact interface pointer before freeing the bytes.
+4. Create a producer-owned descriptor containing the entry pointer and complete byte length, and
+   install the descriptor as the SBOM entry protocol interface.
+5. Keep the descriptor and entry bytes immutable at stable addresses while installed.
+6. Uninstall the exact descriptor interface pointer before freeing the descriptor or entry bytes.
 
 If any SBOM-specific step fails, the producer logs a warning with source context, discards any
-partial SBOM state, and allows the source image or firmware volume operation to continue.
+partial SBOM state, and allows the source image operation to continue.
 
 ### PE/COFF Discovery
 
@@ -404,33 +399,32 @@ The Patina and EDK II DXE Cores implement the same behavior in their image-loadi
 
 1. Parse the source PE/COFF image and search for a section named `.sbom`.
 2. If the section is absent, continue without logging an error.
-3. If the section cannot be read or is not exactly one structurally well-formed serialized entry,
-   log a warning and continue loading the image.
-4. Copy the structurally well-formed entry into image-owned memory.
+3. Parse one structurally well-formed serialized entry from the section. If the section cannot be
+   read, parsing fails, or any trailing byte is nonzero, log a warning and continue loading the image.
+4. Copy the validated entry into image-owned memory.
 5. Install the protocol on the loaded image handle.
 6. If copying or protocol installation fails, log a warning and continue loading the image.
-7. On image unload, uninstall the protocol before releasing the entry bytes.
+7. On image unload or failed-load rollback, uninstall the protocol before releasing the entry bytes.
 
 The protocol's lifetime therefore follows the loaded image. Consumers can associate the entry with
 the image by querying other protocols on the same handle, such as Loaded Image and Loaded Image
 Device Path.
 
-### Firmware Volume Discovery
-
-The Patina and EDK II DXE Cores inspect firmware volumes for the SBOM FFS format. The exact FFS file
-GUID, section type, and payload format are follow-up design work.
-
-Only one SBOM FFS file is supported in each firmware volume. When a structurally well-formed entry
-is found, its SBOM entry protocol is installed on the existing handle supporting
-`EFI_FIRMWARE_VOLUME2_PROTOCOL` for the containing firmware volume.
-
-As with image discovery, every SBOM-specific error is warning-only and must not change the firmware
-volume discovery result.
-
 ### GUIDed HOB Discovery and Platform Publication
 
-A Patina component or EDK II driver may consume multiple instances of the future SBOM GUIDed HOB
-format. Two deployment patterns are supported:
+Pre-DXE firmware publishes one entry per GUIDed HOB using this GUID:
+
+```c
+#define SBOM_HOB_GUID \
+  { 0x16797303, 0x315F, 0x41D3, \
+    { 0xBF, 0x33, 0x3D, 0xF9, 0x25, 0x75, 0x6F, 0x05 } }
+```
+
+The data after `EFI_HOB_GUID_TYPE` is one `EFI_ACPI_SBOM_TABLE_ENTRY`, not a complete ACPI table.
+The entry lengths describe its header and payload. Multiple instances contribute multiple
+independent entries.
+
+A Patina component or EDK II driver may consume those HOBs. Two deployment patterns are supported:
 
 1. **Combined HOB consumer and table publisher:** The component or driver that consumes the HOBs
    also owns collection and ACPI table publication. It adds every structurally well-formed
@@ -447,59 +441,77 @@ producer should install the protocol there. Otherwise, the producer creates a ne
 installing the protocol with a null input handle. The producer may install additional identifying
 protocols, such as a device path or a future source metadata protocol, when attribution is required.
 
+Patina implements the combined path in the standalone `patina_sbom` component. Its `hob` module
+owns the `SbomHob` definition and parsing. The SDK owns the
+generic ACPI definitions, SBOM wire types/parsers, and SBOM discovery protocol.
+
 ### Collection and ACPI Publication
 
 The table collector and publisher is a Patina component or EDK II driver rather than DXE Core
-functionality. It may also be the component or driver that consumes GUIDed HOBs:
+functionality. In Patina, `SbomComponent` consumes HOBs during component dispatch and registers a
+self-managed ReadyToBoot notification at TPL Callback. `Service<dyn EventServices>` and
+`Service<dyn ProtocolServices>` are required dependencies; only `Option<Hob<SbomHob>>` is optional.
+The platform must provide `EFI_ACPI_TABLE_PROTOCOL` before the notification runs.
 
-1. Structurally validate and add any GUIDed HOB entries it consumes directly to the collection.
+At the first ReadyToBoot notification, while allocation services remain available:
+
+1. Start with the validated GUIDed HOB entries copied during dispatch.
 2. Locate every handle supporting the SBOM entry protocol.
-3. Reconstruct each complete serialized entry and structurally validate its header and boundaries.
+3. Read each descriptor and structurally validate its referenced entry within the supplied byte length.
 4. Ignore structurally malformed entries with a warning.
-5. Calculate the final table length with checked arithmetic and enforce platform size limits.
+5. If no entries remain, skip installation. Otherwise calculate the final table length with checked
+   arithmetic, enforce the ACPI `UINT32` length limit, and handle allocation failure.
 6. Construct the complete table image containing the ACPI header and all accepted entries.
 7. Copy each accepted entry without modifying its serialized representation.
 8. Populate the ACPI header and calculate its checksum.
-9. Publish the table through `AcpiProvider` or `EFI_ACPI_TABLE_PROTOCOL`. The ACPI publication layer
+9. Publish the table through `EFI_ACPI_TABLE_PROTOCOL`. The ACPI publication layer
    must copy the final table into `EfiACPIReclaimMemory`.
+10. Close the publication event after the attempt, whether it succeeds, fails, or has no entries.
+    Do not retry on later ReadyToBoot signals.
 
 ```mermaid
 flowchart LR
     PeLoader[PE/COFF Loader] --> ImageHandle[Loaded Image Handle]
-    FvLoader[FV Discovery] --> FvHandle[FV Handle]
     HobConsumer[GUIDed HOB Consumer] -->|Combined Path| Aggregator
     HobConsumer -->|Separated Path| HobHandles[One Handle Per HOB Instance]
     PlatformPublisher[Platform Publisher] --> SourceHandle
 
     ImageHandle -->|SBOM Entry Protocol| Aggregator
-    FvHandle -->|SBOM Entry Protocol| Aggregator
     HobHandles -->|SBOM Entry Protocols| Aggregator
     SourceHandle -->|SBOM Entry Protocol| Aggregator
 
-    Aggregator --> AcpiProvider[ACPI Provider]
-    AcpiProvider --> AcpiTable[SBOM ACPI Table]
+    ReadyToBoot[First ReadyToBoot Notification] --> Aggregator
+    Aggregator --> AcpiProtocol[EFI_ACPI_TABLE_PROTOCOL]
+    AcpiProtocol --> AcpiTable[SBOM ACPI Table]
 ```
 
 The ACPI publication layer owns the final `EfiACPIReclaimMemory` allocation. Uninstalling a source
 protocol after collection cannot invalidate the published table.
+HOB entries precede protocol entries. Protocol enumeration order is not an attribution or ordering
+guarantee. The current prototype preserves duplicates, does not replace an existing SBOM table, and does
+not incorporate entries discovered after its notification.
 
 ### Error Handling
 
-SBOM data is supplemental metadata. It must not become a new failure dependency for `LoadImage`,
-firmware volume discovery, driver dispatch, or platform boot.
+SBOM data is supplemental metadata. It must not become a new failure dependency for `LoadImage`
+or platform boot.
 
 Producers log and skip failures at the source boundary. The aggregator logs and skips individual
 structurally malformed entries so one producer cannot suppress every other well-formed entry. A
 failure to allocate or publish the final ACPI table is reported by the aggregator but does not
 retroactively fail the operations that discovered source entries.
+Protocol discovery failures abort the publication attempt and are reported rather than treated as
+an empty collection. In Patina, HOB-copy and event-registration failures propagate from the
+component entry point; final table construction and installation failures are logged by the
+notification before it closes its event.
 
 Implementations must not log payload bytes. Payloads may be large and may contain vendor-specific
 information.
 
 ## Guide-Level Explanation
 
-An SBOM entry producer does not call a central service. It installs an SBOM entry protocol
-representing one immutable serialized entry in the UEFI protocol database.
+An SBOM entry producer installs an SBOM entry protocol descriptor referencing one immutable
+serialized entry in the UEFI protocol database.
 
 For a PE/COFF image, the DXE Core looks for `.sbom` while it already has the image bytes available.
 If there is no section, loading proceeds normally. If the section cannot be read or is structurally
@@ -518,47 +530,47 @@ fn load_sbom_section(&mut self, image: &[u8]) {
         }
     };
 
-    if SbomTableEntry::try_from_bytes(section).is_err() {
+    let (entry, padding) = match SbomTableEntry::parse_prefix(section) {
+        Ok(entry) => entry,
+        Err(error) => {
+            let pe_file_name = self.pe_info.filename_or("Unknown");
+            log::warn!("Ignoring invalid .sbom entry in {pe_file_name}: {error}");
+            return;
+        }
+    };
+    if padding.iter().any(|byte| *byte != 0) {
         let pe_file_name = self.pe_info.filename_or("Unknown");
-        log::warn!("Ignoring invalid .sbom entry in {pe_file_name}");
+        log::warn!("Ignoring .sbom entry with nonzero trailing data in {pe_file_name}");
         return;
     }
 
-    self.sbom_section = Some(section.to_vec().into_boxed_slice());
+    self.sbom_section = Some(entry.as_bytes().into());
 }
 ```
 
-`PrivateImageData::install_additional_interfaces` later installs the retained entry as the SBOM
-entry protocol on the loaded image handle. Image unload removes that exact protocol interface before
-the private entry storage is released.
+`PrivateImageData::install_additional_interfaces` installs the SBOM entry protocol on the loaded
+image handle. With the proposed descriptor, the image owns both the descriptor and retained entry.
+Image unload removes that exact protocol interface before their storage is released.
 
-A Patina component consumes GUIDed HOBs through the dependency-injected `Hob<T>` parameter.
-`Hob<T>` retains every parsed instance of the requested HOB type:
+A platform registers the standalone publisher with its ACPI OEM and creator metadata:
 
 ```rust,ignore
-struct SbomTablePublisher;
-
-#[component]
-impl SbomTablePublisher {
-    fn entry_point(self, sbom_hobs: Option<Hob<SbomHob>>) -> Result<()> {
-        if let Some(sbom_hobs) = sbom_hobs {
-            for sbom_hob in &sbom_hobs {
-                // Add `sbom_hob` to the collection used to construct the ACPI SBOM table.
-            }
-        }
-
-        // Continue by collecting protocol-produced entries and publishing the table.
-        Ok(())
-    }
-}
+add.component(patina_sbom::component::SbomComponent::new(
+    *b"PATINA",
+    *b"PLATFORM",
+    1,
+    u32::from_le_bytes(*b"TOOL"),
+    1,
+));
 ```
 
-Using `Option<Hob<SbomHob>>` allows the table publisher to run when no matching HOB exists.
-Iterating `&sbom_hobs` processes every matching GUIDed HOB instance. When the HOB consumer and table
-publisher are separate, the consumer uses the same iteration pattern but installs one SBOM entry
-protocol on a new handle for each structurally well-formed instance.
+The component's dependency-injected `Option<Hob<patina_sbom::hob::SbomHob>>` parameter lets it run
+when no matching HOB exists. `Hob<T>` retains every parsed instance, so iteration processes all
+matching HOB entries. Required Event and Protocol Services let the component register the
+notification and discover protocol entries; they are not optional. A separate HOB consumer can
+instead install one SBOM entry protocol on a new handle per entry.
 
-At the RFC-defined publication phase, the table publisher combines any GUIDed HOB entries it
+At its first ReadyToBoot notification, the table publisher combines any GUIDed HOB entries it
 consumed directly with all entries found by enumerating the SBOM entry protocol. It structurally
 validates each entry header and boundary, copies the header and opaque payload into one ACPI table,
 fills in the platform's ACPI header values, computes the checksum, and publishes the result into
