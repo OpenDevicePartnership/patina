@@ -972,7 +972,12 @@ mod tests {
     }
 
     fn install_net_driver(driver: NetDriver) -> ControllerDriverRef<NetDriver> {
-        install_controller_driver(Service::mock(Box::new(CoreProtocolServices)), driver).unwrap()
+        install_controller_driver(
+            Service::mock(Box::new(CoreProtocolServices)),
+            Service::mock(Box::new(crate::uefi_services::CoreTplServices)),
+            driver,
+        )
+        .unwrap()
     }
 
     fn connect(controller: Handle) {
