@@ -10,6 +10,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
+pub mod acpi_table;
 #[cfg(any(test, feature = "alloc"))]
 pub mod boot_services;
 pub mod component_name;
