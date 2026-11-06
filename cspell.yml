@@ -162,6 +162,7 @@ words:
   - ntohs
   - nvdimm
   - nvram
+  - oemid
   - oleaut
   - oorandom
   - openvmm

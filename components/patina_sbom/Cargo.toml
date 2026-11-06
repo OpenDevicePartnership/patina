@@ -1,0 +1,25 @@
+[package]
+name = "patina_sbom"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "SBOM ACPI table publication at Ready to Boot."
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+patina = { workspace = true, features = ["alloc"] }
+log = { workspace = true }
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+patina = { path = "../../sdk/patina", features = ["mockall"] }
+
+[features]
+unstable-sbom = ["patina/unstable-sbom"]
+ci_features = ["unstable-sbom"]
