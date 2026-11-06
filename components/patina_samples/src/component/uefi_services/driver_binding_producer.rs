@@ -27,6 +27,7 @@ use patina::{
                 },
                 driver::DriverServices,
                 protocol::{ProtocolError, ProtocolServices, ProtocolServicesExt},
+                tpl::TplServices,
             },
         },
     },
@@ -79,8 +80,13 @@ impl DriverBindingProducerSample {
         Self
     }
 
-    fn entry_point(self, protocols: Service<dyn ProtocolServices>, drivers: Service<dyn DriverServices>) -> Result<()> {
-        let driver = install_controller_driver(protocols, SampleDriver)?;
+    fn entry_point(
+        self,
+        protocols: Service<dyn ProtocolServices>,
+        drivers: Service<dyn DriverServices>,
+        tpl: Service<dyn TplServices>,
+    ) -> Result<()> {
+        let driver = install_controller_driver(protocols, tpl, SampleDriver)?;
 
         for controller in protocols.locate_handles_for::<SampleVendorProtocol>()? {
             if let Err(err) = drivers.connect_controller(controller, false) {

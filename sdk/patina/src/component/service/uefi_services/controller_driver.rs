@@ -19,6 +19,7 @@
 //!         controller_driver::{ControllerDriver, StartContext, SupportedContext, install_controller_driver},
 //!         driver::DriverServices,
 //!         protocol::{ProtocolError, ProtocolServices, ProtocolServicesExt},
+//!         tpl::TplServices,
 //!     },
 //! };
 //! use patina::standard::efi::protocols::block_io;
@@ -42,8 +43,9 @@
 //! fn entry_point(
 //!     protocols: Service<dyn ProtocolServices>,
 //!     drivers: Service<dyn DriverServices>,
+//!     tpl: Service<dyn TplServices>,
 //! ) -> patina::error::Result<()> {
-//!     let driver = install_controller_driver(protocols, BlockCounter)?;
+//!     let driver = install_controller_driver(protocols, tpl, BlockCounter)?;
 //!     for controller in protocols.locate_handles_for::<block_io::Protocol>()? {
 //!         // ConnectController() calls BlockCounter's supported() and start().
 //!         let _ = drivers.connect_controller(controller, false);
@@ -73,7 +75,9 @@
 //!
 //! While a controller is being stopped, the driver may destroy the children it created. The SDK releases the
 //! driver's usage of a child's protocols when the core asks, so the child can be destroyed from within
-//! [`ControllerDriver::stop`].
+//! [`ControllerDriver::stop`], or from [`ControllerDriver::stop_children`] for the children being stopped. A request
+//! to stop the controller while it is being stopped is refused with [`ProtocolError::AccessDenied`], since the outer
+//! stop may still fail and keep managing it.
 //!
 //! ## Sharing state between callbacks
 //!
@@ -82,6 +86,11 @@
 //! different callbacks, use [`ControllerDriverRef::with_shared_state`] with interior mutability as needed.
 //!
 //! Note that while a shared borrow is held, a request to stop the controller is refused.
+//!
+//! The record of managed controllers is updated at `TPL_NOTIFY` without calling out, so the driver and
+//! its [`ControllerDriverRef`] can be used at TPL <= `TPL_NOTIFY`. A callback that preempts a borrow of the same state
+//! gets [`ControllerError::Busy`]. Interior mutability within the state should use atomic types, or a `TplMutex` if the
+//! data is accessed from code running at different TPLs.
 //!
 //! A general rule of thumb is:
 //!
@@ -109,21 +118,23 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
-use core::{
-    cell::{Cell, RefCell},
-    fmt,
-};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use atomic_refcell::AtomicRefCell;
+use core::{cell::Cell, fmt};
 
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
 use crate::base::protocol::ProtocolInterface;
 use crate::component::service::Service;
-use crate::uefi::device_path::walker::BorrowedDevicePathWalker;
+use crate::standard::efi;
+use crate::uefi::{
+    boot_services::tpl::Tpl as BootServicesTpl, device_path::walker::BorrowedDevicePathWalker, tpl_mutex::TplMutex,
+};
 
 use super::driver_binding::DriverBinding;
 use super::handle::Handle;
 use super::protocol::{OpenAttributes, ProtocolError, ProtocolPtr, ProtocolServices, ProtocolServicesExt};
+use super::tpl::TplServices;
 
 /// A driver that manages controllers exposing [`Self::Protocol`].
 ///
@@ -217,9 +228,13 @@ pub enum DependencyAction {
 
 /// Information passed to [`ControllerDriver::supported`].
 pub struct SupportedContext<'a, D: ControllerDriver> {
+    /// The controller being checked.
     controller: Handle,
+    /// The controller's protocol interface.
     protocol: &'a D::Protocol,
+    /// The unconsumed portion of the device path passed to `ConnectController()`, if any.
     remaining_device_path: Option<BorrowedDevicePathWalker<'a>>,
+    /// Whether the driver already manages the controller.
     managed: bool,
 }
 
@@ -248,10 +263,15 @@ impl<'a, D: ControllerDriver> SupportedContext<'a, D> {
 
 /// Information and actions available to [`ControllerDriver::start`].
 pub struct StartContext<'a, D: ControllerDriver> {
+    /// The controller being started.
     controller: Handle,
+    /// The controller's protocol interface.
     protocol: &'a D::Protocol,
+    /// The unconsumed portion of the device path passed to `ConnectController()`, if any.
     remaining_device_path: Option<BorrowedDevicePathWalker<'a>>,
-    usages: &'a RefCell<Vec<Usage>>,
+    /// What this call opened. Only accessible from this call until it returns.
+    opened: &'a Cell<Vec<Usage>>,
+    /// The driver's shared state, used to open protocols and create state references.
     inner: &'static Inner<D>,
 }
 
@@ -286,7 +306,7 @@ impl<'a, D: ControllerDriver> StartContext<'a, D> {
     pub fn open_by_driver<Q: ProtocolInterface>(&self, handle: Handle) -> Result<&'a Q, ProtocolError> {
         let attributes = OpenAttributes::ByDriver { controller: Some(self.controller) };
         let ptr = self.inner.services.open_interface(handle, Q::PROTOCOL_GUID, self.inner.agent, attributes)?;
-        self.usages.borrow_mut().push(Usage { handle, protocol: Q::PROTOCOL_GUID, controller: self.controller });
+        self.record(Usage { handle, protocol: Q::PROTOCOL_GUID, controller: self.controller });
         // SAFETY: `ptr` is the interface installed for `Q`'s GUID, which `ProtocolInterface` binds to `Q`'s layout.
         // The `BY_DRIVER` usage cannot be released without this driver's `Stop()`, which is not called for this
         // controller before `start` returns, so the interface outlives `'a`.
@@ -307,7 +327,7 @@ impl<'a, D: ControllerDriver> StartContext<'a, D> {
         let protocol = D::Protocol::PROTOCOL_GUID;
         let attributes = OpenAttributes::ByChildController { controller: child };
         self.inner.services.open_interface(self.controller, protocol, self.inner.agent, attributes)?;
-        self.usages.borrow_mut().push(Usage { handle: self.controller, protocol, controller: child });
+        self.record(Usage { handle: self.controller, protocol, controller: child });
         Ok(())
     }
 
@@ -317,6 +337,12 @@ impl<'a, D: ControllerDriver> StartContext<'a, D> {
     pub fn state_ref(&self) -> ControllerStateRef<D> {
         ControllerStateRef { inner: self.inner, controller: self.controller }
     }
+
+    fn record(&self, usage: Usage) {
+        let mut opened = self.opened.take();
+        opened.push(usage);
+        self.opened.set(opened);
+    }
 }
 
 /// Information passed to [`ControllerDriver::stop`] and [`ControllerDriver::stop_children`].
@@ -324,7 +350,9 @@ impl<'a, D: ControllerDriver> StartContext<'a, D> {
 /// A [`ControllerStateRef`] or [`ControllerDriverRef`] cannot access the controller while it is being stopped, but
 /// the protocol interface is provided through this context.
 pub struct StopContext<'a, D: ControllerDriver> {
+    /// The controller being stopped.
     controller: Handle,
+    /// The controller's protocol interface (still opened `BY_DRIVER` while stopping).
     protocol: &'a D::Protocol,
 }
 
@@ -377,6 +405,7 @@ impl From<ControllerError> for EfiError {
 
 /// A handle to an installed [`ControllerDriver`], used to access the state of the controllers it manages.
 pub struct ControllerDriverRef<D: ControllerDriver> {
+    /// The driver's shared state.
     inner: &'static Inner<D>,
 }
 
@@ -396,12 +425,13 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
 
     /// The controllers the driver currently manages.
     pub fn controllers(&self) -> Vec<Handle> {
-        self.inner.controllers.borrow().iter().filter(|entry| !entry.stopping.get()).map(|e| e.controller).collect()
+        let records = self.inner.records.lock();
+        records.iter().filter(|r| r.phase != Phase::Stopping).map(|r| r.entry.controller).collect()
     }
 
     /// Returns `true` if the driver currently manages `controller`.
     pub fn is_managing(&self, controller: Handle) -> bool {
-        self.inner.managed_entry(controller).is_some()
+        self.inner.managed(controller).is_some()
     }
 
     /// Runs `f` with mutable access to `controller`'s state.
@@ -413,9 +443,10 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
     /// Returns [`ControllerError::NotManaged`] if the driver is not managing `controller`, or
     /// [`ControllerError::Busy`] if its state is already in use further up the call stack.
     pub fn with_state<R>(&self, controller: Handle, f: impl FnOnce(&mut D::State) -> R) -> Result<R, ControllerError> {
-        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
-        let mut state = entry.state.try_borrow_mut().map_err(|_| ControllerError::Busy)?;
-        Ok(f(&mut state))
+        let entry = self.inner.managed(controller).ok_or(ControllerError::NotManaged)?;
+        let mut guard = entry.state.try_borrow_mut().map_err(|_| ControllerError::Busy)?;
+        let state = guard.as_mut().ok_or(ControllerError::NotManaged)?;
+        Ok(f(state))
     }
 
     /// Runs `f` with mutable access to `controller`'s state and its [`ControllerDriver::Protocol`] interface.
@@ -428,17 +459,10 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
         controller: Handle,
         f: impl FnOnce(&mut D::State, &D::Protocol) -> R,
     ) -> Result<R, ControllerError> {
-        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
-        let mut state = entry.state.try_borrow_mut().map_err(|_| ControllerError::Busy)?;
-        let ptr = self
-            .inner
-            .services
-            .interface_on_handle(controller, D::Protocol::PROTOCOL_GUID)
-            .map_err(|_| ControllerError::NotManaged)?;
-        // SAFETY: `ptr` is the interface installed for `D::Protocol`'s GUID. This driver holds it `BY_DRIVER`, and
-        // uninstalling it requires this driver's `Stop()`, which is refused while `state` is borrowed.
-        let protocol = unsafe { &*ptr.as_raw().cast::<D::Protocol>() };
-        Ok(f(&mut state, protocol))
+        let entry = self.inner.managed(controller).ok_or(ControllerError::NotManaged)?;
+        let mut guard = entry.state.try_borrow_mut().map_err(|_| ControllerError::Busy)?;
+        let state = guard.as_mut().ok_or(ControllerError::NotManaged)?;
+        Ok(f(state, entry.protocol()))
     }
 
     /// Runs `f` with shared access to `controller`'s state.
@@ -456,9 +480,10 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
         controller: Handle,
         f: impl FnOnce(&D::State) -> R,
     ) -> Result<R, ControllerError> {
-        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
-        let state = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
-        Ok(f(&state))
+        let entry = self.inner.managed(controller).ok_or(ControllerError::NotManaged)?;
+        let guard = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
+        let state = guard.as_ref().ok_or(ControllerError::NotManaged)?;
+        Ok(f(state))
     }
 
     /// Runs `f` with shared access to `controller`'s state and its [`ControllerDriver::Protocol`] interface.
@@ -471,17 +496,10 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
         controller: Handle,
         f: impl FnOnce(&D::State, &D::Protocol) -> R,
     ) -> Result<R, ControllerError> {
-        let entry = self.inner.managed_entry(controller).ok_or(ControllerError::NotManaged)?;
-        let state = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
-        let ptr = self
-            .inner
-            .services
-            .interface_on_handle(controller, D::Protocol::PROTOCOL_GUID)
-            .map_err(|_| ControllerError::NotManaged)?;
-        // SAFETY: `ptr` is the interface installed for `D::Protocol`'s GUID. This driver holds it `BY_DRIVER`, and
-        // uninstalling it requires this driver's `Stop()`, which is refused while `state` is borrowed.
-        let protocol = unsafe { &*ptr.as_raw().cast::<D::Protocol>() };
-        Ok(f(&state, protocol))
+        let entry = self.inner.managed(controller).ok_or(ControllerError::NotManaged)?;
+        let guard = entry.state.try_borrow().map_err(|_| ControllerError::Busy)?;
+        let state = guard.as_ref().ok_or(ControllerError::NotManaged)?;
+        Ok(f(state, entry.protocol()))
     }
 
     /// Returns a reference to `controller`'s state that can be stored and used later.
@@ -495,7 +513,9 @@ impl<D: ControllerDriver> ControllerDriverRef<D> {
 /// The reference checks on each use that the controller is still managed. If the controller is stopped and started
 /// again, the reference refers to the new state.
 pub struct ControllerStateRef<D: ControllerDriver> {
+    /// The driver's shared state.
     inner: &'static Inner<D>,
+    /// The controller this reference refers to.
     controller: Handle,
 }
 
@@ -561,126 +581,234 @@ impl<D: ControllerDriver> ControllerStateRef<D> {
 /// Returns an error if the agent handle or the driver binding protocol could not be created.
 pub fn install_controller_driver<D: ControllerDriver>(
     protocols: Service<dyn ProtocolServices>,
+    tpl: Service<dyn TplServices>,
     driver: D,
 ) -> Result<ControllerDriverRef<D>, ProtocolError> {
     let services: &'static dyn ProtocolServices = *protocols;
     let agent = services.register_agent()?;
     // Driver bindings are not uninstalled, so the driver lives for the rest of boot.
-    let inner: &'static Inner<D> =
-        Box::leak(Box::new(Inner { driver, services, agent, controllers: RefCell::new(Vec::new()) }));
+    let inner: &'static Inner<D> = Box::leak(Box::new(Inner::new(driver, services, tpl, agent)));
     services.install_driver_binding_on(agent, ManagedDriver(inner))?;
     Ok(ControllerDriverRef { inner })
 }
 
-/// A protocol usage opened `BY_DRIVER` for a managed controller.
+/// A protocol usage opened `BY_DRIVER` or `BY_CHILD_CONTROLLER` for a managed controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Usage {
+    /// The handle the protocol is opened on.
     handle: Handle,
+    /// The GUID of the protocol that is opened.
     protocol: BinaryGuid,
+    /// The controller the usage was opened for: the managed controller, or the child for `BY_CHILD_CONTROLLER`.
     controller: Handle,
 }
 
+/// Removes and returns the usages for which `select` is `true`.
+fn take_usages(usages: &mut Vec<Usage>, select: impl FnMut(&Usage) -> bool) -> Vec<Usage> {
+    let (taken, kept) = core::mem::take(usages).into_iter().partition(select);
+    *usages = kept;
+    taken
+}
+
+/// What the driver is doing with a managed controller. Only changed while its state is borrowed mutably.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Phase {
+    Running,
+    Stopping,
+    StoppingChildren(Vec<Handle>),
+}
+
+/// A managed controller, shared with the callers using its state.
 struct Entry<D: ControllerDriver> {
+    /// The managed controller's handle.
     controller: Handle,
+    /// The controller's [`ControllerDriver::Protocol`] interface, kept open `BY_DRIVER`.
     protocol: ProtocolPtr,
-    usages: RefCell<Vec<Usage>>,
-    state: RefCell<D::State>,
-    stopping: Cell<bool>,
-    stopping_children: Cell<bool>,
+    /// `None` once the controller is stopped.
+    state: AtomicRefCell<Option<D::State>>,
 }
 
 impl<D: ControllerDriver> Entry<D> {
-    /// Must only be called before the controller's `BY_DRIVER` usage is closed.
-    fn stop_context(&self) -> StopContext<'_, D> {
-        // SAFETY: `protocol` is the interface installed for `D::Protocol`'s GUID. The `BY_DRIVER` usage keeps it
-        // installed, and it is only closed after `stop` and `stop_children` return.
-        let protocol = unsafe { &*self.protocol.as_raw().cast::<D::Protocol>() };
-        StopContext { controller: self.controller, protocol }
+    /// Must only be called while the state is borrowed and `Some`, or from `stop` or `stop_children`.
+    fn protocol(&self) -> &D::Protocol {
+        // SAFETY: `protocol` is the interface installed for `D::Protocol`'s GUID. The controller's `BY_DRIVER` usage
+        // keeps it installed and is only closed after the state is taken, which the caller's borrow prevents.
+        unsafe { &*self.protocol.as_raw().cast::<D::Protocol>() }
     }
+
+    fn stop_context(&self) -> StopContext<'_, D> {
+        StopContext { controller: self.controller, protocol: self.protocol() }
+    }
+}
+
+/// A record of a given managed controller.
+struct Record<D: ControllerDriver> {
+    /// The controller's entry, shared with callers using its state.
+    entry: Arc<Entry<D>>,
+    /// The protocol usages opened for the controller, closed in reverse order when released.
+    usages: Vec<Usage>,
+    /// What the driver is currently doing with the controller.
+    phase: Phase,
 }
 
 struct Inner<D: ControllerDriver> {
+    /// The driver implementation supplied by the component.
     driver: D,
+    /// Protocol services used to open and close protocols on behalf of the driver.
     services: &'static dyn ProtocolServices,
+    /// The driver's agent handle, which is also its driver binding handle.
     agent: Handle,
-    controllers: RefCell<Vec<Rc<Entry<D>>>>,
+    /// Should only be locked for short updates that do not call outside this module.
+    records: TplMutex<Vec<Record<D>>, Service<dyn TplServices>>,
 }
 
 impl<D: ControllerDriver> Inner<D> {
-    fn managed_entry(&self, controller: Handle) -> Option<Rc<Entry<D>>> {
-        self.controllers.borrow().iter().find(|entry| entry.controller == controller && !entry.stopping.get()).cloned()
+    fn new(driver: D, services: &'static dyn ProtocolServices, tpl: Service<dyn TplServices>, agent: Handle) -> Self {
+        // Raises to TPL_NOTIFY so the driver can be used from any allowable callback TPL.
+        let records = TplMutex::new(tpl, BootServicesTpl(efi::TPL_NOTIFY), Vec::new());
+        Self { driver, services, agent, records }
     }
 
-    /// Finds every entry holding a protocol on `handle`, either as its controller or through `open_by_driver`.
-    fn entries_using(&self, handle: Handle) -> Vec<Rc<Entry<D>>> {
-        self.controllers
-            .borrow()
-            .iter()
-            .filter(|entry| entry.controller == handle || entry.usages.borrow().iter().any(|u| u.handle == handle))
-            .cloned()
-            .collect()
+    /// The entry for `controller`, unless it is not managed or is being stopped.
+    fn managed(&self, controller: Handle) -> Option<Arc<Entry<D>>> {
+        let records = self.records.lock();
+        let record = records.iter().find(|r| r.entry.controller == controller && r.phase != Phase::Stopping)?;
+        Some(Arc::clone(&record.entry))
     }
 
-    /// Releases everything `entry` holds on `handle`, stopping the entry if needed.
-    fn release_handle(&self, entry: &Rc<Entry<D>>, handle: Handle) -> Result<(), ProtocolError> {
-        if entry.stopping.get() || entry.stopping_children.get() {
-            // The driver's own stop() or stop_children() is destroying a handle it opened a protocol on.
-            self.close_usages_on(entry, handle);
-            return Ok(());
+    /// Runs `f` on `entry`'s record, which exists while its state is `Some`.
+    fn with_record<R>(&self, entry: &Arc<Entry<D>>, f: impl FnOnce(&mut Record<D>) -> R) -> Option<R> {
+        let mut records = self.records.lock();
+        records.iter_mut().find(|r| Arc::ptr_eq(&r.entry, entry)).map(f)
+    }
+
+    /// Removes `entry`'s record and returns its usages.
+    fn remove(&self, entry: &Arc<Entry<D>>) -> Vec<Usage> {
+        let mut records = self.records.lock();
+        match records.iter().position(|r| Arc::ptr_eq(&r.entry, entry)) {
+            Some(index) => records.remove(index).usages,
+            None => Vec::new(),
         }
+    }
 
-        let mut state = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
+    /// Releases what every managed controller holds on `handle`.
+    fn release_handle(&self, handle: Handle) -> Result<(), ProtocolError> {
+        let mut found = false;
+        let mut result = Ok(());
+        let mut closing = Vec::new();
+        let mut releasing = Vec::new();
+        let mut records = self.records.lock();
+        for record in records.iter_mut() {
+            let controller = record.entry.controller;
+            if controller != handle && !record.usages.iter().any(|u| u.handle == handle) {
+                continue;
+            }
+            found = true;
+            match &record.phase {
+                // The outer stop may still fail and keep managing the controller, so its protocols stay open.
+                Phase::Stopping if controller == handle => result = Err(ProtocolError::AccessDenied),
+                // The driver is destroying a handle it opened a protocol on.
+                Phase::Stopping => closing.extend(take_usages(&mut record.usages, |u| u.handle == handle)),
+                Phase::StoppingChildren(children) if children.contains(&handle) => {
+                    closing.extend(take_usages(&mut record.usages, |u| u.handle == handle));
+                }
+                _ => releasing.push(Arc::clone(&record.entry)),
+            }
+        }
+        drop(records);
+
+        if !found {
+            return Err(ProtocolError::NotFound);
+        }
+        self.close_all(&closing);
+        // Every controller must let go of `handle`, so a refusal does not skip the others.
+        for entry in &releasing {
+            let released = self.release(entry, handle);
+            if result.is_ok() {
+                result = released;
+            }
+        }
+        result
+    }
+
+    /// Releases what `entry` holds on `handle`, stopping the controller unless `dependency_lost` keeps it.
+    fn release(&self, entry: &Arc<Entry<D>>, handle: Handle) -> Result<(), ProtocolError> {
+        let mut guard = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
+        let Some(state) = guard.as_mut() else {
+            // A callback stopped the controller after it was found.
+            return Ok(());
+        };
         if entry.controller != handle
-            && self.driver.dependency_lost(entry.controller, handle, &mut state) == DependencyAction::Release
+            && self.driver.dependency_lost(entry.controller, handle, state) == DependencyAction::Release
         {
-            drop(state);
-            self.close_usages_on(entry, handle);
+            let released = self.with_record(entry, |r| take_usages(&mut r.usages, |u| u.handle == handle));
+            drop(guard);
+            self.close_all(&released.unwrap_or_default());
             return Ok(());
         }
 
-        entry.stopping.set(true);
-        let result = self.driver.stop(&entry.stop_context(), &mut state);
-        drop(state);
-        if let Err(err) = result {
-            entry.stopping.set(false);
+        self.with_record(entry, |r| r.phase = Phase::Stopping);
+        if let Err(err) = self.driver.stop(&entry.stop_context(), state) {
+            self.with_record(entry, |r| r.phase = Phase::Running);
             return Err(err);
         }
-
-        self.controllers.borrow_mut().retain(|e| !Rc::ptr_eq(e, entry));
-        let usages = entry.usages.take();
-        self.close_all(&usages);
+        // Dropped only after the controller's protocols are closed.
+        let stopped = guard.take();
+        drop(guard);
+        self.close_all(&self.remove(entry));
+        drop(stopped);
         Ok(())
     }
 
-    /// Destroys `children` of `entry`'s controller through the driver, then closes what was opened for them.
-    fn stop_children(&self, entry: &Entry<D>, children: &[Handle]) -> Result<(), ProtocolError> {
-        let mut state = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
-        entry.stopping_children.set(true);
-        let result = self.driver.stop_children(&entry.stop_context(), children, &mut state);
-        entry.stopping_children.set(false);
-        drop(state);
+    /// Destroys `children` of `controller` through the driver, then closes what was opened for them.
+    fn stop_children(&self, controller: Handle, children: &[Handle]) -> Result<(), ProtocolError> {
+        let entry = {
+            let records = self.records.lock();
+            let record = records.iter().find(|r| r.entry.controller == controller).ok_or(ProtocolError::NotFound)?;
+            if record.phase == Phase::Stopping {
+                // The outer stop may still fail and keep managing the controller.
+                return Err(ProtocolError::AccessDenied);
+            }
+            Arc::clone(&record.entry)
+        };
+        let mut guard = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
+        let state = guard.as_mut().ok_or(ProtocolError::NotFound)?;
+        self.with_record(&entry, |r| r.phase = Phase::StoppingChildren(children.to_vec()));
+        let result = self.driver.stop_children(&entry.stop_context(), children, state);
+        self.with_record(&entry, |r| r.phase = Phase::Running);
+        drop(guard);
         result?;
 
-        let released: Vec<Usage> = {
-            let mut usages = entry.usages.borrow_mut();
-            let (released, kept) = core::mem::take(&mut *usages).into_iter().partition(|u| {
-                children.contains(&u.handle) || (u.controller != entry.controller && children.contains(&u.controller))
-            });
-            *usages = kept;
-            released
-        };
-        self.close_all(&released);
+        let released = self.with_record(&entry, |r| {
+            take_usages(&mut r.usages, |u| {
+                children.contains(&u.handle) || (u.controller != controller && children.contains(&u.controller))
+            })
+        });
+        self.close_all(&released.unwrap_or_default());
         Ok(())
     }
 
-    fn close_usages_on(&self, entry: &Entry<D>, handle: Handle) {
-        let released: Vec<Usage> = {
-            let mut usages = entry.usages.borrow_mut();
-            let (released, kept) = core::mem::take(&mut *usages).into_iter().partition(|u| u.handle == handle);
-            *usages = kept;
-            released
-        };
-        self.close_all(&released);
+    /// Runs [`ControllerDriver::restart`] for a controller the driver already manages.
+    fn restart(
+        &'static self,
+        controller: Handle,
+        remaining_device_path: Option<BorrowedDevicePathWalker<'_>>,
+    ) -> Result<(), ProtocolError> {
+        let entry = self.managed(controller).ok_or(ProtocolError::AlreadyStarted)?;
+        let mut guard = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
+        let state = guard.as_mut().ok_or(ProtocolError::AlreadyStarted)?;
+        let opened = Cell::new(Vec::new());
+        let protocol = entry.protocol();
+        let context = StartContext { controller, protocol, remaining_device_path, opened: &opened, inner: self };
+        let result = self.driver.restart(&context, state);
+        let opened = opened.into_inner();
+        if result.is_ok() {
+            // The borrow of `state` keeps the record in place until the usages are added.
+            self.with_record(&entry, |r| r.usages.extend(opened));
+        } else {
+            self.close_all(&opened);
+        }
+        result
     }
 
     fn close_all(&self, usages: &[Usage]) {
@@ -693,29 +821,6 @@ impl<D: ControllerDriver> Inner<D> {
 
 /// The [`DriverBinding`] installed for a [`ControllerDriver`].
 struct ManagedDriver<D: ControllerDriver>(&'static Inner<D>);
-
-/// Runs [`ControllerDriver::restart`] for a controller the driver already manages.
-fn restart<D: ControllerDriver>(
-    inner: &'static Inner<D>,
-    controller: Handle,
-    remaining_device_path: Option<BorrowedDevicePathWalker<'_>>,
-) -> Result<(), ProtocolError> {
-    let entry = inner.managed_entry(controller).ok_or(ProtocolError::AlreadyStarted)?;
-    let mut state = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
-    let ptr = inner.services.interface_on_handle(controller, D::Protocol::PROTOCOL_GUID)?;
-    // SAFETY: `ptr` is the interface installed for `D::Protocol`'s GUID, held `BY_DRIVER` by this driver, which
-    // keeps it installed until this driver's `Stop()` runs. That is refused while `state` is borrowed.
-    let protocol = unsafe { &*ptr.as_raw().cast::<D::Protocol>() };
-    let opened = entry.usages.borrow().len();
-    let context = StartContext { controller, protocol, remaining_device_path, usages: &entry.usages, inner };
-    let result = inner.driver.restart(&context, &mut state);
-    drop(state);
-    if result.is_err() {
-        let added = entry.usages.borrow_mut().split_off(opened);
-        inner.close_all(&added);
-    }
-    result
-}
 
 impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
     const VERSION: u32 = D::VERSION;
@@ -733,7 +838,7 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
             OpenAttributes::ByDriver { controller: None },
         )?;
         let managed = protocol.is_already_started();
-        if managed && !(D::RESTARTABLE && inner.managed_entry(controller).is_some()) {
+        if managed && !(D::RESTARTABLE && inner.managed(controller).is_some()) {
             return Err(ProtocolError::AlreadyStarted);
         }
         let context = SupportedContext { controller, protocol: &*protocol, remaining_device_path, managed };
@@ -753,58 +858,33 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
             {
                 Ok(ptr) => ptr,
                 Err(ProtocolError::AlreadyStarted) if D::RESTARTABLE => {
-                    return restart(inner, controller, remaining_device_path);
+                    return inner.restart(controller, remaining_device_path);
                 }
                 Err(err) => return Err(err),
             };
         // SAFETY: `ptr` is the interface installed for `D::Protocol`'s GUID. The `BY_DRIVER` usage keeps it installed
         // until this driver's `Stop()` runs, which cannot happen for this controller before `start` returns.
         let protocol = unsafe { &*ptr.as_raw().cast::<D::Protocol>() };
-        let usages = RefCell::new(vec![Usage { handle: controller, protocol: guid, controller }]);
-        let context = StartContext { controller, protocol, remaining_device_path, usages: &usages, inner };
+        let opened = Cell::new(vec![Usage { handle: controller, protocol: guid, controller }]);
+        let context = StartContext { controller, protocol, remaining_device_path, opened: &opened, inner };
+        let result = inner.driver.start(&context);
+        let usages = opened.into_inner();
 
-        match inner.driver.start(&context) {
+        match result {
             Ok(state) => {
-                let entry = Entry {
-                    controller,
-                    protocol: ptr,
-                    usages,
-                    state: RefCell::new(state),
-                    stopping: Cell::new(false),
-                    stopping_children: Cell::new(false),
-                };
-                inner.controllers.borrow_mut().push(Rc::new(entry));
+                let entry = Arc::new(Entry { controller, protocol: ptr, state: AtomicRefCell::new(Some(state)) });
+                inner.records.lock().push(Record { entry, usages, phase: Phase::Running });
                 Ok(())
             }
             Err(err) => {
-                inner.close_all(&usages.into_inner());
+                inner.close_all(&usages);
                 Err(err)
             }
         }
     }
 
     fn stop(&self, _agent: Handle, handle: Handle, children: &[Handle]) -> Result<(), ProtocolError> {
-        let inner = self.0;
-        if !children.is_empty()
-            && let Some(entry) = inner.managed_entry(handle)
-        {
-            return inner.stop_children(&entry, children);
-        }
-
-        let entries = inner.entries_using(handle);
-        if entries.is_empty() {
-            return Err(ProtocolError::NotFound);
-        }
-
-        // Every entry must let go of `handle`, so a refusal does not skip the others.
-        let mut result = Ok(());
-        for entry in &entries {
-            let released = inner.release_handle(entry, handle);
-            if result.is_ok() {
-                result = released;
-            }
-        }
-        result
+        if children.is_empty() { self.0.release_handle(handle) } else { self.0.stop_children(handle, children) }
     }
 }
 
@@ -813,7 +893,9 @@ impl<D: ControllerDriver> DriverBinding for ManagedDriver<D> {
 mod tests {
     use super::*;
     use crate::component::service::uefi_services::protocol::MockProtocolServices;
+    use crate::component::service::uefi_services::tpl::{MockTplServices, PreviousTpl, Tpl};
     use crate::standard::efi;
+    use core::cell::{Cell, RefCell};
     use core::ffi::c_void;
     use std::sync::{Arc, Mutex};
 
@@ -868,6 +950,15 @@ mod tests {
         Box::leak(Box::new(mock))
     }
 
+    fn mock_tpl() -> Service<dyn TplServices> {
+        let mut mock = MockTplServices::new();
+        mock.expect_raise_tpl()
+            .withf(|tpl| *tpl == Tpl::Notify)
+            .returning(|_| PreviousTpl::from_raw(efi::TPL_APPLICATION));
+        mock.expect_restore_tpl().return_const(());
+        Service::mock(Box::new(mock))
+    }
+
     #[derive(Default)]
     #[allow(clippy::struct_excessive_bools)]
     struct TestDriver {
@@ -876,7 +967,11 @@ mod tests {
         release_dependencies: bool,
         fail_start: bool,
         fail_stop: bool,
+        fail_stop_after_nested: bool,
+        stops: Cell<u32>,
         destroy_child_on_stop: Cell<Option<&'static Inner<TestDriver>>>,
+        nested_stop_handle: Option<usize>,
+        nested_stop_children: bool,
         nested_stop_result: Cell<Option<Result<(), ProtocolError>>>,
         state_access_in_stop: Cell<Option<Result<(), ControllerError>>>,
         supported_seen: Cell<Option<(Handle, Option<bool>)>>,
@@ -907,6 +1002,7 @@ mod tests {
         }
 
         fn stop(&self, context: &StopContext<'_, Self>, _state: &mut u32) -> Result<(), ProtocolError> {
+            self.stops.set(self.stops.get() + 1);
             assert_eq!(context.protocol().value, 7);
             if self.fail_stop {
                 return Err(ProtocolError::AccessDenied);
@@ -914,8 +1010,13 @@ mod tests {
             if let Some(inner) = self.destroy_child_on_stop.get() {
                 let access = ControllerDriverRef { inner }.with_state(context.controller(), |_| ());
                 self.state_access_in_stop.set(Some(access));
-                // Simulates the core calling Stop() for the child while this driver destroys it.
-                self.nested_stop_result.set(Some(ManagedDriver(inner).stop(h(AGENT), h(CHILD), &[])));
+                // Simulates the core calling Stop() for a handle while this driver destroys it.
+                let nested = h(self.nested_stop_handle.unwrap_or(CHILD));
+                let children: &[Handle] = if self.nested_stop_children { &[h(CHILD)] } else { &[] };
+                self.nested_stop_result.set(Some(ManagedDriver(inner).stop(h(AGENT), nested, children)));
+            }
+            if self.fail_stop_after_nested {
+                return Err(ProtocolError::DeviceError);
             }
             Ok(())
         }
@@ -931,13 +1032,7 @@ mod tests {
     }
 
     fn setup(driver: TestDriver, closed: &Closed) -> (ManagedDriver<TestDriver>, ControllerDriverRef<TestDriver>) {
-        let inner: &'static Inner<TestDriver> = Box::leak(Box::new(Inner {
-            driver,
-            services: mock_services(closed),
-            agent: h(AGENT),
-            controllers: RefCell::new(Vec::new()),
-        }));
-        (ManagedDriver(inner), ControllerDriverRef { inner })
+        setup_with(driver, mock_services(closed))
     }
 
     #[test]
@@ -1132,6 +1227,7 @@ mod tests {
         let (binding, _) = setup(TestDriver::default(), &closed);
 
         assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Err(ProtocolError::NotFound));
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Err(ProtocolError::NotFound));
     }
 
     #[test]
@@ -1173,6 +1269,49 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_driver_nested_stop_of_controller_while_stopping_is_refused() {
+        let closed = Closed::default();
+        let (binding, driver) =
+            setup(TestDriver { nested_stop_handle: Some(CONTROLLER), ..Default::default() }, &closed);
+        binding.0.driver.destroy_child_on_stop.set(Some(binding.0));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Ok(()));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Err(ProtocolError::AccessDenied)));
+        assert!(!driver.is_managing(h(CONTROLLER)));
+        assert_eq!(*closed.lock().unwrap(), vec![(CONTROLLER, Some(CONTROLLER))]);
+    }
+
+    #[test]
+    fn test_controller_driver_nested_stop_of_children_while_stopping_is_refused() {
+        let closed = Closed::default();
+        let driver =
+            TestDriver { nested_stop_handle: Some(CONTROLLER), nested_stop_children: true, ..Default::default() };
+        let (binding, _) = setup(driver, &closed);
+        binding.0.driver.destroy_child_on_stop.set(Some(binding.0));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Ok(()));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Err(ProtocolError::AccessDenied)));
+    }
+
+    #[test]
+    fn test_controller_driver_failed_stop_after_nested_stop_of_controller_keeps_it_managed() {
+        let closed = Closed::default();
+        let driver =
+            TestDriver { nested_stop_handle: Some(CONTROLLER), fail_stop_after_nested: true, ..Default::default() };
+        let (binding, driver) = setup(driver, &closed);
+        binding.0.driver.destroy_child_on_stop.set(Some(binding.0));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Err(ProtocolError::DeviceError));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Err(ProtocolError::AccessDenied)));
+        assert!(driver.is_managing(h(CONTROLLER)));
+        assert_eq!(driver.with_state(h(CONTROLLER), |state| *state), Ok(7));
+        assert!(closed.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn test_controller_driver_error_conversions() {
         assert_eq!(ProtocolError::from(ControllerError::NotManaged), ProtocolError::NotFound);
         assert_eq!(ProtocolError::from(ControllerError::Busy), ProtocolError::AccessDenied);
@@ -1192,7 +1331,8 @@ mod tests {
             Ok(h(AGENT))
         });
 
-        let driver = install_controller_driver(Service::mock(Box::new(mock)), TestDriver::default()).unwrap();
+        let driver =
+            install_controller_driver(Service::mock(Box::new(mock)), mock_tpl(), TestDriver::default()).unwrap();
         assert_eq!(driver.agent(), h(AGENT));
         assert!(driver.controllers().is_empty());
     }
@@ -1232,8 +1372,11 @@ mod tests {
     #[derive(Default)]
     struct BusDriver {
         fail_restart: bool,
+        dependency: Option<usize>,
         seen_managed: RefCell<Vec<bool>>,
         stopped_children: RefCell<Vec<Handle>>,
+        nested_stop: Cell<Option<(&'static Inner<BusDriver>, usize)>>,
+        nested_stop_result: Cell<Option<Result<(), ProtocolError>>>,
     }
 
     impl ControllerDriver for BusDriver {
@@ -1248,6 +1391,9 @@ mod tests {
 
         fn start(&self, context: &StartContext<'_, Self>) -> Result<u32, ProtocolError> {
             context.open_for_child(h(CHILD))?;
+            if let Some(dependency) = self.dependency {
+                context.open_by_driver::<FakeProtocol>(h(dependency))?;
+            }
             Ok(1)
         }
 
@@ -1269,6 +1415,10 @@ mod tests {
             assert_eq!(context.controller(), h(CONTROLLER));
             assert_eq!(context.protocol().value, 7);
             self.stopped_children.borrow_mut().extend_from_slice(children);
+            if let Some((inner, handle)) = self.nested_stop.get() {
+                // Simulates calling Stop() for a handle while this driver destroys the children.
+                self.nested_stop_result.set(Some(ManagedDriver(inner).stop(h(AGENT), h(handle), &[])));
+            }
             Ok(())
         }
     }
@@ -1277,8 +1427,7 @@ mod tests {
         driver: D,
         services: &'static dyn ProtocolServices,
     ) -> (ManagedDriver<D>, ControllerDriverRef<D>) {
-        let inner: &'static Inner<D> =
-            Box::leak(Box::new(Inner { driver, services, agent: h(AGENT), controllers: RefCell::new(Vec::new()) }));
+        let inner: &'static Inner<D> = Box::leak(Box::new(Inner::new(driver, services, mock_tpl(), h(AGENT))));
         (ManagedDriver(inner), ControllerDriverRef { inner })
     }
 
@@ -1345,6 +1494,87 @@ mod tests {
         assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Err(ProtocolError::Unsupported));
         assert!(driver.is_managing(h(CONTROLLER)));
         assert!(closed.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_controller_driver_nested_stop_of_child_while_stopping_children_releases_it() {
+        let closed = Closed::default();
+        let (binding, driver) =
+            setup_with(BusDriver { dependency: Some(CHILD), ..Default::default() }, mock_core_services(&closed));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        binding.0.driver.nested_stop.set(Some((binding.0, CHILD)));
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Ok(()));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Ok(())));
+        assert!(driver.is_managing(h(CONTROLLER)));
+        assert_eq!(*closed.lock().unwrap(), vec![(CHILD, Some(CONTROLLER)), (CONTROLLER, Some(CHILD))]);
+    }
+
+    #[test]
+    fn test_controller_driver_nested_stop_of_other_handle_while_stopping_children_is_refused() {
+        const DEPENDENCY: usize = 0x700;
+        let closed = Closed::default();
+        let (binding, driver) =
+            setup_with(BusDriver { dependency: Some(DEPENDENCY), ..Default::default() }, mock_core_services(&closed));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        binding.0.driver.nested_stop.set(Some((binding.0, DEPENDENCY)));
+
+        // The dependency is not one of the children, so dependency_lost() must decide, which needs the state.
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Ok(()));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Err(ProtocolError::AccessDenied)));
+        assert!(driver.is_managing(h(CONTROLLER)));
+        assert_eq!(*closed.lock().unwrap(), vec![(CONTROLLER, Some(CHILD))]);
+
+        binding.0.driver.nested_stop.set(Some((binding.0, CONTROLLER)));
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[h(CHILD)]), Ok(()));
+        assert_eq!(binding.0.driver.nested_stop_result.get(), Some(Err(ProtocolError::AccessDenied)));
+
+        // Once stop_children() returns, losing the dependency stops the controller.
+        assert_eq!(binding.stop(h(AGENT), h(DEPENDENCY), &[]), Ok(()));
+        assert!(!driver.is_managing(h(CONTROLLER)));
+        assert_eq!(
+            *closed.lock().unwrap(),
+            vec![(CONTROLLER, Some(CHILD)), (DEPENDENCY, Some(CONTROLLER)), (CONTROLLER, Some(CONTROLLER))]
+        );
+    }
+
+    /// Records `(0, None)` in the closed log when dropped.
+    struct DropRecorder(Closed);
+
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push((0, None));
+        }
+    }
+
+    struct DropDriver(Closed);
+
+    impl ControllerDriver for DropDriver {
+        type Protocol = FakeProtocol;
+        type State = DropRecorder;
+
+        fn supported(&self, _context: &SupportedContext<'_, Self>) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn start(&self, _context: &StartContext<'_, Self>) -> Result<DropRecorder, ProtocolError> {
+            Ok(DropRecorder(Arc::clone(&self.0)))
+        }
+    }
+
+    #[test]
+    fn test_controller_driver_state_is_dropped_after_usages_are_closed() {
+        let closed = Closed::default();
+        let (binding, _) = setup_with(DropDriver(Arc::clone(&closed)), mock_services(&closed));
+        binding.start(h(AGENT), h(CONTROLLER), None).unwrap();
+        let stale = binding.0.managed(h(CONTROLLER)).unwrap();
+
+        assert_eq!(binding.stop(h(AGENT), h(CONTROLLER), &[]), Ok(()));
+        // The state is dropped even though `stale` still refers to the entry.
+        assert_eq!(*closed.lock().unwrap(), vec![(CONTROLLER, Some(CONTROLLER)), (0, None)]);
+        assert!(stale.state.try_borrow().unwrap().is_none());
+        // A release found before the stop has nothing left to do.
+        assert_eq!(binding.0.release(&stale, h(CONTROLLER)), Ok(()));
     }
 
     /// Only implements the required methods, so every other method uses its default.
