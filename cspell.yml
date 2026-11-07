@@ -61,6 +61,7 @@ words:
   - cntpct
   - corem
   - corosensei
+  - coswid
   - coverity
   - cpuid
   - csodimm
@@ -68,6 +69,7 @@ words:
   - ctypes
   - cudimm
   - cuviper
+  - cyclonedx
   - deassertion
   - depex
   - deque
@@ -158,6 +160,7 @@ words:
   - ntohs
   - nvdimm
   - nvram
+  - oemid
   - oleaut
   - oorandom
   - openvmm
