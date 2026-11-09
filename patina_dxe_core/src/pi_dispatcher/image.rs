@@ -745,6 +745,10 @@ mod dispatch {
         /// The `image_handle` is validated against the protocol database and the
         /// private image data map; an error is returned if the handle is unknown or
         /// the image has already been started.
+        ///
+        /// # TPL
+        /// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+        /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
         pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
             PROTOCOL_DB.validate_handle(image_handle)?;
 
@@ -856,6 +860,10 @@ mod dispatch {
         /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
         /// stored and later returned to the caller of `start_image` to retrieve the
         /// exit data.
+        ///
+        /// # TPL
+        /// The UEFI specification requires this API to be called at or below `TPL_CALLBACK`.
+        /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
         pub(super) unsafe fn exit(
             &self,
             image_handle: efi::Handle,
@@ -967,6 +975,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// use [`service_load_image_from_device_path`] instead.
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     pub(crate) fn service_load_image(parent: efi::Handle, source: &[u8]) -> Result<efi::Handle, ImageError> {
         Self::instance().load_image(false, parent, None, Some(source)).map_err(image_status_to_error)
     }
@@ -975,6 +986,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     ///
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::start_image`].
     pub(crate) fn service_start_image(image: efi::Handle) -> Result<(), ImageError> {
         Self::instance().start_image(image).map_err(efi_status_to_image_error)
     }
@@ -983,6 +997,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     ///
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::unload_image`].
     pub(crate) fn service_unload_image(image: efi::Handle) -> Result<(), ImageError> {
         Self::instance().unload_image(image, false).map_err(efi_status_to_image_error)
     }
@@ -991,6 +1008,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     ///
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     #[cfg(feature = "unstable-device-path")]
     pub(crate) fn service_load_image_from_device_path(
         parent: efi::Handle,
@@ -1012,6 +1032,10 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Returns `Ok(efi::Handle)` if the image was loaded successfully.
     /// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
     ///   with security violations, or not at all. See [`ImageStatus`] for details.
+    ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+    /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
     pub fn load_image(
         &self,
         boot_policy: bool,
@@ -1125,6 +1149,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     ///   structure in readable memory for the duration of the call.
     /// - `image_handle` is null-checked and returns `INVALID_PARAMETER` if null; if non-null,
     ///   it must point to writable memory suitable for storing an `efi::Handle`.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn load_image_efiapi(
         boot_policy: efi::Boolean,
@@ -1179,6 +1206,8 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// If `exit_data_size` and `exit_data` are non-null, they must point to
     /// valid writable memory. The caller owns the returned exit data buffer.
     ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::start_image`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn start_image_efiapi(
         image_handle: efi::Handle,
@@ -1226,6 +1255,10 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// database via [`PROTOCOL_DB.validate_handle`] and looked up in the
     /// private image data map; if the handle is not found, an error status is
     /// returned rather than causing undefined behavior.
+    ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called at or below `TPL_CALLBACK`.
+    /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
     pub fn unload_image(&self, image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
         PROTOCOL_DB.validate_handle(image_handle)?;
         let private_data = self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?;
@@ -1319,6 +1352,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// database via [`PROTOCOL_DB.validate_handle`] and looked up in the
     /// private image data map; if the handle is not found, an error status is
     /// returned rather than causing undefined behavior.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::unload_image`].
     pub(super) extern "efiapi" fn unload_image_efiapi(image_handle: efi::Handle) -> efi::Status {
         match Self::instance().unload_image(image_handle, false) {
             Ok(()) => efi::Status::SUCCESS,
@@ -1346,6 +1382,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
     /// stored and later returned to the caller of `start_image` to retrieve the
     /// exit data.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::exit`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn exit_efiapi(
         image_handle: efi::Handle,
@@ -1358,7 +1397,11 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         unsafe { Self::instance().exit(image_handle, status, exit_data_size, exit_data) }
     }
 
-    /// Fixes runtime image protections at ExitBootServices.
+    /// Fixes runtime image protections at `ExitBootServices`.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the image lock.
+    /// The event invokes this callback at `TPL_CALLBACK`.
     pub(super) extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
         let mut private_data = Self::instance().image_data.try_lock().expect(
             "Cannot complete ExitBootServices safely: image state is busy and runtime image memory protections cannot be fixed up",

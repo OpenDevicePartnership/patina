@@ -69,6 +69,10 @@ impl NotificationRegistry {
     /// periodic poll also needs, so no processor can be selected, signaled or taken
     /// while a dispatch is being set up. `dispatch` receives the pending list so it
     /// can both see which processors are already claimed and register itself.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY`.
     pub(super) fn with_dispatch_lock<R>(
         &self,
         dispatch: impl FnOnce(&mut Vec<PendingDispatch>) -> Result<R, MpError>,
@@ -78,6 +82,10 @@ impl NotificationRegistry {
     }
 
     /// Waits for every outstanding notification to complete or reach its deadline.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to process the registry.
     pub(super) fn finish_pending(
         &self,
         mp: &impl MpDispatcher,
@@ -95,6 +103,10 @@ impl NotificationRegistry {
     }
 
     /// Processes pending dispatches once, returning whether the registry is empty.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY`.
     fn process(&self, mp: &impl MpDispatcher, timer: &dyn ArchTimerFunctionality) -> Result<bool, MpError> {
         let now = timer.cpu_count();
         let mut resolved: Vec<PendingDispatch> = Vec::new();

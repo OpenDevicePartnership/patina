@@ -113,6 +113,9 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// Attempts to lock the global [`FvProtocolData`].
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
     fn instance<'a>() -> Option<tpl_mutex::TplGuard<'a, Self>> {
         Core::<P>::instance().pi_dispatcher.fv_data.try_lock()
     }
@@ -446,6 +449,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 #[cfg_attr(coverage, coverage(off))]
 impl<P: PlatformInfo> FvProtocolData<P> {
     /// EFIAPI compliant FVB protocol `GetAttributes` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fvb_get_attributes_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         attributes: *mut fvb::attributes::EfiFvbAttributes2,
@@ -477,6 +484,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FVB protocol `GetPhysicalAddress` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fvb_get_physical_address_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         address: *mut efi::PhysicalAddress,
@@ -500,6 +511,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FVB protocol `GetBlockSize` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fvb_get_block_size_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         lba: efi::Lba,
@@ -530,6 +545,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FVB protocol Read method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fvb_read_efiapi(
         this: *mut pi::protocol::firmware_volume_block::FirmwareVolumeBlockProtocol,
         lba: efi::Lba,
@@ -592,6 +611,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FV protocol `GetVolumeAttributes` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The PI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fv_get_volume_attributes_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         fv_attributes: *mut fv::attributes::EfiFvAttributes,
@@ -625,6 +648,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FV protocol `ReadFile` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The PI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fv_read_file_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         name_guid: *const efi::Guid,
@@ -728,6 +755,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FV protocol `ReadSection` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The PI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fv_read_section_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         name_guid: *const efi::Guid,
@@ -835,6 +866,10 @@ impl<P: PlatformInfo> FvProtocolData<P> {
     }
 
     /// EFIAPI compliant FV protocol `GetNextFile` method.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume lock.
+    /// The PI specification also requires this API to be called at or below `TPL_NOTIFY`.
     extern "efiapi" fn fv_get_next_file_efiapi(
         this: *const pi::protocol::firmware_volume::FirmwareVolumeProtocol,
         key: *mut c_void,

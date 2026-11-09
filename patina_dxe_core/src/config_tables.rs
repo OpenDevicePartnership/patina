@@ -39,6 +39,11 @@ pub(crate) static CONFIG_TABLE_TYPES: TplMutex<BTreeMap<BinaryGuid, TypeId>> =
 
 /// Installs a configuration table entry identified by `table_guid` into the system table.
 ///
+/// # TPL
+///
+/// The UEFI specification requires `InstallConfigurationTable` to be called at or below `TPL_NOTIFY`.
+/// The system table and type metadata locks also require this ceiling.
+///
 /// # Safety
 ///
 /// The caller is responsible for ensuring that `table_guid` points to valid, readable memory
@@ -159,6 +164,12 @@ fn install_configuration_table_entry(
 /// under `vendor_guid` after this call is no longer vouched for by the type-tracking map, since
 /// neither the raw `extern "efiapi"` boot service nor this untyped API knows what Rust type (if any)
 /// backs it.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY`, matching the `InstallConfigurationTable` service
+/// limit documented on [`install_configuration_table`]. This internal implementation also acquires
+/// the type metadata lock at `TPL_NOTIFY`; the caller supplies the system table reference.
 pub fn core_install_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: *mut c_void,
@@ -188,6 +199,12 @@ fn configuration_table_has_entry(efi_system_table: &mut EfiSystemTable, vendor_g
 /// `vendor_guid`'s table, atomically with the install, so a later typed lookup can verify it before
 /// casting the pointer. If `fail_if_exists` is set, fails with `EfiError::AlreadyStarted` rather than
 /// replacing a table (typed or not) that exists under `vendor_guid`.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY`, inheriting the configuration table installation
+/// requirement of [`core_install_configuration_table`]. This Rust-specific helper also acquires the
+/// type metadata lock; it is not a separate UEFI service.
 pub(crate) fn core_install_typed_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: *mut c_void,
@@ -217,6 +234,11 @@ pub(crate) fn configuration_table_entry_ptr(st: &EfiSystemTable, vendor_guid: &e
 }
 
 /// Returns the pointer to a configuration table for the specified guid, if it exists.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to acquire the system table lock. This internal
+/// lookup is not the UEFI `InstallConfigurationTable` service; its ceiling is lock-derived.
 pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>> {
     let st_guard = SYSTEM_TABLE.try_lock()?;
     let st = st_guard.as_ref()?;

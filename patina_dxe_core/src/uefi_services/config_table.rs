@@ -26,6 +26,12 @@ use crate::systemtables::{EfiSystemTable, SYSTEM_TABLE};
 /// Looks up the pointer for `guid`'s table given an already-locked system table reference,
 /// and verifies it was recorded with `type_id` in [`CONFIG_TABLE_TYPES`]. Returns `None` if either
 /// check fails.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to acquire the type metadata lock.
+/// This internal lookup does not invoke UEFI `InstallConfigurationTable`; its ceiling is
+/// lock-derived, not a separate specification limit on reading a configuration table.
 fn typed_table_ptr(st: &EfiSystemTable, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
     if CONFIG_TABLE_TYPES.try_lock()?.get(&guid) != Some(&type_id) {
         return None;

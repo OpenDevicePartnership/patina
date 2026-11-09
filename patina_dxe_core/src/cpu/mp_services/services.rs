@@ -89,6 +89,10 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// health status.
     ///
     /// Only callable from the BSP.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     pub(super) fn enable_disable_ap(
         &self,
         processor_index: usize,
@@ -124,12 +128,20 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// Prevents new non-blocking requests and waits for existing requests to
     /// complete or reach their deadlines while allocation and event signaling
     /// are still available.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to process pending notifications.
     pub(super) fn mark_ready_to_boot(&self) -> Result<(), MpError> {
         self.ready_to_boot.store(true, Ordering::Release);
         self.notifications.finish_pending(&self.mp, self.timer)
     }
 
     /// Replicates the BSP's dynamic state (MTRRs for x64) to every enabled AP.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     pub(super) fn synchronize(&self) {
         self.notifications
             .finish_pending(&self.mp, self.timer)
@@ -185,6 +197,10 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// `completion`) or registers the dispatch for the periodic poll. A single shared
     /// deadline bounds the whole operation, so a hung AP cannot extend the timeout
     /// for the others.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     fn dispatch(
         &self,
         targets: Targets,

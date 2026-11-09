@@ -123,6 +123,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Displays drivers that were discovered but not dispatched.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     pub fn display_discovered_not_dispatched(&self) {
         let Some(context) = self.dispatcher_context.try_lock() else {
             log::warn!("Cannot report drivers that were not dispatched: dispatcher context is busy");
@@ -170,6 +173,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Initializes the dispatcher by registering for FV protocol installation events.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the image, dispatcher-context and protocol-database locks.
     pub fn init(&self, hob_list: &HobList<'static>, system_table: &mut EfiSystemTable) {
         const ALIGNMENT_SHIFT_4MB: usize = 22;
 
@@ -279,6 +285,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Installs any firmware volumes from FV HOBs in the hob list
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume and protocol-database locks.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn install_firmware_volumes_from_hoblist(
@@ -289,6 +298,11 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Performs a single dispatch iteration.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION` because dispatch starts images. The dispatcher-context,
+    /// image, firmware-volume and protocol-database locks have a `TPL_NOTIFY` ceiling.
+    /// The UEFI specification requires `LoadImage()` and `StartImage()` to be called at `TPL == TPL_APPLICATION`.
     pub fn dispatch(&'static self) -> Result<bool, EfiError> {
         let scheduled: Vec<PendingDriver>;
         {
@@ -489,6 +503,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Performs a full dispatch until no more drivers can be dispatched.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION`, as required by [`Self::dispatch`].
     pub fn dispatcher(&'static self) -> Result<(), EfiError> {
         if self.dispatcher_context.try_lock().ok_or(EfiError::NotReady)?.executing {
             return Err(EfiError::AlreadyStarted);
@@ -557,6 +574,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Schedules a driver for execution.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn schedule(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
@@ -564,6 +584,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// Marks a driver as trusted for execution.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the dispatcher-context lock.
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn trust(&self, handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
@@ -597,6 +620,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     #[inline(always)]
     #[cfg_attr(coverage, coverage(off))]
     /// Caller must ensure that the base address is a valid firmware volume.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the firmware-volume and protocol-database locks.
     pub unsafe fn install_firmware_volume(
         &self,
         base_address: u64,
@@ -609,6 +635,10 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     /// EFIAPI event callback to add the FV handles when FVB protocol is installed.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database and dispatcher locks.
+    /// The event invokes this callback at `TPL_CALLBACK`.
     extern "efiapi" fn fw_vol_event_protocol_notify_efiapi(_event: efi::Event, _context: *mut c_void) {
         let pd = &crate::Core::<P>::instance().pi_dispatcher;
         //Note: runs at TPL_CALLBACK

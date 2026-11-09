@@ -203,6 +203,10 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 
 /// Terminates all boot services.
 ///
+/// # TPL
+///
+/// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+///
 /// # Safety Considerations
 ///
 /// This function is not marked `unsafe` because both parameters are safe to accept from unverified

@@ -394,6 +394,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// The entry point for the Patina DXE Core.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION` for component-dispatcher locking and image dispatch.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
         assert!(self.set_instance(), "DXE Core instance was already set!");
 
@@ -430,6 +433,9 @@ impl<P: PlatformInfo> Core<P> {
     ///
     ///
     /// Returns the relocated HOB list pointer that should be used for all subsequent operations.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     fn init_memory(&'static self, physical_hob_list: *const c_void) -> *mut c_void {
         log::info!("DXE Core Crate v{DXE_CORE_VERSION}");
 
@@ -549,6 +555,9 @@ impl<P: PlatformInfo> Core<P> {
 
     /// Registers the `TimingServices` component service once the Metronome and Watchdog Timer Architectural
     /// Protocols are both available.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     fn try_register_timing_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && misc_boot_services::timing_arch_protocols_ready() {
@@ -561,6 +570,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Registers the `TimerEventServices` component service once the Timer Architectural Protocol is available.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     fn try_register_timer_event_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && events::timer_arch_protocol_ready() {
@@ -580,6 +592,9 @@ impl<P: PlatformInfo> Core<P> {
     ///
     /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION` for component-dispatcher locking and image dispatch.
     fn core_dispatcher(&'static self) -> Result<()> {
         loop {
             self.try_register_timing_service()?;
@@ -601,6 +616,10 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Initializes system tables and component state.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock,
+    /// which is stricter than the system-table and protocol-database locks' `TPL_NOTIFY` ceiling.
     fn initialize_system_table(&self, physical_hob_list: *mut c_void) -> Result<()> {
         // Instantiate system table.
         systemtables::init_system_table(P::UEFI_SPEC_VERSION);
@@ -650,6 +669,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Registers platform provided components, configurations, and services.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     #[inline(always)]
     fn apply_component_info(&self) -> Result<()> {
         self.component_dispatcher
@@ -660,6 +682,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Registers core provided components
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     #[allow(clippy::default_constructed_unit_structs)]
     fn add_core_components(&self) -> Result<()> {
         let mut dispatcher = self.component_dispatcher.try_lock().ok_or(error::EfiError::NotReady)?;
@@ -679,6 +704,9 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Starts the core, dispatching all drivers.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL_APPLICATION` for component-dispatcher locking and image dispatch.
     fn start_dispatcher(&'static self, physical_hob_list: *mut c_void) -> Result<()> {
         log::info!("Registering platform components");
         self.apply_component_info()?;

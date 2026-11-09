@@ -48,6 +48,10 @@ struct NotifyHolder {
 ///
 /// Drains the handles that the registration has flagged as installed and invokes the
 /// component-supplied closure for each.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to access the protocol database.
 extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c_void) {
     if context.is_null() {
         return;

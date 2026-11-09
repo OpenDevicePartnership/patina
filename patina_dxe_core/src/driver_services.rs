@@ -346,6 +346,10 @@ fn core_connect_single_controller(
 /// let result = core_connect_controller(controller_handle, Vec::new(), None, false);
 /// ```
 ///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock,
+/// including when recursively locating child controllers.
+/// The UEFI specification also requires `ConnectController()` to be called at or below `TPL_NOTIFY`.
 pub unsafe fn core_connect_controller(
     handle: efi::Handle,
     driver_handles: Vec<efi::Handle>,
@@ -398,6 +402,10 @@ pub unsafe fn core_connect_controller(
 ///   wrapped inside Rust types. Passing an invalid value does not by itself
 ///   cause undefined behavior; the firmware is expected to reject it by
 ///   returning an error status.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_connect_controller`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn connect_controller(
     handle: efi::Handle,
     driver_image_handle: *mut efi::Handle,
@@ -455,6 +463,9 @@ unsafe extern "efiapi" fn connect_controller(
 /// let result = core_disconnect_controller(controller_handle, None, None);
 /// ```
 ///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires `DisconnectController()` to be called at or below `TPL_NOTIFY`.
 pub unsafe fn core_disconnect_controller(
     controller_handle: efi::Handle,
     driver_image_handle: Option<efi::Handle>,
@@ -623,6 +634,10 @@ pub unsafe fn core_disconnect_controller(
 /// duration of the call. The handle parameters are validated internally and
 /// passing invalid handles does not by itself cause undefined behavior; the
 /// firmware will reject them by returning an error status.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_disconnect_controller`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn disconnect_controller(
     controller_handle: efi::Handle,
     driver_image_handle: efi::Handle,

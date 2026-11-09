@@ -33,6 +33,10 @@ pub static PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 ///
 /// This function is safe because `interface` is an opaque pointer that is stored but never
 /// dereferenced. All other parameters are value types.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 pub fn core_install_protocol_interface(
     handle: Option<efi::Handle>,
     protocol: efi::Guid,
@@ -71,6 +75,10 @@ pub fn core_install_protocol_interface(
 /// interface is registered in the protocol database (i.e. until it is uninstalled via
 /// `uninstall_protocol_interface` or `uninstall_multiple_protocol_interfaces`, or replaced via
 /// `reinstall_protocol_interface`).
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_install_protocol_interface`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn install_protocol_interface(
     handle: *mut efi::Handle,
     protocol: *mut efi::Guid,
@@ -107,6 +115,10 @@ unsafe extern "efiapi" fn install_protocol_interface(
 /// Instances the core marked non-removable (FV, FVB and device path instances
 /// the dispatcher depends on, see #1126) are never uninstalled and
 /// `ACCESS_DENIED` is returned.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 pub fn core_uninstall_protocol_interface(
     handle: efi::Handle,
     protocol: efi::Guid,
@@ -209,6 +221,10 @@ pub fn core_uninstall_protocol_interface(
 /// `protocol` must be a valid pointer to an `efi::Guid`. It is null checked, but validity of the
 /// referenced memory is the caller's responsibility. NOTE: `interface` is not dereferenced in this
 /// function, so its validity is not required for safety.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_uninstall_protocol_interface`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn uninstall_protocol_interface(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -247,6 +263,10 @@ fn uninstall_dummy_interface(handle: efi::Handle) -> Result<(), EfiError> {
 /// `protocol` must be a valid pointer to an `efi::Guid`. It is null checked, but validity of the
 /// referenced memory is the caller's responsibility. Throughout the lifetime of the interface
 /// reference, the caller must ensure it remains valid.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn reinstall_protocol_interface(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -310,6 +330,10 @@ unsafe extern "efiapi" fn reinstall_protocol_interface(
 /// `protocol` must be a valid pointer to an `efi::Guid`. `registration` must be a valid pointer
 /// to receive the registration key. Both are null checked, but validity of the referenced memory
 /// is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn register_protocol_notify(
     protocol: *mut efi::Guid,
     event: efi::Event,
@@ -347,6 +371,10 @@ unsafe extern "efiapi" fn register_protocol_notify(
 /// `buffer_size` must be a valid pointer to a `usize`.
 /// `handle_buffer` must be valid for writes of the number of handles indicated by `buffer_size`.
 ///  All pointers are null checked, but validity of the referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn locate_handle(
     search_type: efi::LocateSearchType,
     protocol: *mut efi::Guid,
@@ -422,6 +450,10 @@ unsafe extern "efiapi" fn locate_handle(
 /// `protocol` must be a valid pointer to an `efi::Guid`. `interface` must be a valid pointer to
 /// receive the protocol interface pointer. Both are null checked by the underlying `open_protocol`
 /// implementation, but validity of the referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by the underlying protocol open operation.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 pub unsafe extern "efiapi" fn handle_protocol(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -457,6 +489,10 @@ pub unsafe extern "efiapi" fn handle_protocol(
 /// call cannot be verified here, see `core_disconnect_controller`'s safety documentation. This
 /// function inherits that same caveat when `attributes` has `EXCLUSIVE` set, since preempting an
 /// existing `BY_DRIVER` holder calls `core_disconnect_controller`.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 pub unsafe fn core_open_protocol(
     handle: efi::Handle,
     protocol: efi::Guid,
@@ -517,6 +553,10 @@ pub unsafe fn core_open_protocol(
 }
 
 /// Closes a protocol usage previously opened by [`core_open_protocol`].
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 pub fn core_close_protocol(
     handle: efi::Handle,
     protocol: efi::Guid,
@@ -535,6 +575,10 @@ pub fn core_close_protocol(
 /// receive the protocol interface pointer (may be null only when `attributes` is
 /// `OPEN_PROTOCOL_TEST_PROTOCOL`). Both are null checked, but validity of the referenced memory
 /// is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_open_protocol`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn open_protocol(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -606,6 +650,10 @@ unsafe extern "efiapi" fn open_protocol(
 ///
 /// `protocol` must be a valid pointer to an `efi::Guid`. It is null checked, but validity of the
 /// referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY`, as required by [`core_close_protocol`].
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn close_protocol(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -649,6 +697,10 @@ unsafe extern "efiapi" fn close_protocol(
 /// to receive an allocated array of `OpenProtocolInformationEntry`. `entry_count` must be a valid
 /// pointer to receive the number of entries. All pointers are null checked, but validity of the
 /// referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn open_protocol_information(
     handle: efi::Handle,
     protocol: *mut efi::Guid,
@@ -712,6 +764,10 @@ macro_rules! va_arg {
 /// `handle` must be a valid pointer to an `efi::Handle` (may point to a null handle for new
 /// handle creation). `args` must consist of paired `(*mut efi::Guid, *mut c_void)` entries
 /// terminated by a null `*mut efi::Guid` sentinel.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the atomic-install and protocol-database locks.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Handle, mut args: ...) -> efi::Status {
     // The UEFI spec does not indicate whether the protocols installed here are atomic with respect to notify  - i.e.
     // whether any registered notifies should be invoked between the installation of the multiple protocols, or only
@@ -790,6 +846,10 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
 ///
 /// `args` must consist of paired `(*mut efi::Guid, *mut c_void)` entries terminated by a null
 /// `*mut efi::Guid` sentinel.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` for protocol removal and rollback installation.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle, mut args: ...) -> efi::Status {
     if handle.is_null() {
         return efi::Status::INVALID_PARAMETER;
@@ -835,6 +895,10 @@ unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle,
 /// `protocol_buffer` must be a valid pointer to receive an allocated array of GUID pointers.
 /// `protocol_buffer_count` must be a valid pointer to receive the number of entries. Both are
 /// null checked, but validity of the referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn protocols_per_handle(
     handle: efi::Handle,
     protocol_buffer: *mut *mut *mut efi::Guid,
@@ -890,6 +954,10 @@ unsafe extern "efiapi" fn protocols_per_handle(
 /// `no_handles` must be a valid pointer to receive the handle count. `buffer` must be a valid
 /// pointer to receive the allocated handle array. Both are null checked, but validity of the
 /// referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn locate_handle_buffer(
     search_type: efi::LocateSearchType,
     protocol: *mut efi::Guid,
@@ -962,6 +1030,10 @@ unsafe extern "efiapi" fn locate_handle_buffer(
 /// receive the protocol interface pointer. `registration` must be null or a valid registration key
 /// from a prior call to `register_protocol_notify`. All pointers are null checked, but validity
 /// of the referenced memory is the caller's responsibility.
+///
+/// # TPL
+/// The caller must be at `TPL <= TPL_NOTIFY` to acquire the protocol-database lock.
+/// The UEFI specification also requires this API to be called at or below `TPL_NOTIFY`.
 unsafe extern "efiapi" fn locate_protocol(
     protocol: *mut efi::Guid,
     registration: *mut c_void,

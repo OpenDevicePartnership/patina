@@ -106,6 +106,14 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
 }
 
 /// Publishes the memory attributes table for runtime memory regions.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to install the configuration table.
+/// This helper inherits the `InstallConfigurationTable` service limit documented on
+/// [`core_install_configuration_table`] and the Memory Allocation Services limit documented on
+/// [`core_allocate_pool`]. Configuration table lookup and installation also acquire the system
+/// table and type metadata locks. Publishing the MAT is not a separate UEFI service.
 pub fn core_install_memory_attributes_table() {
     if !POST_RTB.is_completed() {
         if get_configuration_table(&efi::MEMORY_ATTRIBUTES_TABLE_GUID).is_none() {

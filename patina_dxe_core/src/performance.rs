@@ -86,6 +86,10 @@ impl CorePerformance {
     }
 
     /// Initializes the core performance service.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` when installing enabled HOB records.
     pub(crate) fn init(
         &self,
         frequency: u64,

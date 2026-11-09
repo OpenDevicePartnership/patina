@@ -682,12 +682,18 @@ impl SpinLockedProtocolDb {
     /// Returns a list of all the protocols that have been registered with the protocol database.
     ///
     /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn registered_protocols(&self) -> Result<Vec<efi::Guid>, EfiError> {
         Ok(self.try_lock().ok_or(EfiError::NotReady)?.registered_protocols())
     }
 
     /// Initialize the protocol database. Installs well-known handles, and then enables hashing to ensure handles are
     /// opaque.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn init_protocol_db(&self) {
         let well_known_handle_guid = efi::Guid::from_bytes(WELL_KNOWN_HANDLE_PROTOCOL_GUID.as_bytes());
 
@@ -731,6 +737,10 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `InstallProtocolInterface()` to be called at or below `TPL_NOTIFY`.
     pub fn install_protocol_interface(
         &self,
         handle: Option<efi::Handle>,
@@ -749,6 +759,10 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `UninstallProtocolInterface()` to be called at or below `TPL_NOTIFY`.
     pub fn uninstall_protocol_interface(
         &self,
         handle: efi::Handle,
@@ -769,6 +783,10 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching handles are found.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateHandle()` and `LocateHandleBuffer()` to be called at or below `TPL_NOTIFY`.
     pub fn locate_handles(&self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.locate_handles(protocol)
     }
@@ -784,6 +802,10 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn locate_protocol(&self, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.locate_protocol(protocol)
     }
@@ -797,11 +819,17 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found on the given handle.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn get_interface_for_handle(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.get_interface_for_handle(handle, protocol)
     }
 
     /// Returns Ok(()) if the handle is a valid handle, `Err(Status::INVALID_PARAMETER)` otherwise.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.validate_handle(handle)
     }
@@ -825,6 +853,10 @@ impl SpinLockedProtocolDb {
     ///     `driver::OPEN_PROTOCOL_EXCLUSIVE` | `driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE` and there is an existing
     ///     usage that conflicts with those attributes.
     /// Returns [`UNSUPPORTED`](efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `OpenProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn add_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -851,6 +883,9 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if a handle is invalid, `attributes` is not an
     /// allowed value, or a handle that `attributes` requires is missing.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn validate_open_protocol_parameters(
         &self,
         handle: efi::Handle,
@@ -876,6 +911,10 @@ impl SpinLockedProtocolDb {
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the protocol interface specified by handle and protocol are not
     ///   opened by the specified agent and controller handle.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `CloseProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn remove_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -902,6 +941,9 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn is_protocol_non_removable(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<bool, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.is_protocol_non_removable(handle, protocol)
     }
@@ -917,6 +959,9 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn set_protocol_non_removable(
         &self,
         handle: efi::Handle,
@@ -936,6 +981,10 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `OpenProtocolInformation()` to be called at or below `TPL_NOTIFY`.
     pub fn get_open_protocol_information_by_protocol(
         &self,
         handle: efi::Handle,
@@ -951,6 +1000,9 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn get_open_protocol_information(
         &self,
         handle: efi::Handle,
@@ -963,6 +1015,10 @@ impl SpinLockedProtocolDb {
     ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.ProtocolsPerHandle()` API in the UEFI spec
     /// 2.10 section 7.3.14. Refer to the UEFI spec description for details on input parameters.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `ProtocolsPerHandle()` to be called at or below `TPL_NOTIFY`.
     pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.get_protocols_on_handle(handle)
     }
@@ -977,6 +1033,10 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns a registration token that can be used with [`next_handle_for_registration`](SpinLockedProtocolDb::next_handle_for_registration)
     /// to iterate over handles that have fresh installations of the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `RegisterProtocolNotify()` to be called at or below `TPL_NOTIFY`.
     pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.register_protocol_notify(protocol, event)
     }
@@ -986,6 +1046,9 @@ impl SpinLockedProtocolDb {
     ///
     /// This can be used by the caller to remove previously registered event notifications.
     /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn unregister_protocol_notify_events(&self, events: Vec<efi::Event>) -> Result<(), EfiError> {
         self.try_lock().ok_or(EfiError::NotReady)?.unregister_protocol_notify_events(events);
         Ok(())
@@ -994,6 +1057,10 @@ impl SpinLockedProtocolDb {
     /// Returns the next handle for which a protocol has been installed that matches the registration.
     ///
     /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateHandle()` with `ByRegisterNotify` to be called at or below `TPL_NOTIFY`.
     pub fn next_handle_for_registration(&self, registration: *mut c_void) -> Result<Option<efi::Handle>, EfiError> {
         Ok(self.try_lock().ok_or(EfiError::NotReady)?.next_handle_for_registration(registration))
     }
@@ -1001,6 +1068,9 @@ impl SpinLockedProtocolDb {
     /// Returns a vector of controller handles that have `parent_handle` open `BY_CHILD_CONTROLLER`.
     ///
     /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn get_child_handles(&self, parent_handle: efi::Handle) -> Result<Vec<efi::Handle>, EfiError> {
         Ok(self.try_lock().ok_or(EfiError::NotReady)?.get_child_handles(parent_handle))
     }

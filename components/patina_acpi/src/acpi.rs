@@ -129,6 +129,10 @@ impl StandardAcpiProvider {
     }
 
     /// Sets up tracking for the RSDP internally.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// # Errors
     /// Returns [`AcpiError::StateUnavailable`] if the RSDP state cannot be acquired.
     pub fn set_rsdp(&self, rsdp: &'static mut AcpiRsdp) -> Result<(), AcpiError> {
@@ -138,6 +142,10 @@ impl StandardAcpiProvider {
     }
 
     /// Sets up tracking for the XSDT internally.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// # Errors
     /// Returns [`AcpiError::StateUnavailable`] if the XSDT state cannot be acquired.
     pub fn set_xsdt(&self, xsdt_data: AcpiXsdtMetadata) -> Result<(), AcpiError> {
@@ -226,6 +234,10 @@ impl AcpiProvider for StandardAcpiProvider {
 
 impl StandardAcpiProvider {
     /// Installs the FACS.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// SAFETY: The caller must ensure that the table is valid and correctly formatted.
     pub(crate) unsafe fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // Update the FADT's address pointer to the FACS.
@@ -288,6 +300,9 @@ impl StandardAcpiProvider {
     }
 
     /// Installs tables pointed to by an existing FADT.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn install_dsdt_facs_from_fadt(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null.
         if fadt.x_firmware_ctrl() != 0 {
@@ -331,6 +346,9 @@ impl StandardAcpiProvider {
     }
 
     /// Installs tables pointed to by the ACPI memory HOB.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
@@ -392,6 +410,9 @@ impl StandardAcpiProvider {
     }
 
     /// Allocates memory for the FADT and adds it to the list of installed tables
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
         if self.acpi_tables.try_lock().map_err(|()| AcpiError::StateUnavailable)?.get(&Self::FADT_KEY).is_some() {
             // FADT already installed. By spec, only one copy of the FADT should ever be installed, and it cannot be replaced.
@@ -458,6 +479,9 @@ impl StandardAcpiProvider {
 
     /// Installs the DSDT.
     /// The DSDT is not added to the list of XSDT entries.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn install_dsdt(&self, mut dsdt_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // If the FADT is already installed, update the FACP's x_dsdt field.
         // If not, it will be updated when the FACP is installed.
@@ -483,6 +507,9 @@ impl StandardAcpiProvider {
     }
 
     /// Adds the table to the list of installed ACPI tables and sets up metadata.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn install_standard_table(&self, mut table_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // By spec, table keys can be assigned in any manner as long as they are unique for each newly installed table.
         // For simplicity, we use a monotonically increasing key.
@@ -512,6 +539,9 @@ impl StandardAcpiProvider {
     }
 
     /// Adds an address entry to the XSDT.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
         let mut max_capacity = 0;
         let mut curr_capacity = 0;
@@ -550,6 +580,9 @@ impl StandardAcpiProvider {
     }
 
     /// Allocates a new, larger memory space for the XSDT when it is full and relocates all entries to the newly allocated memory.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn reallocate_xsdt(&self) -> Result<(), AcpiError> {
         if let Some(xsdt_data) = self.xsdt_metadata.try_lock().map_err(|()| AcpiError::StateUnavailable)?.as_mut() {
             // Calculate current size of the XSDT.
@@ -594,6 +627,9 @@ impl StandardAcpiProvider {
     }
 
     /// Removes a table from the list of installed tables.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn remove_table_from_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         let table_for_key = self.acpi_tables.try_lock().map_err(|()| AcpiError::StateUnavailable)?.remove(&table_key);
 
@@ -613,6 +649,9 @@ impl StandardAcpiProvider {
     }
 
     /// Deletes a table from the list of installed tables and frees its memory.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn delete_table(&self, physical_addr: u64, signature: u32) -> Result<(), AcpiError> {
         match signature {
             // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
@@ -672,6 +711,9 @@ impl StandardAcpiProvider {
     }
 
     /// Removes an address entry from the XSDT when a table is uninstalled.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn remove_table_from_xsdt(&self, table_address: u64) -> Result<(), AcpiError> {
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.try_lock().map_err(|()| AcpiError::StateUnavailable)? {
             // Calculate where entries are in the slice.
@@ -726,6 +768,9 @@ impl StandardAcpiProvider {
     }
 
     /// Performs `checksum` and `extended_checksum` calculations on the RSDP and XSDT.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.try_lock().map_err(|()| AcpiError::StateUnavailable)? {
             // Zero the old checksum byte.
@@ -769,6 +814,11 @@ impl StandardAcpiProvider {
     }
 
     /// Publishes ACPI tables after installation.
+    ///
+    /// # TPL
+    /// Must be called at `TPL <= TPL_NOTIFY` for the RSDP lock and the underlying
+    /// `InstallConfigurationTable` call. The UEFI specification requires that API to be called
+    /// at or below `TPL_NOTIFY`.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
         if let Some(rsdp) = self.rsdp.try_lock().map_err(|()| AcpiError::StateUnavailable)?.as_mut() {
             let rsdp_ptr: *const AcpiRsdp = core::ptr::from_mut::<AcpiRsdp>(*rsdp).cast_const();
@@ -786,6 +836,9 @@ impl StandardAcpiProvider {
     }
 
     /// Calls the notify functions in `notify_list` upon installation of an ACPI table.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         // Extract the guard as a variable so it lives until the end of this function.
         let read_guard = self.acpi_tables.try_lock().map_err(|()| AcpiError::StateUnavailable)?;
@@ -819,6 +872,9 @@ impl StandardAcpiProvider {
     /// assuming we correctly exclude system tables (XSDT, RSDP, FACS, and DSDT), which by spec are not included in the list of installed tables.
     ///
     /// The only downside to the above approach is the non-constant access time for a particular index.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub(crate) fn get_table_at_idx(&self, idx: usize) -> Result<(TableKey, AcpiTable), AcpiError> {
         let guard = self.acpi_tables.try_lock().map_err(|()| AcpiError::StateUnavailable)?;
 

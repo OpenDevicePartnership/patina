@@ -249,3 +249,23 @@ specific cases; these should include design rationale for the departure from
 these rules of thumb. For example, it might be possible to use a non-TPL
 synchronization primitive that only uses `try_lock` to avoid deadlock and is
 designed to handle failure to acquire the lock in a non-fatal manner.
+
+## TPL Documentation
+
+Functions with caller TPL restrictions must include a `# TPL` section in their
+function documentation. State the allowed caller TPL explicitly, including restrictions
+inherited from called services or locks acquired by the function. Document trait
+contracts on the trait methods so every implementation and caller shares the same
+requirements.
+
+```rust,ignore
+/// My fun function
+///
+/// # TPL
+/// This API must be called at TPL <= TPL_NOTIFY because memory allocation services are
+/// used which the UEFI spec requires to be called with this TPL restriction. In addition,
+/// a TPL_NOTIFY level `TplMutex` is acquired by this function.
+fn my_fun_function() -> Result<(), EfiError> {
+   // ...
+}
+```

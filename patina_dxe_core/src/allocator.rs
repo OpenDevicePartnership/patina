@@ -562,6 +562,9 @@ impl AllocatorMap {
     // Note: this routine is used to generate new handles for the creation of allocators as needed; this means that an
     // Ok() result from this routine doesn't necessarily guarantee that an allocator associated with this handle exists or
     // memory type exists.
+    /// # TPL
+    ///
+    /// Must be called at or below `TPL_NOTIFY` because creating a handle locks the protocol database.
     fn handle_for_memory_type(memory_type: efi::MemoryType) -> Result<efi::Handle, EfiError> {
         match memory_type {
             efi::RESERVED_MEMORY_TYPE => Ok(protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
@@ -616,6 +619,11 @@ impl AllocatorMap {
 
 /// Allocates pool memory of the specified type.
 ///
+/// # TPL
+///
+/// The UEFI specification requires `AllocatePool` to be called at or below `TPL_NOTIFY`.
+/// Allocator handle creation also locks the protocol database at `TPL_NOTIFY`.
+///
 /// # Safety
 ///
 /// `buffer` must be a pointer pointing to valid, writable memory for a `*mut c_void`.
@@ -643,6 +651,11 @@ unsafe extern "efiapi" fn allocate_pool(
 ///
 /// This function is safe because all input parameters are value types and any internal unsafe
 /// operations are fully encapsulated with validated preconditions.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`allocate_pool`]. Allocator handle creation also locks the protocol database.
 pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, EfiError> {
     // It is not valid to attempt to allocate these memory types
     if matches!(pool_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
@@ -662,6 +675,11 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
 
 /// Frees pool memory previously allocated with [`allocate_pool`].
 ///
+/// # TPL
+///
+/// The UEFI specification requires `FreePool` to be called at or below `TPL_NOTIFY`.
+/// The allocator map's `TPL_HIGH_LEVEL` lock does not relax this service limit.
+///
 /// # Safety
 ///
 /// `buffer` must be a pointer pointing to valid, previously allocated memory
@@ -677,6 +695,11 @@ unsafe extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
 }
 
 /// Frees pool memory previously allocated with [`core_allocate_pool`].
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`free_pool`], even though the allocator map lock permits `TPL_HIGH_LEVEL`.
 ///
 /// # Safety
 ///
@@ -704,6 +727,12 @@ pub unsafe fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
 }
 
 /// Allocates pages of the specified type and returns the address through the `memory` pointer.
+///
+/// # TPL
+///
+/// The UEFI specification requires `AllocatePages` to be called at or below `TPL_NOTIFY`.
+/// Allocator handle creation and runtime MAT installation also acquire protocol database and
+/// system table locks, respectively.
 ///
 /// # Safety
 ///
@@ -743,6 +772,12 @@ unsafe extern "efiapi" fn allocate_pages(
 }
 
 /// Allocates pages of the specified type and returns the address through the `memory` pointer.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`allocate_pages`]. Allocator handle creation and runtime MAT installation also
+/// acquire protocol database and system table locks, respectively.
 pub fn core_allocate_pages(
     allocation_type: efi::AllocateType,
     memory_type: efi::MemoryType,
@@ -793,6 +828,9 @@ pub fn core_allocate_pages(
     res
 }
 
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because allocator handle creation locks the protocol database.
 pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocatorWithFsb, EfiError> {
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
     ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?.get_or_create_allocator(memory_type, handle)
@@ -804,6 +842,11 @@ pub fn memory_type_for_handle(handle: efi::Handle) -> Option<efi::MemoryType> {
 }
 
 /// Frees pages previously allocated with [`allocate_pages`].
+///
+/// # TPL
+///
+/// The UEFI specification requires `FreePages` to be called at or below `TPL_NOTIFY`.
+/// Runtime MAT installation also locks the system table.
 ///
 /// # Safety
 ///
@@ -818,6 +861,11 @@ unsafe extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize)
 }
 
 /// Frees pages previously allocated with [`core_allocate_pages`].
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`free_pages`]. Runtime MAT installation also locks the system table.
 ///
 /// # Safety
 ///
@@ -1077,6 +1125,11 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     }
 }
 
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because configuration table installation locks type metadata.
+/// This helper inherits the configuration table installation requirement documented on
+/// [`config_tables::core_install_configuration_table`]; it is not itself a UEFI service.
 #[cfg_attr(coverage, coverage(off))]
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     let bin_manager = MEMORY_BIN_MANAGER.try_lock().ok_or(EfiError::AccessDenied)?;
@@ -1272,6 +1325,9 @@ fn process_hob_allocations(hob_list: &HobList) {
 /// memory map reported to the OS can be stable even in the face of small variations in memory from boot-to-boot, which
 /// helps to avoid S4 failure due to memory map change.
 ///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because memory bin reservation can create allocator handles.
 pub fn init_memory_support(hob_list: &HobList) {
     // Add the rest of the system resources to the GCD.
     // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
@@ -1306,6 +1362,10 @@ pub fn init_memory_support(hob_list: &HobList) {
 /// Note: A local `MemoryBinManager` is used during initialization to avoid holding the global lock
 /// during GCD allocations (which would cause re-entrant lock panics since allocation recording also
 /// acquires the lock).
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because bin reservation can create allocator handles.
 #[cfg_attr(coverage, coverage(off))]
 fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeInformation]) {
     let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
@@ -1436,6 +1496,10 @@ fn seed_bin_statistics_from_hobs(hob_list: &HobList) {
 /// - Different-type allocated blocks are logged as an error with `debug_assert` (should not happen, but
 ///   the allocation is left in place).
 /// - Partial overlaps at bin boundaries are logged as an error with `debug_assert`.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because allocator handle creation locks the protocol database.
 fn reserve_bin_ranges() {
     let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
         log::warn!(target: "memory_bin", "Cannot reserve memory bins: bin manager is in use");

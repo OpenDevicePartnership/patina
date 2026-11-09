@@ -882,6 +882,10 @@ impl EfiSystemTable {
 }
 
 /// Initializes and publishes the global system table.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to acquire the system table lock.
 pub fn init_system_table(uefi_spec_version: UefiSpecVersion) {
     let revision = u32::from(uefi_spec_version);
     let mut table = EfiSystemTable::allocate_new_table();

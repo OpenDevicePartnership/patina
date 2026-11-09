@@ -57,6 +57,9 @@ impl AcpiTableManager {
     /// The returned `TableKey` can be used to uninstall the table later.
     /// It is an opaque reference to the table and should not be manipulated directly.
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// ## SAFETY
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
@@ -71,6 +74,9 @@ impl AcpiTableManager {
     /// The `table_key` is the opaque reference returned by `install_acpi_table`.
     ///
     /// This function will remove the table from the XSDT and free the memory associated with it.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError> {
         self.provider_service.uninstall_acpi_table(table_key)
     }
@@ -84,6 +90,9 @@ impl AcpiTableManager {
     /// use `get_acpi_table_unchecked` for a untyped retrieval.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub fn get_acpi_table<T: Clone + 'static>(&self, table_key: TableKey) -> Result<T, AcpiError> {
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
@@ -110,6 +119,9 @@ impl AcpiTableManager {
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table_unchecked`.
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// ## SAFETY
     ///
     /// - The caller must ensure the type T is a valid representation for the retrieved table.
@@ -124,12 +136,18 @@ impl AcpiTableManager {
     }
 
     /// Registers a function which will be called whenever a new ACPI table is installed.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub fn register_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
         self.provider_service.register_notify(true, notify_fn)
     }
 
     /// Unregisters an existing notification function.
     /// The function must have been previously registered with `register_notify`.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     pub fn unregister_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
         self.provider_service.register_notify(false, notify_fn)
     }
@@ -140,6 +158,10 @@ impl AcpiTableManager {
     /// This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// # Errors
     /// Returns an error if the provider's shared state cannot be acquired due to TPL restrictions.
     pub fn iter_tables(&self) -> Result<Vec<AcpiTable>, AcpiError> {
@@ -152,18 +174,33 @@ impl AcpiTableManager {
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub(crate) trait AcpiProvider {
     /// Installs an ACPI table and returns an associated key which can be used to get or uninstall the table later.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn install_acpi_table(&self, acpi_table: AcpiTable) -> Result<TableKey, AcpiError>;
 
     /// Uninstalls an ACPI table using the same `table_key` returned at the time of installation.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError>;
 
     /// Retrieves an ACPI table by its table key. This must be the same key returned at the time of installation.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError>;
 
     /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
 
     /// Returns all currently installed tables in an iterable format.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     fn collect_tables(&self) -> Result<Vec<AcpiTable>, AcpiError>;
 }
 
