@@ -108,6 +108,7 @@ words:
   - getsp
   - gicr
   - gigantor
+  - gitea
   - gnullvm
   - gohman
   - granularities
@@ -129,6 +130,7 @@ words:
   - jhpratt
   - joshlf
   - keccak
+  - kellnr
   - libfuzzer
   - libyaml
   - linkme
