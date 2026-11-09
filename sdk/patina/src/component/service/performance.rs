@@ -19,6 +19,8 @@ use crate::performance::{
 
 /// Service that records firmware performance measurements into the Firmware Basic Boot Performance Table (FBPT).
 ///
+/// # TPL
+/// All methods must be called at or below `TPL_NOTIFY` to acquire the performance table lock.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait PerformanceManager: Send + Sync {
     /// Function to log performance record with event description and a timestamp.

@@ -128,6 +128,13 @@ impl From<EfiError> for ConfigTableError {
 /// [`Service<dyn ConfigurationTableServices>`](crate::component::service::Service) parameter to
 /// their entry point.
 ///
+/// # TPL
+/// All methods must be called at or below `TPL_NOTIFY` to acquire the system table and type metadata locks.
+/// For installation, replacement, and removal, the UEFI specification requires the corresponding
+/// `InstallConfigurationTable` API to be called at or below `TPL_NOTIFY`.
+/// These SDK methods are not themselves UEFI services; lookup and read
+/// methods have a lock-derived ceiling rather than an `InstallConfigurationTable` requirement.
+///
 /// # Examples
 ///
 /// ```rust,no_run
@@ -355,6 +362,11 @@ pub trait ConfigTable: Sized + 'static {
 /// republished for as long as the table stays installed. [`Self::get_ptr`] is available for callers
 /// that need zero-copy access and are willing to take on the resulting aliasing requirements
 /// themselves.
+///
+/// # TPL
+/// All methods must be called at or below `TPL_NOTIFY`, inheriting the requirements of the
+/// underlying [`ConfigurationTableServices`] methods. These type-safe SDK wrappers do not define
+/// additional UEFI service limits.
 pub trait ConfigurationTableServicesExt: ConfigurationTableServices {
     /// Installs `table` as a [`ConfigTable`].
     ///

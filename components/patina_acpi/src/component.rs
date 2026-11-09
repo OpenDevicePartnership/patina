@@ -75,6 +75,12 @@ impl AcpiComponent {
     }
 
     /// Initializes the ACPI system.
+    ///
+    /// # TPL
+    /// Must be called at `TPL <= TPL_NOTIFY` for the provider locks and the underlying
+    /// memory allocation, protocol installation, and configuration table services.
+    /// The UEFI specification requires those APIs to be called at or below `TPL_NOTIFY`.
+    ///
     /// TODO: Coverage was previously disabled because the entry point relied on `StandardBootServices`. Now that
     /// the dependency on `StandardBootServices` has been removed, revisit to determine if the entry point can be
     /// refactored and to enable coverage of various code paths.
