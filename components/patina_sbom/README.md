@@ -93,3 +93,26 @@ Publication is attempted only once. The notification closes its event after the 
 repeated signals are ignored even if publication failed. Discovery, event-registration, and
 installation errors are reported. The component does not replace an existing SBOM table or
 include entries discovered after its first ReadyToBoot notification.
+
+## Host Tools
+
+The `std` feature enables two standalone host binaries, without changing the firmware library:
+
+```text
+cargo make build-lib -p patina_sbom --features std --bins
+```
+
+- `sbom-acpi-decode <table.bin>` validates a saved ACPI SBOM table and prints its ACPI header,
+  entry headers, and payload bytes in hexadecimal. Payloads retain their original compression.
+- `sbom-acpi-dump <output.bin>` captures the running system's SBOM table using the Windows
+  firmware-table API or Linux `/sys/firmware/acpi/tables/SBOM`. Linux may require elevated
+  read permissions. The tool validates the table before saving and requires a new output path.
+
+For example, after building on Windows:
+
+```text
+target\debug\sbom-acpi-dump.exe sbom.bin
+target\debug\sbom-acpi-decode.exe sbom.bin
+```
+
+Both tools report malformed tables and operating-system errors with a nonzero exit status.

@@ -12,6 +12,16 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "sbom-acpi-decode"
+path = "bin/decode.rs"
+required-features = ["std"]
+
+[[bin]]
+name = "sbom-acpi-dump"
+path = "bin/dump.rs"
+required-features = ["std"]
+
 [dependencies]
 patina = { workspace = true, features = ["alloc"] }
 log = { workspace = true }
@@ -21,5 +31,6 @@ zerocopy = { workspace = true }
 patina = { path = "../../sdk/patina", features = ["mockall"] }
 
 [features]
+std = ["unstable-sbom"]
 unstable-sbom = ["patina/unstable-sbom"]
 ci_features = ["unstable-sbom"]
