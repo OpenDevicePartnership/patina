@@ -55,6 +55,10 @@ impl AcpiTableProtocol {
     ///
     /// This implementation only supports ACPI 2.0+.
     ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called below `TPL_NOTIFY`.
+    /// This is stricter than the ACPI provider locks' `TPL <= TPL_NOTIFY` ceiling.
+    ///
     /// # Errors
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) the table buffer is null or too small to contain the ACPI table header.
@@ -138,6 +142,10 @@ impl AcpiTableProtocol {
     ///
     /// This implementation only supports ACPI 2.0+.
     ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called below `TPL_NOTIFY`.
+    /// This is stricter than the ACPI provider locks' `TPL <= TPL_NOTIFY` ceiling.
+    ///
     /// # Errors
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if the table key does not correspond to an installed table.
@@ -190,6 +198,9 @@ impl AcpiGetProtocol {
     ///
     /// This implementation only supports ACPI 2.0+.
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
+    ///
     /// # Errors
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) the index is out of bounds of the list of installed tables.
@@ -237,6 +248,9 @@ impl AcpiGetProtocol {
     /// section 9.1. Refer to the PI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
+    ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`.
     ///
     /// # Errors
     ///

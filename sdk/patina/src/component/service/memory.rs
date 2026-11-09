@@ -141,6 +141,11 @@ pub trait MemoryManager {
     /// }
     /// ```
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`. The UEFI specification requires the corresponding
+    /// `AllocatePages` API to be called at or below `TPL_NOTIFY`.
+    /// This SDK method is not itself a UEFI service. Allocation can also create protocol handles or
+    /// update the runtime memory attributes configuration table, acquiring `TPL_NOTIFY` locks.
     fn allocate_pages(&self, page_count: usize, options: AllocationOptions) -> Result<PageAllocation, MemoryError>;
 
     /// Allocates pages and zeroes them.
@@ -150,6 +155,9 @@ pub trait MemoryManager {
     ///
     /// See [`MemoryManager::allocate_pages`] for more details.
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`, inheriting the requirements of
+    /// [`MemoryManager::allocate_pages`], which this SDK helper calls before zeroing the pages.
     fn allocate_zero_pages(
         &self,
         page_count: usize,
@@ -187,6 +195,11 @@ pub trait MemoryManager {
     /// dropped. The memory will be freed and any access after this call will result
     /// in undefined behavior.
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`. The UEFI specification requires the corresponding
+    /// `FreePages` API to be called at or below `TPL_NOTIFY`.
+    /// This SDK method is not itself a UEFI service. Freeing runtime pages can also update the
+    /// memory attributes configuration table, acquiring `TPL_NOTIFY` locks.
     unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError>;
 
     /// Gets a heap allocator for the specified memory type.
@@ -229,6 +242,10 @@ pub trait MemoryManager {
     /// }
     /// ```
     ///
+    /// # TPL
+    /// Must be called at or below `TPL_NOTIFY`; obtaining an allocator can create a protocol handle.
+    /// This is an SDK-specific operation with an implementation-derived ceiling, not a UEFI
+    /// Memory Allocation Service entry point.
     #[cfg(feature = "alloc")]
     fn get_allocator(&self, memory_type: EfiMemoryType) -> Result<&'static dyn Allocator, MemoryError>;
 

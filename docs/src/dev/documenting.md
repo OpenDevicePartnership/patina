@@ -102,6 +102,11 @@ graph TD
     D --> E
 ```
 
+### TPL Restrictions
+
+Follow the [TPL Guidance](../dxe_core/synchronization.md) to add function level comments detailing TPL
+restrictions, if applicable, for a function.
+
 ## Style Guides
 
 The goal is to create documentation that provides developers with a clear and concise description

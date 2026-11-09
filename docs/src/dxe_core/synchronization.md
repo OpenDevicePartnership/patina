@@ -23,11 +23,17 @@ the [UEFI Specification Section 7.1](https://uefi.org/specs/UEFI/2.11/07_Service
 very similar to the Rust [sync::Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html).
 Each `TplMutex` has a type parameter which represents the data that it is
 protecting. The data can only be accessed through the guards returned by
-`try_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in the DXE Core adapter.
-The DXE Core adapter exposes only `try_lock()`. The SDK retains a deprecated
-`lock()` method for compatibility, but it panics on acquisition failure. Callers
-should use `try_lock()` and explicitly handle failure, normally by returning an
-appropriate domain error.
+`checked_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in
+the DXE Core adapter. Ordinary acquisitions must use `checked_lock()` and
+handle its `Result` (both SDK and Core), normally by returning an appropriate domain error.
+It asserts in debug builds if any acquisition invariant fails: contention,
+an uninitialized controller, or a rejected TPL transition. In non-debug builds,
+these failures return `Err(TplMutexError)` instead. The error distinguishes
+`AlreadyLocked`, `UninitializedController`, and `InvalidTplTransition` (including
+TPL inversion). An already-held mutex reports `AlreadyLocked` before checking
+the controller or attempting a TPL transition.
+
+The infallible `TplMutex::lock()` method is replaced by `checked_lock()`.
 
 There are two mutual exclusion mechanisms that protect the data guarded by
 `TplMutex`:
@@ -43,9 +49,11 @@ scenarios.
 
 ```admonish warning
 Care must be taken when selecting the `tpl_lock_level` for a `TplMutex`. Code
-executing at a TPL higher than the `TplMutex` will panic if it attempts to
-acquire the lock (because it will attempt to raise the TPL to a lower level,
-which is an error). But setting a `tpl_lock_level` to a high TPL level will
+executing at a TPL higher than the `TplMutex` violates the acquisition invariant
+(because it attempts to raise the TPL to a lower level, which is an error).
+`checked_lock()` asserts on rejection in debug builds and returns an error in
+non-debug builds; acquisition failures return an error in non-debug builds. Setting a
+`tpl_lock_level` to a high TPL level will
 prevent other (unrelated) usage of that TPL, potentially reducing system
 responsiveness. It is recommended to set the `tpl_lock_level` as low as possible
 while still guaranteeing that the no access to the lock will be attempted at a
@@ -58,9 +66,11 @@ The second mutual exclusion mechanism used by `TplMutex` is a flag to control
 access to the lock. To acquire the `TplMutex`, the flag must be clear to
 indicate that the lock is not owned by any other agent. There is a significant
 difference between the `TplMutex` and `sync::Mutex` - while `sync::Mutex` will
-simply block on a call to `lock()` when the lock is owned, `TplMutex::try_lock()`
-returns `Err(())` immediately if it is already owned. The SDK also returns
-`Err(())` if its deferred TPL controller has not been initialized.
+simply block on a call to `lock()` when the lock is owned, `TplMutex::checked_lock()`
+asserts in debug builds and otherwise returns `Err(TplMutexError::AlreadyLocked)` immediately.
+`TplMutex::checked_lock()` in non-debug builds
+returns `Err(TplMutexError::AlreadyLocked)` immediately if it is already owned. The SDK also returns
+`Err(TplMutexError::UninitializedController)` if its deferred TPL controller has not been initialized.
 
 ```admonish warning
 Reentrant acquisition fails. Do not retry in a loop: the interrupted owner
@@ -80,7 +90,7 @@ would therefore deadlock. Note that [`sync::Mutex` behavior](https://doc.rust-la
 is similar if `lock()` is attempted on the same thread that already holds the
 mutex.
 
-The `try_lock()` routine in `TplMutex` allows a lock to be attempted and fail
+The `checked_lock()` routine in `TplMutex` allows a lock to be attempted and fail
 without blocking; this can be used for scenarios where a lock might be held by
 another agent in a lower TPL but the caller can handle not acquiring the lock,
 or in scenarios where a call is re-entrant at the same TPL.
@@ -106,33 +116,33 @@ infallible `TplServices::raise_tpl()` service interface.
 
 ## TplGuard
 
-When `try_lock()` succeeds on `TplMutex` a guard is returned that
+When `checked_lock()` succeeds on `TplMutex` a guard is returned that
 provides access to the locked data. The `TplGuard` structure implements `Deref`
 and `DerefMut`, which allows access to the underlying data. These examples
 assume an initialized `boot_services` controller and a function returning
-`Result<_, ()>`:
+`Result<_, patina::uefi::tpl_mutex::TplMutexError>`:
 
 ```rust,ignore
 use patina::uefi::{boot_services::tpl::Tpl, tpl_mutex::TplMutex};
 let tpl_mutex = TplMutex::new(boot_services, Tpl::HIGH_LEVEL, 1_usize);
 
-*tpl_mutex.try_lock()? = 2_usize; //deref to set
-assert_eq!(2_usize, *tpl_mutex.try_lock()?); //deref to read.
+*tpl_mutex.checked_lock()? = 2_usize; //deref to set
+assert_eq!(2_usize, *tpl_mutex.checked_lock()?); //deref to read.
 ```
 
-In addition, when the guard returned by `try_lock()` goes out of
+In addition, when the guard returned by `checked_lock()` goes out of
 scope or is dropped, the lock is automatically released:
 
 ```rust,ignore
 use patina::uefi::{boot_services::tpl::Tpl, tpl_mutex::TplMutex};
 let tpl_mutex1 = TplMutex::new(boot_services, Tpl::HIGH_LEVEL, 1_usize);
 
-let mut guard1 = tpl_mutex1.try_lock()?; //mutex1 locked.
+let mut guard1 = tpl_mutex1.checked_lock()?; //mutex1 locked.
 *guard1 = 2_usize; //set data behind guard1
 assert_eq!(2_usize, *guard1); //deref to read.
-assert!(tpl_mutex1.try_lock().is_err()); //mutex1 still locked.
+// The guard must be dropped before acquiring the mutex again.
 drop(guard1); //lock is released.
-assert!(tpl_mutex1.try_lock().is_ok()); //mutex1 unlocked and can be acquired.
+assert!(tpl_mutex1.checked_lock().is_ok()); //mutex1 unlocked and can be acquired.
 ```
 
 ## General Guidelines for Synchronization within Patina
@@ -166,7 +176,8 @@ the mutex. Typically this will be `TPL_NOTIFY` as that is the highest level that
 the UEFI specification normally allows for general usage - see [Table 7.2](https://uefi.org/specs/UEFI/2.11/07_Services_Boot_Services.html#tpl-usage)
 in the UEFI spec. Designs must guarantee the invariant that there will be no
 attempts to access the `TplMutex` at a higher TPL level than associated with the
-mutex, and this will be enforced with an `assert`. This is known as "TPL
+mutex. `checked_lock()` enforces this with a debug assertion and returns an
+error in non-debug builds. This is known as "TPL
 Inversion," and if it were allowed, it would mean that higher TPL levels could
 break mutual exclusion and cause data races.
 [Table 7.3](https://uefi.org/specs/UEFI/2.11/07_Services_Boot_Services.html#tpl-restrictions)
@@ -195,20 +206,20 @@ guard is active.
 
    ```rust,ignore
    {
-      let guard = my_tpl_mutex.try_lock()?;
+      let guard = my_tpl_mutex.checked_lock()?;
        // TPL raised to level associated with my_tpl_mutex
        guard.mutation();
    }
    // mutex dropped, TPL restored to the base TPL level for the event callback.
    long_running_computation();
    // re-acquire mutex
-   my_tpl_mutex.try_lock()?.mutation2();
+   my_tpl_mutex.checked_lock()?.mutation2();
    ```
 
    instead of:
 
    ```rust,ignore
-   let guard = my_tpl_mutex.try_lock()?;
+   let guard = my_tpl_mutex.checked_lock()?;
    guard.mutation();
    //mutex held and TPL stays high during long_running_computation
    long_running_computation();
@@ -231,7 +242,9 @@ pointer. Sometimes the `context` pointer is known to be unique to the event
 callback and never accessed from other contexts, in which case a `TplMutex` is
 not required.
 
-7. Direct `raise_tpl` and `restore_tpl` calls should be avoided. Directly
+7. Direct TPL transitions and `restore_tpl` calls should be avoided. When a
+direct `TplController` transition is necessary, use `checked_tpl_raise()`.
+Directly
 manipulating the TPL decouples the mutual exclusion primitives from the data
 that is being protected and makes it hard to associate the TPL requirements with
 the data synchronization model of the code.
@@ -244,7 +257,7 @@ error:
 
    ```rust,ignore
    let my_tpl_mutex = TplMutex::new(boot_services, Tpl::NOTIFY, Data::new());
-   let _guard = my_tpl_mutex.try_lock()?; //TPL raised to NOTIFY while _guard is in scope.
+   let _guard = my_tpl_mutex.checked_lock()?; //TPL raised to NOTIFY while _guard is in scope.
    let acpi_services = locate_acpi_table_protocol();
    acpi_services.install_acpi_table(); //BUG: UEFI spec requires invocation at < TPL_NOTIFY
    ```
@@ -254,3 +267,23 @@ specific cases; these should include design rationale for the departure from
 these rules of thumb. For example, it might be possible to use a non-TPL
 synchronization primitive that only uses `try_lock` to avoid deadlock and is
 designed to handle failure to acquire the lock in a non-fatal manner.
+
+## TPL Documentation
+
+Functions with caller TPL restrictions must include a `# TPL` section in their
+function documentation. State the allowed caller TPL explicitly, including restrictions
+inherited from called services or locks acquired by the function. Document trait
+contracts on the trait methods so every implementation and caller shares the same
+requirements.
+
+```rust,ignore
+/// My fun function
+///
+/// # TPL
+/// This API must be called at TPL <= TPL_NOTIFY because memory allocation services are
+/// used which the UEFI spec requires to be called with this TPL restriction. In addition,
+/// a TPL_NOTIFY level `TplMutex` is acquired by this function.
+fn my_fun_function() -> Result<(), EfiError> {
+   // ...
+}
+```

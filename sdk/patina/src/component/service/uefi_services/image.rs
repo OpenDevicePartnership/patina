@@ -107,6 +107,9 @@ pub trait ImageServices {
     /// Returns [`ImageError::LoadError`] if the image could not be loaded,
     /// [`ImageError::SecurityViolation`] if it failed authentication, or
     /// [`ImageError::AccessDenied`] if platform policy prevented loading.
+    ///
+    /// # TPL
+    /// The UEFI specification requires `LoadImage()` to be called at `TPL == TPL_APPLICATION`.
     fn load_image(&self, parent: Handle, source: &[u8]) -> Result<Handle, ImageError>;
 
     /// Starts a previously loaded image, transferring control to its entry point.
@@ -114,6 +117,9 @@ pub trait ImageServices {
     /// # Errors
     ///
     /// Returns [`ImageError::InvalidParameter`] if `image` is not a loaded, not started image.
+    ///
+    /// # TPL
+    /// The UEFI specification requires `StartImage()` to be called at `TPL == TPL_APPLICATION`.
     fn start_image(&self, image: Handle) -> Result<(), ImageError>;
 
     /// Unloads a previously loaded image.
@@ -121,6 +127,9 @@ pub trait ImageServices {
     /// # Errors
     ///
     /// Returns [`ImageError::InvalidParameter`] if `image` is not a valid image handle.
+    ///
+    /// # TPL
+    /// The UEFI specification requires `UnloadImage()` to be called at or below `TPL_CALLBACK`.
     fn unload_image(&self, image: Handle) -> Result<(), ImageError>;
 
     /// Loads a UEFI image located by a device path (for example, a file on a file system or a
@@ -137,6 +146,9 @@ pub trait ImageServices {
     ///
     /// Returns [`ImageError::NotFound`] if no provider could produce the image for the given device
     /// path, or the other [`ImageError`] variants as for [`Self::load_image`].
+    ///
+    /// # TPL
+    /// Must be called at `TPL == TPL_APPLICATION`, matching UEFI `LoadImage`.
     #[cfg(feature = "unstable-device-path")]
     fn load_image_from_device_path(
         &self,
