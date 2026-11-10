@@ -306,7 +306,7 @@ where
     }
 }
 
-/// Converts a `log::Level` to a EFI Debug Level.
+/// Converts a `log::Level` to a EDK II Debug Level.
 #[cfg_attr(coverage, coverage(off))]
 const fn log_level_to_debug_level(level: Level) -> u32 {
     match level {
