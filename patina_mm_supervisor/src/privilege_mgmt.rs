@@ -118,10 +118,11 @@ pub(crate) unsafe fn invoke_demoted_routine(
 
 /// Test-only mock backing [`invoke_demoted_routine`].
 ///
-/// The assembly privilege transition cannot run on the host, so in test builds the wrapper
-/// delegates here. Install a handler with [`set_handler`] to observe calls and control the
-/// return value; with no handler installed, calls return `0` (`EFI_SUCCESS`).
+/// The assembly transition cannot run on the host, so test builds call this instead. Install a
+/// handler with [`set_handler`] to observe calls and set the return value. With no handler
+/// installed, calls return 0 (`EFI_SUCCESS`).
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 pub(crate) mod mock {
     use core::cell::RefCell;
 
@@ -133,7 +134,7 @@ pub(crate) mod mock {
         static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
     }
 
-    /// Installs a handler invoked in place of the real Ring 0 -> Ring 3 transition.
+    /// Installs a handler that runs in place of the real Ring 0 to Ring 3 transition.
     pub(crate) fn set_handler<F>(handler: F)
     where
         F: FnMut(usize, u64, u64, usize, u64, u64, u64) -> usize + 'static,
@@ -141,7 +142,7 @@ pub(crate) mod mock {
         HANDLER.with(|handler_cell| *handler_cell.borrow_mut() = Some(Box::new(handler)));
     }
 
-    /// Removes any installed handler; subsequent calls return `0`.
+    /// Removes any installed handler; later calls return 0.
     pub(crate) fn clear() {
         HANDLER.with(|handler_cell| *handler_cell.borrow_mut() = None);
     }
@@ -163,8 +164,10 @@ pub(crate) mod mock {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use core::cell::RefCell;
 
     #[test]
     fn test_invoke_demoted_routine_delegates_to_mock_handler() {
@@ -187,6 +190,43 @@ mod tests {
         // SAFETY: see above.
         let ret = unsafe { invoke_demoted_routine(7, 0xdead_beef, 0xcafe, 3, 10, 20, 30) };
         assert_eq!(ret, 0x1234);
+
+        mock::clear();
+    }
+
+    #[test]
+    fn test_invoke_demoted_routine_reports_failures_from_ring_3() {
+        // A demoted routine that fails returns its EFI status through the wrapper, which is how
+        // callers learn the Ring 3 work did not succeed.
+        mock::set_handler(|_, _, _, _, _, _, _| Status::ACCESS_DENIED.as_usize());
+        // SAFETY: under `test` the wrapper delegates to the mock; no real privilege transition occurs.
+        let ret = unsafe { invoke_demoted_routine(0, 0x1000, 0x2000, 0, 0, 0, 0) };
+        assert_eq!(ret, Status::ACCESS_DENIED.as_usize());
+
+        // Clearing the handler restores the inert default rather than leaving the last one installed.
+        mock::clear();
+        // SAFETY: see above.
+        let ret = unsafe { invoke_demoted_routine(0, 0x1000, 0x2000, 0, 0, 0, 0) };
+        assert_eq!(ret, 0);
+    }
+
+    #[test]
+    fn test_invoke_demoted_routine_records_every_invocation() {
+        // Each call reaches the handler, so a test can drive a caller through several demotions.
+        let calls = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let recorder = calls.clone();
+        mock::set_handler(move |cpu_index, routine, _stack, arg_count, arg1, _, _| {
+            recorder.borrow_mut().push((cpu_index, routine, arg_count, arg1));
+            0
+        });
+
+        for cpu in 0..3usize {
+            // SAFETY: under `test` the wrapper delegates to the mock; no real privilege transition occurs.
+            let ret = unsafe { invoke_demoted_routine(cpu, 0x1000 + cpu as u64, 0x2000, 1, cpu as u64, 0, 0) };
+            assert_eq!(ret, 0);
+        }
+
+        assert_eq!(*calls.borrow(), vec![(0, 0x1000, 1, 0), (1, 0x1001, 1, 1), (2, 0x1002, 1, 2)]);
 
         mock::clear();
     }

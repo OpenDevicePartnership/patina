@@ -222,3 +222,190 @@ impl PagingPageAllocator for SharedPagingAllocator {
         allocator.allocate_page_internal(align, size, is_root).map_err(|error| paging_error_to_pt(error, align, size))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    const TEST_BUFFER_PAGES: usize = 32;
+    const TEST_BUFFER_BYTES: usize = TEST_BUFFER_PAGES * UEFI_PAGE_SIZE;
+
+    #[repr(align(4096))]
+    struct AlignedBuffer([u8; TEST_BUFFER_BYTES]);
+
+    fn initialized_allocator(pool_pages: usize) -> (PagingPoolAllocator, Box<AlignedBuffer>) {
+        assert!(pool_pages <= TEST_BUFFER_PAGES);
+        let mut buffer = Box::new(AlignedBuffer([0xA5; TEST_BUFFER_BYTES]));
+        let allocator = PagingPoolAllocator::new();
+
+        // SAFETY: `buffer` is page-aligned, remains live in the returned tuple, and
+        // contains at least `pool_pages` pages.
+        unsafe {
+            allocator.init(buffer.0.as_mut_ptr() as u64, pool_pages).unwrap();
+        }
+
+        (allocator, buffer)
+    }
+
+    #[test]
+    fn test_paging_allocator_not_initialized() {
+        let allocator = PagingPoolAllocator::new();
+        assert!(!allocator.is_initialized());
+        assert_eq!(allocator.free_page_count(), 0);
+        assert_eq!(allocator.allocated_page_count(), 0);
+        assert_eq!(
+            allocator.allocate_page_internal(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, false),
+            Err(AllocError::NotInitialized.into())
+        );
+    }
+
+    #[test]
+    fn test_paging_allocator_init_rejects_a_pool_size_that_overflows() {
+        let mut buffer = Box::new(AlignedBuffer([0xA5; TEST_BUFFER_BYTES]));
+        let base = buffer.0.as_mut_ptr() as u64;
+
+        // SAFETY: the page count is rejected before the allocator touches the buffer.
+        unsafe {
+            assert_eq!(PagingPoolAllocator::new().init(base, usize::MAX), Err(AllocError::PoolTooSmall.into()));
+        }
+    }
+
+    #[test]
+    fn test_paging_allocator_init_rejects_a_pool_that_wraps_the_address_space() {
+        // A base near the top of the address space cannot hold a one page pool.
+        let base = u64::MAX - UEFI_PAGE_SIZE as u64 + 1;
+
+        // SAFETY: the range check fails before the allocator writes anything.
+        unsafe {
+            assert_eq!(PagingPoolAllocator::new().init(base, 2), Err(AllocError::PoolTooSmall.into()));
+        }
+    }
+
+    #[test]
+    fn test_paging_allocator_init_validates_parameters() {
+        let mut buffer = Box::new(AlignedBuffer([0xA5; TEST_BUFFER_BYTES]));
+        let base = buffer.0.as_mut_ptr() as u64;
+
+        // SAFETY: each non-null address points into the live test buffer. Invalid
+        // parameters are rejected before the allocator writes to it.
+        unsafe {
+            assert_eq!(PagingPoolAllocator::new().init(base, 0), Err(AllocError::PoolTooSmall.into()));
+            assert_eq!(PagingPoolAllocator::new().init(base + 1, 1), Err(AllocError::InvalidAlignment.into()));
+        }
+    }
+
+    #[test]
+    fn test_paging_allocator_init_zeroes_only_the_pool() {
+        let pool_pages = 8;
+        let (allocator, buffer) = initialized_allocator(pool_pages);
+        let pool_bytes = pool_pages * UEFI_PAGE_SIZE;
+
+        assert!(allocator.is_initialized());
+        assert_eq!(allocator.free_page_count(), pool_pages);
+        assert_eq!(allocator.allocated_page_count(), 0);
+        assert!(buffer.0[..pool_bytes].iter().all(|&byte| byte == 0));
+        assert!(buffer.0[pool_bytes..].iter().all(|&byte| byte == 0xA5));
+    }
+
+    #[test]
+    fn test_paging_allocator_double_init_preserves_state() {
+        let (allocator, mut buffer) = initialized_allocator(8);
+        let base = buffer.0.as_mut_ptr() as u64;
+
+        // SAFETY: `buffer` is page-aligned and contains the requested eight pages.
+        unsafe {
+            assert_eq!(allocator.init(base, 8), Err(AllocError::AlreadyInitialized.into()));
+        }
+        assert_eq!(allocator.free_page_count(), 8);
+        assert_eq!(allocator.allocated_page_count(), 0);
+    }
+
+    #[test]
+    fn test_paging_allocator_rejects_invalid_requests_without_consuming_space() {
+        let (allocator, _buffer) = initialized_allocator(8);
+        let page_size = UEFI_PAGE_SIZE as u64;
+
+        for align in [0, page_size / 2, page_size + 1] {
+            assert_eq!(
+                allocator.allocate_page_internal(align, page_size, false),
+                Err(AllocError::InvalidAlignment.into())
+            );
+        }
+        for size in [0, page_size - 1, u64::MAX] {
+            assert_eq!(allocator.allocate_page_internal(page_size, size, false), Err(AllocError::InvalidSize.into()));
+        }
+
+        assert_eq!(PagingPoolAllocator::page_bytes(usize::MAX), None);
+        assert_eq!(allocator.free_page_count(), 8);
+        assert_eq!(allocator.allocated_page_count(), 0);
+    }
+
+    #[test]
+    fn test_paging_allocator_allocates_and_rounds_up_to_pages() {
+        let (allocator, mut buffer) = initialized_allocator(8);
+        let base = buffer.0.as_mut_ptr() as u64;
+        let page_size = UEFI_PAGE_SIZE as u64;
+
+        assert_eq!(allocator.allocate_page_internal(page_size, page_size, false), Ok(base));
+        assert_eq!(allocator.allocate_page_internal(page_size, page_size + 1, false), Ok(base + page_size));
+        assert_eq!(allocator.allocated_page_count(), 3);
+        assert_eq!(allocator.free_page_count(), 5);
+    }
+
+    #[test]
+    fn test_paging_allocator_counts_alignment_padding_as_consumed() {
+        let (allocator, mut buffer) = initialized_allocator(12);
+        let base = buffer.0.as_mut_ptr() as u64;
+        let page_size = UEFI_PAGE_SIZE as u64;
+        let double_page = page_size * 2;
+
+        // Move the bump pointer to an odd page relative to a two-page boundary.
+        let initial_pages = if base.is_multiple_of(double_page) { 1 } else { 2 };
+        allocator.allocate_page_internal(page_size, initial_pages * page_size, false).unwrap();
+
+        let aligned = allocator.allocate_page_internal(double_page, page_size, false).unwrap();
+        assert!(aligned.is_multiple_of(double_page));
+        assert_eq!(allocator.allocated_page_count(), initial_pages as usize + 1);
+        assert_eq!(allocator.free_page_count(), 12 - initial_pages as usize - 2);
+    }
+
+    #[test]
+    fn test_paging_allocator_out_of_memory_does_not_advance_state() {
+        // The out of memory path reports how much pool was left using a plain subtraction.
+        // With no logger installed, log::error! skips its arguments and that subtraction never
+        // runs. The silent test logger reports every level as enabled, so it runs here and
+        // shows it cannot underflow and panic while the build has overflow checks on.
+        crate::test_support::init_test_logger();
+
+        let (allocator, _buffer) = initialized_allocator(2);
+        let page_size = UEFI_PAGE_SIZE as u64;
+
+        assert!(allocator.allocate_page_internal(page_size, page_size * 2, false).is_ok());
+        assert_eq!(allocator.allocate_page_internal(page_size, page_size, false), Err(AllocError::OutOfMemory.into()));
+        assert_eq!(allocator.allocated_page_count(), 2);
+        assert_eq!(allocator.free_page_count(), 0);
+    }
+
+    #[test]
+    fn test_paging_allocator_maps_trait_errors() {
+        assert_eq!(paging_error_to_pt(AllocError::InvalidSize.into(), 0x1000, 0x1000), PtError::InvalidParameter);
+        assert_eq!(paging_error_to_pt(AllocError::OutOfMemory.into(), 0x1000, 0x1000), PtError::OutOfResources);
+    }
+
+    #[test]
+    fn test_paging_allocator_trait_adapters() {
+        let mut allocator = PagingPoolAllocator::new();
+        assert_eq!(
+            PagingPageAllocator::allocate_page(&mut allocator, UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, false),
+            Err(PtError::InvalidParameter)
+        );
+
+        let shared_allocator = Box::leak(Box::new(PagingPoolAllocator::new()));
+        let mut shared = SharedPagingAllocator::new(shared_allocator);
+        assert_eq!(
+            PagingPageAllocator::allocate_page(&mut shared, UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64, true),
+            Err(PtError::InvalidParameter)
+        );
+    }
+}
