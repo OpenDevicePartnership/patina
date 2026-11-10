@@ -412,3 +412,424 @@ const _: () = {
     assert!(core::mem::size_of::<PolicyRootV1>() == 24);
     assert!(core::mem::size_of::<SecurePolicyDataV1_0>() == 40);
 };
+
+/// Builders for synthetic policy buffers, shared by the policy unit tests.
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+pub(crate) mod test_support {
+    use crate::error::MmSupervisorResult;
+
+    use super::*;
+
+    /// Byte size of the `SecurePolicyDataV1_0` header.
+    pub(crate) const HEADER_SIZE: usize = 40;
+    /// Byte size of one `PolicyRootV1`.
+    pub(crate) const ROOT_SIZE: usize = 24;
+
+    /// The descriptor array carried by one policy root.
+    pub(crate) enum Descriptors {
+        Mem(Vec<MemDescriptorV1_0>),
+        Io(Vec<IoDescriptorV1_0>),
+        Msr(Vec<MsrDescriptorV1_0>),
+        Instruction(Vec<InstructionDescriptorV1_0>),
+        SaveState(Vec<SaveStateDescriptorV1_0>),
+        /// An empty root carrying a policy type the supervisor does not recognize.
+        Unknown(u32),
+    }
+
+    impl Descriptors {
+        fn policy_type(&self) -> u32 {
+            match self {
+                Self::Mem(_) => TYPE_MEM,
+                Self::Io(_) => TYPE_IO,
+                Self::Msr(_) => TYPE_MSR,
+                Self::Instruction(_) => TYPE_INSTRUCTION,
+                Self::SaveState(_) => TYPE_SAVE_STATE,
+                Self::Unknown(policy_type) => *policy_type,
+            }
+        }
+
+        fn count(&self) -> usize {
+            match self {
+                Self::Mem(descriptors) => descriptors.len(),
+                Self::Io(descriptors) => descriptors.len(),
+                Self::Msr(descriptors) => descriptors.len(),
+                Self::Instruction(descriptors) => descriptors.len(),
+                Self::SaveState(descriptors) => descriptors.len(),
+                Self::Unknown(_) => 0,
+            }
+        }
+
+        fn entry_size(&self) -> usize {
+            match self {
+                Self::Mem(_) => size_of::<MemDescriptorV1_0>(),
+                Self::Io(_) | Self::Msr(_) | Self::Instruction(_) => 8,
+                Self::SaveState(_) => size_of::<SaveStateDescriptorV1_0>(),
+                Self::Unknown(_) => 0,
+            }
+        }
+
+        fn encode(&self, bytes: &mut [u8], at: usize) {
+            match self {
+                Self::Mem(descriptors) => {
+                    for (index, descriptor) in descriptors.iter().enumerate() {
+                        let at = at + index * 24;
+                        write_u64(bytes, at, descriptor.base_address);
+                        write_u64(bytes, at + 8, descriptor.size);
+                        write_u32(bytes, at + 16, descriptor.mem_attributes);
+                        write_u32(bytes, at + 20, descriptor.reserved);
+                    }
+                }
+                Self::Io(descriptors) => {
+                    for (index, descriptor) in descriptors.iter().enumerate() {
+                        let at = at + index * 8;
+                        write_u16(bytes, at, descriptor.io_address);
+                        write_u16(bytes, at + 2, descriptor.length_or_width);
+                        write_u16(bytes, at + 4, descriptor.attributes);
+                        write_u16(bytes, at + 6, descriptor.reserved);
+                    }
+                }
+                Self::Msr(descriptors) => {
+                    for (index, descriptor) in descriptors.iter().enumerate() {
+                        let at = at + index * 8;
+                        write_u32(bytes, at, descriptor.msr_address);
+                        write_u16(bytes, at + 4, descriptor.length);
+                        write_u16(bytes, at + 6, descriptor.attributes);
+                    }
+                }
+                Self::Instruction(descriptors) => {
+                    for (index, descriptor) in descriptors.iter().enumerate() {
+                        let at = at + index * 8;
+                        write_u16(bytes, at, descriptor.instruction_index);
+                        write_u16(bytes, at + 2, descriptor.attributes);
+                        write_u32(bytes, at + 4, descriptor.reserved);
+                    }
+                }
+                Self::SaveState(descriptors) => {
+                    for (index, descriptor) in descriptors.iter().enumerate() {
+                        let at = at + index * 16;
+                        write_u32(bytes, at, descriptor.map_field);
+                        write_u32(bytes, at + 4, descriptor.attributes);
+                        write_u32(bytes, at + 8, descriptor.access_condition);
+                        write_u32(bytes, at + 12, descriptor.reserved);
+                    }
+                }
+                Self::Unknown(_) => {}
+            }
+        }
+    }
+
+    fn write_u16(bytes: &mut [u8], at: usize, value: u16) {
+        bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u32(bytes: &mut [u8], at: usize, value: u32) {
+        bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u64(bytes: &mut [u8], at: usize, value: u64) {
+        bytes[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    /// Assembles a byte-exact V1.0 policy buffer from a list of policy roots.
+    #[derive(Default)]
+    pub(crate) struct PolicyBuilder {
+        roots: Vec<(u8, Descriptors)>,
+        version_major: Option<u16>,
+        version_minor: Option<u16>,
+        flags: u32,
+        memory_policy_count: u32,
+        root_reserved: [u8; 3],
+        size_override: Option<u32>,
+        root_count_override: Option<u32>,
+        descriptor_count_override: Option<u32>,
+    }
+
+    impl PolicyBuilder {
+        pub(crate) fn new() -> Self {
+            Self::default()
+        }
+
+        /// Appends a policy root carrying `descriptors`.
+        pub(crate) fn root(mut self, access_attr: u8, descriptors: Descriptors) -> Self {
+            self.roots.push((access_attr, descriptors));
+            self
+        }
+
+        /// Overrides the header version, for validation tests.
+        pub(crate) fn version(mut self, major: u16, minor: u16) -> Self {
+            self.version_major = Some(major);
+            self.version_minor = Some(minor);
+            self
+        }
+
+        /// Sets the header `flags` field, which a conforming policy leaves zero.
+        pub(crate) fn flags(mut self, flags: u32) -> Self {
+            self.flags = flags;
+            self
+        }
+
+        /// Sets the legacy `memory_policy_count` field, which a conforming policy leaves zero.
+        pub(crate) fn memory_policy_count(mut self, count: u32) -> Self {
+            self.memory_policy_count = count;
+            self
+        }
+
+        /// Dirties every policy root's reserved bytes, for validation tests.
+        pub(crate) fn root_reserved(mut self, reserved: [u8; 3]) -> Self {
+            self.root_reserved = reserved;
+            self
+        }
+
+        /// Overrides the header `size` field without changing the buffer contents.
+        pub(crate) fn declared_size(mut self, size: u32) -> Self {
+            self.size_override = Some(size);
+            self
+        }
+
+        /// Overrides the header `policy_root_count` without emitting more roots.
+        pub(crate) fn declared_root_count(mut self, count: u32) -> Self {
+            self.root_count_override = Some(count);
+            self
+        }
+
+        /// Overrides every root's descriptor `count` without emitting more descriptors.
+        pub(crate) fn declared_descriptor_count(mut self, count: u32) -> Self {
+            self.descriptor_count_override = Some(count);
+            self
+        }
+
+        pub(crate) fn build(self) -> PolicyBuffer {
+            let descriptor_offset = HEADER_SIZE + self.roots.len() * ROOT_SIZE;
+            let descriptor_bytes: usize =
+                self.roots.iter().map(|(_, descriptors)| descriptors.count() * descriptors.entry_size()).sum();
+            let total = descriptor_offset + descriptor_bytes;
+
+            // `Vec<u64>` guarantees the 8-byte alignment `SecurePolicyDataV1_0` requires.
+            let mut words = vec![0u64; total.div_ceil(8)];
+            let bytes = unsafe {
+                // SAFETY: `u64` has no padding or invalid bit patterns, so its backing store can
+                // be viewed as bytes for the lifetime of this borrow.
+                core::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), words.len() * 8)
+            };
+
+            write_u16(bytes, 0, self.version_minor.unwrap_or(0));
+            write_u16(bytes, 2, self.version_major.unwrap_or(1));
+            write_u32(bytes, 4, self.size_override.unwrap_or(total as u32));
+            write_u32(bytes, 12, self.memory_policy_count);
+            write_u32(bytes, 16, self.flags);
+            write_u32(bytes, 32, HEADER_SIZE as u32);
+            write_u32(bytes, 36, self.root_count_override.unwrap_or(self.roots.len() as u32));
+
+            let mut descriptor_at = descriptor_offset;
+            for (index, (access_attr, descriptors)) in self.roots.iter().enumerate() {
+                let at = HEADER_SIZE + index * ROOT_SIZE;
+                write_u32(bytes, at, 1);
+                write_u32(bytes, at + 4, ROOT_SIZE as u32);
+                write_u32(bytes, at + 8, descriptors.policy_type());
+                write_u32(bytes, at + 12, descriptor_at as u32);
+                write_u32(bytes, at + 16, self.descriptor_count_override.unwrap_or(descriptors.count() as u32));
+                bytes[at + 20] = *access_attr;
+                bytes[at + 21..at + 24].copy_from_slice(&self.root_reserved);
+
+                descriptors.encode(bytes, descriptor_at);
+                descriptor_at += descriptors.count() * descriptors.entry_size();
+            }
+
+            PolicyBuffer { words }
+        }
+    }
+
+    /// Owns the bytes of a synthetic policy buffer.
+    pub(crate) struct PolicyBuffer {
+        words: Vec<u64>,
+    }
+
+    impl PolicyBuffer {
+        pub(crate) fn as_ptr(&self) -> *const u8 {
+            self.words.as_ptr().cast()
+        }
+
+        /// Byte length of the buffer backing this policy.
+        pub(crate) fn len(&self) -> usize {
+            self.words.len() * core::mem::size_of::<u64>()
+        }
+
+        pub(crate) fn header(&self) -> &SecurePolicyDataV1_0 {
+            // SAFETY: `PolicyBuilder::build` wrote an aligned, fully-initialized header at offset 0.
+            unsafe { &*self.as_ptr().cast::<SecurePolicyDataV1_0>() }
+        }
+
+        /// Creates a gate over this buffer, which outlives the returned gate.
+        pub(crate) fn gate(&self) -> PolicyGate {
+            self.try_gate().expect("valid policy buffer")
+        }
+
+        /// Creates a gate over this buffer, surfacing the validation error for malformed blobs.
+        pub(crate) fn try_gate(&self) -> MmSupervisorResult<PolicyGate> {
+            // SAFETY: `PolicyBuilder::build` produced an aligned buffer of `len()` bytes that
+            // this `PolicyBuffer` keeps alive for the gate's lifetime.
+            unsafe { PolicyGate::new(self.as_ptr(), self.len()) }
+        }
+    }
+
+    pub(crate) fn mem(base_address: u64, size: u64, mem_attributes: u32) -> MemDescriptorV1_0 {
+        MemDescriptorV1_0 { base_address, size, mem_attributes, reserved: 0 }
+    }
+
+    pub(crate) fn io(io_address: u16, length_or_width: u16, attributes: u16) -> IoDescriptorV1_0 {
+        IoDescriptorV1_0 { io_address, length_or_width, attributes, reserved: 0 }
+    }
+
+    pub(crate) fn msr(msr_address: u32, length: u16, attributes: u16) -> MsrDescriptorV1_0 {
+        MsrDescriptorV1_0 { msr_address, length, attributes }
+    }
+
+    pub(crate) fn instruction(instruction: Instruction, attributes: u16) -> InstructionDescriptorV1_0 {
+        InstructionDescriptorV1_0 { instruction_index: instruction.as_index(), attributes, reserved: 0 }
+    }
+
+    pub(crate) fn save_state(
+        field: SaveStateField,
+        attributes: u32,
+        condition: SaveStateCondition,
+    ) -> SaveStateDescriptorV1_0 {
+        SaveStateDescriptorV1_0 {
+            map_field: field.as_index(),
+            attributes,
+            access_condition: condition as u32,
+            reserved: 0,
+        }
+    }
+
+    /// A policy exercising every recognized root type, with conforming descriptors.
+    pub(crate) fn full_policy() -> PolicyBuilder {
+        PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Mem(vec![mem(0x1000, 0x2000, RESOURCE_ATTR_READ)]))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Io(vec![io(0x60, 1, RESOURCE_ATTR_READ as u16)]))
+            .root(ACCESS_ATTR_DENY, Descriptors::Msr(vec![msr(0x1B, 1, RESOURCE_ATTR_WRITE as u16)]))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Instruction(vec![instruction(Instruction::Hlt, 0x04)]))
+            .root(
+                ACCESS_ATTR_ALLOW,
+                Descriptors::SaveState(vec![
+                    save_state(SaveStateField::Rax, RESOURCE_ATTR_READ, SaveStateCondition::Unconditional),
+                    save_state(SaveStateField::IoTrap, RESOURCE_ATTR_COND_READ, SaveStateCondition::IoRead),
+                ]),
+            )
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::test_support::{Descriptors, PolicyBuilder, instruction, io, mem, msr, save_state};
+    use super::*;
+
+    #[test]
+    fn test_memory_range_from_mem_descriptor() {
+        let desc = |base_address, size| MemDescriptorV1_0 { base_address, size, mem_attributes: 0, reserved: 0 };
+
+        assert_eq!(MemoryRange::try_from(&desc(0x1000, 0x2000)), MemoryRange::new(0x1000, 0x2000));
+        assert_eq!(MemoryRange::try_from(&desc(0x1000, 0)), Err(MemoryRangeError::Empty));
+        assert_eq!(MemoryRange::try_from(&desc(u64::MAX, 1)), Err(MemoryRangeError::Overflow));
+    }
+
+    #[test]
+    fn test_policy_enum_conversions() {
+        assert_eq!(Instruction::Cli.as_index(), 0);
+        assert_eq!(Instruction::Wbinvd.as_index(), 1);
+        assert_eq!(Instruction::Hlt.as_index(), 2);
+        assert_eq!(Instruction::COUNT, 3);
+
+        assert_eq!(SaveStateField::Rax.as_index(), 0);
+        assert_eq!(SaveStateField::IoTrap.as_index(), 1);
+
+        assert_eq!(IoWidth::Byte.size(), 1);
+        assert_eq!(IoWidth::Word.size(), 2);
+        assert_eq!(IoWidth::Dword.size(), 4);
+
+        assert_eq!(AccessType::Read.as_attr_mask(), RESOURCE_ATTR_READ);
+        assert_eq!(AccessType::Write.as_attr_mask(), RESOURCE_ATTR_WRITE);
+        assert_eq!(AccessType::Execute.as_attr_mask(), RESOURCE_ATTR_EXECUTE);
+    }
+
+    #[test]
+    fn test_header_accepts_only_version_1_0() {
+        assert!(PolicyBuilder::new().build().header().is_valid_version());
+        assert!(!PolicyBuilder::new().version(2, 0).build().header().is_valid_version());
+        assert!(!PolicyBuilder::new().version(1, 1).build().header().is_valid_version());
+    }
+
+    #[test]
+    fn test_policy_root_reserved_validation() {
+        let policy = PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![])).build();
+        // SAFETY: the builder produced a valid policy buffer that outlives this borrow.
+        let roots = unsafe { policy.header().get_policy_roots() };
+        assert!(roots[0].has_valid_reserved());
+
+        let dirty =
+            PolicyBuilder::new().root(ACCESS_ATTR_ALLOW, Descriptors::Msr(vec![])).root_reserved([0, 1, 0]).build();
+        // SAFETY: as above.
+        let roots = unsafe { dirty.header().get_policy_roots() };
+        assert!(!roots[0].has_valid_reserved());
+    }
+
+    #[test]
+    fn test_policy_header_describes_its_roots() {
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Io(vec![io(0x60, 1, RESOURCE_ATTR_READ as u16)]))
+            .root(ACCESS_ATTR_DENY, Descriptors::Msr(vec![msr(0x1B, 1, RESOURCE_ATTR_WRITE as u16)]))
+            .build();
+
+        let header = policy.header();
+        assert_eq!(header.policy_root_count, 2);
+        assert_eq!(header.policy_root_offset, 40);
+        assert_eq!(header.size, 40 + 2 * 24 + 8 + 8);
+
+        // SAFETY: the builder produced a valid policy buffer that outlives this borrow.
+        let roots = unsafe { header.get_policy_roots() };
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].policy_type, TYPE_IO);
+        assert_eq!(roots[0].access_attr, ACCESS_ATTR_ALLOW);
+        assert_eq!(roots[1].policy_type, TYPE_MSR);
+        assert_eq!(roots[1].access_attr, ACCESS_ATTR_DENY);
+
+        // SAFETY: as above; the roots point into the same buffer.
+        unsafe {
+            assert_eq!(
+                roots[0].get_descriptors_ptr::<IoDescriptorV1_0>(policy.as_ptr()),
+                roots[0].get_io_descriptors(policy.as_ptr()).as_ptr()
+            );
+        }
+    }
+
+    #[test]
+    fn test_policy_root_descriptor_accessors_round_trip() {
+        let mem_descriptors = vec![mem(0x1000, 0x2000, RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE)];
+        let io_descriptors = vec![io(0x60, 1, 0x01), io(0xCF8, 4, 0x03)];
+        let msr_descriptors = vec![msr(0x1B, 1, 0x01)];
+        let instruction_descriptors = vec![instruction(Instruction::Hlt, 0x04)];
+        let save_state_descriptors =
+            vec![save_state(SaveStateField::Rax, RESOURCE_ATTR_READ, SaveStateCondition::Unconditional)];
+
+        let policy = PolicyBuilder::new()
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Mem(mem_descriptors.clone()))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Io(io_descriptors.clone()))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Msr(msr_descriptors.clone()))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::Instruction(instruction_descriptors.clone()))
+            .root(ACCESS_ATTR_ALLOW, Descriptors::SaveState(save_state_descriptors.clone()))
+            .build();
+
+        let base = policy.as_ptr();
+        // SAFETY: the builder produced a valid policy buffer that outlives these borrows, and
+        // every root was written with the offset/count of its own descriptor array.
+        unsafe {
+            let roots = policy.header().get_policy_roots();
+            assert_eq!(roots[0].get_mem_descriptors(base), mem_descriptors.as_slice());
+            assert_eq!(roots[1].get_io_descriptors(base), io_descriptors.as_slice());
+            assert_eq!(roots[2].get_msr_descriptors(base), msr_descriptors.as_slice());
+            assert_eq!(roots[3].get_instruction_descriptors(base), instruction_descriptors.as_slice());
+            assert_eq!(roots[4].get_save_state_descriptors(base), save_state_descriptors.as_slice());
+        }
+    }
+}

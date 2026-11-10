@@ -631,23 +631,868 @@ pub extern "efiapi" fn syscall_dispatcher(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::comm_buffer::{CommBufferConfig, CommChannel};
+    use crate::error::MmSupervisorResult;
+    use crate::memory::{AllocError, AllocationType};
+    use crate::policy::PolicyGateError;
+    use core::cell::RefCell;
+
+    /// An action a handler asked its [`SyscallOps`] implementation to perform.
+    ///
+    /// Recording policy queries alongside the privileged work lets a test assert both that the
+    /// work happened and that it only happened after the request cleared the policy gate.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Effect {
+        CheckMsr(u32, AccessType),
+        CheckIo(u16, IoWidth, AccessType),
+        CheckInstruction(Instruction),
+        ReadMsr(u32),
+        WriteMsr(u32, u64),
+        IoRead(u16, IoWidth),
+        IoWrite(u16, IoWidth, u64),
+        Execute(Instruction),
+        AllocateUserPages(usize),
+        FreeUserPages(u64, usize),
+        StartAp(u64, u64, u64),
+        SaveStatePhase1(u64, u64, u64),
+        SaveStatePhase2(u64, u64, u64),
+    }
+
+    /// A [`SyscallOps`] implementation that records what a handler asked for and answers with
+    /// caller-configured values, so handler validation can run on a host.
+    struct MockOps {
+        msr_policy: PolicyDecision,
+        io_policy: PolicyDecision,
+        instruction_policy: PolicyDecision,
+        msr_value: u64,
+        io_value: u64,
+        is_bsp: bool,
+        allocate_result: MmSupervisorResult<u64>,
+        free_result: MmSupervisorResult<()>,
+        allocation_type: Option<AllocationType>,
+        /// Mapped addresses and their ownership; any other address is treated as unmapped.
+        mapped: Vec<(u64, PageOwnership)>,
+        ap_status: Option<u64>,
+        phase1_result: SyscallResult,
+        phase2_result: SyscallResult,
+        unblocked: bool,
+        comm_buffer: Option<CommBufferConfig>,
+        effects: RefCell<Vec<Effect>>,
+    }
+
+    impl Default for MockOps {
+        fn default() -> Self {
+            Self {
+                msr_policy: PolicyDecision::Allowed,
+                io_policy: PolicyDecision::Allowed,
+                instruction_policy: PolicyDecision::Allowed,
+                msr_value: 0,
+                io_value: 0,
+                is_bsp: true,
+                allocate_result: Ok(0x4000),
+                free_result: Ok(()),
+                allocation_type: Some(AllocationType::User),
+                mapped: Vec::new(),
+                ap_status: Some(0),
+                phase1_result: Ok(0),
+                phase2_result: Ok(0),
+                unblocked: true,
+                comm_buffer: None,
+                effects: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl MockOps {
+        fn record(&self, effect: Effect) {
+            self.effects.borrow_mut().push(effect);
+        }
+
+        fn effects(&self) -> Vec<Effect> {
+            self.effects.borrow().clone()
+        }
+    }
+
+    impl SyscallOps for MockOps {
+        fn check_msr(&self, msr: u32, access: AccessType) -> PolicyDecision {
+            self.record(Effect::CheckMsr(msr, access));
+            self.msr_policy
+        }
+
+        fn check_io(&self, port: u16, width: IoWidth, access: AccessType) -> PolicyDecision {
+            self.record(Effect::CheckIo(port, width, access));
+            self.io_policy
+        }
+
+        fn check_instruction(&self, instruction: Instruction) -> PolicyDecision {
+            self.record(Effect::CheckInstruction(instruction));
+            self.instruction_policy
+        }
+
+        unsafe fn read_msr(&self, msr: u32) -> u64 {
+            self.record(Effect::ReadMsr(msr));
+            self.msr_value
+        }
+
+        unsafe fn write_msr(&self, msr: u32, value: u64) {
+            self.record(Effect::WriteMsr(msr, value));
+        }
+
+        unsafe fn io_read(&self, port: u16, width: IoWidth) -> u64 {
+            self.record(Effect::IoRead(port, width));
+            self.io_value
+        }
+
+        unsafe fn io_write(&self, port: u16, width: IoWidth, value: u64) {
+            self.record(Effect::IoWrite(port, width, value));
+        }
+
+        unsafe fn execute_instruction(&self, instruction: Instruction) {
+            self.record(Effect::Execute(instruction));
+        }
+
+        fn is_bsp(&self) -> bool {
+            self.is_bsp
+        }
+
+        fn allocate_user_pages(&self, page_count: usize) -> MmSupervisorResult<u64> {
+            self.record(Effect::AllocateUserPages(page_count));
+            self.allocate_result
+        }
+
+        fn free_user_pages(&self, addr: u64, page_count: usize) -> MmSupervisorResult<()> {
+            self.record(Effect::FreeUserPages(addr, page_count));
+            self.free_result
+        }
+
+        fn allocation_type(&self, _addr: u64) -> Option<AllocationType> {
+            self.allocation_type
+        }
+
+        fn query_address_ownership(&self, range: &MemoryRange) -> Option<PageOwnership> {
+            self.mapped.iter().find(|(mapped, _)| *mapped == range.base()).map(|(_, owner)| *owner)
+        }
+
+        fn start_ap_procedure(&self, cpu_index: u64, procedure: u64, argument: u64) -> Option<u64> {
+            self.record(Effect::StartAp(cpu_index, procedure, argument));
+            self.ap_status
+        }
+
+        fn save_state_read_phase1(&self, protocol: u64, register: u64, cpu_index: u64) -> SyscallResult {
+            self.record(Effect::SaveStatePhase1(protocol, register, cpu_index));
+            self.phase1_result
+        }
+
+        fn save_state_read_phase2(&self, protocol: u64, width: u64, buffer: u64) -> SyscallResult {
+            self.record(Effect::SaveStatePhase2(protocol, width, buffer));
+            self.phase2_result
+        }
+
+        fn is_within_unblocked_region(&self, _range: &MemoryRange) -> bool {
+            self.unblocked
+        }
+
+        fn comm_buffer_config(&self) -> Option<CommBufferConfig> {
+            self.comm_buffer
+        }
+    }
+
+    /// Builds a dispatcher over a mock, which tests reach through `dispatcher.ops`.
+    fn new_dispatcher(ops: MockOps) -> SyscallDispatcher<MockOps> {
+        SyscallDispatcher::with_ops(ops)
+    }
+
+    /// Builds a syscall context with recognizable caller/stack values.
+    fn ctx(call_index: u64, arg1: u64, arg2: u64, arg3: u64) -> SyscallContext {
+        SyscallContext { call_index, arg1, arg2, arg3, caller_addr: 0xCA11_0000, ring3_stack_ptr: 0x57AC_0000 }
+    }
 
     #[test]
     fn test_syscall_index_roundtrip() {
         for idx in
             [SyscallIndex::RdMsr, SyscallIndex::WrMsr, SyscallIndex::Cli, SyscallIndex::IoRead, SyscallIndex::IoWrite]
         {
-            assert_eq!(SyscallIndex::from_u64(idx.as_u64()), Some(idx));
+            assert_eq!(SyscallIndex::try_from(idx.as_u64()), Ok(idx));
         }
     }
 
     #[test]
     fn test_unknown_syscall_index() {
         // Values that fall in the gaps between defined indices map to `None`.
-        assert_eq!(SyscallIndex::from_u64(0x0008), None);
-        assert_eq!(SyscallIndex::from_u64(0x10000), None);
-        assert_eq!(SyscallIndex::from_u64(0xDEAD_BEEF), None);
+        assert_eq!(SyscallIndex::try_from(0x0008), Err(0x0008));
+        assert_eq!(SyscallIndex::try_from(0x10000), Err(0x10000));
+        assert_eq!(SyscallIndex::try_from(0xDEAD_BEEF), Err(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn test_efi_io_width_conversion() {
+        assert_eq!(efi_io_width_to_io_width(MM_IO_UINT8), Some(IoWidth::Byte));
+        assert_eq!(efi_io_width_to_io_width(MM_IO_UINT16), Some(IoWidth::Word));
+        assert_eq!(efi_io_width_to_io_width(MM_IO_UINT32), Some(IoWidth::Dword));
+        // 3 is EFI's MM_IO_UINT64, which the supervisor does not support, and anything above it
+        // is not a width at all.
+        assert_eq!(efi_io_width_to_io_width(3), None);
+        assert_eq!(efi_io_width_to_io_width(u64::MAX), None);
+    }
+
+    #[test]
+    fn test_io_port_from_arg_rejects_ports_outside_io_space() {
+        assert_eq!(io_port_from_arg(0), Some(0));
+        assert_eq!(io_port_from_arg(0xB2), Some(0xB2));
+        assert_eq!(io_port_from_arg(0xFFFF), Some(0xFFFF));
+        assert_eq!(io_port_from_arg(0x1_0000), None);
+        // Without the range check these would silently alias port 0.
+        assert_eq!(io_port_from_arg(0x1_0000_0000), None);
+        assert_eq!(io_port_from_arg(u64::MAX), None);
+    }
+
+    #[test]
+    fn test_check_policy_maps_decisions_to_status() {
+        assert_eq!(check_policy("TEST", PolicyDecision::Allowed), Ok(()));
+        assert_eq!(
+            check_policy("TEST", PolicyDecision::Denied(PolicyGateError::AccessDenied.into())),
+            Err(Status::ACCESS_DENIED)
+        );
+        assert_eq!(check_policy("TEST", PolicyDecision::Unavailable), Err(Status::NOT_READY));
+    }
+
+    #[test]
+    fn test_instruction_name() {
+        assert_eq!(instruction_name(Instruction::Cli), "CLI");
+        assert_eq!(instruction_name(Instruction::Wbinvd), "WBINVD");
+        assert_eq!(instruction_name(Instruction::Hlt), "HLT");
+    }
+
+    #[test]
+    fn test_dispatch_rejects_unknown_index() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.dispatch(&ctx(0x0008, 0, 0, 0)), Err(Status::UNSUPPORTED));
+        assert!(dispatcher.ops.effects().is_empty());
+    }
+
+    /// One dispatch routing expectation for [`test_dispatch_routes_to_handlers`].
+    struct RoutingCase {
+        index: SyscallIndex,
+        ops: MockOps,
+        args: (u64, u64, u64),
+        expected: SyscallResult,
+        /// The side effect the handler must produce, for the handlers that act on the platform.
+        effect: Option<Effect>,
+    }
+
+    #[test]
+    fn test_dispatch_routes_to_handlers() {
+        let any = u64::from(ALLOCATE_ANY_PAGES);
+        let data = u64::from(RUNTIME_SERVICES_DATA);
+        let comm_buffer = CommBufferConfig {
+            user: CommChannel { internal_address: 0x1_0000, size: 0x1000, ..Default::default() },
+            ..Default::default()
+        };
+
+        // Every real index must reach the handler that performs the matching side effect. The
+        // last two handlers answer a question rather than acting, so they are pinned by result.
+        let cases = [
+            RoutingCase {
+                index: SyscallIndex::RdMsr,
+                ops: MockOps::default(),
+                args: (0x1B, 0, 0),
+                expected: Ok(0),
+                effect: Some(Effect::ReadMsr(0x1B)),
+            },
+            RoutingCase {
+                index: SyscallIndex::WrMsr,
+                ops: MockOps::default(),
+                args: (0x1B, 0x5A, 0),
+                expected: Ok(0),
+                effect: Some(Effect::WriteMsr(0x1B, 0x5A)),
+            },
+            RoutingCase {
+                index: SyscallIndex::Cli,
+                ops: MockOps::default(),
+                args: (0, 0, 0),
+                expected: Ok(0),
+                effect: Some(Effect::Execute(Instruction::Cli)),
+            },
+            RoutingCase {
+                index: SyscallIndex::Wbinvd,
+                ops: MockOps::default(),
+                args: (0, 0, 0),
+                expected: Ok(0),
+                effect: Some(Effect::Execute(Instruction::Wbinvd)),
+            },
+            RoutingCase {
+                index: SyscallIndex::Hlt,
+                ops: MockOps::default(),
+                args: (0, 0, 0),
+                expected: Ok(0),
+                effect: Some(Effect::Execute(Instruction::Hlt)),
+            },
+            RoutingCase {
+                index: SyscallIndex::IoRead,
+                ops: MockOps::default(),
+                args: (0xB2, MM_IO_UINT8, 0),
+                expected: Ok(0),
+                effect: Some(Effect::IoRead(0xB2, IoWidth::Byte)),
+            },
+            RoutingCase {
+                index: SyscallIndex::IoWrite,
+                ops: MockOps::default(),
+                args: (0xB2, MM_IO_UINT8, 0x5A),
+                expected: Ok(0),
+                effect: Some(Effect::IoWrite(0xB2, IoWidth::Byte, 0x5A)),
+            },
+            RoutingCase {
+                index: SyscallIndex::SaveStateRead,
+                ops: MockOps::default(),
+                args: (0x1000, 38, 1),
+                expected: Ok(0),
+                effect: Some(Effect::SaveStatePhase1(0x1000, 38, 1)),
+            },
+            RoutingCase {
+                index: SyscallIndex::AllocPage,
+                ops: MockOps { allocate_result: Ok(0x8000), ..Default::default() },
+                args: (any, data, 1),
+                expected: Ok(0x8000),
+                effect: Some(Effect::AllocateUserPages(1)),
+            },
+            RoutingCase {
+                index: SyscallIndex::FreePage,
+                ops: MockOps::default(),
+                args: (0x2000, 1, 0),
+                expected: Ok(0),
+                effect: Some(Effect::FreeUserPages(0x2000, 1)),
+            },
+            RoutingCase {
+                index: SyscallIndex::StartApProc,
+                ops: MockOps { mapped: vec![(0x1000, PageOwnership::User)], ..Default::default() },
+                args: (0x1000, 1, 0),
+                expected: Ok(0),
+                effect: Some(Effect::StartAp(1, 0x1000, 0)),
+            },
+            RoutingCase {
+                index: SyscallIndex::SaveStateRead2,
+                ops: MockOps::default(),
+                args: (0x1000, 8, 0x2000),
+                expected: Ok(0),
+                effect: Some(Effect::SaveStatePhase2(0x1000, 8, 0x2000)),
+            },
+            RoutingCase {
+                index: SyscallIndex::MmMemoryUnblocked,
+                ops: MockOps { mapped: vec![(0x5000, PageOwnership::User)], ..Default::default() },
+                args: (0x5000, 0x100, 0),
+                expected: Ok(1),
+                effect: None,
+            },
+            RoutingCase {
+                index: SyscallIndex::MmIsCommBuffer,
+                ops: MockOps { comm_buffer: Some(comm_buffer), ..Default::default() },
+                args: (0x1_0000, 0x100, 0),
+                expected: Ok(1),
+                effect: None,
+            },
+        ];
+
+        for case in cases {
+            let index = case.index;
+            let (arg1, arg2, arg3) = case.args;
+            let dispatcher = new_dispatcher(case.ops);
+
+            assert_eq!(
+                dispatcher.dispatch(&ctx(index.as_u64(), arg1, arg2, arg3)),
+                case.expected,
+                "wrong result for {index:?}"
+            );
+            if let Some(effect) = case.effect {
+                assert!(dispatcher.ops.effects().contains(&effect), "{index:?} did not produce {effect:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_syscall_dispatcher_entry_point() {
+        // The `efiapi` entry point the assembly stub calls builds a dispatcher over the real
+        // `FirmwareOps`. `MmIsCommBuffer` is the one syscall that reaches a definite answer
+        // without hardware: with no communication buffer published it reports FALSE.
+        assert_eq!(syscall_dispatcher(SyscallIndex::MmIsCommBuffer.as_u64(), 0x1_0000, 0x100, 0, 0xCA11, 0x57AC), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "failed with error")]
+    fn test_dispatch_panics_when_a_handler_fails() {
+        // Ring 3 cannot be allowed to continue after a rejected privileged request, so every
+        // syscall except the two save-state phases turns a handler error into a panic.
+        let dispatcher = new_dispatcher(MockOps { msr_policy: PolicyDecision::Unavailable, ..Default::default() });
+        let _ = dispatcher.dispatch(&ctx(SyscallIndex::RdMsr.as_u64(), 0x1B, 0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "LegacyMax is not a real syscall")]
+    fn test_dispatch_panics_on_legacy_max() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        let _ = dispatcher.dispatch(&ctx(SyscallIndex::LegacyMax.as_u64(), 0, 0, 0));
+    }
+
+    #[test]
+    fn test_dispatch_returns_status_code_for_save_state_read_errors() {
+        // Both save-state phases report failures back to the caller instead of panicking. A
+        // register the save state does not define fails in phase 1.
+        let dispatcher = new_dispatcher(MockOps { phase1_result: Err(Status::NOT_FOUND), ..Default::default() });
+        assert_eq!(
+            dispatcher.dispatch(&ctx(SyscallIndex::SaveStateRead.as_u64(), 0x1000, 999, 0)),
+            Ok(Status::NOT_FOUND.as_usize() as u64)
+        );
+
+        let dispatcher = new_dispatcher(MockOps { phase2_result: Err(Status::ACCESS_DENIED), ..Default::default() });
+        assert_eq!(
+            dispatcher.dispatch(&ctx(SyscallIndex::SaveStateRead2.as_u64(), 0x1000, 8, 0x2000)),
+            Ok(Status::ACCESS_DENIED.as_usize() as u64)
+        );
+    }
+
+    #[test]
+    fn test_rdmsr_reads_only_after_policy_allows() {
+        let dispatcher = new_dispatcher(MockOps { msr_value: 0xDEAD_BEEF, ..Default::default() });
+
+        assert_eq!(dispatcher.handle_rdmsr(&ctx(0, 0x1B, 0, 0)), Ok(0xDEAD_BEEF));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckMsr(0x1B, AccessType::Read), Effect::ReadMsr(0x1B)]);
+    }
+
+    #[test]
+    fn test_rdmsr_denied_by_policy() {
+        let dispatcher = new_dispatcher(MockOps {
+            msr_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
+
+        assert_eq!(dispatcher.handle_rdmsr(&ctx(0, 0x1B, 0, 0)), Err(Status::ACCESS_DENIED));
+        // The MSR must not be read once the policy denies the request.
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckMsr(0x1B, AccessType::Read)]);
+    }
+
+    #[test]
+    fn test_rdmsr_without_policy_gate() {
+        let dispatcher = new_dispatcher(MockOps { msr_policy: PolicyDecision::Unavailable, ..Default::default() });
+
+        assert_eq!(dispatcher.handle_rdmsr(&ctx(0, 0x1B, 0, 0)), Err(Status::NOT_READY));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckMsr(0x1B, AccessType::Read)]);
+    }
+
+    #[test]
+    fn test_wrmsr_writes_only_after_policy_allows() {
+        let dispatcher = new_dispatcher(MockOps::default());
+
+        assert_eq!(dispatcher.handle_wrmsr(&ctx(0, 0x1B, 0x1234_5678_9ABC_DEF0, 0)), Ok(0));
+        assert_eq!(
+            dispatcher.ops.effects(),
+            vec![Effect::CheckMsr(0x1B, AccessType::Write), Effect::WriteMsr(0x1B, 0x1234_5678_9ABC_DEF0)]
+        );
+    }
+
+    #[test]
+    fn test_msr_index_over_32_bits_is_rejected_before_the_policy_check() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        let index = 0x1_0000_001B;
+
+        assert_eq!(dispatcher.handle_rdmsr(&ctx(0, index, 0, 0)), Err(Status::INVALID_PARAMETER));
+        assert_eq!(dispatcher.handle_wrmsr(&ctx(0, index, 0x5A, 0)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty(), "a truncated MSR index must not reach the policy gate");
+    }
+
+    #[test]
+    fn test_wrmsr_denied_by_policy() {
+        let dispatcher = new_dispatcher(MockOps {
+            msr_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
+
+        assert_eq!(dispatcher.handle_wrmsr(&ctx(0, 0x1B, 0x5A, 0)), Err(Status::ACCESS_DENIED));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckMsr(0x1B, AccessType::Write)]);
+    }
+
+    #[test]
+    fn test_privileged_instructions_run_only_after_policy_allows() {
+        for instruction in [Instruction::Cli, Instruction::Wbinvd, Instruction::Hlt] {
+            let dispatcher = new_dispatcher(MockOps::default());
+
+            assert_eq!(dispatcher.handle_instruction(instruction), Ok(0));
+            assert_eq!(
+                dispatcher.ops.effects(),
+                vec![Effect::CheckInstruction(instruction), Effect::Execute(instruction)],
+                "unexpected effects for {instruction:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_privileged_instructions_respect_policy_denial() {
+        let denied = new_dispatcher(MockOps {
+            instruction_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
+        assert_eq!(denied.handle_instruction(Instruction::Cli), Err(Status::ACCESS_DENIED));
+        assert_eq!(denied.ops.effects(), vec![Effect::CheckInstruction(Instruction::Cli)]);
+
+        let open_gate =
+            new_dispatcher(MockOps { instruction_policy: PolicyDecision::Unavailable, ..Default::default() });
+        assert_eq!(open_gate.handle_instruction(Instruction::Hlt), Err(Status::NOT_READY));
+        assert_eq!(open_gate.ops.effects(), vec![Effect::CheckInstruction(Instruction::Hlt)]);
+    }
+
+    #[test]
+    fn test_io_read_widths() {
+        for (efi_width, width) in
+            [(MM_IO_UINT8, IoWidth::Byte), (MM_IO_UINT16, IoWidth::Word), (MM_IO_UINT32, IoWidth::Dword)]
+        {
+            let dispatcher = new_dispatcher(MockOps { io_value: 0x1234_5678, ..Default::default() });
+
+            assert_eq!(dispatcher.handle_io_read(&ctx(0, 0xCF8, efi_width, 0)), Ok(0x1234_5678));
+            assert_eq!(
+                dispatcher.ops.effects(),
+                vec![Effect::CheckIo(0xCF8, width, AccessType::Read), Effect::IoRead(0xCF8, width)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_io_read_rejects_invalid_requests() {
+        // Unsupported width.
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_io_read(&ctx(0, 0xCF8, 3, 0)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        // Port outside the 16-bit I/O space: rejected before the policy gate sees a truncated port.
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_io_read(&ctx(0, 0x1_0000_0000, MM_IO_UINT8, 0)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        // Denied by policy.
+        let dispatcher = new_dispatcher(MockOps {
+            io_policy: PolicyDecision::Denied(PolicyGateError::AccessDenied.into()),
+            ..Default::default()
+        });
+        assert_eq!(dispatcher.handle_io_read(&ctx(0, 0xCF8, MM_IO_UINT8, 0)), Err(Status::ACCESS_DENIED));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckIo(0xCF8, IoWidth::Byte, AccessType::Read)]);
+    }
+
+    #[test]
+    fn test_io_write_widths() {
+        for (efi_width, width) in
+            [(MM_IO_UINT8, IoWidth::Byte), (MM_IO_UINT16, IoWidth::Word), (MM_IO_UINT32, IoWidth::Dword)]
+        {
+            let dispatcher = new_dispatcher(MockOps::default());
+
+            assert_eq!(dispatcher.handle_io_write(&ctx(0, 0xCFC, efi_width, 0xAABB_CCDD)), Ok(0));
+            assert_eq!(
+                dispatcher.ops.effects(),
+                vec![Effect::CheckIo(0xCFC, width, AccessType::Write), Effect::IoWrite(0xCFC, width, 0xAABB_CCDD)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_io_write_rejects_invalid_requests() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_io_write(&ctx(0, 0xCFC, 4, 0)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_io_write(&ctx(0, 0x1_0000, MM_IO_UINT8, 0)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        let dispatcher = new_dispatcher(MockOps { io_policy: PolicyDecision::Unavailable, ..Default::default() });
+        assert_eq!(dispatcher.handle_io_write(&ctx(0, 0xCFC, MM_IO_UINT8, 0)), Err(Status::NOT_READY));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::CheckIo(0xCFC, IoWidth::Byte, AccessType::Write)]);
+    }
+
+    #[test]
+    fn test_save_state_read_requires_protocol_pointer() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_save_state_read(&ctx(0, 0, 38, 1)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        let dispatcher = new_dispatcher(MockOps { phase1_result: Ok(0), ..Default::default() });
+        assert_eq!(dispatcher.handle_save_state_read(&ctx(0, 0x1000, 38, 1)), Ok(0));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::SaveStatePhase1(0x1000, 38, 1)]);
+    }
+
+    #[test]
+    fn test_save_state_read2_requires_protocol_pointer() {
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_save_state_read2(&ctx(0, 0, 8, 0x2000)), Err(Status::INVALID_PARAMETER));
+        assert!(dispatcher.ops.effects().is_empty());
+
+        // Phase 2 failures are propagated to the caller rather than swallowed.
+        let dispatcher = new_dispatcher(MockOps { phase2_result: Err(Status::NOT_FOUND), ..Default::default() });
+        assert_eq!(dispatcher.handle_save_state_read2(&ctx(0, 0x1000, 8, 0x2000)), Err(Status::NOT_FOUND));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::SaveStatePhase2(0x1000, 8, 0x2000)]);
+    }
+
+    #[test]
+    fn test_alloc_page_success() {
+        let dispatcher = new_dispatcher(MockOps { allocate_result: Ok(0x8000), ..Default::default() });
+
+        assert_eq!(
+            dispatcher.handle_alloc_page(&ctx(0, u64::from(ALLOCATE_ANY_PAGES), u64::from(RUNTIME_SERVICES_DATA), 2)),
+            Ok(0x8000)
+        );
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::AllocateUserPages(2)]);
+    }
+
+    #[test]
+    fn test_alloc_page_rejects_invalid_requests() {
+        let any = u64::from(ALLOCATE_ANY_PAGES);
+        let data = u64::from(RUNTIME_SERVICES_DATA);
+
+        // Every rejected request must be refused with the documented status and must never
+        // reach the page allocator, so each case checks the recorded effects of its own mock.
+        let cases: [(&str, MockOps, u64, u64, u64, Status); 6] = [
+            // Only the BSP may allocate, since allocation updates the page table.
+            ("AP request", MockOps { is_bsp: false, ..Default::default() }, any, data, 1, Status::ACCESS_DENIED),
+            // Only EfiRuntimeServicesData is allocatable by Ring 3.
+            ("wrong memory type", MockOps::default(), any, data + 1, 1, Status::INVALID_PARAMETER),
+            // Only AllocateAnyPages is supported.
+            ("wrong allocate type", MockOps::default(), any + 1, data, 1, Status::UNSUPPORTED),
+            // A zero page count is meaningless.
+            ("zero pages", MockOps::default(), any, data, 0, Status::INVALID_PARAMETER),
+            // Set high bits must not be dropped to make a valid 32-bit enum value.
+            ("allocate type over 32 bits", MockOps::default(), any | (1 << 32), data, 1, Status::INVALID_PARAMETER),
+            ("memory type over 32 bits", MockOps::default(), any, data | (1 << 32), 1, Status::INVALID_PARAMETER),
+        ];
+
+        for (name, ops, alloc_type, mem_type, page_count, expected) in cases {
+            let dispatcher = new_dispatcher(ops);
+            assert_eq!(
+                dispatcher.handle_alloc_page(&ctx(0, alloc_type, mem_type, page_count)),
+                Err(expected),
+                "{name}"
+            );
+            assert!(dispatcher.ops.effects().is_empty(), "{name} reached the allocator");
+        }
+    }
+
+    #[test]
+    fn test_alloc_page_reports_allocator_failure() {
+        let dispatcher =
+            new_dispatcher(MockOps { allocate_result: Err(AllocError::OutOfMemory.into()), ..Default::default() });
+
+        assert_eq!(
+            dispatcher.handle_alloc_page(&ctx(0, u64::from(ALLOCATE_ANY_PAGES), u64::from(RUNTIME_SERVICES_DATA), 4)),
+            Err(Status::OUT_OF_RESOURCES)
+        );
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::AllocateUserPages(4)]);
+    }
+
+    #[test]
+    fn test_free_page_success() {
+        let dispatcher = new_dispatcher(MockOps::default());
+
+        assert_eq!(dispatcher.handle_free_page(&ctx(0, 0x2000, 2, 0)), Ok(0));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::FreeUserPages(0x2000, 2)]);
+    }
+
+    #[test]
+    fn test_free_page_rejects_invalid_requests() {
+        // Every rejected request must be refused with the documented status and must never
+        // reach the page allocator, so each case checks the recorded effects of its own mock.
+        let cases: [(&str, MockOps, u64, u64, Status); 5] = [
+            ("zero pages", MockOps::default(), 0x2000, 0, Status::INVALID_PARAMETER),
+            ("unaligned address", MockOps::default(), 0x2001, 1, Status::INVALID_PARAMETER),
+            // The range would end past the top of the address space.
+            ("range past the end of memory", MockOps::default(), u64::MAX - 0xfff, 2, Status::INVALID_PARAMETER),
+            // Ring 3 must not be able to free supervisor-owned memory.
+            (
+                "supervisor allocation",
+                MockOps { allocation_type: Some(AllocationType::Supervisor), ..Default::default() },
+                0x2000,
+                1,
+                Status::SECURITY_VIOLATION,
+            ),
+            // Address was never allocated.
+            (
+                "unallocated address",
+                MockOps { allocation_type: None, ..Default::default() },
+                0x2000,
+                1,
+                Status::INVALID_PARAMETER,
+            ),
+        ];
+
+        for (name, ops, addr, page_count, expected) in cases {
+            let dispatcher = new_dispatcher(ops);
+            assert_eq!(dispatcher.handle_free_page(&ctx(0, addr, page_count, 0)), Err(expected), "{name}");
+            assert!(dispatcher.ops.effects().is_empty(), "{name} reached the allocator");
+        }
+    }
+
+    #[test]
+    fn test_free_page_reports_allocator_failure() {
+        // A page in the range belongs to someone else, so the checked free fails.
+        let dispatcher =
+            new_dispatcher(MockOps { free_result: Err(AllocError::NotAllocated.into()), ..Default::default() });
+
+        assert_eq!(dispatcher.handle_free_page(&ctx(0, 0x2000, 3, 0)), Err(Status::SECURITY_VIOLATION));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::FreeUserPages(0x2000, 3)]);
+    }
+
+    #[test]
+    fn test_start_ap_proc_success() {
+        let dispatcher = new_dispatcher(MockOps {
+            mapped: vec![(0x1000, PageOwnership::User), (0x3000, PageOwnership::User)],
+            ..Default::default()
+        });
+
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 2, 0x3000)), Ok(0));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::StartAp(2, 0x1000, 0x3000)]);
+    }
+
+    #[test]
+    fn test_start_ap_proc_allows_null_argument() {
+        // A null argument is legitimate and must not be validated as a pointer.
+        let dispatcher = new_dispatcher(MockOps { mapped: vec![(0x1000, PageOwnership::User)], ..Default::default() });
+
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Ok(0));
+        assert_eq!(dispatcher.ops.effects(), vec![Effect::StartAp(1, 0x1000, 0)]);
+    }
+
+    #[test]
+    fn test_start_ap_proc_rejects_invalid_pointers() {
+        // Every rejected request must be refused with the documented status and must never be
+        // dispatched to an AP, so each case checks the recorded effects of its own mock.
+        let cases: [(&str, MockOps, u64, u64); 3] = [
+            ("null procedure", MockOps::default(), 0, 0),
+            ("unmapped procedure", MockOps::default(), 0x1000, 0),
+            (
+                "unmapped argument",
+                MockOps { mapped: vec![(0x1000, PageOwnership::User)], ..Default::default() },
+                0x1000,
+                0x3000,
+            ),
+        ];
+
+        for (name, ops, procedure, argument) in cases {
+            let dispatcher = new_dispatcher(ops);
+            assert_eq!(
+                dispatcher.handle_start_ap_proc(&ctx(0, procedure, 1, argument)),
+                Err(Status::INVALID_PARAMETER),
+                "{name}"
+            );
+            assert!(dispatcher.ops.effects().is_empty(), "{name} was dispatched to an AP");
+        }
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_caller_that_is_not_the_bsp() {
+        // An AP reaching here is already running a procedure the BSP dispatched to it, so a
+        // nested dispatch must not reach the mailbox at all.
+        let dispatcher = new_dispatcher(MockOps {
+            is_bsp: false,
+            mapped: vec![(0x1000, PageOwnership::User)],
+            ..Default::default()
+        });
+
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::ACCESS_DENIED));
+        assert!(dispatcher.ops.effects().is_empty(), "a non-BSP caller was dispatched to an AP");
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_supervisor_owned_procedure() {
+        // The procedure runs demoted on the target AP. Accepting a supervisor-owned address here
+        // would let Ring 3 pick code for the supervisor to run.
+        let dispatcher =
+            new_dispatcher(MockOps { mapped: vec![(0x1000, PageOwnership::Supervisor)], ..Default::default() });
+
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::SECURITY_VIOLATION));
+        assert!(dispatcher.ops.effects().is_empty(), "a supervisor-owned procedure was dispatched to an AP");
+    }
+
+    #[test]
+    fn test_start_ap_proc_refuses_a_supervisor_owned_argument() {
+        // The argument reaches the same Ring 3 procedure, which cannot read supervisor memory.
+        let dispatcher = new_dispatcher(MockOps {
+            mapped: vec![(0x1000, PageOwnership::User), (0x3000, PageOwnership::Supervisor)],
+            ..Default::default()
+        });
+
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0x3000)), Err(Status::SECURITY_VIOLATION));
+        assert!(dispatcher.ops.effects().is_empty(), "a supervisor-owned argument was dispatched to an AP");
+    }
+
+    #[test]
+    fn test_start_ap_proc_propagates_failures() {
+        // AP startup has not been registered yet.
+        let dispatcher = new_dispatcher(MockOps {
+            mapped: vec![(0x1000, PageOwnership::User)],
+            ap_status: None,
+            ..Default::default()
+        });
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::NOT_READY));
+
+        // A non-zero status from the platform is returned to the caller.
+        let dispatcher = new_dispatcher(MockOps {
+            mapped: vec![(0x1000, PageOwnership::User)],
+            ap_status: Some(Status::NOT_FOUND.as_usize() as u64),
+            ..Default::default()
+        });
+        assert_eq!(dispatcher.handle_start_ap_proc(&ctx(0, 0x1000, 1, 0)), Err(Status::NOT_FOUND));
+    }
+
+    #[test]
+    fn test_mm_memory_unblocked_requires_unblocked_user_memory() {
+        // Unblocked and user-owned: the only case that reports TRUE.
+        let dispatcher = new_dispatcher(MockOps { mapped: vec![(0x5000, PageOwnership::User)], ..Default::default() });
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, 0x5000, 0x100, 0)), Ok(1));
+
+        // Not unblocked.
+        let dispatcher = new_dispatcher(MockOps {
+            unblocked: false,
+            mapped: vec![(0x5000, PageOwnership::User)],
+            ..Default::default()
+        });
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, 0x5000, 0x100, 0)), Ok(0));
+
+        // Unblocked but supervisor-owned.
+        let dispatcher =
+            new_dispatcher(MockOps { mapped: vec![(0x5000, PageOwnership::Supervisor)], ..Default::default() });
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, 0x5000, 0x100, 0)), Ok(0));
+
+        // Unblocked but unmapped.
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, 0x5000, 0x100, 0)), Ok(0));
+
+        // An empty buffer, or one that runs past the end of the address space, is not a range.
+        let dispatcher = new_dispatcher(MockOps { mapped: vec![(0x5000, PageOwnership::User)], ..Default::default() });
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, 0x5000, 0, 0)), Ok(0));
+        assert_eq!(dispatcher.handle_mm_memory_unblocked(&ctx(0, u64::MAX, 0x100, 0)), Ok(0));
+    }
+
+    #[test]
+    fn test_mm_is_comm_buffer_range_checks() {
+        let config = CommBufferConfig {
+            user: CommChannel { internal_address: 0x1_0000, size: 0x1000, ..Default::default() },
+            ..Default::default()
+        };
+        let dispatcher = new_dispatcher(MockOps { comm_buffer: Some(config), ..Default::default() });
+
+        // Fully inside, including the exact bounds of the buffer.
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0000, 0x1000, 0)), Ok(1));
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0800, 0x800, 0)), Ok(1));
+
+        // Empty range, starting below the buffer, and running past its end.
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0000, 0, 0)), Ok(0));
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0xFFFF, 0x10, 0)), Ok(0));
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0800, 0x801, 0)), Ok(0));
+
+        // A length that would overflow the end address must not wrap into the buffer.
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0000, u64::MAX, 0)), Ok(0));
+    }
+
+    #[test]
+    fn test_mm_is_comm_buffer_without_configuration() {
+        // Before the PassDown HOB is processed nothing can be a communication buffer.
+        let dispatcher = new_dispatcher(MockOps::default());
+        assert_eq!(dispatcher.handle_mm_is_comm_buffer(&ctx(0, 0x1_0000, 0x100, 0)), Ok(0));
     }
 }

@@ -288,4 +288,17 @@ mod tests {
         }
         assert_eq!(GDT.len(), 11);
     }
+
+    #[test]
+    fn test_gdt_tss_rsp0_round_trips_without_touching_other_fields() {
+        let mut tss = TaskStateSegment::new(0x1000);
+        assert_eq!(tss.rsp0(), 0);
+
+        tss.set_rsp0(0xFFFF_8000_0000_2000);
+
+        assert_eq!(tss.rsp0(), 0xFFFF_8000_0000_2000);
+        assert_eq!(tss.ist1(), 0x1000);
+        let io_map_base = tss.io_map_base;
+        assert_eq!(usize::from(io_map_base), core::mem::size_of::<TaskStateSegment>());
+    }
 }

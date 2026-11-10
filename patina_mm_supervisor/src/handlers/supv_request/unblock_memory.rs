@@ -399,7 +399,7 @@ impl UnblockedMemoryTracker {
         !self.is_memory_blocked(range)
     }
 
-    /// Gets the current count of unblocked regions.
+    /// Returns the number of unblocked regions.
     #[cfg(test)]
     pub fn region_count(&self) -> usize {
         self.state.lock().count
@@ -716,4 +716,800 @@ fn validate_unblock_request(params: &MmSupervisorUnblockMemoryParams) -> Result<
     }
 
     Ok(ValidatedUnblockRequest { range, is_supervisor_page, track_attributes })
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use core::cell::Cell;
+
+    use patina_paging::MockPageTable;
+    use serial_test::serial;
+
+    use crate::test_support::{self, PageAlignedMemory};
+
+    use super::*;
+
+    const REQUEST_SIZE: usize = MmSupervisorRequestHeader::SIZE + MmSupervisorUnblockMemoryParams::SIZE;
+    const MEMORY_DESCRIPTOR_PHYSICAL_START_OFFSET: usize = 8;
+    const MEMORY_DESCRIPTOR_NUMBER_OF_PAGES_OFFSET: usize = 24;
+    const MEMORY_DESCRIPTOR_ATTRIBUTE_OFFSET: usize = 32;
+    const IDENTIFIER_GUID_OFFSET: usize = 40;
+
+    struct TestUnblockMemoryContext {
+        locked: bool,
+        overlaps_mmram: bool,
+        track_result: MmSupervisorResult<TrackOutcome>,
+        page_update_result: MmSupervisorResult<()>,
+        rollback_result: bool,
+        mmram_checks: Cell<usize>,
+        track_calls: Cell<usize>,
+        page_update_calls: Cell<usize>,
+        rollback_calls: Cell<usize>,
+        last_request: Cell<Option<ValidatedUnblockRequest>>,
+    }
+
+    impl TestUnblockMemoryContext {
+        fn new() -> Self {
+            Self {
+                locked: false,
+                overlaps_mmram: false,
+                track_result: Ok(TrackOutcome::Added),
+                page_update_result: Ok(()),
+                rollback_result: true,
+                mmram_checks: Cell::new(0),
+                track_calls: Cell::new(0),
+                page_update_calls: Cell::new(0),
+                rollback_calls: Cell::new(0),
+                last_request: Cell::new(None),
+            }
+        }
+    }
+
+    impl UnblockMemoryContext for TestUnblockMemoryContext {
+        fn is_locked(&self) -> bool {
+            self.locked
+        }
+
+        fn overlaps_mmram(&self, _range: &MemoryRange) -> bool {
+            self.mmram_checks.set(self.mmram_checks.get() + 1);
+            self.overlaps_mmram
+        }
+
+        fn track_unblocked_memory(&self, _range: MemoryRange, _attributes: u32) -> MmSupervisorResult<TrackOutcome> {
+            self.track_calls.set(self.track_calls.get() + 1);
+            self.track_result
+        }
+
+        fn remove_unblocked_memory(&self, _range: &MemoryRange, _attributes: u32) -> bool {
+            self.rollback_calls.set(self.rollback_calls.get() + 1);
+            self.rollback_result
+        }
+
+        fn update_page_table(&self, request: &ValidatedUnblockRequest) -> MmSupervisorResult<()> {
+            self.page_update_calls.set(self.page_update_calls.get() + 1);
+            self.last_request.set(Some(*request));
+            self.page_update_result
+        }
+    }
+
+    /// A tracker backed by a test MMRAM pool. The pool is heap memory far above the low
+    /// addresses the tests unblock, so those addresses all lie outside MMRAM.
+    fn create_test_tracker() -> UnblockedMemoryTracker {
+        test_support::init_test_logger();
+        // The pool backs global state for the rest of this nextest process.
+        let mmram = Box::leak(Box::new(PageAlignedMemory::new(crate::memory::DEFAULT_PAGING_POOL_PAGES + 8)));
+        test_support::init_global_state_over(mmram);
+        UnblockedMemoryTracker::new()
+    }
+
+    /// Returns `[base, base + size)` as a range.
+    fn range(base: u64, size: u64) -> MemoryRange {
+        MemoryRange::new(base, size).unwrap()
+    }
+
+    fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {
+        buffer
+            .get_mut(offset..offset + core::mem::size_of::<u64>())
+            .expect("test field must fit in the request buffer")
+            .copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn request_buffer(
+        physical_start: u64,
+        number_of_pages: u64,
+        attribute: u64,
+        valid_guid: bool,
+    ) -> [u8; REQUEST_SIZE] {
+        test_support::init_test_logger();
+        let mut buffer = [0u8; REQUEST_SIZE];
+        let payload_offset = MmSupervisorRequestHeader::SIZE;
+        write_u64(&mut buffer, payload_offset + MEMORY_DESCRIPTOR_PHYSICAL_START_OFFSET, physical_start);
+        write_u64(&mut buffer, payload_offset + MEMORY_DESCRIPTOR_NUMBER_OF_PAGES_OFFSET, number_of_pages);
+        write_u64(&mut buffer, payload_offset + MEMORY_DESCRIPTOR_ATTRIBUTE_OFFSET, attribute);
+        if valid_guid {
+            *buffer
+                .get_mut(payload_offset + IDENTIFIER_GUID_OFFSET)
+                .expect("identifier GUID must fit in the request buffer") = 1;
+        }
+        buffer
+    }
+
+    fn validated_request(is_supervisor_page: bool) -> ValidatedUnblockRequest {
+        test_support::init_test_logger();
+        ValidatedUnblockRequest {
+            range: range(0x2000, 2 * UEFI_PAGE_SIZE as u64),
+            is_supervisor_page,
+            track_attributes: RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE,
+        }
+    }
+
+    #[test]
+    fn handler_rejects_a_null_buffer() {
+        let mut size = REQUEST_SIZE;
+
+        assert_eq!(handle_unblock_mem(core::ptr::null_mut(), &mut size), efi::Status::INVALID_PARAMETER);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+    }
+
+    #[test]
+    fn process_rejects_requests_after_ready_to_lock_before_parsing() {
+        let mut context = TestUnblockMemoryContext::new();
+        context.locked = true;
+
+        assert_eq!(process_unblock_mem(&[], &context), efi::Status::ACCESS_DENIED);
+        assert_eq!(context.mmram_checks.get(), 0);
+        assert_eq!(context.track_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_a_short_request() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = [0u8; REQUEST_SIZE - 1];
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::BUFFER_TOO_SMALL);
+        assert_eq!(context.mmram_checks.get(), 0);
+        assert_eq!(context.track_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_a_zero_identifier_guid() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x1000, 1, 0, false);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_a_zero_physical_start() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_an_unaligned_physical_start() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x1001, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_zero_pages() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x1000, 0, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_a_page_count_that_overflows_the_region_size() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x1000, u64::MAX, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_a_page_count_that_does_not_fit_a_tracker_entry() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x1000, u64::from(u32::MAX) + 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+        assert_eq!(context.track_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_an_address_range_that_overflows() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(u64::MAX - (UEFI_PAGE_SIZE as u64 - 1), 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.mmram_checks.get(), 0);
+    }
+
+    #[test]
+    fn process_rejects_mmram_overlap_before_tracking() {
+        let mut context = TestUnblockMemoryContext::new();
+        context.overlaps_mmram = true;
+        let buffer = request_buffer(0x1000, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SECURITY_VIOLATION);
+        assert_eq!(context.mmram_checks.get(), 1);
+        assert_eq!(context.track_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_treats_an_existing_entry_as_an_idempotent_success() {
+        let mut context = TestUnblockMemoryContext::new();
+        context.track_result = Ok(TrackOutcome::Existing);
+        let buffer = request_buffer(0x1000, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SUCCESS);
+        assert_eq!(context.track_calls.get(), 1);
+        assert_eq!(context.page_update_calls.get(), 0);
+        assert_eq!(context.rollback_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_maps_tracker_conflicts_to_security_violations() {
+        let mut context = TestUnblockMemoryContext::new();
+        context.track_result = Err(UnblockError::ConflictingAttributes.into());
+        let buffer = request_buffer(0x1000, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SECURITY_VIOLATION);
+        assert_eq!(context.page_update_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_maps_other_tracker_failures_to_invalid_parameter() {
+        let mut context = TestUnblockMemoryContext::new();
+        context.track_result = Err(UnblockError::TooManyRegions.into());
+        let buffer = request_buffer(0x1000, 1, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::INVALID_PARAMETER);
+        assert_eq!(context.page_update_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_rolls_back_tracking_after_each_page_table_failure() {
+        let cases = [
+            (PageUpdateError::PageTableNotReady, efi::Status::NOT_READY),
+            (PageUpdateError::AlreadyMapped, efi::Status::SECURITY_VIOLATION),
+            (PageUpdateError::QueryFailed, efi::Status::DEVICE_ERROR),
+            (PageUpdateError::MapFailed, efi::Status::DEVICE_ERROR),
+        ];
+        let buffer = request_buffer(0x1000, 1, 0, true);
+
+        for (page_error, expected_status) in cases {
+            let mut context = TestUnblockMemoryContext::new();
+            context.page_update_result = Err(page_error.into());
+
+            assert_eq!(process_unblock_mem(&buffer, &context), expected_status);
+            assert_eq!(context.page_update_calls.get(), 1);
+            assert_eq!(context.rollback_calls.get(), 1);
+        }
+    }
+
+    #[test]
+    fn process_returns_success_for_a_user_accessible_mapping() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x2000, 3, 0, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SUCCESS);
+        let request = context.last_request.get().expect("page-table update must receive the validated request");
+        assert_eq!(request.range, range(0x2000, 3 * UEFI_PAGE_SIZE as u64));
+        assert!(!request.is_supervisor_page);
+        assert_eq!(request.track_attributes, RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE);
+        assert_eq!(context.rollback_calls.get(), 0);
+    }
+
+    #[test]
+    fn process_preserves_the_supervisor_only_attribute() {
+        let context = TestUnblockMemoryContext::new();
+        let buffer = request_buffer(0x2000, 1, efi::MEMORY_SP, true);
+
+        assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SUCCESS);
+        let request = context.last_request.get().expect("page-table update must receive the validated request");
+        assert!(request.is_supervisor_page);
+        assert_eq!(request.track_attributes, RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE | SUPERVISOR_TRACKING_ATTRIBUTE);
+    }
+
+    #[test]
+    fn handler_rejects_a_short_non_null_buffer() {
+        let mut buffer = [0u8; REQUEST_SIZE - 1];
+        let mut size = buffer.len();
+
+        assert_eq!(handle_unblock_mem(buffer.as_mut_ptr(), &mut size), efi::Status::BUFFER_TOO_SMALL);
+        assert_eq!(size, MmSupervisorRequestHeader::SIZE);
+    }
+
+    #[test]
+    #[serial]
+    fn supervisor_unblock_context_delegates_to_its_real_tracker() {
+        let tracker = create_test_tracker();
+        let context = SupervisorUnblockMemoryContext { unblocked_tracker: &tracker };
+
+        assert!(!context.is_locked());
+        assert!(!context.overlaps_mmram(&range(0x1000, 0x1000)));
+        assert_eq!(context.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ), Ok(TrackOutcome::Added));
+        assert_eq!(
+            context.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ),
+            Ok(TrackOutcome::Existing)
+        );
+        assert!(context.remove_unblocked_memory(&range(0x1000, 0x1000), RESOURCE_ATTR_READ));
+        assert_eq!(tracker.region_count(), 0);
+    }
+
+    #[test]
+    fn supervisor_unblock_context_reports_an_uninitialized_page_table() {
+        let tracker = UnblockedMemoryTracker::new();
+        let context = SupervisorUnblockMemoryContext { unblocked_tracker: &tracker };
+        *security_state().lock_page_table() = None;
+
+        assert_eq!(
+            context.update_page_table(&validated_request(false)),
+            Err(PageUpdateError::PageTableNotReady.into())
+        );
+    }
+
+    #[test]
+    fn page_table_update_rejects_an_existing_mapping() {
+        let mut page_table = MockPageTable::new();
+        page_table.expect_query_memory_region().times(1).returning(|_, _| Ok(MemoryAttributes::ReadOnly));
+        page_table.expect_map_memory_region().never();
+
+        assert_eq!(
+            update_unblocked_page_table(&mut page_table, &validated_request(false)),
+            Err(PageUpdateError::AlreadyMapped.into())
+        );
+    }
+
+    #[test]
+    fn page_table_update_maps_user_data_as_writable_and_non_executable() {
+        let request = validated_request(false);
+        let mut page_table = MockPageTable::new();
+        page_table.expect_query_memory_region().times(1).returning(|_, _| Err(PtError::NoMapping));
+        page_table
+            .expect_map_memory_region()
+            .withf(move |base, size, attributes| {
+                *base == request.range.base()
+                    && *size == request.range.size()
+                    && *attributes == MemoryAttributes::ExecuteProtect
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(()));
+
+        assert_eq!(update_unblocked_page_table(&mut page_table, &request), Ok(()));
+    }
+
+    #[test]
+    fn page_table_update_preserves_supervisor_only_access() {
+        let request = validated_request(true);
+        let mut page_table = MockPageTable::new();
+        page_table.expect_query_memory_region().times(1).returning(|_, _| Err(PtError::NoMapping));
+        page_table
+            .expect_map_memory_region()
+            .withf(move |base, size, attributes| {
+                *base == request.range.base()
+                    && *size == request.range.size()
+                    && *attributes == MemoryAttributes::ExecuteProtect | MemoryAttributes::Supervisor
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(()));
+
+        assert_eq!(update_unblocked_page_table(&mut page_table, &request), Ok(()));
+    }
+
+    #[test]
+    fn page_table_update_reports_query_failure() {
+        let mut page_table = MockPageTable::new();
+        page_table.expect_query_memory_region().times(1).returning(|_, _| Err(PtError::InvalidParameter));
+        page_table.expect_map_memory_region().never();
+
+        assert_eq!(
+            update_unblocked_page_table(&mut page_table, &validated_request(false)),
+            Err(PageUpdateError::QueryFailed.into())
+        );
+    }
+
+    #[test]
+    fn page_table_update_reports_mapping_failure() {
+        let mut page_table = MockPageTable::new();
+        page_table.expect_query_memory_region().times(1).returning(|_, _| Err(PtError::NoMapping));
+        page_table.expect_map_memory_region().times(1).returning(|_, _, _| Err(PtError::OutOfResources));
+
+        assert_eq!(
+            update_unblocked_page_table(&mut page_table, &validated_request(false)),
+            Err(PageUpdateError::MapFailed.into())
+        );
+    }
+
+    #[test]
+    fn test_unblock_errors_render_each_variant_distinctly() {
+        // An unblock request that fails reaches Ring 3 as a bare EFI status, so this message is
+        // the only record of why. The table is exhaustive, so a variant added without a Display
+        // arm fails here rather than rendering as another variant's text.
+        let all = [
+            (UnblockError::AlreadyInitialized, "the unblocked memory tracker is already initialized"),
+            (UnblockError::TooManyRegions, "the request exceeds the 64 tracked unblocked regions"),
+            (UnblockError::OverlapsWithMmram, "the requested region overlaps MMRAM"),
+            (
+                UnblockError::ConflictingAttributes,
+                "the requested region overlaps an unblocked region with different attributes",
+            ),
+            (UnblockError::InvalidParameter, "the request has a null pointer or a zero length"),
+            (UnblockError::AddressOverflow, "the requested region's address plus size overflows"),
+        ];
+
+        for (error, expected) in all {
+            assert_eq!(format!("{error}"), expected);
+        }
+
+        // The message carries the limit, so it stays correct if the table is resized.
+        assert!(format!("{}", UnblockError::TooManyRegions).contains(&MAX_UNBLOCKED_REGIONS.to_string()));
+    }
+
+    #[test]
+    fn test_page_update_errors_render_each_variant_distinctly() {
+        // The four ways a mapping change can fail are reported through one status, so the
+        // message is what separates a missing page table from a refused map.
+        let all = [
+            (PageUpdateError::PageTableNotReady, "the page table is not installed yet"),
+            (PageUpdateError::AlreadyMapped, "the region is already mapped"),
+            (PageUpdateError::QueryFailed, "the region's current attributes could not be read"),
+            (PageUpdateError::MapFailed, "the region could not be mapped with the requested attributes"),
+        ];
+
+        for (error, expected) in all {
+            assert_eq!(format!("{error}"), expected);
+        }
+
+        // A read that failed and a write that failed are different findings.
+        assert_ne!(format!("{}", PageUpdateError::QueryFailed), format!("{}", PageUpdateError::MapFailed));
+    }
+
+    #[test]
+    fn test_empty_entry() {
+        let entry = UnblockedMemoryEntry::empty();
+        assert_eq!(entry.num_pages, 0);
+        assert_eq!(entry.base_address, 0);
+        assert_eq!(entry.size(), 0);
+    }
+
+    #[test]
+    fn test_entry_is_compact() {
+        // The tracker is a SEA-audited static, so guard against the per-entry
+        // footprint regressing: base (u64) + num_pages (u32) + attributes (u32).
+        assert_eq!(core::mem::size_of::<UnblockedMemoryEntry>(), 16);
+    }
+
+    #[test]
+    fn test_entry_size_round_trips_pages() {
+        let entry = UnblockedMemoryEntry::new(range(0x2000, 4 * UEFI_PAGE_SIZE as u64), RESOURCE_ATTR_READ)
+            .expect("4 pages fit");
+        assert_eq!(entry.num_pages, 4);
+        assert_eq!(entry.size(), 4 * UEFI_PAGE_SIZE as u64);
+        assert_eq!(entry.range(), MemoryRange::new(0x2000, 4 * UEFI_PAGE_SIZE as u64).ok());
+        assert_eq!(UnblockedMemoryEntry::empty().range(), None);
+
+        // A sub-page size rounds up to a whole page (matching the page-granular mapping).
+        let partial = UnblockedMemoryEntry::new(range(0x1000, 1), RESOURCE_ATTR_READ).expect("1 page fits");
+        assert_eq!(partial.num_pages, 1);
+        assert_eq!(partial.size(), UEFI_PAGE_SIZE as u64);
+
+        // A page count above `u32::MAX` cannot be recorded.
+        let too_many_pages = (u64::from(u32::MAX) + 1) * UEFI_PAGE_SIZE as u64;
+        assert!(UnblockedMemoryEntry::new(range(0x1000, too_many_pages), RESOURCE_ATTR_READ).is_none());
+    }
+
+    #[test]
+    fn test_entry_contains() {
+        let entry = UnblockedMemoryEntry::new(range(0x1000, 0x1000), RESOURCE_ATTR_READ).expect("1 page fits");
+
+        // Fully contained
+        assert!(entry.contains(&range(0x1000, 0x1000)));
+        assert!(entry.contains(&range(0x1000, 0x800)));
+        assert!(entry.contains(&range(0x1800, 0x800)));
+
+        // Partially outside
+        assert!(!entry.contains(&range(0x0800, 0x1000))); // Starts before
+        assert!(!entry.contains(&range(0x1800, 0x1000))); // Ends after
+
+        // Completely outside
+        assert!(!entry.contains(&range(0x3000, 0x1000)));
+        assert!(!entry.contains(&range(u64::MAX - 1, 1)));
+
+        // An empty entry contains nothing.
+        assert!(!UnblockedMemoryEntry::empty().contains(&range(0, 1)));
+    }
+
+    #[test]
+    fn test_entry_overlaps() {
+        let entry = UnblockedMemoryEntry::new(range(0x1000, 0x1000), RESOURCE_ATTR_READ).expect("1 page fits");
+
+        // Overlapping cases
+        assert!(entry.overlaps(&range(0x1000, 0x1000))); // Exact match
+        assert!(entry.overlaps(&range(0x0800, 0x1000))); // Starts before, ends inside
+        assert!(entry.overlaps(&range(0x1800, 0x1000))); // Starts inside, ends after
+        assert!(entry.overlaps(&range(0x0800, 0x2000))); // Completely contains entry
+
+        // Non-overlapping
+        assert!(!entry.overlaps(&range(0x2000, 0x1000))); // Immediately after
+        assert!(!entry.overlaps(&range(0x0000, 0x1000))); // Immediately before
+        assert!(!entry.overlaps(&range(0x3000, 0x1000))); // Far after
+        assert!(!entry.overlaps(&range(u64::MAX - 1, 1)));
+
+        // An empty entry overlaps nothing.
+        assert!(!UnblockedMemoryEntry::empty().overlaps(&range(0, 1)));
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_before_init_complete() {
+        let tracker = create_test_tracker();
+
+        // Before core init complete, nothing is blocked
+        assert!(!tracker.is_memory_blocked(&range(0x1000, 0x1000)));
+        assert!(!tracker.is_memory_blocked(&range(0x0, 0x100000)));
+        assert!(!tracker.is_core_init_complete());
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_after_init_complete_empty() {
+        let tracker = create_test_tracker();
+        tracker.set_core_init_complete();
+        assert!(tracker.is_core_init_complete());
+
+        // After init complete with no regions, everything is blocked
+        assert!(tracker.is_memory_blocked(&range(0x1000, 0x1000)));
+        assert!(!tracker.is_within_unblocked_region(&range(0x1000, 0x1000)));
+    }
+
+    #[test]
+    #[serial]
+    fn test_unblock_memory() {
+        let tracker = create_test_tracker();
+
+        // Unblock a region
+        assert!(
+            tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE).is_ok()
+        );
+
+        tracker.set_core_init_complete();
+
+        // Region should be accessible
+        assert!(!tracker.is_memory_blocked(&range(0x1000, 0x1000)));
+        assert!(!tracker.is_memory_blocked(&range(0x1000, 0x800)));
+
+        // Outside region should be blocked
+        assert!(tracker.is_memory_blocked(&range(0x3000, 0x1000)));
+    }
+
+    #[test]
+    #[serial]
+    fn test_idempotent_unblock() {
+        let tracker = create_test_tracker();
+
+        // First unblock
+        assert_eq!(tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ), Ok(TrackOutcome::Added));
+
+        // Identical unblock should succeed
+        assert_eq!(
+            tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ),
+            Ok(TrackOutcome::Existing)
+        );
+
+        // Same region with different attributes should fail
+        assert_eq!(
+            tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ | RESOURCE_ATTR_WRITE),
+            Err(UnblockError::ConflictingAttributes.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_overlapping_unblock_fails() {
+        let tracker = create_test_tracker();
+
+        // First unblock
+        assert!(tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ).is_ok());
+
+        // Overlapping unblock should fail
+        assert_eq!(
+            tracker.track_unblocked_memory(range(0x1800, 0x1000), RESOURCE_ATTR_READ),
+            Err(UnblockError::ConflictingAttributes.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_invalid_parameters() {
+        let tracker = create_test_tracker();
+        tracker.set_core_init_complete();
+
+        // A range that cannot be built is reported by kind.
+        assert_eq!(UnblockError::from(MemoryRangeError::Empty), UnblockError::InvalidParameter);
+        assert_eq!(UnblockError::from(MemoryRangeError::Overflow), UnblockError::AddressOverflow);
+
+        // The request itself fits, but rounding it up to a whole page would run past the end of
+        // the address space, so it is not tracked.
+        assert_eq!(
+            tracker.track_unblocked_memory(range(u64::MAX - 0x10, 0x10), RESOURCE_ATTR_READ),
+            Err(UnblockError::AddressOverflow.into())
+        );
+        assert_eq!(tracker.region_count(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_reports_capacity_exhaustion() {
+        let tracker = create_test_tracker();
+
+        for index in 0..MAX_UNBLOCKED_REGIONS {
+            let base = (index as u64 + 1) * 0x2000;
+            assert_eq!(
+                tracker.track_unblocked_memory(range(base, 0x1000), RESOURCE_ATTR_READ),
+                Ok(TrackOutcome::Added)
+            );
+        }
+
+        assert_eq!(
+            tracker.track_unblocked_memory(range(0x10_0000, 0x1000), RESOURCE_ATTR_READ),
+            Err(UnblockError::TooManyRegions.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_removes_only_the_matching_entry() {
+        let tracker = create_test_tracker();
+        assert_eq!(tracker.track_unblocked_memory(range(0x1000, 0x1000), RESOURCE_ATTR_READ), Ok(TrackOutcome::Added));
+        assert_eq!(tracker.track_unblocked_memory(range(0x3000, 0x1000), RESOURCE_ATTR_WRITE), Ok(TrackOutcome::Added));
+
+        assert!(!tracker.remove_unblocked_memory(&range(0x1000, 0x1000), RESOURCE_ATTR_WRITE));
+        assert!(tracker.remove_unblocked_memory(&range(0x1000, 0x1000), RESOURCE_ATTR_READ));
+        assert_eq!(tracker.region_count(), 1);
+
+        tracker.set_core_init_complete();
+        assert!(tracker.is_memory_blocked(&range(0x1000, 0x1000)));
+        assert!(!tracker.is_memory_blocked(&range(0x3000, 0x1000)));
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_initializes_from_descriptors_once() {
+        let tracker = create_test_tracker();
+        let descriptors = [
+            MemDescriptorV1_0 { base_address: 0x1000, size: 0x1000, mem_attributes: RESOURCE_ATTR_READ, reserved: 0 },
+            MemDescriptorV1_0 { base_address: 0x3000, size: 0x2000, mem_attributes: RESOURCE_ATTR_WRITE, reserved: 0 },
+        ];
+
+        assert_eq!(tracker.init_from_descriptors(&descriptors), Ok(()));
+        assert_eq!(tracker.region_count(), 2);
+        assert_eq!(tracker.init_from_descriptors(&[]), Err(UnblockError::AlreadyInitialized.into()));
+        tracker.dump_regions();
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_init_rejects_a_zero_size_descriptor() {
+        let tracker = create_test_tracker();
+        let descriptors = [
+            MemDescriptorV1_0 { base_address: 0x1000, size: 0x1000, mem_attributes: RESOURCE_ATTR_READ, reserved: 0 },
+            MemDescriptorV1_0 { base_address: 0x3000, size: 0, mem_attributes: RESOURCE_ATTR_READ, reserved: 0 },
+        ];
+
+        assert_eq!(tracker.init_from_descriptors(&descriptors), Err(UnblockError::InvalidParameter.into()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_rejects_every_region_before_mmram_is_known() {
+        test_support::init_test_logger();
+        let tracker = UnblockedMemoryTracker::new();
+
+        assert_eq!(
+            tracker.track_unblocked_memory(range(0x1000, 0x2000), RESOURCE_ATTR_READ),
+            Err(UnblockError::OverlapsWithMmram.into())
+        );
+        assert_eq!(tracker.region_count(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_init_rejects_a_descriptor_that_overlaps_mmram() {
+        let mmram = PageAlignedMemory::new(crate::memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        test_support::init_global_state_over(&mmram);
+        let page = UEFI_PAGE_SIZE as u64;
+        let mmram_end = mmram.base() + mmram.size();
+
+        // Fully inside, crossing the end, and crossing the start of MMRAM.
+        for (base, size) in [(mmram.base(), page), (mmram_end - page, 2 * page), (mmram.base() - page, 2 * page)] {
+            let tracker = UnblockedMemoryTracker::new();
+            let descriptors =
+                [MemDescriptorV1_0 { base_address: base, size, mem_attributes: RESOURCE_ATTR_READ, reserved: 0 }];
+
+            assert_eq!(tracker.init_from_descriptors(&descriptors), Err(UnblockError::OverlapsWithMmram.into()));
+            assert_eq!(tracker.region_count(), 0);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_unblock_request_that_crosses_an_mmram_boundary_is_rejected() {
+        let mmram = PageAlignedMemory::new(crate::memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        test_support::init_global_state_over(&mmram);
+        let page = UEFI_PAGE_SIZE as u64;
+        let mmram_end = mmram.base() + mmram.size();
+        let tracker = UnblockedMemoryTracker::new();
+        let context = SupervisorUnblockMemoryContext { unblocked_tracker: &tracker };
+
+        // The test page table maps nothing, which is how free MMRAM pages look, so only the
+        // MMRAM check stands between these requests and a Ring 3 mapping of MMRAM.
+        for (base, pages) in [(mmram_end - page, 1), (mmram_end - page, 2), (mmram.base() - page, 2)] {
+            let buffer = request_buffer(base, pages, 0, true);
+
+            assert_eq!(process_unblock_mem(&buffer, &context), efi::Status::SECURITY_VIOLATION);
+        }
+
+        let page_table = security_state().lock_page_table();
+        let page_table = page_table.as_ref().expect("a page table is installed");
+        assert_eq!(page_table.query_memory_region(mmram.base(), page), Err(PtError::NoMapping));
+        assert_eq!(page_table.query_memory_region(mmram_end - page, page), Err(PtError::NoMapping));
+        assert_eq!(tracker.region_count(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_reports_descriptor_initialization_capacity_exhaustion() {
+        let tracker = create_test_tracker();
+        let descriptors: Vec<_> = (0..=MAX_UNBLOCKED_REGIONS)
+            .map(|index| MemDescriptorV1_0 {
+                base_address: (index as u64 + 1) * 0x2000,
+                size: 0x1000,
+                mem_attributes: RESOURCE_ATTR_READ,
+                reserved: 0,
+            })
+            .collect();
+
+        assert_eq!(tracker.init_from_descriptors(&descriptors), Err(UnblockError::TooManyRegions.into()));
+        assert_eq!(tracker.region_count(), MAX_UNBLOCKED_REGIONS);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_initializes_from_empty_raw_buffer_once() {
+        let tracker = create_test_tracker();
+
+        // SAFETY: A null buffer with zero entries is explicitly supported as empty initialization.
+        assert_eq!(unsafe { tracker.init_from_buffer(core::ptr::null(), 0) }, Ok(()));
+        assert_eq!(
+            // SAFETY: A null buffer with zero entries remains a valid request and reaches the
+            // already-initialized check.
+            unsafe { tracker.init_from_buffer(core::ptr::null(), 0) },
+            Err(UnblockError::AlreadyInitialized.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_tracker_initializes_from_a_raw_descriptor_buffer() {
+        let tracker = create_test_tracker();
+        let descriptors =
+            [MemDescriptorV1_0 { base_address: 0x1000, size: 0x1000, mem_attributes: RESOURCE_ATTR_READ, reserved: 0 }];
+
+        // SAFETY: `descriptors` is a live array containing exactly one valid descriptor.
+        assert_eq!(unsafe { tracker.init_from_buffer(descriptors.as_ptr(), descriptors.len()) }, Ok(()));
+        assert_eq!(tracker.region_count(), 1);
+    }
 }
