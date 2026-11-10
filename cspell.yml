@@ -125,6 +125,7 @@ words:
   - impls
   - inmodule
   - intid
+  - iommu
   - irouter
   - iscsi
   - isenabler
@@ -146,6 +147,7 @@ words:
   - lstar
   - lzmatest
   - maxnp
+  - maxphyaddr
   - mdbook
   - mdscr
   - mmbase
@@ -213,6 +215,7 @@ words:
   - sgram
   - smbus
   - smbase
+  - smbases
   - smcport
   - smiport
   - smmrevid
@@ -242,6 +245,7 @@ words:
   - unconfigured
   - uncontained
   - uncrustify
+  - unmapping
   - unmaps
   - unrecovered
   - unreg
