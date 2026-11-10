@@ -1,0 +1,46 @@
+[package]
+name = "patina_mm_supervisor"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+readme = "README.md"
+description = "A pure Rust implementation of the MM Supervisor Core for standalone MM mode environments."
+keywords.workspace = true
+categories.workspace = true
+
+# Metadata to tell docs.rs how to build the documentation when uploading
+[package.metadata.docs.rs]
+features = ["doc"]
+
+[lints]
+workspace = true
+
+[dependencies]
+log = { workspace = true }
+patina = { workspace = true }
+patina_internal_cpu = { workspace = true }
+patina_paging = { workspace = true, features = [
+    "supervisor"
+] }
+patina_stacktrace = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+patina_paging = { workspace = true, features = ["mockall", "supervisor"] }
+serial_test = { workspace = true }
+
+[features]
+default = []
+std = []
+doc = []
+# Read the SMRAM save state with the AMD64 layout. The Intel x64 layout is used otherwise.
+save_state_amd = ["patina_internal_cpu/save_state_amd"]
+# Also validate V1 resource descriptor HOBs. Without it only V2 descriptors are validated and V1
+# descriptors are ignored, matching `patina_dxe_core`. Temporary: removed once platforms stop
+# producing V1 descriptors.
+v1_resource_descriptor_support = []
+# All non-std features to test in CI
+ci_features = ["v1_resource_descriptor_support"]
