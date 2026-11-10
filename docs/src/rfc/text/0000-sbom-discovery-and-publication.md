@@ -8,7 +8,8 @@ interface represents one serialized ACPI SBOM table entry. A GUIDed HOB consumer
 ACPI table publication may instead add its HOB-derived entries directly to the table collection.
 The entry consists of a metadata header prepended to opaque raw SBOM bytes. During boot, firmware
 validates only that header and the entry's byte boundaries; it does not decompress, parse, or
-semantically validate the raw SBOM. The table publisher copies each entry unchanged into the table
+semantically validate the raw SBOM. The table publisher deduplicates entries based on their raw
+bytes and copies each unique entry unchanged into the table
 and publishes it through the platform's ACPI implementation. A primary requirement is compatibility
 between Patina-based and EDK II-based firmware: every discovery method described by this RFC must
 be possible in both implementations, and both implementations must produce the same serialized
@@ -19,6 +20,8 @@ entry format. Patina and EDK II may use different internal integration points to
 - 2026-10-12: Initial RFC created.
 - 2026-11-06: Define the HOB handoff and publish once at ReadyToBoot through
   `EFI_ACPI_TABLE_PROTOCOL`.
+- 2026-11-10: Use the serialized entry directly as the protocol interface and retain
+  image-discovered entries after image unload.
 
 ## Motivation
 
@@ -79,7 +82,7 @@ source object.
 This model is usually used for device or service interfaces. The protocol proposed by this RFC
 instead represents one complete serialized SBOM table entry per protocol instance. It has no
 function table and creates no call-time dependency between a producer and the aggregator. Its
-interface is a fixed-size descriptor containing a pointer to the serialized entry and its byte length.
+interface points directly to the serialized entry, whose header describes its complete byte length.
 
 ### ACPI Publication
 
@@ -123,7 +126,8 @@ installation.
 9. Allocation failures and SBOM protocol installation failures must also be reported and ignored
    without failing the image load.
 10. The PE/COFF discovery path must install a structurally well-formed `.sbom` entry on the loaded
-    image handle.
+    image handle. After a successful load, the protocol and its backing entry storage must remain
+    available even if the image is later unloaded.
 11. Each SBOM GUIDed HOB must contain exactly one serialized entry, without an ACPI description
     header. Only the HOB's expected eight-byte alignment padding may follow the entry.
 12. A component or driver that consumes GUIDed HOB instances may also act as the ACPI SBOM table
@@ -135,7 +139,8 @@ installation.
 13. Platform implementations using the common publication interface may use an existing source
     handle or create a dedicated handle.
 14. The aggregator must locate all SBOM entry protocol instances that are available at its
-    collection point and include any GUIDed HOB entries that it consumes directly.
+    collection point and include any GUIDed HOB entries that it consumes directly. It must
+    deduplicate entries based on their complete serialized bytes, including the header and payload.
 15. The final ACPI SBOM table must be published in `EfiACPIReclaimMemory`. The published table must
     contain owned copies of every entry and must not borrow producer-owned protocol memory.
 16. The ACPI table must represent an N-entry list of standalone SBOMs. The aggregator must not merge
@@ -146,13 +151,9 @@ installation.
 
 ## Unresolved Questions
 
-The following details are expected to be resolved through this RFC process or follow-up work:
+N/A.
 
-1. Should an SBOM entry discovered from an image that is later unloaded remain eligible for
-   inclusion in the ACPI SBOM table, or should the table contain entries only from images that
-   remain loaded at publication time?
-2. Should the ACPI table producer be responsible for de-duplicating SBOM entries, or should it
-   publish every structurally well-formed entry provided by the discovery mechanisms?
+## Out of Scope
 
 The following work is out of scope:
 
@@ -334,48 +335,37 @@ The firmware preserves the header and opaque payload. An operating system consum
 
 ### SBOM Entry Protocol
 
-The protocol interface is a fixed-size descriptor referencing one serialized entry:
+The protocol interface is one serialized SBOM table entry:
 
 ```c
 #define EFI_SBOM_ENTRY_PROTOCOL_GUID \
   { 0x6F84698B, 0xC4E9, 0x4BD0, \
     { 0x9C, 0x8F, 0x5E, 0xB6, 0xC6, 0xF4, 0x68, 0x71 } }
 
-typedef struct {
-  CONST EFI_ACPI_SBOM_TABLE_ENTRY *Entry;
-  UINTN                          EntrySize;
-} EFI_SBOM_ENTRY_PROTOCOL;
+typedef EFI_ACPI_SBOM_TABLE_ENTRY EFI_SBOM_ENTRY_PROTOCOL;
 ```
 
 Patina's proposed interface lives in `patina::vendor_protocols::sbom`, using the wire type from
 `patina::uefi::acpi_table::sbom`:
 
 ```rust
-#[repr(C)]
-pub struct SbomProtocol {
-    pub entry: *const u8,
-    pub entry_size: usize,
-}
+pub type SbomProtocol = SbomTableEntry;
 
-// SAFETY: This is the EFI_SBOM_ENTRY_PROTOCOL C layout for this GUID.
+// SAFETY: The protocol GUID identifies the packed SBOM entry wire layout.
 unsafe impl ProtocolInterface for SbomProtocol {
     const PROTOCOL_GUID: BinaryGuid =
         BinaryGuid::from_string("6F84698B-C4E9-4BD0-9C8F-5EB6C6F46871");
 }
 ```
 
-UEFI stores a pointer to the descriptor. `EntrySize` is the complete serialized entry length in
-bytes, including its header and payload. A consumer checks that `Entry` is non-null and that
-`EntrySize` is representable as a slice, then parses the entry within that supplied boundary.
-The entry's embedded lengths must match `EntrySize`.
+UEFI stores a pointer directly to the entry bytes. A consumer reads and validates the fixed
+ten-byte header, calculates the total entry length as `HeaderLength + PayloadLength` with checked
+arithmetic, and parses the complete entry. The protocol carries no separate allocation length.
 
-The producer guarantees that the descriptor and referenced bytes remain readable throughout their
-installed lifetime. Constructing the borrowed slice requires that memory-validity contract;
-structural validation uses the explicit size to bound parsing. The fixed-size protocol can be
-located through Patina's sized protocol helpers.
-
-This pointer-and-length descriptor follows an established UEFI pattern. For example,
-`EFI_LOADED_IMAGE_PROTOCOL` exposes the loaded image through its `ImageBase` and `ImageSize` fields.
+The producer guarantees that the fixed header and complete declared payload remain readable and
+immutable throughout the installed lifetime. Reconstructing the entry requires that memory-validity
+contract; consumers cannot detect a truncated allocation from the protocol pointer alone. In Patina,
+the unsafe `SbomTableEntry::from_raw` helper reconstructs the borrowed entry from the interface pointer.
 
 ### Producer Contract
 
@@ -385,10 +375,9 @@ A producer follows this sequence:
 2. Structurally validate the entry header and exact byte boundary without parsing the payload.
 3. Copy the exact serialized bytes into producer-owned storage when the source storage does not
    already have a suitable lifetime.
-4. Create a producer-owned descriptor containing the entry pointer and complete byte length, and
-   install the descriptor as the SBOM entry protocol interface.
-5. Keep the descriptor and entry bytes immutable at stable addresses while installed.
-6. Uninstall the exact descriptor interface pointer before freeing the descriptor or entry bytes.
+4. Install a pointer to the serialized entry bytes as the SBOM entry protocol interface.
+5. Keep the entry bytes immutable at a stable address while installed.
+6. Uninstall the exact interface pointer before freeing the entry bytes.
 
 If any SBOM-specific step fails, the producer logs a warning with source context, discards any
 partial SBOM state, and allows the source image operation to continue.
@@ -399,16 +388,19 @@ The Patina and EDK II DXE Cores implement the same behavior in their image-loadi
 
 1. Parse the source PE/COFF image and search for a section named `.sbom`.
 2. If the section is absent, continue without logging an error.
-3. Parse one structurally well-formed serialized entry from the section. If the section cannot be
-   read, parsing fails, or any trailing byte is nonzero, log a warning and continue loading the image.
-4. Copy the validated entry into image-owned memory.
+3. Parse one structurally well-formed serialized `EFI_ACPI_SBOM_TABLE_ENTRY`, including its payload,
+   from the section. If the section cannot be read, parsing fails, or any trailing byte is nonzero,
+   log a warning and continue loading the image.
+4. Copy the validated entry into independently allocated storage.
 5. Install the protocol on the loaded image handle.
 6. If copying or protocol installation fails, log a warning and continue loading the image.
-7. On image unload or failed-load rollback, uninstall the protocol before releasing the entry bytes.
+7. On failed-load rollback, uninstall the protocol before releasing the entry bytes.
+8. After a successful load, retain the protocol and its backing entry storage when the image is
+   unloaded. The entry remains eligible for collection at ReadyToBoot.
 
-The protocol's lifetime therefore follows the loaded image. Consumers can associate the entry with
-the image by querying other protocols on the same handle, such as Loaded Image and Loaded Image
-Device Path.
+While the image remains loaded, consumers can associate the entry with the image by querying other
+protocols on the same handle, such as Loaded Image and Loaded Image Device Path. After unload, the
+SBOM entry protocol remains installed even though those image protocols have been removed.
 
 ### GUIDed HOB Discovery and Platform Publication
 
@@ -457,8 +449,10 @@ At the first ReadyToBoot notification, while allocation services remain availabl
 
 1. Start with the validated GUIDed HOB entries copied during dispatch.
 2. Locate every handle supporting the SBOM entry protocol.
-3. Read each descriptor and structurally validate its referenced entry within the supplied byte length.
-4. Ignore structurally malformed entries with a warning.
+3. Read and validate each entry's fixed header, derive its total length, and parse and copy the
+   complete entry under the producer's memory-validity contract.
+4. Ignore structurally malformed entries with a warning and deduplicate the accepted entries
+   based on their raw bytes.
 5. If no entries remain, skip installation. Otherwise calculate the final table length with checked
    arithmetic, enforce the ACPI `UINT32` length limit, and handle allocation failure.
 6. Construct the complete table image containing the ACPI header and all accepted entries.
@@ -487,9 +481,8 @@ flowchart LR
 
 The ACPI publication layer owns the final `EfiACPIReclaimMemory` allocation. Uninstalling a source
 protocol after collection cannot invalidate the published table.
-HOB entries precede protocol entries. Protocol enumeration order is not an attribution or ordering
-guarantee. The current prototype preserves duplicates, does not replace an existing SBOM table, and does
-not incorporate entries discovered after its notification.
+Entry order is not an attribution or ordering guarantee. The publisher does not replace an existing
+SBOM table or incorporate entries discovered after its notification.
 
 ### Error Handling
 
@@ -510,8 +503,8 @@ information.
 
 ## Guide-Level Explanation
 
-An SBOM entry producer installs an SBOM entry protocol descriptor referencing one immutable
-serialized entry in the UEFI protocol database.
+An SBOM entry producer installs one immutable serialized entry directly as the SBOM entry protocol
+interface in the UEFI protocol database.
 
 For a PE/COFF image, the DXE Core looks for `.sbom` while it already has the image bytes available.
 If there is no section, loading proceeds normally. If the section cannot be read or is structurally
@@ -549,8 +542,9 @@ fn load_sbom_section(&mut self, image: &[u8]) {
 ```
 
 `PrivateImageData::install_additional_interfaces` installs the SBOM entry protocol on the loaded
-image handle. With the proposed descriptor, the image owns both the descriptor and retained entry.
-Image unload removes that exact protocol interface before their storage is released.
+image handle. After successful installation, the entry storage is retained independently of the
+image. Image unload removes the image protocols but leaves the SBOM entry protocol and its bytes
+available for collection. Failed-load rollback removes the SBOM protocol before releasing its bytes.
 
 A platform registers the standalone publisher with its ACPI OEM and creator metadata:
 
