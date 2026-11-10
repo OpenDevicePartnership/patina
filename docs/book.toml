@@ -7,6 +7,8 @@ title = "Developing UEFI with Rust"
 [output.html]
 additional-js = ["cdn-assets.js", "mermaid.min.js", "mermaid-init.js"]
 additional-css = ["./mdbook-admonish.css"]
+git-repository-url = "https://github.com/OpenDevicePartnership/patina"
+git-repository-icon = "fa-github"
 
 [rust]
 edition = "2021"
