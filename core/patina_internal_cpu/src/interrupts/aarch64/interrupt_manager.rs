@@ -8,14 +8,13 @@
 //!
 
 use patina::{
-    arch::{disable_interrupts, enable_interrupts},
+    arch::{SystemContextDiagnostics, disable_interrupts, enable_interrupts},
     {UEFI_PAGE_MASK, UEFI_PAGE_SIZE, bit, error::EfiError},
 };
 use patina_paging::PageTable;
 
 use crate::interrupts::{
     EfiExceptionInfoDump, EfiSystemContext, ExceptionType, HandlerType, InterruptHandler, InterruptManager,
-    aarch64::ExceptionContextAArch64,
 };
 
 cfg_select! {
@@ -178,50 +177,10 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
     // to report. The system is dead anyway.
     let aarch64_context = unsafe { context.system_context_aarch64.as_ref().unwrap() };
-
-    log::error!("");
-    log::error!("EXCEPTION: Synchronous Exception");
-
-    log::error!("");
-
-    // determine if this was a page fault
-    let ec = (aarch64_context.esr >> 26) & 0x3F;
-    let iss = aarch64_context.esr & 0xFFFFFF;
-    let page_fault = ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25;
-    let far_valid = (iss & bit!(10)) == 0;
-
-    let sp_page = aarch64_context.sp & !UEFI_PAGE_MASK as u64;
-    let far_page = aarch64_context.far & !UEFI_PAGE_MASK as u64;
-    let same_or_below = (far_page == sp_page) || (far_page == (sp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
-
-    if ec == 0x20 || ec == 0x21 {
-        // Instruction Abort from a lower EL or same EL.
-        log::error!("Page Fault (Instruction Abort)");
-    } else if ec == 0x24 || ec == 0x25 {
-        // Data Abort from a lower EL or same EL.
-        // Stack overflows cause page faults, let's give a hint if it looks like one.
-        // The heuristic we are using is that stack overflow will either have FAR on the same page
-        // as SP or directly below it. Sometimes SP is decremented first, sometimes second.
-        if far_valid && same_or_below {
-            log::error!("Page Fault (Stack Overflow)");
-        } else {
-            log::error!("Page Fault (Data Abort)");
-        }
-    }
-
-    log::error!("");
-
-    (aarch64_context as &ExceptionContextAArch64).dump_system_context_registers();
-
-    log::error!("");
-
-    if page_fault {
-        // make sure the FAR is valid before we dump the page table
-        if far_valid {
-            dump_pte(aarch64_context.far);
-        } else {
-            log::error!("FAR not valid, not dumping PTE");
-        }
+    aarch64_context.dump_exception(0);
+    // make sure the FAR is valid before we dump the page table
+    if let Some(address) = aarch64_context.page_fault_address(0) {
+        dump_pte(address);
     }
 
     log::debug!("Full Context: {aarch64_context:#X?}");
