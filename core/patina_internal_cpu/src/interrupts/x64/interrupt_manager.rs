@@ -99,7 +99,7 @@ impl InterruptsX64 {
         Ok(())
     }
 
-    /// Registers the default #DF, #GP, and #PF handlers followed by the supplied platform handlers.
+    /// Registers supplied platform handlers, then default #DF, #GP, and #PF handlers for unclaimed vectors.
     ///
     /// # Errors
     ///
@@ -113,15 +113,19 @@ impl InterruptsX64 {
         &mut self,
         exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
-        self.register_exception_handler(8, HandlerType::UefiRoutine(double_fault_handler))
-            .expect("Failed to install default exception handler!");
-        self.register_exception_handler(13, HandlerType::UefiRoutine(general_protection_fault_handler))
-            .expect("Failed to install default exception handler!");
-        self.register_exception_handler(14, HandlerType::UefiRoutine(page_fault_handler))
-            .expect("Failed to install default exception handler!");
+        const CORE_EXCEPTION_HANDLERS: &[(ExceptionType, patina::pi::protocol::cpu_arch::InterruptHandler)] =
+            &[(8, double_fault_handler), (13, general_protection_fault_handler), (14, page_fault_handler)];
 
         for &(exception_type, handler) in exception_handlers {
             self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+        }
+
+        for &(exception_type, handler) in CORE_EXCEPTION_HANDLERS {
+            if exception_handlers.iter().any(|(registered_type, _)| *registered_type == exception_type) {
+                continue;
+            }
+            self.register_exception_handler(exception_type, HandlerType::UefiRoutine(handler))
+                .expect("Failed to install default exception handler!");
         }
 
         Ok(())
@@ -430,9 +434,8 @@ mod test {
 
         static HANDLER: PlatformHandler = PlatformHandler;
         let mut interrupts = InterruptsX64::new();
-        assert!(interrupts.initialize(&[(20, &HANDLER)]).is_ok());
-        assert!(interrupts.unregister_exception_handler(20).is_ok());
-        for exception_type in [8, 13, 14] {
+        assert!(interrupts.initialize(&[(8, &HANDLER), (13, &HANDLER), (14, &HANDLER), (20, &HANDLER)]).is_ok());
+        for exception_type in [8, 13, 14, 20] {
             assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
         }
     }
@@ -453,7 +456,7 @@ mod test {
 
         static HANDLER: PlatformHandler = PlatformHandler;
         let mut interrupts = InterruptsX64::new();
-        assert!(interrupts.initialize_idt(&[(20, &HANDLER)]).is_ok());
+        assert!(interrupts.initialize_idt(&[(8, &HANDLER), (13, &HANDLER), (14, &HANDLER), (20, &HANDLER)]).is_ok());
         for exception_type in [8, 13, 14, 20] {
             assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
         }
@@ -476,8 +479,6 @@ mod test {
         static HANDLER: PlatformHandler = PlatformHandler;
         let mut interrupts = InterruptsX64::new();
         assert!(matches!(interrupts.initialize_idt(&[(20, &HANDLER), (20, &HANDLER)]), Err(EfiError::AlreadyStarted)));
-        for exception_type in [8, 13, 14, 20] {
-            assert!(interrupts.unregister_exception_handler(exception_type).is_ok());
-        }
+        assert!(interrupts.unregister_exception_handler(20).is_ok());
     }
 }
