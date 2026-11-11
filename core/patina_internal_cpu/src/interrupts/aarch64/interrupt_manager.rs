@@ -55,11 +55,21 @@ impl InterruptsAarch64 {
         &mut self,
         exception_handlers: &[(ExceptionType, &'static dyn InterruptHandler)],
     ) -> Result<(), EfiError> {
-        self.register_exception_handler(0, HandlerType::UefiRoutine(synchronous_exception_handler))
-            .expect("Failed to install default exception handler!");
+        const CORE_EXCEPTION_HANDLERS: &[(ExceptionType, patina::pi::protocol::cpu_arch::InterruptHandler)] =
+            &[(0, synchronous_exception_handler)];
 
+        // Install the platform provided exception handlers before the core owned handlers, which we only install
+        // if the platform hasn't claimed them
         for &(exception_type, handler) in exception_handlers {
             self.register_exception_handler(exception_type, HandlerType::Handler(handler))?;
+        }
+
+        for &(exception_type, handler) in CORE_EXCEPTION_HANDLERS {
+            if exception_handlers.iter().any(|(registered_type, _)| *registered_type == exception_type) {
+                continue;
+            }
+            self.register_exception_handler(exception_type, HandlerType::UefiRoutine(handler))
+                .expect("Failed to install default exception handler!");
         }
 
         initialize_exception()?;
