@@ -9,8 +9,77 @@
 //! Portions Copyright 2023 The arm-gic Authors.
 //! arm-gic is dual-licensed under Apache 2.0 and MIT terms.
 
-use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
+use super::{SystemContextDiagnostics, system_context::log_registers};
+use crate::{
+    UEFI_PAGE_MASK, UEFI_PAGE_SIZE, bit, error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi,
+};
 use core::num::NonZeroU64;
+
+impl SystemContextDiagnostics for efi::protocols::debug_support::SystemContextAArch64 {
+    fn dump_exception(&self, exception_type: usize) {
+        if exception_type == 0 {
+            log::error!("");
+            log::error!("EXCEPTION: Synchronous Exception");
+            log::error!("");
+
+            // determine if this was a page fault
+            let ec = (self.esr >> 26) & 0x3F;
+            let iss = self.esr & 0xFFFFFF;
+            let far_valid = (iss & bit!(10)) == 0;
+
+            let sp_page = self.sp & !UEFI_PAGE_MASK as u64;
+            let far_page = self.far & !UEFI_PAGE_MASK as u64;
+            let same_or_below = (far_page == sp_page) || (far_page == (sp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
+
+            if ec == 0x20 || ec == 0x21 {
+                // Instruction Abort from a lower EL or same EL.
+                log::error!("Page Fault (Instruction Abort)");
+            } else if ec == 0x24 || ec == 0x25 {
+                // Data Abort from a lower EL or same EL.
+                // Stack overflows cause page faults, let's give a hint if it looks like one.
+                // The heuristic we are using is that stack overflow will either have FAR on the same page
+                // as SP or directly below it. Sometimes SP is decremented first, sometimes second.
+                if far_valid && same_or_below {
+                    log::error!("Page Fault (Stack Overflow)");
+                } else {
+                    log::error!("Page Fault (Data Abort)");
+                }
+            }
+            log::error!("");
+
+            if !far_valid {
+                log::error!("FAR not valid, page table won't be dumped");
+            }
+        } else {
+            log::error!("EXCEPTION: {exception_type}");
+        }
+        self.dump_system_context_registers();
+        log::error!("");
+    }
+
+    fn dump_system_context_registers(&self) {
+        log::error!("Exception Registers:");
+        log_registers!("ESR", self.esr, "ELR", self.elr, "SPSR", self.spsr, "FAR", self.far,);
+        log::error!("");
+        log::error!("General-Purpose Registers:");
+        log_registers!(
+            "x0", self.x0, "x1", self.x1, "x2", self.x2, "x3", self.x3, "x4", self.x4, "x5", self.x5, "x6", self.x6,
+            "x7", self.x7, "x8", self.x8, "x9", self.x9, "x10", self.x10, "x11", self.x11, "x12", self.x12, "x13",
+            self.x13, "x14", self.x14, "x15", self.x15, "x16", self.x16, "x17", self.x17, "x18", self.x18, "x19",
+            self.x19, "x20", self.x20, "x21", self.x21, "x22", self.x22, "x23", self.x23, "x24", self.x24, "x25",
+            self.x25, "x26", self.x26, "x27", self.x27, "x28", self.x28, "fp", self.fp, "lr", self.lr, "sp", self.sp
+        );
+        log::debug!("Full Context: {self:#X?}");
+    }
+
+    fn page_fault_address(&self, exception_type: usize) -> Option<u64> {
+        let ec = (self.esr >> 26) & 0x3F;
+        let iss = self.esr & 0xFFFFFF;
+        let page_fault = ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25;
+        let far_valid = (iss & bit!(10)) == 0;
+        (exception_type == 0 && page_fault && far_valid).then_some(self.far)
+    }
+}
 
 /// Returns `false` because confidential guest detection is not yet supported on `AArch64`.
 pub fn is_cc_guest() -> bool {

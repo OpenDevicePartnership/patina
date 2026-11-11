@@ -7,11 +7,165 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi};
+use super::{SystemContextDiagnostics, system_context::log_registers};
+use crate::{
+    UEFI_PAGE_MASK, UEFI_PAGE_SIZE, bit, error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi,
+};
 use core::arch::asm;
 use core::num::NonZeroU64;
 
 mod tdx;
+
+impl SystemContextDiagnostics for efi::protocols::debug_support::SystemContextX64 {
+    fn dump_exception(&self, exception_type: usize) {
+        match exception_type {
+            8 => {
+                log::error!("EXCEPTION: DOUBLE FAULT");
+                log::error!("Instruction Pointer: {:#X?}", self.rip);
+                log::error!("Code Segment: {:#X?}", self.cs);
+                log::error!("RFLAGS: {:#X?}", self.rflags);
+                log::error!("Stack Segment: {:#X?}", self.ss);
+                log::error!("Stack Pointer: {:#X?}", self.rsp);
+                log::error!("Data Segment: {:#X?}", self.ds);
+                log::error!("Paging Enable: {}", self.cr0 & 0x80000000 != 0);
+                log::error!("Protection Enable: {}", self.cr0 & 0x00000001 != 0);
+                log::error!("Page Directory Base: {:#X?}", self.cr3);
+                log::error!("Control Flags (cr4): {:#X?}", self.cr4);
+                log::error!("");
+                self.dump_system_context_registers();
+            }
+            13 => {
+                log::error!("EXCEPTION: GP FAULT");
+                log::error!("Instruction Pointer: {:#X?}", self.rip);
+                log::error!("Code Segment: {:#X?}", self.cs);
+                log::error!("RFLAGS: {:#X?}", self.rflags);
+                log::error!("Stack Segment: {:#X?}", self.ss);
+                log::error!("Stack Pointer: {:#X?}", self.rsp);
+                log::error!("Data Segment: {:#X?}", self.ds);
+                log::error!("Paging Enable: {}", self.cr0 & 0x80000000 != 0);
+                log::error!("Protection Enable: {}", self.cr0 & 0x00000001 != 0);
+                log::error!("Page Directory Base: {:#X?}", self.cr3);
+                log::error!("Control Flags (cr4): {:#X?}", self.cr4);
+                interpret_gp_fault_exception_data(self.exception_data);
+                log::error!("");
+                self.dump_system_context_registers();
+            }
+            14 => {
+                let rsp_page = self.rsp & !UEFI_PAGE_MASK as u64;
+                let cr2_page = self.cr2 & !UEFI_PAGE_MASK as u64;
+                let same_or_below =
+                    (cr2_page == rsp_page) || (cr2_page == (rsp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
+                let data_access = (self.exception_data & bit!(4)) == 0;
+
+                // Stack overflows cause page faults, let's give a hint if it looks like one.
+                // The heuristic we are using is that stack overflow will either have CR2 on the same page
+                // as RSP or directly below it. Sometimes RSP is decremented first, sometimes second. Stack overflows
+                // are always data access, so ensure that is the case as well.
+                if same_or_below && data_access {
+                    log::error!("EXCEPTION: PAGE FAULT STACK OVERFLOW");
+                } else {
+                    log::error!("EXCEPTION: PAGE FAULT");
+                }
+                log::error!("Accessed Address: {:#X?}", self.cr2);
+                log::error!("Paging Enabled: {}", self.cr0 & 0x80000000 != 0);
+                log::error!("Instruction Pointer: {:#X?}", self.rip);
+                log::error!("Code Segment: {:#X?}", self.cs);
+                log::error!("RFLAGS: {:#X?}", self.rflags);
+                log::error!("Stack Segment: {:#X?}", self.ss);
+                log::error!("Data Segment: {:#X?}", self.ds);
+                log::error!("Stack Pointer: {:#X?}", self.rsp);
+                log::error!("Page Directory Base: {:#X?}", self.cr3);
+                log::error!("Paging Features (cr4): {:#X?}", self.cr4);
+                interpret_page_fault_exception_data(self.exception_data);
+                log::error!("");
+                self.dump_system_context_registers();
+            }
+            _ => {
+                log::error!("EXCEPTION: {exception_type}");
+                self.dump_system_context_registers();
+            }
+        }
+    }
+
+    fn dump_system_context_registers(&self) {
+        log::error!("Control Registers:");
+        log_registers!(
+            "CR0",
+            self.cr0,
+            "CR2",
+            self.cr2,
+            "CR3",
+            self.cr3,
+            "CR4",
+            self.cr4,
+            "RIP",
+            self.rip,
+            "CS",
+            self.cs,
+            "SS",
+            self.ss,
+            "DS",
+            self.ds,
+            "RSP",
+            self.rsp,
+            "RFLAGS",
+            self.rflags
+        );
+        log::error!("");
+        log::error!("General-Purpose Registers:");
+        log_registers!(
+            "RAX", self.rax, "RBX", self.rbx, "RCX", self.rcx, "RDX", self.rdx, "RSI", self.rsi, "RDI", self.rdi,
+            "RBP", self.rbp, "R8", self.r8, "R9", self.r9, "R10", self.r10, "R11", self.r11, "R12", self.r12, "R13",
+            self.r13, "R14", self.r14, "R15", self.r15
+        );
+        log::debug!("Full Context: {self:#X?}");
+    }
+
+    fn page_fault_address(&self, exception_type: usize) -> Option<u64> {
+        (exception_type == 14).then_some(self.cr2)
+    }
+}
+
+// see Intel SDM Vol 3A section 7.15
+fn interpret_page_fault_exception_data(exception_data: u64) {
+    log::error!("Error Code: {exception_data:#X?}");
+    if (exception_data & bit!(0)) == 0 {
+        log::error!("Page not present");
+    } else {
+        log::error!("Page-level protection violation");
+    }
+
+    if (exception_data & bit!(1)) == 0 {
+        log::error!("R/W: Read");
+    } else {
+        log::error!("R/W: Write");
+    }
+
+    if (exception_data & bit!(2)) != 0 {
+        log::error!("User-mode access violation");
+    } else {
+        log::error!("Supervisor-mode access violation");
+    }
+
+    if (exception_data & bit!(3)) != 0 {
+        log::error!("Reserved bit violation");
+    }
+
+    if (exception_data & bit!(4)) == 0 {
+        log::error!("Data access");
+    } else {
+        log::error!("Instruction fetch access");
+    }
+}
+
+// see Intel SDM Vol 3A section 7.15
+fn interpret_gp_fault_exception_data(exception_data: u64) {
+    if exception_data != 0 {
+        log::error!("Segment descriptor or IDT vector number: {exception_data:#X?}");
+    } else {
+        log::error!("Not from loading a segment descriptor");
+    }
+}
 
 /// Cache writeback granule for `x86_64`, using 4 bytes following precedence set by Tianocore.
 const CACHE_WRITEBACK_GRANULE: u32 = 4;

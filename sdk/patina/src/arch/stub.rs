@@ -15,6 +15,26 @@ use crate::{error::EfiError, pi::protocol::cpu_arch::CpuFlushType, standard::efi
 use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+impl super::SystemContextDiagnostics for efi::protocols::debug_support::SystemContextX64 {
+    fn dump_exception(&self, _exception_type: usize) {}
+
+    fn dump_system_context_registers(&self) {}
+
+    fn page_fault_address(&self, _exception_type: usize) -> Option<u64> {
+        None
+    }
+}
+
+impl super::SystemContextDiagnostics for efi::protocols::debug_support::SystemContextAArch64 {
+    fn dump_exception(&self, _exception_type: usize) {}
+
+    fn dump_system_context_registers(&self) {}
+
+    fn page_fault_address(&self, _exception_type: usize) -> Option<u64> {
+        None
+    }
+}
+
 /// Returns `false` for host builds.
 pub fn is_cc_guest() -> bool {
     false
