@@ -121,7 +121,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         self.mp.park();
     }
 
-    /// Prevents new non-blocking requests and waits for existing requests to
+    /// Marks `ReadyToBoot` and waits for existing non-blocking requests to
     /// complete or reach their deadlines while allocation and event signaling
     /// are still available.
     pub(super) fn mark_ready_to_boot(&self) {
@@ -586,17 +586,38 @@ mod tests {
     }
 
     #[test]
-    fn test_mp_services_rejects_non_blocking_dispatch_after_ready_to_boot() {
+    fn test_mp_services_allows_non_blocking_dispatch_after_ready_to_boot() {
+        // This intentionally breaks the spec for issue #1970.
+
         with_global_state(|| {
             let mut mp = MockMpDispatcher::new();
             mp.expect_who_am_i().once().return_const(Some(Processor::Bsp));
+            mp.expect_ap_count().once().return_const(1usize);
+            mp.expect_ap_availability().with(eq(0)).once().return_const(ProcessorState::Ready);
+            mp.expect_signal_ap().withf(|index, _| *index == 0).once().return_const(Some(9));
+            mp.expect_ap_finished().with(eq(0), eq(9)).once().return_const(true);
             let service = test_service(mp);
+            let completed = std::sync::Arc::new(AtomicBool::new(false));
+            let completion_result = completed.clone();
 
             service.mark_ready_to_boot();
             assert!(matches!(
-                service.startup_all_aps(test_work(), false, 0, Some(Box::new(|_| {}))),
-                Err(MpError::NotSupported)
+                service.startup_all_aps(
+                    test_work(),
+                    false,
+                    0,
+                    Some(Box::new(move |failed| {
+                        assert!(failed.is_empty());
+                        completion_result.store(true, Ordering::Relaxed);
+                    }))
+                ),
+                Ok(())
             ));
+            assert!(!completed.load(Ordering::Relaxed));
+
+            service.poll_notifications();
+
+            assert!(completed.load(Ordering::Relaxed));
         });
     }
 }
