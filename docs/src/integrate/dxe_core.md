@@ -254,6 +254,49 @@ that crate to your platform's `Cargo.toml` file. Additionally, where the `Defaul
 you would provide any configuration to the Patina DXE Core.
 ```
 
+### 5.1 Registering Exception Handlers
+
+A platform may optionally provide exception handlers to Patina during initialization by implementing
+ `CpuInfo::exception_handlers()`. Implement `InterruptHandler` for each handler and return a static slice of
+`(ExceptionType, &'static dyn InterruptHandler)` pairs. Both the slice and its handlers must have a `'static` lifetime.
+The interrupt handler is just the Rust business logic for processing the interrupt, the assembly trap code is
+managed by Patina.
+
+For example, replace the empty `impl CpuInfo for ExamplePlatform {}` from the previous section with the following
+to supply an x64 page-fault handler:
+
+```rust
+# extern crate patina_dxe_core;
+use patina_dxe_core::{CpuInfo, ExceptionContext, ExceptionType, InterruptHandler};
+
+# struct ExamplePlatform;
+struct PlatformPageFaultHandler;
+
+impl InterruptHandler for PlatformPageFaultHandler {
+    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext) {
+        panic!("Platform exception {exception_type}: {context:#X?}");
+    }
+}
+
+static PAGE_FAULT_HANDLER: PlatformPageFaultHandler = PlatformPageFaultHandler;
+
+#[cfg(target_arch = "x86_64")]
+impl CpuInfo for ExamplePlatform {
+    fn exception_handlers() -> &'static [(ExceptionType, &'static dyn InterruptHandler)] {
+        const HANDLERS: &[(ExceptionType, &'static dyn InterruptHandler)] = &[(14, &PAGE_FAULT_HANDLER)];
+        HANDLERS
+    }
+}
+```
+
+Platform handlers are registered before the exception vector table becomes active. Patina then installs default
+handlers only for vectors not claimed by the platform:
+
+| Architecture | Default Exception Handlers |
+| --- | --- |
+| x64 | Double fault (8), general protection fault (13), page fault (14) |
+| AArch64 | Synchronous exception (0) |
+
 ## 6. Logging and Debugging
 
 The DXE Core logging model builds on the standard [`log` crate](https://crates.io/crates/log). Patina currently
