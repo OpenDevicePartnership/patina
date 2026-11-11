@@ -189,7 +189,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         completion: Option<DispatchCompletion>,
     ) -> Result<(), MpError> {
         if completion.is_some() && self.ready_to_boot.load(Ordering::Acquire) {
-            // By specification:
+            // By Platform Initialization (PI) specification:
             //      "If a non-blocking mode is requested after the UEFI Event EFI_EVENT_GROUP_READY_TO_BOOT
             //       is signaled, then EFI_UNSUPPORTED must be returned."
             //
