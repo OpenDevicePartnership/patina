@@ -200,7 +200,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
             // issue #1970.
             //
 
-            log::error!("non-blocking requests should not be made after ReadyToBoot!");
+            log::error!("non-blocking requests should not be made after ReadyToBoot per the PI Specification!");
         }
 
         let deadline = deadline_for(self.timer, timeout_us);
