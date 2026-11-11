@@ -189,8 +189,20 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         completion: Option<DispatchCompletion>,
     ) -> Result<(), MpError> {
         if completion.is_some() && self.ready_to_boot.load(Ordering::Acquire) {
-            return Err(MpError::NotSupported);
+            // By specification:
+            //      "If a non-blocking mode is requested after the UEFI Event EFI_EVENT_GROUP_READY_TO_BOOT
+            //       is signaled, then EFI_UNSUPPORTED must be returned."
+            //
+            // However, this has not been enforced by the EDK II x86 implementation and so external callers
+            // have built dependence on this being available. In the absence of concrete evidence that
+            // this restriction is needed, continue to allow non-blocking requests but log an error.
+            // This should be addressed first with the PI spec and EDK II. This is being tracked in
+            // issue #1970.
+            //
+
+            log::error!("non-blocking requests should not be made after ReadyToBoot!");
         }
+
         let deadline = deadline_for(self.timer, timeout_us);
 
         // The registry lock is the dispatch lock: it raises to TPL_NOTIFY, which the
