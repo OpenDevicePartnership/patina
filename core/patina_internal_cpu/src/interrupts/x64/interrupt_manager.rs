@@ -8,7 +8,7 @@
 //!
 
 use patina::{
-    bit,
+    arch::SystemContextDiagnostics,
     error::EfiError,
     pi::protocol::cpu_arch::EfiSystemContext,
     {UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
@@ -16,11 +16,8 @@ use patina::{
 #[cfg(target_arch = "x86_64")]
 use patina_mtrr::{Mtrr, error::MtrrError};
 use patina_paging::PageTable;
-use patina_stacktrace::{StackFrame, StackTrace};
 
-use crate::interrupts::{
-    EfiExceptionInfoDump, ExceptionType, HandlerType, InterruptHandler, InterruptManager, x64::ExceptionContextX64,
-};
+use crate::interrupts::{EfiExceptionInfoDump, ExceptionType, HandlerType, InterruptHandler, InterruptManager};
 
 /// X64 Implementation of the `InterruptManager`.
 ///
@@ -215,21 +212,7 @@ extern "efiapi" fn double_fault_handler(_exception_type: isize, context: EfiSyst
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
     // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
-    log::error!("EXCEPTION: DOUBLE FAULT");
-    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
-    log::error!("Code Segment: {:#X?}", x64_context.cs);
-    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
-    log::error!("Stack Segment: {:#X?}", x64_context.ss);
-    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
-    log::error!("Data Segment: {:#X?}", x64_context.ds);
-    log::error!("Paging Enable: {}", x64_context.cr0 & 0x80000000 != 0);
-    log::error!("Protection Enable: {}", x64_context.cr0 & 0x00000001 != 0);
-    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
-    log::error!("Control Flags (cr4): {:#X?}", x64_context.cr4);
-
-    log::error!("");
-
-    (x64_context as &ExceptionContextX64).dump_system_context_registers();
+    x64_context.dump_exception(8);
 
     panic!("EXCEPTION: Double Fault");
 }
@@ -240,30 +223,9 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
     // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
-    log::error!("EXCEPTION: GP FAULT");
-    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
-    log::error!("Code Segment: {:#X?}", x64_context.cs);
-    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
-    log::error!("Stack Segment: {:#X?}", x64_context.ss);
-    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
-    log::error!("Data Segment: {:#X?}", x64_context.ds);
-    log::error!("Paging Enable: {}", x64_context.cr0 & 0x80000000 != 0);
-    log::error!("Protection Enable: {}", x64_context.cr0 & 0x00000001 != 0);
-    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
-    log::error!("Control Flags (cr4): {:#X?}", x64_context.cr4);
-    interpret_gp_fault_exception_data(x64_context.exception_data);
-
-    log::error!("");
-
-    (x64_context as &ExceptionContextX64).dump_system_context_registers();
-
+    x64_context.dump_exception(13);
     log::error!("Dumping Exception Stack Trace:");
-    let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
-    // SAFETY: Called during exception handling with CPU context registers. The exception context
-    // is considered valid to dump at this time.
-    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
-        log::error!("StackTrace: {err}");
-    }
+    x64_context.dump_stack_trace();
 
     panic!("EXCEPTION: GP FAULT");
 }
@@ -274,92 +236,12 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
     // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
-
-    let rsp_page = x64_context.rsp & !UEFI_PAGE_MASK as u64;
-    let cr2_page = x64_context.cr2 & !UEFI_PAGE_MASK as u64;
-    let same_or_below = (cr2_page == rsp_page) || (cr2_page == (rsp_page.wrapping_sub(UEFI_PAGE_SIZE as u64)));
-    let data_access = (x64_context.exception_data & bit!(4)) == 0;
-
-    // Stack overflows cause page faults, let's give a hint if it looks like one.
-    // The heuristic we are using is that stack overflow will either have CR2 on the same page
-    // as RSP or directly below it. Sometimes RSP is decremented first, sometimes second. Stack overflows
-    // are always data access, so ensure that is the case as well.
-    if same_or_below && data_access {
-        log::error!("EXCEPTION: PAGE FAULT STACK OVERFLOW");
-    } else {
-        log::error!("EXCEPTION: PAGE FAULT");
-    }
-
-    log::error!("Accessed Address: {:#X?}", x64_context.cr2);
-    log::error!("Paging Enabled: {}", x64_context.cr0 & 0x80000000 != 0);
-    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
-    log::error!("Code Segment: {:#X?}", x64_context.cs);
-    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
-    log::error!("Stack Segment: {:#X?}", x64_context.ss);
-    log::error!("Data Segment: {:#X?}", x64_context.ds);
-    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
-    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
-    log::error!("Paging Features (cr4): {:#X?}", x64_context.cr4);
-    interpret_page_fault_exception_data(x64_context.exception_data);
-
-    log::error!("");
-
-    (x64_context as &ExceptionContextX64).dump_system_context_registers();
-
+    x64_context.dump_exception(14);
     dump_pte(x64_context.cr2);
-
     log::error!("Dumping Exception Stack Trace:");
-    let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
-    // SAFETY: Called during page fault exception handling with CPU context registers. The exception context
-    // is considered valid to dump at this time.
-    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
-        log::error!("StackTrace: {err}");
-    }
+    x64_context.dump_stack_trace();
 
     panic!("EXCEPTION: PAGE FAULT");
-}
-
-#[cfg_attr(coverage, coverage(off))]
-// see Intel SDM Vol 3A section 7.15
-fn interpret_page_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: {exception_data:#X?}");
-    if (exception_data & bit!(0)) == 0 {
-        log::error!("Page not present");
-    } else {
-        log::error!("Page-level protection violation");
-    }
-
-    if (exception_data & bit!(1)) == 0 {
-        log::error!("R/W: Read");
-    } else {
-        log::error!("R/W: Write");
-    }
-
-    if (exception_data & bit!(2)) != 0 {
-        log::error!("User-mode access violation");
-    } else {
-        log::error!("Supervisor-mode access violation");
-    }
-
-    if (exception_data & bit!(3)) != 0 {
-        log::error!("Reserved bit violation");
-    }
-
-    if (exception_data & bit!(4)) == 0 {
-        log::error!("Data access");
-    } else {
-        log::error!("Instruction fetch access");
-    }
-}
-
-#[cfg_attr(coverage, coverage(off))]
-// see Intel SDM Vol 3A section 7.15
-fn interpret_gp_fault_exception_data(exception_data: u64) {
-    if exception_data != 0 {
-        log::error!("Segment descriptor or IDT vector number: {exception_data:#X?}");
-    } else {
-        log::error!("Not from loading a segment descriptor");
-    }
 }
 
 // There is no value in coverage for this function.

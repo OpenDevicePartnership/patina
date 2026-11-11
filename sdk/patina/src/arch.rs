@@ -7,6 +7,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+#[cfg_attr(coverage, coverage(off))]
+pub mod system_context;
+pub use system_context::SystemContextDiagnostics;
+
 cfg_select! {
     not(target_os = "uefi") => {
         #[cfg_attr(coverage, coverage(off))]
