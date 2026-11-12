@@ -19,6 +19,7 @@ use core::ffi::c_char;
 
 use alloc::string::ToString;
 use patina::{Char8Str, component::service::Service, protocol::ProtocolInterface, standard::efi};
+use zerocopy::FromBytes;
 
 use crate::service::{Smbios, SmbiosHandle, SmbiosTableHeader, SmbiosType};
 
@@ -168,9 +169,17 @@ impl SmbiosProtocol {
         // Convert handle
         let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
 
+        // Copy the record and put `*SmbiosHandle` in its header, since `add_from_bytes` reads the handle from there.
+        let mut record_bytes = full_record_bytes.to_vec();
+        let Ok((header, _)) = SmbiosTableHeader::mut_from_prefix(&mut record_bytes) else {
+            return efi::Status::INVALID_PARAMETER;
+        };
+        // SAFETY: smbios_handle is checked for null above.
+        header.handle = unsafe { smbios_handle.read_unaligned() };
+
         // Add the record. `Smbios::add_from_bytes` already republishes the table on success, so there is
         // nothing further to do on either path.
-        match internal.service.add_from_bytes(producer_opt, full_record_bytes) {
+        match internal.service.add_from_bytes(producer_opt, &record_bytes) {
             Ok(handle) => {
                 // SAFETY: smbios_handle pointer is guaranteed valid by caller
                 unsafe {
@@ -392,6 +401,34 @@ mod tests {
     }
 
     // Protocol-specific tests
+    #[test]
+    fn test_add_ext_uses_smbios_handle_parameter_not_record_header() {
+        use crate::service::{MockSmbios, SMBIOS_HANDLE_PI_RESERVED};
+        use std::boxed::Box;
+
+        let mut record = create_test_bios_info_record();
+        record[2..4].copy_from_slice(&0u16.to_le_bytes());
+
+        let mut smbios_mock = MockSmbios::new();
+        smbios_mock
+            .expect_add_from_bytes()
+            .once()
+            .withf(|_, bytes| u16::from_le_bytes([bytes[2], bytes[3]]) == SMBIOS_HANDLE_PI_RESERVED)
+            .returning(|_, _| Ok(0x0005));
+
+        let internal = SmbiosProtocolInternal::new(3, 9, Service::mock(Box::new(smbios_mock)));
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+        let status = (internal.protocol.add)(
+            &raw const internal.protocol,
+            core::ptr::null_mut(),
+            &mut handle,
+            record.as_ptr().cast(),
+        );
+
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(handle, 0x0005);
+    }
+
     #[test]
     fn test_protocol_new() {
         let protocol = SmbiosProtocol::new(3, 9);
