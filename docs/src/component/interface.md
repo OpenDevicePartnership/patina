@@ -22,7 +22,7 @@ graph TD
     B -->|Yes| C[Execute Component]
     B -->|No| D[Skip This Iteration]
     D --> E[Try Again Next Iteration]
-    C --> F[Remove from Dispatch Queue]
+    C --> F[Mark Dispatch Succeeded]
 ```
 
 ## Defining Components
@@ -60,7 +60,7 @@ graph TD
     B --> C{All Parameters Available?}
     C -->|Yes| D[Execute Component]
     C -->|No| E[Mark Failed Parameter]
-    D --> F[Remove from Queue]
+    D --> F[Record Dispatch Status]
     E --> G[Try Next Iteration]
     G --> H{Any Components Executed?}
     H -->|Yes| I[Continue Dispatching]
@@ -69,10 +69,11 @@ graph TD
 ```
 
 Components are executed by validating each individual parameter (See [Params](#component-params) below) in the
-component. If all parameters are validated, then the component is executed and removed from the list of components to
-execute. If any parameter fails to validate, then that parameter is registered as the failed param and the dispatcher
-will attempt to validate and execute the component in the next iteration. The dispatcher stops executing when no
-components have been dispatched in a single iteration.
+component. Components begin in the pending state. If all parameters are available and the component executes
+successfully, it is marked as successfully dispatched and is not dispatched again. If a parameter is unavailable, that
+parameter is recorded and the component remains pending for the next iteration. A component that returns an error is
+marked as failed, while a component whose parameters cannot be initialized is rejected. The dispatcher stops executing
+when no components have been dispatched in a single iteration.
 
 ## Component Params
 

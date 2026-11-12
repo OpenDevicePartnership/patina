@@ -23,6 +23,7 @@ fn compile_fail_tests() {
     t.compile_fail("tests/ui/duplicate_storage_mut.rs");
     t.compile_fail("tests/ui/storage_and_storage_mut_conflict.rs");
     t.compile_fail("tests/ui/storage_mut_and_storage_conflict.rs");
+    t.compile_fail("tests/ui/query_mut_excludes_shared_query.rs");
     t.compile_fail("tests/ui/devpath_non_literal.rs");
     t.compile_fail("tests/ui/devpath_malformed.rs");
     t.compile_fail("tests/ui/devpath_unknown_node.rs");

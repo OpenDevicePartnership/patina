@@ -1,0 +1,9 @@
+error[E0502]: cannot borrow `storage` as immutable because it is also borrowed as mutable
+ --> tests/ui/query_mut_excludes_shared_query.rs:8:54
+  |
+7 |     let mut mutable_query = Query::<&mut Value>::new().query_mut(&mut storage);
+  |                                                                  ------------ mutable borrow occurs here
+8 |     let _shared_query = Query::<&Value>::new().query(&storage);
+  |                                                      ^^^^^^^^ immutable borrow occurs here
+9 |     let _ = mutable_query.next();
+  |             ------------- mutable borrow later used here
