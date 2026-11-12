@@ -16,7 +16,6 @@ use core::fmt;
 
 use patina::MemoryRange;
 use patina::management_mode::{MmCommBufferStatus, comm_buffer_hob::MmCommonBufferHobData};
-use patina_paging::x64::{disable_write_protection, enable_write_protection};
 use zerocopy::FromBytes;
 use zerocopy_derive::Immutable;
 
@@ -306,41 +305,6 @@ impl CommChannel {
 
         Ok(Self { external_address, internal_address, size: buffer.size(), status_address })
     }
-
-    /// Points the `MM_COMM_BUFFER_HOB_GUID` HOB's `physical_start` at this channel's internal copy,
-    /// so the user core uses it instead of the non-MM buffer.
-    ///
-    /// ## Errors
-    ///
-    /// Returns `CommunicationBufferHobTooSmall` without writing if `data_len` cannot hold an
-    /// [`MmCommonBufferHobData`].
-    ///
-    /// ## Safety
-    ///
-    /// `data` must point to `data_len` writable bytes of the original HOB payload, with no live
-    /// references to them.
-    pub(crate) unsafe fn redirect_user_hob(&self, data: *mut u8, data_len: usize) -> MmSupervisorResult<()> {
-        let expected = core::mem::size_of::<MmCommonBufferHobData>();
-        if data_len < expected {
-            return Err(CommBufferError::CommunicationBufferHobTooSmall { found: data_len, expected }.into());
-        }
-
-        // TODO: Pass the internal copy to the user core directly instead of rewriting the HOB.
-        // SAFETY: `data` holds a writable `MmCommonBufferHobData`, checked above. The struct is
-        // packed, so `addr_of_mut!` takes the field's address without a reference, and the
-        // value is stored as `[u8; 8]`, which has no alignment requirement. `CR0.WP` is cleared
-        // only for this store, because the HOB pages may be read-only, during single-threaded
-        // BSP init.
-        unsafe {
-            let hob_ptr = data.cast::<MmCommonBufferHobData>();
-            let physical_start = core::ptr::addr_of_mut!((*hob_ptr).physical_start).cast::<[u8; 8]>();
-            let original_cr0 = disable_write_protection();
-            core::ptr::write_volatile(physical_start, self.internal_address.to_le_bytes());
-            enable_write_protection(original_cr0);
-        }
-
-        Ok(())
-    }
 }
 
 /// Requires that `range` is usable as an external communication buffer:
@@ -543,7 +507,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_from_user_hob_redirects_the_hob_to_the_internal_copy() {
+    fn test_from_user_hob_preserves_the_external_buffer_descriptor() {
         test_support::init_test_logger();
         let mmram = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
         init_global_state_over(&mmram);
@@ -551,7 +515,8 @@ mod tests {
         let external = PageAlignedMemory::new(3);
         map_supervisor_only(&external);
         let status = external.base() + 2 * UEFI_PAGE_SIZE as u64;
-        let mut data = user_comm_buffer_hob_data(external.base(), 2, status);
+        let data = user_comm_buffer_hob_data(external.base(), 2, status);
+        let original = data;
 
         let channel = CommChannel::from_user_hob(&data).expect("build the user channel");
 
@@ -563,34 +528,8 @@ mod tests {
             Some(AllocationType::User)
         );
 
-        // SAFETY: `data` is a live, writable payload of exactly one `MmCommonBufferHobData`, and
-        // no references into it are held across the call.
-        unsafe { channel.redirect_user_hob(data.as_mut_ptr(), data.len()) }.expect("redirect the user HOB");
-
-        // The user module reads the HOB after demotion, so it must name the internal copy.
-        assert_eq!(u64::from_ne_bytes(data[0..8].try_into().expect("eight bytes")), channel.internal_address);
-    }
-
-    #[test]
-    fn test_redirect_user_hob_rejects_a_truncated_payload() {
-        let channel = CommChannel { internal_address: 0x1234_0000, ..Default::default() };
-        let mut data = user_comm_buffer_hob_data(0x30_0000, 1, 0x40_0000);
-        let short_len = data.len() - 1;
-
-        // SAFETY: `data` is a live, writable payload of at least `short_len` bytes, and no
-        // references into it are held across the call.
-        let result = unsafe { channel.redirect_user_hob(data.as_mut_ptr(), short_len) };
-
-        assert_eq!(
-            result,
-            Err(CommBufferError::CommunicationBufferHobTooSmall {
-                found: short_len,
-                expected: size_of::<MmCommonBufferHobData>()
-            }
-            .into())
-        );
-        // Nothing is written when the payload is too short.
-        assert_eq!(u64::from_ne_bytes(data[0..8].try_into().expect("eight bytes")), 0x30_0000);
+        assert_ne!(channel.internal_address, channel.external_address);
+        assert_eq!(data, original, "the HOB must continue to describe the external buffer and status mailbox");
     }
 
     #[test]

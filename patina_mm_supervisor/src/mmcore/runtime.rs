@@ -14,7 +14,10 @@
 use patina::standard::efi;
 use patina::{
     MemoryRange,
-    management_mode::{MmCommBufferStatus, supervisor::UserCommandType},
+    management_mode::{
+        MmCommBufferStatus,
+        supervisor::{MmUserRequest, UserCommandType},
+    },
     pi::{mm_cis::EfiMmEntryContext, protocol::communication::EfiMmCommunicateHeader},
 };
 
@@ -186,8 +189,8 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
     /// Handles a request for the user core.
     ///
     /// 1. Builds a fresh `EfiMmEntryContext` with the current CPU index and CPU count
-    /// 2. Copies the `EfiMmEntryContext` into the supervisor-to-user data buffer
-    /// 3. Appends the `MmCommBufferStatus` immediately after the context
+    /// 2. Builds an `MmUserRequest` with that context, status, and internal buffer address/capacity
+    /// 3. Writes the handoff into the supervisor-to-user data buffer
     /// 4. For synchronous MMIs, copies the user comm buffer to the internal copy
     /// 5. Demotes to the user entry point via `invoke_demoted_routine`
     /// 6. On return, copies back the user comm buffer and reads the updated status
@@ -229,38 +232,28 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             cpu_save_state: 0,
         };
 
-        // The user core reads the context and status from the supervisor-to-user buffer after
-        // demotion.
-        let context_size = core::mem::size_of::<EfiMmEntryContext>();
-        let status_size = core::mem::size_of::<MmCommBufferStatus>();
+        let request = MmUserRequest {
+            entry_context,
+            status: *status,
+            comm_buffer_address: config.user.internal_address,
+            comm_buffer_size: config.user.size,
+        };
+        let request_size = core::mem::size_of::<MmUserRequest>() as u64;
 
-        if (config.supv_to_user_buffer_size as usize) < context_size + status_size {
+        if config.supv_to_user_buffer_size < request_size {
             log::error!(
-                "Supervisor-to-user buffer too small: {} < {} (context) + {} (status)",
+                "Supervisor-to-user buffer too small: {} < {} (request handoff)",
                 config.supv_to_user_buffer_size,
-                context_size,
-                status_size
+                request_size
             );
             return;
         }
 
-        // SAFETY: `supv_to_user_buffer` is the user-owned buffer published by MM IPL and was
-        // verified above to hold `context_size + status_size` bytes, so both copies stay inside
-        // it and every access made while SMAP is lifted targets that user range.
+        // SAFETY: the supervisor allocated this user-owned buffer and verified above that it
+        // holds the whole handoff. The store while SMAP is lifted stays inside that allocation.
         unsafe {
             with_user_access(|| {
-                core::ptr::copy_nonoverlapping(
-                    (&raw const entry_context).cast::<u8>(),
-                    config.supv_to_user_buffer as *mut u8,
-                    context_size,
-                );
-
-                // The status follows the context.
-                core::ptr::copy_nonoverlapping(
-                    core::ptr::from_ref::<MmCommBufferStatus>(status).cast::<u8>(),
-                    (config.supv_to_user_buffer as *mut u8).add(context_size),
-                    status_size,
-                );
+                core::ptr::write_unaligned(config.supv_to_user_buffer as *mut MmUserRequest, request);
             });
         }
 
@@ -287,7 +280,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         }
 
         // Arguments to the user entry point: the command type, the supervisor-to-user buffer
-        // (context followed by status), and the size of the context.
+        // (the complete request handoff), and the size of that handoff.
         // SAFETY: `user_entry` was validated to be non-zero above and points to the user
         // module entry published by MM IPL. `cpl3_stack` is the per-CPU Ring 3 stack returned
         // by `get_cpl3_stack`. The arg count (3) matches the three argument values passed.
@@ -299,7 +292,7 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
                 DEMOTED_ROUTINE_ARG_COUNT,
                 UserCommandType::UserRequest as u64,
                 config.supv_to_user_buffer,
-                context_size as u64,
+                request_size,
             )
         };
         log::trace!("Returned from user request on CPU {cpu_index} with value: 0x{ret:016x}");
@@ -319,15 +312,12 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
             }
         }
 
-        // The user core may have updated return_status and return_buffer_size.
-        // SAFETY: `supv_to_user_buffer` is the user-owned buffer verified above to hold
-        // `context_size + status_size` bytes, so the status read while SMAP is lifted stays
-        // inside that user range.
+        // Only status is read back. Ring 3 cannot change the supervisor's buffer configuration
+        // by editing the handoff's address or capacity.
+        // SAFETY: the buffer was verified above to hold an `MmUserRequest`, including its status.
         let returned_status = unsafe {
             with_user_access(|| {
-                core::ptr::read(
-                    (config.supv_to_user_buffer as *const u8).add(context_size).cast::<MmCommBufferStatus>(),
-                )
+                core::ptr::addr_of!((*(config.supv_to_user_buffer as *const MmUserRequest)).status).read_unaligned()
             })
         };
 
@@ -729,8 +719,11 @@ mod tests {
     use crate::{SupervisorMmiHandler, privilege_mgmt::mock};
     use core::sync::atomic::{AtomicUsize, Ordering};
     use patina::Guid;
-    use patina::management_mode::{MmCommBufferStatus, supervisor::UserCommandType};
-    use patina::pi::{mm_cis::EfiMmEntryContext, protocol::communication::EfiMmCommunicateHeader};
+    use patina::management_mode::{
+        MmCommBufferStatus,
+        supervisor::{MmUserRequest, UserCommandType},
+    };
+    use patina::pi::protocol::communication::EfiMmCommunicateHeader;
     use patina::standard::efi;
 
     /// GUID claimed by [`TestPlatform`]'s MMI handler; distinct from every default handler.
@@ -1122,17 +1115,21 @@ mod tests {
     }
 
     #[test]
-    fn test_process_user_request_requires_room_for_the_entry_context() {
+    fn test_process_user_request_requires_room_for_the_entire_handoff() {
         init_state().set_user_entry_point(0x4000);
         let core = TestCore::new();
         core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
 
         let mut buffers = TestBuffers::new(256);
         let mut config = buffers.config();
-        config.supv_to_user_buffer_size = 1;
+        config.supv_to_user_buffer_size = size_of::<MmUserRequest>() as u64 - 1;
+
+        mock::set_handler(|_, _, _, _, _, _, _| panic!("a truncated handoff must not reach Ring 3"));
 
         core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
         assert_eq!(buffers.user_status.return_status, 0);
+        assert!(buffers.supv_to_user.iter().all(|&byte| byte == 0));
     }
 
     #[test]
@@ -1144,9 +1141,9 @@ mod tests {
 
         let mut buffers = TestBuffers::new(256);
         buffers.user_external[..4].copy_from_slice(&[1, 2, 3, 4]);
-        let config = buffers.config();
+        let mut config = buffers.config();
+        config.supv_to_user_buffer_size = size_of::<MmUserRequest>() as u64;
         let supv_to_user = config.supv_to_user_buffer;
-        let context_size = core::mem::size_of::<EfiMmEntryContext>();
 
         // The mock stands in for the transition from Ring 0 to Ring 3: it verifies the arguments,
         // edits the internal buffer, and reports a status through the shared window.
@@ -1155,13 +1152,26 @@ mod tests {
             assert_eq!(arg_count, 3);
             assert_eq!(command, UserCommandType::UserRequest as u64);
             assert_eq!(buffer, supv_to_user);
-            assert_eq!(size, context_size as u64);
+            assert_eq!(size, size_of::<MmUserRequest>() as u64);
 
-            // SAFETY: the supervisor placed an `MmCommBufferStatus` right after the context.
+            // SAFETY: the supervisor wrote the complete handoff and staged the internal buffer.
             unsafe {
-                let status = (supv_to_user as *mut u8).add(context_size).cast::<MmCommBufferStatus>();
-                (*status).return_status = efi::Status::SUCCESS.as_usize() as u64;
-                (*status).return_buffer_size = 4;
+                let request_ptr = buffer as *mut MmUserRequest;
+                let mut request = request_ptr.read_unaligned();
+                assert_eq!(request.entry_context.currently_executing_cpu, 0);
+                assert_eq!(request.entry_context.number_of_cpus, 1);
+                assert_eq!(request.status.is_comm_buffer_valid, 1);
+                assert_eq!(request.comm_buffer_address, config.user.internal_address);
+                assert_ne!(request.comm_buffer_address, config.user.external_address);
+                assert_eq!(request.comm_buffer_size, config.user.size);
+                let payload = core::slice::from_raw_parts_mut(request.comm_buffer_address as *mut u8, 4);
+                assert_eq!(payload, &[1, 2, 3, 4]);
+                payload.copy_from_slice(&[4, 3, 2, 1]);
+                request.status.return_status = efi::Status::SUCCESS.as_usize() as u64;
+                request.status.return_buffer_size = 4;
+                request.comm_buffer_address = 0;
+                request.comm_buffer_size = 0;
+                request_ptr.write_unaligned(request);
             }
             0
         });
@@ -1170,16 +1180,11 @@ mod tests {
         mock::clear();
 
         // The request was staged into the internal buffer and the response copied back out.
-        assert_eq!(&buffers.user_internal[..4], &[1, 2, 3, 4]);
+        assert_eq!(&buffers.user_internal[..4], &[4, 3, 2, 1]);
+        assert_eq!(&buffers.user_external[..4], &[4, 3, 2, 1]);
         assert_eq!(buffers.user_status.is_comm_buffer_valid, 0);
         assert_eq!(buffers.user_status.return_status, efi::Status::SUCCESS.as_usize() as u64);
         assert_eq!(buffers.user_status.return_buffer_size, 4);
-
-        // The entry context handed to the user names this CPU and the registered CPU count.
-        // SAFETY: `process_user_request` wrote the context at the start of the shared window.
-        let context = unsafe { core::ptr::read(supv_to_user as *const EfiMmEntryContext) };
-        assert_eq!(context.currently_executing_cpu, 0);
-        assert_eq!(context.number_of_cpus, 1);
     }
 
     #[test]
@@ -1192,16 +1197,18 @@ mod tests {
         let mut buffers = TestBuffers::new(256);
         let config = buffers.config();
         let supv_to_user = config.supv_to_user_buffer;
-        let context_size = core::mem::size_of::<EfiMmEntryContext>();
 
         // Without the check, a user module that reports more than the communication buffer holds
         // would send the non-MM caller reading past the end of it.
         mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
-            // SAFETY: the supervisor placed an `MmCommBufferStatus` right after the context.
+            // SAFETY: the supervisor wrote the complete handoff into this buffer.
             unsafe {
-                let status = (supv_to_user as *mut u8).add(context_size).cast::<MmCommBufferStatus>();
-                (*status).return_status = efi::Status::SUCCESS.as_usize() as u64;
-                (*status).return_buffer_size = u64::MAX;
+                let request_ptr = supv_to_user as *mut MmUserRequest;
+                let mut request = request_ptr.read_unaligned();
+                request.status.return_status = efi::Status::SUCCESS.as_usize() as u64;
+                request.status.return_buffer_size = u64::MAX;
+                request.comm_buffer_size = u64::MAX;
+                request_ptr.write_unaligned(request);
             }
             0
         });
@@ -1223,14 +1230,15 @@ mod tests {
         let mut buffers = TestBuffers::new(256);
         let config = buffers.config();
         let supv_to_user = config.supv_to_user_buffer;
-        let context_size = core::mem::size_of::<EfiMmEntryContext>();
 
         // Exactly the buffer size is legitimate and must reach the caller untouched.
         mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
-            // SAFETY: the supervisor placed an `MmCommBufferStatus` right after the context.
+            // SAFETY: the supervisor wrote the complete handoff into this buffer.
             unsafe {
-                let status = (supv_to_user as *mut u8).add(context_size).cast::<MmCommBufferStatus>();
-                (*status).return_buffer_size = 256;
+                let status = core::ptr::addr_of_mut!((*(supv_to_user as *mut MmUserRequest)).status);
+                let mut updated = status.read_unaligned();
+                updated.return_buffer_size = 256;
+                status.write_unaligned(updated);
             }
             0
         });

@@ -546,17 +546,12 @@ impl<P: PlatformInfo, const MAX_CPUS: usize> MmSupervisorCore<P, MAX_CPUS> {
         let supv = CommChannel::from_supv_hob(supv_region_data)
             .inspect_err(|err| log::error!("Failed to initialize supervisor communication buffer: {err}"))?;
 
-        // User channel, from the `MM_COMM_BUFFER_HOB_GUID` HOB. The user core reads this HOB too, so
-        // it is redirected to the internal copy.
+        // User channel, from the `MM_COMM_BUFFER_HOB_GUID` HOB.
         // SAFETY: as above.
         let user_buffer_data = unsafe { find_guid_hob_data(hob_hand_off_table, MM_COMM_BUFFER_HOB_GUID) }
             .ok_or(CommBufferError::CommunicationBufferHobMissing)?;
         let user = CommChannel::from_user_hob(user_buffer_data)
             .inspect_err(|err| log::error!("Failed to initialize user communication buffer: {err}"))?;
-
-        // SAFETY: `user_buffer_data` is the writable HOB payload and is not used after this call.
-        unsafe { user.redirect_user_hob(user_buffer_data.as_ptr().cast_mut(), user_buffer_data.len()) }
-            .inspect_err(|err| log::error!("Failed to redirect the user communication buffer HOB: {err}"))?;
 
         let supv_to_user_buffer =
             security_state().page_allocator().allocate_pages_with_type(1, AllocationType::User).map_err(|err| {
